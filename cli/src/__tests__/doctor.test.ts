@@ -1,16 +1,26 @@
 /**
- * doctor tests — Phase 6.
+ * doctor tests — Phase 6 (+ FR-212d register-only / global-surfaces update).
  *
- * Drift classification: 8 fixture registries, one per drift class. Each
- * asserts the expected `DriftRow.driftClass` value. --fix and --remove-orphans
- * exercised via runDoctor returning the right exit code.
+ * Drift classification: one fixture per drift class, each asserting the expected
+ * `DriftRow.driftClass`. --fix and --remove-orphans exercised via runDoctor
+ * returning the right exit code. FR-212d: install is register-only (no
+ * per-project `.claude/`), and hooks are a brain-level GLOBAL check — the suite
+ * sandboxes HOME with a clean baseline (valid global hooks + claude.json +
+ * opt-out config) so the brain-level rows don't fire spuriously.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
+  realpathSync,
   rmSync,
+  statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +28,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 let tmpRoot: string;
+/** Sandboxed HOME so claudeJsonPath() (used by the mcp-unregistered
+ *  drift check, TD-168) resolves into a tmp dir, not the real ~. */
+let homeOverride: string;
+let homeBackup: string | undefined;
 const projectDirs: string[] = [];
 
 const CANONICAL_HOOKS = {
@@ -61,17 +75,138 @@ function stageBrain(): void {
   mkdirSync(join(tmpRoot, "memory"), { recursive: true });
 }
 
+/**
+ * Write a valid `~/.claude.json` (in the sandboxed HOME) with the
+ * igris-brain MCP registered pointing at a real on-disk file. Keeps
+ * the existing exit-code tests free of the TD-168 mcp-unregistered
+ * drift row. The mcp-unregistered tests explicitly skip this.
+ *
+ * TD-220: chmod 600 so the new `secret-perms` drift class does NOT flag
+ * this staged harness config — writeFileSync produces 644 under the default
+ * umask, which would trip the read-pass exit-code tests below. A real post-
+ * TD-220 install keeps ~/.claude.json at 600, so 600 is the correct baseline.
+ */
+function stageValidClaudeJson(): void {
+  const mcpFile = join(tmpRoot, "fake-bundled-mcp.js");
+  writeFileSync(mcpFile, "// fake bundled mcp\n");
+  const claudeJson = join(homeOverride, ".claude.json");
+  writeFileSync(
+    claudeJson,
+    JSON.stringify(
+      {
+        mcpServers: {
+          "igris-brain": {
+            type: "stdio",
+            command: "node",
+            args: [mcpFile],
+            env: {},
+          },
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  chmodSync(claudeJson, 0o600);
+}
+
+/**
+ * FR-212d (register-only): `igris install` no longer writes a per-project
+ * `.claude/` layer — a registered project whose path exists is CLEAN. Stage a
+ * bare project dir (no `.claude/`) to exercise the real register-only path. The
+ * `.claude/` arg exists only for the few tests that still stage per-project
+ * scaffolding for unrelated reasons (none currently need it).
+ */
 function stageProject(name = "proj"): string {
   const dir = mkdtempSync(join(tmpdir(), `igris-cli-doctor-${name}-`));
-  mkdirSync(join(dir, ".claude"), { recursive: true });
   projectDirs.push(dir);
   return dir;
+}
+
+/**
+ * FR-212d: write a valid GLOBAL `~/.claude/settings.json` (in the sandboxed
+ * HOME) carrying the canonical Igris hooks. Under the global-projection model
+ * the Igris hooks live in ONE user-level settings block, so the new brain-level
+ * `hooks-missing`/`hooks-stale` drift check (detectGlobalHooksDrift) reads this
+ * file. The sandboxed HOME starts WITHOUT it, which would make every test trip a
+ * brain-level `hooks-missing` row — so the baseline stages it. Tests that
+ * exercise hooks-missing/hooks-stale mutate or remove it in their own setup.
+ */
+function stageValidGlobalHooks(): void {
+  const settingsDir = join(homeOverride, ".claude");
+  mkdirSync(settingsDir, { recursive: true });
+  writeFileSync(
+    join(settingsDir, "settings.json"),
+    JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+  );
+}
+
+/**
+ * FR-212d: write an explicit-opt-out `~/.igris/config.json` (`cli_targets: {}`)
+ * under the sandbox brain dir so the bridge-missing detector never fires from
+ * the staged `~/.claude/` config dir (created by stageValidGlobalHooks) when a
+ * real `claude` binary is on the dev machine's PATH. `detectBridgeMissing`
+ * treats an explicitly-empty `cli_targets` as user opt-out → no rows, PATH-
+ * independent (hermetic). Set at 600 so it doesn't also trip secret-perms.
+ */
+function stageOptOutConfig(): void {
+  const cfg = join(tmpRoot, "config.json");
+  writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
+  chmodSync(cfg, 0o600);
+}
+
+/**
+ * TD-220: `runInstall` registers the igris-brain MCP across all Igris harnesses,
+ * which the FR-162/163 mergers write via tmp+renameSync at the umask-default
+ * mode (644) — Risk R1. A no-`--fix` doctor read pass would then flag those
+ * harness configs as `secret-perms` (harness-owned, loose). Tests that install
+ * a project and assert a CLEAN read-pass exit must harden the harness configs
+ * to 600 first — representing a machine where `igris doctor --fix` (or a
+ * future R1 follow-up) has already tightened them. This is the L-331 self-heal
+ * for the pre-TD-220 "clean = exit 0" assertion.
+ */
+function hardenStagedHarnessConfigs(): void {
+  for (const p of [
+    join(homeOverride, ".claude.json"),
+    join(homeOverride, ".gemini", "settings.json"),
+    join(homeOverride, ".codex", "config.toml"),
+    join(homeOverride, ".config", "opencode", "opencode.json"),
+  ]) {
+    try {
+      chmodSync(p, 0o600);
+    } catch {
+      // Absent harness config — nothing to harden.
+    }
+  }
 }
 
 beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-doctor-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
+  // Sandbox HOME so the TD-168 mcp-unregistered check (claudeJsonPath()
+  // -> ~/.claude.json) resolves into tmp. Without this, the check would
+  // read the developer's real ~/.claude.json and tests would be
+  // non-hermetic. By default the sandboxed home has no .claude.json, so
+  // mcp-unregistered DOES fire; tests that need it absent register a
+  // valid entry in their own setup.
+  homeOverride = join(tmpRoot, "home");
+  mkdirSync(homeOverride, { recursive: true });
+  homeBackup = process.env.HOME;
+  process.env.HOME = homeOverride;
   stageBrain();
+  stageValidClaudeJson();
+  // FR-212d: stage a valid GLOBAL ~/.claude/settings.json so the new
+  // brain-level hooks-missing/hooks-stale check has a clean baseline. Tests
+  // that exercise those classes mutate/remove it.
+  stageValidGlobalHooks();
+  // FR-212d: staging ~/.claude/ above (the global-hooks parent) makes
+  // detectInstalledCLIs treat claude as "detected" whenever a real `claude` is
+  // on the dev machine's PATH (config-dir + PATH = detected) — which would make
+  // the bridge-missing detector fire spuriously (config.json lacks claude). Seed
+  // an EXPLICIT-opt-out config.json (`cli_targets: {}`) so bridge-missing never
+  // fires from the staged config dir, hermetically (independent of PATH). Tests
+  // that need a different config.json overwrite it (preserving the opt-out).
+  stageOptOutConfig();
   const ch = await import("../lib/canonical-hooks.js");
   ch.clearCache();
   const reg = await import("../lib/registry.js");
@@ -85,17 +220,25 @@ afterEach(async () => {
   for (const d of projectDirs) rmSync(d, { recursive: true, force: true });
   projectDirs.length = 0;
   delete process.env.IGRIS_BRAIN_DIR;
+  process.env.HOME = homeBackup;
 });
 
 describe("doctor — drift classification (read-only)", () => {
-  it("clean: vanilla install → driftClass=clean", async () => {
+  it("clean: register-only install → driftClass=clean (FR-212d real path)", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
 
+    // FR-212d: stageProject is now a BARE dir (no pre-staged `.claude/`), so this
+    // exercises the ACTUAL register-only `runInstall` — which writes NO
+    // per-project `.claude/` layer. A registered project whose path exists must
+    // classify `clean` even though `<project>/.claude` is absent. (Pre-fix this
+    // test only passed because the fixture pre-created `.claude` — the masking
+    // the warden flagged.)
     const proj = stageProject("clean");
     const slug = require("node:path").basename(proj);
-    await runInstall({ path: proj, slug, installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: proj, slug, installHooks: true });
+    expect(existsSync(join(proj, ".claude"))).toBe(false); // register-only: no layer
     const drift = classifyDrift(reg.listProjects());
     expect(drift.length).toBe(1);
     expect(drift[0].driftClass).toBe("clean");
@@ -116,47 +259,52 @@ describe("doctor — drift classification (read-only)", () => {
     expect(drift[0].driftClass).toBe("path-missing");
   });
 
-  it("not-installed: path exists but .claude/ missing", async () => {
+  it("FR-212d: a bare registered dir (no .claude/) is clean, NOT not-installed", async () => {
+    // FR-212d retired the `not-installed` class — register-only install writes no
+    // per-project `.claude/` layer, so its absence no longer means "not
+    // installed". A registered row whose path exists is clean.
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     const dir = mkdtempSync(join(tmpdir(), "igris-cli-doctor-bare-"));
     projectDirs.push(dir);
+    expect(existsSync(join(dir, ".claude"))).toBe(false);
+    // Slug = basename so slug-basename-mismatch (informational) doesn't mask the
+    // clean verdict we're asserting.
+    const slug = require("node:path").basename(dir);
     reg.upsertProject({
-      slug: "bare",
-      name: "bare",
+      slug,
+      name: slug,
       path: dir,
       tech_stack: "",
       igris_version: "7.0.0",
     });
     const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("not-installed");
+    expect(drift[0].driftClass).toBe("clean");
+    // The retired class must never resurface.
+    expect(drift.some((r) => r.driftClass === "not-installed")).toBe(false);
   });
 
-  it("hooks-missing: settings.json present but no Igris SessionEnd", async () => {
-    const { classifyDrift } = await import("../verbs/doctor.js");
+  it("hooks-missing (brain-level): GLOBAL ~/.claude/settings.json lacks Igris SessionEnd", async () => {
+    // FR-212d: hooks are global now — a SINGLE (brain) row, read from
+    // ~/.claude/settings.json (NOT per-project). Overwrite the staged-valid
+    // global settings with one lacking the Igris hooks.
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const proj = stageProject("hooksmissing");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
-    reg.upsertProject({
-      slug: require("node:path").basename(proj),
-      name: "x",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
-    const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("hooks-missing");
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "hooks-missing");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
   });
 
-  it("hooks-stale: settings.json has Igris hooks at a different command path", async () => {
-    const { classifyDrift } = await import("../verbs/doctor.js");
+  it("hooks-stale (brain-level): GLOBAL settings carry Igris hooks at a non-canonical path", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const proj = stageProject("hooksstale");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({
         hooks: {
           SessionEnd: [
@@ -172,15 +320,10 @@ describe("doctor — drift classification (read-only)", () => {
         },
       }) + "\n",
     );
-    reg.upsertProject({
-      slug: require("node:path").basename(proj),
-      name: "x",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
-    const drift = classifyDrift(reg.listProjects());
-    expect(drift[0].driftClass).toBe("hooks-stale");
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "hooks-stale");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
   });
 
   it("slug-basename-mismatch: row.slug != basename(row.path)", async () => {
@@ -192,7 +335,6 @@ describe("doctor — drift classification (read-only)", () => {
       path: proj,
       slug: "totally-different-slug",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
     const drift = classifyDrift(reg.listProjects());
     expect(drift[0].driftClass).toBe("slug-basename-mismatch");
@@ -203,13 +345,12 @@ describe("doctor — drift classification (read-only)", () => {
     const { classifyDrift } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     const proj = stageProject("dup");
-    await runInstall({ path: proj, slug: "slug-one", installHooks: true, skipSymlinkLayer: true });
-    await runInstall({ path: proj, slug: "slug-two", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: proj, slug: "slug-one", installHooks: true });
+    await runInstall({ path: proj, slug: "slug-two", installHooks: true });
     await runInstall({
       path: proj,
       slug: "slug-three",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
     const drift = classifyDrift(reg.listProjects());
     // All three should be flagged as duplicate-path (precedence above slug-mismatch).
@@ -227,7 +368,7 @@ describe("doctor — drift classification (read-only)", () => {
     const link = join(linkBase, "linked-proj");
     symlinkSync(real, link);
     // Install registers `real` as canonical, then we add a separate row for the symlink path.
-    await runInstall({ path: real, slug: "real-target", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: real, slug: "real-target", installHooks: true });
     // Simulate someone registering the symlinked path under a different slug.
     reg.upsertProject({
       slug: "via-symlink",
@@ -275,6 +416,95 @@ describe("doctor — drift classification (read-only)", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// TD-168: mcp-unregistered drift class. classifyDriftAll synthesizes a
+// `(brain)`-slug row when ~/.claude.json lacks the igris-brain MCP entry
+// (or it points at a missing file). The sandboxed HOME starts WITH a valid
+// entry (stageValidClaudeJson in beforeEach), so these tests mutate it.
+// ---------------------------------------------------------------------------
+describe("doctor — mcp-unregistered drift class (TD-168)", () => {
+  it("no mcp-unregistered row when ~/.claude.json has a valid igris-brain entry", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // beforeEach already staged a valid ~/.claude.json.
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(false);
+  });
+
+  it("yields a mcp-unregistered row when ~/.claude.json is absent", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // Remove the staged ~/.claude.json so the MCP is unregistered.
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "mcp-unregistered");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+  });
+
+  it("yields a mcp-unregistered row when the entry points at a missing file", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // Repoint the entry at a path that doesn't exist.
+    writeFileSync(
+      join(homeOverride, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          "igris-brain": {
+            type: "stdio",
+            command: "node",
+            args: ["/no/such/mcp/index.js"],
+            env: {},
+          },
+        },
+      }) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "mcp-unregistered")).toBe(true);
+  });
+
+  it("--fix registers the igris-brain MCP into all Igris harnesses (FR-169)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const fs = require("node:fs");
+    // Drop ~/.claude.json so mcp-unregistered fires. runInstall (via no
+    // project) is not involved — the fix arm calls
+    // registerBrainAcrossHarnesses() directly, which writes into the sandboxed
+    // HOME pointing at the real bundled path (built in Phase 1 —
+    // cli/dist/brain-mcp-server/...). FR-169: backfills all Igris harnesses.
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    // Claude — ~/.claude.json now has the igris-brain entry.
+    const claude = JSON.parse(
+      fs.readFileSync(join(homeOverride, ".claude.json"), "utf-8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(claude.mcpServers["igris-brain"]).toBeDefined();
+
+    // Gemini — ~/.gemini/settings.json.
+    const gemini = JSON.parse(
+      fs.readFileSync(join(homeOverride, ".gemini", "settings.json"), "utf-8"),
+    ) as { mcpServers: Record<string, unknown> };
+    expect(gemini.mcpServers["igris-brain"]).toBeDefined();
+
+    // OpenCode — ~/.config/opencode/opencode.json.
+    const opencode = JSON.parse(
+      fs.readFileSync(
+        join(homeOverride, ".config", "opencode", "opencode.json"),
+        "utf-8",
+      ),
+    ) as { mcp: Record<string, unknown> };
+    expect(opencode.mcp["igris-brain"]).toBeDefined();
+
+    // Codex — ~/.codex/config.toml.
+    const codexText = fs.readFileSync(
+      join(homeOverride, ".codex", "config.toml"),
+      "utf-8",
+    ) as string;
+    expect(codexText).toContain("[mcp_servers.igris-brain]");
+  });
+});
+
 describe("doctor — runDoctor exit codes", () => {
   it("exits 0 on clean registry", async () => {
     const { runInstall } = await import("../verbs/install.js");
@@ -284,55 +514,116 @@ describe("doctor — runDoctor exit codes", () => {
       path: proj,
       slug: require("node:path").basename(proj),
       installHooks: true,
-      skipSymlinkLayer: true,
     });
+    // TD-220: install re-loosened the harness configs (R1); a genuinely
+    // "clean" machine has them at 600. Harden so the read-pass stays clean.
+    hardenStagedHarnessConfigs();
     const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
     expect(code).toBe(0);
   });
 
-  it("exits 1 with drift when settings.json missing hooks block (TD-100 silent-failure)", async () => {
+  it("exits 1 when the GLOBAL settings.json is missing the Igris hooks block (TD-100 silent-failure, FR-212d)", async () => {
+    // FR-212d: the TD-100 silent-failure class is now GLOBAL — the Igris hooks
+    // live in ONE `~/.claude/settings.json` block. Overwrite the staged-valid
+    // global hooks with a settings file lacking the Igris SessionEnd hook so the
+    // brain-level hooks-missing row fires → exit 1.
     const { runDoctor } = await import("../verbs/doctor.js");
-    const reg = await import("../lib/registry.js");
-    const proj = stageProject("td100");
     writeFileSync(
-      join(proj, ".claude", "settings.json"),
+      join(homeOverride, ".claude", "settings.json"),
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
-    reg.upsertProject({
-      slug: "td100-victim",
-      name: "td100-victim",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
     const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
     expect(code).toBe(1);
   });
 
-  it("--fix repairs hooks-missing", async () => {
+  it("FR-165: warns (read-only) when an MCP ${VAR} resolves nowhere", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const path = await import("node:path");
+    // Unique VAR name guaranteed absent from process.env + the (absent)
+    // sandboxed secrets.env (tmpRoot has none).
+    const VAR = "IGRIS_FR165_MISSING_TOK_TEST";
+    delete process.env[VAR];
+    // Personal overlay with an MCP block carrying an unresolved env ref.
+    const overlayPath = path.join(
+      tmpRoot,
+      "loadout",
+      "harness-manifest.personal.json",
+    );
+    mkdirSync(path.dirname(overlayPath), { recursive: true });
+    writeFileSync(
+      overlayPath,
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          mcp_servers: [
+            {
+              name: "needs-secret",
+              canonical: {
+                command: "node",
+                args: [],
+                env: { API_KEY: `\${${VAR}}` },
+              },
+              targets: [],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    try {
+      // No projects registered; the only output of interest is the warning.
+      await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+
+    const out = stderrChunks.join("");
+    // Names the VAR + server, never a value (there is none to leak).
+    expect(out).toContain(VAR);
+    expect(out).toContain("needs-secret");
+    expect(out).toContain("warn:");
+    // Read-only: the overlay we wrote must be byte-unchanged (no doctor write).
+    const after = require("node:fs").readFileSync(overlayPath, "utf-8");
+    expect(after).toContain(`\${${VAR}}`);
+  });
+
+  it("--fix repairs hooks-missing by refreshing the GLOBAL hooks (FR-212d)", async () => {
     const { runDoctor } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
-    const ifs = await import("../lib/installed-features.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
     const proj = stageProject("fixme");
-    writeFileSync(
-      join(proj, ".claude", "settings.json"),
-      JSON.stringify({ includeGitInstructions: false }) + "\n",
-    );
+    // Slug = basename so the project itself is clean (no informational
+    // slug-basename-mismatch) — the only non-clean row must be hooks-missing.
+    const slug = require("node:path").basename(proj);
     reg.upsertProject({
-      slug: "fixme",
-      name: "fixme",
+      slug,
+      name: slug,
       path: proj,
       tech_stack: "",
       igris_version: "7.0.0",
     });
+    // FR-212d: hooks-missing is a brain-level row read from the GLOBAL
+    // ~/.claude/settings.json. Overwrite the staged-valid global hooks with a
+    // settings file that LACKS the Igris hooks so the row fires.
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ includeGitInstructions: false }) + "\n",
+    );
     const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
     expect(code).toBe(0);
-    // After --fix, settings.json should have the canonical SessionEnd command.
+    // FR-212d: the fix re-merges the canonical Igris hooks into the GLOBAL
+    // `~/.claude/settings.json` (the live hooks surface now). HOME is sandboxed
+    // in this suite so `claudeUserSettingsPath()` resolves into tmp.
     const settings = JSON.parse(
-      require("node:fs").readFileSync(
-        join(proj, ".claude", "settings.json"),
-        "utf-8",
-      ),
+      require("node:fs").readFileSync(claudeUserSettingsPath(), "utf-8"),
     ) as { hooks: Record<string, unknown[]> };
     const sessionEnd = settings.hooks.SessionEnd as Array<{
       hooks: Array<{ command: string }>;
@@ -340,7 +631,6 @@ describe("doctor — runDoctor exit codes", () => {
     expect(sessionEnd[0].hooks[0].command).toBe(
       "$HOME/.igris/core/hooks/shared/session_end.sh",
     );
-    expect(ifs.readInstalledFeatures("fixme")).not.toBeNull();
   });
 
   it("--remove-orphans --yes deletes path-missing rows", async () => {
@@ -366,41 +656,36 @@ describe("doctor — runDoctor exit codes", () => {
   });
 
   // -------------------------------------------------------------------
-  // TD-122: --fix loop must visit per-project drift rows that come AFTER
-  // a bridge-missing row. Pre-TD-122, the bridge-missing arm called
+  // TD-122: --fix loop must visit drift rows that come AFTER a
+  // bridge-missing row. Pre-TD-122, the bridge-missing arm called
   // `break`, which (a) skipped multiple bridge-missing rows that should
-  // have been deduped via a flag, and (b) skipped per-project rows
-  // (not-installed / hooks-* / brain-core-missing) entirely. Post-TD-122
-  // the arm sets `bridgeFixApplied = true` and continues, so a single
-  // `--fix` invocation handles BOTH classes.
+  // have been deduped via a flag, and (b) skipped later drift rows
+  // entirely. Post-TD-122 the arm sets `bridgeFixApplied = true` and
+  // continues, so a single `--fix` invocation handles BOTH classes.
   //
-  // Architect-approved test approach (plan §4 + §8 Risk #6): spy on the
-  // dependency modules `init.js` and `install.js` (NOT the SUT
-  // `doctor.js` per L-159). We inject a synthetic bridge-missing row
-  // ahead of the not-installed row by spying on `detectBridgeMissing`
-  // (a doctor.ts dependency, not the SUT). After --fix:
+  // FR-212d: the `not-installed` class was retired (register-only). The
+  // "second class after bridge-missing" is now the brain-level
+  // hooks-missing row (global ~/.claude/settings.json lacking the Igris
+  // hooks), whose fix is `mergeGlobalCanonicalHooks`. Test approach (per
+  // L-159): spy on the DEPENDENCY modules `init.js` + `global-hooks.js`
+  // (NOT the SUT `doctor.js`). After --fix:
   //   - runInit was invoked exactly once (bridge fix)
-  //   - runInstall was invoked at least once (not-installed fix)
+  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix)
   // Both calls in one runDoctor invocation = `break` was replaced with
   // continue.
   // -------------------------------------------------------------------
-  it("--fix: bridge-missing AND not-installed in one invocation (TD-122)", async () => {
+  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122)", async () => {
     const initMod = await import("../verbs/init.js");
-    const installMod = await import("../verbs/install.js");
+    const ghMod = await import("../lib/global-hooks.js");
     const bridgeMod = await import("../lib/drift/bridge-missing.js");
     const { runDoctor } = await import("../verbs/doctor.js");
-    const reg = await import("../lib/registry.js");
 
-    // Stage a not-installed project (path exists, .claude/ missing).
-    const proj = mkdtempSync(join(tmpdir(), "igris-cli-doctor-td122-"));
-    projectDirs.push(proj);
-    reg.upsertProject({
-      slug: "td122-not-installed",
-      name: "td122-not-installed",
-      path: proj,
-      tech_stack: "",
-      igris_version: "7.0.0",
-    });
+    // Make the GLOBAL hooks row fire: overwrite the staged-valid global
+    // settings with one lacking the Igris hooks.
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ includeGitInstructions: false }) + "\n",
+    );
 
     // Inject a synthetic bridge-missing drift row. The detector itself
     // is a pure function; spying on it cleanly isolates the doctor
@@ -416,38 +701,30 @@ describe("doctor — runDoctor exit codes", () => {
         },
       ]);
 
-    // Stub runInit so we don't actually re-init the test brain. We DO
-    // want runInstall to fire its full path (it's not the SUT, but we
-    // need it to do its job for the not-installed fix to mutate state).
-    // Returning 0 from runInit signals "fix succeeded".
+    // Stub runInit so we don't actually re-init the test brain. Returning
+    // 0 signals "bridge fix succeeded".
     const initSpy = vi.spyOn(initMod, "runInit").mockResolvedValue(0);
-    const installSpy = vi.spyOn(installMod, "runInstall");
+    // Spy on the global-hooks merge (the hooks-missing fix). Let it run for
+    // real — it writes into the sandboxed HOME and clears the row.
+    const ghSpy = vi.spyOn(ghMod, "mergeGlobalCanonicalHooks");
 
     try {
-      // --fix should visit BOTH classes. We don't care about the exit
-      // code per se — partial success is acceptable; the assertion is
-      // that both fix paths fired in one invocation.
+      // --fix should visit BOTH classes. The assertion is that both fix
+      // paths fired in one invocation (the loop did NOT break after
+      // bridge-missing).
       await runDoctor({ fix: true, removeOrphans: false, yes: false });
 
       // Bridge fix invoked exactly once.
       expect(initSpy).toHaveBeenCalledTimes(1);
       expect(initSpy).toHaveBeenCalledWith({ upgrade: true, yes: true });
 
-      // not-installed fix invoked at least once. (runInstall is also
-      // called from the install verb chain; we only need ONE call here
-      // to evidence the loop did NOT break after bridge-missing.)
-      expect(installSpy).toHaveBeenCalled();
-      const installCalls = installSpy.mock.calls;
-      // Look for the call matching our staged not-installed slug.
-      const matched = installCalls.some(
-        (call) =>
-          (call[0] as { slug?: string }).slug === "td122-not-installed",
-      );
-      expect(matched).toBe(true);
+      // hooks-missing fix invoked at least once — evidence the loop did
+      // NOT break after bridge-missing.
+      expect(ghSpy).toHaveBeenCalled();
     } finally {
       bridgeSpy.mockRestore();
       initSpy.mockRestore();
-      installSpy.mockRestore();
+      ghSpy.mockRestore();
     }
   });
 });
@@ -595,5 +872,518 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(removed).toBe(1);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["upper-2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-220: secret-perms drift class. classifyDriftAll synthesizes a
+// `(brain)`-slug `secret-perms` row for any Igris-written secret file
+// (config.json, secrets.env) OR harness config that is group/world-readable
+// or git-tracked. Igris-owned + harness-owned both chmod'd to 600 under --fix
+// (the read pass WARNs harness-owned). The sandboxed brain (tmpRoot) has no
+// config.json/secrets.env by default, and stageValidClaudeJson() stages
+// ~/.claude.json at 600 — so the baseline has NO secret-perms rows.
+// ---------------------------------------------------------------------------
+describe("doctor — secret-perms drift class (TD-220)", () => {
+  it("T10: a 644 config.json yields a secret-perms row; runDoctor (no --fix) exits 1", async () => {
+    const { classifyDriftAll, runDoctor } = await import("../verbs/doctor.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+    const reg = await import("../lib/registry.js");
+
+    const cfg = configJsonPath(); // resolves under tmpRoot (IGRIS_BRAIN_DIR)
+    // cli_targets:{} keeps bridge-missing opted-out (see stageOptOutConfig) so
+    // the only non-clean row is the 644-perms one under test.
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
+    chmodSync(cfg, 0o644);
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find(
+      (r) => r.driftClass === "secret-perms" && r.path === cfg,
+    );
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+
+    const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+  });
+
+  it("T11: runDoctor({fix:true}) on the 644 config.json chmods it to 600 and exits 0", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { configJsonPath } = await import("../lib/paths.js");
+
+    const cfg = configJsonPath();
+    // cli_targets:{} keeps bridge-missing opted-out so --fix's only action is
+    // the chmod (a spurious bridge-missing would fail the fix's runInit).
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
+    chmodSync(cfg, 0o644);
+    expect(statSync(cfg).mode & 0o777).toBe(0o644);
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+    expect(statSync(cfg).mode & 0o777).toBe(0o600);
+  });
+
+  it("T12: a 644 harness config (gemini) WARNs in the read pass + is chmod'd 600 under --fix", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { geminiSettingsPath } = await import("../lib/paths.js");
+
+    const gem = geminiSettingsPath(); // ~/.gemini/settings.json under sandboxed HOME
+    mkdirSync(join(homeOverride, ".gemini"), { recursive: true });
+    writeFileSync(gem, JSON.stringify({ mcpServers: {} }) + "\n");
+    chmodSync(gem, 0o644);
+
+    // Read pass: WARNs (harness-owned) and exits 1.
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    let readCode: number;
+    try {
+      readCode = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readCode).toBe(1);
+    const out = stderrChunks.join("");
+    expect(out).toContain("harness config");
+    expect(out).toContain(gem);
+    // gemini is still 644 — the read pass never chmods a harness config.
+    expect(statSync(gem).mode & 0o777).toBe(0o644);
+
+    // --fix chmods it to 600 and exits 0.
+    const fixCode = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(fixCode).toBe(0);
+    expect(statSync(gem).mode & 0o777).toBe(0o600);
+  });
+
+  it("T13: clean — all secret files at 600 (or absent) → no secret-perms rows", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const { configJsonPath, secretsEnvPath } = await import("../lib/paths.js");
+    const reg = await import("../lib/registry.js");
+
+    // config.json + secrets.env staged at 600; harness claude.json already 600.
+    // cli_targets:{} keeps bridge-missing opted-out (baseline parity).
+    const cfg = configJsonPath();
+    writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
+    chmodSync(cfg, 0o600);
+    const sec = secretsEnvPath();
+    writeFileSync(sec, "export FOO=bar\n");
+    chmodSync(sec, 0o600);
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "secret-perms")).toBe(false);
+  });
+});
+
+describe("doctor — skills-pollution drift class (TD-223 RE-SCOPED)", () => {
+  /**
+   * Stage the core surfaces-manifest under the sandbox brain dir declaring the
+   * canonical claude/symlink skills target (~/.igris/core/skills →
+   * ~/.claude/skills). Both resolve under the sandboxed HOME.
+   */
+  function stageSkillsSurface(): void {
+    const adapterDir = join(tmpRoot, "core", "scripts", "cli-adapters");
+    mkdirSync(adapterDir, { recursive: true });
+    writeFileSync(
+      join(adapterDir, "surfaces-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: [
+            {
+              source: "~/.igris/core/skills",
+              layer: "core",
+              targets: [
+                { type: "claude", method: "symlink", path: "~/.claude/skills" },
+              ],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+  }
+
+  function coreSkillsRoot(): string {
+    return join(homeOverride, ".igris", "core", "skills");
+  }
+  function coreAgentsRoot(): string {
+    return join(homeOverride, ".igris", "core", "agents");
+  }
+  function claudeSkillsRoot(): string {
+    return join(homeOverride, ".claude", "skills");
+  }
+  function claudeAgentsRoot(): string {
+    return join(homeOverride, ".claude", "agents");
+  }
+
+  function stageCanonicalSkill(name: string): void {
+    const dir = join(coreSkillsRoot(), name);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "SKILL.md"),
+      `---\nname: ${name}\ndescription: "${name}"\n---\n\nBody.\n`,
+    );
+  }
+
+  function stageCoreAgent(name: string): void {
+    mkdirSync(coreAgentsRoot(), { recursive: true });
+    writeFileSync(join(coreAgentsRoot(), `${name}.md`), `# ${name}\n`);
+  }
+
+  /** Make ~/.claude/skills a legacy whole-dir symlink → the core source. */
+  function legacySkillsSymlink(): void {
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(coreSkillsRoot(), claudeSkillsRoot());
+  }
+  function legacyAgentsSymlink(): void {
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(coreAgentsRoot(), claudeAgentsRoot());
+  }
+
+  function claudeBaks(prefix: string): string[] {
+    return require("node:fs")
+      .readdirSync(join(homeOverride, ".claude"))
+      .filter((n: string) => n.includes(`${prefix}.bak-`));
+  }
+
+  it("T1: a legacy whole-dir skills symlink yields a skills-pollution row; read pass exits 1", async () => {
+    const { classifyDriftAll, runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    const row = drift.find((r) => r.driftClass === "skills-pollution");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.recommendedFix).toContain("migrate");
+
+    const code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+  });
+
+  it("T1/fix: runDoctor({fix:true}) migrates the skills root to a real dir of per-item symlinks, exits 0", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    stageCanonicalSkill("bar");
+    legacySkillsSymlink();
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(true);
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    // Root is now a REAL dir of per-skill symlinks → the core source.
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(false);
+    for (const n of ["foo", "bar"]) {
+      const link = join(claudeSkillsRoot(), n);
+      expect(lstatSync(link).isSymbolicLink()).toBe(true);
+      expect(realpathSync(link)).toBe(realpathSync(join(coreSkillsRoot(), n)));
+    }
+    // The old root symlink is backed up.
+    expect(claudeBaks("skills").length).toBe(1);
+  });
+
+  it("T2: agents whole-dir symlink also migrated (parity)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+    stageCoreAgent("architect");
+    writeFileSync(join(coreAgentsRoot(), "manifest.yaml"), "agents: []\n");
+    legacyAgentsSymlink();
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    expect(lstatSync(claudeAgentsRoot()).isSymbolicLink()).toBe(false);
+    const agentLink = join(claudeAgentsRoot(), "architect.md");
+    expect(lstatSync(agentLink).isSymbolicLink()).toBe(true);
+    expect(realpathSync(agentLink)).toBe(
+      realpathSync(join(coreAgentsRoot(), "architect.md")),
+    );
+    // manifest.yaml preserved as a symlink (aux file, not an agent).
+    const manifest = join(claudeAgentsRoot(), "manifest.yaml");
+    expect(lstatSync(manifest).isSymbolicLink()).toBe(true);
+    expect(claudeBaks("agents").length).toBe(1);
+  });
+
+  it("T4: a loadout-projection stray in the source is cleaned under --fix", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // The loadout store lives under brainDir() (IGRIS_BRAIN_DIR=tmpRoot) — that is
+    // where loadoutOverlayPath() + loadoutDirPath() resolve. Stage the
+    // personal content-pipeline skill there (L-517 nested layout).
+    const loadoutSkillDir = join(tmpRoot, "loadout", "skills", "content-pipeline");
+    const nested = join(loadoutSkillDir, "content-pipeline");
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(
+      join(nested, "SKILL.md"),
+      `---\nname: content-pipeline\ndescription: "cp"\n---\n\nBody.\n`,
+    );
+    writeFileSync(
+      join(tmpRoot, "loadout", "harness-manifest.personal.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [],
+        surfaces: {
+          skills: [
+            {
+              source: loadoutSkillDir,
+              layer: "personal",
+              targets: [
+                { type: "claude", method: "symlink", path: "~/.claude/skills" },
+              ],
+            },
+          ],
+        },
+      }) + "\n",
+    );
+    // The leaked projection stray inside the canonical source (→ the loadout).
+    symlinkSync(nested, join(coreSkillsRoot(), "content-pipeline"));
+    legacySkillsSymlink();
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(0);
+
+    // Stray removed from the source; the migrated per-item home exists.
+    expect(require("node:fs").existsSync(join(coreSkillsRoot(), "content-pipeline"))).toBe(
+      false,
+    );
+    expect(
+      lstatSync(join(claudeSkillsRoot(), "content-pipeline")).isSymbolicLink(),
+    ).toBe(true);
+  });
+
+  it("T5: a stray NOT a loadout projection is reported but never removed (exits 1)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // A stray symlink pointing OUTSIDE the loadout.
+    const outside = mkdtempSync(join(tmpdir(), "igris-doctor-stray-outside-"));
+    projectDirs.push(outside);
+    symlinkSync(outside, join(coreSkillsRoot(), "weird"));
+    legacySkillsSymlink();
+
+    const stderrChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrChunks.push(String(chunk));
+        return true;
+      });
+    let code: number;
+    try {
+      code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    // The non-projection stray keeps the row non-clean → exit 1.
+    expect(code).toBe(1);
+    // Stray left in place.
+    expect(require("node:fs").existsSync(join(coreSkillsRoot(), "weird"))).toBe(true);
+    const out = stderrChunks.join("");
+    expect(out).toContain("weird");
+  });
+
+  it("T3 (T9): a per-surface-model real dir produces NO skills-pollution row", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    // ~/.claude/skills is a REAL dir of per-skill symlinks already.
+    mkdirSync(claudeSkillsRoot(), { recursive: true });
+    symlinkSync(join(coreSkillsRoot(), "foo"), join(claudeSkillsRoot(), "foo"));
+    // ~/.claude/agents is also a real dir.
+    mkdirSync(claudeAgentsRoot(), { recursive: true });
+
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "skills-pollution")).toBe(false);
+  });
+
+  it("T6: idempotent — a 2nd --fix on a migrated root is a no-op (no 2nd backup, exits 0)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    legacySkillsSymlink();
+    // ~/.claude/agents absent → real-dir/missing → no agent migration.
+
+    expect(
+      await runDoctor({ fix: true, removeOrphans: false, yes: false }),
+    ).toBe(0);
+    expect(claudeBaks("skills").length).toBe(1);
+
+    // 2nd --fix: root is now a real dir → no row, no new backup.
+    expect(
+      await runDoctor({ fix: true, removeOrphans: false, yes: false }),
+    ).toBe(0);
+    expect(claudeBaks("skills").length).toBe(1);
+  });
+
+  it("T7: a root symlinked to an UNEXPECTED target is reported, never rewritten (exits 1)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("foo");
+    const other = mkdtempSync(join(tmpdir(), "igris-doctor-unexpected-"));
+    projectDirs.push(other);
+    mkdirSync(join(homeOverride, ".claude"), { recursive: true });
+    symlinkSync(other, claudeSkillsRoot());
+
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    expect(code).toBe(1);
+    // Root untouched: still a symlink → the unexpected target, no backup.
+    expect(lstatSync(claudeSkillsRoot()).isSymbolicLink()).toBe(true);
+    expect(realpathSync(claudeSkillsRoot())).toBe(realpathSync(other));
+    expect(claudeBaks("skills")).toEqual([]);
+  });
+
+  it("T3/no-loss: --fix prints the before/after enumeration to stdout (no skill lost)", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    stageSkillsSurface();
+    stageCanonicalSkill("alpha");
+    stageCanonicalSkill("beta");
+    legacySkillsSymlink();
+
+    // The before/after enumeration is emitted via info() → stdout.
+    const stdoutChunks: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutChunks.push(String(chunk));
+        return true;
+      });
+    try {
+      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+    } finally {
+      spy.mockRestore();
+    }
+    const out = stdoutChunks.join("");
+    expect(out).toContain("before");
+    expect(out).toContain("after");
+    expect(out).toContain("alpha");
+    expect(out).toContain("beta");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-179 Phase C: antigravity-skills-link drift class. The detector is pure +
+// CLI-detection-driven (mirrors bridge-missing): it fires when `agy` is detected
+// but ~/.gemini/antigravity-cli/skills does NOT resolve to ~/.agents/skills.
+// We test the detector directly via its detectFn + path seams (fully hermetic —
+// the real machine's link is never touched), and test the runDoctor --fix path
+// by spying on the detector (synthetic row) + linkAntigravitySkills (the repair).
+// ---------------------------------------------------------------------------
+describe("doctor — antigravity-skills-link drift class (FR-179)", () => {
+  it("no row when antigravity is NOT detected", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set() }),
+    });
+    expect(row).toBeNull();
+  });
+
+  it("no row when detected AND the link already resolves to the target", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-ok-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(join(w, "gemini", "antigravity-cli"), { recursive: true });
+    symlinkSync(target, linkPath);
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).toBeNull();
+  });
+
+  it("yields a row when detected but the link is MISSING", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-miss-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).not.toBeNull();
+    expect(row!.driftClass).toBe("antigravity-skills-link");
+    expect(row!.path).toBe(linkPath);
+  });
+
+  it("yields a row when the link points at the WRONG target", async () => {
+    const { detectAntigravitySkillsLink } = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const w = mkdtempSync(join(tmpdir(), "igris-ag-doctor-wrong-"));
+    projectDirs.push(w);
+    const target = join(w, "agents", "skills");
+    const elsewhere = join(w, "elsewhere");
+    const linkPath = join(w, "gemini", "antigravity-cli", "skills");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    mkdirSync(join(w, "gemini", "antigravity-cli"), { recursive: true });
+    symlinkSync(elsewhere, linkPath);
+
+    const row = detectAntigravitySkillsLink({
+      detectFn: () => ({ detected: new Set(["antigravity" as const]) }),
+      linkPath,
+      target,
+    });
+    expect(row).not.toBeNull();
+    expect(row!.driftClass).toBe("antigravity-skills-link");
+  });
+
+  it("--fix invokes linkAntigravitySkills to repair the link", async () => {
+    const driftMod = await import(
+      "../lib/drift/antigravity-skills-link.js"
+    );
+    const agMod = await import("../lib/antigravity-skills.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+
+    // Inject a synthetic antigravity-skills-link drift row (pure detector;
+    // spying isolates the doctor loop from the brittle PATH/configDir probe).
+    const detectSpy = vi
+      .spyOn(driftMod, "detectAntigravitySkillsLink")
+      .mockReturnValue({
+        slug: "(brain)",
+        path: "/fake/.gemini/antigravity-cli/skills",
+        driftClass: "antigravity-skills-link",
+        recommendedFix: "synthetic — FR-179 test",
+      });
+    // Stub the repair so we don't mutate the real machine; report success.
+    const linkSpy = vi
+      .spyOn(agMod, "linkAntigravitySkills")
+      .mockReturnValue({
+        outcome: "created",
+        linkPath: "/fake/.gemini/antigravity-cli/skills",
+        target: "/fake/.agents/skills",
+      });
+
+    try {
+      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(linkSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      detectSpy.mockRestore();
+      linkSpy.mockRestore();
+    }
   });
 });

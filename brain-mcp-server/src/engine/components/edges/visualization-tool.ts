@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — FR-111 igris_brief_graph_render handler
+ * Brain Engine v7.0 — FR-111 igris_brief_graph_render handler
  *
  * Thin MCP wrapper over the visualization data layer. Reads the live
  * brain DB, assembles a project's graph payload, and writes the HTML
@@ -12,7 +12,7 @@
  * `dist/engine/components/edges/`).
  *
  * @module engine/components/edges/visualization-tool
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import path from 'node:path';

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Graph Visualization (FR-111)
+ * Brain Engine v7.0 — Edges Component Graph Visualization (FR-111)
  *
  * Pure data-layer functions for assembling a project's brief graph payload
  * plus the HTML embedding helpers (template substitution + XSS-safe JSON).
@@ -26,7 +26,7 @@
  *     reaching outside the dist tree (scripts/ is not built).
  *
  * @module engine/components/edges/visualization
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

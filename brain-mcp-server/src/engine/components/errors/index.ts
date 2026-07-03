@@ -1,11 +1,11 @@
 /**
- * Brain Engine v5.0 — Errors Component
+ * Brain Engine v7.0 — Errors Component
  *
  * Wraps the existing error tool handlers as a BrainComponent.
  * Provides: igris_error_lookup
  *
  * @module engine/components/errors
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -15,8 +15,18 @@ import type {
   ToolDefinition,
   EventDef,
 } from '../../types.js';
-import { handleErrorLookup, handleErrorSimilar, handleErrorBackfillEmbeddings } from '../../../tools/errors.js';
-import type { ErrorLookupInput, ErrorSimilarInput, ErrorBackfillInput } from '../../../tools/errors.js';
+import {
+  handleErrorLookup,
+  handleErrorSimilar,
+  handleErrorBackfillEmbeddings,
+  handleErrorDashboard,
+} from '../../../tools/errors.js';
+import type {
+  ErrorLookupInput,
+  ErrorSimilarInput,
+  ErrorBackfillInput,
+  ErrorDashboardInput,
+} from '../../../tools/errors.js';
 
 export function createErrorsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -109,6 +119,32 @@ export function createErrorsComponent(): BrainComponent {
             required: [],
           },
           handler: async (args) => handleErrorBackfillEmbeddings(args as unknown as ErrorBackfillInput),
+        },
+        // ---------------------------------------------------------------
+        // TD-171 M3 — igris_error_dashboard
+        // ---------------------------------------------------------------
+        {
+          name: 'igris_error_dashboard',
+          description: 'Aggregate dashboard over the errors table. Reports totals (with/without solution), recent new errors in the last `days` window, and samples (top recurring fingerprints + by_project breakdown). Use during /scan or after a long debug session to spot recurring errors that warrant a /hunt.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Optional project filter — narrows totals + recent + samples.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for recent.new_errors. Default 30.',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only — omit samples block. Default false.',
+              },
+            },
+          },
+          handler: async (args) => handleErrorDashboard(args as unknown as ErrorDashboardInput),
         },
       ];
     },

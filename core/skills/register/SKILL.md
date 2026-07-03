@@ -1,6 +1,7 @@
 ---
 name: register
-description: Create a new brief - usage: /register bug|feature|migration|debt "title"
+tier: essential
+description: "Create a new brief - usage: /register bug|feature|migration|debt \"title\""
 disable-model-invocation: false
 allowed-tools:
   - Read
@@ -9,6 +10,7 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
   - mcp__igris-brain__igris_brief_list
+  - mcp__igris-brain__igris_brief_similar
 triggers:
   - "REGISTER"
   - "register a bug"
@@ -56,12 +58,6 @@ Types and their prefixes:
 
 ## Execution
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "register" 2>/dev/null || true
-```
-
 ### 1. Parse Arguments
 
 Extract type and title from `$ARGUMENTS`.
@@ -87,6 +83,28 @@ Map type to brief prefix:
 Call `igris_brief_list` to find next available number, fallback to cache glob at `~/.igris/projects/{project}/briefs/`.
 Find highest number, add 1.
 Example: If BR-007 exists, next is BR-008.
+
+### 3.5 Dup-check (enforcement gate)
+
+Before creating the brief, run the dup-check — the enforced form of brain
+obligation #3 ("Dup-check before creating a brief"), tracked in
+`core/enforcement/INDEX.md`.
+
+Call `igris_brief_similar` with:
+- **query:** `"{title}. {problem}"` (the title plus the one-line problem, if known)
+- **project:** the current project slug
+- **threshold:** `0.85`
+
+Then branch:
+- **A hit at or above the threshold** → STOP. Display the near-duplicate brief(s)
+  (ID, title, similarity) and ask the operator to confirm they want a new brief
+  anyway, or to abort / amend the existing one. Do NOT proceed to step 4 without
+  operator confirmation.
+- **No hit** → proceed to step 4.
+- **Tool unavailable** (`igris_brief_similar` returns a capability message —
+  sqlite-vec extension or embeddings backend not loaded — rather than results) →
+  proceed to step 4 (fail-open, matching every other Igris gate's posture). Do not
+  treat the capability message as an error.
 
 ### 4. Build Brief Content
 
@@ -141,7 +159,7 @@ Call `igris_brief_create` with:
 
 If `igris_brief_create` fails or MCP is unavailable:
 1. Write to `~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md` as fallback.
-2. Display: `WARNING: Brain MCP unavailable — brief {PREFIX}-{XXX} saved to local cache only. Queued for sync on next /awaken or /sync data.`
+2. Display: `WARNING: Brain MCP unavailable — brief {PREFIX}-{XXX} saved to local cache only. Queued for sync on next /boot or /sync data.`
 3. Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
    ```json
    {"timestamp":"{ISO-8601 now}","operation":"brief_create","project":"{project}","brief_id":"{PREFIX}-{XXX}","title":"{title}","status":"Ready","priority":"{priority}","brief_type":"{type}","cache_path":"~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md"}

@@ -29,7 +29,7 @@
  * produce the union of their inserts with zero duplicates.
  *
  * @module scripts/backfill_brief_edges
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import Database from 'better-sqlite3';

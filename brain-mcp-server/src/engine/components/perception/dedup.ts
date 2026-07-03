@@ -48,13 +48,61 @@
  * the dedup pass.
  *
  * @module engine/components/perception/dedup
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';
 import type { PerceptionCandidate } from './types.js';
 import { generateEmbedding } from '../../../utils/embeddings.js';
 import { isVectorSearchAvailable, vectorSearch } from '../../../utils/vector-search.js';
+
+// ---------------------------------------------------------------------------
+// Intra-run title dedup (FR-118 M4a — moved here from runner.ts)
+// ---------------------------------------------------------------------------
+//
+// The within-run, highest-confidence-wins title dedup. Lives here (the
+// perception-shared dedup home) so BOTH the runner and the cognition perception
+// instance's `parseResponse` reuse ONE implementation — FR-118 M4a moved it out
+// of `runner.ts` to avoid a duplicate copy when the engine drives perception.
+
+/** Normalize a title for dedupe equality: lowercase, collapse whitespace. */
+function dedupeKey(c: PerceptionCandidate): string {
+  return c.title.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Within-run dedupe by normalized title. Highest-confidence wins; on a tie,
+ * the first occurrence is kept (insertion order is stable). Rule-vs-LLM
+ * tie-break logic was dropped in TD-066 — only LLM emits candidates now.
+ *
+ * The KEPT candidate is returned VERBATIM (its original title casing is
+ * preserved — only the equality KEY is normalized). FR-118 M4a relocated this
+ * from `runner.ts` so the cognition perception instance can title-dedupe inside
+ * `parseResponse` without duplicating the logic.
+ */
+export function dedupeByTitle(
+  candidates: PerceptionCandidate[],
+): { kept: PerceptionCandidate[]; suppressed: number } {
+  const buckets = new Map<string, PerceptionCandidate[]>();
+  for (const c of candidates) {
+    const key = dedupeKey(c);
+    const list = buckets.get(key);
+    if (list) list.push(c);
+    else buckets.set(key, [c]);
+  }
+  const kept: PerceptionCandidate[] = [];
+  let suppressed = 0;
+  for (const list of buckets.values()) {
+    if (list.length === 1) {
+      kept.push(list[0]);
+      continue;
+    }
+    list.sort((a, b) => b.confidence - a.confidence);
+    kept.push(list[0]);
+    suppressed += list.length - 1;
+  }
+  return { kept, suppressed };
+}
 
 // ---------------------------------------------------------------------------
 // Public types

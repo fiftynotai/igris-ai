@@ -7,7 +7,7 @@
  * a single database connection per MCP server process.
  *
  * @module db
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createRequire } from 'node:module';
@@ -833,6 +833,454 @@ function migrateSchema(db: Database.Database): void {
     console.error(
       '[brain] Schema migrated to version 15 (learnings.review_status + source_extractor)',
     );
+  }
+
+  // v16: learnings.promoted_to_doc (FR-200 M2 — memory→doc promotion pipeline)
+  //
+  // Adds one nullable column recording the project-context doc (path[#anchor])
+  // that a learning's standard was promoted into. NULL = not promoted (every
+  // pre-FR-200 row). Set by `igris_memory_mark_promoted`; read by
+  // `handleMemoryRecall` to surface a "Promoted → <doc>" pointer and stop
+  // double-surfacing the now-doc-owned standard (one-fact-one-source, FR-196).
+  //
+  // PLACEMENT (FR-200 verification, L-142): this is a CONSCIOUS-channel column
+  // — it gates the same recall path `review_status` gates and replicates via
+  // SYNC_TABLES, exactly like v15's review_status. It is the closest sibling to
+  // review_status of anything in the schema. The memory component owns NO
+  // migrations (`memory/index.ts` schema() returns []; the TD-171 comment in
+  // memory.ts is explicit that `memory/schema.ts` is intentionally absent), so
+  // the established home for a conscious-channel learnings ALTER is this legacy
+  // registry — exactly where v14 (provenance) and v15 (review_status +
+  // source_extractor) live. Perception's `seen_again_count`/`last_seen_at` ALTERs
+  // live in perception/schema.ts because they are perception-CHANNEL-specific
+  // (excluded from sync); promoted_to_doc is not, so it belongs here.
+  //
+  // Why no CHECK constraint: SQLite's ALTER TABLE cannot add a CHECK without
+  // rewriting the table; the value is a free-form doc path validated in the
+  // handler. Nullable ADD COLUMN is O(1) metadata-only.
+  //
+  // Gate behind v15's actual completion (re-read schema_version) so a partial
+  // migration that stopped before v15 does not leap-frog the missing column.
+  let postV15Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV15Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV15Version >= 15 && postV15Version < 16) {
+    db.transaction(() => {
+      // Defensive PRAGMA check: tolerate partial migrations / hot reloads where
+      // the column already landed. Mirror v15's `cols.some(...)` guard.
+      const cols = db.prepare(`PRAGMA table_info(learnings)`).all() as Array<{ name: string }>;
+      const hasPromotedToDoc = cols.some((c) => c.name === 'promoted_to_doc');
+      if (!hasPromotedToDoc) {
+        db.exec(`
+          ALTER TABLE learnings ADD COLUMN promoted_to_doc TEXT
+        `);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (16)').run();
+    })();
+    console.error('[brain] Schema migrated to version 16 (learnings.promoted_to_doc)');
+  }
+
+  // v17: registry asset-reference columns (FR-198 — the "lego" catalog)
+  //
+  // Generalizes the registry table into the reusable-assets catalog shape by
+  // adding three nullable columns:
+  //   - when_to_use   TEXT — "reach for this lego block when ..." (today this
+  //                          is folded into `description`; a dedicated column
+  //                          makes the reuse-fit queryable/renderable).
+  //   - source        TEXT — where the asset lives: "pub.dev" | "github" |
+  //                          "npm" | etc. fifty_flutter_kit packages live on
+  //                          pub.dev, not github — `github_repo` alone could not
+  //                          express that. (D-2 Option A: NO `type` CHECK widen;
+  //                          `source` distinguishes pub.dev packages from repos,
+  //                          so `template|module` stays expressive enough.)
+  //   - source_ref    TEXT — the source-specific locator (package name, npm
+  //                          spec, etc.) — generic companion to `github_repo`/
+  //                          `github_path` for non-github sources.
+  // All three are NULL on every pre-FR-198 row (back-compat preserved).
+  //
+  // PLACEMENT (FR-198 verification, L-53 / L-142): the L-142 convention is
+  // "per-component migrations own ALTERs even on globally-shared tables" — BUT
+  // the registry component explicitly does NOT own its migrations: its
+  // `schema()` returns [] and is annotated "Migrations handled by legacy db.ts
+  // migrateSchema()" (engine/components/registry/index.ts:44-47). The registry
+  // TABLE itself was created here in v12. So the established home for a registry
+  // ALTER is this legacy registry — exactly where v12 created the table. Putting
+  // it here matches the registry's existing migration ownership.
+  //
+  // Why no CHECK constraint: SQLite's ALTER TABLE cannot add a CHECK without
+  // rewriting the table; `source` is a free-form locator-kind validated (if at
+  // all) in the handler. Nullable ADD COLUMN is O(1) metadata-only — NULL-safe
+  // for all existing rows, the same pattern v14/v15/v16 used.
+  //
+  // The new columns are NOT added to registry_fts (R-2): FTS coverage of
+  // when_to_use is a deliberate follow-on (rebuilding the FTS table + 3 triggers
+  // is its own risk surface). Search still hits name/description/tags/framework.
+  //
+  // Gate behind v16's actual completion (re-read schema_version, L-209) so a
+  // partial migration that stopped before v16 cannot leap-frog these columns.
+  let postV16Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV16Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV16Version >= 16 && postV16Version < 17) {
+    db.transaction(() => {
+      // Defensive PRAGMA check: tolerate partial migrations / hot reloads where
+      // a column already landed. Mirror v16's per-column guard.
+      const cols = db.prepare(`PRAGMA table_info(registry)`).all() as Array<{ name: string }>;
+      const has = (name: string): boolean => cols.some((c) => c.name === name);
+      if (!has('when_to_use')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN when_to_use TEXT`);
+      }
+      if (!has('source')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN source TEXT`);
+      }
+      if (!has('source_ref')) {
+        db.exec(`ALTER TABLE registry ADD COLUMN source_ref TEXT`);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (17)').run();
+    })();
+    console.error(
+      '[brain] Schema migrated to version 17 (registry asset-reference columns: when_to_use, source, source_ref)',
+    );
+  }
+
+  // v18: brief metadata normalization + C1 phase reconciliation (TD-238)
+  //
+  // A one-time, idempotent DATA migration that folds existing brief_status rows
+  // to the canonical metadata form the TD-238 write boundary now enforces, and
+  // applies the C1 reconciliation from the build-state invariant (#811 / TD-257).
+  // It rewrites ONLY the metadata columns (priority, brief_type, phase) — NEVER
+  // content, title, status, claimed_by, updated_at, or embedding (#230).
+  //
+  //   - Priority fold: bare/spaced legacy forms → canonical P{N}-{Word}; the
+  //     "unset" family (literal 'Unset' / empty / whitespace) → NULL (the
+  //     dashboard renders NULL as "Unset"; this collapses the split buckets the
+  //     dashboard was double-counting — the G-05 bug TD-238 fixes).
+  //   - brief_type fold: 'Tech Debt' → 'Technical Debt', 'Bug Fix' → 'Bug'.
+  //     Unknown types are left untouched (read-widen — never drop operator data).
+  //   - C1 reconciliation: status IN ('Done','Archived') ⇒ phase='COMPLETE'.
+  //     status is the authoritative build-state source; the invariant pivots on
+  //     COMPLETE. Only C1 is migrated here — C2 (Done-but-no-commit) and C3
+  //     (committed-but-open) are human-disposition judgment calls left for the
+  //     TD-257 read-side validator to keep WARNing (git stays out of this
+  //     migration entirely).
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a canonical target, so a
+  // second run matches zero rows. The schema_version gate also blocks re-entry
+  // once v18 is recorded. All values are fixed literals (§14 — no interpolation).
+  //
+  // Gate behind v17's actual completion (re-read schema_version, L-209) so this
+  // DATA-only migration — which has NO vec dependency — applies even on a vec-
+  // less machine where the v13 vec backfill stopped the chain. The
+  // db-migration-v18.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV17Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV17Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV17Version >= 17 && postV17Version < 18) {
+    db.transaction(() => {
+      // Priority fold — one WHERE-guarded UPDATE per alias → canonical pair.
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P0-Critical'
+           WHERE priority IN ('P0', 'P0 - Critical')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P1-High'
+           WHERE priority IN ('P1', 'P1 - High')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P2-Medium'
+           WHERE priority IN ('P2', 'P2 - Medium')`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET priority = 'P3-Low'
+           WHERE priority IN ('P3', 'P3 - Low')`,
+      ).run();
+      // Unset family (literal 'Unset' / empty / whitespace-only) → NULL.
+      db.prepare(
+        `UPDATE brief_status SET priority = NULL
+           WHERE priority = 'Unset' OR TRIM(COALESCE(priority, '')) = ''`,
+      ).run();
+
+      // brief_type fold — known aliases only; unknown types untouched.
+      db.prepare(
+        `UPDATE brief_status SET brief_type = 'Technical Debt'
+           WHERE brief_type = 'Tech Debt'`,
+      ).run();
+      db.prepare(
+        `UPDATE brief_status SET brief_type = 'Bug'
+           WHERE brief_type = 'Bug Fix'`,
+      ).run();
+
+      // C1 reconciliation — terminal status ⇒ terminal phase. C2/C3 deferred.
+      db.prepare(
+        `UPDATE brief_status SET phase = 'COMPLETE'
+           WHERE status IN ('Done', 'Archived')
+             AND COALESCE(phase, '') != 'COMPLETE'`,
+      ).run();
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (18)').run();
+    })();
+    console.error(
+      '[brain] Schema migrated to version 18 (brief field normalization + C1 phase reconciliation)',
+    );
+  }
+
+  // v19: rename the reusable-assets store `registry` → `catalog` (TD-259).
+  //
+  // The lego store was named `registry`, colliding with the personal surface
+  // overlay (the FR-139 personal customization store — `igris registry`/
+  // `~/.igris/registry/` at the time, renamed to `igris loadout`/
+  // `~/.igris/loadout/` under FR-216) and the project registry
+  // (`igris_project_*`). TD-259 freed "registry" from the lego store; the
+  // reusable-assets store becomes `catalog` (table, FTS5
+  // virtual table, triggers, indexes — and the `igris_catalog_*` MCP tools).
+  //
+  // Strategy (D-3): `ALTER TABLE registry RENAME TO catalog` is an O(1)
+  // metadata-only op that preserves rows, the PK, CHECK constraints, the three
+  // FR-198 columns (when_to_use/source/source_ref), and rowids — no copy, no
+  // rowid drift. The FTS5 external-content table + its 3 triggers hard-reference
+  // the old name (`content=registry`, trigger bodies write `registry_fts`), so
+  // they must be dropped + recreated against `catalog` regardless of strategy,
+  // then the FTS index is REBUILT from the renamed content table so the
+  // pre-existing rows stay searchable. The 4 indexes auto-follow the RENAME but
+  // keep their `idx_registry_*` names — rename them too for vocabulary coherence
+  // (index names are not a contract; renaming is cosmetic + idempotent).
+  //
+  // Backup (rollback artifact): before the transaction, snapshot the DB file via
+  // `VACUUM INTO '<dbpath>.pre-v19.bak'`. VACUUM cannot run inside a transaction,
+  // so it sits outside the db.transaction() block. It runs once — only when the
+  // backup does not already exist AND `registry` still exists (i.e. the rename is
+  // about to happen) — and only for real on-disk DBs (skipped for `:memory:`
+  // test DBs, which have nothing to snapshot to a sibling file).
+  //
+  // Idempotency: probe-guarded (haveOld && !haveNew gates the ALTER) +
+  // IF EXISTS / IF NOT EXISTS on the FTS/trigger/index DDL + the schema_version
+  // gate blocks re-entry once 19 is recorded. A re-run sees catalog present and
+  // registry absent → every step is a no-op.
+  //
+  // Gate behind v18's actual completion (re-read schema_version, L-209) so this
+  // rename applies even on a vec-less machine where the v13 vec backfill stopped
+  // the module-level chain. The db-migration-v19.test.ts runs WITHOUT loading
+  // vec to prove this gate dodge.
+  let postV18Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV18Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV18Version >= 18 && postV18Version < 19) {
+    const tableExists = (name: string): boolean =>
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?`,
+        )
+        .get(name) !== undefined;
+
+    const haveOldPre = tableExists('registry');
+    const haveNewPre = tableExists('catalog');
+
+    // Backup snapshot (outside the transaction — VACUUM cannot run in one).
+    // Only when the rename is actually about to happen, on a real file DB.
+    const dbFile = db.name;
+    const isFileDb = dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+    if (isFileDb && haveOldPre && !haveNewPre) {
+      const backupPath = `${dbFile}.pre-v19.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      if (!fs.existsSync(backupPath)) {
+        try {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v19 backup snapshot written: ${backupPath}`);
+        } catch (err) {
+          // Non-fatal: the rename below is itself non-destructive (no data
+          // dropped), so a failed snapshot does not block the migration.
+          console.error('[brain] v19 backup snapshot failed (continuing):', err);
+        }
+      }
+    }
+
+    db.transaction(() => {
+      const haveOld = tableExists('registry');
+      const haveNew = tableExists('catalog');
+
+      // 1. Rename the base table (carries rows, PK, CHECKs, FR-198 columns).
+      if (haveOld && !haveNew) {
+        db.exec(`ALTER TABLE registry RENAME TO catalog`);
+      }
+
+      // 2. Rename the 4 indexes for vocabulary coherence (idempotent).
+      db.exec(`DROP INDEX IF EXISTS idx_registry_type`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_archetype`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_framework`);
+      db.exec(`DROP INDEX IF EXISTS idx_registry_status`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_type ON catalog(type)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_archetype ON catalog(archetype)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_framework ON catalog(framework)`);
+      db.exec(`CREATE INDEX IF NOT EXISTS idx_catalog_status ON catalog(status)`);
+
+      // 3. Drop the old FTS triggers + FTS table (external-content — dropping
+      //    does NOT lose source rows; they live in `catalog` now).
+      db.exec(`DROP TRIGGER IF EXISTS registry_ai`);
+      db.exec(`DROP TRIGGER IF EXISTS registry_au`);
+      db.exec(`DROP TRIGGER IF EXISTS registry_ad`);
+      db.exec(`DROP TABLE IF EXISTS registry_fts`);
+
+      // 4. Recreate the FTS5 external-content table against `catalog`.
+      db.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS catalog_fts USING fts5(
+          name, description, tags, framework,
+          content=catalog,
+          content_rowid=rowid
+        );
+      `);
+
+      // 5. Recreate the 3 FTS triggers writing into `catalog_fts`.
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_ai AFTER INSERT ON catalog BEGIN
+          INSERT INTO catalog_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_au AFTER UPDATE ON catalog BEGIN
+          INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+          INSERT INTO catalog_fts(rowid, name, description, tags, framework)
+          VALUES (new.rowid, new.name, new.description, new.tags, new.framework);
+        END;
+      `);
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS catalog_ad AFTER DELETE ON catalog BEGIN
+          INSERT INTO catalog_fts(catalog_fts, rowid, name, description, tags, framework)
+          VALUES ('delete', old.rowid, old.name, old.description, old.tags, old.framework);
+        END;
+      `);
+
+      // 6. Rebuild the FTS index from the renamed content table so pre-existing
+      //    rows remain searchable (the dropped/recreated FTS table is empty).
+      db.exec(`INSERT INTO catalog_fts(catalog_fts) VALUES('rebuild')`);
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (19)').run();
+    })();
+    console.error('[brain] Schema migrated to version 19 (registry → catalog rename)');
+  }
+
+  // v20: drop the autonomous-execution (worker) substrate tables (TD-265).
+  //
+  // TD-265 removed the `tasks` + `coordination` brain components entirely (the
+  // worker/task-queue + self-heal/auto-route autonomous-execution subsystem).
+  // Their 7 tables were created by the (now-deleted) tasks-component engine
+  // migrations, which are forward-only and per-component — once the component
+  // is gone, its schema.ts migrations never run again, so the DROP CANNOT live
+  // there (memory #53: two migration registries). It MUST live in this
+  // unconditional db.ts legacy chain so it runs on existing DBs that carry the
+  // tables (and is a clean no-op on fresh DBs that never had them).
+  //
+  // Idempotency: `DROP TABLE IF EXISTS` is a no-op on a DB without the tables.
+  // Child tables are dropped before `tasks` (FK order: task_deps/task_results/
+  // task_assignments reference tasks(id) ON DELETE CASCADE). Deleting the
+  // engine_migrations rows lets a future re-add (if ever) re-run cleanly. The
+  // orphaned `autonomous-priority-adjust` schedule row is deleted too — its
+  // handler tool (igris_coordination_adjust_priorities) is gone, so the
+  // schedules daemon would otherwise log a missing-tool warning on every fire.
+  //
+  // Gate behind v19's actual completion (re-read schema_version, L-209) so this
+  // applies even on a machine where an earlier gated migration stopped the
+  // module-level chain.
+  let postV19Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV19Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV19Version >= 19 && postV19Version < 20) {
+    const tableExists = (name: string): boolean =>
+      db
+        .prepare(
+          `SELECT name FROM sqlite_master WHERE type IN ('table','view') AND name = ?`,
+        )
+        .get(name) !== undefined;
+
+    db.transaction(() => {
+      // Child tables first (FK references to tasks(id)).
+      db.exec(`DROP TABLE IF EXISTS task_deps`);
+      db.exec(`DROP TABLE IF EXISTS task_assignments`);
+      db.exec(`DROP TABLE IF EXISTS task_results`);
+      db.exec(`DROP TABLE IF EXISTS autonomous_decisions`);
+      db.exec(`DROP TABLE IF EXISTS coordination_config`);
+      db.exec(`DROP TABLE IF EXISTS agent_capabilities`);
+      // Parent table last.
+      db.exec(`DROP TABLE IF EXISTS tasks`);
+
+      // Drop the per-component migration ledger rows for the removed components.
+      // `engine_migrations` is created by the engine storage adapter; in the
+      // standalone legacy getDb() path it may not exist yet — guard accordingly.
+      if (tableExists('engine_migrations')) {
+        db.exec(`DELETE FROM engine_migrations WHERE component IN ('tasks','coordination')`);
+      }
+
+      // Delete the orphaned autonomous-routing schedule row (handler tool gone).
+      // `schedules` is created by the schedules-component engine migration; guard
+      // for DBs where it does not exist yet.
+      if (tableExists('schedules')) {
+        db.exec(`DELETE FROM schedules WHERE name='autonomous-priority-adjust'`);
+      }
+
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (20)').run();
+    })();
+    console.error('[brain] Schema migrated to version 20 (TD-265 worker-subsystem table teardown)');
+  }
+
+  // TD-277: remove heartbeat vocabulary from the normal instances schema.
+  // Existing local DBs created before TD-277 have `last_heartbeat_at`; rename
+  // it to `last_activity_at`. Fresh DBs still pass through v4 first, so the
+  // terminal schema after v21 is the clean activity column.
+  let postV20Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV20Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  if (postV20Version >= 20 && postV20Version < 21) {
+    const tableInfo = (name: string): Set<string> => {
+      const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+      return new Set(rows.map((r) => r.name));
+    };
+
+    db.transaction(() => {
+      const columns = tableInfo('instances');
+      if (!columns.has('last_activity_at') && columns.has('last_heartbeat_at')) {
+        db.exec(`ALTER TABLE instances RENAME COLUMN last_heartbeat_at TO last_activity_at`);
+      }
+      db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (21)').run();
+    })();
+    console.error('[brain] Schema migrated to version 21 (TD-277 instance activity timestamp rename)');
   }
 }
 

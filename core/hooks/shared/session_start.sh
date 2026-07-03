@@ -26,6 +26,10 @@
 
 set -e
 
+# FR-212c: capture the gate-helper dir while cwd is still the invocation dir
+# (the later `cd "$PROJECT_DIR"` would break a relative dirname). See _gate.sh.
+_IGRIS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 # ---------------------------------------------------------------------------
 # Resolve project directory: payload.project_dir > env > CLAUDE_PROJECT_DIR > PWD
 # ---------------------------------------------------------------------------
@@ -60,6 +64,72 @@ except Exception:
 
 PROJECT_DIR=$(resolve_project_dir)
 [ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
+
+# ---------------------------------------------------------------------------
+# Set the terminal tab title to the Igris project slug (FR-178).
+# Slug = registered-project lookup in the brain DB by longest path-prefix
+# match on PROJECT_DIR, falling back to basename (same posture as the
+# statusline script). Best-effort: silent no-op when no writable tty is
+# present (headless, CI, Codex/Gemini bridges).
+# NEVER writes to stdout — hook stdout is the additionalContext JSON contract.
+# ---------------------------------------------------------------------------
+set_terminal_title() {
+  # Guard: only attempt when /dev/tty looks writable. Note: on macOS the
+  # device node is world-writable, so this can pass headless — the actual
+  # open below is the authoritative (silenced) check.
+  [ -w /dev/tty ] || return 0
+
+  local slug=""
+  local db="$HOME/.igris/memory/knowledge.db"
+  if command -v sqlite3 > /dev/null 2>&1 && [ -f "$db" ]; then
+    # Single-quote-escape the path for the SQL literal. Deliberately
+    # UNQUOTED expansion: double-quoting keeps the \ escapes literal
+    # (\'\') and corrupts the SQL. Assignments don't word-split, so this
+    # is safe (same form as the statusline script).
+    local esc
+    esc=${PROJECT_DIR//\'/\'\'}
+    slug=$(sqlite3 "$db" \
+      "SELECT slug FROM projects WHERE '$esc' = path OR '$esc' LIKE path || '/%' ORDER BY length(path) DESC LIMIT 1;" 2>/dev/null) || slug=""
+  fi
+  [ -n "$slug" ] || slug=$(basename "$PROJECT_DIR" 2>/dev/null) || slug=""
+  [ -n "$slug" ] || return 0
+
+  # OSC 0 sets the icon name + window/tab title. Direct to the tty, never
+  # stdout. Group redirection so a failed /dev/tty open is silenced too.
+  { printf '\033]0;%s\007' "$slug" > /dev/tty; } 2>/dev/null || true
+  return 0
+}
+
+# Fire on ALL session-start paths (startup/resume/clear/compact, every bridge).
+# Must never fail the hook (set -e): the trailing '|| true' guarantees it.
+set_terminal_title || true
+
+# ---------------------------------------------------------------------------
+# FR-212c REGISTRATION GATE. SessionStart projects GLOBALLY (one
+# ~/.claude/settings.json block fires it in EVERY project on the machine).
+# Outside a registered Igris project this hook MUST no-op the CONTEXT INJECTION:
+# emit an empty additionalContext and skip the [IGRIS SESSION STATE] block + the
+# [IGRIS AUTO-BOOT] /boot nudge (injecting Igris context / nudging /boot inside
+# someone else's repo is the misfire this gate prevents). FAIL-OPEN-TO-NO-OP: a
+# missing/locked brain DB resolves to not-registered -> empty context (never an
+# Igris nudge in a non-Igris project).
+#
+# Placed AFTER set_terminal_title (FR-178): the tab title is a harmless cosmetic
+# that should still name the project tab (basename fallback) for ANY harness —
+# only the Igris CONTEXT/nudge is gated on registration.
+# ---------------------------------------------------------------------------
+if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_IGRIS_HOOK_DIR/_gate.sh"
+  if ! is_registered_igris_project "$PROJECT_DIR"; then
+    if command -v jq &> /dev/null; then
+      jq -n '{"additionalContext": ""}'
+    else
+      echo '{"additionalContext": ""}'
+    fi
+    exit 0
+  fi
+fi
 
 # ---------------------------------------------------------------------------
 # Parse 'source' field. Unified shape: top-level 'source'. Native Claude: top-level
@@ -185,6 +255,27 @@ build_context() {
 
   context="${context}\n${blockers}"
   context="${context}\n[/IGRIS SESSION STATE]"
+
+  # FR-202 M4 Unit A — auto-boot nudge. Append a directive cue that prompts the
+  # model to run /boot on a FRESH session only. A native-Claude resume, clear,
+  # or compact already carries grounding, so re-booting just churns — those are
+  # excluded. Fresh-session sources:
+  #   - "startup"  : native Claude fresh session.
+  #   - "opencode" : the OpenCode bridge dispatches session_start ONLY on a fresh
+  #                  session (session.created / first-seen session.updated|status),
+  #                  so every value it passes here is a fresh session.
+  # Codex (session_end only) and Antigravity (no session hook) never reach this
+  # script, so Claude+OpenCode are the only harnesses that see the cue.
+  # This is a NUDGE the model is expected to follow — NOT a guaranteed system
+  # trigger; /boot is a registered skill the model invokes in response.
+  # The cue rides the SAME $context string both serialization branches in main()
+  # consume, so jq and the python3 fallback emit it byte-identically by
+  # construction. The existing [IGRIS SESSION STATE] block is preserved verbatim.
+  case "$source" in
+    startup | opencode)
+      context="${context}\n[IGRIS AUTO-BOOT] Run /boot to ground this session."
+      ;;
+  esac
 
   echo "$context"
 }

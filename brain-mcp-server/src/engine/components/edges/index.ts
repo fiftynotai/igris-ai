@@ -1,24 +1,29 @@
 /**
- * Brain Engine v5.0 — Edges Component
+ * Brain Engine v7.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 7 MCP tools:
- *   CRUD (FR-105):       igris_edge_create / list / remove
- *   Graph (FR-113):      igris_graph_neighbors / path / subgraph
- *   Visualization (FR-111): igris_brief_graph_render
+ * Provides 11 MCP tools:
+ *   CRUD (FR-105):                igris_edge_create / list / remove
+ *   Graph traversal (FR-113):     igris_graph_neighbors / path / subgraph
+ *   Node CRUD + search (TD-171 M2): igris_graph_node_create / node_get /
+ *                                    search / dashboard
+ *   Visualization (FR-111):       igris_brief_graph_render
  * Subscribes to brief.created so structural Parent edges are captured
  * at insert time without coupling the briefs component to edge logic.
+ * FR-210: also subscribes to the enriched memory.stored so learning→brief
+ * (from the structured source_brief column) + model-supplied (edges[]) edges
+ * are captured at store time — all edge-writes stay in this component.
  * Self-listens on edge.created and edge.removed to invalidate the
  * subgraph traversal cache.
  *
  * Emits: edge.created, edge.removed
- * Listens: brief.created, edge.created (self), edge.removed (self)
+ * Listens: brief.created, memory.stored, edge.created (self), edge.removed (self)
  *
  * Foundation for FR-107 (provenance), FR-110 (goals), FR-111
  * (visualization), FR-112 (community detection).
  *
  * @module engine/components/edges
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -47,6 +52,12 @@ import {
   invalidateSubgraphCache,
 } from './traversal.js';
 import { handleBriefGraphRender } from './visualization-tool.js';
+import {
+  handleGraphNodeCreate,
+  handleGraphNodeGet,
+  handleGraphSearch,
+  handleGraphDashboard,
+} from './nodes-handlers.js';
 
 /**
  * Build the edges component instance.
@@ -114,6 +125,118 @@ export function createEdgesComponent(): BrainComponent {
     }
   }
 
+  /**
+   * FR-210 — auto-populate cross-surface edges when a learning is stored.
+   *
+   * Listens on the enriched `memory.stored` payload
+   * (`{ project, id, category, source_brief, edges }`, emitted by the memory
+   * component). Two paths, both `provenance:'observed'`, both writing via
+   * `handleEdgeCreate` so ownership of every edge-write stays here (learning
+   * #206):
+   *   - Path A (structured net): if `source_brief` is a non-empty string,
+   *     create a `learning → brief` `derived_from` edge — the deterministic
+   *     analogue of `onBriefCreated`'s `parent_of`, from a declared column
+   *     (hence `observed`, not `inferred`). Fires even when the model omitted
+   *     `edges`.
+   *   - Path B (model-supplied): for each entry in `edges[]`, create a
+   *     `learning → <to_type>` edge of the given `edge_type`.
+   *
+   * The learning node id is `String(id)` — the settled `numericId` convention
+   * (traversal.ts:237); learning nodes auto-register on first edge reference.
+   * Errors are logged, never thrown (mirrors `onBriefCreated`).
+   */
+  function onMemoryStored(payload: EventPayload): void {
+    if (!_ctx) return;
+
+    const data = payload.data;
+    const rawId = data.id;
+    // Need the new learning id to anchor the edge `from` side.
+    if (rawId === undefined || rawId === null || rawId === '') return;
+    const fromId = String(rawId);
+
+    // Local helper: write one learning→X edge, guard degenerate self-edges,
+    // emit edge.created on success, log (never throw) on failure.
+    const writeEdge = (
+      toType: string,
+      toId: string,
+      edgeType: string,
+      confidence: number | undefined,
+      metadata: Record<string, unknown>,
+    ): void => {
+      if (!_ctx) return;
+      if (!toType || !toId || !edgeType) return;
+      // Defensive: never auto-create a degenerate self-edge (mirror the :87
+      // guard in onBriefCreated). from_type is always 'learning' here.
+      if (toType === 'learning' && toId === fromId) return;
+
+      const source = typeof metadata.source === 'string' ? metadata.source : 'memory.stored';
+
+      try {
+        const result = handleEdgeCreate({
+          from_type: 'learning',
+          from_id: fromId,
+          to_type: toType,
+          to_id: toId,
+          edge_type: edgeType,
+          confidence,
+          provenance: 'observed',
+          metadata,
+        });
+
+        if (!result.isError) {
+          _ctx.bus.emit('edge.created', {
+            from_type: 'learning',
+            from_id: fromId,
+            to_type: toType,
+            to_id: toId,
+            edge_type: edgeType,
+            source,
+          });
+          _ctx.log.info(
+            `Auto-created ${edgeType} edge: learning:${fromId} -> ${toType}:${toId}`,
+          );
+        } else {
+          _ctx.log.warn(
+            `Auto-edge learning:${fromId} -> ${toType}:${toId} returned error: ${result.content[0]?.text ?? 'unknown'}`,
+          );
+        }
+      } catch (err) {
+        _ctx.log.error(
+          `Failed to auto-create ${edgeType} edge for learning:${fromId}: ${errMsg(err)}`,
+        );
+      }
+    };
+
+    // Path A — structured source_brief → derived_from (deterministic net).
+    const sourceBrief = data.source_brief;
+    if (typeof sourceBrief === 'string' && sourceBrief) {
+      writeEdge('brief', sourceBrief, 'derived_from', undefined, {
+        source: 'memory.stored',
+      });
+    }
+
+    // Path B — model-supplied edges captured at store time.
+    const edges = data.edges;
+    if (Array.isArray(edges)) {
+      for (const raw of edges) {
+        if (!raw || typeof raw !== 'object') continue;
+        const spec = raw as Record<string, unknown>;
+        const toType = typeof spec.to_type === 'string' ? spec.to_type : '';
+        const toId = typeof spec.to_id === 'string' ? spec.to_id : '';
+        const edgeType = typeof spec.edge_type === 'string' ? spec.edge_type : '';
+        const confidence = typeof spec.confidence === 'number' ? spec.confidence : undefined;
+        const extraMeta =
+          spec.metadata && typeof spec.metadata === 'object'
+            ? (spec.metadata as Record<string, unknown>)
+            : {};
+        writeEdge(toType, toId, edgeType, confidence, {
+          source: 'memory.stored.edges',
+          ...extraMeta,
+        });
+      }
+    }
+  }
+
   // Cache-invalidation listeners are stable function references so they can
   // be passed to both bus.on() and bus.off() — typed loosely to satisfy the
   // EventHandler signature even though we ignore the payload.
@@ -123,7 +246,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.2.0',
+    version: '1.3.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -387,6 +510,127 @@ export function createEdgesComponent(): BrainComponent {
         },
 
         // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_node_create
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_node_create',
+          description:
+            'Idempotently register a free-standing graph node (typically node_type=concept or decision). Brief / learning / error / session / goal nodes auto-register on first reference via igris_edge_create — only call this for nodes that do NOT have a backing row in another table. Returns created=false on UNIQUE(node_type, node_external_id) re-creation; the existing label is preserved (rename via delete + recreate).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              node_type: {
+                type: 'string',
+                enum: [...VALID_ENTITY_TYPES],
+                description:
+                  'Node type. Typically "concept" or "decision" for free-standing nodes; the brief/learning/error/session/goal types are accepted but those nodes usually live in their own tables and are referenced by entity_edges directly.',
+              },
+              node_external_id: {
+                type: 'string',
+                description:
+                  'Stable string id (e.g. "FR-105", "concept:vector-search", "decision:swap-better-sqlite3-for-libsql"). Used as the join key from entity_edges.',
+              },
+              label: {
+                type: 'string',
+                description: 'Human-readable display label (used by graph visualizations and search).',
+              },
+              properties: {
+                type: 'object',
+                description: 'Free-form JSON property bag (default {}). Use the `project` key to scope a node for igris_graph_dashboard project filtering.',
+                additionalProperties: true,
+              },
+            },
+            required: ['node_type', 'node_external_id', 'label'],
+          },
+          handler: (args) => handleGraphNodeCreate(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_node_get
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_node_get',
+          description:
+            'Inspect one graph_nodes row plus its in/out edge degrees. Soft-deleted edges are excluded from the degree counts (parity with igris_edge_list). Errors when the (node_type, node_external_id) pair does not match a registered node.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              node_type: {
+                type: 'string',
+                description: 'Node type to look up (matches graph_nodes.node_type).',
+              },
+              node_external_id: {
+                type: 'string',
+                description: 'Stable id to look up (matches graph_nodes.node_external_id).',
+              },
+            },
+            required: ['node_type', 'node_external_id'],
+          },
+          handler: (args) => handleGraphNodeGet(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_search
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_search',
+          description:
+            'Find graph_nodes by partial label or node_external_id (LIKE substring match). Optional node_type filter restricts to a single type. Returns a score per result (fraction of the matched field the query covers; 1.0 = exact match). Default limit 20, max 100.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              query: {
+                type: 'string',
+                description:
+                  'Search term. Matched (case-sensitive in SQLite default) against label and node_external_id. SQL LIKE wildcards in the input are escaped — pass plain text.',
+              },
+              node_type: {
+                type: 'string',
+                description: 'Optional exact-match filter on node_type (e.g. "concept").',
+              },
+              limit: {
+                type: 'number',
+                description: 'Maximum results to return. Default 20, capped at 100.',
+              },
+            },
+            required: ['query'],
+          },
+          handler: (args) => handleGraphSearch(args),
+        },
+
+        // -----------------------------------------------------------------
+        // TD-171 M2: igris_graph_dashboard
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_dashboard',
+          description:
+            'Aggregate snapshot over graph_nodes + entity_edges: node counts by type, edge counts by type, orphan-node count, recent stats, and top god-nodes by total degree. Mirrors the canonical TD-171 _dashboard shape (totals + recent + samples). Honors summary_only to skip the samples block. Project filter applies to graph_nodes via properties.project; edge totals are unfiltered (edges have no project column).',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description:
+                  'Optional project filter — narrows graph_nodes via properties.project. Edge counts remain global.',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only, no samples block (omits top_god_nodes). Default false.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for recent.* stats. Default 30. Must be non-negative.',
+              },
+            },
+          },
+          handler: (args) => handleGraphDashboard(args),
+        },
+
+        // -----------------------------------------------------------------
         // FR-111: igris_brief_graph_render
         // -----------------------------------------------------------------
         {
@@ -433,6 +677,10 @@ export function createEdgesComponent(): BrainComponent {
             description: 'Auto-create parent_of edge when payload contains parent_brief_id',
           },
           {
+            name: 'memory.stored',
+            description: 'FR-210: auto-create learning-to-brief (source_brief) + model-supplied (edges array) edges at store time',
+          },
+          {
             name: 'edge.created',
             description: 'Self-listen to invalidate the FR-113 subgraph traversal cache',
           },
@@ -447,15 +695,18 @@ export function createEdgesComponent(): BrainComponent {
     init(ctx: ComponentContext): void {
       _ctx = ctx;
       ctx.bus.on('brief.created', onBriefCreated);
+      // FR-210: capture cross-surface edges at learning-store time.
+      ctx.bus.on('memory.stored', onMemoryStored);
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.2.0 — FR-111 visualization)');
+      ctx.log.info('Edges component initialized (v1.3.0 — TD-171 M2 graph nodes)');
     },
 
     destroy(): void {
       if (_ctx) {
         _ctx.bus.off('brief.created', onBriefCreated);
+        _ctx.bus.off('memory.stored', onMemoryStored);
         _ctx.bus.off('edge.created', onEdgeMutated);
         _ctx.bus.off('edge.removed', onEdgeMutated);
       }

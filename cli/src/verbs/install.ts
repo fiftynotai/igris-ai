@@ -1,42 +1,29 @@
 /**
- * `igris install <path>` — Phase 2 (M2: full CLI ownership).
+ * `igris install <path>` — FR-212d (register-only).
  *
- * Owns the entire install pipeline. Phase 1 shelled out to
- * `scripts/igris_install.sh` for the symlink layer; Phase 2 runs that
- * layer natively via `cli/src/lib/symlinks.ts` and removes the shell-out.
+ * In the FR-212 global-projection model, ALL surfaces (skills/MCP/agents/hooks)
+ * project GLOBALLY at `igris init`. `igris install <project>` therefore reduces
+ * to BRAIN REGISTRATION: it tells the brain "this path is an Igris project" so
+ * the globally-projected hooks de-no-op for it (the `_gate.sh` registration
+ * gate keys on the `projects.path` row this writes). FR-212d Phase 2 DELETED the
+ * legacy per-project layer (symlinks + `.igris_version` + per-project
+ * `settings.json` hooks merge) and the `--legacy-per-project` flag — there is no
+ * longer a per-project materialization path.
  *
- * Pipeline (in order):
- *
- *   1. Symlink layer: <path>/.claude/{agents,rules,skills} → ~/.igris/core/...
- *      via linkDir/linkFile. Skipped when `skipSymlinkLayer: true`
- *      (test seam) or when ~/.igris/core/ is absent.
- *   2. CLAUDE.md: render template from ~/.igris/core/templates/CLAUDE.md.tmpl
- *      and atomic-write to <path>/CLAUDE.md.
- *   3. .igris_version: write JSON marker at <path>/.igris_version.
- *   4. Hooks (default ON, --no-hooks opts out): merge canonical hooks into
- *      <path>/.claude/settings.json using `mergeCanonicalHooks`. Backs up
- *      original to .bak.<timestamp> per Risks #2 mitigation (D-2 default).
- *   5. Registry: upsert the explicit slug (NOT basename) — D-3/D-4 default.
- *   6. installed_features.json: write content hashes for hooks/agents/skills/rules.
- *      Schema v2: brain_channel + brain_ref read from .install-source.json.
- *   7. subconscious.enabled=false default (TD-102; A3 — only if absent).
- *   8. Remote-brain push (A4 — best-effort; failure does not fail install).
+ * Pipeline (register-only):
+ *   7.  Registry: upsert the explicit slug (NOT basename) — the de-no-op gate.
+ *   8.  installed_features.json: content hashes (schema v2: brain_channel/ref).
+ *   9.  cognition.{perception,subconscious}.enabled=false defaults (only if absent).
+ *   10. Remote-brain push (best-effort; failure does not fail install).
+ *   11. Register igris-brain MCP in ~/.claude.json (already global; belt-and-
+ *       suspenders for the from-source contributor flow).
  *
  * Flag semantics:
- *   D-1: Igris-hooks-first inside event arrays.
- *   D-2: .bak.<timestamp> kept unless IGRIS_KEEP_BAK=0.
  *   D-4: better-sqlite3 direct DB access (not via MCP).
  */
 
-import {
-  existsSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
-import { basename, join, resolve as pathResolve } from "node:path";
-import { loadCanonicalHooks } from "../lib/canonical-hooks.js";
-import { mergeCanonicalHooks, MalformedSettingsError } from "../lib/json-merge.js";
+import { existsSync } from "node:fs";
+import { basename, resolve as pathResolve } from "node:path";
 import { upsertProject } from "../lib/registry.js";
 import {
   computeFeatureHashes,
@@ -45,19 +32,12 @@ import {
 } from "../lib/installed-features.js";
 import {
   brainDir,
-  projectSettingsPath,
+  claudeJsonPath,
   installedFeaturesPath,
 } from "../lib/paths.js";
-import { linkDir, linkFile, SymlinkConflictError } from "../lib/symlinks.js";
-import {
-  discoverAgentEntries,
-  discoverRuleEntries,
-  discoverSkillEntries,
-} from "../lib/install-discovery.js";
+import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
 import { validateSlug } from "../lib/slug.js";
-import { regenerateClaudeMd, ClaudeMdTemplateError } from "../lib/claude-md.js";
-import { writeIgrisVersion } from "../lib/igris-version.js";
-import { applySubconsciousDefault } from "../lib/init-config.js";
+import { applyJanitorDefault, applyPerceptionDefault, applySubconsciousDefault, applySynapseDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
 import { DryRunCollector } from "../lib/dry-run.js";
@@ -66,46 +46,34 @@ import { info, warn, error as logError, debug } from "../lib/log.js";
 export interface InstallOptions {
   path: string;
   slug?: string;
+  /**
+   * FR-212d: vestigial — the per-project hooks merge it gated was deleted (hooks
+   * project globally at `igris init`). Retained so existing callers/tests still
+   * type-check; no pipeline step reads it. `--no-hooks` is accepted as a no-op.
+   */
   installHooks: boolean;
-  /** Internal: skip the symlink layer entirely. Used by tests + update verb. */
-  skipSymlinkLayer?: boolean;
   /** Internal: CLI version string, defaults to package.json's version. */
   cliVersion?: string;
   /**
-   * Internal: override the install date stamped into CLAUDE.md. Mostly for
-   * tests asserting deterministic content; production calls always use today.
+   * Internal: vestigial since FR-191 retired the CLAUDE.md render that
+   * consumed it. Retained so existing callers/tests still type-check; no
+   * pipeline step reads it.
    */
   installDate?: string;
   /**
-   * When true, preview the would-be writes (symlinks, CLAUDE.md, hooks merge,
-   * registry upsert, installed_features.json) without performing any. The
-   * verb returns 0 after printing the plan; `runUpdate --dry-run` does NOT
-   * delegate here — it has its own enumeration path.
+   * When true, preview the would-be writes (registry upsert,
+   * installed_features.json, MCP register) without performing any. The verb
+   * returns 0 after printing the plan; `runUpdate --dry-run` does NOT delegate
+   * here — it has its own enumeration path.
    */
   dryRun?: boolean;
 }
 
 // Slug grammar lives in lib/slug.ts (TD-118 — single source of truth).
-
-function backupSettings(filePath: string): string | null {
-  if (process.env.IGRIS_KEEP_BAK === "0") {
-    return null;
-  }
-  if (!existsSync(filePath)) {
-    return null;
-  }
-  const ts = new Date().toISOString().replace(/[:.]/g, "-");
-  const bak = `${filePath}.bak.${ts}`;
-  // copy via read+write (renameSync would lose the original)
-  writeFileSync(bak, readFileSync(filePath, "utf-8"));
-  return bak;
-}
-
-function atomicWrite(filePath: string, content: string): void {
-  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}`;
-  writeFileSync(tmp, content);
-  renameSync(tmp, filePath);
-}
+//
+// FR-212d Phase 2: `backupSettings` + `atomicWrite` (the per-project
+// settings.json backup + atomic write helpers) were DELETED with the legacy
+// step-6 hooks merge — install no longer writes a per-project settings.json.
 
 /**
  * Run `igris install`. Returns process exit code.
@@ -126,110 +94,30 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   }
   validateSlug(slug);
 
-  const cliVersion = opts.cliVersion ?? "7.0.0";
+  const cliVersion = opts.cliVersion ?? "7.1.0";
   const root = brainDir();
 
   // M3 — dry-run short-circuit. Enumerate would-be writes via DryRunCollector
-  // and exit 0 without touching disk or the registry. We intentionally do NOT
-  // run the symlink/CLAUDE.md/hooks-merge code paths in preview mode — the
-  // collector enumerates the planned operations from the same input as the
-  // real run (project path + slug + install-source).
+  // and exit 0 without touching disk or the registry. The collector enumerates
+  // the planned operations from the same input as the real run (slug +
+  // install-source). FR-212d: register-only — no per-project layer to enumerate.
   if (opts.dryRun === true) {
     const dry = new DryRunCollector();
-    enumerateInstallPlan(absPath, root, slug, opts.installHooks, dry);
+    enumerateInstallPlan(absPath, slug, dry);
     dry.print();
     return 0;
   }
 
-  // 3. Symlink layer — native TS replacement for igris_install.sh:212-237.
-  if (opts.skipSymlinkLayer !== true) {
-    try {
-      applySymlinkLayer(absPath, root);
-    } catch (err) {
-      if (err instanceof SymlinkConflictError) {
-        logError(`symlink-layer install failed: ${err.message}`);
-        return 1;
-      }
-      throw err;
-    }
-  }
-
-  // 4. CLAUDE.md regeneration from runtime template.
-  if (opts.skipSymlinkLayer !== true) {
-    try {
-      regenerateClaudeMd(absPath, {
-        cliVersion,
-        installDate: opts.installDate,
-      });
-      info(`Wrote ${absPath}/CLAUDE.md`);
-    } catch (err) {
-      if (err instanceof ClaudeMdTemplateError) {
-        // Non-fatal: a fresh from-source install may not have run init yet.
-        warn(err.message);
-      } else {
-        throw err;
-      }
-    }
-  }
-
-  // 5. .igris_version write.
-  if (opts.skipSymlinkLayer !== true) {
-    writeIgrisVersion(absPath, cliVersion);
-    debug(`Wrote ${absPath}/.igris_version`);
-  }
-
-  // 6. Materialized layer — hooks (default ON).
-  const settingsPath = projectSettingsPath(absPath);
-  let hooksHash: string | null = null;
-
-  if (opts.installHooks) {
-    let canonical;
-    try {
-      canonical = loadCanonicalHooks();
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError(msg);
-      return 1;
-    }
-
-    let existing: Record<string, unknown> = {};
-    if (existsSync(settingsPath)) {
-      try {
-        existing = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<
-          string,
-          unknown
-        >;
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        logError(
-          `refusing to clobber unreadable ${settingsPath}: ${msg}`,
-        );
-        return 1;
-      }
-    }
-
-    let merged: Record<string, unknown>;
-    try {
-      merged = mergeCanonicalHooks(existing, canonical);
-    } catch (err) {
-      if (err instanceof MalformedSettingsError) {
-        logError(
-          `settings.json merge failed (refusing to clobber): ${err.message}`,
-        );
-        return 1;
-      }
-      throw err;
-    }
-
-    const bakPath = backupSettings(settingsPath);
-    if (bakPath !== null) {
-      debug(`backed up existing settings.json to ${bakPath}`);
-    }
-    atomicWrite(settingsPath, JSON.stringify(merged, null, 2) + "\n");
-    info(`Wrote ${settingsPath} with merged hooks block`);
-  } else {
-    info("--no-hooks: skipping settings.json hooks merge");
-  }
+  // 3-6. FR-212d Phase 2: the legacy per-project layer (symlink layer,
+  // `.igris_version` marker, per-project `settings.json` hooks merge) + the
+  // CLAUDE.md render (FR-191) were DELETED. `igris install` is register-only:
+  // every surface projects GLOBALLY at `igris init` (the canonical-hooks merge
+  // target moved to `~/.claude/settings.json`); install just registers the
+  // project with the brain (step 7) so the global hooks de-no-op for it.
+  debug(
+    "register-only install: surfaces project globally at `igris init` " +
+      "(no per-project layer; --no-hooks is a no-op).",
+  );
 
   // 7. Registry — upsert with explicit slug.
   const techStack = detectTechStack(absPath);
@@ -250,7 +138,6 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
 
   // 8. installed_features.json — content hashes for upgrade detection (schema v2).
   const hashes = computeFeatureHashes({ includeHooks: opts.installHooks });
-  hooksHash = hashes.hooks_version;
 
   // Read brain channel/ref from .install-source.json (M2 schema v2 fields).
   // When the file is absent (CLI invoked before init/refresh), both default
@@ -266,7 +153,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     cli_version: cliVersion,
     brain_channel: brainChannel,
     brain_ref: brainRef,
-    hooks_version: hooksHash,
+    hooks_version: hashes.hooks_version,
     agents_version: hashes.agents_version,
     skills_version: hashes.skills_version,
     rules_version: hashes.rules_version,
@@ -274,12 +161,35 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     updated_at: now,
   });
 
-  // 9. Subconscious default (A3, TD-102).
+  // 9. Cognition defaults (FR-191; A3, TD-102) — both instances default OFF
+  // under the `cognition.*` namespace, only-set-if-absent so an operator who
+  // re-enabled a flag is never silently reverted.
   const subOutcome = applySubconsciousDefault();
   if (subOutcome === "default_set") {
-    info("subconscious.enabled defaulted to false (TD-102; FR-118 redesign pending)");
+    info("cognition.subconscious.enabled defaulted to false (TD-102; FR-191 zero-config door)");
   } else if (subOutcome === "preserved") {
-    debug("subconscious.enabled preserved (operator override)");
+    debug("cognition.subconscious.enabled preserved (operator override)");
+  }
+
+  const percOutcome = applyPerceptionDefault();
+  if (percOutcome === "default_set") {
+    info("cognition.perception.enabled defaulted to false (FR-191 zero-config door)");
+  } else if (percOutcome === "preserved") {
+    debug("cognition.perception.enabled preserved (operator override)");
+  }
+
+  const synOutcome = applySynapseDefault();
+  if (synOutcome === "default_set") {
+    info("cognition.synapse.enabled defaulted to false (FR-211 edge-inference instance)");
+  } else if (synOutcome === "preserved") {
+    debug("cognition.synapse.enabled preserved (operator override)");
+  }
+
+  const janOutcome = applyJanitorDefault();
+  if (janOutcome === "default_set") {
+    info("cognition.janitor.enabled defaulted to false (FR-119 memory-hygiene instance)");
+  } else if (janOutcome === "preserved") {
+    debug("cognition.janitor.enabled preserved (operator override)");
   }
 
   // 10. Remote-brain push (A4) — best-effort, never fails the install.
@@ -295,11 +205,29 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     debug(`remote brain push outcome: ${pushOutcome}`);
   }
 
+  // 11. Register igris-brain MCP in ~/.claude.json (TD-168). Belt-and-
+  // suspenders so a user who runs `igris install` without `igris init`
+  // (the from-source contributor flow) still gets the MCP registered.
+  // Non-fatal: a registration failure WARNs and the install completes.
+  const mcpRes = registerMcpInClaudeJson();
+  if (mcpRes.outcome === "failed") {
+    warn(`MCP registration skipped: ${mcpRes.error}`);
+    warn(
+      `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
+    );
+    warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
+  } else if (mcpRes.outcome === "unchanged") {
+    debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
+  } else {
+    info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
+    info("  Restart Claude Code to pick up the new MCP server.");
+  }
+
   info("");
   info("Install summary:");
   info(`  slug:           ${slug}`);
   info(`  path:           ${absPath}`);
-  info(`  hooks:          ${opts.installHooks ? "yes" : "no"}`);
+  info(`  mode:           register-only`);
   info(`  features:       ${root}/projects/${slug}/installed_features.json`);
 
   // TD-112: when --slug differs from basename(path), preserve a diagnostic
@@ -320,133 +248,24 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   return 0;
 }
 
-/**
- * Materialize the .claude/{agents,rules,skills} symlinks on the project.
- * Mirrors `scripts/igris_install.sh:212-237` exactly:
- *
- *   - Agents: each *.md file under brain agents/ is linked individually.
- *     manifest.yaml is also linked.
- *   - Rules: 00-igris-universal.md only.
- *   - Skills: each subdirectory under brain skills/ is linked as a dir.
- *
- * Throws SymlinkConflictError if any pre-existing path collides with a
- * non-matching symlink target. The early throw is intentional — install
- * never silently clobbers.
- */
-function applySymlinkLayer(projectPath: string, brainRoot: string): void {
-  const claudeDir = join(projectPath, ".claude");
-
-  // ---- Agents ---------------------------------------------------------
-  // TD-117: discovery is centralized in lib/install-discovery.ts so this
-  // verb and the dry-run enumerator share one source of truth.
-  const agentEntries = discoverAgentEntries(brainRoot);
-  if (agentEntries.length > 0) {
-    const agentsDest = join(claudeDir, "agents");
-    for (const entry of agentEntries) {
-      linkFile(entry.src, join(agentsDest, entry.basename));
-    }
-  }
-
-  // ---- Rules ----------------------------------------------------------
-  const ruleEntries = discoverRuleEntries(brainRoot);
-  if (ruleEntries.length > 0) {
-    const rulesDest = join(claudeDir, "rules");
-    for (const entry of ruleEntries) {
-      linkFile(entry.src, join(rulesDest, entry.basename));
-    }
-  }
-
-  // ---- Skills ---------------------------------------------------------
-  const skillEntries = discoverSkillEntries(brainRoot);
-  if (skillEntries.length > 0) {
-    const skillsDest = join(claudeDir, "skills");
-    for (const entry of skillEntries) {
-      linkDir(entry.src, join(skillsDest, entry.basename));
-    }
-  }
-}
+// FR-212d Phase 2: `applySymlinkLayer` (the per-project `.claude/{agents,skills}`
+// symlink materializer) was DELETED — `igris install` is register-only and no
+// longer symlinks. Skills/agents project GLOBALLY at `igris init` (skills via the
+// `skills` CLI delegate; agents via the global agent compiler). The TS symlink
+// primitives (`lib/symlinks.ts`) and the install discovery walk
+// (`lib/install-discovery.ts`) were deleted with it.
 
 /**
- * Enumerate the planned install operations into the DryRunCollector without
- * performing any of them. Mirrors the order of side-effects in runInstall:
- * symlinks → CLAUDE.md → .igris_version → settings.json hooks merge →
- * registry upsert → installed_features.json.
- *
- * Discovery is read-only: we walk the brain core directory to enumerate the
- * symlinks that WOULD be created and report them as `would_create_dir` /
- * `would_write_file` records. The collector's printer renders them as a plan.
+ * Enumerate the planned register-only install operations into the DryRunCollector
+ * without performing any. FR-212d: there is no per-project layer to plan — only
+ * the registry upsert, installed_features.json, and the global igris-brain MCP
+ * registration.
  */
 function enumerateInstallPlan(
   projectPath: string,
-  brainRoot: string,
   slug: string,
-  installHooks: boolean,
   dry: DryRunCollector,
 ): void {
-  const claudeDir = join(projectPath, ".claude");
-
-  // Symlinks: agents (TD-117 — same discovery source as applySymlinkLayer)
-  const agentEntries = discoverAgentEntries(brainRoot);
-  if (agentEntries.length > 0) {
-    const agentsDest = join(claudeDir, "agents");
-    dry.wouldCreateDir(agentsDest);
-    for (const entry of agentEntries) {
-      dry.wouldWriteFile(
-        join(agentsDest, entry.basename),
-        `symlink to ${entry.src}`,
-      );
-    }
-  }
-
-  // Symlinks: rules
-  const ruleEntries = discoverRuleEntries(brainRoot);
-  if (ruleEntries.length > 0) {
-    const rulesDest = join(claudeDir, "rules");
-    dry.wouldCreateDir(rulesDest);
-    for (const entry of ruleEntries) {
-      dry.wouldWriteFile(
-        join(rulesDest, entry.basename),
-        `symlink to ${entry.src}`,
-      );
-    }
-  }
-
-  // Symlinks: skills
-  const skillEntries = discoverSkillEntries(brainRoot);
-  if (skillEntries.length > 0) {
-    const skillsDest = join(claudeDir, "skills");
-    dry.wouldCreateDir(skillsDest);
-    for (const entry of skillEntries) {
-      dry.wouldWriteFile(
-        join(skillsDest, entry.basename),
-        `symlink to ${entry.src}`,
-      );
-    }
-  }
-
-  // CLAUDE.md (if template exists)
-  const tmplPath = join(brainRoot, "core", "templates", "CLAUDE.md.tmpl");
-  if (existsSync(tmplPath)) {
-    dry.wouldWriteFile(
-      join(projectPath, "CLAUDE.md"),
-      `regenerated from ${tmplPath}`,
-    );
-  }
-
-  // .igris_version
-  dry.wouldWriteFile(
-    join(projectPath, ".igris_version"),
-    "version marker",
-  );
-
-  // Hooks merge
-  if (installHooks) {
-    dry.wouldWriteFile(
-      projectSettingsPath(projectPath),
-      "merge canonical hooks block",
-    );
-  }
-
   // Registry upsert (no file path, but we record it as an invoked command).
   dry.wouldInvokeCommand(
     "sqlite",
@@ -458,6 +277,12 @@ function enumerateInstallPlan(
   dry.wouldWriteFile(
     installedFeaturesPath(slug),
     "content hashes for upgrade detection",
+  );
+
+  // igris-brain MCP registration in ~/.claude.json (TD-168)
+  dry.wouldWriteFile(
+    claudeJsonPath(),
+    "register igris-brain MCP server",
   );
 }
 

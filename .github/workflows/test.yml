@@ -35,6 +35,14 @@ jobs:
         run: |
           python3 --version
 
+      - name: Verify PyYAML installed (TD-219 strict-YAML SKILL.md guard)
+        # The SKILL.md frontmatter validator (and its bats test) needs PyYAML
+        # to run. Without this the bats test would skip silently and the
+        # recurrence guard would be a no-op in CI. Install on miss.
+        run: |
+          python3 -c "import yaml" || python3 -m pip install --user pyyaml
+          python3 -c "import yaml, sys; print('PyYAML', yaml.__version__)"
+
       - name: Verify jq installed
         run: |
           jq --version
@@ -42,6 +50,17 @@ jobs:
       - name: Verify git installed
         run: |
           git --version
+
+      - name: Install gitleaks (TD-159 — so test/secrets_scan.test.bash runs, not skips)
+        run: |
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            brew install gitleaks
+          else
+            GL=8.30.1
+            curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GL}/gitleaks_${GL}_linux_x64.tar.gz" | tar -xz -C /tmp gitleaks
+            sudo mv /tmp/gitleaks /usr/local/bin/gitleaks
+          fi
+          gitleaks version
 
       - name: Run test suite
         run: |
@@ -51,6 +70,19 @@ jobs:
             echo "Running $(basename $test_file)..."
             bats "$test_file" || exit 1
           done
+
+      - name: Check agent-prompt harness drift (FR-135)
+        # Belt-and-suspenders behind the pre-commit hook (scripts/git-hooks/
+        # pre-commit -> validate_harness_drift.sh). Surfaces drift between the
+        # canonical core/agents/*.md prompts and their generated harnesses.
+        #
+        # HARD step: the wrapper exits 1 on real DRIFTED but exits 0 (with a
+        # loud NOTICE) on the gated-codex MISSING-only state. The 7 core agents
+        # declare only codex targets, whose .codex/agents/*.toml are not built
+        # yet (codex emit gated until FR-138). STOPGAP: FR-138 un-gates codex
+        # and must flip MISSING back to fatal in the wrapper.
+        run: |
+          bash scripts/validate_harness_drift.sh
 
       - name: Test results summary
         if: always()

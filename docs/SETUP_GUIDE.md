@@ -1,6 +1,6 @@
 # Igris AI Setup Guide
 
-Complete guide to setting up Igris AI v5.0 in your project.
+Complete guide to setting up Igris AI v7.0 in your project.
 
 ---
 
@@ -19,78 +19,95 @@ Before you begin, ensure you have:
 
 ## Installation
 
-Igris AI v5.0 offers two installation paths.
-
-### Path 1: Brain-First Install (Recommended)
-
-This installs the centralized brain at `~/.igris/` and uses symlinks so all projects share the same Igris AI files. Updates to the brain automatically propagate to all linked projects.
+Igris AI v7.0 uses a single brain-based install. The centralized brain lives at `~/.igris/`, and every surface (skills, agents, MCP, hooks) projects **globally** at `igris init` (FR-212c/d) — into the universal skill store, the global harness agent/MCP dirs, and the one global `~/.claude/settings.json` hooks block. `igris install <path>` is **register-only**: it registers the project with the brain (so the global hooks apply) and writes no files into the project repo. A single `igris init`/`igris refresh` re-projects the global surfaces and every registered project sees the change immediately.
 
 ```bash
-# Step 1: Clone Igris AI
-cd /path/to/projects/
-git clone https://github.com/fiftynotai/igris-ai
+# Step 1: Install the CLI globally from npm
+npm install -g igris-ai
 
 # Step 2: Initialize the brain
-cd igris-ai
 igris init
 
-# Step 3: Install into your project (symlinks)
+# Step 3: Install into your project
 cd /path/to/your-project/
 igris install .
 ```
 
 **What this does:**
-- Creates the centralized brain at `~/.igris/`
-- Initializes SQLite database with FTS5 search
-- Symlinks `.claude/` directory (agents, rules, skills) into your project
-- Creates `ai/` directory with templates and session files
-- Sets up `CLAUDE.md` for Claude Code integration
+- Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, skills, prompts)
+- Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, and Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family). First-class harnesses are Claude Code, OpenCode, and Antigravity; Codex and Gemini CLI are supported bridges.
+- Notes Cursor as an onboarding target, not a shipped surface.
+- **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
+- Registers the project in the brain so it shows up in `/ops` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
 
-### Path 2: Copy-Based Install (Standalone)
+> **`igris install <path>` is REGISTER-ONLY (FR-212d):** it writes NO per-project
+> `.claude/` symlink layer, NO per-project `settings.json`, and NO `.igris_version`
+> marker. Those were retired — every surface projects globally at `igris init`.
+> `install` just registers the project path with the brain (so the global hooks
+> apply) + writes `installed_features.json` for upgrade detection.
 
-This copies all files directly into your project. Useful when you want a self-contained setup or cannot use symlinks.
+> **Restart your harness(es) after `igris init`** so they pick up the newly registered `igris-brain` MCP server. The brain tools are not available until the harness reloads its config (e.g. Claude Code reloads `~/.claude.json`).
+
+Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. FR-212d made `igris install` register-only: it writes **no files into the project repo** (FR-191 zero-config already removed the `CLAUDE.md` render; FR-212d removed the `.claude/` symlink layer + `.igris_version`).
+
+### Onboarding (`igris configure`)
+
+A fresh install is deliberately **zero-config**: no persona override, no VPS, and both LLM-extraction engines (perception + subconscious) **OFF**. `igris configure` is the opt-in onboarding verb — a re-runnable dial of an existing install. Run it any time after `igris init`:
 
 ```bash
-# Step 1: Clone Igris AI
-cd /path/to/projects/
-git clone https://github.com/fiftynotai/igris-ai
-
-# Step 2: Initialize in your project (copies files)
-cd /path/to/your-project/
-/path/to/igris-ai/scripts/igris_init.sh .
+igris configure
 ```
 
-**What this does:**
-- Creates `ai/` directory with all templates
-- Copies `.claude/` directory (agents, rules, skills)
-- Creates session files and brief templates
-- Sets up `CLAUDE.md` for Claude Code integration
+It walks you through four things, **seeding every prompt from your current state** (press Enter to keep the current value):
+
+1. **Identity** — your name + email (written to `~/.igris/USER.md`).
+2. **Persona** — pick a shipped SOUL preset:
+   - `character` — the battle-ready, evolution-style Igris voice (the shipped default).
+   - `professional` — a dry, neutral, matter-of-fact register.
+
+   The chosen preset is copied over `~/.igris/core/SOUL.md`. Every preset carries the required `layer/tier/scope/summary` frontmatter, so the OS-index generator stays valid.
+3. **Remote brain (VPS)** — **by address presence**: enter a URL to enable cross-machine sync, or leave it **blank to disable** it. A non-local `http://` URL is **refused** (your `api_key` would travel in cleartext) unless you set `IGRIS_ALLOW_INSECURE_SYNC=1`; use `https://` instead. The `api_key` is stored in `~/.igris/config.json`, which is always chmod-tightened to `600`. Before you enter the URL, the prompt discloses exactly what egresses to the VPS; local filesystem paths are relativized before any row leaves your machine. Full disclosure: [`docs/reference/sync-egress-manifest.md`](reference/sync-egress-manifest.md).
+4. **Cognition toggles** — turn perception and/or subconscious ON or OFF. These write the nested `cognition.perception.enabled` / `cognition.subconscious.enabled` keys in `config.json`.
+
+**Flags:**
+
+| Flag | Effect |
+|------|--------|
+| `--persona <name>` | Apply a persona preset directly; skips the persona prompt. |
+| `--skip-remote` | Skip the VPS prompt; leave `remote_brain` unchanged. |
+| `--dry-run` | Print the plan of would-be writes and exit — writes nothing. |
+| `-y, --yes` | Keep the current values; skip all prompts. A `--yes` run is a **no-op on values** (nothing is reset to a default). |
+
+`igris configure` requires `igris init` to have run first (it dials an existing install — it does not create `config.json`).
+
+You can also pick a persona at install time:
+
+```bash
+igris init --persona professional
+```
+
+> **Note on `igris refresh`:** a refresh re-fetches `~/.igris/core/` (where `SOUL.md` lives) but preserves your `config.json` toggles. Because the active persona is written under `core/SOUL.md`, **re-run `igris configure --persona <name>`** after a refresh if you want to keep a non-default persona.
 
 ### Verify Installation
 
 ```bash
-# Check that the core directories exist
-ls -la .claude/
-ls -la ai/
+# FR-212d: surfaces project GLOBALLY (not into the project repo). Confirm the
+# global skills store + the global hooks block + the brain MCP registration:
+ls -la ~/.claude/skills/        # skills via the `skills` CLI delegate (claude)
+ls -la ~/.agents/skills/        # the cross-CLI universal store (codex/gemini/opencode/antigravity)
+cat ~/.claude/settings.json     # the ONE global Igris hooks block (FR-212c)
+igris doctor                    # registry + brain-MCP + drift health
 
-# Expected structure:
-# .claude/
-# ├── agents/          # 7 native subagents
-# ├── hooks/           # Session start, pre/post commit
-# ├── rules/           # 5 modular rules
-# ├── skills/          # 21 skills
-# └── settings.json    # Claude Code config
-#
-# ai/
-# ├── briefs/          # Work items (9 brief types)
-# ├── context/         # Architecture docs
-# ├── masks/           # Mask greeting files
-# ├── prompts/         # System prompts
-# ├── session/         # Session tracking
-# └── templates/       # PR/commit templates
-#
-# CLAUDE.md            # Claude Code instructions
-# SOUL.md              # Igris persona identity (if brain-first)
+# The project repo gets NO Igris files (register-only install): no .claude/
+# symlink layer, no settings.json, no .igris_version, no CLAUDE.md.
+
+# Brain-side state (outside the project repo) lives under:
+# ~/.igris/projects/<slug>/
+# ├── session/            # Session tracking
+# ├── briefs/             # Local brief cache (briefs live in the brain DB)
+# ├── plans/              # Architect plans
+# └── context/            # Generated architecture docs (from /document)
+# ├── installed_features.json   # content hashes for `igris update` detection
 ```
 
 ### Check Brain Health (Brain-First Only)
@@ -106,25 +123,88 @@ sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check; PRAGMA journal_mod
 sqlite3 ~/.igris/memory/knowledge.db "SELECT slug, path, status FROM projects;"
 ```
 
----
-
-## Optional: MCP Server Setup
-
-The MCP (Model Context Protocol) server provides 27 brain tools for cross-project intelligence. This is optional but recommended for multi-project workflows.
+### Verify the brain MCP is registered
 
 ```bash
-# Navigate to MCP server directory
-cd /path/to/igris-ai/mcp-server
+# Confirm the igris-brain MCP entry exists in ~/.claude.json
+python3 -c "import json; print(json.load(open('$HOME/.claude.json'))['mcpServers']['igris-brain'])"
 
-# Install dependencies
-npm install
-
-# Build the server
-npm run build
-
-# The server is configured in .claude/settings.json
-# It will be available as MCP tools in Claude Code
+# Or let doctor check it for you (reports the `mcp-unregistered` drift
+# class if the entry is missing or points at a deleted file):
+igris doctor
 ```
+
+If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
+`igris init --upgrade`) to register it, then restart Claude Code.
+
+---
+
+## The Brain MCP Server
+
+The `igris-brain` MCP (Model Context Protocol) server provides the brain
+tools — persistent memory, brief management, cross-project intelligence —
+to the supported harness bridge set. Claude Code, OpenCode, and Antigravity
+are first-class; Codex and Gemini CLI are supported bridges.
+
+**It ships inside the `igris-ai` npm package and registers itself
+automatically.** `npm install -g igris-ai` bundles a pre-built
+brain-mcp-server, and `igris init` adds the `igris-brain`
+entry to the supported MCP config files (`~/.claude.json`,
+`~/.config/opencode/opencode.json`, `~/.codex/config.toml`,
+`~/.gemini/settings.json`, and `~/.gemini/config/mcp_config.json` for
+Antigravity). There is no separate
+clone-build-configure step.
+
+**Restart Claude Code** after `igris init` so it picks up the new MCP
+server.
+
+### Native dependencies (built at install time)
+
+The brain MCP relies on native modules (`better-sqlite3`, `sqlite-vec`)
+whose compiled binaries must match your machine's OS and architecture — so
+the `igris-ai` package does **not** ship them pre-built. A `postinstall`
+step builds them on your machine immediately after `npm install -g igris-ai`.
+Watch the install output for these lines:
+
+```
+igris-ai: installing igris-brain MCP dependencies...
+igris-ai: igris-brain MCP dependencies ready.
+```
+
+**Verify after install** that the dependencies landed:
+
+```bash
+ls "$(npm root -g)/igris-ai/dist/brain-mcp-server/node_modules/@modelcontextprotocol/sdk" >/dev/null 2>&1 \
+  && echo "brain MCP dependencies OK" \
+  || echo "brain MCP dependencies MISSING — see Troubleshooting"
+```
+
+If the install instead printed a `WARNING: igris-brain MCP dependency
+install did not complete` block, or the check above reports `MISSING`, the
+brain MCP will fail to spawn — see [Brain MCP fails to spawn](#issue-brain-mcp-fails-to-spawn-err_module_not_found)
+in Troubleshooting for the one-command fix.
+
+### Degraded mode (vector search)
+
+The MCP's vector-search feature depends on `@huggingface/transformers`, a
+heavyweight optional dependency (ONNX runtime). It is listed under
+`optionalDependencies`, so if `npm install -g igris-ai` cannot build it on
+your platform, the install still succeeds and the MCP still boots — only
+semantic/vector search degrades to FTS5 keyword search. Briefs, memory,
+sessions, tasks, and sync are unaffected.
+
+### Contributors (developing Igris itself)
+
+If you are working on the Igris source and want Claude Code to use your
+working clone's MCP rather than the bundled copy:
+
+```bash
+igris init --upgrade --dev --from-source /path/to/igris-ai
+```
+
+`--dev` registers `<clone>/brain-mcp-server/dist/index.js` so your
+edit-rebuild-test loop is not broken by a repoint to the stale bundled
+copy. `--dev` requires `--from-source`.
 
 ---
 
@@ -150,7 +230,7 @@ This will:
 ### Generate Coding Guidelines
 
 ```
-/standardize analyze
+/ground analyze
 ```
 
 This analyzes your codebase and generates project-specific coding guidelines.
@@ -227,21 +307,18 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 | Command | Purpose |
 |---------|---------|
 | `/scan` | System status report |
-| `/awaken` | Start/resume session |
+| `/boot` | Start/resume session |
 | `/rest` | Pause/end session |
 | `/register` | Create new brief |
 | `/hunt` | Implement brief (full workflow) |
 | `/archive` | Archive completed brief |
-| `/digivolve` | Agent management |
 | `/document` | Documentation workflow |
-| `/standardize` | Generate coding guidelines |
+| `/ground` | Generate coding guidelines |
 | `/release` | Release preparation |
 | `/ideate` | Feature brainstorming |
 | `/audit` | Codebase audit |
 | `/team` | Parallel execution |
-| `/projects` | List brain-registered projects |
-| `/portfolio` | Cross-project dashboard |
-| `/dashboard` | Brief and session tracker |
+| `/ops` | Cross-project command center: in-flight work, blockers, projects, and brain health |
 
 ---
 
@@ -251,11 +328,8 @@ This archives the current session to `~/.igris/projects/{project}/session/archiv
 
 **Solution:**
 ```bash
-# Run the appropriate initialization script
-# Brain-first:
+# Run the initialization (v7 CLI):
 igris install .
-# Or standalone:
-/path/to/igris-ai/scripts/igris_init.sh .
 ```
 
 ### Issue: "Permission denied" when running scripts
@@ -293,16 +367,59 @@ sudo apt-get install sqlite3
 sqlite3 ~/.igris/memory/knowledge.db "PRAGMA integrity_check;"
 
 # If corrupted, re-initialize
-/path/to/igris-aigris init
+cd /path/to/igris-ai && igris init
 ```
 
-### Issue: Symlinks broken after moving Igris AI repo
+### Issue: Brain MCP fails to spawn (`ERR_MODULE_NOT_FOUND`)
+
+**Symptom:** The `igris-brain` MCP server does not connect in Claude Code.
+Its MCP log shows:
+
+```
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@modelcontextprotocol/sdk'
+```
+
+**Cause:** The brain MCP's native dependencies were never installed. This
+happens when `npm install -g igris-ai` ran with install scripts disabled
+(`--ignore-scripts`, or `npm config get ignore-scripts` returns `true`), so
+the `postinstall` step that builds them was skipped.
+
+**Solution:** Build the brain dependencies manually. The bundle lives at
+`$(npm root -g)/igris-ai/dist/brain-mcp-server`:
+
+```bash
+cd "$(npm root -g)/igris-ai/dist/brain-mcp-server"
+npm install --omit=dev
+```
+
+If npm is configured to ignore scripts, the native modules still cannot
+build — re-enable scripts first, then re-run the install above:
+
+```bash
+npm config set ignore-scripts false
+```
+
+Restart Claude Code once the install completes. To confirm the fix, re-run
+the verification check from
+[Native dependencies (built at install time)](#native-dependencies-built-at-install-time).
+
+### Issue: Global surfaces stale after moving Igris AI repo or upgrading
+
+FR-212d retired the per-project `.claude/` symlink layer — every surface
+(skills/agents/MCP/hooks) projects **globally** at `igris init`. If the global
+skills/agents/hooks look stale, re-project them:
 
 **Solution:**
 ```bash
-# Re-run the install script to recreate symlinks
-igris install .
+# Re-project the GLOBAL surfaces (skills, agents, MCP, hooks)
+igris init
+
+# Or refresh the brain core from the configured channel first:
+igris refresh
 ```
+
+`igris install .` only registers the project with the brain (register-only) — it
+does not recreate any surfaces.
 
 ---
 
@@ -310,11 +427,11 @@ igris install .
 
 After setup:
 
-1. **Generate architecture docs** - Run `/document architecture`
-2. **Analyze codebase** - Run `/migrate-analyze`
-3. **Review generated briefs** - Run `List all briefs`
-4. **Start implementing** - Run `/hunt BR-XXX`
-5. **Set up MCP** - (Optional) Build the MCP server for cross-project intelligence
+1. **Restart your harness** (Claude Code, OpenCode, Antigravity, Codex, or Gemini CLI) - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
+2. **Generate architecture docs** - Run `/document architecture`
+3. **Analyze codebase** - Run `/migrate-analyze`
+4. **Review generated briefs** - Run `List all briefs`
+5. **Start implementing** - Run `/hunt BR-XXX`
 
 ---
 
@@ -326,4 +443,4 @@ After setup:
 
 ---
 
-**Setup complete! You're ready to use Igris AI v5.0.**
+**Setup complete! You're ready to use Igris AI v7.0.**

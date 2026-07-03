@@ -35,7 +35,6 @@ import { createEventBus } from '../../../bus.js';
 import { edgeMigrations } from '../../edges/schema.js';
 import {
   applyMinimalSchema,
-  seedBrief,
   seedProject,
 } from './fixtures/minimal-schema.js';
 
@@ -277,76 +276,39 @@ describe('subconscious handlers', () => {
   // Run
   // -------------------------------------------------------------------------
 
-  describe('handleSubconsciousRun', () => {
-    it('runs the full pipeline and returns a summary', async () => {
+  describe('handleSubconsciousRun (FR-118 M2 — the LLM engine path)', () => {
+    // The handler delegates to runSubconscious → the cognition engine. With the
+    // default (disabled) subconscious config and no harness CLI, the run skips
+    // cleanly — the handler returns the engine's outcome shape (NOT the old
+    // detector summary). The engine-level behavior (mocked backend, INSERT
+    // shape, dedup, hallucination guard, confidence cap, parse_error) is
+    // exercised in engine-integration.test.ts which can inject backend seams.
+    it('returns a clean run_skipped(disabled) outcome when the instance is disabled', async () => {
+      // Default handler context uses DEFAULT_DETECTOR_CONFIG; the subconscious
+      // config defaults to enabled=false, so the run skips with reason=disabled.
       seedProject(db, { slug: 'p1' });
-      seedBrief(db, {
-        project: 'p1',
-        brief_id: 'BR-1',
-        status: 'In Progress',
-        updated_days_ago: 35,
-      });
       const result = await handleSubconsciousRun({});
       const parsed = parse<{
-        emitted: number;
-        suppressed: number;
-        by_module: Record<string, number>;
+        instance_id: string;
+        outcome: string;
+        persisted: number;
+        skip_reason?: string;
       }>(result);
-      expect(parsed.emitted).toBeGreaterThanOrEqual(1);
-      expect(parsed.by_module.stalled).toBeGreaterThanOrEqual(1);
-
-      // Pin the priority explicitly. With updated_days_ago=35 and the
-      // default `stalled_in_progress_high_days=30`, the stalled detector
-      // emits at 'high' priority. If anyone bumps the high threshold to 40+
-      // without updating this seed, the suggestion would silently downgrade
-      // to 'medium' and this test would still pass on count alone — pin the
-      // priority to fail loudly on threshold drift.
-      const stalledRow = db
-        .prepare(
-          `SELECT priority FROM suggestions WHERE source_module = 'stalled' ORDER BY id LIMIT 1`,
-        )
-        .get() as { priority: string };
-      expect(stalledRow.priority).toBe('high');
+      expect(parsed.instance_id).toBe('subconscious');
+      expect(parsed.outcome).toBe('skipped');
+      expect(parsed.persisted).toBe(0);
+      expect(parsed.skip_reason).toBe('disabled');
+      // No rows persisted.
+      const count = db.prepare('SELECT COUNT(*) AS n FROM suggestions').get() as { n: number };
+      expect(count.n).toBe(0);
     });
 
-    it('does not duplicate within-run on repeated invocations', async () => {
+    it('reports the subconscious instance id even when the project is scoped', async () => {
       seedProject(db, { slug: 'p1' });
-      seedBrief(db, {
-        project: 'p1',
-        brief_id: 'BR-1',
-        status: 'In Progress',
-        updated_days_ago: 35,
-      });
-      await handleSubconsciousRun({});
-      const before = db.prepare('SELECT COUNT(*) AS n FROM suggestions').get() as { n: number };
-      await handleSubconsciousRun({});
-      const after = db.prepare('SELECT COUNT(*) AS n FROM suggestions').get() as { n: number };
-      expect(after.n).toBe(before.n);
-    });
-
-    it('does not duplicate across days when title drifts (days_stalled increments)', async () => {
-      // Simulates the warden-flagged regression: stalled brief titles include
-      // "stalled for N days" which drifts daily. Dedupe must key on
-      // evidence_signature (stable) not title (drifts).
-      seedProject(db, { slug: 'p1' });
-      seedBrief(db, {
-        project: 'p1',
-        brief_id: 'BR-1',
-        status: 'In Progress',
-        updated_days_ago: 35,
-      });
-      await handleSubconsciousRun({});
-      const before = db.prepare('SELECT COUNT(*) AS n FROM suggestions').get() as { n: number };
-
-      // Hand-mutate the existing pending row's title to simulate a drift in
-      // days_stalled (as would happen on a later cron run before TTL clears).
-      db.prepare(
-        `UPDATE suggestions SET title = 'BR-1 stalled in In Progress for 36 days' WHERE status = 'pending'`,
-      ).run();
-
-      await handleSubconsciousRun({});
-      const after = db.prepare('SELECT COUNT(*) AS n FROM suggestions').get() as { n: number };
-      expect(after.n).toBe(before.n);
+      const result = await handleSubconsciousRun({ project: 'p1' });
+      const parsed = parse<{ instance_id: string; outcome: string }>(result);
+      expect(parsed.instance_id).toBe('subconscious');
+      expect(parsed.outcome).toBe('skipped');
     });
   });
 

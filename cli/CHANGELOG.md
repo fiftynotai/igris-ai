@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [7.0.2] - TBD
+## [7.1.0] - 2026-07-04
 
 ### Changed
 
@@ -23,6 +23,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project-handoff line (FR-229 / FR-230 / FR-231 / FR-232)** — a
+  complete cross-installation project-portability workflow:
+  - **`igris export <project>`** (FR-229) — read-only verb that
+    serializes a project's brain slice (briefs + brief-graph + context
+    docs + goals by default; `+learnings/errors/concept-graph` at
+    `--tier full`) into a portable `.igris-pack.tar.gz` bundle. Supports
+    `--out`, `--tier core|standard|full`, `--include`, `--since`.
+  - **`igris import <bundle>`** (FR-230) — the consumer half. Unpacks a
+    `.igris-pack.tar.gz`, verifies its checksum, and rejects
+    executable-surface/unknown stores before any DB write. Classifies
+    every row NEW/UNCHANGED/INCOMING/LOCAL_ONLY/CONFLICT via an
+    ancestor-based 3-way compare (bundle hash vs. local hash vs. a
+    recorded ancestor hash in a CLI-local ledger under
+    `~/.igris/projects/<slug>/imports/` — deliberately NOT a naive
+    `updated_at` last-writer-wins), previews the plan, requires explicit
+    confirmation, and applies the chosen `--on-conflict
+    ask|theirs|mine|newer` policy in one transaction. Auto-registers the
+    target project on a fresh machine so the `brief_status` foreign key
+    is satisfied atomically; `--dry-run` previews with zero writes;
+    `--as <slug>` imports under a different slug. A partial apply exits
+    non-zero and stays retryable; BLOB content (context-doc bodies)
+    round-trips losslessly.
+  - **`/handoff` skill** (FR-231) — wraps the export/import verbs with an
+    in-chat preview/confirm ceremony, and records the project-slice
+    portability contract in the OS knowledge-map (tiers + exclusions,
+    and the two-mode portability decision: VPS sync for same-owner
+    continuous access vs. bundle export/import for cross-owner
+    point-in-time handoff).
+  - **README + brand assets** (FR-232) — new project-handoff section
+    documenting the `/handoff` export/import workflow, plus a top brand
+    banner and a 2400×1260 OG/social preview card generated via the
+    fifty.dev `oss-readme` asset pipeline.
+
 - **`igris sync code` advisory for `.claude/*` real dirs** — warns
   (does not abort) when any of `.claude/{agents,rules,skills}/` is a
   real directory rather than a symlink. RSYNC_EXCLUDES treats these
@@ -30,7 +63,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its contents silently stripped at deploy time. The advisory surfaces
   the partial-install footgun before it bites. Closes #TD-139.
 
+- **Multi-harness distribution redesign** — consolidated per-harness
+  wiring (agents, skills, MCP servers, hooks) onto one descriptor model
+  with a single `igris harness` compile/check surface and an `igris
+  registry` verb for Layer-2 overlays. Cursor onboarded as a 6th
+  first-class harness alongside Claude, Codex, Gemini, OpenCode, and
+  Antigravity; drift-guard parity extended across agent, skill, MCP,
+  and hook surfaces so a stale projection is caught the same way on
+  every harness instead of only Claude's. (FR-150 epic, FR-161/164/165,
+  FR-171/172/179, FR-202, FR-217, TD-283, and related harness/registry
+  work)
+
+- **Bundled brain — cognition engine (review-gated, off by default)** —
+  the `igris-brain` MCP server bundled into this package gains a shared
+  cognition host running single-purpose LLM instances that observe the
+  brain and *propose* candidates for review; nothing is auto-written to
+  conscious memory. Instances: `perception` (transcripts → learnings),
+  `subconscious` (digest → suggestions), `synapse` (learning-to-learning
+  edge inference), and the `janitor` family (`arbiter` contradiction
+  resolution, `curator` stale-learning pruning, `cartographer` Leiden-
+  clustering meta-learnings). Every instance and every auto-apply flag
+  defaults to disabled/`false` in `~/.igris/config.json`; the new `igris
+  configure` verb onboards persona/VPS/cognition opt-ins. Documented in
+  `docs/COGNITION.md`. (FR-118, FR-116, FR-210, FR-211)
+
+- **Bundled brain — knowledge-graph cluster** — new graph tools (node
+  CRUD, search, dashboard, graph render/visualization), store-time
+  knowledge-graph edge population, and goals + metrics dashboards with
+  a drift validator.
+
 ### Fixed
+
+- **Global install left the bundled brain MCP unbootable (BR-075)** —
+  `npm install -g igris-ai` set `npm_config_global=true` in the
+  postinstall's environment, which the bundled brain's nested install
+  inherited and aborted on, leaving `dist/brain-mcp-server/node_modules`
+  empty so `igris-brain` crashed on spawn with `ERR_MODULE_NOT_FOUND`.
+  Fixed by sanitizing the child environment (stripping inherited
+  `npm_config_*` vars) so the nested install always runs as a clean
+  local install. Verified in a Docker clean-room (`npm install -g` →
+  `igris init` → brain boots). Shipped as an interim `7.0.1` hotfix
+  ahead of this release; recorded here for completeness.
 
 - **`igris sync code` Python cache coverage** — `*.pyo` and `*.pyd`
   were missing from `RSYNC_EXCLUDES` despite being covered by
@@ -46,6 +119,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Added a `wouldCopy()` primitive to `DryRunCollector` with a
   dedicated `copy:` printer block, and switched both verbs to use it.
   Closes #TD-142.
+
+- **`igris init` interactive prompts** — `igris init` now interactively
+  prompts for user identity (name, email) and optional remote_brain
+  config (URL + API key). Previously, USER.md shipped with literal
+  `{{USER_NAME}}` / `{{USER_EMAIL}}` placeholders that the user had to
+  hand-edit after install, and `--skip-remote` was effectively a no-op
+  (it gated a prompt that did not exist). `--yes`, `--upgrade`,
+  `--dry-run`, and non-TTY shells all auto-skip prompts using defaults
+  so CI and `curl | bash` installers never hang. Closes #TD-144.
+
+- **brief-gate hook reads the brain DB** — `pre_tool_use.sh` now queries
+  `brief_status` (sqlite3) for an `In Progress` brief instead of grepping
+  `~/.igris/projects/<slug>/briefs/` only — v5+ briefs (brain-only, no
+  filesystem cache) were invisible to the gate, so a legitimately-active
+  brief still produced "No active brief found". It also resolves the
+  project slug by walking `PROJECT_DIR`'s ancestors against `projects.path`
+  in the registry, so a subagent whose cwd is a subdirectory (e.g.
+  `<repo>/cli`) no longer resolves the wrong slug via `basename`. Both new
+  paths degrade to the legacy v4 filesystem-cache behavior when sqlite3 or
+  the brain DB is unavailable; the resolved slug is validated against
+  `^[a-z0-9_-]+$` before any SQL interpolation. New
+  `cli/tests/integration/pre-tool-use-hook.bats` (5 cases). Closes #TD-146.
 
 ---
 

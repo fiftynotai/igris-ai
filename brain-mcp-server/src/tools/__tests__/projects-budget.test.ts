@@ -64,7 +64,7 @@ function makeTestDb(): Database.Database {
       current_task TEXT,
       status TEXT DEFAULT 'active',
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
-      last_heartbeat_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
       metadata TEXT DEFAULT '{}'
     );
 

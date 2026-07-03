@@ -5,18 +5,64 @@ set -e
 #   relevant files are staged, so unrelated commits stay fast.
 #
 # Validators:
-#   - validate_memory_agency_enums.sh  (DRIFT-1, TD-070, TD-092)
-#       Triggers if: core/prompts/igris_os.md OR
-#                    core/prompts/brain_stewardship.md OR
+#   - validate_brain_stewardship_enums.sh  (DRIFT-1, TD-070, TD-092; renamed in TD-148)
+#       Triggers if: core/prompts/brain_stewardship.md OR
 #                    brain-mcp-server/src/engine/components/memory/index.ts
-#                    is staged.
-#   - validate_igris_tree_lineranges.py  (DRIFT-3, TD-070)
-#       Triggers if: core/prompts/igris_os.md OR core/igris_tree.json
-#                    is staged.
+#                    is staged. (FR-187: the igris_os.md monolith was deleted;
+#                    the validator only ever read brain_stewardship.md.)
+#   - validate_skill_frontmatter_yaml.py  (TD-219, #587)
+#       Triggers if: any core/skills/*/SKILL.md is staged.
+#       Strict YAML parse of SKILL.md frontmatter — catches an unquoted
+#       mid-scalar `: ` that strict parsers (Codex) silently skip.
+#   - validate_skill_os_harness_leak.py  (TD-248)
+#       Triggers if: any core/skills/*/SKILL.md OR core/os/*.md OR
+#                    core/prompts/*.md is staged.
+#       Scans the skill/OS core for known harness-leak token classes
+#       (CLAUDE_CODE_* flags, per-harness config-path targets,
+#       define_subagent/invoke_subagent) and hard-fails on a genuine
+#       instruction-level leak. Conservative recurrence net (L-400) with an
+#       explicit allowlist for the adapter-authoring/by-design files.
 #   - validate_lockfile_in_sync.sh  (TD-134)
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
 #                    is staged.
+#   - validate_harness_drift.sh  (FR-135, TD-021)
+#       Triggers if a CANONICAL agent-prompt SOURCE is staged:
+#                    core/agents/*.md OR core/rules/*.md OR the harness
+#                    manifest. NOT triggered on generated harness paths —
+#                    those are gitignored and never staged (OD-4); the guard
+#                    validates the ON-DISK generated copies, not the index.
+#   - check_contract_consumers.sh  (FR-186)
+#       Triggers if: MAINTAINING.md is staged, OR the staged diff
+#                    deletes/renames any path (where a mapped `file` contract
+#                    would surface). Surfaces the consumer list (WARN, does not
+#                    block); hard-fails only on a STALE MAP (a consumer
+#                    citation whose file no longer exists).
+#   - validate_brief_state_reconciliation.sh  (TD-257)
+#       Triggers if: core/skills/hunt/SKILL.md OR
+#                    brain-mcp-server/src/tools/briefs.ts OR MAINTAINING.md
+#                    is staged.
+#       Flags status<->phase<->git contradictions (Done-but-not-COMPLETE,
+#       Done-but-no-commit, committed-but-open) against the canonical
+#       brief_status.status source. WARN only — surfaces the report, does
+#       NOT block the commit (matches check_contract_consumers' posture).
+#   - validate_error_fingerprint_loop.sh  (TD-240)
+#       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
+#                    staged.
+#       Ensures mender keeps lookup-before-diagnosis language and /hunt keeps
+#       verified post-fix storage ownership via igris_error_lookup.
+#   - gitleaks protect --staged  (TD-159)
+#       Always runs (gitleaks decides what to scan from the staged set).
+#       Deterministic secret-scanner — catches the secret-shaped strings
+#       every other gate misses (IPv4 outside RFC-1918/loopback, API-key
+#       shapes, SSH private keys, AWS/Stripe/Slack/GitHub tokens, plus the
+#       Igris-specific operator-VPS-IP family rule). Config: .gitleaks.toml.
+#       HARD-fails the commit on any finding (layer 1 of the 4-layer model).
+#       Degrades gracefully (WARN + skip) if gitleaks is not installed —
+#       CI (.github/workflows/secrets-scan.yml) is the non-bypassable net.
+#       See docs/operations/secret-scanning.md. WHY: TD-157 (the IP leak
+#       that survived 5 hunts + every other gate, caught only by manual
+#       git grep). Bypass with `--no-verify` only in an emergency.
 #
 # (TD-110 canonical-hooks lockstep validator was retired in MG-014 M5;
 #  the legacy `install_claude_hooks.sh` shell emitter is gone, so the
@@ -42,46 +88,99 @@ cd "$REPO_ROOT"
 # Phase source: brain DB (brief_status.phase) — the canonical live phase
 # tracker. CURRENT_SESSION.md and brief cache files lag.
 #
-# Failure mode: if any input is missing (no session file, no Active Brief,
-# no brain DB, sqlite3 absent), the guard skips silently — fail-open so we
-# don't break commits in projects that don't use the hunt workflow.
+# Active-Brief source (FR-186 / G-01R): the brief is discovered from the brain
+# `instances` registry — the machine-disambiguated live source kept fresh by
+# instance state updates — NOT the retired CURRENT_SESSION.md. FR-133 archived that file, so
+# the old grep returned empty and the guard went silently inert. Discovery order:
+#   1. instances registry  (machine-scoped, freshest active state update)
+#   2. newest per-instance session file carrying an **Active Brief:** line
+#   3. legacy CURRENT_SESSION.md (un-migrated consumer projects only)
+#
+# Failure mode: if any input is missing (no brain DB, no active instance, no
+# session file, sqlite3 absent), the guard skips silently — fail-open at every
+# tier so we don't break commits in projects that don't use the hunt workflow.
 
 if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   PROJECT="$(basename "$REPO_ROOT")"
-  SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  HOSTNAME_LOCAL="$(hostname)"
   BRAIN_DB="$HOME/.igris/memory/knowledge.db"
+  INSTANCES_DIR="$HOME/.igris/projects/$PROJECT/session/instances"
+  LEGACY_SESSION_FILE="$HOME/.igris/projects/$PROJECT/session/CURRENT_SESSION.md"
+  ACTIVE_BRIEF=""
 
-  if [ -f "$SESSION_FILE" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
-    # Extract the brief ID from the **Active Brief:** line in CURRENT_SESSION.md.
-    # Format: **Active Brief:** PI-004 (some annotations)
-    ACTIVE_BRIEF="$(grep -m1 -E '^\*\*Active Brief:\*\*' "$SESSION_FILE" \
+  # extract_brief_from_file <path> -> echoes the brief ID on the **Active Brief:**
+  # line, or empty. Reuses the exact grep/sed shape the legacy guard used, so the
+  # `**Active Brief:** None ...` literal resolves to empty -> guard skips (correct:
+  # a planning session with no claim must not gate commits).
+  extract_brief_from_file() {
+    local f="$1"
+    [ -f "$f" ] || return 0
+    grep -m1 -E '^\*\*Active Brief:\*\*' "$f" 2>/dev/null \
       | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+).*/\1/' \
-      | tr -d '[:space:]')"
+      | tr -d '[:space:]'
+  }
 
-    if [ -n "$ACTIVE_BRIEF" ]; then
-      # Live phase comes from brain DB (canonical source per /hunt sync flow).
-      # The igris_brief_sync MCP tool writes brief_status.phase on every
-      # phase transition; brief cache files are NOT updated.
-      ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
-        "SELECT phase FROM brief_status WHERE project='$PROJECT' AND brief_id='$ACTIVE_BRIEF' AND status='In Progress' LIMIT 1;" \
-        2>/dev/null)"
+  # Tier 1 — instances registry (authoritative live source, machine-scoped).
+  # $PROJECT is basename(repo) and $HOSTNAME_LOCAL is `hostname` — neither is
+  # user-controlled free text. They are still single-quote-escaped (doubling any
+  # embedded quote) before interpolation so a stray quote cannot break the SQL.
+  if [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    PROJECT_SQL="${PROJECT//\'/\'\'}"
+    HOSTNAME_SQL="${HOSTNAME_LOCAL//\'/\'\'}"
+    ACTIVE_BRIEF="$(sqlite3 "$BRAIN_DB" \
+      "SELECT current_brief FROM instances
+         WHERE project_slug='$PROJECT_SQL'
+           AND machine_hostname='$HOSTNAME_SQL'
+           AND status='active'
+           AND current_brief IS NOT NULL
+         ORDER BY last_activity_at DESC LIMIT 1;" \
+      2>/dev/null | tr -d '[:space:]')"
+  fi
 
-      case "$ACTIVE_PHASE" in
-        BUILDING|TESTING)
-          echo ""
-          echo "[pre-commit] PI-004 phase guard: refusing commit"
-          echo "  active brief: $ACTIVE_BRIEF"
-          echo "  active phase: $ACTIVE_PHASE"
-          echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
-          echo ""
-          echo "  if you ARE the orchestrator running the post-warden commit:"
-          echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
-          echo ""
-          echo "  this guard exists per PI-004 / L-248. see brief for context."
-          exit 1
-          ;;
-      esac
+  # Tier 2 — newest per-instance session file (when the brain/sqlite3 is absent).
+  if [ -z "$ACTIVE_BRIEF" ] && [ -d "$INSTANCES_DIR" ]; then
+    # Instance filenames are <instance_id>.md UUIDs — no whitespace/newlines —
+    # so `ls -t` (newest by mtime) is safe here; `find` has no portable mtime
+    # sort without GNU -printf. shellcheck SC2012 does not apply.
+    # shellcheck disable=SC2012
+    NEWEST_INSTANCE_FILE="$(ls -t "$INSTANCES_DIR"/*.md 2>/dev/null | head -1)"
+    if [ -n "$NEWEST_INSTANCE_FILE" ]; then
+      ACTIVE_BRIEF="$(extract_brief_from_file "$NEWEST_INSTANCE_FILE")"
     fi
+  fi
+
+  # Tier 3 — legacy CURRENT_SESSION.md (un-migrated consumer projects only).
+  if [ -z "$ACTIVE_BRIEF" ]; then
+    ACTIVE_BRIEF="$(extract_brief_from_file "$LEGACY_SESSION_FILE")"
+  fi
+
+  if [ -n "$ACTIVE_BRIEF" ] && [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
+    # Live phase comes from brain DB (canonical source per /hunt sync flow).
+    # The igris_brief_sync MCP tool writes brief_status.phase on every
+    # phase transition; brief cache files are NOT updated. The guard's
+    # enforcement logic (refuse on BUILDING|TESTING) is unchanged — only the
+    # brief-discovery source above changed (FR-186 / G-01R).
+    BRIEF_SQL="${ACTIVE_BRIEF//\'/\'\'}"
+    PROJECT_SQL="${PROJECT//\'/\'\'}"
+    ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
+      "SELECT phase FROM brief_status WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' AND status='In Progress' LIMIT 1;" \
+      2>/dev/null)"
+
+    case "$ACTIVE_PHASE" in
+      BUILDING|TESTING)
+        echo ""
+        echo "[pre-commit] PI-004 phase guard: refusing commit"
+        echo "  active brief: $ACTIVE_BRIEF"
+        echo "  active phase: $ACTIVE_PHASE"
+        echo "  the orchestrator owns COMMITTING — sentinel + warden must run first"
+        echo ""
+        echo "  if you ARE the orchestrator running the post-warden commit:"
+        echo "    IGRIS_BYPASS_PHASE_GUARD=1 git commit ..."
+        echo ""
+        echo "  this guard exists per PI-004 / L-248. see brief for context."
+        exit 1
+        ;;
+    esac
   fi
 fi
 
@@ -89,19 +188,78 @@ fi
 staged="$(git diff --cached --name-only --diff-filter=ACM)"
 
 needs_enum_check=0
-needs_lineranges_check=0
 needs_lockfile_check=0
+needs_harness_check=0
+needs_skill_yaml_check=0
+needs_skill_os_leak_check=0
+needs_contract_check=0
+needs_reconciliation_check=0
+needs_error_loop_check=0
 
-if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
+if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
   needs_enum_check=1
-fi
-
-if echo "$staged" | grep -qE '^(core/prompts/igris_os\.md|core/igris_tree\.json)$'; then
-  needs_lineranges_check=1
 fi
 
 if echo "$staged" | grep -qE '^(package\.json|package-lock\.json|cli/package\.json|brain-mcp-server/package\.json)$'; then
   needs_lockfile_check=1
+fi
+
+# OD-4: trigger on a staged CANONICAL SOURCE, never on the generated harness
+# paths. Generated harnesses are gitignored (e.g. .claude/agents/, .codex/) so
+# they never appear in the staged set — keying off them would never fire. The
+# guard then validates the on-disk generated copies against canonical.
+if echo "$staged" | grep -qE '^(core/agents/.*\.md|core/rules/.*\.md|core/scripts/cli-adapters/harness-manifest\.json)$'; then
+  needs_harness_check=1
+fi
+
+# TD-219: trigger on a staged canonical SKILL.md source. The validator parses
+# the whole tree regardless of which file changed (cheap), so the trigger only
+# decides whether to run at all.
+if echo "$staged" | grep -qE '^core/skills/.*/SKILL\.md$'; then
+  needs_skill_yaml_check=1
+fi
+
+# TD-248: trigger the harness-leak guard on a staged skill or OS-core file.
+# The validator scans the whole tree regardless of which file changed (cheap),
+# so the trigger only decides whether to run at all.
+if echo "$staged" | grep -qE '^(core/skills/.*/SKILL\.md|core/os/.*\.md|core/prompts/.*\.md)$'; then
+  needs_skill_os_leak_check=1
+fi
+
+# FR-186: trigger the contract-consumer checker when MAINTAINING.md is staged
+# (self-consistency hard-fail) OR the staged diff deletes/renames any path
+# (where a mapped `file` token would surface). Removed identifier lines are
+# self-scoped by the checker over `git diff --cached`. Normal commits with no
+# MAINTAINING.md change and no deletions/renames skip it entirely (stays off
+# the hot path). The checker exists only if FR-186 is adopted in this repo.
+if [ -f "$REPO_ROOT/MAINTAINING.md" ] \
+   && [ -f "$REPO_ROOT/scripts/check_contract_consumers.sh" ]; then
+  if echo "$staged" | grep -qxF 'MAINTAINING.md'; then
+    needs_contract_check=1
+  elif [ -n "$(git diff --cached --name-only --diff-filter=DR)" ]; then
+    needs_contract_check=1
+  fi
+fi
+
+# TD-257: trigger the brief-state reconciliation validator when a brief-state
+# surface is staged — the hunt skill (the producer of the phase->COMPLETE flip),
+# the brief tools (the write path), or MAINTAINING.md (the contract home). Keeps
+# it off the hot path; the validator scans the whole DB regardless of which file
+# changed, so the trigger only decides whether to run at all. The validator
+# exists only if TD-257 is adopted in this repo.
+if [ -f "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
+    needs_reconciliation_check=1
+  fi
+fi
+
+# TD-240: keep the marketed "never debug twice" loop fed. The validator is
+# small and content-contract focused, so run it only when the two producer
+# prompts change.
+if [ -f "$REPO_ROOT/scripts/validate_error_fingerprint_loop.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/agents/mender\.md|core/skills/hunt/SKILL\.md)$'; then
+    needs_error_loop_check=1
+  fi
 fi
 
 failed=0
@@ -111,17 +269,7 @@ if [ "$needs_enum_check" = "1" ]; then
   # set -e is intentionally bypassed here (if-condition exits set -e scope)
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
-  if ! bash "$REPO_ROOT/scripts/validate_memory_agency_enums.sh"; then
-    failed=1
-  fi
-fi
-
-if [ "$needs_lineranges_check" = "1" ]; then
-  echo "[pre-commit] Validating igris_tree.json line ranges..."
-  # set -e is intentionally bypassed here (if-condition exits set -e scope)
-  # so multiple validator failures are aggregated into $failed and reported
-  # together at the end, rather than aborting on the first failure.
-  if ! python3 "$REPO_ROOT/scripts/validate_igris_tree_lineranges.py"; then
+  if ! bash "$REPO_ROOT/scripts/validate_brain_stewardship_enums.sh"; then
     failed=1
   fi
 fi
@@ -133,6 +281,141 @@ if [ "$needs_lockfile_check" = "1" ]; then
   # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_lockfile_in_sync.sh"; then
     failed=1
+  fi
+fi
+
+if [ "$needs_skill_yaml_check" = "1" ]; then
+  echo "[pre-commit] Validating SKILL.md frontmatter (strict YAML)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_frontmatter_yaml.py"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_skill_os_leak_check" = "1" ]; then
+  echo "[pre-commit] Validating skill/OS harness-leak guard (TD-248)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_os_harness_leak.py"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_harness_check" = "1" ]; then
+  echo "[pre-commit] Validating agent-prompt harness drift..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  if ! bash "$REPO_ROOT/scripts/validate_harness_drift.sh"; then
+    echo "[pre-commit] Harness drift detected (or a generated harness is missing)."
+    echo "[pre-commit]   Run: bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
+    echo "[pre-commit]   (or 'igris harness compile' once FR-136 lands), then re-stage."
+    failed=1
+  fi
+fi
+
+if [ "$needs_error_loop_check" = "1" ]; then
+  echo "[pre-commit] Validating error-fingerprint loop contract (TD-240)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end.
+  if ! bash "$REPO_ROOT/scripts/validate_error_fingerprint_loop.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_contract_check" = "1" ]; then
+  echo "[pre-commit] Checking MAINTAINING.md contract consumers (FR-186)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end, rather than aborting on the first failure.
+  # The checker DEFAULTS TO WARN (exit 0) for the rename/deletion case — it
+  # surfaces the consumer list without vetoing a legitimate refactor. It only
+  # exits non-zero on a STALE MAP (a consumer citation whose file is gone),
+  # which IS a hard-fail aggregated here.
+  if ! bash "$REPO_ROOT/scripts/check_contract_consumers.sh"; then
+    echo "[pre-commit] MAINTAINING.md is stale — fix the consumer citation(s) above."
+    failed=1
+  fi
+fi
+
+if [ "$needs_reconciliation_check" = "1" ]; then
+  echo "[pre-commit] Checking brief-state reconciliation (TD-257)..."
+  # WARN-ONLY (operator-confirmed posture — matches check_contract_consumers).
+  # The validator returns non-zero internally when it finds status<->phase<->git
+  # contradictions, but the hook DOWNGRADES that to a WARN: it prints the report
+  # and does NOT set failed=1, so a brain-DB lag (the same lag the phase guard
+  # fail-opens on) or an un-synced COMPLETE flip cannot veto a legitimate commit.
+  # To flip to hard-fail once the data is proven clean, change the next line's
+  # body to `failed=1` (one-line change — the run block is otherwise unchanged).
+  if ! bash "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh"; then
+    echo "[pre-commit] Brief-state contradictions surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+# TD-159: gitleaks secret scan (layer 1 of the 4-layer model). Always runs —
+# gitleaks scans the staged set itself and decides what to inspect, so there is
+# no file-trigger gate (a secret can land in any file type). HARD-fails on any
+# finding. Degrades gracefully (WARN + skip) if gitleaks is absent so a
+# contributor without it installed is not hard-blocked; CI is the non-bypassable
+# net. The config lives at .gitleaks.toml (only present if TD-159 is adopted).
+if [ -f "$REPO_ROOT/.gitleaks.toml" ]; then
+  if command -v gitleaks >/dev/null 2>&1; then
+    echo "[pre-commit] Scanning staged changes for secrets (gitleaks)..."
+    # `protect --staged` scans only the staged diff (fast: <500ms on a typical
+    # 10-file diff). --redact keeps the scanned secret out of the hook log;
+    # the actionable report below tells the author where to look. set -e is
+    # bypassed in the if-condition so the finding is aggregated into $failed
+    # and reported together with any other validator failures.
+    gitleaks_report="$(mktemp)"
+    if ! gitleaks protect --staged \
+           --config "$REPO_ROOT/.gitleaks.toml" \
+           --redact \
+           --report-format json \
+           --report-path "$gitleaks_report" \
+           --no-banner >/dev/null 2>&1; then
+      echo ""
+      echo "[pre-commit] gitleaks: SECRET-SHAPED CONTENT DETECTED — refusing commit"
+      echo ""
+      # Summarise each finding as file:line + rule (secret value redacted).
+      if command -v python3 >/dev/null 2>&1 && [ -s "$gitleaks_report" ]; then
+        python3 - "$gitleaks_report" <<'PYEOF'
+import json, sys
+try:
+    with open(sys.argv[1]) as fh:
+        findings = json.load(fh)
+except Exception:
+    findings = []
+for f in findings:
+    loc = f"{f.get('File','?')}:{f.get('StartLine','?')}"
+    print(f"  - {loc}  rule={f.get('RuleID','?')}  (secret redacted)")
+PYEOF
+      else
+        echo "  (install python3 to see per-finding file:line; report at $gitleaks_report)"
+      fi
+      echo ""
+      echo "  If this is a REAL secret:"
+      echo "    1. Remove it from the staged content (use a placeholder /"
+      echo "       \${ENV_VAR} indirection — see CONTRIBUTING.md Documentation"
+      echo "       Invariant #9)."
+      echo "    2. If it was a live credential, rotate it."
+      echo "    3. See docs/operations/secret-scanning.md for the full"
+      echo "       remediation decision-tree."
+      echo ""
+      echo "  If this is a FALSE POSITIVE (test fixture, example URL, etc.):"
+      echo "    Add an inline '# gitleaks:allow' marker on the same line with a"
+      echo "    one-line rationale, then re-stage. (Or path-allowlist it in"
+      echo "    .gitleaks.toml if it is a whole fixture file.)"
+      echo ""
+      failed=1
+    fi
+    rm -f "$gitleaks_report"
+  else
+    echo "[pre-commit] gitleaks not installed — skipping local secret scan (WARN)."
+    echo "[pre-commit]   Install: brew install gitleaks  (CI still enforces it)."
   fi
 fi
 

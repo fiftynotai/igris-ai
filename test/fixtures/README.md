@@ -20,14 +20,13 @@ fixtures/
 ```bash
 # Setup test projects
 setup_test_project                      # Empty project
-init_igris_in_test_project             # Project with Igris initialized
 ```
 
 ## Fixture Descriptions
 
 ### mock_project
 - **Purpose:** Basic project structure for initialization tests
-- **Use cases:** Testing igris_init.sh on empty project
+- **Use cases:** Empty-project scenarios for top-level scripts under test
 - **Key feature:** Minimal README.md only
 
 ### mock_project_with_git

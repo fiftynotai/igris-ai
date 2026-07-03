@@ -19,6 +19,15 @@ export interface CapturedCall {
   toolName?: string;
   args?: Record<string, unknown>;
   rawBody: string;
+  /**
+   * HTTP request method (`GET` / `POST` / …). Distinct from `method` above,
+   * which is the JSON-RPC method (`tools/call`) parsed from a POST body. Added
+   * (FR-195 M3) so GET-endpoint tests (e.g. `GET /sync/pull`) can assert the
+   * verb + path; #356 requires asserting the exact endpoint, not 200-any-path.
+   */
+  httpMethod?: string;
+  /** Raw request URL incl. query string (e.g. `/sync/pull?since_learnings=...`). */
+  url?: string;
 }
 
 /**
@@ -42,7 +51,11 @@ export function makeLoopback(
         buf += chunk.toString("utf-8");
       });
       req.on("end", async () => {
-        const call: CapturedCall = { rawBody: buf };
+        const call: CapturedCall = {
+          rawBody: buf,
+          httpMethod: req.method,
+          url: req.url,
+        };
         try {
           const parsed = JSON.parse(buf) as {
             jsonrpc?: string;

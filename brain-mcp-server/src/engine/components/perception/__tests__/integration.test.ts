@@ -83,12 +83,17 @@ function makeFullSchemaDb(): Database.Database {
       updated_at TEXT NOT NULL DEFAULT (datetime('now')),
       access_count INTEGER DEFAULT 0,
       last_accessed_at TEXT,
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT,
+      deleted_at TEXT,
       embedding BLOB,
       embedding_model TEXT DEFAULT '',
       provenance TEXT NOT NULL DEFAULT 'observed'
         CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- FR-200 M2: nullable promotion pointer (db.ts v16); recall/search SELECT it.
+      promoted_to_doc TEXT
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(

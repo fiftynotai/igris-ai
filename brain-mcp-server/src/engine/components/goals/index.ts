@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Goals Component
+ * Brain Engine v7.0 — Goals Component
  *
  * Outcome-level entities distinct from briefs (FR-110). A goal is a "what
  * we're trying to achieve" with a deadline, status lifecycle, and optional
@@ -8,18 +8,19 @@
  * already-registered `serves_goal` edge type and `goal` entity type from
  * FR-105.
  *
- * Provides 5 MCP tools:
+ * Provides the goal-management MCP tools:
  *   - igris_goal_create   — server-side GL-XXX allocation
  *   - igris_goal_list     — filtered query (project, status, upcoming_days)
  *   - igris_goal_get      — goal + serving briefs/learnings
  *   - igris_goal_update   — partial patch with status->achieved auto-stamp
  *   - igris_goal_progress — count-based completion across serving briefs
+ *   - igris_goal_dashboard — status counts, upcoming deadlines, stalled goals
  *
  * Emits: goal.created, goal.updated, goal.achieved
  * Listens: (none in Phase 1 — listeners deferred to FR-106 subconscious)
  *
  * @module engine/components/goals
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -36,6 +37,7 @@ import {
   handleGoalGet,
   handleGoalUpdate,
   handleGoalProgress,
+  handleGoalDashboard,
   VALID_GOAL_STATUSES,
 } from './handlers.js';
 
@@ -241,6 +243,30 @@ export function createGoalsComponent(): BrainComponent {
             }
             return result;
           },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_goal_dashboard (TD-171 M4)
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_goal_dashboard',
+          description:
+            'Aggregate dashboard over goals — totals (total + by_status across active/achieved/abandoned/deferred), recent.upcoming_deadlines (active goals with deadlines in next 30d, top 10), and samples.stalled_goals (active goals untouched for 30+ days, top 10). Optional `project` scopes everything; `summary_only=true` omits the samples block. Use before a release announcement or quarterly review to frame shipped briefs against stated goals.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter all aggregations to a single project slug',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts + upcoming deadlines only — omit samples.stalled_goals (default false)',
+              },
+            },
+          },
+          handler: (args) => handleGoalDashboard(args),
         },
 
         // -----------------------------------------------------------------

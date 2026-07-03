@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Handlers
+ * Brain Engine v7.0 — Edges Component Handlers
  *
  * Handlers for the three typed-edge MCP tools:
  *   - igris_edge_create  — idempotent insert via UNIQUE constraint
@@ -12,7 +12,7 @@
  * assume the args came from the MCP gateway.
  *
  * @module engine/components/edges/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';
@@ -23,16 +23,43 @@ import { errorResult, successResult, WhereBuilder } from '../../helpers.js';
 // Validation catalogs (runtime defense, complementary to JSON Schema enums)
 // ---------------------------------------------------------------------------
 
-/** Accepted entity types in from_type / to_type columns. */
+/**
+ * Accepted entity types in from_type / to_type columns.
+ *
+ * TD-171 M2 (operator-locked Decision 2): extended with `concept` and
+ * `decision` to support free-standing nodes registered via
+ * igris_graph_node_create. The cascade affects every tool that lists
+ * VALID_ENTITY_TYPES in its inputSchema.enum (igris_edge_create / list,
+ * igris_graph_neighbors / path / subgraph) — all now accept the extended
+ * types automatically because they reference this constant directly.
+ * No standalone validator besides handleEdgeCreate / handleEdgeList
+ * references this list, so no other validator update was required.
+ */
 export const VALID_ENTITY_TYPES = [
   'brief',
   'learning',
   'error',
   'session',
   'goal',
+  'concept',
+  'decision',
 ] as const;
 
-/** Accepted edge type vocabulary. Stored as plain strings — extensible later. */
+/**
+ * Accepted edge type vocabulary. Stored as plain strings — extensible later.
+ *
+ * ROW-100 LOCKSTEP (MAINTAINING.md): the `igris_memory_store` `edges[]` enum
+ * (`memory/index.ts`) imports this constant directly, as do the traversal filters
+ * (`traversal.ts`) and every edge tool's inputSchema (`edges/index.ts`). Adding a
+ * literal here therefore flows into the store enum + traversal + tools with no
+ * further edit — they stay in lockstep by reference, never a hand-copied list.
+ *
+ * FR-116 M4 (Decision #3a): `cluster_member_of` — a member node → its cluster
+ * representative (the synthesized meta-learning). Written by the `cluster_meta`
+ * apply-action via `handleEdgeCreate` when the cartographer's cluster summary is
+ * applied; the community-detection primitive (`community.ts`) is a pure READ and
+ * writes NO edges itself.
+ */
 export const VALID_EDGE_TYPES = [
   'parent_of',
   'depends_on',
@@ -43,6 +70,7 @@ export const VALID_EDGE_TYPES = [
   'duplicates',
   'derived_from',
   'recurs_with',
+  'cluster_member_of',
 ] as const;
 
 /** Accepted provenance values. */

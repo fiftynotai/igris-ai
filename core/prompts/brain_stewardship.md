@@ -7,6 +7,8 @@ trigger, and you are responsible for reaching for it at the right moment.
 A brain READ that is not triggered is invisible to the next session: a
 correctly-stored memory that is never recalled does not change behavior.
 
+> **Status (post-FR-187):** this file is NO LONGER loaded at boot — `core/os/memory.md` is the boot-tier Memory contract. `brain_stewardship.md` is retained as (1) the input to `scripts/validate_brain_stewardship_enums.sh` (a pre-commit gate) and (2) an enumeration surface tracked in MAINTAINING.md. Don't delete it expecting `memory.md` to cover it — they serve different roles.
+
 <!-- SECTION: brain_stewardship -->
 
 ## How sync routes (read this first)
@@ -18,7 +20,7 @@ Code session, owns the local DB, and dies with the session. There is no
 HTTP roundtrip on the read path; recalls and `access_count` increments hit
 the local file directly.
 
-Cross-instance sync to the VPS at `http://76.13.180.77:3001` is **explicit**
+Cross-instance sync to the VPS (URL from `~/.igris/config.json` → `remote_brain.url`) is **explicit**
 and happens via two paths:
 
 1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
@@ -57,8 +59,8 @@ applies migrations on first use.
 ## 1. Learnings (`igris_memory_*`)
 
 **Tools:** `igris_memory_store`, `igris_memory_recall`, `igris_memory_search`,
-`igris_memory_get`, `igris_memory_update`, `igris_memory_delete`,
-`igris_memory_dashboard`.
+`igris_memory_hybrid_search`, `igris_memory_get`, `igris_memory_update`,
+`igris_memory_delete`, `igris_memory_dashboard`.
 
 **What's there:** project-local and global lessons — patterns, decisions,
 discoveries, mistakes, optimizations. Hybrid BM25 + vector search with project
@@ -94,7 +96,7 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 
 ### When to Recall
 
-`/awaken` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
+`/boot` already pulls relevant memories at session start, so the orchestrator's baseline context is covered. Use `igris_memory_recall` and `igris_memory_search` *in addition to* that automatic recall, on-demand:
 
 - When the user asks about a topic you don't recognize from the loaded context.
 - When you switch domains mid-session (e.g., from frontend work into a database migration).
@@ -104,6 +106,38 @@ When in doubt, ask: *"Will a future actor reading the code learn this on their o
 Avoid redundant recalls within the same session over the same topic — once you have the relevant memories in context, work from them.
 
 **Category filter limitation (TD-093 follow-up):** `igris_memory_recall` does NOT currently accept a `category` parameter. To bias recall toward a specific category (e.g., `mistake`), include category-evocative keywords in the `context` query (e.g., `"... mistake regression bug"`). FTS5 ranking biases the match but does not strictly filter. If you need a hard filter, see TD-093.
+
+### When to Hybrid-Search (`igris_memory_hybrid_search`)
+
+Use `igris_memory_hybrid_search` for the highest-quality single-query recall:
+it fuses BM25 (FTS5) and vector-KNN results via RRF, so a query matches on both
+lexical keywords and semantic similarity. It excludes `pending_review` rows
+(conscious channel only) and falls back to BM25-only when sqlite-vec / embedding
+is unavailable — no caller handling needed. Input: `{ query, project?, limit? }`
+(defaults: `limit` 10, `bm25_weight`/`vector_weight` 0.5/0.5, `rrf_k` 60); pass
+`project` to scope, omit it to search everything. Prefer this over
+`igris_memory_search` (BM25-only) when you want the best ranked recall and don't
+need to tune weights.
+
+The **`/search` skill is the interactive entrypoint** for this tool — it parses
+`--project` / `--global` / `--limit`, renders the ranked `ID | Title | Snippet |
+Score` table, and pulls a chosen learning into context via `igris_memory_get`
+(`/search --pull <id>`). Reach for the raw tool in free-form reasoning; point the
+operator at `/search` when they want to browse recall interactively.
+
+### When to Update
+
+Use `igris_memory_update` when an existing learning needs a title or content correction post-extraction (typo, wrong tag, sharper rationale). Pass the learning ID and at least one of the updatable fields: title, content, tags, category, scope, confidence. The handler bumps the row's update timestamp automatically and returns the list of fields actually changed.
+
+Do NOT update to flip provenance, review status, or source extractor — provenance is permanent (FR-107 audit trail), review status is owned by the perception lifecycle (`igris_perception_approve` / `_reject`), and source extractor records who originally produced the row. If any of those is genuinely wrong, `igris_memory_delete` + `igris_memory_store` afresh — the audit history loss is the price of the rewrite.
+
+### When to Delete
+
+Use `igris_memory_delete` when a stored learning is provably wrong (the rule it states is false) or duplicates a higher-quality entry. Prefer `igris_memory_update` for fixable entries — deletion is hard and irreversible (no soft-delete column on `learnings` today; FR-116 may add one). The delete emits a `memory.deleted` bus event so future audit-log subscribers can record the action; pass an optional `reason` arg to make that audit trail readable.
+
+### When to Inspect (Dashboard)
+
+Use `igris_memory_dashboard` with `summary_only: true` during `/scan` and `/boot` to size the project's memory footprint without dumping content. Cross-reference `by_review_status.pending_review` against `igris_perception_dashboard` (TD-171 M3) to confirm the subconscious is healthy — large pending counts that aren't draining mean the approve loop is stalled. Default `days=30`; pass a smaller window when triaging "what landed today" and a larger one for quarterly health checks. The dashboard is unfiltered by review_status by design — you are sizing the full memory footprint, not just the conscious channel.
 
 ### How to Tag a Stored Memory
 
@@ -127,7 +161,7 @@ Mapping common phrasings to the legal `category` enum:
 
 **Provenance defaults.** If you don't specify `provenance`, it defaults to `observed`. Use `human_asserted` only when the user explicitly told you the rule; use `inferred` when you derived it from code without confirmation; use `synthesized` when you combined multiple sources; use `ambiguous` only when you genuinely can't tell.
 
-**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion is normally automatic when the same memory is observed in 2+ projects (see `/distill`) — don't pre-promote out of optimism.
+**Scope guidance.** Default `scope=local`. Promote to `global` only when the same lesson applies across project archetypes (bash quoting, secret handling, generic algorithmic patterns). Cross-project promotion happens later when the same memory is observed in 2+ projects — don't pre-promote out of optimism.
 
 **Decision log mirror.** Architectural decisions stored as `category=decision` should also be mirrored to the project's `DECISIONS.md` log when one exists — the memory captures the lesson for future recall, the file gives reviewers an in-repo audit trail.
 
@@ -164,40 +198,86 @@ igris_memory_store({
 })
 ```
 
-See also `/distill` for end-of-session extraction across larger work.
-
 ## 2. Knowledge Graph (`igris_graph_*`)
 
-**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_graph_edge_create`,
-`igris_graph_traverse`, `igris_graph_search`, `igris_graph_dashboard`.
+**Tools:** `igris_graph_node_create`, `igris_graph_node_get`,
+`igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`,
+`igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`.
 
 **What's there:** typed nodes (concepts, projects, briefs, decisions) and
 edges (relates-to, supersedes, blocks, derived-from). The graph captures
 relationships that a flat learnings table cannot: chains of supersession,
 dependency trees between briefs, lineage of decisions.
 
+Brief / learning / error / session / goal nodes live in their own tables
+and are referenced by `entity_edges` directly via `(type, id)`. The
+`graph_nodes` table (TD-171 M2) is dedicated to free-standing nodes —
+typically `node_type=concept` or `node_type=decision` — that have no
+backing row elsewhere. Register those explicitly via
+`igris_graph_node_create` before linking them.
+
 ### When to call
 
-- Before proposing a refactor: `igris_graph_traverse` from the affected
-  module/concept node to surface dependents and prior decisions.
+- Before proposing a refactor: `igris_graph_neighbors` from the affected
+  module/concept node (depth: 2, direction: 'in') to surface dependents
+  and prior decisions. Use `igris_graph_path` for shortest-path between two
+  known nodes and `igris_graph_subgraph` for the connected component.
 - When the user asks "why did we change X to Y?" — `igris_graph_search` the
   concept node and walk `supersedes` edges.
 - When stitching together a broader context for an architect prompt — the
   graph gives structured ancestry that recall does not.
 
+### When to Register a Node
+
+Use `igris_graph_node_create` to register a free-standing concept or decision node before linking it via `igris_edge_create`. Briefs / learnings / errors / sessions / goals are addressable by their existing IDs without explicit registration — only concept and decision nodes need this call. The handler is idempotent: re-creating an identical `(node_type, node_external_id)` pair returns the existing row's id with `created: false`. The original label is preserved on conflict; rename via delete-then-recreate (a node-update tool is a planned follow-up but is not yet registered — the validator drift gate enforces that intended-future tool names are not backticked as if they exist). Use the `properties.project` key to scope a node so `igris_graph_dashboard` project filtering can find it.
+
+### When to Inspect a Single Node
+
+Use `igris_graph_node_get` to inspect one node's metadata plus its in/out edge degrees before traversal. Cheaper than `igris_graph_neighbors` when you only need to confirm the node exists and gauge its connectedness; reach for `_neighbors` once you want the actual neighbour rows. Soft-deleted edges are excluded from the degree counts (parity with `igris_edge_list`). Errors with `Node not found` when the `(node_type, node_external_id)` pair does not match a registered row.
+
+### When to Search
+
+Use `igris_graph_search` to find concept or decision nodes by partial name when you only know a fragment of the label or external id. Substring (LIKE) match against `label` and `node_external_id`; SQL wildcards in user input are escaped, so pass plain text. Optional `node_type` filter narrows by type. Default limit 20, max 100. Score = fraction of the matched field the query covers (1.0 = exact match) — a deliberate v1 placeholder; FTS5 ranking is a follow-up. Use the score to disambiguate when multiple candidates are returned.
+
+### When to Inspect (Dashboard)
+
+Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/boot` — counts only, no samples block, fast on large graphs. The full call surfaces `samples.top_god_nodes` (top 10 nodes by total in+out degree) which is the same data `igris_brief_graph_render` visualizes, in textual form. Reach for it before refactoring to spot god-nodes whose extraction would touch many edges. Project filter narrows `graph_nodes` via `properties.project`; edge totals stay unfiltered (edges have no project column — flagged for follow-up). Default `days=30` window for the `recent.*` block; totals always count the full table.
+
 ### Example invocation
 
 ```jsonc
+// Register a free-standing concept node, then link it.
+igris_graph_node_create({
+  node_type: "concept",
+  node_external_id: "concept:vector-search",
+  label: "Vector search",
+  properties: { project: "igris-ai" }
+})
+igris_edge_create({
+  from_type: "concept", from_id: "concept:vector-search",
+  to_type: "brief", to_id: "FR-076",
+  edge_type: "related_to"
+})
+
+// Topology snapshot before a refactor.
+igris_graph_dashboard({ project: "igris-ai", summary_only: true })
+
+// Find a node by partial label.
 igris_graph_search({ query: "memory_agency rename", limit: 5 })
-igris_graph_traverse({ node_id: 142, edge_types: ["supersedes", "derived-from"], depth: 2 })
+igris_graph_neighbors({ node_type: "concept", node_id: "concept:142", edge_types: ["supersedes", "derived_from"], depth: 2 })
 ```
 
 ## 3. Briefs (`igris_brief_*`)
 
 **Tools:** `igris_brief_create`, `igris_brief_get`, `igris_brief_list`,
-`igris_brief_update`, `igris_brief_search`, `igris_brief_similar`,
-`igris_brief_sync`, `igris_brief_dashboard`, `igris_brief_velocity`,
-`igris_brief_archive`.
+`igris_brief_update`, `igris_brief_similar`, `igris_brief_sync`,
+`igris_brief_dashboard`, `igris_brief_velocity`, `igris_brief_claim`,
+`igris_brief_release`.
+
+Archival is a status transition: call `igris_brief_update` with
+`status: 'Archived'` rather than reaching for a separate archive tool.
+Hybrid search lives on `igris_brief_similar` (vector + FTS) — there is no
+separate `_search` tool.
 
 **What's there:** every BR/FR/TD/MG/PR/RE/IN brief — current state, history,
 phase, agent log, similarity vectors. Source of truth post-v5 (filesystem
@@ -213,6 +293,11 @@ fallback at `~/.igris/projects/{project}/briefs/`).
 - **For dashboards / standup:** `igris_brief_dashboard` with `summary_only:
   true` (NEVER `limit: 0` — that dumps ~13k tokens).
 - **Before a release cut:** `igris_brief_velocity` for cadence sanity.
+- **Claiming a brief for a hunt is automatic via `/hunt`;** `igris_brief_claim`
+  / `igris_brief_release` are the FR-127 atomic claim/release gate that stops
+  two instances hunting the same brief — not called by hand. `/hunt` claims
+  before INIT (a second instance's claim affects 0 rows and hard-stops);
+  `/rest` and brief-completion release.
 
 ### Example invocation
 
@@ -228,7 +313,7 @@ igris_brief_dashboard({ project: "igris-ai", summary_only: true })
 
 ## 4. Errors (`igris_error_*`)
 
-**Tools:** `igris_error_lookup`, `igris_error_store`, `igris_error_dashboard`.
+**Tools:** `igris_error_lookup`, `igris_error_dashboard`.
 
 **What's there:** error fingerprints (file-path/line-number-agnostic) mapped
 to known root causes and solutions. Built up over time from mender's diagnoses.
@@ -239,8 +324,13 @@ to known root causes and solutions. Built up over time from mender's diagnoses.
   parsing. A fingerprint match short-circuits the entire diagnosis loop.
 - When the same stack trace surfaces twice in a session: stop guessing,
   look it up.
-- After a hard-won fix: `igris_error_store` with the canonical message and
-  the resolution so the next agent doesn't relearn it.
+- After a hard-won fix: call `igris_error_lookup` with the canonical message
+  AND a `solution` arg — the same handler upserts when `solution` is present,
+  so the next agent doesn't relearn it.
+- During `/scan` or after a long debug session: `igris_error_dashboard` to
+  spot recurring errors that warrant a `/hunt`. The top-N recurring rows
+  without a recorded solution are the next mender targets — pair the
+  `summary_only: true` mode with `project` filter for a focused triage view.
 
 ### Example invocation
 
@@ -249,11 +339,17 @@ igris_error_lookup({
   message: "TypeError: Cannot read properties of undefined (reading 'rowid')",
   project: "igris-ai"
 })
+igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ```
 
-## 5. Registry (`igris_project_*`)
+## 5. Project registry (`igris_project_*`)
 
-**Tools:** `igris_project_register`, `igris_project_list`, `igris_project_get`,
+> **Naming note:** this is the **project** registry (registered Igris
+> projects). Do not confuse it with the **reusable-assets catalog** in §5b
+> (`igris_catalog_*`), which is a different store (cataloged templates/modules,
+> the "lego" store).
+
+**Primary tools:** `igris_project_register`, `igris_project_list`,
 `igris_project_update`, `igris_project_dashboard`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
@@ -261,22 +357,73 @@ archetype, status, last session. Drives the affinity boosts in recall.
 
 ### When to call
 
-- Before a cross-project recommendation: `igris_project_get` the target to
-  verify tech stack and archetype match before suggesting reuse.
+- Before a cross-project recommendation: `igris_project_dashboard({slug})` the
+  target to verify tech stack, archetype, and recent project context before
+  suggesting reuse (replaces the older `igris_project_status` pattern).
 - When onboarding a new project: `igris_project_register` so its briefs and
   learnings can participate in cross-project recall and promotion.
-- During `/portfolio` or `/projects` skill flows.
+- After registration, to flip `status` (e.g., archive a project) or correct
+  `tech_stack` / `archetype`: `igris_project_update`. Partial UPDATE — only
+  the fields you pass are written. For brand-new projects use
+  `igris_project_register`, not `_update`.
+- For a unified per-project / cross-project view: `igris_project_dashboard`.
+  Set `slug` for one project's detail (replaces the older `_status` pattern);
+  omit `slug` and pass `status` / `archetype` / `tech_stack` filters for
+  narrowed cross-project listings (replaces the older `_list` pattern).
+  `summary_only: true` for counts-only during `/scan`.
+- During the `/ops` skill flow.
 
 ### Example invocation
 
 ```jsonc
-igris_project_get({ slug: "fifty-flutter-kit" })
+igris_project_dashboard({ slug: "fifty-flutter-kit" })
+igris_project_update({ slug: "old-prototype", status: "archived" })
+igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
+```
+
+## 5b. Reusable-assets catalog (`igris_catalog_*`)
+
+> **Distinct from §5.** This is the **reusable-assets catalog** (the "lego"
+> store) — cataloged templates and modules, NOT the project registry. The tool
+> prefix is `igris_catalog_*`, not `igris_project_*`.
+
+**Tools:** `igris_catalog_search`, `igris_catalog_get`, `igris_catalog_list`
+(read), `igris_catalog_add`, `igris_catalog_update`, `igris_catalog_remove`
+(write — driven by `/harvest`, not free-form reasoning).
+
+**What's there:** reference rows for reusable assets — templates (full project
+scaffolds) and modules (standalone components, incl. pub.dev/npm packages and
+SDKs). Each row records *what it is* (name/type/description), *where it lives*
+(`github_repo`/`github_path` or `source`/`source_ref`), *when to reach for it*
+(`when_to_use`/`tags`), and *how to integrate* (`install_command`,
+`rebrand_checklist`). The shared mechanics are in
+`~/.igris/core/docs/catalog-recipe.md`.
+
+### When to call
+
+- **Reuse before rewrite — before building something new**, search the catalog:
+  `igris_catalog_search({ query: "<what you're about to build>" })`. If a lego
+  block fits, reach for it (the `/reuse` skill drives scaffold-from-template and
+  add-a-package). This is the live obligation behind the conduct "Reuse before
+  rewrite" rule.
+- Before cataloging a module during `/harvest` Phase 3: `igris_catalog_search`
+  to dedup against the existing catalog (offer skip/update on a strong match).
+- To inspect a chosen asset's full detail (incl. `rebrand_checklist`):
+  `igris_catalog_get({ id })`. To browse the shelf: `igris_catalog_list`.
+
+### Example invocation
+
+```jsonc
+igris_catalog_search({ query: "flutter branded buttons", type: "module" })
+igris_catalog_list({ type: "template", archetype: "enterprise-mvvm-mobile" })
+igris_catalog_get({ id: "tmpl-enterprise-mobile" })
 ```
 
 ## 6. Subconscious (`igris_perception_*`)
 
-**Tools:** `igris_perception_list`, `igris_perception_get`,
-`igris_perception_review`, `igris_perception_dashboard`.
+**Tools:** `igris_perception_review_pending`, `igris_perception_get`,
+`igris_perception_approve`, `igris_perception_reject`,
+`igris_perception_dashboard`.
 
 **What's there:** background-extracted perception records — pending-review
 learnings the subconscious extractor surfaced from session events. Not yet
@@ -284,17 +431,29 @@ promoted to the conscious learnings channel.
 
 ### When to call
 
-- During `/scan` or `/awaken`: surface pending perception items to the user
+- During `/scan` or `/boot`: surface pending perception items to the user
   for triage.
 - Before storing a similar new learning manually: check if the subconscious
   already has a draft of it (avoid double-entry).
-- After a long session: `igris_perception_review` to approve/reject
-  candidates so they migrate to the conscious channel.
+- After a long session: `igris_perception_approve` / `igris_perception_reject`
+  to migrate candidates to the conscious channel.
+- Before approve/reject when `igris_perception_review_pending` shows
+  truncated content: `igris_perception_get` with the candidate's
+  `learning_id` to inspect the full row (title, content, tags, confidence,
+  source_extractor, dedup metadata). Errors on approved/non-existent rows
+  by design — perception scope ends at promotion.
+- During `/scan` to spot extractor health issues: `igris_perception_dashboard`
+  reports inbox size (`pending`), recent approve/reject volume, run outcomes
+  (`succeeded`/`failed`/`skipped` from `event_log`) and dedup rediscoveries.
+  A failed-run spike or a dedup-rate drop is the early-warning signal.
+  Pair with `igris_memory_dashboard` for the post-promotion view.
 
 ### Example invocation
 
 ```jsonc
-igris_perception_list({ project: "igris-ai", status: "pending_review", limit: 10 })
+igris_perception_review_pending({ project: "igris-ai", limit: 10 })
+igris_perception_get({ learning_id: 4321 })
+igris_perception_dashboard({ project: "igris-ai", summary_only: true })
 ```
 
 ## 7. Goals (`igris_goal_*`)
@@ -314,33 +473,62 @@ to become over weeks/months, distinct from per-brief tactical work.
 - Before writing a release announcement: `igris_goal_dashboard` to frame
   shipped work against stated direction.
 
+### When to Inspect (Dashboard)
+
+Use `igris_goal_dashboard` before a release announcement or quarterly
+review to frame shipped briefs against stated goals. The canonical
+`_dashboard` shape returns `totals.by_status` (active / achieved /
+abandoned / deferred), `recent.upcoming_deadlines` (active goals with
+deadlines in the next 30 days, with serving-brief and completed-brief
+counts so you can see "how close is this one to shipping?"), and
+`samples.stalled_goals` — active goals untouched for 30+ days. Stalled
+goals are the candidates for revisit / abandon / re-scope. Pair with
+`igris_goal_progress` for completion math on a specific goal. Pass
+`summary_only: true` during `/scan` to drop the samples block when you
+just need the headline counts.
+
 ### Example invocation
 
 ```jsonc
 igris_goal_list({ project: "igris-ai", status: "active" })
+igris_goal_dashboard({ project: "igris-ai" })
 ```
 
-## 8. Metrics (`igris_metric_*`, velocity)
+## 8. Metrics (`igris_metrics_*`)
 
-**Tools:** `igris_metric_record`, `igris_metric_query`, `igris_metric_dashboard`,
-`igris_brief_velocity` (cross-listed under briefs but metric-flavored).
+**Tools:** `igris_metrics_record`, `igris_metrics_query`,
+`igris_metrics_dashboard`, `igris_metrics_velocity`.
 
 **What's there:** time-series of agent invocations, token spend, brief
-throughput, error rates. Source for the Crimson Arena dashboards.
+throughput, error rates. Source for agent activity dashboards.
 
 ### When to call
 
-- During `/scan` or `/dashboard`: pull recent metric snapshots.
+- During `/scan` or `/ops`: pull recent metric snapshots.
 - When the user asks "is this getting faster/slower?": query velocity over
   the relevant window.
 - Before refactoring a hot path: check the current cost so you can measure
   the win.
 
+### When to Inspect (Dashboard)
+
+Use `igris_metrics_dashboard` during `/scan` or `/ops` for a
+one-shot agent-utilization view. The canonical `_dashboard` shape
+returns `totals.by_agent` (invocations / success_rate / avg_duration_ms
+/ retries per agent), `totals.by_action`, `totals.by_result` (the four
+CHECK-constraint outcomes — `success`, `failure`, `partial`, `blocked`
+— always present), `recent.invocations` over the last N days (default
+30) plus `week_over_week_delta_pct`, and `samples.top_durations` (top
+10 longest-running invocations). Pair with `igris_brief_velocity` for
+completion-rate context. Optional `agent` filter scopes everything to
+one agent (combinable with `project`); `summary_only: true` drops the
+samples block when you only need the headline counters.
+
 ### Example invocation
 
 ```jsonc
-igris_brief_velocity({ project: "igris-ai", days: 30 })
-igris_metric_query({ project: "igris-ai", metric: "agent_duration_seconds", agent: "forger", days: 7 })
+igris_metrics_velocity({ project: "igris-ai", days: 30 })
+igris_metrics_dashboard({ project: "igris-ai", agent: "forger" })
 ```
 
 <!-- /SECTION: brain_stewardship -->

@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IGRIS — System Architecture</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0d0a08;--fg:#f6efe6;--accent:#ff5a1f;--deep:#7a2410;--muted:rgba(246,239,230,.55);--line:rgba(246,239,230,.16);--panel:rgba(255,255,255,.025)}
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:var(--bg);display:flex;justify-content:center;padding:28px}
+  svg{width:1700px;height:1330px;display:block}
+  svg text{ -webkit-font-smoothing:antialiased }
+  .eyebrow{font:500 13px 'JetBrains Mono',monospace;fill:var(--accent);letter-spacing:3px}
+  .title{font:400 40px 'Anton',sans-serif;fill:var(--fg);letter-spacing:.5px;text-transform:uppercase}
+  .subt{font:italic 400 15px 'Space Grotesk';fill:var(--muted)}
+  .band{font:500 12px 'JetBrains Mono',monospace;fill:var(--accent);letter-spacing:2.5px}
+  .bandm{font:500 12px 'JetBrains Mono',monospace;fill:var(--muted);letter-spacing:2.5px}
+  .key{font:500 14.5px 'JetBrains Mono',monospace;fill:var(--fg)}
+  .keyA{font:600 14.5px 'JetBrains Mono',monospace;fill:var(--accent)}
+  .keybig{font:400 19px 'Anton',sans-serif;fill:var(--fg);letter-spacing:.4px;text-transform:uppercase}
+  .d{font:300 11.5px 'Space Grotesk';fill:var(--muted)}
+  .df{font:400 11.5px 'Space Grotesk';fill:var(--fg)}
+  .box{fill:var(--panel);stroke:var(--line);stroke-width:1}
+  .boxA{fill:rgba(255,90,31,.07);stroke:var(--deep);stroke-width:1.2}
+  .region{fill:none;stroke:var(--line);stroke-width:1}
+  .regionfill{fill:rgba(255,255,255,.012);stroke:var(--line);stroke-width:1}
+  .conn{stroke:rgba(246,239,230,.28);stroke-width:1;fill:none}
+  .connA{stroke:var(--accent);stroke-width:1.2;fill:none}
+  .dash{stroke-dasharray:5 4}
+  .gl{font:500 10.5px 'JetBrains Mono',monospace;fill:var(--muted);letter-spacing:1.5px}
+</style>
+</head>
+<body>
+<svg viewBox="0 0 1700 1330" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="#ff5a1f" stroke-width="1.2"/></marker>
+    <marker id="ahm" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8" fill="none" stroke="rgba(246,239,230,.4)" stroke-width="1"/></marker>
+    <marker id="ah2" markerWidth="9" markerHeight="9" refX="1" refY="4" orient="auto"><path d="M8,0 L0,4 L8,8" fill="none" stroke="#ff5a1f" stroke-width="1.2"/></marker>
+  </defs>
+
+  <!-- ───────── title ───────── -->
+  <text x="40" y="44" class="eyebrow">// IGRIS · SYSTEM ARCHITECTURE · v7.0</text>
+  <text x="40" y="86" class="title">The Igris OS — full system map</text>
+  <text x="40" y="110" class="subt">Model = CPU · Igris = OS · /boot = bootloader · project = mounted volume</text>
+
+  <!-- ───────── HARNESSES ───────── -->
+  <text x="40" y="150" class="band">HARNESSES — DETECTED AT BOOT</text>
+  <g>
+    <rect class="box" x="40"   y="160" width="312" height="44"/><text x="56" y="187" class="key">Claude</text><text x="336" y="187" class="d" text-anchor="end">native subagents</text>
+    <rect class="box" x="368"  y="160" width="312" height="44"/><text x="384" y="187" class="key">Codex</text><text x="664" y="187" class="d" text-anchor="end">compiled harness</text>
+    <rect class="box" x="696"  y="160" width="312" height="44"/><text x="712" y="187" class="key">Gemini</text><text x="992" y="187" class="d" text-anchor="end">dynamic-define</text>
+    <rect class="box" x="1024" y="160" width="312" height="44"/><text x="1040" y="187" class="key">OpenCode</text><text x="1320" y="187" class="d" text-anchor="end">plugin bridge</text>
+    <rect class="box" x="1352" y="160" width="308" height="44"/><text x="1368" y="187" class="key">Antigravity</text><text x="1644" y="187" class="d" text-anchor="end">dynamic-define</text>
+  </g>
+  <!-- harness → detect funnel -->
+  <path class="conn" d="M196,204 L196,232" marker-end="url(#ahm)"/>
+  <path class="conn" d="M524,204 L300,232"/>
+  <path class="conn" d="M852,204 L360,232"/>
+
+  <!-- ───────── BOOTLOADER ───────── -->
+  <text x="40" y="244" class="band">/AWAKEN — THE BOOTLOADER  ·  LIFECYCLE (WHEN)</text>
+  <g>
+    <rect class="boxA" x="40"   y="254" width="200" height="50"/><text x="56" y="280" class="keyA">Detect</text><text x="56" y="296" class="d">which harness?</text>
+    <rect class="box"  x="290"  y="254" width="200" height="50"/><text x="306" y="280" class="key">Boot</text><text x="306" y="296" class="d">load the OS</text>
+    <rect class="box"  x="540"  y="254" width="200" height="50"/><text x="556" y="280" class="key">Login</text><text x="556" y="296" class="d">who I serve</text>
+    <rect class="box"  x="790"  y="254" width="200" height="50"/><text x="806" y="280" class="key">Mount</text><text x="806" y="296" class="d">the project</text>
+    <rect class="box"  x="1040" y="254" width="220" height="50"/><text x="1056" y="280" class="key">Userland</text><text x="1056" y="296" class="d">do the work</text>
+    <path class="connA" d="M242,279 L288,279" marker-end="url(#ah)"/>
+    <path class="connA" d="M492,279 L538,279" marker-end="url(#ah)"/>
+    <path class="connA" d="M742,279 L788,279" marker-end="url(#ah)"/>
+    <path class="connA" d="M992,279 L1038,279" marker-end="url(#ah)"/>
+  </g>
+  <text x="1290" y="285" class="d" style="font-size:12px">Boot loads the OS ↓ · Mount runs the verbs → Userland invokes the skills</text>
+
+  <!-- ───────── THE OS (two faces) ───────── -->
+  <rect class="region" x="40" y="338" width="1180" height="560"/>
+  <text x="58" y="368" class="keybig">The Igris OS</text>
+  <text x="58" y="386" class="gl">core/os/ · SOUL.md · USER.md</text>
+
+  <!-- CONTEXT column -->
+  <text x="58" y="416" class="band">CONTEXT — CONTRACTS THE MODEL READS</text>
+  <rect class="boxA" x="58" y="426" width="520" height="40"/><text x="74" y="451" class="keyA">INDEX</text><text x="562" y="451" class="d" text-anchor="end">generated map · discovery</text>
+  <rect class="box" x="58"  y="476" width="252" height="46"/><text x="74" y="500" class="key">identity</text><text x="74" y="516" class="d">SOUL.md · persona</text>
+  <rect class="box" x="326" y="476" width="252" height="46"/><text x="342" y="500" class="key">operator</text><text x="342" y="516" class="d">USER.md · who I serve</text>
+  <rect class="box" x="58"  y="532" width="252" height="46"/><text x="74" y="556" class="key">conduct</text><text x="74" y="572" class="d">os/conduct.md · always-on rules</text>
+  <rect class="box" x="326" y="532" width="252" height="46"/><text x="342" y="556" class="key">standards</text><text x="342" y="572" class="d">universal baseline</text>
+  <text x="58" y="604" class="gl">CAPABILITY</text>
+  <rect class="box" x="58"  y="612" width="166" height="46"/><text x="74" y="636" class="key">memory</text><text x="74" y="652" class="d">recall / store</text>
+  <rect class="box" x="234" y="612" width="166" height="46"/><text x="250" y="636" class="key">delegation</text><text x="250" y="652" class="d">to a role</text>
+  <rect class="box" x="410" y="612" width="168" height="46"/><text x="426" y="636" class="key">self-extend</text><text x="426" y="652" class="d">grow the OS</text>
+  <rect class="box" x="58" y="668" width="520" height="48"/><text x="74" y="692" class="key">protocol · the skills</text><text x="74" y="708" class="d">boot · hunt · scan · register · rest · team · audit · document · harvest · reuse …</text>
+  <rect class="box" x="58"  y="726" width="252" height="46"/><text x="74" y="750" class="key">knowledge-map</text><text x="74" y="766" class="d">route knowledge by kind</text>
+  <rect class="box" x="326" y="726" width="252" height="46"/><text x="342" y="750" class="key">harness-specific</text><text x="342" y="766" class="d">detected harness's adapter</text>
+
+  <!-- gutter -->
+  <line class="conn dash" x1="600" y1="430" x2="600" y2="860"/>
+  <text x="600" y="430" class="gl" transform="rotate(90 600 430)" style="fill:#ff5a1f">CONTRACT ↔ IMPL</text>
+
+  <!-- MECHANISM column -->
+  <text x="622" y="416" class="band">MECHANISM — CODE THAT RUNS</text>
+  <rect class="box" x="622" y="426" width="578" height="46"/><text x="638" y="450" class="key">environment</text><text x="638" y="466" class="d">detect harness + capabilities + degradation mode</text>
+  <rect class="box" x="622" y="482" width="578" height="56"/><text x="638" y="506" class="key">enforcement</text><text x="638" y="524" class="d">brief-gate · phase-guard · consumer-sweep  +  enforcement registry</text>
+  <rect class="box" x="622" y="548" width="578" height="56"/><text x="638" y="572" class="key">verbs</text><text x="638" y="590" class="d">session gather/register · boot-sync · assess · housekeeping · igris add · harness compile</text>
+  <rect class="box" x="622" y="614" width="578" height="46"/><text x="638" y="638" class="key">memory</text><text x="638" y="654" class="d">igris-brain MCP · local stdio per instance</text>
+  <rect class="box" x="622" y="670" width="578" height="46"/><text x="638" y="694" class="key">discovery</text><text x="638" y="710" class="d">gen_os_index.sh · scans self-describing parts → generates INDEX</text>
+
+  <!-- contract↔impl connectors -->
+  <path class="connA dash" d="M578,446 C605,446 600,693 622,693" marker-end="url(#ah)"/>            <!-- discovery → INDEX -->
+  <path class="conn dash"  d="M578,635 C605,635 600,637 622,637"/>                                   <!-- memory.md ↔ memory -->
+  <path class="conn dash"  d="M578,555 C605,555 600,510 622,510"/>                                   <!-- conduct ↔ enforcement -->
+  <path class="conn dash"  d="M578,635 C605,635 600,576 622,576"/>                                   <!-- self-extend ↔ verbs -->
+  <path class="conn dash"  d="M578,692 C606,692 600,576 622,576"/>                                   <!-- protocol(skills) ↔ verbs -->
+
+  <!-- ───────── DELEGATION ───────── -->
+  <rect class="region" x="1240" y="338" width="420" height="560"/>
+  <text x="1258" y="368" class="band" style="fill:#ff5a1f">DELEGATION</text>
+  <rect class="boxA" x="1258" y="382" width="384" height="58"/><text x="1274" y="408" class="keyA">ORCHESTRATOR</text><text x="1274" y="426" class="d">owns brief · session · workflow — delegates work</text>
+  <text x="1258" y="466" class="gl">↓ DELEGATE TO THE ROLE THAT FITS</text>
+  <g>
+    <rect class="box" x="1258" y="476" width="120" height="42"/><text x="1274" y="502" class="key" style="font-size:13px">architect</text>
+    <rect class="box" x="1390" y="476" width="120" height="42"/><text x="1406" y="502" class="key" style="font-size:13px">forger</text>
+    <rect class="box" x="1522" y="476" width="120" height="42"/><text x="1538" y="502" class="key" style="font-size:13px">sentinel</text>
+    <rect class="box" x="1258" y="526" width="120" height="42"/><text x="1274" y="552" class="key" style="font-size:13px">warden</text>
+    <rect class="box" x="1390" y="526" width="120" height="42"/><text x="1406" y="552" class="key" style="font-size:13px">mender</text>
+    <rect class="box" x="1522" y="526" width="120" height="42"/><text x="1538" y="552" class="key" style="font-size:13px">seeker</text>
+    <rect class="box" x="1258" y="576" width="120" height="42"/><text x="1274" y="602" class="key" style="font-size:13px">sage</text>
+    <rect class="box" x="1390" y="576" width="120" height="42"/><text x="1406" y="602" class="key" style="font-size:13px">aegis</text>
+    <rect class="box" x="1522" y="576" width="120" height="42"/><text x="1538" y="602" class="key" style="font-size:13px">scribe</text>
+  </g>
+  <text x="1258" y="654" class="gl">WORKFLOW (PER BRIEF)</text>
+  <g>
+    <rect class="box" x="1258" y="664" width="384" height="40"/>
+    <text x="1450" y="689" class="keyA" text-anchor="middle" style="font-size:12.5px">plan → build → test → review → commit</text>
+  </g>
+  <text x="1258" y="744" class="gl">QUALITY GATES</text>
+  <rect class="box" x="1258" y="754" width="384" height="120"/>
+  <text x="1274" y="780" class="df">▸ brief-first — no edit without a brief</text>
+  <text x="1274" y="804" class="df">▸ phase-guard — no out-of-phase commit</text>
+  <text x="1274" y="828" class="df">▸ consumer-sweep — re-point every consumer</text>
+  <text x="1274" y="852" class="df">▸ delegation — specialists behind the gates</text>
+
+  <!-- mechanism.memory → store connector -->
+  <path class="connA" d="M911,716 L911,948" marker-end="url(#ah)"/>
+  <text x="922" y="740" class="gl" style="fill:#ff5a1f">backed by ↓</text>
+
+  <!-- ───────── STORES ───────── -->
+  <text x="40" y="940" class="band">STORES — DATA THE OS DRAWS ON (NOT OS CODE)</text>
+  <!-- knowledge.db -->
+  <rect class="regionfill" x="40" y="950" width="740" height="200"/>
+  <text x="58" y="980" class="keybig" style="font-size:17px">knowledge.db</text>
+  <text x="58" y="998" class="gl">the brain · igris-brain MCP</text>
+  <g>
+    <rect class="box" x="58"  y="1012" width="160" height="40"/><text x="138" y="1037" class="key" text-anchor="middle" style="font-size:12px">learnings</text>
+    <rect class="box" x="230" y="1012" width="160" height="40"/><text x="310" y="1037" class="key" text-anchor="middle" style="font-size:12px">graph</text>
+    <rect class="box" x="402" y="1012" width="160" height="40"/><text x="482" y="1037" class="key" text-anchor="middle" style="font-size:12px">briefs</text>
+    <rect class="box" x="574" y="1012" width="186" height="40"/><text x="667" y="1037" class="key" text-anchor="middle" style="font-size:12px">errors</text>
+    <rect class="box" x="58"  y="1062" width="160" height="40"/><text x="138" y="1087" class="key" text-anchor="middle" style="font-size:12px">sessions</text>
+    <rect class="box" x="230" y="1062" width="160" height="40"/><text x="310" y="1087" class="key" text-anchor="middle" style="font-size:12px">goals</text>
+    <rect class="box" x="402" y="1062" width="160" height="40"/><text x="482" y="1087" class="key" text-anchor="middle" style="font-size:12px">metrics</text>
+    <rect class="box" x="574" y="1062" width="186" height="40"/><text x="667" y="1087" class="key" text-anchor="middle" style="font-size:12px">perception</text>
+  </g>
+  <text x="58" y="1130" class="d">8 record-kinds · hybrid search · cross-project recall</text>
+
+  <!-- loadout -->
+  <rect class="regionfill" x="800" y="950" width="380" height="200"/>
+  <text x="818" y="980" class="keybig" style="font-size:17px">loadout</text>
+  <text x="818" y="998" class="gl">~/.igris/loadout/</text>
+  <rect class="box" x="818" y="1012" width="344" height="40"/><text x="834" y="1037" class="key" style="font-size:12.5px">agents · skills customizations</text>
+  <rect class="box" x="818" y="1062" width="344" height="40"/><text x="834" y="1087" class="key" style="font-size:12.5px">reusable-asset catalog (lego)</text>
+  <text x="818" y="1130" class="d">layer-2 · bring-your-own surfaces</text>
+
+  <!-- domain docs -->
+  <rect class="regionfill" x="1200" y="950" width="460" height="200"/>
+  <text x="1218" y="980" class="keybig" style="font-size:17px">domain docs</text>
+  <text x="1218" y="998" class="gl">~/.igris/projects/{project}/context/</text>
+  <rect class="box" x="1218" y="1012" width="208" height="40"/><text x="1234" y="1037" class="key" style="font-size:12.5px">coding_guidelines</text>
+  <rect class="box" x="1438" y="1012" width="204" height="40"/><text x="1454" y="1037" class="key" style="font-size:12.5px">architecture</text>
+  <rect class="box" x="1218" y="1062" width="208" height="40"/><text x="1234" y="1087" class="key" style="font-size:12.5px">design system</text>
+  <rect class="box" x="1438" y="1062" width="204" height="40"/><text x="1454" y="1087" class="key" style="font-size:12.5px">brand</text>
+  <text x="1218" y="1130" class="d">curated standards · OS-owned, project-scoped</text>
+
+  <!-- ───────── VPS SYNC ───────── -->
+  <rect class="boxA" x="40" y="1180" width="740" height="56"/>
+  <text x="58" y="1204" class="keyA">VPS SYNC · brain.fifty.dev (HTTPS)</text>
+  <text x="58" y="1222" class="d">pure HTTP sync hub — learnings, briefs &amp; decisions cross machines &amp; projects (last-write-wins)</text>
+  <path class="connA" d="M410,1150 L410,1178" marker-end="url(#ah)"/>
+  <path class="connA" d="M410,1178 L410,1152" marker-end="url(#ah2)"/>
+
+  <!-- ownership tiers -->
+  <rect class="box" x="800" y="1180" width="860" height="56"/>
+  <text x="818" y="1204" class="bandm">OWNERSHIP TIERS</text>
+  <text x="818" y="1224" class="df" style="font-size:12.5px">OS core (core/os/)  ·  OS project-knowledge (~/.igris/projects/ — OS-owned)  ·  the project (your repo — user-owned)</text>
+
+  <!-- footer -->
+  <text x="40" y="1306" class="gl">fifty.dev · IGRIS v7.0 · self-describing · harness-agnostic · brain-backed</text>
+  <text x="1660" y="1306" class="gl" text-anchor="end">contracts ⇄ mechanisms · one fact, one source</text>
+</svg>
+</body>
+</html>

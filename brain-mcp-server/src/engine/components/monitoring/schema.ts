@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component Schema
+ * Brain Engine v7.0 -- Monitoring Component Schema
  *
  * Defines the event_log table for storing engine event history.
  * Events are logged by the monitoring component which listens to
  * all orphan engine events (schedules, cache, coordination).
  *
  * @module engine/components/monitoring/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

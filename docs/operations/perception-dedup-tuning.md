@@ -36,9 +36,13 @@ all swing the embedding out of the dedup neighbourhood.
     4. drop structural punctuation (`. ! ? : ; , " ' ( ) [ ] { } | < > + = * ~ ^ @ # $ % &`)
     5. collapse whitespace runs (incl. tabs, newlines) to single space
     6. trim
-   The same normalisation is mirrored in `runner.ts::persistCandidate` so
-   stored embeddings live in the same space as dedup queries — geometric
-   consistency is preserved without a forced backfill of pre-TD-087 rows.
+   The same normalisation is mirrored in the perception persist path
+   (`cognition/extractors/perception.ts::persistCandidate`) so perception-channel
+   stored embeddings live in the same space as dedup queries. Note this
+   consistency holds **only for the perception channel** — the manual
+   `igris_memory_store` channel embeds RAW `${title} ${content}` regardless of
+   date, so its stored geometry stays un-normalised until backfilled (see
+   [Backfill decision](#backfill-decision) — the TD-286 channel-aware backfill).
 
 2. **Lower the default threshold** from 0.85 → 0.80 (`types.ts`
    `DEFAULT_PERCEPTION_CONFIG.dedup_cosine_threshold`). Operator overrides
@@ -291,24 +295,49 @@ sqlite3 /tmp/td087_rollback_check.db "
 
 ## Backfill decision
 
-**No backfill.** Pre-TD-087 rows have non-normalised embeddings. The
-dedup window for these is degraded but still works for high-similarity
-matches (≥ 0.85). The TTL filter (`pending_review_ttl_days = 14`) phases
-them out within two weeks. Approved rows persist with their original
-embeddings indefinitely — for those, the dedup pre-filter compares a
-normalised query vector against a non-normalised stored vector, so cosine
-is artificially depressed for genuine paraphrase pairs that span the
-TD-087 boundary. This is acceptable because:
+**Channel-aware backfill — shipped as TD-286.** (This section originally
+declined a backfill on a *temporal* premise — "pre-TD-087 rows have
+non-normalised embeddings." TD-285 showed that premise was wrong: the
+depressed cosine is **channel-based, not date-based**.)
 
-- High-similarity duplicates (cosine ≥ 0.95) still cross the threshold
-  trivially.
-- Mid-band paraphrases that fail to dedup against a pre-TD-087 row will
-  insert as a new row, and that row's embedding IS normalised — subsequent
-  paraphrases dedup against the new anchor.
-- Forced backfill costs ~1-2s per row × ~200 rows = 1-5 minutes of
-  embedding work + an UPDATE per row. The benefit is bounded (the row
-  ages out of pending_review in 14 days anyway, and approved-row dedup
-  windows recover automatically over a few sessions).
+The root cause is asymmetric embedding geometry across ingestion channels,
+independent of `created_at`:
+
+- **Perception channel** (`cognition/extractors/perception.ts:265`) embeds the
+  normalised fingerprint `${normalizeForDedup(title)} ${normalizeForDedup(
+  content)}` — so its stored geometry already lives in the space the 0.80
+  threshold was F1-tuned for.
+- **Manual channel** (`igris_memory_store`, `src/tools/memory.ts:283`) embeds
+  RAW `${title} ${content}` — **regardless of date**. Every manually-stored
+  learning holds un-normalised geometry, whether written before or after
+  TD-087.
+
+The live dedup query is always normalised (`dedup.ts:245`), so it measures a
+normalised query vector against a RAW-stored vector for every manual row —
+artificially depressing cosine for genuine paraphrase pairs. TD-285's acid
+test quantified the effect (Path A caught 0/258 vs Path B's 3/258 on the
+pending proxy corpus); the residual duplicates were a pre-normalisation
+artifact, not a live recall gap.
+
+**TD-286 performs the backfill this section previously declined.**
+`brain-mcp-server/scripts/td286_renormalize_backfill.ts` detects RAW-stored
+rows using the TD-285 `svr > svn` classifier (not a date filter — self-limiting
+and re-run-safe), re-embeds them on the normalised fingerprint, and rewrites
+`learnings.embedding` (BLOB + `embedding_model`) **and** `learnings_vec` in a
+single per-row transaction (lockstep). It is idempotent (`norm`-classified rows
+are skipped) and resumable (each row commits independently). Dry-run is the
+default; `--apply` is the explicit opt-in. A dry-run over the live corpus at
+build time found 447 RAW-stored rows (all approved) out of 711 embedded, with
+264 already norm-stored (the perception channel + a handful of approved rows).
+
+**Guardrail — unchanged.** The backfill realigns *stored geometry* only; it
+does **not** touch the dedup threshold. The `0.80` default (and the
+`dedup_cosine_threshold` config/env overrides) are untouched, and the
+complementary-facet band around `~0.71–0.79` (the real-LLM `0.69–0.78`
+paraphrases documented above) remains FR-119 / FR-116 semantic-merge
+territory — out of scope for cheap-dedup. Because the backfill moves stored
+vectors uniformly *into* the space the threshold was tuned for, the F1 numbers
+in this doc continue to describe the live system.
 
 ## Future work
 

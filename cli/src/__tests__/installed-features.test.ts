@@ -117,7 +117,7 @@ describe("installed-features — read/write/migrate", () => {
 
   it("hash is stable across same canonical input (deterministic)", async () => {
     const m = await import("../lib/installed-features.js");
-    // Stage a fake brain runtime: canonical hooks file + agents manifest + rules + skills.
+    // Stage a fake brain runtime: canonical hooks file + agents manifest + skills.
     const hooksDir = join(tmpRoot, "core", "hooks");
     mkdirSync(hooksDir, { recursive: true });
     writeFileSync(
@@ -127,9 +127,6 @@ describe("installed-features — read/write/migrate", () => {
     const agentsDir = join(tmpRoot, "core", "agents");
     mkdirSync(agentsDir, { recursive: true });
     writeFileSync(join(agentsDir, "manifest.yaml"), "agents: []\n");
-    const rulesDir = join(tmpRoot, "core", "rules");
-    mkdirSync(rulesDir, { recursive: true });
-    writeFileSync(join(rulesDir, "00-igris-universal.md"), "# universal\n");
     const skillsDir = join(tmpRoot, "core", "skills", "demo");
     mkdirSync(skillsDir, { recursive: true });
     writeFileSync(join(skillsDir, "SKILL.md"), "skill\n");
@@ -144,8 +141,9 @@ describe("installed-features — read/write/migrate", () => {
     expect(a).toEqual(b);
     expect(typeof a.hooks_version).toBe("string");
     expect(typeof a.agents_version).toBe("string");
-    expect(typeof a.rules_version).toBe("string");
     expect(typeof a.skills_version).toBe("string");
+    // FR-187: the universal rule retired; rules_version is always null now.
+    expect(a.rules_version).toBe(null);
   });
 
   it("hash is null for each missing input", async () => {
@@ -153,6 +151,7 @@ describe("installed-features — read/write/migrate", () => {
     const a = m.computeFeatureHashes({ includeHooks: true });
     expect(a.hooks_version).toBe(null);
     expect(a.agents_version).toBe(null);
+    // FR-187: rules_version is a deprecated always-null vestige.
     expect(a.rules_version).toBe(null);
     expect(a.skills_version).toBe(null);
   });

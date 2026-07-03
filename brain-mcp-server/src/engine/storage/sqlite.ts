@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — SQLite Storage Adapter
+ * Brain Engine v7.0 — SQLite Storage Adapter
  *
  * Wraps better-sqlite3 to implement the StorageAdapter interface.
  * Sets pragmas (WAL, busy_timeout, foreign_keys, trusted_schema=OFF).
@@ -7,7 +7,7 @@
  * in the engine_migrations table.
  *
  * @module engine/storage/sqlite
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createRequire } from 'node:module';

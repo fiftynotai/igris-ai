@@ -1,0 +1,3 @@
+- [better-sqlite3 iterate vs writes](feedback_better_sqlite3_iterate_writes.md) — `.iterate()` blocks the connection; use `.all()` when the loop writes back
+- [node stub -- separator for spawn tests](feedback_node_stub_arg_separator.md) — append `--` to args when factory under test appends `--system <prompt>` afterwards
+- [Mock at I/O boundary, not domain boundary](feedback_mock_at_io_boundary.md) — for CLI tests, mock fetch/getDb, NOT the handler under test (BR-064 lesson)

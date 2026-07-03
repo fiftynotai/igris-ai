@@ -3,7 +3,7 @@
  *
  * Inverts `igris install`: writes the brain `projects` registry row only.
  * Does NOT:
- *   - touch <path>/.claude/ (no symlinks, no settings.json merge, no CLAUDE.md)
+ *   - touch <path>/.claude/ (no symlinks, no settings.json merge)
  *   - write installed_features.json
  *   - merge hooks
  *   - regenerate .igris_version
@@ -33,7 +33,7 @@ export interface RegisterProjectOptions {
    * Without this flag, a missing path is a hard error (exit 1).
    */
   allowMissingPath?: boolean;
-  /** Internal: CLI version stamp; defaults to 7.0.0. */
+  /** Internal: CLI version stamp; defaults to 7.1.0. */
   cliVersion?: string;
 }
 
@@ -72,7 +72,7 @@ export async function runRegisterProject(
   }
   validateSlug(slug);
 
-  const cliVersion = opts.cliVersion ?? "7.0.0";
+  const cliVersion = opts.cliVersion ?? "7.1.0";
 
   // 4. Registry write — the entire scope of this verb.
   try {
@@ -92,6 +92,6 @@ export async function runRegisterProject(
   info(`Registered project: ${slug} -> ${absPath}`);
   info("");
   info("Note: register-project writes the brain registry row only.");
-  info("To install symlinks, hooks, and CLAUDE.md, run: igris install <path>");
+  info("To install symlinks and hooks, run: igris install <path>");
   return 0;
 }

@@ -1,14 +1,20 @@
 /**
- * Brain Engine v5.0 -- Context Component
+ * Brain Engine v7.0 -- Context Component
  *
  * Manages project context files (coding guidelines, architecture maps, etc.)
  * in the brain DB. Provides registration, retrieval by key, and access to
- * the global context routing tree from ~/.igris/core/igris_tree.json.
+ * the generated OS module roster at ~/.igris/core/os/INDEX.md.
+ *
+ * FR-187 cutover: the legacy ~/.igris/core/igris_tree.json + the
+ * ~/.igris/core/prompts/igris_os.md monolith are retired. The os/ INDEX is a
+ * generated markdown manifest produced by core/scripts/gen_os_index.sh; its
+ * boot-tier modules are self-contained files (no `<!-- SECTION: -->` slicing).
+ * The two roster-reading tools below are re-pointed onto the INDEX.
  *
  * Provides: igris_context_register, igris_context_get, igris_context_tree, igris_context_load
  *
  * @module engine/components/context
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -25,88 +31,147 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 // ---------------------------------------------------------------------------
-// Section extraction helpers (marker-based, not line-number-based)
+// OS INDEX parsing (FR-187 cutover)
 // ---------------------------------------------------------------------------
+//
+// The os/ INDEX is a generated markdown manifest (core/scripts/gen_os_index.sh).
+// Its module roster is the first markdown table after the `# Igris OS` heading:
+//
+//   | module | layer | tier | scope | summary | consult_when |
+//   |---|---|---|---|---|---|
+//   | conduct | conduct | boot | orchestrator | ... | — |
+//   | SOUL    | identity | boot | orchestrator | ... | — |
+//
+// A module name resolves to a file: `SOUL` -> ~/.igris/core/SOUL.md; every
+// other name -> ~/.igris/core/os/<name>.md (mirrors gen_os_index.sh's
+// module_name()).
 
-/** Regex to match `<!-- SECTION: name -->` ... `<!-- /SECTION: name -->` blocks */
-const SECTION_OPEN_RE = /^<!--\s*SECTION:\s*(\S+)\s*-->/;
-const SECTION_CLOSE_PREFIX = '<!-- /SECTION:';
+/** Absolute path to the generated OS module index. */
+export function osIndexPath(): string {
+  return join(homedir(), '.igris', 'core', 'os', 'INDEX.md');
+}
+
+/** A single module-roster row parsed from the INDEX. */
+export interface IndexModule {
+  module: string;
+  layer: string;
+  tier: string;
+  scope: string;
+  summary: string;
+  consult_when: string;
+}
 
 /**
- * Extract named sections from a file that uses `<!-- SECTION: name -->` markers.
+ * Parse the module-roster table out of the generated os/ INDEX markdown.
  *
- * Returns the concatenated content of only the requested sections.
- * Sections not found in the file are silently skipped.
+ * Only the leading roster table (header `| module | layer | tier | ... |`) is
+ * read; the later Agent / Harness rosters use different headers and are
+ * ignored. Returns one entry per data row, in INDEX order.
  */
-export function extractSections(fileContent: string, sectionNames: string[]): string {
-  const wanted = new Set(sectionNames);
-  const lines = fileContent.split('\n');
-  const parts: string[] = [];
-  let capturing = false;
-  let currentSection = '';
+export function parseIndexModules(indexContent: string): IndexModule[] {
+  const lines = indexContent.split('\n');
+  const modules: IndexModule[] = [];
+  let inTable = false;
 
   for (const line of lines) {
-    const openMatch = SECTION_OPEN_RE.exec(line);
-    if (openMatch) {
-      const name = openMatch[1];
-      if (wanted.has(name)) {
-        capturing = true;
-        currentSection = name;
-        parts.push(line);
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('|')) {
+      // A non-pipe line ends the current table; stop after the first table.
+      if (inTable) break;
+      continue;
+    }
+
+    const cells = trimmed
+      .replace(/^\|/, '')
+      .replace(/\|$/, '')
+      .split('|')
+      .map((c) => c.trim());
+
+    // Header row: starts the module roster (must lead with "module").
+    if (!inTable) {
+      if (cells[0]?.toLowerCase() === 'module') {
+        inTable = true;
       }
       continue;
     }
 
-    if (capturing && line.trimStart().startsWith(SECTION_CLOSE_PREFIX) && line.includes(currentSection)) {
-      parts.push(line);
-      capturing = false;
-      currentSection = '';
+    // Separator row (e.g. `|---|---|...|`) — skip.
+    if (cells.every((c) => /^-+$/.test(c) || c === '')) {
       continue;
     }
 
-    if (capturing) {
-      parts.push(line);
+    if (cells.length >= 4 && cells[0]) {
+      modules.push({
+        module: cells[0],
+        layer: cells[1] ?? '',
+        tier: cells[2] ?? '',
+        scope: cells[3] ?? '',
+        summary: cells[4] ?? '',
+        consult_when: cells[5] ?? '',
+      });
     }
   }
 
-  return parts.join('\n');
+  return modules;
 }
 
 /**
- * Resolve a context file path, replacing `~` with homedir
- * and `{project}` with the project slug.
+ * Resolve an INDEX module display name to its absolute source file path.
+ * Mirrors gen_os_index.sh: `SOUL` lives at core/SOUL.md; the `USER` operator
+ * row lives at machine-home (~/.igris/USER.md); everything else under
+ * core/os/<name>.md. (The operator row is filtered out of the bundled set in
+ * the loader — TD-271 — so this case is defensive for any other caller.)
  */
-export function resolveContextPath(rawPath: string, project: string): string {
+export function moduleFilePath(moduleName: string): string {
+  const coreDir = join(homedir(), '.igris', 'core');
+  if (moduleName === 'SOUL') {
+    return join(coreDir, 'SOUL.md');
+  }
+  if (moduleName === 'USER') {
+    return join(homedir(), '.igris', 'USER.md');
+  }
+  return join(coreDir, 'os', `${moduleName}.md`);
+}
+
+/**
+ * Resolve a context file path, replacing `~` with homedir,
+ * `{project}` with the project slug, and `{repo_root}` with the project's
+ * absolute repo path from the registry (when provided).
+ *
+ * `repoRoot` is the project's `path` column from the projects registry. When
+ * it is absent (project not registered, or path empty), a `{repo_root}` token
+ * is left unresolved — the caller's existsSync() then treats the file as
+ * missing rather than crashing (FR-186: graceful degradation).
+ */
+export function resolveContextPath(rawPath: string, project: string, repoRoot?: string): string {
   if (/[\/\\]|\.\./.test(project)) {
     throw new Error(`Invalid project slug: "${project}" contains path traversal characters`);
   }
-  return rawPath
+  let resolved = rawPath
     .replace(/^~/, homedir())
     .replace(/\{project\}/g, project);
+  if (repoRoot) {
+    resolved = resolved.replace(/\{repo_root\}/g, repoRoot.replace(/\/+$/, ''));
+  }
+  return resolved;
 }
 
 // ---------------------------------------------------------------------------
-// Tree types (minimal, for internal use only)
+// Actor scope model (FR-187 cutover)
 // ---------------------------------------------------------------------------
+//
+// The legacy per-actor `sections` routing (tree.tasks / tree.agents) is gone.
+// The INDEX exposes a `scope` per module: `orchestrator` or `universal`.
+// - A task actor (e.g. "/hunt", "/awaken") IS the orchestrator -> it loads the
+//   boot-tier modules scoped `orchestrator` OR `universal`.
+// - An agent actor (e.g. "forger", "architect") is a subagent -> it loads only
+//   the boot-tier modules scoped `universal`.
 
-interface TreeContextFile {
-  path: string;
-  sections?: Record<string, { lines: string; kb: number; tier: string }>;
-  optional?: boolean;
-}
-
-interface TreeActorConfig {
-  load: string[];
-  sections?: Record<string, string | string[]>;
-  load_if?: Record<string, string[]>;
-  note?: string;
-}
-
-interface ContextTree {
-  version: string;
-  context_files: Record<string, TreeContextFile>;
-  tasks: Record<string, TreeActorConfig>;
-  agents: Record<string, TreeActorConfig>;
+/** Returns the INDEX `scope` values a given actor is entitled to load. */
+function scopesForActor(actorType: 'task' | 'agent'): Set<string> {
+  return actorType === 'task'
+    ? new Set(['orchestrator', 'universal'])
+    : new Set(['universal']);
 }
 
 export function createContextComponent(): BrainComponent {
@@ -262,7 +327,11 @@ export function createContextComponent(): BrainComponent {
         // -----------------------------------------------------------------
         {
           name: 'igris_context_tree',
-          description: 'Get the global Igris context routing tree from ~/.igris/core/igris_tree.json. Returns the full tree structure that defines how context files are resolved and routed.',
+          description:
+            'Get the generated Igris OS module index from ~/.igris/core/os/INDEX.md. ' +
+            'Returns the os/ INDEX markdown — the generated roster of OS context modules ' +
+            '(with tier/scope), agents, and harness-specific files. This replaces the ' +
+            'retired igris_tree.json routing tree.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -270,12 +339,13 @@ export function createContextComponent(): BrainComponent {
           },
           handler: () => {
             try {
-              const treePath = join(homedir(), '.igris', 'core', 'igris_tree.json');
-              const content = readFileSync(treePath, 'utf-8');
+              const indexPath = osIndexPath();
+              const content = readFileSync(indexPath, 'utf-8');
               return successResult(content);
             } catch (err) {
               return errorResult(
-                `Failed to read igris_tree.json: ${errMsg(err)}. Ensure ~/.igris/core/igris_tree.json exists.`
+                `Failed to read os/ INDEX: ${errMsg(err)}. Ensure ~/.igris/core/os/INDEX.md exists ` +
+                `(generated by core/scripts/gen_os_index.sh).`
               );
             }
           },
@@ -287,10 +357,12 @@ export function createContextComponent(): BrainComponent {
         {
           name: 'igris_context_load',
           description:
-            'One-call context resolver. Given an actor (task name like "/hunt" or agent name like "forger") ' +
-            'and a project slug, reads igris_tree.json, resolves all context file paths, reads their contents ' +
-            '(extracting specific sections from igris_os.md when configured), and returns the concatenated result. ' +
-            'Use this instead of manually reading the tree + resolving paths + reading files.',
+            'One-call OS boot-context resolver. Given an actor (task name like "/hunt" or ' +
+            'agent name like "forger") and a project slug, reads ~/.igris/core/os/INDEX.md, ' +
+            'selects the boot-tier OS modules the actor is scoped to load (a task is the ' +
+            'orchestrator -> orchestrator + universal modules; an agent is a subagent -> ' +
+            'universal modules only), reads each self-contained module file, and returns the ' +
+            'concatenated result. Modules are whole files — there is no section slicing.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -303,7 +375,7 @@ export function createContextComponent(): BrainComponent {
               },
               project: {
                 type: 'string',
-                description: 'Project slug for path resolution (e.g., "igris-ai").',
+                description: 'Project slug (recorded on the result; reserved for future use).',
               },
             },
             required: ['actor', 'project'],
@@ -313,78 +385,45 @@ export function createContextComponent(): BrainComponent {
               const actor = args.actor as string;
               const project = args.project as string;
 
-              // 1. Read the tree
-              const treePath = join(homedir(), '.igris', 'core', 'igris_tree.json');
-              if (!existsSync(treePath)) {
+              // 1. Read the generated os/ INDEX (replaces igris_tree.json).
+              const indexPath = osIndexPath();
+              if (!existsSync(indexPath)) {
                 return errorResult(
-                  'igris_tree.json not found at ~/.igris/core/igris_tree.json. ' +
-                  'Fallback: read the full igris_os.md at ~/.igris/core/prompts/igris_os.md instead.'
+                  'os/ INDEX not found at ~/.igris/core/os/INDEX.md. ' +
+                  'Generate it with core/scripts/gen_os_index.sh.'
                 );
               }
 
-              const tree: ContextTree = JSON.parse(readFileSync(treePath, 'utf-8'));
+              const indexContent = readFileSync(indexPath, 'utf-8');
+              const modules = parseIndexModules(indexContent);
 
-              // 2. Resolve actor config — try tasks first, then agents
-              let actorConfig: TreeActorConfig | undefined;
-              let actorType: 'task' | 'agent';
+              // 2. Classify the actor. A leading "/" marks a task (the
+              //    orchestrator); anything else is an agent (a subagent).
+              const actorType: 'task' | 'agent' = actor.startsWith('/') ? 'task' : 'agent';
+              const allowedScopes = scopesForActor(actorType);
 
-              if (tree.tasks[actor]) {
-                actorConfig = tree.tasks[actor];
-                actorType = 'task';
-              } else if (tree.agents[actor]) {
-                actorConfig = tree.agents[actor];
-                actorType = 'agent';
-              } else {
-                const availableTasks = Object.keys(tree.tasks).join(', ');
-                const availableAgents = Object.keys(tree.agents).join(', ');
-                return errorResult(
-                  `Actor "${actor}" not found in igris_tree.json. ` +
-                  `Available tasks: ${availableTasks}. ` +
-                  `Available agents: ${availableAgents}.`
-                );
-              }
+              // 3. Select the boot-tier modules this actor is scoped to load.
+              //    The operator layer (USER.md) is machine-home, loaded by the
+              //    boot ceremony directly — it is in the INDEX for map
+              //    completeness but is NOT a core/os/ file and is not bundled
+              //    here (TD-271).
+              const selected = modules.filter(
+                (m) => m.tier === 'boot' && m.layer !== 'operator' && allowedScopes.has(m.scope)
+              );
 
-              // 3. Resolve and read each context file
+              // 4. Resolve each module name to its file and read it whole.
               const files: Array<{ key: string; path: string; content: string; size_bytes: number }> = [];
               const missing: string[] = [];
-              const sectionsLoaded: Record<string, string[]> = {};
 
-              const keysToLoad = new Set(actorConfig.load || []);
-              if (actorConfig.sections) {
-                for (const key of Object.keys(actorConfig.sections)) {
-                  keysToLoad.add(key);
-                }
-              }
-
-              for (const key of keysToLoad) {
-                const fileEntry = tree.context_files[key];
-                if (!fileEntry) {
-                  missing.push(key);
-                  continue;
-                }
-
-                const resolvedPath = resolveContextPath(fileEntry.path, project);
-
+              for (const mod of selected) {
+                const resolvedPath = moduleFilePath(mod.module);
                 if (!existsSync(resolvedPath)) {
-                  // Optional files are expected to be absent sometimes
-                  missing.push(key);
+                  missing.push(mod.module);
                   continue;
                 }
-
-                let content = readFileSync(resolvedPath, 'utf-8');
-
-                // If this key has section restrictions in the actor config, extract only those sections
-                const sectionSpec = actorConfig.sections?.[key];
-                if (sectionSpec && fileEntry.sections) {
-                  if (Array.isArray(sectionSpec)) {
-                    content = extractSections(content, sectionSpec);
-                    sectionsLoaded[key] = sectionSpec;
-                  }
-                  // "ALL" means use the full file content — no extraction needed
-                }
-
+                const content = readFileSync(resolvedPath, 'utf-8');
                 files.push({
-                  key,
+                  key: mod.module,
                   path: resolvedPath,
                   content,
                   size_bytes: Buffer.byteLength(content, 'utf-8'),
@@ -402,9 +441,6 @@ export function createContextComponent(): BrainComponent {
                 total_kb: totalKb,
               };
 
-              if (Object.keys(sectionsLoaded).length > 0) {
-                result.sections_loaded = sectionsLoaded;
-              }
               if (missing.length > 0) {
                 result.missing = missing;
               }

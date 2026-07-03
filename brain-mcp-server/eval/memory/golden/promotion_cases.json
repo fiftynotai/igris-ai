@@ -1,0 +1,19 @@
+{
+  "description": "Cross-project promotion (promoteToGlobal). A title shared by 2+ projects (local, approved) whose first-200-char word-Jaccard >= 0.80 must flip ALL matching rows to scope='global'; a shared title below 0.80 must stay local. Pairs are seeded LAST so base seeding never fires a premature promotion. TP = true-dup correctly promoted; FP = distinct pair wrongly promoted; FN = true-dup not promoted.",
+  "cases": [
+    {
+      "id": "true_dup",
+      "keys": ["PROMO-A1", "PROMO-A2"],
+      "title": "Validate configuration on startup",
+      "expect": "promote",
+      "notes": "near-identical content (>=0.80 Jaccard on first 200 chars) across aurora-mobile + nimbus-api"
+    },
+    {
+      "id": "distinct",
+      "keys": ["PROMO-B1", "PROMO-B2"],
+      "title": "Handle the empty state",
+      "expect": "no_promote",
+      "notes": "same title, semantically different content (<0.80 Jaccard) across helio-web + pipeline-etl"
+    }
+  ]
+}

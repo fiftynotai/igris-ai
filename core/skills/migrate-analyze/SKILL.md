@@ -1,5 +1,6 @@
 ---
 name: migrate-analyze
+tier: opt-in
 description: Migration analysis - gap analysis, migration roadmaps, MG-XXX brief generation
 disable-model-invocation: false
 allowed-tools:
@@ -28,12 +29,6 @@ Migration analysis workflow. Compares current codebase against target standards,
 - Path to a base repo or standards file to compare against
 
 ## Workflow
-
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "migrate-analyze" 2>/dev/null || true
-```
 
 ### Step 1: Load Standards (Target State)
 

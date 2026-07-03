@@ -400,12 +400,19 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 38 listened events', () => {
+    it('events() declares 24 listened events', () => {
       // 34 base + 4 perception lifecycle events added in TD-074
-      // (perception.run_started/succeeded/failed/skipped).
+      // (perception.run_started/succeeded/failed/skipped). FR-118 M2 removed 6
+      // dead subconscious bus listeners (run_start/run_complete/
+      // suggestion_emitted/suggestion_suppressed/suggestion_verified/
+      // suggestion_rejected_by_verifier) — the subconscious now writes
+      // `cognition.subconscious.*` directly to event_log, NOT via the bus. Only
+      // `subconscious.bootstrap_failed` still rides the bus. 38 - 6 = 32.
+      // TD-265 removed 8 task/coordination listeners (7 task.* + 1
+      // coordination.self_heal) with the worker-subsystem teardown. 32 - 8 = 24.
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(38);
+      expect(listens).toHaveLength(24);
     });
 
     it('events() declares 0 emitted events', () => {
@@ -455,7 +462,6 @@ describe('Monitoring Component', () => {
 
       bus.emit('schedule.created', {});
       bus.emit('cache.rebuilt', {});
-      bus.emit('coordination.self_heal', {});
 
       const rows = db.prepare('SELECT event_name, component FROM event_log ORDER BY id').all() as {
         event_name: string;
@@ -464,7 +470,6 @@ describe('Monitoring Component', () => {
 
       expect(rows[0]).toEqual({ event_name: 'schedule.created', component: 'schedules' });
       expect(rows[1]).toEqual({ event_name: 'cache.rebuilt', component: 'cache' });
-      expect(rows[2]).toEqual({ event_name: 'coordination.self_heal', component: 'coordination' });
 
       comp.destroy();
     });
@@ -503,38 +508,6 @@ describe('Monitoring Component', () => {
 
       const row = db.prepare('SELECT machine_hostname FROM event_log').get() as { machine_hostname: string };
       expect(row.machine_hostname).toBe('test-host');
-
-      comp.destroy();
-    });
-
-    it('task events logged with correct component name', () => {
-      const comp = createMonitoringComponent();
-      comp.init(makeCtx(bus));
-
-      const taskEvents = [
-        'task.created',
-        'task.assigned',
-        'task.completed',
-        'task.blocked',
-        'task.unblocked',
-        'task.failed',
-        'task.claimed',
-      ] as const;
-
-      for (const evt of taskEvents) {
-        bus.emit(evt, { task_id: `t-${evt}` });
-      }
-
-      const rows = db.prepare('SELECT event_name, component FROM event_log ORDER BY id').all() as {
-        event_name: string;
-        component: string;
-      }[];
-
-      expect(rows).toHaveLength(7);
-      for (const row of rows) {
-        expect(row.component).toBe('tasks');
-        expect(row.event_name).toMatch(/^task\./);
-      }
 
       comp.destroy();
     });
@@ -594,11 +567,11 @@ describe('Monitoring Component', () => {
       comp.destroy();
     });
 
-    it('instance.heartbeat logged with correct component name', () => {
+    it('instance.state_updated logged with correct component name', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { instance_id: 'inst-1' });
+      bus.emit('instance.state_updated', { instance_id: 'inst-1' });
 
       const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
         event_name: string;
@@ -606,7 +579,7 @@ describe('Monitoring Component', () => {
       }[];
 
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({ event_name: 'instance.heartbeat', component: 'instances' });
+      expect(rows[0]).toEqual({ event_name: 'instance.state_updated', component: 'instances' });
 
       comp.destroy();
     });
@@ -683,7 +656,7 @@ describe('Monitoring Component', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { instance_id: 'inst-abc-123' });
+      bus.emit('instance.state_updated', { instance_id: 'inst-abc-123' });
 
       const row = db.prepare('SELECT instance_id FROM event_log').get() as { instance_id: string };
       expect(row.instance_id).toBe('inst-abc-123');

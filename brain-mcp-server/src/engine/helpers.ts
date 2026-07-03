@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 — Shared Handler Helpers
+ * Brain Engine v7.0 — Shared Handler Helpers
  *
  * Common utility functions used across engine component handlers.
  * Centralizes errorResult, successResult, and now() to eliminate
  * DRY violations.
  *
  * @module engine/helpers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { ToolResult } from './types.js';

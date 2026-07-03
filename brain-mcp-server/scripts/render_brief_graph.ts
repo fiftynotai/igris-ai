@@ -13,7 +13,7 @@
  * guaranteed to produce identical output for identical inputs.
  *
  * @module scripts/render_brief_graph
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import Database from 'better-sqlite3';

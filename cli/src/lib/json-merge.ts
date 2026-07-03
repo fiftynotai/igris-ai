@@ -35,6 +35,19 @@ const PORTABLE_EVENTS = [
 const IGRIS_HOOK_CMD_PREFIX = "$HOME/.igris/core/hooks/";
 
 /**
+ * FR-180 (D7 / R2): the PERSONAL-hook provenance prefix (mirror of
+ * `PERSONAL_HOOK_CMD_PREFIX` in hook-merge.ts). A group whose command starts
+ * with this prefix was projected by `igris add hook` and MUST survive the
+ * canonical re-merge — it is explicitly NOT stripped here (it is neither the
+ * CORE prefix above nor a legacy portable filename, so the default already
+ * preserves it; this constant + the explicit guard in `isIgrisEntry` make the
+ * R2 preservation a deliberate, regression-tested contract rather than an
+ * incidental side effect of the prefix check). See FR-180 D7 + the
+ * refresh-no-clobber test.
+ */
+const IGRIS_PERSONAL_HOOK_CMD_PREFIX = "$HOME/.igris/loadout/hooks/";
+
+/**
  * Pre-FR-104 Igris portable hooks lived in the project-local `.claude/hooks/`
  * directory. These exact filenames are legacy-Igris and should be stripped
  * during migration so we don't leave dead references pointing at deleted
@@ -46,8 +59,8 @@ const LEGACY_PORTABLE_FILENAMES = new Set([
   "pre_compact.sh",
   "brief_gate.sh", // old name for pre_tool_use.sh
   "post_edit_lint.sh", // now post_tool_use.d/01-lint.sh
-  "post_brief_sync.sh", // now post_tool_use.d/02-brief-sync.sh
-  "post_session_sync.sh", // now post_tool_use.d/03-session-sync.sh
+  "post_brief_sync.sh",
+  "post_session_sync.sh",
 ]);
 
 /**
@@ -158,6 +171,12 @@ function isIgrisEntry(entry: unknown, stripLegacy: boolean): boolean {
     if (typeof h !== "object" || h === null) continue;
     const cmd = (h as { command?: unknown }).command;
     if (typeof cmd !== "string") continue;
+    // FR-180 (D7 / R2): a PERSONAL-added hook (loadout-prefix command) is NEVER
+    // stripped — it is preserved across the canonical re-merge so install /
+    // update / doctor --fix cannot clobber it. The early-continue makes this an
+    // explicit, deliberate carve-out (not merely "it doesn't match the core
+    // prefix"). This is the merge gate the refresh-no-clobber regression locks.
+    if (cmd.startsWith(IGRIS_PERSONAL_HOOK_CMD_PREFIX)) continue;
     if (cmd.startsWith(IGRIS_HOOK_CMD_PREFIX)) return true;
     if (stripLegacy && commandIsLegacyPortable(cmd)) return true;
   }

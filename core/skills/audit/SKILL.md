@@ -1,5 +1,6 @@
 ---
 name: audit
+tier: opt-in
 description: Codebase audit - 7 audit types for quality, security, architecture, and process analysis
 disable-model-invocation: false
 allowed-tools:
@@ -52,12 +53,6 @@ Comprehensive codebase audit workflow. Supports 7 audit types to detect quality,
 | ARCHITECTURE_REVIEW | AC-XXX | Dead code, redundancy, layer violations |
 
 ## Workflow
-
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "audit" 2>/dev/null || true
-```
 
 ### Step 1: Select Audit Scope
 - Parse `$ARGUMENTS` for audit type
@@ -131,3 +126,4 @@ bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "audit" 2>/dev/null || tr
 3. **ALWAYS suggest brief type** - Enable tracking of findings
 4. **ALWAYS prioritize findings** - Critical first
 5. **ALWAYS be actionable** - Suggest concrete fixes
+6. **Build-state from the canonical source, NEVER plan docs (#811)** - Any finding about whether work is built (gaps, dead code, "is X done?") reads the canonical `brief_status.status` (via `igris_brief_dashboard`/`igris_brief_list`) and verifies against git log + on-disk artifacts. Plan docs describe pre-build INTENT and read as "unbuilt" forever — never infer build-state from them. Scope: this governs only the SOURCE OF TRUTH for build-state; it does NOT discourage reading plan docs — plans remain a valid input for design, intent, approach, and rationale, so read them freely for their content. The rule forbids only inferring *whether* a brief is built from a plan. See `docs/architecture/brief-state-source-of-truth.md`.

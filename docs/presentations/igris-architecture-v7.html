@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IGRIS — Architecture · v7.0</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* ───────────────── fifty.dev v2 brand · blood/desert palette ───────────────── */
+  :root{
+    --bg:#0d0a08; --fg:#f6efe6; --accent:#ff5a1f; --accent-deep:#7a2410;
+    --muted:rgba(246,239,230,.55); --line:rgba(246,239,230,.14);
+    --panel:rgba(255,255,255,.02);
+    --display:'Anton','Archivo Black',sans-serif;
+    --ui:'Space Grotesk',system-ui,sans-serif;
+    --serif:'Instrument Serif',Georgia,serif;
+    --mono:'JetBrains Mono',ui-monospace,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:var(--ui); font-weight:300;
+    overflow:hidden; -webkit-font-smoothing:antialiased;
+  }
+  body::after{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:50; opacity:.07;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+
+  /* ───────────────── slide system (no motion) ───────────────── */
+  .deck{position:fixed;inset:0}
+  .slide{
+    position:absolute; inset:0; display:none;
+    flex-direction:column; justify-content:center;
+    padding:6.5vh 8vw 9vh;
+  }
+  .slide.active{display:flex}
+  .slide::before{content:""; position:absolute; top:0; left:0; right:0; height:.5px; background:var(--line)}
+
+  /* ───────────────── type roles ───────────────── */
+  .eyebrow{font-family:var(--mono); font-weight:500; font-size:13px; text-transform:uppercase; letter-spacing:.22em; color:var(--accent); margin-bottom:22px}
+  h1{font-family:var(--display); font-weight:400; line-height:.9; letter-spacing:-.02em; text-transform:uppercase; text-wrap:balance; font-size:clamp(40px,7.2vw,108px); color:var(--fg)}
+  h2{font-family:var(--display); font-weight:400; line-height:.94; letter-spacing:-.015em; text-transform:uppercase; text-wrap:balance; font-size:clamp(30px,4.6vw,66px)}
+  .deck-sub{font-family:var(--serif); font-style:italic; color:var(--muted); font-size:clamp(20px,2.4vw,30px); line-height:1.35; margin-top:24px; max-width:26ch}
+  .lead{font-size:clamp(17px,1.7vw,21px); line-height:1.55; color:var(--fg); max-width:64ch; margin-top:22px}
+  .body{font-size:clamp(15px,1.45vw,18px); line-height:1.6; color:var(--fg); max-width:64ch; margin-top:20px}
+  .pull{font-family:var(--serif); font-style:italic; font-size:clamp(20px,2.4vw,30px); line-height:1.4; color:var(--accent); margin-top:30px; max-width:26ch}
+  .accent{color:var(--accent)} .muted{color:var(--muted)}
+  .caption{font-family:var(--mono); font-size:12px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); margin-top:24px}
+  .verdict{font-family:var(--mono); font-weight:600; font-size:13px; letter-spacing:.22em; text-transform:uppercase; color:var(--accent); margin-bottom:18px; display:flex; align-items:center; gap:10px}
+  .verdict::before{content:"▸"; font-size:15px}
+
+  ol.points{list-style:none; margin-top:30px; max-width:64ch}
+  ol.points li{display:flex; gap:18px; padding:15px 0; border-bottom:.5px solid var(--line); align-items:baseline}
+  ol.points li:last-child{border-bottom:0}
+  ol.points .n{font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:.1em; min-width:3ch}
+  ol.points .tx{font-size:clamp(16px,1.6vw,20px); line-height:1.45}
+
+  .pull-quote{font-family:var(--serif); font-style:italic; font-size:clamp(20px,2.2vw,28px); line-height:1.4; color:var(--fg); margin-top:30px; max-width:30ch}
+
+  /* ───────────────── diagram primitives (same hairline aesthetic) ───────────────── */
+  .diagram{margin-top:34px}
+
+  /* horizontal flow with accent arrows */
+  .flow{display:flex; align-items:stretch; flex-wrap:wrap; gap:0}
+  .flow .node{border:.5px solid var(--line); background:var(--panel); padding:15px 16px; min-width:122px; flex:1}
+  .flow .arr{color:var(--accent); font-family:var(--mono); font-size:15px; align-self:center; padding:0 11px}
+  .flow .node .k{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--accent); margin-bottom:7px}
+  .flow .node .v{font-size:13.5px; line-height:1.35}
+  .flow .node .v small{display:block; color:var(--muted); font-size:11.5px; margin-top:4px}
+
+  /* mapping rows (metaphor / contract↔impl) */
+  .map{border:.5px solid var(--line); max-width:80ch}
+  .map .row{display:grid; grid-template-columns:1.1fr auto 1.1fr 1.4fr; gap:14px; align-items:center; padding:14px 20px; border-bottom:.5px solid var(--line)}
+  .map .row:last-child{border-bottom:0}
+  .map .from{font-family:var(--display); text-transform:uppercase; font-size:clamp(16px,1.7vw,22px); letter-spacing:-.01em}
+  .map .eq{font-family:var(--mono); color:var(--accent); font-size:16px; text-align:center}
+  .map .to{font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:.06em}
+  .map .note{font-size:14px; color:var(--muted); line-height:1.35}
+
+  /* two faces split */
+  .faces{display:grid; grid-template-columns:1fr auto 1fr; gap:0; align-items:stretch; margin-top:30px; border:.5px solid var(--line)}
+  .face{padding:24px 26px}
+  .face.mech{border-left:.5px solid var(--line)}
+  .face h4{font-family:var(--mono); font-size:12px; letter-spacing:.2em; text-transform:uppercase; margin-bottom:6px; color:var(--accent)}
+  .face .sub{font-family:var(--serif); font-style:italic; color:var(--muted); font-size:16px; margin-bottom:18px}
+  .face .tags{display:flex; flex-wrap:wrap; gap:8px}
+  .face .tg{font-family:var(--mono); font-size:12.5px; border:.5px solid var(--line); padding:7px 11px; background:var(--panel)}
+  .bridge{display:flex; flex-direction:column; align-items:center; justify-content:center; padding:0 4px; min-width:54px}
+  .bridge .b{color:var(--accent); font-size:22px; font-family:var(--mono)}
+  .bridge .bl{font-family:var(--mono); font-size:9.5px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); writing-mode:vertical-rl; margin-top:8px}
+
+  /* layer grid */
+  .layers{display:grid; grid-template-columns:repeat(2,1fr); gap:0; border:.5px solid var(--line); margin-top:30px}
+  .layers.three{grid-template-columns:repeat(3,1fr)}
+  .ly{padding:15px 18px; border-bottom:.5px solid var(--line); border-right:.5px solid var(--line)}
+  .ly .lk{font-family:var(--mono); font-size:13px; color:var(--accent); letter-spacing:.06em}
+  .ly .lv{font-size:13.5px; line-height:1.4; color:var(--fg); margin-top:5px}
+  .ly .lv b{font-weight:600}
+  .ly .loc{font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:5px; display:block}
+
+  /* module chips */
+  .mods{display:flex; flex-wrap:wrap; gap:10px; margin-top:30px; max-width:84ch}
+  .mod{border:.5px solid var(--line); background:var(--panel); padding:12px 15px; min-width:150px}
+  .mod .mn{font-family:var(--mono); font-size:13.5px; color:var(--fg)}
+  .mod .mt{font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--accent); margin-top:5px}
+  .mod .md{font-size:12.5px; color:var(--muted); margin-top:5px; line-height:1.35}
+  .mod.gen{border-color:var(--accent-deep); background:rgba(255,90,31,.05)}
+  .mod.gen .mt{color:var(--accent)}
+
+  /* fan / orchestrator */
+  .fan{margin-top:34px; max-width:88ch}
+  .orch{border:.5px solid var(--accent); background:rgba(255,90,31,.06); padding:16px 22px; display:inline-flex; flex-direction:column}
+  .orch .on{font-family:var(--display); text-transform:uppercase; font-size:clamp(18px,1.9vw,26px); letter-spacing:-.01em}
+  .orch .od{font-size:13px; color:var(--muted); margin-top:4px}
+  .fan .down{font-family:var(--mono); font-size:12px; color:var(--accent); letter-spacing:.12em; text-transform:uppercase; margin:14px 0 14px 4px}
+  .agents{display:flex; flex-wrap:wrap; gap:9px}
+  .ag{border:.5px solid var(--line); background:var(--panel); padding:11px 14px; min-width:118px}
+  .ag .agn{font-family:var(--mono); font-size:13px; color:var(--fg)}
+  .ag .agr{font-size:11.5px; color:var(--muted); margin-top:4px; line-height:1.3}
+
+  /* terminal trace */
+  .trace{font-family:var(--mono); font-size:clamp(12.5px,1.2vw,15px); line-height:1.95; border:.5px solid var(--line); padding:20px 24px; margin-top:24px; background:var(--panel); max-width:78ch}
+  .trace .tag{display:inline-block; width:14ch; color:var(--muted)}
+  .trace .a{color:var(--accent)} .trace .o{color:var(--fg)} .trace .f{color:var(--fg); font-weight:600} .trace .t{color:var(--muted)}
+
+  /* stat strip */
+  .stats{display:grid; grid-template-columns:repeat(4,1fr); gap:0; border:.5px solid var(--line); margin-top:32px; max-width:86ch}
+  .stat{padding:20px 18px; border-right:.5px solid var(--line)}
+  .stat:last-child{border-right:0}
+  .stat .num{font-family:var(--display); font-size:clamp(28px,4vw,52px); color:var(--accent); line-height:.9}
+  .stat .lab{font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); margin-top:10px; line-height:1.4}
+
+  /* cover + footer */
+  .cover h1{font-size:clamp(46px,9vw,140px); line-height:.84}
+  .cover .mark{font-family:var(--display); text-transform:uppercase; letter-spacing:-.025em; font-size:20px}
+  .cover .mark .accent{color:var(--accent)}
+  .foot{position:absolute; left:8vw; right:8vw; bottom:4vh; display:flex; justify-content:space-between; font-family:var(--mono); font-size:11px; letter-spacing:.22em; text-transform:uppercase; color:var(--muted)}
+  .foot .pg .accent{color:var(--accent)}
+  .hint{position:fixed; bottom:4vh; left:50%; transform:translateX(-50%); font-family:var(--mono); font-size:10px; letter-spacing:.2em; text-transform:uppercase; color:var(--muted); opacity:.5; z-index:40}
+
+  @media (max-width:820px){
+    .map .row{grid-template-columns:1fr; gap:6px; text-align:left}
+    .map .eq{text-align:left}
+    .faces{grid-template-columns:1fr}
+    .face.mech{border-left:0; border-top:.5px solid var(--line)}
+    .bridge{flex-direction:row; padding:10px}
+    .bridge .bl{writing-mode:horizontal-tb; margin:0 0 0 8px}
+    .layers,.layers.three,.stats{grid-template-columns:1fr}
+  }
+</style>
+</head>
+<body>
+<div class="deck" id="deck">
+
+  <!-- 1 · COVER -->
+  <section class="slide cover active">
+    <div class="eyebrow">// IGRIS · ARCHITECTURE · v7.0</div>
+    <h1>An operating system for AI&nbsp;engineering</h1>
+    <div class="deck-sub">Not a wrapper. Not a prompt library. An OS that commandeers any harness — and remembers.</div>
+    <div class="foot"><span class="mark">fifty<span class="accent">.</span>dev</span><span>system architecture walkthrough</span></div>
+  </section>
+
+  <!-- 2 · THESIS -->
+  <section class="slide">
+    <div class="eyebrow">// WHAT IGRIS IS</div>
+    <h2>Three things, one system</h2>
+    <ol class="points">
+      <li><span class="n">01</span><span class="tx">A <span class="accent">multi-agent team</span> — an orchestrator that delegates to specialists, behind quality gates.</span></li>
+      <li><span class="n">02</span><span class="tx">A <span class="accent">persistent brain</span> — memory, briefs, and decisions that survive across sessions and projects.</span></li>
+      <li><span class="n">03</span><span class="tx">A <span class="accent">harness-agnostic OS</span> — the same system runs on Claude, Codex, Gemini, OpenCode, Antigravity.</span></li>
+    </ol>
+    <div class="deck-sub">The model is the CPU. Igris is the operating system that runs on it.</div>
+  </section>
+
+  <!-- 3 · BOOTLOADER MODEL -->
+  <section class="slide">
+    <div class="eyebrow">// THE MENTAL MODEL</div>
+    <h2>Model is the CPU. Igris is the OS.</h2>
+    <div class="diagram map">
+      <div class="row"><span class="from">Model</span><span class="eq">=</span><span class="to">CPU</span><span class="note">raw reasoning — swappable, harness-agnostic</span></div>
+      <div class="row"><span class="from">Igris</span><span class="eq">=</span><span class="to">OS</span><span class="note">the layers, contracts &amp; mechanisms it runs</span></div>
+      <div class="row"><span class="from">/boot</span><span class="eq">=</span><span class="to">bootloader</span><span class="note">the ceremony that loads the OS into the model</span></div>
+      <div class="row"><span class="from">project</span><span class="eq">=</span><span class="to">mounted volume</span><span class="note">per-project context, mounted at session start</span></div>
+    </div>
+    <div class="caption">Boot is project-independent. Mount is per-project. Never conflate the two.</div>
+  </section>
+
+  <!-- 4 · LIFECYCLE -->
+  <section class="slide">
+    <div class="eyebrow">// AXIS ONE · LIFECYCLE (WHEN)</div>
+    <h2>The boot ceremony</h2>
+    <div class="diagram flow">
+      <div class="node"><div class="k">Detect</div><div class="v">which harness?<small>claude · codex · gemini · opencode</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">Boot</div><div class="v">load the OS<small>identity + boot-tier modules</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">Login</div><div class="v">who I serve<small>USER.md · operator prefs</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">Mount</div><div class="v">the project<small>gather · register · assess</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">Userland</div><div class="v">do the work<small>hunt · register · scan</small></div></div>
+    </div>
+    <p class="body">Detect feeds Boot the harness identity; Boot loads only what each stage needs. Session state — crash recovery, per-instance ownership — is reconstructed deterministically by CLI verbs at Mount.</p>
+  </section>
+
+  <!-- 5 · TWO FACES -->
+  <section class="slide">
+    <div class="eyebrow">// AXIS TWO · STRUCTURE (WHAT) · THE CORE SPLIT</div>
+    <h2>Two faces of the OS</h2>
+    <div class="faces">
+      <div class="face ctx">
+        <h4>Context</h4>
+        <div class="sub">what the model reads — all contracts</div>
+        <div class="tags">
+          <span class="tg">identity</span><span class="tg">operator</span><span class="tg">conduct</span>
+          <span class="tg">capability</span><span class="tg">protocol</span><span class="tg">knowledge-map</span><span class="tg">harness-specific</span>
+        </div>
+      </div>
+      <div class="bridge"><span class="b">⇄</span><span class="bl">contract ↔ impl</span></div>
+      <div class="face mech">
+        <h4>Mechanism</h4>
+        <div class="sub">code that runs — the model never reads it</div>
+        <div class="tags">
+          <span class="tg">environment</span><span class="tg">enforcement</span><span class="tg">verbs</span><span class="tg">memory</span><span class="tg">discovery</span>
+        </div>
+      </div>
+    </div>
+    <div class="pull">A contract never names its implementation — so any mechanism can be swapped without touching what the model reads.</div>
+  </section>
+
+  <!-- 6 · CONTEXT LAYERS -->
+  <section class="slide">
+    <div class="eyebrow">// CONTEXT FACE · 7 LAYERS</div>
+    <h2>What the model reads</h2>
+    <div class="layers three" style="margin-top:26px">
+      <div class="ly"><span class="lk">identity</span><div class="lv">who I am — persona</div><span class="loc">SOUL.md</span></div>
+      <div class="ly"><span class="lk">operator</span><div class="lv">who I serve</div><span class="loc">USER.md</span></div>
+      <div class="ly"><span class="lk">conduct</span><div class="lv">always-on operating rules + obligations</div><span class="loc">os/conduct.md</span></div>
+      <div class="ly"><span class="lk">capability</span><div class="lv">what I can do &amp; when — memory, delegate, self-extend</div><span class="loc">os/&lt;cap&gt;.md</span></div>
+      <div class="ly"><span class="lk">protocol</span><div class="lv">invokable procedures — hunt, register, rest…</div><span class="loc">the skills</span></div>
+      <div class="ly"><span class="lk">knowledge-map</span><div class="lv">which docs exist + when to consult them</div><span class="loc">generated</span></div>
+    </div>
+    <div class="caption" style="margin-top:18px">+ harness-specific — per-harness content the Boot stage loads for the detected harness. You <span class="accent">invoke</span> a protocol; you <span class="accent">always-follow</span> conduct.</div>
+  </section>
+
+  <!-- 7 · MECHANISM LAYERS -->
+  <section class="slide">
+    <div class="eyebrow">// MECHANISM FACE · 5 LAYERS</div>
+    <h2>Code that runs</h2>
+    <div class="layers" style="margin-top:26px">
+      <div class="ly"><span class="lk">environment</span><div class="lv">detect harness + capabilities + degradation mode</div><span class="loc">detect lib / verb</span></div>
+      <div class="ly"><span class="lk">enforcement</span><div class="lv">gate <b>detectable</b> violations</div><span class="loc">hooks + registry</span></div>
+      <div class="ly"><span class="lk">verbs</span><div class="lv">deterministic ceremony — the mount work</div><span class="loc">cli/ verbs</span></div>
+      <div class="ly"><span class="lk">memory</span><div class="lv">persistent learned experience</div><span class="loc">knowledge.db + MCP</span></div>
+    </div>
+    <div class="diagram" style="margin-top:0; border:.5px solid var(--line); border-top:0; padding:15px 18px; max-width:none">
+      <span class="lk" style="font-family:var(--mono); font-size:13px; color:var(--accent)">discovery</span>
+      <span class="lv" style="font-size:13.5px"> — assemble the OS: scan self-describing parts → generate the index. <span class="muted">Reached only through a contract on the context side.</span></span>
+    </div>
+  </section>
+
+  <!-- 8 · CONTRACT ↔ IMPL -->
+  <section class="slide">
+    <div class="eyebrow">// THE SWAP-CLEANLY GUARANTEE</div>
+    <h2>Contract ↔ implementation</h2>
+    <div class="diagram map">
+      <div class="row"><span class="from" style="font-size:15px; font-family:var(--mono); text-transform:none; color:var(--fg)">Memory</span><span class="eq">⇄</span><span class="to" style="color:var(--fg)">when to recall / store</span><span class="note">knowledge.db + igris-brain MCP</span></div>
+      <div class="row"><span class="from" style="font-size:15px; font-family:var(--mono); text-transform:none; color:var(--fg)">Brief-first</span><span class="eq">⇄</span><span class="to" style="color:var(--fg)">no edit without a brief</span><span class="note">brief-gate PreToolUse hook</span></div>
+      <div class="row"><span class="from" style="font-size:15px; font-family:var(--mono); text-transform:none; color:var(--fg)">Phase discipline</span><span class="eq">⇄</span><span class="to" style="color:var(--fg)">conduct / protocol</span><span class="note">phase-guard pre-commit hook</span></div>
+      <div class="row"><span class="from" style="font-size:15px; font-family:var(--mono); text-transform:none; color:var(--fg)">Self-extension</span><span class="eq">⇄</span><span class="to" style="color:var(--fg)">igris add &lt;surface&gt;</span><span class="note">the add verb + harness compile</span></div>
+    </div>
+    <p class="body"><span class="accent">Left = what the model reads.</span> Right = swappable code it never sees. Change the mechanism — the contract holds.</p>
+  </section>
+
+  <!-- 9 · SELF-DESCRIBING -->
+  <section class="slide">
+    <div class="eyebrow">// THE ANTI-DRIFT PRINCIPLE</div>
+    <h2>Self-describing, not hand-maintained</h2>
+    <div class="diagram flow">
+      <div class="node"><div class="k">modules</div><div class="v">each declares its own frontmatter<small>layer · tier · scope</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">discovery</div><div class="v">scans the self-describing parts<small>gen_os_index.sh</small></div></div>
+      <span class="arr">→</span>
+      <div class="node"><div class="k">INDEX</div><div class="v">the generated model-facing map<small>never hand-edited</small></div></div>
+    </div>
+    <p class="body">Hand-maintained registries are the disease — they drift the moment code changes. Parts <span class="accent">declare</span> their metadata; the OS <span class="accent">discovers</span> them and <span class="accent">generates</span> the index. Growth = "which layer?" → drop it in.</p>
+    <div class="caption">v7 retired a 46KB monolith + a hand-encoded routing tree for exactly this.</div>
+  </section>
+
+  <!-- 10 · THE MODULES -->
+  <section class="slide">
+    <div class="eyebrow">// THE OS · core/os/</div>
+    <h2>The modules</h2>
+    <div class="mods">
+      <div class="mod"><div class="mn">SOUL.md</div><div class="mt">identity · boot</div><div class="md">persona — name + voice</div></div>
+      <div class="mod"><div class="mn">conduct.md</div><div class="mt">conduct · boot</div><div class="md">operating contract + obligations</div></div>
+      <div class="mod"><div class="mn">standards.md</div><div class="mt">conduct · universal</div><div class="md">cross-actor baseline</div></div>
+      <div class="mod"><div class="mn">memory.md</div><div class="mt">capability · boot</div><div class="md">the memory surfaces + when</div></div>
+      <div class="mod"><div class="mn">delegation.md</div><div class="mt">capability · boot</div><div class="md">delegate to a role, by judgment</div></div>
+      <div class="mod"><div class="mn">self-extension.md</div><div class="mt">capability · boot</div><div class="md">how to grow the OS</div></div>
+      <div class="mod"><div class="mn">knowledge-map.md</div><div class="mt">knowledge-map</div><div class="md">the store model + routing</div></div>
+      <div class="mod"><div class="mn">harness-specific/</div><div class="mt">per-harness · boot</div><div class="md">the detected harness's adapter</div></div>
+      <div class="mod gen"><div class="mn">INDEX.md</div><div class="mt">discovery · generated</div><div class="md">the model-facing map of all modules</div></div>
+    </div>
+    <div class="caption">Each module self-describes; the INDEX is generated from their frontmatter.</div>
+  </section>
+
+  <!-- 11 · KNOWLEDGE ROUTING -->
+  <section class="slide">
+    <div class="eyebrow">// INFORMATION ARCHITECTURE</div>
+    <h2>One fact, one source</h2>
+    <div class="diagram flow" style="margin-top:30px">
+      <div class="node"><div class="k">Memory</div><div class="v">experiential lessons<small>brain DB — staging</small></div></div>
+      <span class="arr">·</span>
+      <div class="node"><div class="k">Docs</div><div class="v">curated standards<small>project context — authoritative</small></div></div>
+      <span class="arr">·</span>
+      <div class="node"><div class="k">Code</div><div class="v">ground truth<small>read it, don't store it</small></div></div>
+      <span class="arr">·</span>
+      <div class="node"><div class="k">Git</div><div class="v">history<small>don't snapshot it</small></div></div>
+    </div>
+    <p class="body">Route knowledge to the source matching its <span class="accent">kind</span>. A fact lives in exactly one place — never duplicated. When a lesson hardens into a standard, it <span class="accent">promotes</span> (moves, not copies). Memory is staging; docs are curated; promotion is the pipeline.</p>
+  </section>
+
+  <!-- 12 · THE BRAIN -->
+  <section class="slide">
+    <div class="eyebrow">// THE BRAIN · knowledge.db + igris-brain MCP</div>
+    <h2>Memory that survives the session</h2>
+    <div class="diagram layers three" style="margin-top:26px">
+      <div class="ly"><span class="lk">learnings</span><div class="lv">patterns, decisions, mistakes — hybrid search</div></div>
+      <div class="ly"><span class="lk">graph</span><div class="lv">typed nodes + edges — supersession, lineage</div></div>
+      <div class="ly"><span class="lk">briefs</span><div class="lv">every BR / FR / TD — state, phase, history</div></div>
+      <div class="ly"><span class="lk">errors</span><div class="lv">fingerprints → known root causes</div></div>
+      <div class="ly"><span class="lk">goals · metrics</span><div class="lv">trajectory + agent throughput</div></div>
+      <div class="ly"><span class="lk">registry</span><div class="lv">projects + the reusable-asset catalog</div></div>
+    </div>
+    <p class="body">Local stdio MCP per instance; a VPS acts as a pure HTTP sync hub so <span class="accent">learnings cross projects and machines</span>. Recall at boot, store on discovery, sync on rest.</p>
+  </section>
+
+  <!-- 13 · MULTI-AGENT -->
+  <section class="slide">
+    <div class="eyebrow">// CAPABILITY · DELEGATION</div>
+    <h2>An orchestrator + specialists</h2>
+    <div class="fan">
+      <div class="orch"><span class="on">Orchestrator</span><span class="od">owns the brief, the session, the workflow — delegates the work</span></div>
+      <div class="down">↓ delegate to the role that fits</div>
+      <div class="agents">
+        <div class="ag"><div class="agn">architect</div><div class="agr">plans</div></div>
+        <div class="ag"><div class="agn">forger</div><div class="agr">implements</div></div>
+        <div class="ag"><div class="agn">sentinel</div><div class="agr">tests</div></div>
+        <div class="ag"><div class="agn">warden</div><div class="agr">reviews</div></div>
+        <div class="ag"><div class="agn">mender</div><div class="agr">diagnoses</div></div>
+        <div class="ag"><div class="agn">seeker</div><div class="agr">investigates</div></div>
+        <div class="ag"><div class="agn">sage</div><div class="agr">flutter</div></div>
+        <div class="ag"><div class="agn">aegis</div><div class="agr">security</div></div>
+        <div class="ag"><div class="agn">scribe</div><div class="agr">docs</div></div>
+      </div>
+    </div>
+    <div class="diagram flow" style="margin-top:24px">
+      <div class="node"><div class="k">plan</div><div class="v">architect</div></div><span class="arr">→</span>
+      <div class="node"><div class="k">build</div><div class="v">forger</div></div><span class="arr">→</span>
+      <div class="node"><div class="k">test</div><div class="v">sentinel</div></div><span class="arr">→</span>
+      <div class="node"><div class="k">review</div><div class="v">warden</div></div><span class="arr">→</span>
+      <div class="node"><div class="k">commit</div><div class="v">orchestrator</div></div>
+    </div>
+  </section>
+
+  <!-- 14 · MULTI-HARNESS -->
+  <section class="slide">
+    <div class="eyebrow">// CAPABILITY · PORTABILITY</div>
+    <h2>One OS, any harness</h2>
+    <div class="fan">
+      <div class="orch" style="border-color:var(--line); background:var(--panel)"><span class="on">OS core</span><span class="od">harness-agnostic — skills + modules know nothing about the harness</span></div>
+      <div class="down">↓ each harness's adapter injects its mechanism, once at boot</div>
+      <div class="agents">
+        <div class="ag"><div class="agn">Claude</div><div class="agr">native subagents</div></div>
+        <div class="ag"><div class="agn">Codex</div><div class="agr">compiled harness</div></div>
+        <div class="ag"><div class="agn">Gemini</div><div class="agr">dynamic-define</div></div>
+        <div class="ag"><div class="agn">OpenCode</div><div class="agr">plugin bridge</div></div>
+        <div class="ag"><div class="agn">Antigravity</div><div class="agr">dynamic-define</div></div>
+      </div>
+    </div>
+    <p class="body">"Delegate to architect" is an <span class="accent">abstract contract</span>. The per-harness <i>how</i> — Task tool, predefined agents, or read-prompt-then-define — is adapter config. Add a harness = declare its mechanisms. Zero skill edits.</p>
+  </section>
+
+  <!-- 15 · SELF-EXTENSION -->
+  <section class="slide">
+    <div class="eyebrow">// CAPABILITY · GROWTH</div>
+    <h2>The OS grows itself</h2>
+    <div class="diagram map" style="max-width:82ch">
+      <div class="row" style="grid-template-columns:1fr 1.6fr"><span class="to" style="color:var(--fg)">extension point</span><span class="note" style="grid-column:span 2">skill · agent · mcp · hook · identity → <span class="accent">igris add &lt;surface&gt;</span></span></div>
+      <div class="row" style="grid-template-columns:1fr 1.6fr"><span class="to" style="color:var(--fg)">OS module</span><span class="note" style="grid-column:span 2">drop a self-describing module → discovered</span></div>
+      <div class="row" style="grid-template-columns:1fr 1.6fr"><span class="to" style="color:var(--fg)">doc-type</span><span class="note" style="grid-column:span 2">drop a self-describing definition → catalog</span></div>
+      <div class="row" style="grid-template-columns:1fr 1.6fr"><span class="to" style="color:var(--fg)">harness</span><span class="note" style="grid-column:span 2">/onboard-harness + manifest config</span></div>
+      <div class="row" style="grid-template-columns:1fr 1.6fr"><span class="to" style="color:var(--fg)">subsystem</span><span class="note" style="grid-column:span 2">decompose → place each piece in its layer</span></div>
+    </div>
+    <div class="pull">Every extension is either self-describing-and-discovered, or follows a defined procedure. Never ad-hoc.</div>
+  </section>
+
+  <!-- 16 · QUALITY GATES -->
+  <section class="slide">
+    <div class="eyebrow">// CAPABILITY · THE GUARDRAILS</div>
+    <h2>Why it stays honest</h2>
+    <div class="trace">
+      <div><span class="tag a">brief-first</span><span class="o">no file modification without an active brief</span></div>
+      <div><span class="tag a">phase-guard</span><span class="o">no commit out of workflow phase</span></div>
+      <div><span class="tag a">consumer-sweep</span><span class="o">change a contract → every consumer re-pointed, same commit</span></div>
+      <div><span class="tag a">enforcement</span><span class="o">detectable violations gated by hooks + a registry</span></div>
+      <div><span class="tag a">delegation</span><span class="o">specialists run behind plan → test → review</span></div>
+    </div>
+    <p class="body">The disciplines live as <span class="accent">conduct</span> (always-followed) and as <span class="accent">mechanism</span> (hooks that gate what's detectable). Convention where it must persuade; enforcement where it can be checked.</p>
+  </section>
+
+  <!-- 17 · CAPABILITIES RECAP -->
+  <section class="slide">
+    <div class="eyebrow">// THE CAPABILITY SURFACE</div>
+    <h2>What Igris does</h2>
+    <div class="stats">
+      <div class="stat"><div class="num">9</div><div class="lab">specialist agents behind quality gates</div></div>
+      <div class="stat"><div class="num">5</div><div class="lab">harnesses, one agnostic OS</div></div>
+      <div class="stat"><div class="num">8</div><div class="lab">brain memory surfaces, cross-project</div></div>
+      <div class="stat"><div class="num">1</div><div class="lab">command to extend any surface — igris add</div></div>
+    </div>
+    <ol class="points" style="margin-top:26px">
+      <li><span class="n">▸</span><span class="tx">Brief management · session recovery · self-describing growth</span></li>
+      <li><span class="n">▸</span><span class="tx">Persistent, syncing memory · architecture enforcement · multi-agent orchestration</span></li>
+    </ol>
+  </section>
+
+  <!-- 18 · CLOSE -->
+  <section class="slide cover">
+    <div class="eyebrow">// THE TAKEAWAY</div>
+    <h1>Self-describing.<br>Harness-agnostic.<br>Brain-backed.</h1>
+    <div class="deck-sub">An OS for AI engineering — every layer has one purpose, one place, and one way to grow.</div>
+    <div class="foot"><span class="mark">fifty<span class="accent">.</span>dev</span><span>IGRIS · v7.0</span></div>
+  </section>
+
+</div>
+
+<div class="hint">← → or space to navigate · F for fullscreen</div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  let i=0;
+  function render(){
+    slides.forEach((s,n)=>s.classList.toggle('active',n===i));
+    document.querySelectorAll('.pg').forEach(e=>e.remove());
+    const s=slides[i];
+    if(!s.querySelector('.foot')){
+      const f=document.createElement('div'); f.className='foot pg';
+      f.innerHTML='<span class="accent">'+String(i+1).padStart(2,'0')+'</span> / '+String(slides.length).padStart(2,'0')+'<span></span>';
+      s.appendChild(f);
+    }
+  }
+  function go(n){ i=Math.max(0,Math.min(slides.length-1,n)); render(); history.replaceState(null,'','#'+(i+1)); }
+  document.addEventListener('keydown',e=>{
+    if(e.key==='ArrowRight'||e.key===' '||e.key==='PageDown'){e.preventDefault();go(i+1);}
+    else if(e.key==='ArrowLeft'||e.key==='PageUp'){e.preventDefault();go(i-1);}
+    else if(e.key==='Home'){go(0);} else if(e.key==='End'){go(slides.length-1);}
+    else if(e.key==='f'||e.key==='F'){ if(!document.fullscreenElement)document.documentElement.requestFullscreen(); else document.exitFullscreen(); }
+  });
+  document.addEventListener('click',e=>{ if(e.clientX < window.innerWidth*0.28) go(i-1); else go(i+1); });
+  function fromHash(){ const n=parseInt((location.hash||'').replace('#',''),10); if(!isNaN(n)) i=Math.max(0,Math.min(slides.length-1,n-1)); }
+  window.addEventListener('hashchange',()=>{ fromHash(); render(); });
+  fromHash(); render();
+</script>
+</body>
+</html>

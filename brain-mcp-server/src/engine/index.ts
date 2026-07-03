@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Engine Bootstrap
+ * Brain Engine v7.0 — Engine Bootstrap
  *
  * Orchestrates the full engine lifecycle:
  * 1. Create storage adapter (SQLite)
@@ -11,7 +11,7 @@
  * 7. Bridge db.ts via setAdapter()
  *
  * @module engine/index
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { EngineConfig, ComponentConfig } from './types.js';
@@ -32,17 +32,14 @@ import { createSessionsComponent } from './components/sessions/index.js';
 import { createBriefsComponent } from './components/briefs/index.js';
 import { createEdgesComponent } from './components/edges/index.js';
 import { createGoalsComponent } from './components/goals/index.js';
-import { createTasksComponent } from './components/tasks/index.js';
 import { createInstancesComponent } from './components/instances/index.js';
 import { createSyncComponent } from './components/sync/index.js';
 import { createCacheComponent } from './components/cache/index.js';
 import { createSchedulesComponent } from './components/schedules/index.js';
-import { createCoordinationComponent } from './components/coordination/index.js';
-import { createSubconsciousComponent } from './components/subconscious/index.js';
-import { createPerceptionComponent } from './components/perception/index.js';
+import { createCognitionComponent } from './components/cognition/index.js';
 import { createMonitoringComponent } from './components/monitoring/index.js';
 import { createContextComponent } from './components/context/index.js';
-import { createRegistryComponent } from './components/registry/index.js';
+import { createCatalogComponent } from './components/catalog/index.js';
 
 // db.ts bridge
 import { setAdapter, migrateSchema } from '../db.js';
@@ -69,7 +66,7 @@ const DEFAULT_COMPONENT_CONFIG: ComponentConfig = { enabled: true };
  * @returns The booted engine with gateway, registry, and shutdown handle
  */
 export function bootEngine(config: EngineConfig): Engine {
-  console.error('[engine] Booting Brain Engine v5.0...');
+  console.error('[engine] Booting Brain Engine v7.0...');
 
   // 1. Create storage adapter
   const storage = createSqliteAdapter(config.dbPath);
@@ -88,9 +85,11 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (all 19)
-  // FR-109: perception is registered AFTER memory because it depends on the
-  // memory schema (learnings.review_status, added in db.ts v15).
+  // 6. Register domain components (16 — perception + subconscious collapsed
+  //    into one cognition component in FR-118 M4a; tasks + coordination removed
+  //    in TD-265 full worker-subsystem teardown).
+  // FR-109/FR-118: cognition is registered AFTER memory because the perception
+  // instance depends on the memory schema (learnings.review_status, db.ts v15).
   const componentFactories = [
     createMemoryComponent,
     createErrorsComponent,
@@ -101,16 +100,16 @@ export function bootEngine(config: EngineConfig): Engine {
     createBriefsComponent,
     createEdgesComponent,
     createGoalsComponent,
-    createTasksComponent,
     createInstancesComponent,
     createSyncComponent,
     createCacheComponent,
     createSchedulesComponent,
-    createCoordinationComponent,
-    createSubconsciousComponent,
-    createPerceptionComponent,
+    // FR-118 M4a: perception + subconscious collapsed into ONE cognition
+    // component (the unified LLM-extraction host). Registered after memory
+    // (the dependency resolver orders it; perception reads learnings).
+    createCognitionComponent,
     createMonitoringComponent,
-    createRegistryComponent,
+    createCatalogComponent,
   ];
 
   for (const factory of componentFactories) {
@@ -130,7 +129,7 @@ export function bootEngine(config: EngineConfig): Engine {
   bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway) });
 
   console.error(
-    `[engine] Brain Engine v5.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`
+    `[engine] Brain Engine v7.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`
   );
 
   // Shutdown function

@@ -90,7 +90,7 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     vi.restoreAllMocks();
   });
 
-  it('exposes 7 MCP tools (3 CRUD + 3 traversal + 1 visualization)', () => {
+  it('exposes 11 MCP tools (3 edge CRUD + 3 traversal + 4 node tools + 1 visualization)', () => {
     const comp = createEdgesComponent();
     const tools = comp.tools();
     const names = tools.map((t) => t.name).sort();
@@ -99,15 +99,19 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
       'igris_edge_create',
       'igris_edge_list',
       'igris_edge_remove',
+      'igris_graph_dashboard',
       'igris_graph_neighbors',
+      'igris_graph_node_create',
+      'igris_graph_node_get',
       'igris_graph_path',
+      'igris_graph_search',
       'igris_graph_subgraph',
     ]);
   });
 
-  it('reports version 1.2.0 (FR-111 bump)', () => {
+  it('reports version 1.3.0 (TD-171 M2 bump — graph node tools)', () => {
     const comp = createEdgesComponent();
-    expect(comp.version).toBe('1.2.0');
+    expect(comp.version).toBe('1.3.0');
   });
 
   it('declares edge.removed emit and self-listens on edge.created/edge.removed', () => {

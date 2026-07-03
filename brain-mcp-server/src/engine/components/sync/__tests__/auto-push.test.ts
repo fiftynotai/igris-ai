@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (26 entries — FR-106 added suggestions + dismissed_patterns)
+ * 2. SYNC_TABLES completeness (27 entries — TD-171 M2 added graph_nodes)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,14 +276,14 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 26 entries', () => {
-      expect(SYNC_TABLES).toHaveLength(26);
+    it('has exactly 20 entries', () => {
+      // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
+      // task_assignments, agent_capabilities, autonomous_decisions,
+      // coordination_config) removed with the worker subsystem teardown.
+      expect(SYNC_TABLES).toHaveLength(20);
     });
 
     const newTables = [
-      { table: 'agent_capabilities', syncKey: ['agent', 'capability'], strategy: 'lww', timestampCol: 'created_at' },
-      { table: 'autonomous_decisions', syncKey: ['id'], strategy: 'append', timestampCol: 'created_at' },
-      { table: 'coordination_config', syncKey: ['key'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },
       // FR-105: typed-edges graph layer
@@ -313,6 +313,13 @@ describe('Sync Auto-Push', () => {
         syncKey: ['source_module', 'project_slug', 'evidence_signature'],
         strategy: 'lww',
         timestampCol: 'last_dismissed_at',
+      },
+      // TD-171 M2: graph_nodes (free-standing concept/decision nodes)
+      {
+        table: 'graph_nodes',
+        syncKey: ['node_type', 'node_external_id'],
+        strategy: 'append',
+        timestampCol: 'created_at',
       },
     ];
 
@@ -433,13 +440,13 @@ describe('Sync Auto-Push', () => {
       comp.destroy();
     });
 
-    it('instance.heartbeat triggers push of instances', async () => {
+    it('instance.state_updated triggers push of instances', async () => {
       mockDb._stmt.all.mockReturnValueOnce([{ machine_hostname: 'host-1', status: 'active' }]);
 
       const comp = createSyncComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('instance.heartbeat', { machine_hostname: 'host-1' });
+      bus.emit('instance.state_updated', { machine_hostname: 'host-1' });
       await flushMicrotasks();
 
       expect(fetchWithRetry).toHaveBeenCalledTimes(1);
@@ -480,7 +487,7 @@ describe('Sync Auto-Push', () => {
 
       bus.emit('brief.synced', { project: 'p', brief_id: 'BR-001' });
       bus.emit('session.synced', { project: 'p' });
-      bus.emit('instance.heartbeat', { machine_hostname: 'h' });
+      bus.emit('instance.state_updated', { machine_hostname: 'h' });
       await flushMicrotasks();
 
       expect(fetchWithRetry).not.toHaveBeenCalled();
@@ -652,7 +659,7 @@ describe('Sync Auto-Push', () => {
       bus.emit('brief.completed', { project: 'p', brief_id: 'BR-001' });
       bus.emit('session.synced', { project: 'p' });
       bus.emit('session.file.updated', { project: 'p', filename: 'f' });
-      bus.emit('instance.heartbeat', { machine_hostname: 'h' });
+      bus.emit('instance.state_updated', { machine_hostname: 'h' });
       bus.emit('memory.stored', { project: 'p' });
       bus.emit('error.stored', { project: 'p' });
       bus.emit('project.registered', { slug: 's' });
@@ -716,7 +723,7 @@ describe('Sync Auto-Push', () => {
         'brief.completed',
         'session.synced',
         'session.file.updated',
-        'instance.heartbeat',
+        'instance.state_updated',
         'memory.stored',
         'error.stored',
         'project.registered',

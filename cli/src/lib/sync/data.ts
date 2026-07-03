@@ -26,15 +26,31 @@
  *
  * Tests use a real tmp `sync_queue.jsonl` and mock the MCP HTTP boundary
  * (per L-159 / TD-098: never `vi.mock` the module under test).
+ *
+ * FR-128 atomic drain: the read-then-truncate pair has been replaced by
+ * the rename-then-process primitive in `./queue.ts`. `runSyncData`
+ * delegates: `acquireDrainSnapshot` produces a renamed snapshot of the
+ * queue (the rename is the atomic moment), `dispatchEntry` replays each
+ * line, and `finalizeDrainSnapshot(snap, ok)` either deletes the temp
+ * (success) or preserves it for crash-recovery (failure). Per L-253
+ * the drain logic lives in ONE code path — this module never inlines
+ * the rename/unlink; it always calls through `queue.ts`.
  */
 
-import { existsSync, readFileSync, unlinkSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpCall, readRemoteBrainConfig, type RemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
-import { info, warn, error as logError } from "../log.js";
+import {
+  acquireDrainSnapshot,
+  finalizeDrainSnapshot,
+  inspectQueueDepth,
+  type DrainSnapshot,
+} from "./queue.js";
+import { info, error as logError, getVerbosity, setVerbosity } from "../log.js";
+import { EGRESS_DISCLOSURE_LINES } from "./egress-manifest.generated.js";
 
 export interface SyncDataOptions {
   /** When true, enumerate plan without invoking MCP. */
@@ -71,46 +87,43 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
     return 1;
   }
 
-  // Resolve local queue path.
+  // Resolve local queue path (for dry-run display + log messages).
   const slug = opts.projectSlug ?? basenameOfCwd();
   const queuePath = join(brainDir(), "projects", slug, "sync_queue.jsonl");
 
-  // Read the queue.
-  let entries: string[] = [];
-  if (existsSync(queuePath)) {
+  // Dry-run: NEVER mutate the filesystem (no acquireDrainSnapshot). We
+  // read the queue read-only via inspectQueueDepth/readFileSync so the
+  // plan reflects on-disk depth without renaming anything.
+  if (dry !== null) {
+    // TD-253: preview exactly what egresses on a real sync (sourced from the
+    // generated manifest module — cannot drift from SYNC_TABLES / the doc).
+    for (const line of EGRESS_DISCLOSURE_LINES) info(line);
+    const depth = inspectQueueDepth(slug);
+    // Read the live queue contents (if any) to enumerate entries in
+    // the plan. We do NOT count `.draining-*` lines here because the
+    // dry-run plan should reflect what an actual `runSyncData` would
+    // process — and the live drain would recover-then-rename, so
+    // post-recovery the live queue would carry all surviving lines.
+    let entries: string[] = [];
     try {
       const raw = readFileSync(queuePath, "utf-8");
       entries = raw
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logError(`failed to read sync queue ${queuePath}: ${msg}`);
-      return 1;
+    } catch {
+      // No queue file (or unreadable) → empty plan, drain-only.
     }
-  }
-
-  if (entries.length === 0) {
-    info(`sync data: local queue empty (${queuePath}); nothing to replay locally.`);
-    if (dry !== null) {
+    if (entries.length === 0) {
+      info(`sync data: local queue empty (${queuePath}); nothing to replay locally.`);
       dry.wouldInvokeCommand(
         "mcp:igris_sync_queue_drain",
         [],
         "drain remote brain queue (would still call even with empty local queue)",
       );
       dry.print();
-    } else {
-      // Even with empty local queue we trigger remote drain — the remote
-      // queue may have entries from other instances.
-      const drainResult = await callRemoteDrain(remote);
-      if (drainResult !== 0) return drainResult;
+      return 0;
     }
-    return 0;
-  }
-
-  if (dry !== null) {
-    // Per-entry replay plan first, then the remote drain.
     for (let i = 0; i < entries.length; i++) {
       const entry = parseEntry(entries[i]);
       const op = entry?.operation ?? "<unknown>";
@@ -128,21 +141,58 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
       "drain remote brain queue (after per-entry replay)",
     );
     dry.wouldWriteFile(queuePath, "remove queue file after successful drain");
+    if (depth.drainingFiles.length > 0) {
+      dry.wouldInvokeCommand(
+        "fs:recoverStaleDrains",
+        [`stale_files=${depth.drainingFiles.length}`],
+        "reclaim stale .draining-* files into queue before drain",
+      );
+    }
     dry.print();
     return 0;
   }
 
-  info(`sync data: replaying ${entries.length} local queue entries via remote MCP...`);
+  // FR-128 atomic acquisition: rename queue → temp, read entries from
+  // temp. Any sibling-harness append landing AFTER this returns goes
+  // to a fresh `sync_queue.jsonl` and survives for the next drain.
+  // `acquireDrainSnapshot` also self-heals any `.draining-*` files
+  // left by a crashed prior drain (Q3 in the FR-128 plan).
+  let snapshot: DrainSnapshot | null;
+  try {
+    snapshot = acquireDrainSnapshot(slug);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    logError(`failed to acquire drain snapshot for ${queuePath}: ${msg}`);
+    return 1;
+  }
 
-  // Phase 1 — per-entry dispatch loop. Stops on first failure; queue
-  // file is preserved so the next attempt can retry from the same state.
-  for (let i = 0; i < entries.length; i++) {
-    const raw = entries[i];
+  if (snapshot === null || snapshot.entries.length === 0) {
+    // Snapshot may be non-null with zero entries if recovery promoted
+    // an empty stale file. Either way, nothing to replay locally — but
+    // we still trigger the remote drain (other instances may have
+    // queued on the brain side).
+    if (snapshot !== null) {
+      finalizeDrainSnapshot(snapshot, true);
+    }
+    info(`sync data: local queue empty (${queuePath}); nothing to replay locally.`);
+    const drainResult = await callRemoteDrain(remote);
+    if (drainResult !== 0) return drainResult;
+    return 0;
+  }
+
+  info(`sync data: replaying ${snapshot.entries.length} local queue entries via remote MCP...`);
+
+  // Phase 1 — per-entry dispatch loop. Stops on first failure; the
+  // temp is finalised as failed so the next drain's recovery pass
+  // reclaims it. The drain logic stays in one code path (L-253).
+  for (let i = 0; i < snapshot.entries.length; i++) {
+    const raw = snapshot.entries[i];
     const entry = parseEntry(raw);
     if (entry === null) {
       logError(
         `sync data: entry ${i} is not valid JSON; preserving queue. Raw: ${truncate(raw, 200)}`,
       );
+      finalizeDrainSnapshot(snapshot, false);
       return 1;
     }
     const op = entry.operation;
@@ -150,45 +200,105 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
       logError(
         `sync data: entry ${i} missing 'operation' field; preserving queue. Raw: ${truncate(raw, 200)}`,
       );
+      finalizeDrainSnapshot(snapshot, false);
       return 1;
     }
 
     const dispatchResult = await dispatchEntry(remote, entry, i);
     if (dispatchResult !== 0) {
-      // dispatchEntry already logged. Queue file stays put.
+      // dispatchEntry already logged. Finalise as failure → temp is
+      // either renamed back to canonical (if no sibling appended) or
+      // left in place for the next recovery pass.
+      finalizeDrainSnapshot(snapshot, false);
       return dispatchResult;
     }
   }
 
-  info(`sync data: ${entries.length} entries replayed; calling brain-side drain...`);
+  info(`sync data: ${snapshot.entries.length} entries replayed; calling brain-side drain...`);
 
   // Phase 2 — drain the brain-side queue. Only runs after every local
   // entry succeeded.
   const drainResult = await callRemoteDrain(remote);
   if (drainResult !== 0) {
     // Local entries already replayed — but the brain-side drain failed.
-    // Preserve the local queue too: the user can re-run, the brain will
-    // dedupe via INSERT ... ON CONFLICT semantics on the per-tool side.
+    // Preserve the local queue (finalize as failure) so the user can
+    // re-run; the brain dedupes via INSERT ... ON CONFLICT semantics.
+    finalizeDrainSnapshot(snapshot, false);
     return drainResult;
   }
 
-  // Both phases succeeded — clear the local queue file.
-  try {
-    unlinkSync(queuePath);
-    info(`sync data: drained ${entries.length} entries; local queue cleared.`);
-  } catch (err) {
-    // The drain succeeded but we couldn't unlink the file. Log and
-    // continue — the queue is now stale (its entries are already on the
-    // brain) and the next run will re-replay; the brain's own dedupe
-    // (ON CONFLICT) will handle the redundant calls. Safer to leave the
-    // file than to silently truncate and risk hiding a permission bug.
-    const msg = err instanceof Error ? err.message : String(err);
-    warn(
-      `sync data: drained ${entries.length} entries but could not unlink queue (${msg}); will re-replay on next run (brain dedupes).`,
-    );
-  }
+  // Both phases succeeded — unlink the temp via the primitive (the
+  // canonical queue is already gone, replaced by any sibling appends
+  // that arrived after the rename).
+  finalizeDrainSnapshot(snapshot, true);
+  info(`sync data: drained ${snapshot.entries.length} entries; local queue cleared.`);
 
   return 0;
+}
+
+/** Structured result of {@link drainSyncQueueOnly}. */
+export interface QueueDrainResult {
+  /** True when the local replay + brain-side drain both succeeded (or there was nothing to do). */
+  ok: boolean;
+  /** Count of local queue entries replayed this drain (0 for an empty queue). */
+  drained: number;
+}
+
+/**
+ * FR-195 (M3) — the queue-drain half of `sync data`, exposed as a structured
+ * seam for `boot-sync` so the awaken remote channel reuses the SAME drain code
+ * path (#253 / L-253: keep the drain logic in ONE place — never fork it).
+ *
+ * Delegates straight to `runSyncData()` (no behavior change to `sync data`
+ * itself) and maps its exit code to `{ok}`, capturing the entry count via a
+ * read-only `inspectQueueDepth` snapshot taken BEFORE the drain (the drain
+ * removes the file, so depth must be read first). This is intentionally a thin
+ * adapter — it does NOT re-implement the rename/replay/unlink; `runSyncData`
+ * remains the single owner of the atomicity contract.
+ *
+ * NEVER throws: a thrown error from the underlying drain is caught and mapped
+ * to `{ok:false, drained:0}` so boot-sync records a skip and continues (the
+ * never-block-session-start contract). The `remote_brain`-unconfigured case is
+ * handled by `runSyncData` returning exit 1 → `{ok:false}` here; boot-sync's
+ * own degraded-mode check short-circuits before calling this, so this path is
+ * the belt-and-braces fallback.
+ *
+ * stdout discipline: `runSyncData` narrates progress via `info()`, which writes
+ * to STDOUT. boot-sync emits a JSON digest to stdout, so that chatter would
+ * corrupt the digest. This seam (which exists SOLELY to adapt `sync data` for
+ * the digest-emitting boot-sync path) flips verbosity to `quiet` around the
+ * drain — silencing `info`/`warn` (stdout/stderr noise) while preserving
+ * `error` (stderr) — then restores the prior verbosity. This does NOT change
+ * `runSyncData` or `sync data`'s own behavior; it only quiets the reused call.
+ */
+export async function drainSyncQueueOnly(
+  opts: SyncDataOptions = {},
+): Promise<QueueDrainResult> {
+  const slug = opts.projectSlug ?? basenameOfCwd();
+  // Read depth BEFORE the drain — runSyncData renames/removes the queue file,
+  // so a post-drain inspection would always report zero. Counts live lines in
+  // the canonical queue plus any in-flight `.draining-*` temps from a prior
+  // crash (those get recovered + replayed by this drain).
+  let drained = 0;
+  try {
+    const depth = inspectQueueDepth(slug);
+    drained = depth.liveLines + depth.drainingLines;
+  } catch {
+    drained = 0;
+  }
+
+  // Quiet the reused drain's stdout chatter so the caller's digest stays clean.
+  const priorVerbosity = getVerbosity();
+  setVerbosity("quiet");
+  try {
+    const code = await runSyncData(opts);
+    // On failure the queue is preserved (not drained) → report 0 drained.
+    return { ok: code === 0, drained: code === 0 ? drained : 0 };
+  } catch {
+    return { ok: false, drained: 0 };
+  } finally {
+    setVerbosity(priorVerbosity);
+  }
 }
 
 /**

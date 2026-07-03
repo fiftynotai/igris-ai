@@ -17,14 +17,18 @@
  * - igris_file_pull: Pull a flat file from the remote brain server
  *
  * @module tools/sync
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';
 import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
+import { basename, isAbsolute, sep } from 'node:path';
 import { getDb } from '../db.js';
 import { errMsg } from '../engine/helpers.js';
+import { embedNullLearnings } from '../utils/learning-embed.js';
+import { deleteEmbedding, isVectorSearchAvailable } from '../utils/vector-search.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -68,6 +72,19 @@ interface SyncTableConfig {
   strategy: 'lww' | 'append';
   mergeFields?: Record<string, 'max' | 'merge_tags'>;
   columns: string[];
+  /**
+   * TD-253: columns holding absolute LOCAL filesystem paths that must be
+   * relativized before any row egresses to a remote brain. This ONE array is
+   * the source for BOTH the disclosure-manifest annotation (egress-manifest.ts)
+   * AND the runtime redaction (`redactTablesForEgress`). Every entry MUST also
+   * appear in `columns` (asserted by the parity test).
+   */
+  redactCols?: string[];
+}
+
+function tableColumns(db: Database.Database, name: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${name})`).all() as { name: string }[];
+  return new Set(rows.map((r) => r.name));
 }
 
 // ---------------------------------------------------------------------------
@@ -91,6 +108,13 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       // stay LOCAL until a human approves them. Listed last to minimize diff
       // churn against the original column ordering.
       'review_status', 'provenance', 'source_extractor',
+      // FR-200 M2: promoted_to_doc records the project-context doc a learning's
+      // standard was promoted into (NULL = not promoted). It MUST replicate so
+      // a recall on any synced machine surfaces the same "Promoted → <doc>"
+      // pointer (one-fact-one-source). LWW on the row carries it; unlike the
+      // perception-only seen_again_count counters (deliberately excluded), this
+      // is conscious-channel state shared across machines.
+      'promoted_to_doc',
     ],
   },
   {
@@ -114,6 +138,9 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'slug', 'name', 'path', 'tech_stack', 'archetype', 'igris_version', 'status',
       'registered_at', 'last_session_at', 'metadata',
     ],
+    // TD-253: `path` is the absolute local checkout dir — relativized to ~ (or
+    // basename for a foreign-absolute path) before egress. See egress-manifest.ts.
+    redactCols: ['path'],
   },
   {
     table: 'sessions',
@@ -138,13 +165,19 @@ export const SYNC_TABLES: SyncTableConfig[] = [
   {
     table: 'instances',
     syncKey: ['id'],
-    timestampCol: 'last_heartbeat_at',
+    timestampCol: 'last_activity_at',
     strategy: 'lww',
     columns: [
       'id', 'machine_hostname', 'machine_os', 'project_slug', 'project_path',
       'current_brief', 'current_phase', 'current_task', 'status',
-      'started_at', 'last_heartbeat_at', 'metadata',
+      'started_at', 'last_activity_at', 'metadata',
+      'harness', 'harness_session_id', 'owner_pid', 'owner_started_at',
+      'liveness_method', 'liveness_status', 'liveness_checked_at',
+      'lease_expires_at', 'state_updated_at',
     ],
+    // TD-253: `project_path` is the absolute local checkout dir for this
+    // instance — relativized to ~ before egress. See egress-manifest.ts.
+    redactCols: ['project_path'],
   },
   {
     table: 'agent_metrics',
@@ -168,7 +201,7 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     syncKey: ['project', 'filename'],
     timestampCol: 'updated_at',
     strategy: 'lww',
-    columns: ['project', 'filename', 'content', 'content_hash', 'updated_at'],
+    columns: ['project', 'filename', 'content', 'content_hash', 'updated_at', 'instance_id', 'state'],
   },
   {
     table: 'definition_files',
@@ -187,62 +220,6 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'duration_ms', 'input_tokens', 'output_tokens', 'cache_read', 'cache_create',
       'result', 'error_message', 'metadata', 'created_at',
     ],
-  },
-  {
-    table: 'tasks',
-    syncKey: ['id'],
-    timestampCol: 'updated_at',
-    strategy: 'lww',
-    columns: [
-      'id', 'task_type', 'scope', 'title', 'description', 'brief_id',
-      'project_slug', 'parent_id', 'status', 'priority', 'assignee',
-      'due_at', 'defer_until', 'created_by', 'metadata',
-      'created_at', 'updated_at',
-    ],
-  },
-  {
-    table: 'task_deps',
-    syncKey: ['task_id', 'depends_on'],
-    timestampCol: 'created_at',
-    strategy: 'lww',
-    columns: ['task_id', 'depends_on', 'created_at'],
-  },
-  {
-    table: 'task_results',
-    syncKey: ['id'],
-    strategy: 'lww',
-    timestampCol: 'created_at',
-    columns: ['id', 'task_id', 'result_type', 'content', 'file_path', 'metadata', 'created_at'],
-  },
-  {
-    table: 'task_assignments',
-    syncKey: ['id'],
-    timestampCol: 'assigned_at',
-    strategy: 'lww',
-    columns: [
-      'id', 'task_id', 'agent', 'assigned_at', 'completed_at', 'result',
-    ],
-  },
-  {
-    table: 'agent_capabilities',
-    syncKey: ['agent', 'capability'],
-    timestampCol: 'created_at',
-    strategy: 'lww',
-    columns: ['agent', 'capability', 'created_at'],
-  },
-  {
-    table: 'autonomous_decisions',
-    syncKey: ['id'],
-    timestampCol: 'created_at',
-    strategy: 'append',
-    columns: ['id', 'decision_type', 'task_id', 'agent', 'detail', 'created_at'],
-  },
-  {
-    table: 'coordination_config',
-    syncKey: ['key'],
-    timestampCol: 'updated_at',
-    strategy: 'lww',
-    columns: ['key', 'value', 'updated_at'],
   },
   {
     table: 'schedules',
@@ -276,7 +253,7 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
   {
-    table: 'registry',
+    table: 'catalog',
     syncKey: ['id'],
     timestampCol: 'updated_at',
     strategy: 'lww',
@@ -284,7 +261,11 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'id', 'name', 'type', 'archetype', 'framework', 'github_repo',
       'github_path', 'github_branch', 'description', 'install_command',
       'standalone', 'parent_template', 'tags', 'rebrand_checklist',
-      'source_project', 'status', 'created_at', 'updated_at',
+      'source_project', 'status',
+      // FR-198 asset-reference columns — MUST be listed here or they silently
+      // don't replicate to/from VPS (R-4).
+      'when_to_use', 'source', 'source_ref',
+      'created_at', 'updated_at',
     ],
   },
   {
@@ -300,6 +281,21 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: [
       'from_type', 'from_id', 'to_type', 'to_id', 'edge_type',
       'confidence', 'provenance', 'created_at', 'metadata',
+    ],
+  },
+  {
+    // TD-171 M2: graph_nodes — free-standing concept/decision nodes.
+    // Append strategy + composite syncKey on (node_type, node_external_id)
+    // matches the local UNIQUE constraint so remote INSERT OR IGNORE shares
+    // idempotency semantics with handleGraphNodeCreate. Properties bag is
+    // free-form JSON; LWW would risk stomping merged property changes —
+    // append + UNIQUE handles the dominant create-once pattern correctly.
+    table: 'graph_nodes',
+    syncKey: ['node_type', 'node_external_id'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'node_type', 'node_external_id', 'label', 'properties', 'created_at',
     ],
   },
   {
@@ -337,10 +333,15 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     syncKey: ['source_module', 'project_slug', 'title'],
     timestampCol: 'created_at',
     strategy: 'lww',
+    // FR-118 M2: confidence/suggested_action/type_inferred ADDED. The LLM
+    // extractor writes them; without them here they would replicate as silent
+    // NULLs on the remote brain (the loader/schema/writer-must-agree trap —
+    // memory #133/#213). New cols are nullable, so older rows replicate clean.
     columns: [
       'source_module', 'project_slug', 'title', 'evidence', 'priority',
       'status', 'created_at', 'expires_at', 'dismissed_at',
       'dismissed_reason', 'acted_at', 'acted_brief_id',
+      'confidence', 'suggested_action', 'type_inferred',
     ],
   },
   {
@@ -361,6 +362,56 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
 ];
+
+// ---------------------------------------------------------------------------
+// Egress path redaction (TD-253)
+// ---------------------------------------------------------------------------
+
+/**
+ * Relativize an absolute LOCAL filesystem path so a remote brain never sees the
+ * source machine's directory layout. Idempotent (re-applying is a no-op):
+ *   - the home directory itself → `~`
+ *   - a path under home         → `~` + the suffix (e.g. `~/code/app`)
+ *   - any other absolute path   → its basename (strip the foreign prefix)
+ *   - an already-relative value → unchanged
+ * Non-string / empty values pass through untouched.
+ *
+ * Runs on the SOURCE machine (push side) where `homedir()` is the correct
+ * relativization base — the receiver/VPS is never given the real path.
+ */
+export function relativizeEgressPath(value: unknown): unknown {
+  if (typeof value !== 'string' || value === '') return value;
+  const home = homedir();
+  if (value === home) return '~';
+  if (value.startsWith(home + sep)) return '~' + value.slice(home.length);
+  if (isAbsolute(value)) return basename(value);
+  return value;
+}
+
+/**
+ * Redact the `redactCols` of every table IN PLACE, running each value through
+ * {@link relativizeEgressPath}. Returns the same object for call-site chaining.
+ *
+ * MUST be applied at each egress choke point BEFORE chunking AND before any
+ * `queueFailedRows` — mutating in place means the `tables` object reused by the
+ * failure-path re-queue is already redacted, so retries never leak (the
+ * load-bearing ordering decision, TD-253). Idempotent, so a second application
+ * (e.g. defense-in-depth in the queue-drain path) is a harmless no-op.
+ */
+export function redactTablesForEgress(
+  tables: Record<string, Record<string, unknown>[]>,
+): Record<string, Record<string, unknown>[]> {
+  for (const [tableName, rows] of Object.entries(tables)) {
+    const cfg = SYNC_TABLES.find((t) => t.table === tableName);
+    if (!cfg?.redactCols || cfg.redactCols.length === 0) continue;
+    for (const row of rows) {
+      for (const col of cfg.redactCols) {
+        if (col in row) row[col] = relativizeEgressPath(row[col]);
+      }
+    }
+  }
+  return tables;
+}
 
 // ---------------------------------------------------------------------------
 // Helper functions
@@ -616,12 +667,47 @@ export function mergeRows(
             }
           }
 
+          // FR-220: stale-embedding invalidation. An LWW update that changes a
+          // learnings row's title/content makes the stored embedding (derived
+          // from the OLD text) stale — and a stale NON-NULL embedding is
+          // invisible to the post-merge `WHERE embedding IS NULL` scan. NULL
+          // both embedding columns HERE and delete the vec row below, inside
+          // the SAME per-table sync transaction the caller wraps mergeRows in,
+          // so the BLOB-null and the vec-delete stay lockstep. The row then
+          // falls into the post-merge NULL-scan (scheduleLearningEmbedAfterMerge)
+          // and is re-embedded via the normalized fingerprint. Guarded to the
+          // learnings table only.
+          const learningTextChanged =
+            config.table === 'learnings' &&
+            (existing.title !== row.title || existing.content !== row.content);
+          if (learningTextChanged) {
+            setClauses.push('embedding = ?', 'embedding_model = ?');
+            setValues.push(null, null);
+          }
+
           if (setClauses.length > 0) {
             const whereClause = config.syncKey.map(k => `${k} = ?`).join(' AND ');
             db.prepare(
               `UPDATE ${config.table} SET ${setClauses.join(', ')} WHERE ${whereClause}`
             ).run(...setValues, ...keyValues);
             updated++;
+
+            // Lockstep vec-delete for the just-NULLed embedding. DEFENSIVE:
+            // only when sqlite-vec is available. If the extension is missing the
+            // columns are already NULLed above and the row degrades to FTS until
+            // the next embed pass re-derives it (#213) — guarding here means a
+            // missing extension can never throw out of the merge and abort the
+            // sync transaction.
+            // NOTE (FR-220): with the extension DOWN, the stale learnings_vec row
+            // survives (vec-delete is skipped). It is inert while vec is down (no
+            // vector query can run), and self-heals on the next embed pass, which
+            // DELETE-then-INSERTs the vec row. The only window is a later
+            // vec-available process that hasn't re-embedded yet — a transient
+            // old-text ranking, never corruption. See TD-288 for a boot-time
+            // NULL-scan that would close that window proactively.
+            if (learningTextChanged && isVectorSearchAvailable(db)) {
+              deleteEmbedding(db, existing.id as number);
+            }
           } else {
             skipped++;
           }
@@ -712,6 +798,95 @@ export function processSyncPush(
 }
 
 // ---------------------------------------------------------------------------
+// FR-220 — post-merge learning-embedding pass (fire-and-forget, coalescing)
+// ---------------------------------------------------------------------------
+
+/**
+ * Progress-log batch granularity for the post-merge NULL-embedding scan.
+ * Forwarded to `embedNullLearnings` — it does NOT cap the rows processed
+ * (the pass drains the whole NULL backlog); it only controls log cadence.
+ */
+const EMBED_BATCH = 50;
+
+/**
+ * Coalescing guard for the post-merge embed pass. At most one pass runs at a
+ * time; a schedule call that arrives while a pass is in flight sets
+ * `embedRerun` so exactly ONE follow-up pass runs after the current one drains
+ * (collapsing N overlapping syncs into one redundant-CPU-free follow-up).
+ *
+ * Race-free by construction: the event loop is single-threaded and there is no
+ * `await` between the `!embedRerun` break check and clearing `embedInFlight`,
+ * so no schedule call can slip through that gap unobserved. Correctness does
+ * not depend on the guard — `embedNullLearnings` is idempotent (`WHERE
+ * embedding IS NULL` + per-row txn) — the guard only prevents wasted model runs.
+ */
+let embedInFlight = false;
+let embedRerun = false;
+
+/**
+ * Schedule a fire-and-forget post-merge embed pass IFF the just-committed merge
+ * inserted or updated a learnings row. A clean merge (learnings absent, or
+ * `inserted + updated === 0`) is a no-op — no pass is scheduled.
+ *
+ * NEVER blocks the caller: the pass runs on a LATER tick via `setImmediate`,
+ * after the sync response has already been queued/flushed (#224 — both halves
+ * of the background feature stay background). It is `void`-invoked and never
+ * awaited, so it cannot delay the response or the caller's return.
+ *
+ * @param db - The database the merge committed into.
+ * @param results - Per-table `MergeRowsResult` map from the merge.
+ */
+export function scheduleLearningEmbedAfterMerge(
+  db: Database.Database,
+  results: Record<string, MergeRowsResult>,
+): void {
+  const l = results['learnings'];
+  if (!l || l.inserted + l.updated === 0) return; // AC4 clean-merge no-op
+  if (embedInFlight) {
+    embedRerun = true; // coalesce overlapping syncs into one follow-up pass
+    return;
+  }
+  embedInFlight = true;
+  setImmediate(() => {
+    void runPostMergeEmbedPass(db);
+  });
+}
+
+/**
+ * Drain the NULL-embedding backlog by delegating to the shipped
+ * `embedNullLearnings` core, looping once more if an overlapping schedule call
+ * set `embedRerun` while the pass ran.
+ *
+ * NEVER rejects out of the `setImmediate` callback (#224): the inner core call
+ * is wrapped in its own try/catch (a failed pass leaves rows NULL for the next
+ * merge to re-derive — degrade-not-crash, #213/AC2), and the outer try/finally
+ * guarantees `embedInFlight` clears even on an unexpected throw. There is NO
+ * success log at schedule time (#125 observability honesty) — the only
+ * completion signal is the core's own post-pass progress/summary log.
+ *
+ * Exported for direct unit testing (drive it with a fake embedder + a tick).
+ */
+export async function runPostMergeEmbedPass(db: Database.Database): Promise<void> {
+  try {
+    for (;;) {
+      embedRerun = false;
+      try {
+        await embedNullLearnings(db, { dryRun: false, batchSize: EMBED_BATCH });
+      } catch (err) {
+        // AC2: never break the sync path. #125: no success-implying line here.
+        console.error(
+          '[fr220] post-merge embed pass failed (rows left NULL for next pass):',
+          errMsg(err),
+        );
+      }
+      if (!embedRerun) break; // no await between here and the finally → race-free
+    }
+  } finally {
+    embedInFlight = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // handleBrainPush
 // ---------------------------------------------------------------------------
 
@@ -755,6 +930,9 @@ async function handleBrainPush(
   let totalRows = 0;
 
   for (const config of activeSyncTables) {
+    const existingColumns = tableColumns(db, config.table);
+    const selectedColumns = config.columns.filter((c) => existingColumns.has(c));
+    if (!existingColumns.has(config.timestampCol)) continue;
     // Get last push timestamp for this table
     const stateRow = db.prepare(
       'SELECT last_push_at FROM sync_state WHERE remote_url = ? AND table_name = ?'
@@ -770,7 +948,7 @@ async function handleBrainPush(
     // even if the column list ever drifts, this filter keeps the privacy
     // posture intact (pending candidates are session-private until approved).
     // Other tables remain unfiltered.
-    const cols = config.columns.join(', ');
+    const cols = selectedColumns.join(', ');
     const extraFilter = config.table === 'learnings' ? " AND review_status = 'approved'" : '';
     const rows = db.prepare(
       `SELECT ${cols} FROM ${config.table} WHERE ${config.timestampCol} > ?${extraFilter}`
@@ -790,6 +968,11 @@ async function handleBrainPush(
       }],
     };
   }
+
+  // TD-253: relativize local FS paths IN PLACE before both chunking and the
+  // failure-path `queueFailedRows` (line ~982). Mutating `tables` here means the
+  // re-queued object is already redacted, so retries never leak absolute paths.
+  redactTablesForEgress(tables);
 
   // Chunk and POST to remote
   const chunks = chunkTablesForPush(tables);
@@ -939,6 +1122,10 @@ async function handleBrainPull(
     // Merge rows within a transaction for performance
     const summary: string[] = [];
     let totalMerged = 0;
+    // FR-220: per-table merge counts, kept alongside totalMerged so the
+    // post-merge embed pass can fire on a learnings insert/update (pull site
+    // symmetry with the /sync/push route).
+    const results: Record<string, MergeRowsResult> = {};
 
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_pull_at)
@@ -953,6 +1140,7 @@ async function handleBrainPull(
         if (!rows || rows.length === 0) continue;
 
         const result = mergeRows(db, config, rows);
+        results[config.table] = result;
         totalMerged += result.inserted + result.updated;
         const failedSuffix = result.failed > 0 ? `, ${result.failed} failed` : '';
         summary.push(
@@ -971,6 +1159,12 @@ async function handleBrainPull(
         upsertState.run(remoteUrl, config.table, pulledAt);
       }
     })();
+
+    // FR-220: after the merge transaction commits, fire the fire-and-forget
+    // post-merge embed pass so synced-in learnings (sync excludes the embedding
+    // column) get embedded on receive. Non-blocking — the pull response returns
+    // without awaiting the pass. Same helper + core as the /sync/push route.
+    scheduleLearningEmbedAfterMerge(db, results);
 
     if (summary.length === 0) {
       return {
@@ -1175,7 +1369,10 @@ async function handleSyncQueueDrain(
       if (!out[t.table]) out[t.table] = [];
       out[t.table].push(t.row);
     }
-    return out;
+    // TD-253: idempotent defense-in-depth. Queued rows are already redacted
+    // (sites 1 & 2 redact before queueing), so this is a no-op on relative
+    // paths — but it guards any future queue-population path that skips redaction.
+    return redactTablesForEgress(out);
   }
 
   // Initial chunking: pack tagged rows up to CHUNK_SIZE_LIMIT_DRAIN. We can't
@@ -1491,7 +1688,7 @@ function handleSessionFilePull(
     FROM session_files
     WHERE project = ?
     ORDER BY updated_at DESC
-  `).all(args.project) as { filename: string; content: string; content_hash: string; updated_at: string }[];
+  `).all(args.project) as { filename: string; content: unknown; content_hash: string; updated_at: string }[];
 
   if (rows.length === 0) {
     return {
@@ -1504,7 +1701,11 @@ function handleSessionFilePull(
 
   const files = rows.map(r => ({
     filename: r.filename,
-    content: r.content,
+    // TD-280: coerce a BLOB-stored content (Buffer) to a UTF-8 string, mirroring
+    // the CLI read boundary (getSessionFileContent).
+    content: Buffer.isBuffer(r.content)
+      ? r.content.toString('utf8')
+      : r.content == null ? null : String(r.content),
     content_hash: r.content_hash,
     updated_at: r.updated_at,
   }));

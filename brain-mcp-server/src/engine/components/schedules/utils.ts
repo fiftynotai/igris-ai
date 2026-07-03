@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 — Schedules Component Utilities
+ * Brain Engine v7.0 — Schedules Component Utilities
  *
  * Shared helper functions used by both handlers.ts and daemon.ts.
  * Centralizes timestamp generation, ID generation, and retry logic
  * to avoid duplication.
  *
  * @module engine/components/schedules/utils
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { randomUUID } from 'node:crypto';

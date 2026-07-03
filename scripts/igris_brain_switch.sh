@@ -14,6 +14,94 @@ CLAUDE_CONFIG="$HOME/.claude.json"
 CONFIG_FILE="$BRAIN_DIR/config.json"
 
 # ============================================================
+# Insecure-transport guard (TD-256, mirrors TD-252/TD-255
+# cli/src/lib/sync-transport.ts). Refuses writing a non-local
+# http:// remote brain entry (the api_key is sent in cleartext
+# as a Bearer header) UNLESS the operator opts in. Polarity
+# invariant (MAINTAINING.md): UNSET = refuse non-local http.
+# ============================================================
+
+# Classify a remote URL: prints "https" | "localhost-http" | "insecure-http".
+# Pure — no env read, no I/O. A malformed URL is treated as insecure (refuse
+# what we cannot prove safe).
+classify_remote_url() {
+  python3 -c "
+import sys
+from urllib.parse import urlparse
+
+LOCAL_HOSTNAMES = {'localhost', '127.0.0.1', '::1', '[::1]'}
+
+url = sys.argv[1]
+try:
+    parsed = urlparse(url)
+except Exception:
+    print('insecure-http')
+    sys.exit(0)
+
+scheme = parsed.scheme
+# urlparse strips brackets from [::1] into the bare ::1 via .hostname
+host = parsed.hostname or ''
+if scheme == 'https':
+    print('https')
+elif scheme == 'http':
+    print('localhost-http' if host in LOCAL_HOSTNAMES else 'insecure-http')
+else:
+    print('insecure-http')
+" "$1"
+}
+
+# Read the insecure-sync override. SINGLE reader of the override (the choke
+# point so the polarity lives in one place). Precedence:
+#   1. env var IGRIS_ALLOW_INSECURE_SYNC=1 (primary, one-shot; never export)
+#   2. config.json remote_brain.allow_insecure: true (optional persistent)
+# Default (neither set) → refuse. Returns 0 (allowed) / 1 (refused).
+is_insecure_sync_allowed() {
+  if [ "${IGRIS_ALLOW_INSECURE_SYNC:-}" = "1" ]; then
+    return 0
+  fi
+  local allowed
+  allowed="$(python3 -c "
+import json, sys
+try:
+    with open(sys.argv[1], 'r') as f:
+        cfg = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    print('false')
+    sys.exit(0)
+rb = cfg.get('remote_brain', {})
+print('true' if rb.get('allow_insecure') is True else 'false')
+" "$CONFIG_FILE")"
+  [ "$allowed" = "true" ]
+}
+
+# Enforcement gate for the remote/dual path. Exits 1 (refuse) on a non-local
+# http URL with no override; warns-and-continues with the override; passes
+# silently for https / localhost-http. Never inverts the default-refuse.
+assert_remote_transport_allowed() {
+  local url="$1"
+  local transport
+  transport="$(classify_remote_url "$url")"
+  case "$transport" in
+    https|localhost-http)
+      return 0
+      ;;
+  esac
+  # insecure-http
+  if is_insecure_sync_allowed; then
+    echo "⚠️  WARNING: configuring remote brain over insecure http:// to $url —"
+    echo "   the api_key is sent in cleartext (IGRIS_ALLOW_INSECURE_SYNC override active)."
+    return 0
+  fi
+  echo "❌ Error: refusing to configure remote brain over http:// to $url —"
+  echo "   your api_key would be sent in cleartext as a Bearer header."
+  echo ""
+  echo "   Use an https:// URL, or set IGRIS_ALLOW_INSECURE_SYNC=1 to override"
+  echo "   (NOT recommended on untrusted networks). A persistent override is"
+  echo "   config.json remote_brain.allow_insecure: true."
+  exit 1
+}
+
+# ============================================================
 # Validate environment
 # ============================================================
 if [ ! -d "$BRAIN_DIR" ]; then
@@ -238,16 +326,54 @@ with open(config_file, 'w') as f:
       exit 1
     fi
   fi
+
+  # TD-256: refuse a non-local http remote URL (cleartext api_key) unless the
+  # operator opted in (IGRIS_ALLOW_INSECURE_SYNC=1 / remote_brain.allow_insecure).
+  assert_remote_transport_allowed "$REMOTE_URL"
 fi
 
-# For local/dual, we need the local MCP server to be built
-MCP_SERVER_PATH="$BRAIN_DIR/mcp-server/dist/index.js"
+# For local/dual, resolve the local MCP server path from the entry that
+# `igris init` / `igris install` already registered in ~/.claude.json
+# (the bundled brain MCP shipped with the npm package — `node <bundle>/index.js`).
+# The legacy `~/.igris/mcp-server/` dir is only populated by igris_brain_deploy.sh
+# on a VPS, so it must NOT be assumed for a normal consumer install (TD-256).
+resolve_local_mcp_path() {
+  python3 -c "
+import json, sys
+
+claude_file = sys.argv[1]
+try:
+    with open(claude_file, 'r') as f:
+        claude = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    print('')
+    sys.exit(0)
+
+entry = claude.get('mcpServers', {}).get('igris-brain', {})
+# A local-stdio entry has command=node and args[0] = path to the brain index.js.
+if entry.get('command') == 'node':
+    args = entry.get('args', [])
+    if args:
+        print(args[0])
+        sys.exit(0)
+print('')
+" "$CLAUDE_CONFIG"
+}
+
+MCP_SERVER_PATH=""
 if [ "$COMMAND" = "local" ] || [ "$COMMAND" = "dual" ]; then
-  if [ ! -f "$MCP_SERVER_PATH" ]; then
-    echo "❌ Error: Local MCP server not found at $MCP_SERVER_PATH"
+  MCP_SERVER_PATH="$(resolve_local_mcp_path)"
+  if [ -z "$MCP_SERVER_PATH" ] || [ ! -f "$MCP_SERVER_PATH" ]; then
+    echo "❌ Error: Local brain MCP server not found."
     echo ""
-    echo "   Build it first:"
-    echo "   cd ~/.igris/mcp-server && npm install && npm run build"
+    if [ -n "$MCP_SERVER_PATH" ]; then
+      echo "   Registered path does not exist: $MCP_SERVER_PATH"
+    else
+      echo "   No local 'igris-brain' (node) entry is registered in $CLAUDE_CONFIG."
+    fi
+    echo ""
+    echo "   Register the bundled brain MCP first:"
+    echo "   igris install"
     exit 1
   fi
 fi

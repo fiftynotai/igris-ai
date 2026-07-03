@@ -1,8 +1,79 @@
 {
   "version": "{{IGRIS_VERSION}}",
   "installed_at": "{{INSTALL_DATE}}",
-  "subconscious": {
-    "enabled": false
+  "llm_extractor": {
+    "harness": "claude",
+    "fallback_order": ["claude", "codex"]
+  },
+  "cognition": {
+    "perception": {
+      "enabled": false
+    },
+    "subconscious": {
+      "enabled": false,
+      "llm_timeout_ms": 300000,
+      "llm_daily_budget": 8,
+      "min_digest_bytes": 10240,
+      "harness": null
+    },
+    "synapse": {
+      "enabled": false,
+      "llm_timeout_ms": 300000,
+      "llm_daily_budget": 8,
+      "min_input_bytes": 100,
+      "harness": null,
+      "cosine_floor": 0.8,
+      "top_k": 5,
+      "max_pairs": 200,
+      "auto_approve": false
+    },
+    "janitor": {
+      "enabled": false,
+      "llm_timeout_ms": 300000,
+      "llm_daily_budget": 8,
+      "min_input_bytes": 100,
+      "harness": null,
+      "dupe_cosine_floor": 0.90,
+      "dupe_min_overlap": 0.6,
+      "top_k": 5,
+      "max_pairs": 200,
+      "auto_merge": false,
+      "auto_merge_threshold": 0.95,
+      "rediscovery_bump_n": 3,
+      "reject_recur_n": 5,
+      "stale_days": 14,
+      "contradiction": {
+        "contradiction_cosine_floor": 0.80,
+        "contradiction_cosine_ceil": 0.995,
+        "top_k": 5,
+        "max_pairs": 200,
+        "auto_resolve": false,
+        "auto_resolve_threshold": 0.95
+      },
+      "pruning": {
+        "stale_months": 6,
+        "max_access_count": 0,
+        "deprecated_tags": [],
+        "max_candidates": 200,
+        "auto_prune": false,
+        "anomaly_threshold": 50
+      },
+      "cluster": {
+        "enabled": false,
+        "min_cluster_size": 3,
+        "resolution": 1.0,
+        "cadence_days": 7,
+        "max_clusters": 20,
+        "cluster_edge_types": ["related_to", "derived_from", "duplicates"],
+        "auto_fork": false
+      },
+      "emergence": {
+        "enabled": false,
+        "min_count": 50,
+        "max_proposals": 10,
+        "max_sample_ids": 10
+      }
+    }
   },
   "cli_targets": {{CLI_TARGETS_JSON}},
   "remote_brain": {{REMOTE_BRAIN_JSON}}

@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component Handlers
+ * Brain Engine v7.0 -- Monitoring Component Handlers
  *
  * Handler functions for the 2 monitoring MCP tools:
  * - igris_event_log: Query the event log with filters
  * - igris_event_log_cleanup: Purge old event log entries
  *
  * @module engine/components/monitoring/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';

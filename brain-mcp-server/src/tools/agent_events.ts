@@ -1,9 +1,9 @@
 /**
  * Igris Brain -- Agent Event Tools
  *
- * Provides real-time agent lifecycle event tracking for the Crimson Arena
- * dashboard. Events are recorded during /hunt workflow phase transitions
- * and consumed by the dashboard for live agent activity visualization.
+ * Provides real-time agent lifecycle event tracking for agent activity
+ * dashboards. Events are recorded during /hunt workflow phase transitions
+ * and consumed by dashboards for live agent activity visualization.
  *
  * Tools:
  * - igris_agent_event: Record an agent lifecycle event (start/stop/error/retry)
@@ -15,7 +15,7 @@
  * - handleAgentMetricsByProject: Per-project metrics breakdown for a specific agent
  *
  * @module tools/agent_events
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';

@@ -12,19 +12,23 @@
  * - igris_memory_get: Fetch full content of a single learning by ID
  * - igris_memory_hybrid_search: RRF-fused BM25 + vector search
  * - igris_memory_backfill_embeddings: Batch-embed learnings missing embeddings
+ * - igris_memory_update: Edit fields of an existing learning (TD-171 M1)
+ * - igris_memory_delete: Hard-DELETE a learning + emit bus event (TD-171 M1)
+ * - igris_memory_dashboard: Aggregate counts + recent stats (TD-171 M1; canonical _dashboard shape)
  * - igris_pattern_suggest: Suggest relevant patterns for current context
  *
  * Internal functions:
  * - promoteToGlobal: Auto-promote local learnings to global when found in 2+ projects
  *
  * @module tools/memory
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb, BRAIN_DIR } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils/vector-search.js';
+import { embedNullLearnings } from '../utils/learning-embed.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
 import type { SourceExtractor } from '../engine/components/perception/types.js';
@@ -55,6 +59,24 @@ function computeTechStackOverlap(stackA: string | null, stackB: string | null): 
   return intersection.size / union.size;
 }
 
+/**
+ * A model-supplied edge captured at store time (FR-210 Path B).
+ *
+ * The `from` side is always the just-stored learning (`from_type:'learning'`,
+ * `from_id:String(learningId)`); the caller only specifies the target and the
+ * edge type. Consumed by the edges component's `onMemoryStored` subscriber,
+ * NOT written here — ownership of every edge-write stays in the edges component
+ * (learning #206). `to_type`/`edge_type` are validated against
+ * `VALID_ENTITY_TYPES`/`VALID_EDGE_TYPES` at the store-schema surface.
+ */
+interface EdgeSpec {
+  to_type: string;
+  to_id: string;
+  edge_type: string;
+  confidence?: number;
+  metadata?: Record<string, unknown>;
+}
+
 /** Input shape for igris_memory_store */
 interface MemoryStoreInput {
   project: string;
@@ -64,6 +86,13 @@ interface MemoryStoreInput {
   tags?: string;
   tech_stack?: string;
   source_brief?: string;
+  /**
+   * FR-210 Path B: relationships the model reasons about at store time. Not
+   * written by `handleMemoryStore`; surfaced (with the new `learningId`) to the
+   * memory component handler, which emits the enriched `memory.stored` payload
+   * that the edges component's `onMemoryStored` subscriber turns into edges.
+   */
+  edges?: EdgeSpec[];
   scope?: 'local' | 'global';
   provenance?: 'observed' | 'inferred' | 'synthesized' | 'ambiguous' | 'human_asserted';
   /**
@@ -76,8 +105,10 @@ interface MemoryStoreInput {
   /**
    * Which extractor produced this row (FR-109 + TD-066). Default `'manual'`
    * covers the conscious-channel use case where a human or agent calls the
-   * tool directly. Perception extractors pass `'llm'`; the /distill skill
-   * passes `'distill'`.
+   * tool directly. Perception extractors pass `'llm'`; the /harvest skill
+   * passes `'distill'` (the enum value intentionally stays `'distill'` after
+   * the /distill → /harvest rename — it is a persisted channel-tag, not the
+   * skill name; renaming it would orphan stored rows).
    *
    * The TD-061 brief originally proposed a wider vocabulary including
    * `rule:learned_marker`, `rule:retry_chain`, `rule:blocker_resolution`,
@@ -106,11 +137,25 @@ interface MemoryRecallInput {
   project: string;
   context: string;
   limit?: number;
+  /**
+   * TD-093: optional hard-filter to a single learning category. When omitted,
+   * all categories are searched (byte-identical SQL = zero regression). When
+   * set, results are restricted to that category on every fetch path
+   * (BM25/FTS + vector-scope + hybrid hydration).
+   */
+  category?: 'pattern' | 'decision' | 'discovery' | 'mistake' | 'optimization';
 }
 
 /** Input shape for igris_memory_get */
 interface MemoryGetInput {
   id: number;
+}
+
+/** Input shape for igris_memory_mark_promoted (FR-200 M2) */
+interface MemoryMarkPromotedInput {
+  id: number;
+  doc_path: string;
+  doc_anchor?: string;
 }
 
 /** A BM25 result row from FTS5 */
@@ -129,6 +174,13 @@ interface Bm25Row {
   access_count: number;
   rank: number;
   provenance: string;
+  /**
+   * FR-200 M2: the project-context doc (path[#anchor]) a learning's standard
+   * was promoted into, or null/undefined when not promoted. Populated only on
+   * the recall hydration paths that SELECT it (recall's BM25 + hybrid
+   * `fullRows`); other Bm25Row producers leave it undefined.
+   */
+  promoted_to_doc?: string | null;
 }
 
 /**
@@ -226,9 +278,13 @@ function validateMemoryInput(args: MemoryStoreInput): string | null {
   return null;
 }
 
-async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { type: string; text: string }[] }> {
+async function handleMemoryStore(
+  args: MemoryStoreInput,
+): Promise<{ content: { type: string; text: string }[]; learningId?: number }> {
   const validationError = validateMemoryInput(args);
   if (validationError) {
+    // Additive contract (FR-210): `learningId` is omitted when nothing was
+    // stored, so callers can distinguish a validation no-op from a real write.
     return { content: [{ type: 'text', text: `Validation error: ${validationError}` }] };
   }
 
@@ -285,6 +341,10 @@ async function handleMemoryStore(args: MemoryStoreInput): Promise<{ content: { t
       type: 'text',
       text: `Learning stored successfully.\n\nID: ${learningId}\nProject: ${args.project}\nCategory: ${args.category}\nTitle: ${args.title}\nScope: ${args.scope ?? 'local'}\nProvenance: ${args.provenance ?? 'observed'}\nReview status: ${reviewStatus}${embeddingNote}${promotedNote}`,
     }],
+    // FR-210: expose the new row id to the component handler so it can emit the
+    // enriched `memory.stored` payload (edge `from_id`). Additive — the existing
+    // `content` shape is untouched, so every current caller is unaffected.
+    learningId,
   };
 }
 
@@ -318,7 +378,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   let sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count, l.provenance,
+           l.created_at, l.access_count, l.provenance, l.promoted_to_doc,
            rank
     FROM learnings_fts fts
     JOIN learnings l ON l.id = fts.rowid
@@ -340,7 +400,17 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   sql += ' ORDER BY rank LIMIT ? OFFSET ?';
   params.push(limit, offset);
 
-  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  // Defense-in-depth (TD-290): the shared sanitizer now neutralizes the full
+  // class of FTS5-unsafe input, but wrap MATCH execution in a try/catch so a
+  // residual/future unsafe token degrades to "no results" instead of throwing
+  // — mirroring the resilience the recall / hybrid_search / pattern_suggest
+  // paths already have.
+  let rows: Record<string, unknown>[];
+  try {
+    rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
+  } catch {
+    rows = [];
+  }
 
   if (rows.length === 0) {
     return {
@@ -352,13 +422,26 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
   }
 
   const results = rows.map((row, i) => {
-    return [
+    // FR-200 M2 (one-fact-one-source): a promoted learning's standard now lives
+    // in a project-context doc. Search must NOT re-emit the raw content (here it
+    // would be the FULL untruncated body) — surface the doc pointer instead.
+    // Gate matches handleMemoryRecall exactly: non-empty string => promoted.
+    const promotedTo = typeof row.promoted_to_doc === 'string' && (row.promoted_to_doc as string).length > 0
+      ? (row.promoted_to_doc as string)
+      : null;
+    const lines = [
       `--- Result ${i + 1} ---`,
       `ID: ${row.id}`,
       `Project: ${row.project}`,
       `Category: ${row.category}`,
       `Title: ${row.title}`,
-      `Content: ${row.content}`,
+    ];
+    if (promotedTo) {
+      lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+    } else {
+      lines.push(`Content: ${row.content}`);
+    }
+    lines.push(
       `Tags: ${row.tags || '(none)'}`,
       `Tech Stack: ${row.tech_stack || '(none)'}`,
       `Scope: ${row.scope}`,
@@ -368,7 +451,8 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
       `Created: ${row.created_at}`,
       `Access Count: ${row.access_count}`,
       `Rank: ${row.rank}`,
-    ].join('\n');
+    );
+    return lines.join('\n');
   });
 
   return {
@@ -394,6 +478,17 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
   const db = getDb();
   const limit = args.limit ?? 5;
 
+  // TD-093: validate the optional category enum before touching the DB.
+  // Mirrors validateMemoryInput's message shape and reuses VALID_CATEGORIES.
+  if (args.category !== undefined && !VALID_CATEGORIES.includes(args.category)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: Invalid category: must be one of ${VALID_CATEGORIES.join(', ')}.`,
+      }],
+    };
+  }
+
   const sanitized = sanitizeFts5Query(args.context);
   if (!sanitized) {
     return {
@@ -406,24 +501,29 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
 
   // --- 1. BM25 search via FTS5 (project-local + global scope) ---
   // FR-109 filter: pending_review rows excluded from conscious-channel recall.
+  // TD-093: `categoryClause` hard-filters to a single category when provided;
+  // empty when omitted so the SQL is byte-identical to the pre-TD-093 query.
+  const categoryClause = args.category ? ' AND l.category = ?' : '';
   const bm25Sql = `
     SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
            l.tech_stack, l.scope, l.source_brief, l.confidence,
-           l.created_at, l.access_count, l.provenance,
+           l.created_at, l.access_count, l.provenance, l.promoted_to_doc,
            rank,
            (rank * 0.6 - l.confidence * 0.2 - MIN(l.access_count, 100) / 100.0 * 0.2) AS composite_score
     FROM learnings_fts fts
     JOIN learnings l ON l.id = fts.rowid
     WHERE learnings_fts MATCH ?
       AND (l.project = ? OR l.scope = 'global')
-      AND l.review_status = 'approved'
+      AND l.review_status = 'approved'${categoryClause}
     ORDER BY composite_score
     LIMIT ?
   `;
 
   let bm25Rows: Bm25Row[] = [];
   try {
-    bm25Rows = db.prepare(bm25Sql).all(sanitized, args.project, limit * 2) as Bm25Row[];
+    bm25Rows = db.prepare(bm25Sql).all(
+      sanitized, args.project, ...(args.category ? [args.category] : []), limit * 2,
+    ) as Bm25Row[];
   } catch {
     bm25Rows = [];
   }
@@ -444,9 +544,11 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
       if (vecResults.length > 0) {
         const ids = vecResults.map(r => r.rowid);
         const placeholders = ids.map(() => '?').join(',');
+        // TD-093: append the same category hard-filter to the vector-channel
+        // scope re-check so a category-mismatched vec hit never bubbles through.
         const scopeRows = db.prepare(
-          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global') AND review_status = 'approved'`,
-        ).all(...ids, args.project) as { id: number }[];
+          `SELECT id FROM learnings WHERE id IN (${placeholders}) AND (project = ? OR scope = 'global') AND review_status = 'approved'${args.category ? ' AND category = ?' : ''}`,
+        ).all(...ids, args.project, ...(args.category ? [args.category] : [])) as { id: number }[];
         const scopeIdSet = new Set(scopeRows.map(r => r.id));
         vecResults = vecResults.filter(r => scopeIdSet.has(r.rowid));
       }
@@ -496,13 +598,18 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     // caller bypassing those upstream filters must not leak unapproved rows
     // through the hydration step. Kept symmetric with the same filter on the
     // hybrid_search hydration query below.
+    // TD-093: the `AND category = ?` here is defense-in-depth (symmetric with
+    // the review_status filter above). topIds are already category-filtered
+    // upstream, but this guarantees "ONLY category rows" even if a future
+    // caller bypasses the upstream predicates.
     const fullRows = db.prepare(
       `SELECT id, project, category, title, content, tags, tech_stack, scope,
-              source_brief, confidence, created_at, access_count, provenance
+              source_brief, confidence, created_at, access_count, provenance,
+              promoted_to_doc
        FROM learnings
        WHERE id IN (${placeholders})
-         AND review_status = 'approved'`,
-    ).all(...topIds) as Bm25Row[];
+         AND review_status = 'approved'${args.category ? ' AND category = ?' : ''}`,
+    ).all(...topIds, ...(args.category ? [args.category] : [])) as Bm25Row[];
 
     const rowMap = new Map<number, Bm25Row>();
     for (const row of fullRows) {
@@ -589,18 +696,33 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     const truncated = fullContent.length > 200
       ? fullContent.substring(0, 200) + '...'
       : fullContent;
+    // FR-200 M2 (one-fact-one-source): when a learning has been promoted into a
+    // project-context doc, that doc now OWNS the standard. Recall must stop
+    // double-surfacing the raw learning content — instead point the reader at
+    // the doc. We replace the Content line with a Promoted pointer (and keep a
+    // short stub so the row still reads), rather than printing the now-stale
+    // full text. The learning row is never deleted; it remains a lineage stub.
+    const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
+      ? row.promoted_to_doc
+      : null;
     const lines = [
       `--- Recall ${i + 1} ---`,
       `ID: ${row.id}`,
       `Project: ${row.project}`,
       `Category: ${row.category}`,
       `Title: ${row.title}`,
-      `Content: ${truncated}`,
+    ];
+    if (promotedTo) {
+      lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+    } else {
+      lines.push(`Content: ${truncated}`);
+    }
+    lines.push(
       `Tags: ${row.tags || '(none)'}`,
       `Scope: ${row.scope}`,
       `Confidence: ${row.confidence}`,
       `Provenance: ${row.provenance}`,
-    ];
+    );
     if (row.rrf_score !== undefined) {
       lines.push(`Score: ${(row.rrf_score as number).toFixed(6)}`);
     } else if (row.composite_score !== undefined) {
@@ -687,6 +809,91 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
   };
 }
 
+/**
+ * Mark a learning as promoted into a project-context doc (FR-200 M2).
+ *
+ * The memory→doc promotion pass (the `/promote` skill) calls this after
+ * it has merged a hardened learning's standard into a `~/.igris/projects/{name}/
+ * context/` doc and recorded a `derived_from` lineage edge. Setting
+ * `promoted_to_doc` makes `handleMemoryRecall` surface a "Promoted → <doc>"
+ * pointer instead of re-printing the now-doc-owned raw content
+ * (one-fact-one-source — FR-196).
+ *
+ * This is a SEPARATE axis from `review_status` (a learning can be `approved`
+ * AND promoted) — which is exactly why FR-200 added a dedicated column rather
+ * than overloading the perception-channel review gate (see the FR-200 plan
+ * Q3b). The learning row is NEVER deleted by promotion; it becomes a lineage
+ * stub whose `promoted_to_doc` points readers at the doc.
+ *
+ * Parameterized throughout. Verifies the row exists first (mirrors
+ * `handleMemoryUpdate`) so the caller gets a clear "not found" rather than a
+ * silent zero-rows-changed. Idempotent: re-marking with a new doc path simply
+ * overwrites the pointer and re-bumps `updated_at`.
+ *
+ * Returns `{ id, promoted_to_doc, updated_at }` JSON.
+ *
+ * @param args - The learning ID + target doc path + optional anchor
+ * @returns MCP-formatted response with the promotion record
+ */
+function handleMemoryMarkPromoted(args: MemoryMarkPromotedInput): { content: { type: string; text: string }[] } {
+  // Validate id (mirror handleMemoryUpdate's positive-int guard).
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  // Validate doc_path: required, non-empty, bounded.
+  if (typeof args.doc_path !== 'string' || args.doc_path.length === 0 || args.doc_path.length > MAX_TITLE_LENGTH) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: doc_path must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters.`,
+      }],
+    };
+  }
+
+  // Validate doc_anchor when present (optional; bounded; no leading '#' needed —
+  // we add the separator ourselves so callers pass the bare anchor).
+  if (args.doc_anchor !== undefined) {
+    if (typeof args.doc_anchor !== 'string' || args.doc_anchor.length === 0 || args.doc_anchor.length > MAX_TITLE_LENGTH) {
+      return {
+        content: [{
+          type: 'text',
+          text: `Validation error: doc_anchor, when provided, must be a non-empty string of at most ${MAX_TITLE_LENGTH} characters.`,
+        }],
+      };
+    }
+  }
+
+  const db = getDb();
+
+  // Verify the row exists before the UPDATE (clear not-found vs silent no-op).
+  const existing = db
+    .prepare('SELECT id FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  // Compose the pointer: doc_path, plus '#'+anchor when an anchor is given.
+  // Strip a leading '#' the caller may have included so we never double it.
+  const anchor = args.doc_anchor !== undefined ? args.doc_anchor.replace(/^#/, '') : '';
+  const promotedToDoc = anchor.length > 0 ? `${args.doc_path}#${anchor}` : args.doc_path;
+
+  // Bump updated_at to a fresh ISO timestamp (mirror handleMemoryUpdate — keeps
+  // LWW sync resolution comparable with created_at's UTC datetime('now')).
+  const updatedAt = new Date().toISOString();
+
+  db.prepare('UPDATE learnings SET promoted_to_doc = ?, updated_at = ? WHERE id = ?')
+    .run(promotedToDoc, updatedAt, args.id);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ id: args.id, promoted_to_doc: promotedToDoc, updated_at: updatedAt }, null, 2),
+    }],
+  };
+}
+
 /** Input shape for igris_pattern_suggest */
 interface PatternSuggestInput {
   project: string;
@@ -727,6 +934,7 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
     let learningSql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.confidence, l.access_count,
+             l.promoted_to_doc,
              rank
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
@@ -793,7 +1001,19 @@ function handlePatternSuggest(args: PatternSuggestInput): { content: { type: str
     learningRows.forEach((row, i) => {
       sections.push(`### ${i + 1}. ${row.title}`);
       sections.push(`- **Project:** ${row.project} | **Scope:** ${row.scope} | **Category:** ${row.category}`);
-      sections.push(`- **Content:** ${row.content}`);
+      // FR-200 M2 (one-fact-one-source): a promoted learning's standard now lives
+      // in a project-context doc. Suppress the raw content and surface the doc
+      // pointer instead — mirrors handleMemorySearch (memory.ts:379-393). Gate:
+      // non-empty string => promoted. Keep the literal `Promoted: →` marker
+      // contiguous so it matches the sibling tools/tests (TD-245).
+      const promotedTo = typeof row.promoted_to_doc === 'string' && (row.promoted_to_doc as string).length > 0
+        ? (row.promoted_to_doc as string)
+        : null;
+      if (promotedTo) {
+        sections.push(`- Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+      } else {
+        sections.push(`- **Content:** ${row.content}`);
+      }
       if (row.tags) sections.push(`- **Tags:** ${row.tags}`);
       if (row.tech_stack) sections.push(`- **Tech Stack:** ${row.tech_stack}`);
       sections.push('');
@@ -874,7 +1094,7 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
     let bm25Sql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.source_brief, l.confidence,
-             l.created_at, l.access_count, l.provenance, rank
+             l.created_at, l.access_count, l.provenance, l.promoted_to_doc, rank
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
@@ -973,7 +1193,8 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
   // with the same filter on the recall hydration query above.
   const fullRows = db.prepare(
     `SELECT id, project, category, title, content, tags, tech_stack, scope,
-            source_brief, confidence, created_at, access_count, provenance
+            source_brief, confidence, created_at, access_count, provenance,
+            promoted_to_doc
      FROM learnings
      WHERE id IN (${placeholders})
        AND review_status = 'approved'`,
@@ -1015,18 +1236,32 @@ function formatHybridResult(
     ? fullContent.substring(0, 300) + '...'
     : fullContent;
 
+  // FR-200 M2 (one-fact-one-source): when the learning has been promoted into a
+  // project-context doc, surface the doc pointer instead of re-emitting the raw
+  // content. Covers BOTH hybrid_search code paths — this formatter is the sole
+  // result renderer for the RRF-merged path AND the BM25-only fallback. Gate
+  // matches handleMemoryRecall exactly: non-empty string => promoted.
+  const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
+    ? row.promoted_to_doc
+    : null;
   const lines = [
     `--- Result ${index + 1} ---`,
     `ID: ${row.id}`,
     `Project: ${row.project}`,
     `Category: ${row.category}`,
     `Title: ${row.title}`,
-    `Content: ${truncated}`,
+  ];
+  if (promotedTo) {
+    lines.push(`Promoted: → ${promotedTo} (this standard now lives in the doc; see it there)`);
+  } else {
+    lines.push(`Content: ${truncated}`);
+  }
+  lines.push(
     `Tags: ${row.tags || '(none)'}`,
     `Scope: ${row.scope}`,
     `Confidence: ${row.confidence}`,
     `Provenance: ${row.provenance}`,
-  ];
+  );
 
   if (rrfScore !== null) {
     lines.push(`RRF Score: ${rrfScore.toFixed(6)}`);
@@ -1077,18 +1312,24 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
-  // INTENTIONAL: no review_status filter — backfills pending rows so they're searchable post-approval without re-embed cost
-  let sql = 'SELECT id, title, content FROM learnings WHERE embedding IS NULL';
-  const params: string[] = [];
-  if (args.project) {
-    sql += ' AND project = ?';
-    params.push(args.project);
-  }
-  sql += ' ORDER BY id LIMIT ?';
+  // INTENTIONAL: no review_status filter — backfills pending rows so they're searchable post-approval without re-embed cost.
+  //
+  // FR-219a: delegate to the shared `embedNullLearnings` core so this tool
+  // embeds the NORMALIZED fingerprint (matching the dedup query path, the
+  // perception write path, and the TD-286 canonical store geometry) instead of
+  // the RAW `${title} ${content}` it historically used — which created a raw
+  // island inside a normalized store. The `WHERE embedding IS NULL` select,
+  // the per-row lockstep dual-write (learnings.embedding + learnings_vec), and
+  // the idempotent/resumable behavior all move into the shared core.
+  const startTime = Date.now();
 
-  const learnings = db.prepare(sql).all(...params, batchSize) as { id: number; title: string; content: string }[];
+  const summary = await embedNullLearnings(db, {
+    dryRun: false,
+    limit: batchSize,
+    project: args.project,
+  });
 
-  if (learnings.length === 0) {
+  if (summary.scanned === 0) {
     // Check total count to give context
     let countSql = 'SELECT COUNT(*) as total FROM learnings';
     const countParams: string[] = [];
@@ -1106,18 +1347,8 @@ async function handleMemoryBackfillEmbeddings(args: BackfillInput): Promise<{ co
     };
   }
 
-  const startTime = Date.now();
-
-  const { succeeded: processed, failed } = await processInBatches(
-    learnings,
-    async (learning) => {
-      const embedding = await generateEmbedding(`${learning.title} ${learning.content}`);
-      db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?')
-        .run(embeddingToBuffer(embedding), EMBEDDING_MODEL, learning.id);
-      insertEmbedding(db, learning.id, embedding);
-    },
-  );
-
+  const processed = summary.embedded;
+  const failed = summary.failures;
   const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
 
   // Check remaining
@@ -1254,24 +1485,444 @@ function promoteToGlobal(): number {
   return promotedCount;
 }
 
+// ---------------------------------------------------------------------------
+// TD-171 M1 — igris_memory_update / igris_memory_delete / igris_memory_dashboard
+// ---------------------------------------------------------------------------
+//
+// Three new tools added in TD-171 M1 against the existing learnings table.
+// No schema migration is needed: the `updated_at` column has been part of
+// the `learnings` table since db.ts v1 and is already declared in
+// `SYNC_TABLES.learnings.columns` (`tools/sync.ts`). The component-level
+// `memory/schema.ts` is intentionally NOT created — per L-142 we only add
+// per-component schema files when there is a real migration to own.
+//
+// Dashboard output shape is the CANONICAL `_dashboard` shape that TD-171
+// M2 (graph), M3 (project/perception/error), and M4 (goal/metrics) MUST
+// mirror. Layout:
+//   { totals: { total, by_<dimension>: { ... } },
+//     recent: { last_n_days, stored, top_tags },
+//     samples: [...] (omitted when summary_only=true)
+//   }
+//
+// `_update` and `_delete` use parameterized queries throughout (security §7
+// of coding_guidelines). Provenance is intentionally NOT updatable — flipping
+// provenance after extraction breaks the audit trail (FR-107). Callers wanting
+// to "fix" a wrong provenance must `_delete` and `_store` afresh.
+
+/** Input shape for igris_memory_update */
+interface MemoryUpdateInput {
+  id: number;
+  title?: string;
+  content?: string;
+  tags?: string;
+  category?: 'pattern' | 'decision' | 'discovery' | 'mistake' | 'optimization';
+  scope?: 'local' | 'global';
+  confidence?: number;
+}
+
+/** Input shape for igris_memory_delete */
+interface MemoryDeleteInput {
+  id: number;
+  reason?: string;
+}
+
+/** Input shape for igris_memory_dashboard */
+interface MemoryDashboardInput {
+  project?: string;
+  summary_only?: boolean;
+  days?: number;
+}
+
+/**
+ * Update mutable fields of an existing learning (TD-171 M1).
+ *
+ * Only the fields listed in `MemoryUpdateInput` are updatable: title,
+ * content, tags, category, scope, confidence. Provenance, review_status,
+ * source_extractor, source_brief, project, tech_stack, created_at,
+ * access_count, last_accessed_at, embedding, embedding_model,
+ * seen_again_count, and last_seen_at are immutable through this surface
+ * by design — they are either audit fields, lifecycle fields owned by
+ * other tools (e.g. perception_approve flips review_status), or
+ * derived telemetry. Callers wanting to "rewrite history" of any of
+ * those fields must `_delete` + `_store` afresh.
+ *
+ * Bumps `updated_at` to the current ISO timestamp on every successful
+ * update. `_update` is idempotent in the sense that updating with no
+ * fields beyond `id` is a no-op error (caller passed a stub).
+ *
+ * Returns a JSON payload `{ id, updated_fields: [...], updated_at }` so
+ * callers can confirm exactly which fields changed.
+ *
+ * @param args - The learning ID + optional new field values
+ * @returns MCP-formatted response with the update summary
+ */
+function handleMemoryUpdate(args: MemoryUpdateInput): { content: { type: string; text: string }[] } {
+  // Validate id
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  // Validate enum-typed fields when present
+  if (args.category !== undefined && !VALID_CATEGORIES.includes(args.category)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: category must be one of ${VALID_CATEGORIES.join(', ')}.`,
+      }],
+    };
+  }
+  if (args.scope !== undefined && args.scope !== 'local' && args.scope !== 'global') {
+    return {
+      content: [{ type: 'text', text: 'Validation error: scope must be "local" or "global".' }],
+    };
+  }
+  if (args.confidence !== undefined) {
+    if (typeof args.confidence !== 'number' || args.confidence < 0 || args.confidence > 1) {
+      return {
+        content: [{ type: 'text', text: 'Validation error: confidence must be a number between 0 and 1.' }],
+      };
+    }
+  }
+  if (args.title !== undefined && (args.title.length === 0 || args.title.length > MAX_TITLE_LENGTH)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: title must be 1-${MAX_TITLE_LENGTH} characters.`,
+      }],
+    };
+  }
+  if (args.content !== undefined && (args.content.length === 0 || args.content.length > MAX_CONTENT_LENGTH)) {
+    return {
+      content: [{
+        type: 'text',
+        text: `Validation error: content must be 1-${MAX_CONTENT_LENGTH} characters (1 MB max).`,
+      }],
+    };
+  }
+
+  const db = getDb();
+
+  // Verify the row exists before any UPDATE (so the caller gets a clear
+  // "not found" instead of a silent zero-rows-changed).
+  const existing = db
+    .prepare('SELECT id FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  // Build dynamic SET clause. Only set fields the caller explicitly passed.
+  const setClauses: string[] = [];
+  const params: unknown[] = [];
+  const updatedFields: string[] = [];
+
+  if (args.title !== undefined) {
+    setClauses.push('title = ?');
+    params.push(args.title);
+    updatedFields.push('title');
+  }
+  if (args.content !== undefined) {
+    setClauses.push('content = ?');
+    params.push(args.content);
+    updatedFields.push('content');
+  }
+  if (args.tags !== undefined) {
+    setClauses.push('tags = ?');
+    params.push(args.tags);
+    updatedFields.push('tags');
+  }
+  if (args.category !== undefined) {
+    setClauses.push('category = ?');
+    params.push(args.category);
+    updatedFields.push('category');
+  }
+  if (args.scope !== undefined) {
+    setClauses.push('scope = ?');
+    params.push(args.scope);
+    updatedFields.push('scope');
+  }
+  if (args.confidence !== undefined) {
+    setClauses.push('confidence = ?');
+    params.push(args.confidence);
+    updatedFields.push('confidence');
+  }
+
+  if (setClauses.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Validation error: no updatable fields provided. At least one of title/content/tags/category/scope/confidence must be set.',
+      }],
+    };
+  }
+
+  // Always bump updated_at to a fresh ISO timestamp. Using ISO 8601 (UTC)
+  // for cross-machine consistency in sync_state — `created_at` defaults to
+  // SQLite's `datetime('now')` which is also UTC, so the formats stay
+  // comparable for LWW resolution.
+  const updatedAt = new Date().toISOString();
+  setClauses.push('updated_at = ?');
+  params.push(updatedAt);
+
+  // Final param: the WHERE id
+  params.push(args.id);
+
+  const sql = `UPDATE learnings SET ${setClauses.join(', ')} WHERE id = ?`;
+  db.prepare(sql).run(...params);
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ id: args.id, updated_fields: updatedFields, updated_at: updatedAt }, null, 2),
+    }],
+  };
+}
+
+/**
+ * Hard-delete a learning by ID (TD-171 M1).
+ *
+ * Mirrors `igris_perception_reject`'s hard-DELETE semantics — there is no
+ * soft-delete column on `learnings` (FR-116 may add one in the future; if
+ * it does, this handler should switch to UPDATE rather than DELETE). The
+ * delete cascades to:
+ *   - `learnings_fts` (via the kept `learnings_ad` AFTER DELETE trigger).
+ *   - `learnings_vec` (NOT cascaded — the `learnings_vec_ad` trigger was
+ *     dropped in TD-098 because sqlite-vec rejects writes to vec0 virtual
+ *     tables from inside trigger context under `PRAGMA trusted_schema = OFF`).
+ *     Vec orphans are tolerable here: the `igris_memory_recall` and
+ *     `_hybrid_search` paths re-hydrate from `learnings` and discard any
+ *     vec hit whose `learnings.id` doesn't resolve. A future janitor pass
+ *     can reap orphans if they accumulate. We do NOT mirror perception's
+ *     transactional vec cleanup here because conscious-channel deletes are
+ *     rare (a manual operator decision) — the complexity-vs-orphan trade
+ *     favours the simpler path.
+ *
+ * Emits a `memory.deleted` bus event (wired in `engine/components/memory/index.ts`)
+ * so future subscribers (e.g., a sync auto-push or audit log) can react.
+ * Deletion is unconditional — we do NOT refuse to delete approved or
+ * pending_review learnings; the operator decision-trigger entry in
+ * brain_stewardship.md is the gate.
+ *
+ * Returns `{ deleted: true, id, reason }` JSON.
+ *
+ * @param args - The learning ID and optional reason for the audit log
+ * @returns MCP-formatted response with the deletion summary
+ */
+function handleMemoryDelete(args: MemoryDeleteInput): { content: { type: string; text: string }[] } {
+  if (typeof args.id !== 'number' || !Number.isInteger(args.id) || args.id <= 0) {
+    return { content: [{ type: 'text', text: 'Validation error: id must be a positive integer.' }] };
+  }
+
+  const db = getDb();
+
+  const existing = db
+    .prepare('SELECT id, title FROM learnings WHERE id = ?')
+    .get(args.id) as { id: number; title: string } | undefined;
+  if (!existing) {
+    return { content: [{ type: 'text', text: `Learning with ID ${args.id} not found.` }] };
+  }
+
+  db.prepare('DELETE FROM learnings WHERE id = ?').run(args.id);
+
+  const reason = typeof args.reason === 'string' ? args.reason : '';
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({ deleted: true, id: args.id, title: existing.title, reason }, null, 2),
+    }],
+  };
+}
+
+/**
+ * Aggregate counts + recent stats over the learnings table (TD-171 M1).
+ *
+ * CANONICAL `_dashboard` shape — TD-171 M2/M3/M4 dashboards MUST mirror this
+ * structure. Output:
+ *   {
+ *     totals: {
+ *       total: N,
+ *       by_category: { pattern: N, decision: N, ... },
+ *       by_scope: { local: N, global: N },
+ *       by_provenance: { observed: N, inferred: N, synthesized: N, ambiguous: N, human_asserted: N },
+ *       by_review_status: { pending_review: N, approved: N }
+ *     },
+ *     recent: {
+ *       last_n_days: <days>,
+ *       stored: N,
+ *       top_tags: [{ tag, count }, ...]
+ *     },
+ *     samples: [{ id, title, category, scope, created_at }, ...]   // omitted when summary_only=true
+ *   }
+ *
+ * `pending_review` rows ARE memory data and DO appear in `by_review_status`
+ * — they are the same `learnings` table, just gated from default recall.
+ * `_dashboard` is unfiltered by review_status by design (you are sizing the
+ * full memory footprint, not just the conscious channel). Per L-152 framing,
+ * perception-engine-specific stats (run outcomes, dedup rediscoveries) are
+ * NOT included here — those belong in M3's `igris_perception_dashboard`.
+ *
+ * Optional filters:
+ *   - `project`: scope all aggregations (totals + recent + samples) to a
+ *     single project. Omitted = cross-project.
+ *   - `days`: window for `recent.stored` and top-tags. Default 30. Must be
+ *     a non-negative number; 0 = "today only".
+ *   - `summary_only`: when true, omit the `samples` array. Counts are still
+ *     fully computed.
+ *
+ * @param args - Optional filters
+ * @returns MCP-formatted response with the dashboard JSON
+ */
+function handleMemoryDashboard(args: MemoryDashboardInput): { content: { type: string; text: string }[] } {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return { content: [{ type: 'text', text: 'Validation error: days must be a non-negative number.' }] };
+  }
+  const summaryOnly = args.summary_only === true;
+  const projectFilter = typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+
+  const db = getDb();
+
+  // Build a project-filter fragment we can splice into each aggregation.
+  // Parameterized — no string interpolation of project name.
+  const projectWhere = projectFilter ? 'WHERE project = ?' : '';
+  const projectParams: string[] = projectFilter ? [projectFilter] : [];
+
+  // --- totals.total ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM learnings ${projectWhere}`)
+    .get(...projectParams) as { n: number };
+
+  // --- totals.by_category ---
+  const categoryRows = db
+    .prepare(`SELECT category, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY category`)
+    .all(...projectParams) as { category: string; n: number }[];
+  const byCategory: Record<string, number> = {};
+  for (const c of VALID_CATEGORIES) byCategory[c] = 0;
+  for (const r of categoryRows) byCategory[r.category] = r.n;
+
+  // --- totals.by_scope ---
+  const scopeRows = db
+    .prepare(`SELECT scope, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY scope`)
+    .all(...projectParams) as { scope: string; n: number }[];
+  const byScope: Record<string, number> = { local: 0, global: 0 };
+  for (const r of scopeRows) byScope[r.scope] = r.n;
+
+  // --- totals.by_provenance ---
+  const provRows = db
+    .prepare(`SELECT provenance, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY provenance`)
+    .all(...projectParams) as { provenance: string; n: number }[];
+  const byProvenance: Record<string, number> = {};
+  for (const p of VALID_LEARNING_PROVENANCE) byProvenance[p] = 0;
+  for (const r of provRows) byProvenance[r.provenance] = r.n;
+
+  // --- totals.by_review_status ---
+  const reviewRows = db
+    .prepare(`SELECT review_status, COUNT(*) AS n FROM learnings ${projectWhere} GROUP BY review_status`)
+    .all(...projectParams) as { review_status: string; n: number }[];
+  const byReviewStatus: Record<string, number> = { pending_review: 0, approved: 0 };
+  for (const r of reviewRows) byReviewStatus[r.review_status] = r.n;
+
+  // --- recent.stored (last `days` window) ---
+  // SQLite `datetime('now', '-N days')` honours fractional days. `days = 0`
+  // resolves to "now" so the window is empty — useful for an "any rows
+  // logged today only" sanity probe (rows with created_at >= now() are
+  // future-dated and shouldn't exist).
+  const recentSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM learnings WHERE project = ? AND created_at >= datetime('now', ?)`
+    : `SELECT COUNT(*) AS n FROM learnings WHERE created_at >= datetime('now', ?)`;
+  const recentParams: (string | number)[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const recentRow = db.prepare(recentSql).get(...recentParams) as { n: number };
+
+  // --- recent.top_tags ---
+  // Tags are stored as a single comma-separated string. We split in TS
+  // rather than relying on a SQLite extension. Cap the scan to reasonable
+  // size to keep the dashboard fast on large DBs (project filter applies).
+  const tagSql = projectFilter
+    ? `SELECT tags FROM learnings WHERE project = ? AND created_at >= datetime('now', ?) AND tags IS NOT NULL AND tags <> ''`
+    : `SELECT tags FROM learnings WHERE created_at >= datetime('now', ?) AND tags IS NOT NULL AND tags <> ''`;
+  const tagParams: (string | number)[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const tagRows = db.prepare(tagSql).all(...tagParams) as { tags: string }[];
+  const tagCounts = new Map<string, number>();
+  for (const r of tagRows) {
+    const split = r.tags.split(',').map((t) => t.trim()).filter((t) => t.length > 0);
+    for (const t of split) {
+      tagCounts.set(t, (tagCounts.get(t) ?? 0) + 1);
+    }
+  }
+  const topTags = [...tagCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([tag, count]) => ({ tag, count }));
+
+  // --- samples (omitted when summary_only) ---
+  let samples: Record<string, unknown>[] = [];
+  if (!summaryOnly) {
+    const sampleSql = projectFilter
+      ? `SELECT id, project, title, category, scope, provenance, review_status, created_at
+         FROM learnings WHERE project = ? ORDER BY created_at DESC LIMIT 20`
+      : `SELECT id, project, title, category, scope, provenance, review_status, created_at
+         FROM learnings ORDER BY created_at DESC LIMIT 20`;
+    samples = db.prepare(sampleSql).all(...projectParams) as Record<string, unknown>[];
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      total: totalRow.n,
+      by_category: byCategory,
+      by_scope: byScope,
+      by_provenance: byProvenance,
+      by_review_status: byReviewStatus,
+    },
+    recent: {
+      last_n_days: days,
+      stored: recentRow.n,
+      top_tags: topTags,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
 export {
   handleMemoryStore,
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryMarkPromoted,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
+  handleMemoryUpdate,
+  handleMemoryDelete,
+  handleMemoryDashboard,
   handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
   computeTechStackOverlap,
 };
 export type {
+  EdgeSpec,
   MemoryStoreInput,
   MemorySearchInput,
   MemoryRecallInput,
   MemoryGetInput,
+  MemoryMarkPromotedInput,
   HybridSearchInput,
   BackfillInput,
+  MemoryUpdateInput,
+  MemoryDeleteInput,
+  MemoryDashboardInput,
   PatternSuggestInput,
 };

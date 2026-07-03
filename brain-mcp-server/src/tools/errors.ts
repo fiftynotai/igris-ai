@@ -9,7 +9,7 @@
  * - igris_error_lookup: Look up or store error solutions
  *
  * @module tools/errors
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';
@@ -483,5 +483,154 @@ async function handleErrorBackfillEmbeddings(args: ErrorBackfillInput): Promise<
   };
 }
 
-export { handleErrorLookup, handleErrorSimilar, handleErrorBackfillEmbeddings };
-export type { ErrorLookupInput, ErrorSimilarInput, ErrorBackfillInput };
+// ---------------------------------------------------------------------------
+// igris_error_dashboard (TD-171 M3)
+// ---------------------------------------------------------------------------
+
+/** Input shape for igris_error_dashboard */
+interface ErrorDashboardInput {
+  project?: string;
+  days?: number;
+  summary_only?: boolean;
+}
+
+/**
+ * Aggregate dashboard over the `errors` table.
+ *
+ * Mirrors the canonical TD-171 `_dashboard` shape established by M1's
+ * `handleMemoryDashboard` and M2's `handleGraphDashboard`:
+ *
+ *   {
+ *     totals: { total, with_solution, without_solution },
+ *     recent: { last_n_days: 30, new_errors: N },
+ *     samples: {                                 // omitted when summary_only
+ *       top_recurring: [{ fingerprint, message, project, hit_count, last_seen }, ...],
+ *       by_project: { slug: count, ... },
+ *     },
+ *     project?: 'foo',                           // echoed when filter set
+ *   }
+ *
+ * Filter semantics:
+ *   - `project`: scopes totals + recent + samples to one project.
+ *   - `days`: window for `recent.new_errors`. Default 30.
+ *   - `summary_only`: omits `samples` (counts still computed).
+ *
+ * Per L-152, scope is strictly the errors channel — no perception or
+ * memory aggregations leak in.
+ */
+function handleErrorDashboard(args: ErrorDashboardInput): { content: { type: string; text: string }[] } {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return { content: [{ type: 'text', text: 'Error: days must be a non-negative number' }] };
+  }
+  const summaryOnly = args.summary_only === true;
+  const projectFilter =
+    typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+
+  const db = getDb();
+
+  const projectWhere = projectFilter ? 'WHERE project = ?' : '';
+  const projectParams: string[] = projectFilter ? [projectFilter] : [];
+
+  // --- totals.total ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM errors ${projectWhere}`)
+    .get(...projectParams) as { n: number };
+
+  // --- totals.with_solution / without_solution ---
+  const withSolSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM errors WHERE project = ? AND solution IS NOT NULL AND solution <> ''`
+    : `SELECT COUNT(*) AS n FROM errors WHERE solution IS NOT NULL AND solution <> ''`;
+  const withSolRow = db.prepare(withSolSql).get(...projectParams) as { n: number };
+  const withoutSolution = totalRow.n - withSolRow.n;
+
+  // --- recent.new_errors (last `days` window, by first_seen_at) ---
+  const recentSql = projectFilter
+    ? `SELECT COUNT(*) AS n FROM errors
+       WHERE project = ? AND first_seen_at >= datetime('now', ?)`
+    : `SELECT COUNT(*) AS n FROM errors WHERE first_seen_at >= datetime('now', ?)`;
+  const recentParams: (string | number)[] = projectFilter
+    ? [projectFilter, `-${days} days`]
+    : [`-${days} days`];
+  const recentRow = db.prepare(recentSql).get(...recentParams) as { n: number };
+
+  // --- samples (omitted when summary_only) ---
+  let samples: Record<string, unknown> | undefined;
+  if (!summaryOnly) {
+    // top_recurring: highest occurrence_count rows. Limit 10.
+    // Without a solution gets the spotlight — those are mender targets —
+    // but we surface ALL rows ordered by occurrence_count so the operator
+    // sees the full top-N picture.
+    const topSql = projectFilter
+      ? `SELECT id, fingerprint, project, message, occurrence_count, last_seen_at,
+                CASE WHEN solution IS NULL OR solution = '' THEN 0 ELSE 1 END AS has_solution
+         FROM errors
+         WHERE project = ?
+         ORDER BY occurrence_count DESC, last_seen_at DESC
+         LIMIT 10`
+      : `SELECT id, fingerprint, project, message, occurrence_count, last_seen_at,
+                CASE WHEN solution IS NULL OR solution = '' THEN 0 ELSE 1 END AS has_solution
+         FROM errors
+         ORDER BY occurrence_count DESC, last_seen_at DESC
+         LIMIT 10`;
+    const topRows = db.prepare(topSql).all(...projectParams) as {
+      id: number;
+      fingerprint: string;
+      project: string;
+      message: string;
+      occurrence_count: number;
+      last_seen_at: string;
+      has_solution: number;
+    }[];
+
+    // by_project: error counts grouped by project slug. When filter is
+    // set this collapses to a single key; we include it anyway for
+    // shape consistency.
+    const byProjectSql = projectFilter
+      ? `SELECT project, COUNT(*) AS n FROM errors WHERE project = ? GROUP BY project`
+      : `SELECT project, COUNT(*) AS n FROM errors GROUP BY project ORDER BY n DESC`;
+    const byProjectRows = db.prepare(byProjectSql).all(...projectParams) as {
+      project: string;
+      n: number;
+    }[];
+    const byProject: Record<string, number> = {};
+    for (const r of byProjectRows) byProject[r.project] = r.n;
+
+    samples = { top_recurring: topRows, by_project: byProject };
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      total: totalRow.n,
+      with_solution: withSolRow.n,
+      without_solution: withoutSolution,
+    },
+    recent: {
+      last_n_days: days,
+      new_errors: recentRow.n,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
+export {
+  handleErrorLookup,
+  handleErrorSimilar,
+  handleErrorBackfillEmbeddings,
+  handleErrorDashboard,
+};
+export type {
+  ErrorLookupInput,
+  ErrorSimilarInput,
+  ErrorBackfillInput,
+  ErrorDashboardInput,
+};

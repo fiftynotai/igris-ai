@@ -82,14 +82,14 @@ Highlights:
   `'measured at <metric>'`). Intentionally not an enum — outcomes vary too
   much to constrain usefully.
 - `project_slug TEXT` (nullable) — `NULL` denotes a cross-project goal
-  surfaced in `/portfolio` rather than `/scan`.
+  surfaced in `/ops` rather than `/scan`.
 
 ### Indexes
 
 - `idx_goals_project` — covers `/scan` (filtered by project).
 - `idx_goals_status`  — covers status filters.
 - `idx_goals_deadline` — **partial index** `WHERE status = 'active'`. The
-  `/awaken` "approaching deadline" query reads only active goals; archived
+  `/boot` "approaching deadline" query reads only active goals; archived
   goals would otherwise pollute the index without ever being queried.
 
 ---
@@ -168,7 +168,7 @@ with five children (`FR-092` through `FR-095`, plus a fifth). Its
 `status` field drifted: even though most children were `Done`, the master
 was still `In Progress` because no one marked the rolled-up state.
 
-After backfill (run via `scripts/backfill_goals.sh`):
+After the one-shot backfill (now retired):
 
 ```
 GL-001 "Ship Igris v6"            (active, deadline 2026-04-30)
@@ -204,9 +204,9 @@ Deferred to follow-up briefs to keep the surface focused:
 
 ---
 
-## /awaken integration
+## /boot integration
 
-`/awaken` calls `igris_goal_list(project, status='active', upcoming_days=14, limit=3)`
+`/boot` calls `igris_goal_list(project, status='active', upcoming_days=14, limit=3)`
 and renders ≤3 lines. The token budget is bounded:
 
 ```
@@ -216,11 +216,11 @@ and renders ≤3 lines. The token budget is bounded:
 ```
 
 If zero results, the section is omitted entirely. If more than 3 active
-goals exist beyond the 14-day window, `/awaken` prints a single trailing
+goals exist beyond the 14-day window, `/boot` prints a single trailing
 line: `(+N other active goals — run /scan for full list)`.
 
 The `upcoming_days` filter exists for this surface specifically — outside
-of `/awaken` the parameter is rarely useful.
+of `/boot` the parameter is rarely useful.
 
 ---
 
@@ -230,11 +230,11 @@ A goal with `project_slug = NULL` is a **cross-project goal**. These are:
 
 - **Not shown in `/scan`** — `/scan` is project-scoped, so it filters
   `project_slug = $project`.
-- **Shown in `/portfolio`** — rendered in the heatmap row labeled
+- **Shown in `/ops`** — rendered in the heatmap row labeled
   "Cross-project".
 
 This split is intentional: cross-project goals would dilute `/scan`'s
-project-focused output, but they are exactly what `/portfolio` is for.
+project-focused output, but they are exactly what `/ops` is for.
 
 ---
 
@@ -254,4 +254,4 @@ project-focused output, but they are exactly what `/portfolio` is for.
 - Component: `brain-mcp-server/src/engine/components/goals/index.ts`
 - Tests: `brain-mcp-server/src/engine/components/goals/__tests__/`
 - Sync entry: `brain-mcp-server/src/tools/sync.ts` (`SYNC_TABLES` → `goals`)
-- Backfill: `scripts/backfill_goals.sh`
+- Backfill: one-shot (FR-110), already applied and retired

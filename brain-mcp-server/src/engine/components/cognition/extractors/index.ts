@@ -1,0 +1,57 @@
+/**
+ * Brain Engine v7.1 — Cognition extractors barrel (FR-118).
+ *
+ * The SINGLE place a cognition instance is listed. The registry's
+ * `discoverInstances` reads `EXTRACTORS` (re-exported from `registry.ts` and
+ * extended here as instances land) so a new extractor is ONE re-export line —
+ * the engine never branches on instance identity (the FR-202 zero-host-change
+ * extensibility property).
+ *
+ * M1 lands the perception instance (`extractors/perception.ts`); subconscious
+ * (M2) is added the same way. They appear in the registry + engine
+ * automatically — ONE re-export line is the whole cost of a new instance.
+ *
+ * @module engine/components/cognition/extractors
+ * @author fifty.dev
+ */
+
+import type { CognitionInstance } from '../types.js';
+import { perceptionInstance } from './perception.js';
+import { subconsciousInstance } from './subconscious.js';
+import { synapseInstance } from './synapse.js';
+import { janitorInstance } from './janitor.js';
+import { arbiterInstance } from './arbiter.js';
+import { curatorInstance } from './curator.js';
+import { cartographerInstance } from './cartographer.js';
+
+/**
+ * Every bundled cognition instance, in boot order. A new instance is added by
+ * importing it and appending it here (one line) — discovery
+ * (`registry.ts:discoverInstances`) registers them all with no engine change
+ * (the FR-202 zero-host-change extensibility property).
+ *
+ * M1: perceptionInstance (the proving instance + correctness oracle).
+ * M2: import { subconsciousInstance } from './subconscious.js';
+ * FR-211: import { synapseInstance } from './synapse.js';
+ * FR-119: import { janitorInstance } from './janitor.js';
+ * FR-116 M2: import { arbiterInstance } from './arbiter.js';
+ * FR-116 M3: import { curatorInstance } from './curator.js';
+ * FR-116 M4: import { cartographerInstance } from './cartographer.js';
+ */
+export const EXTRACTOR_INSTANCES: readonly CognitionInstance[] = [
+  perceptionInstance,
+  subconsciousInstance,
+  synapseInstance,
+  janitorInstance,
+  arbiterInstance,
+  curatorInstance,
+  cartographerInstance,
+];
+
+export { perceptionInstance, createPerceptionInstance } from './perception.js';
+export { subconsciousInstance, createSubconsciousInstance } from './subconscious.js';
+export { synapseInstance, createSynapseInstance } from './synapse.js';
+export { janitorInstance, createJanitorInstance } from './janitor.js';
+export { arbiterInstance, createArbiterInstance } from './arbiter.js';
+export { curatorInstance, createCuratorInstance } from './curator.js';
+export { cartographerInstance, createCartographerInstance } from './cartographer.js';

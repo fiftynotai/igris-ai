@@ -1,5 +1,6 @@
 ---
 name: release
+tier: opt-in
 description: Release preparation - changelog generation, version bumps, release notes
 disable-model-invocation: false
 allowed-tools:
@@ -30,11 +31,83 @@ Release preparation workflow for generating changelogs, determining version bump
 
 ## Workflow
 
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
+### Step 0: Pre-Tag Broken-Feature Audit (BLOCKING)
+
+**Run this FIRST, before any release preparation.** It enforces
+coding_guidelines **§17.2** ("no broken features in release"): zero
+P0/P1 `Ready` / `In Progress` / `Blocked` Bug / Feature-Request rows before a
+release is allowed. If this step does not PASS, the ENTIRE workflow aborts — do
+not proceed to Steps 1–4, do not bump the version, do not author a changelog,
+do not tag.
+
+The query below is DRY-sourced from coding_guidelines §17.2 — the
+`priority` / `status` / `brief_type` literals and the `brief_status` table MUST
+stay byte-aligned with that section (they move in lockstep).
+
 ```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "release" 2>/dev/null || true
+DB="$HOME/.igris/memory/knowledge.db"
+
+# Resolve the project slug portably (never hard-code the project name).
+SLUG="$(igris detect --json 2>/dev/null | grep -E '^\{' | jq -r '.project_slug // empty')"
+[ -z "$SLUG" ] && SLUG="$(basename "$(git rev-parse --show-toplevel 2>/dev/null || pwd)")"
+
+# ROBUSTNESS: a missing DB or an absent brief_status table must NOT fail OPEN.
+# A wrong/empty DB is NOT a legitimate "zero rows" pass — it is a HARD-WARN.
+if [ ! -f "$DB" ]; then
+  echo "AUDIT=HARDWARN reason=db-missing db=$DB slug=$SLUG"
+elif [ "$(sqlite3 "$DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='brief_status';" 2>/dev/null)" != "1" ]; then
+  echo "AUDIT=HARDWARN reason=table-absent db=$DB slug=$SLUG"
+else
+  # §17.2 audit query — byte-aligned with coding_guidelines §17.2. The
+  # brief_type IN-list enumerates the real (inconsistent) feature/bug
+  # vocabulary — 'Bug'/'BR' + 'Feature'/'FR'/'Feature Request' (TD-289). Do
+  # NOT drop synonyms: FR/Feature-typed P0/P1 blockers escaped the old
+  # ('Bug','Feature Request') list. Move in lockstep with §17.2.
+  ROWS="$(sqlite3 -noheader "$DB" "
+    SELECT brief_id || '  ' || priority || '  ' || status || '  ' || brief_type || '  ' || title
+    FROM brief_status
+    WHERE project='$SLUG'
+      AND priority IN ('P0-Critical','P1-High')
+      AND status IN ('Ready','In Progress','Blocked')
+      AND brief_type IN ('Bug','BR','Feature','FR','Feature Request');")"
+  if [ -z "$ROWS" ]; then
+    echo "AUDIT=PASS slug=$SLUG (zero P0/P1 broken-feature rows)"
+  else
+    echo "AUDIT=BLOCK slug=$SLUG — release-blocking briefs:"
+    echo "$ROWS"
+    if [ "${IGRIS_BYPASS_RELEASE_AUDIT:-}" = "1" ]; then
+      BYPASSED_IDS="$(printf '%s\n' "$ROWS" | awk '{print $1}' | paste -sd, -)"
+      echo "WARNING: RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1) — bypassed briefs: $BYPASSED_IDS" >&2
+      echo "AUDIT=BYPASS ids=$BYPASSED_IDS"
+    fi
+  fi
+fi
 ```
+
+Interpret the verdict:
+
+- **`AUDIT=PASS`** → continue to Step 1.
+- **`AUDIT=BLOCK`** (and NO bypass) → **STOP the entire release workflow.** Print
+  the offending briefs to the operator. Each row must be resolved via one of the
+  §17.2 resolution paths (Fixed / Disabled-with-CHANGELOG-note / Explicitly
+  downgraded) before `/release` can proceed.
+- **`AUDIT=HARDWARN`** → **STOP. Do NOT pass.** The audit could not certify the
+  release because the brain DB is missing or the `brief_status` table is absent
+  (likely the wrong DB — the gate reads the LOCAL mirror at
+  `~/.igris/memory/knowledge.db`, not the VPS). Fix the environment (correct DB
+  path / run `igris` from a booted project) and re-run — a wrong/missing DB is
+  **not** bypassable, because it is a config fault, not a resolved-brief decision.
+- **`AUDIT=BYPASS`** → the operator set the one-shot override. You MUST:
+  1. Surface the stderr WARNING (already emitted above) naming every bypassed brief.
+  2. **Log the bypass durably** in the CHANGELOG entry authored in Step 3 — add a
+     blockquote line directly under the new version heading:
+     `> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): <bypassed brief-id list>`
+     so the bypass ships with the release and is diff-visible to reviewers.
+  3. Only then continue to Step 1.
+
+The `IGRIS_BYPASS_RELEASE_AUDIT` override is **one-shot** and must **never** be
+`export`ed (it mirrors the `IGRIS_BYPASS_BRIEF_GATE` / `IGRIS_BYPASS_PHASE_GUARD`
+convention). Bypassing without the logged CHANGELOG line is a Constraint violation.
 
 ### Step 1: Gather Changes
 
@@ -87,6 +160,11 @@ User-friendly release notes highlighting:
 
 ## Constraints
 
+1. **NEVER release with a non-empty §17.2 audit** — Step 0 must PASS. The only
+   exception is `IGRIS_BYPASS_RELEASE_AUDIT=1`, which REQUIRES a stderr WARNING
+   naming the bypassed briefs AND a logged `> RELEASE AUDIT BYPASSED …` line in
+   the CHANGELOG. An `AUDIT=HARDWARN` (missing DB / absent `brief_status`) is a
+   hard STOP and is NOT bypassable.
 1. **ALWAYS follow semantic versioning** - major.minor.patch
 2. **ALWAYS highlight breaking changes** - They're critical for users
 3. **ALWAYS reference briefs** - Traceability matters

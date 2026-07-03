@@ -1,32 +1,18 @@
 # Igris USER — your local override surface
 
 This file lives at `~/.igris/USER.md`. It's preserved across `igris init --upgrade`
-operations byte-for-byte. Use it for personal customization that should NOT live
-in any project repo (because the brain is per-user, not per-project).
+operations byte-for-byte. Use it for personal notes that should NOT live in any
+project repo (because the brain is per-user, not per-project).
 
-## Customization sections
-
-### User identity
+## User identity
 
 - name: {{USER_NAME}}
 - email: {{USER_EMAIL}}
 
-### Persona override
-
-By default the orchestrator loads `~/.igris/core/SOUL.md`. Override here:
-
-```yaml
-# (leave commented to use the default SOUL)
-# persona: terse
-```
-
-### Project shortcuts
-
-Frequently-used projects can be aliased here. Run `igris install <path>` first
-to register them in the brain.
-
-### Notes
+## Notes
 
 This file is YOURS. Igris will never overwrite it. The only operation that
 touches USER.md is the very-first `igris init` (which writes the initial
 template); subsequent `igris init --upgrade` runs preserve it byte-for-byte.
+
+Edit freely — Igris reads this file for display only, not for runtime behavior.

@@ -7,7 +7,7 @@ set -euo pipefail
 #              per command and prints a PASS/FAIL summary.
 #
 #              Used by sentinel during /hunt to confirm the CLI is functional
-#              after Phase 1 lands. Not invoked by /awaken or any hot path —
+#              after Phase 1 lands. Not invoked by /boot or any hot path —
 #              this is a manual diagnostic.
 #
 # Usage: cli_smoke.sh [--bin <path-to-igris>]

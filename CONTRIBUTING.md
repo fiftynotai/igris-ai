@@ -63,7 +63,7 @@ What actually happens
 
 **Environment:**
 - OS: (macOS 14.0, Ubuntu 22.04, etc.)
-- Igris AI Version: (run `cat version.txt`)
+- Igris AI Version: (run `node -p "require('./package.json').version"`)
 - Shell: (bash 5.2, zsh, etc.)
 
 **Error Messages:**
@@ -139,6 +139,55 @@ node cli/dist/index.js init --from-source .
 mkdir -p /tmp/test-project
 node cli/dist/index.js install /tmp/test-project
 ```
+
+### 3.1 Brief-gate escape hatch (emergency only)
+
+The `pre_tool_use.sh` hook enforces the brief-first protocol: no Write/Edit
+proceeds unless an `In Progress` brief exists in the brain DB (or, as a
+fallback, in the v6 filesystem brief-cache at
+`~/.igris/projects/<slug>/briefs/`). In an emergency where the brief gate
+is wrongly blocking work (e.g. a corrupt brain DB during recovery, or you
+need a one-off escape hatch while you fix the underlying problem), the
+hook honours the env var **`IGRIS_BYPASS_BRIEF_GATE=1`**:
+
+```bash
+# One-shot per command — DO NOT `export` this variable.
+IGRIS_BYPASS_BRIEF_GATE=1 <command>
+```
+
+When the bypass fires, the hook emits a loud WARNING on stderr and writes
+a `brief_gate.bypassed` row into the brain DB's `event_log` table, so the
+bypass leaves an audit trail. Symmetric with `IGRIS_BYPASS_PHASE_GUARD=1`
+in `scripts/git-hooks/pre-commit`.
+
+**Critical:** never `export IGRIS_BYPASS_BRIEF_GATE=1` in your shell or rc
+file. Exported env vars inherit into every subprocess — including subagent
+spawns (forger, sentinel) during a `/hunt` — and would silently disable
+the brief gate across the whole session. Always pass it one-shot, prefixed
+to the single command that needs it.
+
+### 3.2 Insecure-sync override (trusted-LAN only)
+
+Remote VPS sync sends the brain `api_key` as a Bearer header on every
+request. The transport classifier in `cli/src/lib/sync-transport.ts`
+therefore **refuses** sync over plain `http://` to a non-local host — the
+key would travel in cleartext. `https://` and `http://` to localhost
+(`127.0.0.1`/`::1`) are always allowed (the latter is what the test
+fixtures use).
+
+If you knowingly run a permanent `http://` VPS on a trusted LAN, the
+classifier honours **`IGRIS_ALLOW_INSECURE_SYNC=1`** — sync proceeds with
+a loud per-sync warning:
+
+```bash
+# One-shot per command — DO NOT `export` this variable (TD-252).
+IGRIS_ALLOW_INSECURE_SYNC=1 igris sync data
+```
+
+It can also be set persistently as `config.json` `remote_brain.allow_insecure: true`.
+Same `export`-discipline as `IGRIS_BYPASS_*`: never `export` the env var —
+it would inherit into subagent spawns and silently weaken transport for the
+whole session.
 
 ### 4. Commit Your Changes
 
@@ -241,8 +290,7 @@ bats test/
 **Run specific test file:**
 
 ```bash
-bats test/igris_init.test.bash
-bats test/hooks.test.bash
+bats test/verify_mirror.test.bash
 ```
 
 **Run with verbose output:**
@@ -269,7 +317,6 @@ load test_helper
 @test "example test" {
   # Setup
   setup_test_project
-  init_igris_in_test_project
 
   # Execute
   run "$SCRIPTS_DIR/your_script.sh" "args"
@@ -288,13 +335,10 @@ See `test/README.md` for full testing documentation.
 Test your changes on a real project:
 
 ```bash
-# Create test project
-mkdir /tmp/test-igris-project
-cd /tmp/test-igris-project
-git init
-
-# Run igris_init.sh from your branch
-/path/to/your-fork/scripts/igris_init.sh .
+# Bootstrap the brain from your checkout, then install into a test project
+node cli/dist/index.js init --from-source .
+mkdir -p /tmp/test-project
+node cli/dist/index.js install /tmp/test-project
 
 # Test the feature/fix
 # ...
@@ -370,25 +414,158 @@ igris-ai/
 ├── .claude/
 │   ├── agents/              # Symlinks → ~/.igris/core/agents/
 │   ├── hooks/               # Hook scripts
-│   ├── rules/               # Symlink → ~/.igris/core/rules/
 │   ├── skills/              # Symlinks → ~/.igris/core/skills/
 │   └── settings.json        # Claude Code config
 ├── core/                    # Distribution source for ~/.igris/core/
-│   ├── agents/              # 7 native subagents
-│   ├── prompts/             # System prompts (igris_os.md)
-│   ├── rules/               # 1 universal rule (v6)
-│   ├── skills/              # 20 skills
+│   ├── agents/              # Native subagents
+│   ├── os/                  # OS context modules + generated INDEX (boot-loaded)
+│   ├── prompts/             # brain_stewardship + session_protocol (reference)
+│   ├── skills/              # Skills
+│   ├── scripts/             # Mirrored helpers (verify_mirror.sh, gen_os_index.sh, cli-adapters/)
 │   ├── templates/           # PR/brief templates
-│   ├── task-handlers/       # Worker daemon handlers
-│   ├── SOUL.md              # Persona identity
-│   └── igris_tree.json      # Context routing tree (v6)
+│   └── SOUL.md              # Persona identity
 ├── brain-mcp-server/        # Brain MCP server (TypeScript)
+├── cli/                     # The `igris` npm CLI (TypeScript)
 ├── docs/                    # Documentation
-├── scripts/                 # Install/update scripts
+├── scripts/                 # Repo-only scripts (validators, brain ops; see "scripts/ inventory")
 ├── test/                    # Tests (bats framework)
-├── CLAUDE.md                # Slim context pointer (v6)
-└── version.txt              # Version (6.0.0)
+└── CLAUDE.md                # Slim context pointer (v7)
 ```
+
+Project version lives in `package.json` (`node -p "require('./package.json').version"`); the machine-local `.igris_version` stamp written by the CLI installer is gitignored.
+
+---
+
+## 🧰 scripts/ inventory
+
+Every script under `scripts/` and `core/scripts/`, and how each is invoked. If
+you add or remove a script here, update this table in the same PR.
+
+| Script | Invoked by | Purpose |
+|--------|-----------|---------|
+| `scripts/git-hooks/pre-commit` | symlinked into `.git/hooks/pre-commit` (one-time, via `scripts/install_git_hooks.sh`) | Conditional pre-commit validators (enum drift, lockfile sync, harness drift) — runs only when the relevant files are staged. Also enforces the PI-004 phase guard. |
+| `scripts/git-hooks/commit-msg` | symlinked into `.git/hooks/commit-msg` (one-time, via `scripts/install_git_hooks.sh`) | Hard-fails a commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180; ≤72). Bypass with `git commit --no-verify`. |
+| `scripts/install_git_hooks.sh` | manual (one-time, per contributor / fresh checkout) | Symlinks every file in `scripts/git-hooks/` into `.git/hooks/`; backs up any pre-existing non-symlink hook before clobbering (TD-072 F3). Idempotent. |
+| `scripts/validate_brain_stewardship_enums.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every `memory_store` enum value (`category`/`scope`/`provenance`) appears in the `brain_stewardship` section of `core/prompts/brain_stewardship.md`, plus schema-shrinkage reverse check. (Renamed from `validate_memory_agency_enums.sh` in TD-148.) |
+| `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
+| `scripts/validate_agent.sh` | manual / docs (`docs/archive/MIGRATION_GUIDE-v5-to-v6.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
+| `scripts/igris_brain_backup.sh` / `scripts/igris_brain_restore.sh` | manual | Backup / restore `~/.igris/memory/knowledge.db` (`sqlite3 .backup`; backup rotates the last 5; restore safety-backs-up before overwriting). |
+| `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. Local mode re-points at the bundled brain MCP that `igris install` registered (resolved from the existing `mcpServers["igris-brain"]` entry). Remote/dual refuses a non-local `http://` URL unless `IGRIS_ALLOW_INSECURE_SYNC=1` / `remote_brain.allow_insecure` (TD-256, mirrors the TD-252 sync-transport guard). The VPS half is populated by `igris_brain_deploy.sh`. |
+| `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
+| `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
+| `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
+| `core/scripts/cli-adapters/_common.sh` | sourced by every adapter | Shared helpers (parse_frontmatter, atomic_symlink, validate_manifest, merge_overlay_manifest, toml_escape*). FR-153 RETIRED `md_to_agents_md.sh` + `md_to_gemini_toml.sh` (codex + gemini now read SKILL.md natively via symlink — no aggregation/conversion). FR-152 RETIRED `sync_claude_agents.sh` (claude reads symlink to loadout-vendored canonical). FR-159 RETIRED `sync_codex_agents.sh` (codex MD → TOML emit moved to TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` for vendor-side + bash `assemble_codex_harness_into_loadout` in `compile_harnesses.sh` for compile-side fallback; the .toml is the target of a symlink to `<brain>/loadout/agents/<name>/harness.codex.toml`, parity with claude). No format-converter scripts remain. |
+
+> Build-time helper (not under top-level `scripts/`): `cli/scripts/copy-templates.sh` is run from `cli/` by `npm run build` (`tsc && bash scripts/copy-templates.sh`) to copy template assets into `cli/dist/`.
+
+---
+
+## 📚 Documentation Invariants
+
+Docs rot when no rule says "when you change X, update Y". The list below is
+the contributor maintenance contract. Every item names what to update and
+the surface that holds it. Mirror this list during code review (warden
+enforces) and during pre-commit (the §13 "Enumeration surfaces" rule in
+`~/.igris/projects/igris-ai/context/coding_guidelines.md` is the wider
+form of this contract).
+
+1. **When you add a brain MCP tool** → list it in:
+   - `docs/architecture/SYSTEM.md`'s "Brain DB" section (or the relevant
+     per-feature doc — the tool count + the component bullet).
+   - The relevant `docs/architecture/<component>.md` per-feature doc (e.g.,
+     a new edges tool → `docs/architecture/typed_edges.md`).
+   - `core/prompts/brain_stewardship.md` decision trigger if the tool is a
+     READ surface (per L-95 / `coding_guidelines.md` §13).
+
+2. **When you add or remove a hook handler** → list it in:
+   - `docs/HOOK_EVENT_SCHEMA.md` (handler table + behavior).
+   - `docs/multi-cli.md` if the handler is cross-CLI-aware.
+   - The `events_covered` list in `~/.igris/config.json:cli_targets.*.hooks`.
+
+3. **When you add or remove an agent** → register it in:
+   - `core/agents/<name>.md` (the agent definition itself — its frontmatter
+     is the canonical roster source).
+   - `core/scripts/gen_os_index.sh` discovers the agent frontmatter into the
+     `core/os/INDEX.md` roster (FR-187 Phase 2b — re-run it).
+   - `docs/architecture/SYSTEM.md`'s agent roster table.
+   - `README.md` if agent count or list appears.
+   - Do NOT write the agent into `CLAUDE.md` — it carries no enumeration
+     (TD-267; the boot-pointer defers identity/routing to `/boot` +
+     `core/os/INDEX.md`).
+
+4. **When you add or remove a skill** → register it in:
+   - `core/skills/<name>/SKILL.md` (the skill itself — the `core/skills/*`
+     tree is the canonical roster).
+   - `docs/architecture/SYSTEM.md` §7.2 grouped skill table (the
+     human-readable enumeration surface).
+   - `README.md` slash-command tables (both the Workflow section and the
+     Skills section).
+   - `docs/<feature>.md` if a feature doc references the skill.
+   - Do NOT write the skill into `CLAUDE.md` — it carries no enumeration
+     (TD-267; the boot-pointer defers the skill roster to `core/skills/*`
+     + the SYSTEM.md §7.2 table).
+
+5. **When you change a `core/` file that has a runtime mirror** → follow
+   the **TD-096 mirror-sync protocol**:
+   ```bash
+   cp <repo-core-file> ~/.igris/core/<same-path>
+   bash core/scripts/verify_mirror.sh <file>
+   # Verdict must say MATCH.
+   ```
+   This applies to: `core/agents/*.md`, `core/os/**`, `core/skills/*/SKILL.md`,
+   `core/prompts/*.md`, `core/SOUL.md`,
+   `core/hooks/**`, `core/scripts/**`. The sentinel runs MIRROR_CHECK on
+   every changed `core/` file during /hunt TESTING; uncommitted drift
+   blocks the commit.
+
+6. **When you change the `/hunt` state machine** → update:
+   - `docs/architecture/SYSTEM.md`'s state-machine diagram (the mermaid
+     block).
+   - `core/skills/hunt/SKILL.md` (the canonical state machine — the sole
+     source since the `igris_os.md` monolith was retired in FR-187).
+
+7. **When you bump a current-system version string** → sweep ALL of:
+   - `package.json:version` (canonical).
+   - `CONTRIBUTING.md` "Project structure" version notes.
+   - Any README banner or footer that names a version.
+   - Do NOT add `CLAUDE.md` to the sweep — it carries no version string
+     (TD-267; the boot-pointer holds no identity/version line).
+   - This is the **TD-147 lesson**: a v6→v7 sweep missed multiple
+     surfaces and shipped self-contradicting docs.
+
+8. **When you add a deprecated or disabled feature** → add a
+   prominent callout at the top of its docs immediately under the H1.
+   - Format: `> **Status (vN): DISABLED/EXPERIMENTAL/DEPRECATED.** <reason>.
+     See <brief-id>.` followed by the technical content.
+   - Example: `docs/architecture/subconscious_engine.md` carries the
+     TD-102 / FR-118 callout. (Without it, a contributor reading the
+     doc wastes time troubleshooting an engine that's switched off.)
+
+9. **When you author docs, configs, or examples containing
+   URLs/IPs/keys/credentials, use placeholders** (`<your-vps-host>`,
+   `<api-key>`, `${SECRET_NAME}`, `https://example.com`) and reference the
+   source-of-truth config — never literals. Pre-commit `gitleaks` will refuse
+   the commit otherwise (TD-159, the four-layer secret-scanning model). If a
+   legitimate inline literal is needed (e.g., a public address in user-facing
+   docs), add an explicit `# gitleaks:allow` marker on the same line with a
+   one-line rationale. Full guidance — what gitleaks checks, how to allowlist,
+   and how to remediate a real leak — is in
+   [`docs/operations/secret-scanning.md`](docs/operations/secret-scanning.md).
+
+### Pre-commit reflex
+
+Before any PR that touches an enumeration surface (skill, agent, tool,
+component, hook, brief type, config key), run:
+
+```bash
+# Find every place the thing's name appears
+git grep -n "<thing-name>" -- ':!*.lock' ':!node_modules'
+```
+
+Cross-check the hits against the table above. If a surface that should
+list the thing doesn't, or one that shouldn't still does, fix it in this
+commit. Warden enforces this in /hunt REVIEWING; do not let a PR with
+drift across surfaces reach the gate.
 
 ---
 
@@ -409,7 +586,7 @@ check_dependency() {
 }
 
 # Good variable naming
-IGRIS_VERSION="5.0.0"  # Constants: UPPERCASE
+IGRIS_VERSION="7.0.0"  # Constants: UPPERCASE
 target_dir="/path"      # Local vars: lowercase
 
 # Good error message
@@ -454,7 +631,7 @@ echo "  Ubuntu: sudo apt install python3"
 
 - **[README.md](README.md)** - Project overview
 - **`~/.igris/projects/{project}/context/coding_guidelines.md`** - Coding standards
-- **`~/.igris/core/prompts/igris_os.md`** - Igris AI operating system
+- **`~/.igris/core/os/INDEX.md`** - Igris OS module index (boot context)
 
 ### Questions?
 

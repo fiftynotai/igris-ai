@@ -42,6 +42,52 @@ fi
 # Read stdin once, fan out to each handler via its own stdin.
 INPUT=$(cat 2>/dev/null || true)
 
+# ---------------------------------------------------------------------------
+# FR-212c REGISTRATION GATE. The PostToolUse dispatcher projects GLOBALLY (one
+# ~/.claude/settings.json block fans handlers out on EVERY Write/Edit in EVERY
+# project on the machine). Outside a registered Igris project it MUST no-op:
+# clean exit 0 BEFORE any handler (lint etc.) runs — so a non-Igris project's
+# writes never trigger Igris post-processing. FAIL-OPEN-TO-NO-OP: a missing/
+# locked brain DB resolves to not-registered -> clean exit.
+#
+# This dispatcher has no project-dir resolver of its own; derive it the same way
+# the other shared hooks do (payload.project_dir > payload.cwd > env > PWD).
+# ---------------------------------------------------------------------------
+_gate_project_dir() {
+  local from_input=""
+  if [ -n "$INPUT" ]; then
+    if command -v jq &> /dev/null; then
+      from_input=$(echo "$INPUT" | jq -r '.project_dir // .cwd // ""' 2>/dev/null || echo "")
+    else
+      from_input=$(echo "$INPUT" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    print(d.get('project_dir') or d.get('cwd') or '')
+except Exception:
+    print('')
+" 2>/dev/null || echo "")
+    fi
+  fi
+  if [ -n "$from_input" ]; then
+    echo "$from_input"
+  elif [ -n "${IGRIS_PROJECT_DIR:-}" ]; then
+    echo "$IGRIS_PROJECT_DIR"
+  elif [ -n "${CLAUDE_PROJECT_DIR:-}" ]; then
+    echo "$CLAUDE_PROJECT_DIR"
+  else
+    echo "$PWD"
+  fi
+}
+
+if [ -f "$SCRIPT_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/_gate.sh"
+  if ! is_registered_igris_project "$(_gate_project_dir)"; then
+    exit 0
+  fi
+fi
+
 # Resolve a timeout binary. macOS base install lacks `timeout`; `gtimeout` comes
 # with `brew install coreutils`. If neither is available, the run_with_watchdog
 # function below enforces the timeout in pure bash.

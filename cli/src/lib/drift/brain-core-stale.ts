@@ -17,13 +17,13 @@
  */
 
 import { readInstallSource } from "../install-source.js";
-import type { DriftRow } from "../../types.js";
+import type { Channel, DriftRow } from "../../types.js";
 import { repoOwner, repoName } from "../channel.js";
 import { httpsGetJson } from "../http.js";
 
 export interface BrainCoreStaleOptions {
   /** Test seam — swap the GitHub head-SHA fetcher. */
-  latestRefShaFn?: (channel: "release" | "main" | "tag", ref: string) => Promise<string>;
+  latestRefShaFn?: (channel: Channel, ref: string) => Promise<string>;
 }
 
 /**
@@ -82,6 +82,8 @@ export async function detectBrainCoreStale(
  * For channel="main": queries `/commits/main` for the branch HEAD.
  * For channel="release"/"tag": queries `/commits/<ref>` (a tag is a commit
  * ref, GitHub resolves it to the tagged commit).
+ * For channel="branch" (TD-154): queries `/commits/<branch>` — GitHub
+ * resolves the branch name to its HEAD commit, same as "main".
  *
  * Note: the recorded `content_sha256` in `.install-source.json` is the
  * sha256 of the GZIPPED tarball bytes, NOT a git SHA. For staleness we
@@ -96,11 +98,12 @@ export async function detectBrainCoreStale(
  * force-push of a tag are intentional — the user should know.
  */
 async function fetchChannelHeadSha(
-  channel: "release" | "main" | "tag",
+  channel: Channel,
   ref: string,
 ): Promise<string> {
   // For "release" channel ref="v7.0.0" tag — same endpoint as "tag".
-  // For "main", ref="main".
+  // For "main", ref="main". For "branch" (TD-154), ref is the branch name —
+  // GitHub's /commits/<branch> resolves it to the branch HEAD.
   const refPath = channel === "main" ? "main" : ref;
   const url = `https://api.github.com/repos/${repoOwner()}/${repoName()}/commits/${encodeURIComponent(refPath)}`;
   const body = await httpsGetJson(url);

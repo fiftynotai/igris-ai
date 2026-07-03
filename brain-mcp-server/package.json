@@ -1,6 +1,6 @@
 {
   "name": "igris-brain-mcp-server",
-  "version": "5.0.0",
+  "version": "7.1.0",
   "description": "Igris AI Centralized Brain MCP Server — persistent memory, project management, cross-project intelligence",
   "main": "dist/index.js",
   "type": "module",
@@ -14,10 +14,12 @@
     "start:http": "node dist/index.js --http",
     "inspect": "npx @modelcontextprotocol/inspector node dist/index.js",
     "test": "vitest run",
-    "sweep-tasks": "tsx scripts/sweep-stale-brief-tasks.ts",
-    "backfill-edges": "tsx scripts/backfill_brief_edges.ts"
+    "eval:memory": "tsx eval/memory/src/run.ts",
+    "backfill-edges": "tsx scripts/backfill_brief_edges.ts",
+    "gen:egress-manifest": "tsx scripts/gen-egress-manifest.ts",
+    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check"
   },
-  "author": "Fifty.ai",
+  "author": "fifty.dev",
   "license": "MIT",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",

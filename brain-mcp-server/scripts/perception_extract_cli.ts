@@ -52,7 +52,7 @@
  * safe. The inbox truncation uses atomic rename via tempfile.
  *
  * @module scripts/perception_extract_cli
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as fs from 'node:fs';
@@ -61,7 +61,10 @@ import * as path from 'node:path';
 import { getDb } from '../src/db.js';
 import { bootEngine } from '../src/engine/index.js';
 import type { Engine } from '../src/engine/index.js';
-import { resolvePerceptionConfig } from '../src/engine/components/perception/index.js';
+import {
+  resolvePerceptionConfig,
+  resolveLlmExtractorGlobalConfig,
+} from '../src/engine/components/perception/index.js';
 import { selectLlmExtractor } from '../src/engine/components/perception/extractors/llm_via_claude_code.js';
 import { runPerception } from '../src/engine/components/perception/runner.js';
 import { parseTranscript } from '../src/engine/components/perception/handlers.js';
@@ -641,7 +644,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     }
 
     const config = resolvePerceptionConfig();
-    const llmExtractor = selectLlmExtractor(config);
+    // FR-118 M1: the detached extractor rides the shared cognition backend.
+    // Resolve the global llm_extractor harness chain (default 'claude').
+    const llmExtractor = selectLlmExtractor(config, undefined, resolveLlmExtractorGlobalConfig());
 
     let result;
     try {

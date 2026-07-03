@@ -26,7 +26,7 @@ session_end / pre_compact hook
               -> INSERT learnings (review_status='pending_review' OR 'approved'
                  if auto_approve_enabled=true)
               -> truncate perception_inbox.jsonl on success
-/awaken section 4.9
+/boot section 4.9
    -> SELECT pending candidates (igris_perception_review_pending, limit=5)
 user
    -> approves (igris_perception_approve) or rejects (igris_perception_reject)
@@ -35,7 +35,7 @@ default recall
 ```
 
 The hook returns immediately after spawning the detached process. The
-parent Claude Code session never blocks on extraction. /awaken and /rest
+parent Claude Code session never blocks on extraction. /boot and /rest
 are read-only with respect to perception state — no inbox drain, no
 synchronous LLM calls.
 
@@ -72,7 +72,7 @@ inference is permanent. The forensic trail is preserved across the lifecycle:
 
 - `provenance='inferred'` → derived by LLM, not directly observed.
 - `learnings.source_extractor` → which extractor produced it.
-  - Post-TD-066: `'llm'`, `'manual'` (direct memory_store), or `'distill'` (/distill skill).
+  - Post-TD-066: `'llm'`, `'manual'` (direct memory_store), or `'distill'` (the `/harvest` skill — the enum value stays `'distill'` after the `/distill` → `/harvest` rename; it is a channel-tag, not the skill name).
   - Pre-TD-066 historical rows may carry `'rule:learned_marker'`,
     `'rule:retry_chain'`, `'rule:blocker_resolution'`, or
     `'rule:error_fingerprint'` — read-compatible, no migration needed.
@@ -154,7 +154,7 @@ Six tools surface the lifecycle:
 | Tool                                 | Purpose                                                    |
 |--------------------------------------|------------------------------------------------------------|
 | `igris_perception_submit`            | Direct ingest (CLI bypasses this; manual triage uses it)   |
-| `igris_perception_review_pending`    | List pending candidates for `/awaken` (limit=5)            |
+| `igris_perception_review_pending`    | List pending candidates for `/boot` (limit=5)              |
 | `igris_perception_approve`           | Flip review_status='approved' (with optional edit)         |
 | `igris_perception_reject`            | DELETE the pending row (hard delete, no soft-delete state) |
 | `igris_perception_extract_now`       | Manual trigger with `force_llm` bypass                     |

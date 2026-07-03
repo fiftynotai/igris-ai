@@ -1,0 +1,12 @@
+{"qid":"N01","project":"nimbus-api","query":"How do we configure a Kubernetes horizontal pod autoscaler for the cluster?","notes":"k8s absent from corpus"}
+{"qid":"N02","project":"aurora-mobile","query":"What is the recommended way to train a convolutional neural network on a GPU?","notes":"ML absent"}
+{"qid":"N03","project":"helio-web","query":"How do we set up a Rust async runtime with Tokio and green threads?","notes":"rust absent"}
+{"qid":"N04","project":"pipeline-etl","query":"How do we tune the garbage collector for low pause times on the virtual machine heap?","notes":"jvm gc absent"}
+{"qid":"N05","project":"nimbus-api","query":"What is the process for filing a travel expense report in the finance portal?","notes":"non-technical absent"}
+{"qid":"N06","project":"aurora-mobile","query":"How do we solder a surface-mount capacitor onto the circuit board?","notes":"hardware absent"}
+{"qid":"N07","project":"helio-web","query":"What sourdough starter hydration ratio works best for artisan bread baking?","notes":"cooking absent"}
+{"qid":"N08","project":"pipeline-etl","query":"How do we negotiate a commercial real estate lease renewal with the landlord?","notes":"legal/business absent"}
+{"qid":"N09","project":"nimbus-api","query":"How do we calibrate a telescope mount for long-exposure astrophotography of nebulae?","notes":"astronomy absent"}
+{"qid":"N10","project":"aurora-mobile","query":"What are the rules for castling and en passant in a chess endgame?","notes":"games absent"}
+{"qid":"N11","project":"helio-web","query":"How do we breed koi carp in an outdoor garden pond over winter?","notes":"aquaculture absent"}
+{"qid":"N12","project":"pipeline-etl","query":"Which violin bowing technique produces the smoothest vibrato in a classical concerto?","notes":"music absent"}

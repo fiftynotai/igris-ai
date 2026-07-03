@@ -11,12 +11,15 @@
  * - generateEmbedding(text): Promise<Float32Array> — produce a 384-dim embedding
  * - embeddingToBuffer(embedding): Buffer — convert Float32Array to BLOB-ready Buffer
  * - bufferToEmbedding(buf): Float32Array — convert Buffer back to Float32Array
- * - isEmbeddingAvailable(): boolean — whether the pipeline loaded successfully
+ * - isEmbeddingAvailable(): boolean | null — pipeline load state (true loaded,
+ *   false permanently unavailable, null never-loaded-or-recoverable)
+ * - disposeEmbeddingPipeline(): Promise<void> — tear down the singleton pipeline
+ * - EmbeddingsUnavailableError: Error — typed graceful-degrade signal (BR-070)
  * - EMBEDDING_MODEL: string — the model identifier
  * - EMBEDDING_DIMENSIONS: number — output vector dimensionality (384)
  *
  * @module utils/embeddings
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 /** Model identifier — hosted on Hugging Face Hub */
@@ -34,6 +37,23 @@ const EMBEDDING_DIMS = 384;
 let _pipeline: unknown = null;
 let _available: boolean | null = null;
 let _loadPromise: Promise<unknown> | null = null;
+// BR-070: latched reason for why the backend is unavailable, so the
+// fast-fail path can report it without re-importing or re-logging.
+let _unavailableReason: string | null = null;
+
+/**
+ * Error thrown by generateEmbedding when the embedding backend is
+ * unavailable (transformers absent, offline cold-cache, or native-load
+ * failure). This is the typed graceful-degrade signal: callers catch it
+ * and fall back to keyword (BM25/FTS) search rather than surfacing a raw
+ * ERR_MODULE_NOT_FOUND. See BR-070.
+ */
+class EmbeddingsUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`embeddings backend unavailable: ${reason}`);
+    this.name = 'EmbeddingsUnavailableError';
+  }
+}
 
 /**
  * Lazily initialise and return the feature-extraction pipeline.
@@ -48,16 +68,77 @@ async function getPipeline(): Promise<unknown> {
   if (_loadPromise) return _loadPromise;
 
   _loadPromise = (async () => {
+    // BR-070 hybrid graceful-degrade guard. We distinguish two failure
+    // classes because they have opposite recovery profiles:
+    //
+    //   PERMANENT (import / native-addon load) — the @huggingface/transformers
+    //     package is absent from node_modules, or its onnxruntime-node native
+    //     binding cannot load on this host. These are deterministic for the
+    //     life of the process: they will not spontaneously start working, so
+    //     we LATCH unavailability (_available = false) and fast-fail forever
+    //     (no throw-storm — generateEmbedding's _available===false gate
+    //     short-circuits subsequent calls before they re-enter here).
+    //
+    //   RECOVERABLE (model weight fetch) — the import resolved and the native
+    //     addon loaded, but pipeline('feature-extraction', …) fetches ~23MB of
+    //     MiniLM weights from the HF Hub on first use (cached in
+    //     ~/.cache/huggingface/). A transient network blip / partial download /
+    //     5xx here is NOT permanent. For the long-running MCP server, latching
+    //     it would silently disable semantic search for the whole process
+    //     lifetime over one hiccup. So we do NOT latch: reset _loadPromise so
+    //     the NEXT call retries the fetch, and leave _available UNLATCHED
+    //     (null) so a later success brings embeddings back.
+    //
+    // In BOTH cases the current call throws EmbeddingsUnavailableError (callers
+    // catch → recall falls back to BM25, store/create → skip-note,
+    // brief_similar → clean "unavailable" message) and we log the capability
+    // warning exactly ONCE per failure episode.
+
+    // --- Stage 1: import (+ native addon load) — PERMANENT on failure ---
+    let pipeline: (task: string, model: string) => Promise<unknown>;
     try {
-      const { pipeline } = await import('@huggingface/transformers');
+      // Dynamic import — rejects with ERR_MODULE_NOT_FOUND if the package is
+      // absent; also surfaces onnxruntime-node native-load failures, which are
+      // likewise deterministic for this process.
+      ({ pipeline } = await import('@huggingface/transformers') as {
+        pipeline: (task: string, model: string) => Promise<unknown>;
+      });
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      _available = false; // PERMANENT latch
+      _unavailableReason = reason;
+      console.error(
+        '[embeddings] backend unavailable (permanent) — semantic/vector search ' +
+        `disabled, keyword (BM25/FTS) search still active. Reason: ${reason}`,
+      );
+      // Deliberately do NOT reset _loadPromise. The _available===false gate in
+      // generateEmbedding short-circuits before re-awaiting this rejected
+      // promise, so the rejection is never re-awaited and the warning fires
+      // once. (The cached rejection is intentionally inert — _available is the
+      // real gate.)
+      throw new EmbeddingsUnavailableError(reason);
+    }
+
+    // --- Stage 2: model weight fetch — RECOVERABLE on failure ---
+    try {
       _pipeline = await pipeline('feature-extraction', MODEL_NAME);
       _available = true;
       console.error('[embeddings] Pipeline loaded — model:', MODEL_NAME);
       return _pipeline;
     } catch (err) {
-      _available = false;
+      const reason = err instanceof Error ? err.message : String(err);
+      // Do NOT latch — leave _available as null (unlatched) so generateEmbedding
+      // does not fast-fail; reset _loadPromise so the NEXT call retries the
+      // fetch. If connectivity is restored, embeddings recover without a
+      // process restart. Warn once for THIS failed attempt.
+      _unavailableReason = reason;
+      console.error(
+        '[embeddings] model load failed (recoverable, will retry on next call) — ' +
+        `semantic/vector search temporarily disabled, keyword (BM25/FTS) search ` +
+        `still active. Reason: ${reason}`,
+      );
       _loadPromise = null;
-      throw err;
+      throw new EmbeddingsUnavailableError(reason);
     }
   })();
 
@@ -75,6 +156,16 @@ async function getPipeline(): Promise<unknown> {
  * @returns A 384-dimension Float32Array embedding
  */
 async function generateEmbedding(text: string): Promise<Float32Array> {
+  // BR-070 fast-fail: only the PERMANENT latch (import / native-addon load
+  // failure) sets _available === false. In that case throw the typed error
+  // immediately rather than re-awaiting the cached rejected _loadPromise —
+  // keeping the warning once-only and avoiding a per-call throw-storm. A
+  // RECOVERABLE model-fetch failure leaves _available as null (unlatched),
+  // so we deliberately fall through to getPipeline() and RETRY the fetch.
+  if (_available === false) {
+    throw new EmbeddingsUnavailableError(_unavailableReason ?? 'unknown');
+  }
+
   const extractor = await getPipeline() as (
     text: string,
     opts: { pooling: string; normalize: boolean }
@@ -190,6 +281,7 @@ export {
   isEmbeddingAvailable,
   disposeEmbeddingPipeline,
   processInBatches,
+  EmbeddingsUnavailableError,
   EMBEDDING_MODEL,
   EMBEDDING_DIMENSIONS,
 };

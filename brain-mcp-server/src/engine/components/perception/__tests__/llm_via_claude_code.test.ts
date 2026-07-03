@@ -1,53 +1,66 @@
 /**
- * LLM extractor — unit + opt-in integration tests (FR-109 Phase 2).
+ * Perception LLM extractor — pure-helper + backend-backed extractor tests.
  *
- * Strategy mirrors `subconscious/__tests__/verifier.test.ts`: use `node`
- * as a stub command with `-e` arguments that emit pre-canned stdout. This
- * validates the spawn / stdin / stdout / parse path without invoking the
- * real `claude` CLI.
+ * FR-118 M1 REPLACEMENT: the OLD spawn-loop unit tests (`makeClaudeLlmExtractor`
+ * + the `claude -p` child / EPIPE / timeout / byte-cap-over-stdin / TD-076
+ * `--system-prompt` argv blocks) were REMOVED — that inline machinery was
+ * deleted in M1, superseded by the shared brain-isolated harness backend
+ * (`cognition/backend`), whose own tests (`cognition/__tests__/{exec,spawn-map,
+ * parse-output,isolation,env}.test.ts`) now own the spawn / timeout / non-zero
+ * / isolation / per-harness-argv coverage. The byte-cap value resolution
+ * (`capPromptBytes` / `resolveMaxPromptBytes`) is a PURE helper and is retained
+ * here; the over-stdin enforcement of that cap is exercised by the backend
+ * exec tests.
  *
- * The opt-in integration block (skipped unless `RUN_LLM_INTEGRATION=1`)
- * spawns the real `claude -p` against a synthetic transcript fixture —
- * useful for occasional drift checks but skipped on CI / VPS by default.
+ * RE-HOMED here: the prompt builders, the JSON validator, the confidence cap,
+ * the transcript sanitiser, the JSON-array extractor — the pure helpers the
+ * perception cognition instance composes — plus the backend-backed
+ * `selectLlmExtractor` / `makeBackendLlmExtractor` (the M1 replacement for the
+ * inline factory), with the backend run injected so no real CLI is needed.
  *
  * @module engine/components/perception/__tests__/llm_via_claude_code.test
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   buildSystemPrompt,
   buildUserPrompt,
   capPromptBytes,
   DEFAULT_MAX_PROMPT_BYTES,
   extractJsonArrayReply,
+  isPerceptionReplyWellFormed,
   type ExtractorLogger,
   LLM_CONFIDENCE_CAP,
-  makeClaudeLlmExtractor,
+  makeBackendLlmExtractor,
   noopLlmExtractor,
   resolveMaxPromptBytes,
   sanitizeTranscript,
   selectLlmExtractor,
   validateAndCoerce,
 } from '../extractors/llm_via_claude_code.js';
-import { resetClaudeCliProbeCache } from '../../subconscious/verifier.js';
+import { resetHarnessCliProbeCache } from '../../cognition/backend/env.js';
 import {
   DEFAULT_PERCEPTION_CONFIG,
   type PerceptionExtractorConfig,
-  type TranscriptEvent,
 } from '../types.js';
 import {
   transcriptWithSubtlePattern,
   transcriptWithSingleLearned,
 } from './fixtures/synthetic-transcripts.js';
 import {
-  cannedThreeCandidates,
-  cannedEmpty,
-  cannedGarbage,
   cannedFenced,
+  cannedGarbage,
   cannedEnveloped,
-  cannedMixedValidity,
-  cannedHighConfidence,
 } from './fixtures/canned-llm-responses.js';
+
+// Mock the cognition backend so makeBackendLlmExtractor can be exercised
+// without a real harness CLI. The backend's own spawn/isolation/timeout paths
+// are tested in cognition/__tests__/*.
+vi.mock('../../cognition/backend/index.js', () => ({
+  runBackend: vi.fn(),
+}));
+import { runBackend } from '../../cognition/backend/index.js';
+const mockedRunBackend = vi.mocked(runBackend);
 
 // ---------------------------------------------------------------------------
 // validateAndCoerce
@@ -243,6 +256,57 @@ describe('extractJsonArrayReply', () => {
 });
 
 // ---------------------------------------------------------------------------
+// isPerceptionReplyWellFormed (TD-295)
+// ---------------------------------------------------------------------------
+//
+// A well-formed (possibly empty, possibly fenced, possibly `{result}`-enveloped)
+// array is a VALID EMPTY judgment — "nothing worth learning" — which the engine
+// records as a SUCCESSFUL zero-persist run rather than parse_error. Genuinely
+// malformed / non-array / empty input stays malformed (→ parse_error). The
+// predicate reuses `extractJsonArrayReply`'s OWN parse core, so it accepts
+// EXACTLY what perception accepts.
+describe('isPerceptionReplyWellFormed (TD-295)', () => {
+  it('a bare empty array [] is well-formed (valid-empty judgment)', () => {
+    expect(isPerceptionReplyWellFormed('[]')).toBe(true);
+  });
+
+  it('a bare non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed('[{"a":1}]')).toBe(true);
+  });
+
+  it('a code-fenced empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed('```json\n[]\n```')).toBe(true);
+  });
+
+  it('a fenced non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed(cannedFenced)).toBe(true);
+  });
+
+  it('an envelope wrapping an empty array is well-formed', () => {
+    expect(
+      isPerceptionReplyWellFormed(JSON.stringify({ type: 'result', result: '[]' })),
+    ).toBe(true);
+  });
+
+  it('an envelope wrapping a non-empty array is well-formed', () => {
+    expect(isPerceptionReplyWellFormed(cannedEnveloped)).toBe(true);
+  });
+
+  it('garbage prose is malformed', () => {
+    expect(isPerceptionReplyWellFormed(cannedGarbage)).toBe(false);
+  });
+
+  it('non-array JSON (an object) is malformed', () => {
+    expect(isPerceptionReplyWellFormed('{"foo": "bar"}')).toBe(false);
+  });
+
+  it('empty and whitespace-only input is malformed', () => {
+    expect(isPerceptionReplyWellFormed('')).toBe(false);
+    expect(isPerceptionReplyWellFormed('   ')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // sanitizeTranscript
 // ---------------------------------------------------------------------------
 
@@ -301,8 +365,6 @@ describe('prompt construction', () => {
       },
     ];
     const prompt = buildUserPrompt(malicious, { project: 'p' });
-    // Both an outer and inner closing tag are present — the model is told to
-    // treat anything inside as untrusted, so this is the expected shape.
     expect(prompt.match(/<\/transcript>/g)?.length).toBe(2);
   });
 
@@ -313,243 +375,8 @@ describe('prompt construction', () => {
 });
 
 // ---------------------------------------------------------------------------
-// noopLlmExtractor
+// TD-073 — capPromptBytes / resolveMaxPromptBytes (pure byte-cap helpers)
 // ---------------------------------------------------------------------------
-
-describe('noopLlmExtractor', () => {
-  it('returns [] without I/O', async () => {
-    const out = await noopLlmExtractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// selectLlmExtractor
-// ---------------------------------------------------------------------------
-
-describe('selectLlmExtractor', () => {
-  beforeEach(() => {
-    resetClaudeCliProbeCache();
-  });
-
-  it('returns noop when extractor_llm_enabled=false', () => {
-    const messages: string[] = [];
-    const extractor = selectLlmExtractor(
-      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: false },
-      { info: (m) => messages.push(`info:${m}`), warn: (m) => messages.push(`warn:${m}`) },
-    );
-    expect(extractor).toBe(noopLlmExtractor);
-    expect(messages.some((m) => m.includes('disabled by config'))).toBe(true);
-  });
-
-  it('returns noop when CLI is absent (probe returns false)', () => {
-    // Override PATH to break the probe.
-    const origPath = process.env.PATH;
-    process.env.PATH = '/nonexistent/dir/that/does/not/exist';
-    try {
-      resetClaudeCliProbeCache();
-      const messages: string[] = [];
-      const extractor = selectLlmExtractor(
-        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
-        { info: (m) => messages.push(`info:${m}`), warn: (m) => messages.push(`warn:${m}`) },
-      );
-      expect(extractor).toBe(noopLlmExtractor);
-      expect(messages.some((m) => m.includes('claude CLI not on PATH'))).toBe(true);
-    } finally {
-      process.env.PATH = origPath;
-      resetClaudeCliProbeCache();
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// makeClaudeLlmExtractor — using deterministic stub commands
-// ---------------------------------------------------------------------------
-
-describe('makeClaudeLlmExtractor (mocked spawn)', () => {
-  // Helper: build an extractor that uses `node -e <script>` to emit fixed stdout.
-  // Trailing `--` makes node ignore the `--system-prompt <prompt>` args the
-  // factory appends, so the stub doesn't need to understand them.
-  function stubExtractor(canned: string) {
-    return makeClaudeLlmExtractor({
-      command: 'node',
-      args: ['-e', `process.stdout.write(${JSON.stringify(canned)})`, '--'],
-      timeoutMs: 5_000,
-    });
-  }
-
-  it('returns 3 valid candidates when stdout contains a clean JSON array', async () => {
-    const extractor = stubExtractor(cannedThreeCandidates);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out.length).toBe(3);
-    expect(out[0].source_extractor).toBe('llm');
-    expect(out[0].title).toBeTruthy();
-    expect(out.every((c) => c.confidence <= LLM_CONFIDENCE_CAP)).toBe(true);
-  });
-
-  it('returns [] when stdout is empty array', async () => {
-    const extractor = stubExtractor(cannedEmpty);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-  });
-
-  it('returns [] for garbage stdout', async () => {
-    const extractor = stubExtractor(cannedGarbage);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-  });
-
-  it('parses fenced JSON output', async () => {
-    const extractor = stubExtractor(cannedFenced);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out.length).toBe(1);
-    expect(out[0].title).toBe('Fenced response works');
-  });
-
-  it('parses --output-format json envelope', async () => {
-    const extractor = stubExtractor(cannedEnveloped);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out.length).toBe(1);
-    expect(out[0].title).toBe('Envelope handling works');
-  });
-
-  it('drops invalid candidates silently and keeps valid ones', async () => {
-    const messages: string[] = [];
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: ['-e', `process.stdout.write(${JSON.stringify(cannedMixedValidity)})`, '--'],
-      timeoutMs: 5_000,
-      log: { info: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out.length).toBe(2);
-    // Info-level diagnostic recorded.
-    expect(messages.some((m) => m.includes('dropped 3 invalid candidates'))).toBe(true);
-  });
-
-  it('caps LLM-reported confidence at 0.85', async () => {
-    const extractor = stubExtractor(cannedHighConfidence);
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out[0].confidence).toBe(LLM_CONFIDENCE_CAP);
-    expect((out[0].evidence as Record<string, unknown>).llm_self_confidence).toBe(0.95);
-  });
-
-  it('returns [] on timeout (subprocess hangs)', async () => {
-    const messages: string[] = [];
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: ['-e', 'process.stdin.on("data", () => {}); setInterval(() => {}, 1000);', '--'],
-      timeoutMs: 200,
-      log: { info: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-    expect(messages.some((m) => m.includes('timeout'))).toBe(true);
-  }, 10_000);
-
-  it('returns [] when subprocess exits non-zero', async () => {
-    const messages: string[] = [];
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: ['-e', 'process.exit(1)', '--'],
-      timeoutMs: 5_000,
-      log: { info: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-    expect(messages.some((m) => m.includes('non-zero exit'))).toBe(true);
-  });
-
-  it('returns [] when binary is missing', async () => {
-    const messages: string[] = [];
-    const extractor = makeClaudeLlmExtractor({
-      command: '/nonexistent/binary/123',
-      args: [],
-      timeoutMs: 5_000,
-      log: { info: (m) => messages.push(m), warn: (m) => messages.push(m) },
-    });
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
-    expect(out).toEqual([]);
-  });
-
-  it('returns [] for empty events without spawning', async () => {
-    const extractor = makeClaudeLlmExtractor({
-      command: '/should/not/be/called',
-      timeoutMs: 5_000,
-    });
-    const out = await extractor([], { project: 'p' });
-    expect(out).toEqual([]);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Opt-in real-CLI integration test
-// ---------------------------------------------------------------------------
-
-const integrationGate = process.env.RUN_LLM_INTEGRATION === '1';
-const describeIntegration = integrationGate ? describe : describe.skip;
-
-describeIntegration('makeClaudeLlmExtractor (real claude CLI, opt-in)', () => {
-  it('returns at least 1 candidate against a synthetic transcript', async () => {
-    const extractor = makeClaudeLlmExtractor({ timeoutMs: 60_000 });
-    const out = await extractor(transcriptWithSubtlePattern, { project: 'igris-ai' });
-    // Real model output is non-deterministic — assert the wire shape only.
-    expect(Array.isArray(out)).toBe(true);
-    for (const c of out) {
-      expect(c.source_extractor).toBe('llm');
-      expect(c.confidence).toBeLessThanOrEqual(LLM_CONFIDENCE_CAP);
-      expect(c.confidence).toBeGreaterThanOrEqual(0);
-    }
-  }, 90_000);
-});
-
-// ---------------------------------------------------------------------------
-// TD-073 regression suite — EPIPE handling + transcript byte cap
-// ---------------------------------------------------------------------------
-//
-// Pins down two surgical fixes to the headless Claude perception extractor:
-//   1. EPIPE on `child.stdin` during/after `.end(prompt)` must not crash
-//      the parent process. The async `'error'` event must be caught and
-//      drained to a defensive `[]` settle.
-//   2. The user prompt body must be tail-truncated to a configurable byte
-//      cap (default 256 KB) before being piped to `claude -p`, with the
-//      cap overridable via `IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES`.
-//
-// Reference incident: 2026-04-30T21:10:40 — 3.4 MB single-line transcript
-// triggered EPIPE on stdin write, crashing the perception extractor and
-// silencing the channel for 7+ hours (0 learnings produced).
-//
-// Stub convention: trailing `'--'` in `args` terminates node's option
-// parsing so the factory's appended `--system-prompt <prompt>` flag does
-// not trip node's own argument validator.
-
-interface CapturedLogger extends ExtractorLogger {
-  warns: string[];
-  infos: string[];
-}
-
-function makeCapturedLogger(): CapturedLogger {
-  const warns: string[] = [];
-  const infos: string[] = [];
-  return {
-    warn: (msg) => warns.push(msg),
-    info: (msg) => infos.push(msg),
-    warns,
-    infos,
-  };
-}
-
-/** Build a single transcript event of approximately `targetBytes` UTF-8. */
-function buildEventsOfBytes(targetBytes: number, marker = ''): TranscriptEvent[] {
-  const filler = 'x'.repeat(Math.max(0, targetBytes - marker.length));
-  return [
-    {
-      timestamp: '2026-04-30T00:00:00Z',
-      role: 'user',
-      content: filler + marker,
-    },
-  ];
-}
 
 describe('TD-073 — capPromptBytes', () => {
   it('returns the original string when below the cap', () => {
@@ -570,111 +397,12 @@ describe('TD-073 — capPromptBytes', () => {
   });
 });
 
-describe('TD-073 — makeClaudeLlmExtractor: EPIPE on stdin', () => {
-  it('does not crash when the child destroys stdin before parent finishes writing', async () => {
-    const log = makeCapturedLogger();
-    // Stub: immediately destroy stdin, then exit cleanly after a short delay.
-    // The parent is writing into a half-closed pipe → async EPIPE on stdin.
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: [
-        '-e',
-        'process.stdin.destroy(); setTimeout(() => process.exit(0), 50);',
-        '--',
-      ],
-      timeoutMs: 5_000,
-      log,
-    });
-
-    const events = buildEventsOfBytes(100_000);
-    const result = await extractor(events, { project: 'test-project' });
-
-    expect(result).toEqual([]);
-    // At least one warn must mention the stdin failure (EPIPE or related).
-    expect(log.warns.some((m) => /stdin|EPIPE|epipe/i.test(m))).toBe(true);
-  }, 10_000);
-});
-
-describe('TD-073 — makeClaudeLlmExtractor: byte cap', () => {
-  it('passes exactly 256 KB (default cap) to the child stdin when given a 1 MB prompt', async () => {
-    const log = makeCapturedLogger();
-    // Stub asserts the received byte count equals the default cap. If the
-    // cap fails, the stub exits 1 → extractor returns [] AND emits a
-    // non-zero exit warn. Surface the warn as a useful failure diagnostic.
-    const expectedCap = 256 * 1024;
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: [
-        '-e',
-        `let n=0; process.stdin.on("data", c => n += c.length); ` +
-          `process.stdin.on("end", () => { ` +
-          `if (n !== ${expectedCap}) { process.stderr.write("got=" + n + " expected=${expectedCap}"); process.exit(1); } ` +
-          `process.stdout.write("[]"); ` +
-          `});`,
-        '--',
-      ],
-      timeoutMs: 10_000,
-      log,
-    });
-
-    const events = buildEventsOfBytes(1_024 * 1024);
-    const result = await extractor(events, { project: 'test-project' });
-
-    const nonZeroWarns = log.warns.filter((m) => /non-zero exit/.test(m));
-    if (nonZeroWarns.length > 0) {
-      throw new Error(`Cap mismatch — stub failed: ${nonZeroWarns.join(' | ')}`);
-    }
-    expect(result).toEqual([]);
-  }, 15_000);
-});
-
-describe('TD-073 — makeClaudeLlmExtractor: tail preservation', () => {
-  it('preserves a trailing marker after a 1 MB → 256 KB tail-slice', async () => {
-    const marker = '__TAIL_MARKER_TD073__';
-    // Stub reads stdin to a buffer, scans for the marker, returns one
-    // candidate marking found/missing. We cannot inspect the literal
-    // last N bytes because `buildUserPrompt` wraps content in
-    // `<transcript>...</transcript>` so the trailing bytes are the
-    // closing tag. The load-bearing assertion is that the marker survived
-    // the byte slice somewhere inside the cap window.
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: [
-        '-e',
-        `const chunks = []; process.stdin.on("data", c => chunks.push(c)); ` +
-          `process.stdin.on("end", () => { ` +
-          `const buf = Buffer.concat(chunks); ` +
-          `const found = buf.includes("${marker}"); ` +
-          `process.stdout.write(JSON.stringify([{` +
-          `category:"discovery",` +
-          `title: found ? "TAIL_PRESERVED_${marker}" : "TAIL_MISSING",` +
-          `content: "stdin_bytes=" + buf.length + " marker_found=" + found,` +
-          `tags:[],` +
-          `confidence:0.5,` +
-          `evidence:{transcript_excerpt:""}` +
-          `}])); ` +
-          `});`,
-        '--',
-      ],
-      timeoutMs: 10_000,
-      log: makeCapturedLogger(),
-    });
-
-    const events = buildEventsOfBytes(1_024 * 1024, marker);
-    const result = await extractor(events, { project: 'test-project' });
-
-    expect(result).toHaveLength(1);
-    expect(result[0]!.title).toContain(marker);
-    expect(result[0]!.content).toContain('marker_found=true');
-  }, 15_000);
-});
-
-describe('TD-073 — selectLlmExtractor: IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES override', () => {
+describe('TD-073 — resolveMaxPromptBytes', () => {
   afterEach(() => {
     delete process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES;
   });
 
-  it('reads IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES via resolveMaxPromptBytes', () => {
+  it('reads IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES', () => {
     process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '1024';
     expect(resolveMaxPromptBytes()).toBe(1024);
   });
@@ -691,123 +419,146 @@ describe('TD-073 — selectLlmExtractor: IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES o
     process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '-5';
     expect(resolveMaxPromptBytes()).toBe(DEFAULT_MAX_PROMPT_BYTES);
   });
-
-  it('honors the env override end-to-end through selectLlmExtractor + a byte-counter stub', async () => {
-    process.env.IGRIS_PERCEPTION_MAX_TRANSCRIPT_BYTES = '1024';
-
-    // Smoke-call selectLlmExtractor so the env-resolution path through the
-    // public production entry is exercised. Result depends on whether
-    // `claude` is on PATH on this host: either noopLlmExtractor ([]) or a
-    // real factory. Either way the call must not throw and must resolve to
-    // an array. Use a dedicated logger so transient real-CLI errors during
-    // the smoke (timeouts, version drift, etc.) do not contaminate the
-    // cap-validation logger below. Tight timeout keeps the test fast even
-    // when the real CLI is slow.
-    const smokeLog = makeCapturedLogger();
-    const config: PerceptionExtractorConfig = {
-      ...DEFAULT_PERCEPTION_CONFIG,
-      llm_timeout_ms: 2_000,
-    };
-    const selected = selectLlmExtractor(config, smokeLog);
-    const smokeResult = await selected(
-      [{ timestamp: 't', role: 'user', content: 'small' }],
-      { project: 'test-project' },
-    );
-    expect(Array.isArray(smokeResult)).toBe(true);
-
-    // Now prove the env override actually constrains the byte stream that
-    // hits the child's stdin. Build a stub-bound factory using the same
-    // resolveMaxPromptBytes() helper selectLlmExtractor delegates to —
-    // assertion fires inside the stub and surfaces as a non-zero exit warn.
-    const log = makeCapturedLogger();
-    const expectedCap = 1024;
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: [
-        '-e',
-        `let n=0; process.stdin.on("data", c => n += c.length); ` +
-          `process.stdin.on("end", () => { ` +
-          `if (n !== ${expectedCap}) { process.stderr.write("got=" + n + " expected=${expectedCap}"); process.exit(1); } ` +
-          `process.stdout.write("[]"); ` +
-          `});`,
-        '--',
-      ],
-      timeoutMs: 10_000,
-      log,
-      maxPromptBytes: resolveMaxPromptBytes(),
-    });
-
-    const events = buildEventsOfBytes(5_000);
-    const result = await extractor(events, { project: 'test-project' });
-
-    const nonZeroWarns = log.warns.filter((m) => /non-zero exit/.test(m));
-    if (nonZeroWarns.length > 0) {
-      throw new Error(`Env override failed — stub: ${nonZeroWarns.join(' | ')}`);
-    }
-    expect(result).toEqual([]);
-  }, 30_000);
 });
 
 // ---------------------------------------------------------------------------
-// TD-076 — system-prompt flag
+// noopLlmExtractor
 // ---------------------------------------------------------------------------
-//
-// Regression: claude 2.1.126 renamed `--system` to `--system-prompt`. The
-// perception extractor was passing the obsolete flag name, so the real CLI
-// rejected the invocation and the defensive error path silently returned
-// []. This test pins the spawn argv so a future flag rename cannot regress
-// the channel without a loud failure here.
 
-describe('TD-076 — system-prompt flag', () => {
-  it('passes --system-prompt (NOT --system) to the spawned CLI', async () => {
-    // Stub strategy: emit a single valid candidate whose `content` field is
-    // the JSON-encoded argv received by the stub. This piggybacks on the
-    // extractor's own parser to surface the captured argv back to the test.
-    //
-    // The trailing `'--'` in `args` terminates node's own option parsing,
-    // so the factory-appended flag (`--system-prompt <body>`) lands in
-    // process.argv as plain tokens rather than being consumed by node.
-    const extractor = makeClaudeLlmExtractor({
-      command: 'node',
-      args: [
-        '-e',
-        'const argv = process.argv.slice(1); ' +
-          'process.stdin.on("data", () => {}); ' +
-          'process.stdin.on("end", () => { ' +
-          'process.stdout.write(JSON.stringify([{' +
-          'category:"discovery",' +
-          'title:"argv",' +
-          'content: JSON.stringify(argv),' +
-          'tags:[],' +
-          'confidence:0.5,' +
-          'evidence:{transcript_excerpt:""}' +
-          '}])); ' +
-          '});',
-        '--',
-      ],
-      timeoutMs: 5_000,
+describe('noopLlmExtractor', () => {
+  it('returns [] without I/O', async () => {
+    const out = await noopLlmExtractor(transcriptWithSubtlePattern, { project: 'p' });
+    expect(out).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// makeBackendLlmExtractor (FR-118 M1 replacement — backend injected)
+// ---------------------------------------------------------------------------
+
+describe('makeBackendLlmExtractor (mocked backend)', () => {
+  beforeEach(() => {
+    mockedRunBackend.mockReset();
+  });
+
+  it('returns validated candidates when the backend yields a clean JSON array', async () => {
+    mockedRunBackend.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify([
+        { category: 'pattern', title: 'P1', content: 'body', tags: [], confidence: 0.5, evidence: {} },
+        { category: 'discovery', title: 'D2', content: 'body2', tags: ['x'], confidence: 0.99, evidence: {} },
+      ]),
     });
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000 });
+    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' });
+    expect(out.length).toBe(2);
+    expect(out[0].source_extractor).toBe('llm');
+    // confidence cap applied post-parse.
+    expect(out.every((c) => c.confidence <= LLM_CONFIDENCE_CAP)).toBe(true);
+  });
 
-    const events: TranscriptEvent[] = [
-      { timestamp: 't', role: 'user', content: 'hello' },
-    ];
-    const out = await extractor(events, { project: 'p' });
-    expect(out).toHaveLength(1);
-    const argv = JSON.parse(out[0]!.content) as string[];
+  it('returns [] for empty events without calling the backend', async () => {
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000 });
+    const out = await extractor([], { project: 'p' });
+    expect(out).toEqual([]);
+    expect(mockedRunBackend).not.toHaveBeenCalled();
+  });
 
-    // Must contain the renamed flag.
-    expect(argv).toContain('--system-prompt');
-    // Must NOT contain the obsolete bare flag. Tokenized argv comparison —
-    // the system-prompt VALUE that follows may legitimately mention the
-    // word "system", but the bare flag literal `--system` must not appear
-    // as its own token.
-    expect(argv).not.toContain('--system');
+  it('returns [] and emits run_failed when the backend fails (timeout)', async () => {
+    mockedRunBackend.mockResolvedValue({
+      ok: false,
+      text: '',
+      fail_reason: 'timeout',
+      detail: 'timeout after 5000ms',
+    });
+    const events: Array<{ role: string; content: string; timestamp: string }> = [];
+    const onEvent = vi.fn();
+    const log: ExtractorLogger = { info: () => {}, warn: () => {}, onEvent };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    void events;
+    expect(out).toEqual([]);
+    expect(onEvent).toHaveBeenCalledWith(
+      'perception.run_failed',
+      expect.objectContaining({ reason: 'timeout' }),
+    );
+  });
 
-    // Sanity: the token immediately after `--system-prompt` is a non-empty
-    // string (the system prompt body).
-    const idx = argv.indexOf('--system-prompt');
-    expect(idx).toBeGreaterThanOrEqual(0);
-    expect(typeof argv[idx + 1]).toBe('string');
-    expect(argv[idx + 1]!.length).toBeGreaterThan(0);
-  }, 10_000);
+  it('treats an empty-response backend result as a clean no-candidate run (no run_failed)', async () => {
+    mockedRunBackend.mockResolvedValue({
+      ok: false,
+      text: '',
+      fail_reason: 'empty_response',
+      detail: 'no text in stdout',
+    });
+    const onEvent = vi.fn();
+    const log: ExtractorLogger = { info: () => {}, warn: () => {}, onEvent };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    expect(out).toEqual([]);
+    // empty_response is NOT a hard failure for perception.
+    expect(onEvent).not.toHaveBeenCalled();
+  });
+
+  it('drops invalid candidates and keeps valid ones', async () => {
+    mockedRunBackend.mockResolvedValue({
+      ok: true,
+      text: JSON.stringify([
+        { category: 'pattern', title: 'valid', content: 'body', tags: [], confidence: 0.5, evidence: {} },
+        { category: 'gossip', title: 'invalid-cat', content: 'body', tags: [], confidence: 0.5, evidence: {} },
+        { title: 'no-category', content: 'body', tags: [], confidence: 0.5, evidence: {} },
+      ]),
+    });
+    const infos: string[] = [];
+    const log: ExtractorLogger = { info: (m) => infos.push(m), warn: () => {} };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    expect(out.length).toBe(1);
+    expect(out[0].title).toBe('valid');
+    expect(infos.some((m) => m.includes('dropped 2 invalid candidates'))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// selectLlmExtractor
+// ---------------------------------------------------------------------------
+
+describe('selectLlmExtractor', () => {
+  beforeEach(() => {
+    resetHarnessCliProbeCache();
+  });
+
+  afterEach(() => {
+    resetHarnessCliProbeCache();
+  });
+
+  it('returns noop when extractor_llm_enabled=false', () => {
+    const messages: string[] = [];
+    const extractor = selectLlmExtractor(
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: false },
+      { info: (m) => messages.push(`info:${m}`), warn: (m) => messages.push(`warn:${m}`) },
+    );
+    expect(extractor).toBe(noopLlmExtractor);
+    expect(messages.some((m) => m.includes('disabled by config'))).toBe(true);
+  });
+
+  it('returns noop when the resolved harness CLI is absent (probe returns false)', () => {
+    // Override PATH to break the probe for every harness binary.
+    const origPath = process.env.PATH;
+    process.env.PATH = '/nonexistent/dir/that/does/not/exist';
+    try {
+      resetHarnessCliProbeCache();
+      const messages: string[] = [];
+      const extractor = selectLlmExtractor(
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+        { info: (m) => messages.push(`info:${m}`), warn: (m) => messages.push(`warn:${m}`) },
+      );
+      expect(extractor).toBe(noopLlmExtractor);
+      // Default harness is claude — the probe miss is reported.
+      expect(messages.some((m) => m.includes('CLI not on PATH'))).toBe(true);
+    } finally {
+      process.env.PATH = origPath;
+      resetHarnessCliProbeCache();
+    }
+  });
 });

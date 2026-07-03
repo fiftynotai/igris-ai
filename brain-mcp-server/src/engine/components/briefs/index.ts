@@ -1,11 +1,11 @@
 /**
- * Brain Engine v5.0 — Briefs Component
+ * Brain Engine v7.0 — Briefs Component
  *
  * Wraps the existing brief tool handlers as a BrainComponent.
  * Provides: igris_brief_sync, igris_brief_dashboard
  *
  * @module engine/components/briefs
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -39,6 +39,8 @@ import type {
   BriefBackfillInput,
 } from '../../../tools/briefs.js';
 import { getDb } from '../../../db.js';
+import { briefMigrations } from './schema.js';
+import { handleBriefClaim, handleBriefRelease } from './handlers.js';
 
 export function createBriefsComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -49,25 +51,7 @@ export function createBriefsComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [
-        {
-          version: 1,
-          description: 'Create brief_files table (idempotent with legacy v6)',
-          sql: `
-            CREATE TABLE IF NOT EXISTS brief_files (
-              id TEXT PRIMARY KEY,
-              project TEXT NOT NULL,
-              brief_id TEXT NOT NULL,
-              filename TEXT NOT NULL,
-              content TEXT NOT NULL,
-              content_hash TEXT NOT NULL,
-              updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-              UNIQUE(project, brief_id)
-            );
-            CREATE INDEX IF NOT EXISTS idx_brief_files_project ON brief_files(project);
-          `,
-        },
-      ];
+      return briefMigrations;
     },
 
     tools(): ToolDefinition[] {
@@ -504,6 +488,74 @@ export function createBriefsComponent(): BrainComponent {
           },
           handler: async (args) => handleBriefBackfillEmbeddings(args as unknown as BriefBackfillInput),
         },
+        {
+          name: 'igris_brief_claim',
+          description: 'Atomically claim a brief for an Igris instance (FR-127 multi-harness gate). Performs a single conditional UPDATE on brief_status: the claim succeeds (claimed=true) when the brief is unclaimed or already held by the same instance (re-entrant), and fails (claimed=false, with held_by) when another instance holds it. claimed=false is a successful result — the gate outcome is data, not an error. Called automatically by /hunt before INIT; not invoked by hand.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID to claim (e.g., "FR-127")',
+              },
+              instance_id: {
+                type: 'string',
+                description: 'The claiming instance UUID (from igris_instance_state)',
+              },
+            },
+            required: ['project', 'brief_id', 'instance_id'],
+          },
+          handler: (args) => {
+            const result = handleBriefClaim(args);
+            if (!result.isError && _ctx) {
+              _ctx.bus.emit('brief.claimed', {
+                project: (args as Record<string, unknown>).project,
+                brief_id: (args as Record<string, unknown>).brief_id,
+                instance_id: (args as Record<string, unknown>).instance_id,
+              });
+            }
+            return result;
+          },
+        },
+        {
+          name: 'igris_brief_release',
+          description: 'Release a brief claim held by an Igris instance (FR-127 multi-harness gate). Ownership-scoped conditional UPDATE: only frees a claim the given instance holds, so a rested instance cannot free a brief a sibling re-claimed. Idempotent — releasing a brief with no claim (or held by another) returns released=false and is still a success. Called automatically by /rest and on brief completion; not invoked by hand.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug',
+              },
+              brief_id: {
+                type: 'string',
+                description: 'Brief ID to release (e.g., "FR-127")',
+              },
+              instance_id: {
+                type: 'string',
+                description: 'The instance UUID — only releases if THIS instance holds the claim',
+              },
+            },
+            required: ['project', 'brief_id', 'instance_id'],
+          },
+          handler: (args) => {
+            const result = handleBriefRelease(args);
+            if (!result.isError && _ctx) {
+              _ctx.bus.emit('brief.released', {
+                project: (args as Record<string, unknown>).project,
+                brief_id: (args as Record<string, unknown>).brief_id,
+                instance_id: (args as Record<string, unknown>).instance_id,
+              });
+            }
+            return result;
+          },
+        },
       ];
     },
 
@@ -514,6 +566,11 @@ export function createBriefsComponent(): BrainComponent {
           { name: 'brief.created', description: 'A new brief was synced for the first time' },
           { name: 'brief.completed', description: 'A brief status transitioned to a terminal state (Done or Archived)' },
           { name: 'brief.similar_detected', description: 'Similar briefs were detected during creation' },
+          // FR-127: orphan emits (no listeners yet) — extension point for a
+          // future claim-activity dashboard. Permitted, as instance state.
+          // already demonstrates.
+          { name: 'brief.claimed', description: 'A brief was atomically claimed by an instance (FR-127)' },
+          { name: 'brief.released', description: 'A brief claim was released by an instance (FR-127)' },
         ],
         listens: [],
       };

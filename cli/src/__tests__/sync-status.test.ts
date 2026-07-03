@@ -45,12 +45,19 @@ function writeQueue(slug: string, lines: string[]): string {
 beforeEach(() => {
   tmpBrain = mkdtempSync(join(tmpdir(), "igris-cli-sync-status-"));
   envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
+  envBackup.IGRIS_ALLOW_INSECURE_SYNC = process.env.IGRIS_ALLOW_INSECURE_SYNC;
   process.env.IGRIS_BRAIN_DIR = tmpBrain;
+  delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
 });
 
 afterEach(() => {
   rmSync(tmpBrain, { recursive: true, force: true });
   process.env.IGRIS_BRAIN_DIR = envBackup.IGRIS_BRAIN_DIR;
+  if (envBackup.IGRIS_ALLOW_INSECURE_SYNC === undefined) {
+    delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
+  } else {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = envBackup.IGRIS_ALLOW_INSECURE_SYNC;
+  }
   vi.restoreAllMocks();
 });
 
@@ -217,6 +224,62 @@ describe("sync status — runSyncStatus", () => {
     }
   });
 
+  it("queue depth includes lines from stale .draining-* files; surfaces 'stale drains' line (FR-128)", async () => {
+    const server = createServer(
+      (_req: IncomingMessage, res: ServerResponse) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", version: "7.0.0" }));
+      },
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${port}`, api_key: "k" },
+    });
+
+    // Live queue: 2 lines.
+    const queuePath = writeQueue("demo", [
+      JSON.stringify({ operation: "brief_sync", brief_id: "L1" }),
+      JSON.stringify({ operation: "brief_sync", brief_id: "L2" }),
+    ]);
+    // Stale draining file: 3 lines (simulates a mid-flight or crashed drain).
+    const dir = join(tmpBrain, "projects", "demo");
+    writeFileSync(
+      join(dir, "sync_queue.jsonl.draining-12345-9"),
+      [
+        JSON.stringify({ operation: "brief_sync", brief_id: "D1" }),
+        JSON.stringify({ operation: "brief_sync", brief_id: "D2" }),
+        JSON.stringify({ operation: "brief_sync", brief_id: "D3" }),
+      ].join("\n") + "\n",
+    );
+
+    const stdoutBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      const code = await runSyncStatus({ projectSlug: "demo" });
+      expect(code).toBe(0);
+      const out = stdoutBuf.join("");
+      // True depth = liveLines (2) + drainingLines (3) = 5
+      expect(out).toContain("queue depth:     5 entries");
+      // Operator-visibility line.
+      expect(out).toContain("stale drains:");
+      expect(out).toContain("1 in-progress");
+      expect(out).toContain("drainingLines=3");
+      // Canonical queue path still rendered.
+      expect(out).toContain(queuePath);
+    } finally {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("--dry-run: no network call; prints plan", async () => {
     writeConfig({
       remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
@@ -238,6 +301,75 @@ describe("sync status — runSyncStatus", () => {
       expect(out).toContain("No filesystem writes were performed.");
     } finally {
       spy.mockRestore();
+    }
+  });
+
+  it("TD-252: remote-http + override → report includes the INSECURE transport line", async () => {
+    // Override active so health is attempted (but the host is invalid, so
+    // reachable=no — the transport line is independent of reachability).
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = "1";
+    writeConfig({
+      remote_brain: { url: "http://vps.example.invalid:3001", api_key: "k" },
+    });
+
+    const stdoutBuf: string[] = [];
+    const stderrBuf: string[] = [];
+    const outSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      const code = await runSyncStatus({ projectSlug: "demo" });
+      expect(code).toBe(0);
+      const out = stdoutBuf.join("") + stderrBuf.join("");
+      expect(out).toContain("transport:");
+      expect(out).toContain("INSECURE http://");
+      expect(out).toContain("cleartext");
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+  });
+
+  it("TD-252: localhost http → NO INSECURE transport line", async () => {
+    const server = createServer(
+      (_req: IncomingMessage, res: ServerResponse) => {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ status: "ok", version: "7.0.0" }));
+      },
+    );
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${port}`, api_key: "k" },
+    });
+
+    const stdoutBuf: string[] = [];
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      const code = await runSyncStatus({ projectSlug: "demo" });
+      expect(code).toBe(0);
+      const out = stdoutBuf.join("");
+      expect(out).not.toContain("INSECURE http://");
+    } finally {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

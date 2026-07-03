@@ -55,6 +55,48 @@ jobs:
         working-directory: cli
         run: npm run build
 
+      # BR-068: the bundled igris-brain MCP must spawn without
+      # ERR_MODULE_NOT_FOUND. `npm run build` (copy-templates.sh) already
+      # vendors node_modules and runs a spawn smoke guard; this explicit
+      # step surfaces a guard failure unambiguously in the Actions log
+      # rather than burying it inside the build step.
+      - name: Smoke-test bundled MCP (BR-068 guard)
+        working-directory: cli
+        run: |
+          IGRIS_BRAIN_DIR="$(mktemp -d)" node dist/brain-mcp-server/dist/index.js > /dev/null 2> mcp-smoke-err.log &
+          PID=$!
+          sleep 3
+          if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+          else
+            wait "$PID" 2>/dev/null || true
+          fi
+          if grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find package' mcp-smoke-err.log; then
+            echo "::error::bundled igris-brain MCP failed to resolve dependencies"
+            cat mcp-smoke-err.log
+            exit 1
+          fi
+          echo "bundled igris-brain MCP spawns OK"
+
+      # BR-070: the bundled igris-brain MCP must vendor the embeddings
+      # backend (@huggingface/transformers) so semantic/vector search works
+      # on the public install path. This is a module-RESOLUTION check, not a
+      # model-loading call (a real embedding would network-fetch ~23MB of
+      # MiniLM weights — slow and flaky in CI). The runtime hybrid guard
+      # handles model-load failures; this step only proves the package was
+      # vendored into the bundle (and that the BR-070 prune did not regress).
+      # This also exercises the ubuntu (linux) per-platform native
+      # resolution path for onnxruntime-node / sharp.
+      - name: Verify embeddings backend resolves in bundle (BR-070 guard)
+        working-directory: cli/dist/brain-mcp-server
+        run: |
+          if ! node --input-type=module -e 'import.meta.resolve("@huggingface/transformers")'; then
+            echo "::error::bundled igris-brain MCP is missing @huggingface/transformers (BR-070 regression)"
+            exit 1
+          fi
+          echo "bundled igris-brain MCP embeddings backend resolves OK"
+
       - name: Run vitest
         working-directory: cli
         run: npm test

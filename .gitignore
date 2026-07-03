@@ -19,11 +19,20 @@ temp/
 *.log
 logs/
 
+# Image generation staging (Higgsfield GPT Image 2 outputs)
+# Committed PNGs live at docs/images/*.png; generated/ holds the raw outputs
+# and Asset 1 (GitHub Settings OG, uploaded manually, not committed)
+docs/images/generated/
+
+# Generated memory-eval scorecards (FR-188 — regenerate via `npm run eval:memory`)
+brain-mcp-server/eval-memory-scorecard.*
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 .Python
+.pytest_cache/
 
 # Node
 node_modules/
@@ -46,13 +55,44 @@ test-output/
 .env
 .env.local
 
+# FR-165 MCP secrets — the real file lives at ~/.igris/secrets.env (OUTSIDE the
+# repo); this is defense-in-depth against a stray in-repo copy. The load-bearing
+# guarantee is that the projector never writes a resolved literal into any
+# git-tracked file (Codex config.toml lives at ~/.codex/, the registry overlay
+# stays ${VAR}-only). See core/scripts/cli-adapters/README.md § "MCP secrets".
+secrets.env
+
+# TD-220 — ~/.igris/config.json may carry remote_brain credentials. The real
+# file lives at ~/.igris/config.json (OUTSIDE the repo) at mode 600; this is
+# defense-in-depth against a stray in-repo copy (same rationale as secrets.env
+# above). `igris doctor` flags it if it ever becomes git-tracked.
+config.json
+
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
 
 # Agent working memory (local-only)
 .claude/agent-memory/
 
+# Per-developer local Claude settings — approved-command permission strings
+# that may embed machine-local secrets. Must NEVER be committed (TD-159 C1).
+.claude/settings.local.json
+
 # Igris v6 — symlinks created by `igris register` (machine-specific)
+# (FR-187 retired the .claude/rules/ symlink layer — agents + skills only.)
 .claude/agents/
-.claude/rules/
 .claude/skills/
+
+# Generated harness projections (FR-137) — mechanically derived from canonical
+# sources by `igris harness compile`; never committed (regenerated on demand,
+# drift-checked against canonical). NB: the FR-153 codex AGENTS.md skills
+# aggregator was retired. Project-root AGENTS.md (and GEMINI.md) carry NO Igris
+# identity content — the os_identity surface was retired (FR-202 M4; TD-267
+# closed the loop). They are kept un-ignored only as inert harness-native
+# placeholders that the pre-commit drift gate requires present on fresh
+# checkouts; they are NOT identity files and enumerate nothing.
+.codex/
+.gemini/
+
+# Machine-local version stamp written by the CLI installer
+.igris_version

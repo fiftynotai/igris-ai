@@ -1,5 +1,6 @@
 ---
 name: visualize
+tier: opt-in
 description: Render and open the current project's brief graph as an interactive HTML visualization
 disable-model-invocation: false
 allowed-tools:
@@ -26,13 +27,6 @@ Render the current project's brief-and-edges graph (FR-111) as a self-contained 
 Cross-project rendering of multiple projects in one call is out of scope (see FR-111 Phase 2).
 
 ## Execution
-
-### 0. Track Invocation
-
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "visualize" 2>/dev/null || true
-```
 
 ### 1. Resolve Project
 

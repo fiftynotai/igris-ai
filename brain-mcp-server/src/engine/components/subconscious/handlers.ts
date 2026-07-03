@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Component Handlers
+ * Brain Engine v7.0 — Subconscious Component Handlers
  *
  * Pure handlers for the four FR-106 MCP tools:
  *   - igris_suggestion_list      — filtered query
@@ -14,7 +14,7 @@
  * `errorResult`.
  *
  * @module engine/components/subconscious/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';
@@ -23,24 +23,34 @@ import { errMsg, errorResult, successResult, WhereBuilder } from '../../helpers.
 import {
   computeEvidenceSignature,
   recordDismissPattern,
-  runAllDetectors,
+  runSubconscious,
 } from './runner.js';
 import {
   DEFAULT_DETECTOR_CONFIG,
+  DEFAULT_SUBCONSCIOUS_CONFIG,
   type DetectorConfig,
+  type SubconsciousConfig,
   type Suggestion,
   type SuggestionPriority,
-  type SuggestionSourceModule,
   type SuggestionStatus,
 } from './types.js';
-import { type ConflictVerifier, noopVerifier } from './verifier.js';
 import { handleEdgeCreate } from '../edges/handlers.js';
+import { applyAction } from './actions/index.js';
+import type { LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
 
 // ---------------------------------------------------------------------------
 // Validation catalogs
 // ---------------------------------------------------------------------------
 
-export const VALID_SOURCE_MODULES: SuggestionSourceModule[] = [
+/**
+ * FR-118 M2 — `source_module` is now OPEN (the LLM extractor names the kind).
+ * The list-filter no longer validates against a closed enum: any non-empty
+ * string is a valid filter value. The four legacy detector names are retained
+ * for the `igris_suggestion_list` schema `enum` HINT only (a non-exhaustive
+ * suggestion list for the caller's UI — NOT a rejection set). Filtering on a
+ * value outside the list is allowed and simply returns the matching rows.
+ */
+export const LEGACY_SOURCE_MODULE_HINTS: string[] = [
   'stalled',
   'conflict',
   'gap',
@@ -55,20 +65,29 @@ export const VALID_PRIORITIES: SuggestionPriority[] = ['high', 'medium', 'low'];
 
 interface HandlerContext {
   bus: EventBus;
+  /**
+   * The legacy detector config (FR-106). Retained for the dismiss-loop's
+   * `recordDismissPattern` envelope (cooldown / suppress thresholds), which is
+   * still active. The live run path (`runSubconscious`) uses the subconscious
+   * instance config below, NOT this.
+   */
   config: DetectorConfig;
-  /** Optional LLM verifier (FR-108). Defaults to `noopVerifier` if unset. */
-  verifier?: ConflictVerifier;
+  /**
+   * FR-118 M2 — the subconscious LLM-instance config (timeout/budget/min-bytes/
+   * enabled/harness). Drives `handleSubconsciousRun` → `runSubconscious`.
+   */
+  subconsciousConfig?: SubconsciousConfig;
+  /** FR-118 M2 — the global `llm_extractor` config (harness default + fallback). */
+  globalConfig?: LlmExtractorGlobalConfig;
 }
 
 let _handlerCtx: HandlerContext | null = null;
 
 /**
- * Set the handler context. Called once by the component's init() — it
- * exposes the bus (so `igris_subconscious_run` can emit events through
- * the engine's shared bus) and the active detector config (so the same
- * thresholds the daemon uses also apply to manual invocations). The
- * optional `verifier` is wired here too — production resolves it via
- * `isClaudeCliAvailable()`, tests inject a stub.
+ * Set the handler context. Called once by the component's init() — it exposes
+ * the bus, the legacy detector config (for the still-active dismiss-loop), and
+ * (FR-118 M2) the subconscious instance config + the global llm_extractor
+ * config that drive the live `igris_subconscious_run` → `runSubconscious` path.
  */
 export function setHandlerContext(ctx: HandlerContext): void {
   _handlerCtx = ctx;
@@ -78,8 +97,12 @@ function getActiveConfig(): DetectorConfig {
   return _handlerCtx?.config ?? DEFAULT_DETECTOR_CONFIG;
 }
 
-function getActiveVerifier(): ConflictVerifier {
-  return _handlerCtx?.verifier ?? noopVerifier;
+function getActiveSubconsciousConfig(): SubconsciousConfig {
+  return _handlerCtx?.subconsciousConfig ?? DEFAULT_SUBCONSCIOUS_CONFIG;
+}
+
+function getActiveGlobalConfig(): LlmExtractorGlobalConfig {
+  return _handlerCtx?.globalConfig ?? {};
 }
 
 // ---------------------------------------------------------------------------
@@ -122,13 +145,14 @@ export function handleSuggestionList(args: Record<string, unknown>): ToolResult 
       `Invalid status: ${args.status as string}. Must be one of: ${VALID_STATUSES.join(', ')}`,
     );
   }
+  // FR-118 M2 — source_module is OPEN. A non-string filter is still invalid,
+  // but any non-empty string is a legitimate filter value (the LLM names the
+  // kind). We do NOT reject against a closed enum.
   if (
     args.source_module !== undefined &&
-    !(VALID_SOURCE_MODULES as string[]).includes(args.source_module as string)
+    (typeof args.source_module !== 'string' || args.source_module.length === 0)
   ) {
-    return errorResult(
-      `Invalid source_module: ${args.source_module as string}. Must be one of: ${VALID_SOURCE_MODULES.join(', ')}`,
-    );
+    return errorResult('source_module must be a non-empty string');
   }
   if (
     args.priority !== undefined &&
@@ -439,73 +463,47 @@ export function handleSuggestionActed(args: Record<string, unknown>): ToolResult
 // ---------------------------------------------------------------------------
 
 /**
- * Fire the detector pipeline once. Called by the cron-driven schedule
- * `subconscious_engine` and exposed for manual invocation
- * (igris_schedule_fire_now passes through to here too).
+ * Fire the subconscious LLM extractor once (FR-118 M2 — REPLACES the rule
+ * detector pipeline as the live path). Called by the cron-driven schedule
+ * `subconscious_engine` (every 6h) and exposed for manual invocation
+ * (`igris_schedule_fire_now` passes through to here too).
  *
- * Async since FR-108: the runner now awaits the LLM verifier sequentially
- * over conflict-class candidates. The MCP gateway's `dispatch` already
- * awaits handler returns (see `gateway.ts:80`).
+ * Delegates to `runSubconscious`, which drives the subconscious cognition
+ * instance through the agnostic engine (`runExtractor`): cold-start / budget /
+ * timeout gates, the brain-isolated LLM call, and the one-terminal-event-per-run
+ * lifecycle. Lifecycle events are written by the ENGINE directly to `event_log`
+ * under the per-instance `cognition.subconscious.*` namespace — NOT via the bus
+ * — so a manual fire and a detached-process fire share ONE observable read path
+ * (`igris_event_log component='cognition.subconscious'`).
  *
- * Emits run lifecycle events around the runner invocation; per-candidate
- * events are returned by the runner and re-emitted here so every literal
- * subconscious bus.emit call lives in this file (the event-bus integrity
- * scanner only inspects index/handlers/daemon).
+ * Because the engine owns the events, this handler emits NO `bus.emit` calls
+ * (the event-bus integrity scanner finds none — and the component declares
+ * none, see index.ts). The optional `project` arg scopes the digest; `force`
+ * bypasses the cold-start + digest-size gate for a manual sweep.
+ *
+ * Async — the MCP gateway's `dispatch` already awaits handler returns.
  */
-export async function handleSubconsciousRun(_args: Record<string, unknown>): Promise<ToolResult> {
+export async function handleSubconsciousRun(args: Record<string, unknown>): Promise<ToolResult> {
   const db = getDb();
-  const bus = _handlerCtx?.bus ?? null;
-  if (bus) bus.emit('subconscious.run_start', {});
+  const project = typeof args.project === 'string' && args.project.length > 0 ? args.project : 'all';
+  const force = args.force === true;
   try {
-    const summary = await runAllDetectors(db, {
-      config: getActiveConfig(),
-      verifier: getActiveVerifier(),
+    const result = await runSubconscious(db, project, {
+      config: getActiveSubconsciousConfig(),
+      globalConfig: getActiveGlobalConfig(),
+      force,
+      trigger: 'manual',
     });
-    if (bus) {
-      for (const evt of summary.events) {
-        if (evt.kind === 'suggestion_emitted') {
-          bus.emit('subconscious.suggestion_emitted', {
-            source_module: evt.source_module,
-            project_slug: evt.project_slug,
-            title: evt.title,
-            priority: evt.priority,
-          });
-        } else if (evt.kind === 'suggestion_suppressed') {
-          bus.emit('subconscious.suggestion_suppressed', {
-            source_module: evt.source_module,
-            project_slug: evt.project_slug,
-            evidence_signature: evt.evidence_signature,
-          });
-        } else if (evt.kind === 'suggestion_verified') {
-          bus.emit('subconscious.suggestion_verified', {
-            source_module: evt.source_module,
-            project_slug: evt.project_slug,
-            title: evt.title,
-            verifier_status: evt.verifier_status,
-          });
-        } else if (evt.kind === 'suggestion_rejected_by_verifier') {
-          bus.emit('subconscious.suggestion_rejected_by_verifier', {
-            source_module: evt.source_module,
-            project_slug: evt.project_slug,
-            title: evt.title,
-            verifier_reason: evt.verifier_reason,
-          });
-        }
-      }
-      bus.emit('subconscious.run_complete', {
-        emitted: summary.emitted,
-        suppressed: summary.suppressed,
-      });
-    }
     return successResult(
       JSON.stringify(
         {
-          emitted: summary.emitted,
-          suppressed: summary.suppressed,
-          by_module: summary.by_module,
-          expired_pending: summary.expired_pending,
-          expired_dismissed: summary.expired_dismissed,
-          expired_observations: summary.expired_observations,
+          instance_id: result.instance_id,
+          outcome: result.outcome,
+          persisted: result.persisted,
+          ...(result.parsed !== undefined ? { parsed: result.parsed } : {}),
+          ...(result.skip_reason ? { skip_reason: result.skip_reason } : {}),
+          ...(result.fail_reason ? { fail_reason: result.fail_reason } : {}),
+          ...(result.backend ? { harness: result.backend.harness } : {}),
         },
         null,
         2,
@@ -513,5 +511,39 @@ export async function handleSubconsciousRun(_args: Record<string, unknown>): Pro
     );
   } catch (err) {
     return errorResult(`Subconscious run failed: ${errMsg(err)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// igris_suggestion_apply_action (FR-118 M3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Apply the `suggested_action` of a reviewed suggestion (FR-118 M3).
+ *
+ * OPERATOR-INVOKED: the operator one-clicks to apply a suggestion they have
+ * reviewed. This NEVER auto-fires — creating a suggestion does not execute its
+ * action. Delegates to the apply layer (`actions/index.ts:applyAction`), which
+ * validates the target resolves, dispatches the action kind (unknown kind →
+ * `flag_for_review` fallback, never a throw), and marks the suggestion `acted`
+ * on success / leaves it `pending` on failure.
+ *
+ * The most consequential kind, `create_brief`, DRAFTS only — it returns a brief
+ * draft for operator approval and does NOT insert anything (the operator
+ * creates the real brief via /register).
+ */
+export function handleSuggestionApplyAction(args: Record<string, unknown>): ToolResult {
+  const idRaw = args.id;
+  if (idRaw === undefined || idRaw === null) {
+    return errorResult('Missing required field: id');
+  }
+  const id = Number(idRaw);
+  if (!Number.isInteger(id) || id <= 0) {
+    return errorResult('id must be a positive integer');
+  }
+  try {
+    return applyAction(getDb(), id);
+  } catch (err) {
+    return errorResult(`apply_action failed: ${errMsg(err)}`);
   }
 }

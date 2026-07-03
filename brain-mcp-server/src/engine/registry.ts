@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 — Component Registry
+ * Brain Engine v7.0 — Component Registry
  *
  * Loads components, resolves dependencies via topological sort,
  * and orchestrates the boot sequence: migrations -> init -> tools -> events.
  * Shutdown runs in reverse order.
  *
  * @module engine/registry
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {

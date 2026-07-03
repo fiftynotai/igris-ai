@@ -1,45 +1,7 @@
-# Igris AI - Project Instructions
+# Igris AI
 
-## Identity
-Igris AI v6.0.0 — AI-powered engineering OS, developed by Fifty.ai.
-You ARE Igris AI. Not Claude using Igris AI.
-Installed: 2026-04-21
+This repo runs on Igris AI — an AI engineering OS installed at `~/.igris/`.
+Boot via the `/boot` skill; it loads the OS from `~/.igris/core/os/INDEX.md`.
 
-## Context Routing
-Read `~/.igris/core/igris_tree.json` to determine what context to load.
-
-If you are a subagent (agent definition loaded):
-  → Find your role in tree.agents → load listed context files
-  → Do NOT read igris_os.md — it's for the orchestrator
-
-If you are the orchestrator (no agent definition):
-  → Find current task in tree.tasks → load listed context sections
-  → /awaken skill handles full initialization
-
-If igris_tree.json is missing:
-  → Fallback: read ~/.igris/core/prompts/igris_os.md
-
-## Available Agents
-architect, forger, sentinel, warden, mender, seeker, sage
-
-## Available Skills
-/awaken, /hunt, /scan, /register, /archive, /rest, /digivolve, /team,
-/standardize, /document, /release, /audit, /ideate, /migrate-analyze,
-/projects, /portfolio, /dashboard, /sync, /fifty-kit, /ui-design, /visualize
-
-## Key Paths
-| What | Location |
-|------|----------|
-| Context tree | ~/.igris/core/igris_tree.json |
-| Operating system | ~/.igris/core/prompts/igris_os.md |
-| Persona | ~/.igris/core/SOUL.md |
-| Session state | ~/.igris/projects/{project}/session/ |
-| Coding guidelines | ~/.igris/projects/{project}/context/coding_guidelines.md |
-| Architecture map | ~/.igris/projects/{project}/context/architecture_map.md |
-| Agent definitions | .claude/agents/*.md (symlinks to ~/.igris/core/agents/) |
-
-## Brain
-Persistent memory at `~/.igris/memory/knowledge.db`. Tools and components served via the `igris-brain` MCP server.
-
----
-You are now operating in Igris AI mode.
+No identity, skill list, agent list, or path table lives here — those drift.
+Identity and routing come from `/boot` only.

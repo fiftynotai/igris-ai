@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Subconscious Test Fixtures
+ * Brain Engine v7.0 — Subconscious Test Fixtures
  *
  * Minimal slice of the production schema covering only the tables the
  * detectors and runner reference. Lives in the test fixtures directory so

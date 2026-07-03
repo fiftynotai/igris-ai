@@ -10,7 +10,7 @@
  * - igris_metrics_velocity: Velocity dashboard with weekly completion rates
  *
  * @module tools/metrics
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../db.js';
@@ -339,5 +339,220 @@ function handleMetricsVelocity(args: MetricsVelocityInput): { content: { type: s
   };
 }
 
-export { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity };
-export type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput };
+/** Input shape for igris_metrics_dashboard (TD-171 M4) */
+interface MetricsDashboardInput {
+  project?: string;
+  days?: number;
+  agent?: string;
+  summary_only?: boolean;
+}
+
+/**
+ * Aggregate dashboard over the `agent_metrics` table (TD-171 M4).
+ *
+ * Mirrors the canonical TD-171 `_dashboard` shape established by M1's
+ * `handleMemoryDashboard` and reused by M2/M3 dashboards:
+ *
+ *   {
+ *     totals: {
+ *       total_invocations: N,
+ *       by_agent: { [agent]: { invocations, success_rate, avg_duration_ms, retries }, ... },
+ *       by_action: { [action]: { invocations, success_rate }, ... },
+ *       by_result: { success, failure, partial, blocked },
+ *     },
+ *     recent: {
+ *       last_n_days: <days>,
+ *       invocations: N,
+ *       week_over_week_delta_pct: number | null,
+ *     },
+ *     samples: {
+ *       top_durations: [{ id, project, agent, action, duration_ms, recorded_at }, ...],
+ *     },                                                // omitted when summary_only
+ *     project?: 'foo',                                  // echoed when filter set
+ *     agent?: 'forger',                                 // echoed when filter set
+ *   }
+ *
+ * Filter semantics:
+ *   - `project`: scopes totals + recent + samples to one project.
+ *   - `agent`: scopes totals + recent + samples to one agent (combinable
+ *     with project; both ANDed). Per-agent breakdown then collapses to a
+ *     single key, kept in the shape for downstream-UI consistency.
+ *   - `days`: window for `recent.invocations` and the WoW delta. Default 30.
+ *   - `summary_only`: omits the `samples` block (counts still computed).
+ *
+ * Per L-152, scope is strictly the metrics channel — no goals, learnings,
+ * or perception aggregations leak in. Pair with `igris_brief_velocity` for
+ * completion-rate context.
+ *
+ * SQL is built via parameterized WHERE fragments — agent and project come
+ * from typed args (string), but we still bind them rather than interpolate.
+ */
+function handleMetricsDashboard(args: MetricsDashboardInput): { content: { type: string; text: string }[] } {
+  const days = args.days !== undefined ? Number(args.days) : 30;
+  if (!Number.isFinite(days) || days < 0) {
+    return { content: [{ type: 'text', text: 'Error: days must be a non-negative number' }] };
+  }
+  const summaryOnly = args.summary_only === true;
+  const projectFilter = typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+  const agentFilter = typeof args.agent === 'string' && args.agent.length > 0 ? args.agent : null;
+
+  const db = getDb();
+
+  // Build a reusable WHERE fragment + params list. All aggregations share
+  // the same project/agent filter; only the recent window adds a time
+  // bound on top.
+  const baseConditions: string[] = [];
+  const baseParams: string[] = [];
+  if (projectFilter) {
+    baseConditions.push('project = ?');
+    baseParams.push(projectFilter);
+  }
+  if (agentFilter) {
+    baseConditions.push('agent = ?');
+    baseParams.push(agentFilter);
+  }
+  const baseWhere = baseConditions.length > 0 ? `WHERE ${baseConditions.join(' AND ')}` : '';
+
+  // --- totals.total_invocations ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM agent_metrics ${baseWhere}`)
+    .get(...baseParams) as { n: number };
+
+  // --- totals.by_agent ---
+  // Per-agent: invocations, success_rate, avg_duration_ms, retries (sum).
+  // Round success_rate to 3 decimal places (matches goals' completion_pct
+  // convention). Empty DB yields zero rows — render as {}.
+  const byAgentRows = db
+    .prepare(
+      `SELECT agent,
+              COUNT(*) AS invocations,
+              SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) AS successes,
+              ROUND(AVG(duration_ms), 0) AS avg_duration_ms,
+              SUM(retry_count) AS retries
+       FROM agent_metrics
+       ${baseWhere}
+       GROUP BY agent
+       ORDER BY invocations DESC`,
+    )
+    .all(...baseParams) as {
+      agent: string;
+      invocations: number;
+      successes: number;
+      avg_duration_ms: number | null;
+      retries: number | null;
+    }[];
+  const byAgent: Record<string, { invocations: number; success_rate: number; avg_duration_ms: number; retries: number }> = {};
+  for (const r of byAgentRows) {
+    const successRate = r.invocations > 0 ? Math.round((r.successes / r.invocations) * 1000) / 1000 : 0;
+    byAgent[r.agent] = {
+      invocations: r.invocations,
+      success_rate: successRate,
+      avg_duration_ms: r.avg_duration_ms ?? 0,
+      retries: r.retries ?? 0,
+    };
+  }
+
+  // --- totals.by_action ---
+  const byActionRows = db
+    .prepare(
+      `SELECT action,
+              COUNT(*) AS invocations,
+              SUM(CASE WHEN result = 'success' THEN 1 ELSE 0 END) AS successes
+       FROM agent_metrics
+       ${baseWhere}
+       GROUP BY action
+       ORDER BY invocations DESC`,
+    )
+    .all(...baseParams) as { action: string; invocations: number; successes: number }[];
+  const byAction: Record<string, { invocations: number; success_rate: number }> = {};
+  for (const r of byActionRows) {
+    const successRate = r.invocations > 0 ? Math.round((r.successes / r.invocations) * 1000) / 1000 : 0;
+    byAction[r.action] = { invocations: r.invocations, success_rate: successRate };
+  }
+
+  // --- totals.by_result ---
+  // Initialize all four valid result codes to zero so the shape is stable
+  // even when a particular outcome hasn't fired.
+  const byResultRows = db
+    .prepare(`SELECT result, COUNT(*) AS n FROM agent_metrics ${baseWhere} GROUP BY result`)
+    .all(...baseParams) as { result: string; n: number }[];
+  const byResult: Record<string, number> = { success: 0, failure: 0, partial: 0, blocked: 0 };
+  for (const r of byResultRows) byResult[r.result] = r.n;
+
+  // --- recent.invocations (last `days` window) ---
+  const recentConditions = [...baseConditions, "recorded_at >= datetime('now', ?)"];
+  const recentWhere = `WHERE ${recentConditions.join(' AND ')}`;
+  const recentParams: (string | number)[] = [...baseParams, `-${days} days`];
+  const recentRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM agent_metrics ${recentWhere}`)
+    .get(...recentParams) as { n: number };
+
+  // --- recent.week_over_week_delta_pct ---
+  // Compares last 7 days vs prior 7 days (each filtered by project/agent).
+  // null when the previous window has zero invocations (no comparable base).
+  const curWeekConditions = [...baseConditions, "recorded_at >= datetime('now', '-7 days')"];
+  const curWeekWhere = `WHERE ${curWeekConditions.join(' AND ')}`;
+  const curWeekRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM agent_metrics ${curWeekWhere}`)
+    .get(...baseParams) as { n: number };
+
+  const prevWeekConditions = [
+    ...baseConditions,
+    "recorded_at >= datetime('now', '-14 days')",
+    "recorded_at < datetime('now', '-7 days')",
+  ];
+  const prevWeekWhere = `WHERE ${prevWeekConditions.join(' AND ')}`;
+  const prevWeekRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM agent_metrics ${prevWeekWhere}`)
+    .get(...baseParams) as { n: number };
+
+  const wowDelta =
+    prevWeekRow.n === 0
+      ? null
+      : Math.round(((curWeekRow.n - prevWeekRow.n) / prevWeekRow.n) * 1000) / 10;
+
+  // --- samples.top_durations (omitted when summary_only) ---
+  let samples: Record<string, unknown> | undefined;
+  if (!summaryOnly) {
+    // Top 10 longest-running invocations across the filter window. Useful
+    // for spotting outlier slow calls without scrolling the full _query
+    // surface.
+    const topDurSql = `SELECT id, project, agent, action, duration_ms, recorded_at, brief_id, result
+                       FROM agent_metrics
+                       ${baseWhere}
+                       ORDER BY duration_ms DESC, recorded_at DESC
+                       LIMIT 10`;
+    const topDurations = db.prepare(topDurSql).all(...baseParams) as Record<string, unknown>[];
+    samples = { top_durations: topDurations };
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      total_invocations: totalRow.n,
+      by_agent: byAgent,
+      by_action: byAction,
+      by_result: byResult,
+    },
+    recent: {
+      last_n_days: days,
+      invocations: recentRow.n,
+      week_over_week_delta_pct: wowDelta,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+  if (agentFilter) {
+    result.agent = agentFilter;
+  }
+
+  return {
+    content: [{ type: 'text', text: JSON.stringify(result, null, 2) }],
+  };
+}
+
+export { handleMetricsRecord, handleMetricsQuery, handleMetricsVelocity, handleMetricsDashboard };
+export type { MetricsRecordInput, MetricsQueryInput, MetricsVelocityInput, MetricsDashboardInput };

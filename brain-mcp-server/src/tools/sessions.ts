@@ -10,7 +10,7 @@
  * - igris_session_recall: Recall recent sessions across projects
  *
  * @module tools/sessions
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createHash, randomUUID } from 'node:crypto';
@@ -140,6 +140,9 @@ function handleSessionRecall(args: SessionRecallInput): { content: { type: strin
   };
 }
 
+/** Lifecycle state for a session file (FR-130). */
+type SessionFileState = 'live' | 'rested' | 'archived';
+
 /** Input shape for igris_session_file_get */
 interface SessionFileGetInput {
   project: string;
@@ -151,6 +154,17 @@ interface SessionFileUpdateInput {
   project: string;
   filename: string;
   content: string;
+  /** Owning instance UUID (FR-130; optional — from igris_instance_state). */
+  instance_id?: string;
+  /** Lifecycle state (FR-130; optional — defaults to 'live' for new rows). */
+  state?: SessionFileState;
+}
+
+/** Input shape for igris_session_file_list */
+interface SessionFileListInput {
+  project: string;
+  /** Optional lifecycle-state filter; omit to list all states. */
+  state?: SessionFileState;
 }
 
 /**
@@ -172,10 +186,16 @@ function handleSessionFileGet(args: SessionFileGetInput): { content: { type: str
   const db = getDb();
 
   const row = db.prepare(`
-    SELECT content, content_hash, updated_at
+    SELECT content, content_hash, updated_at, instance_id, state
     FROM session_files
     WHERE project = ? AND filename = ?
-  `).get(args.project, args.filename) as { content: string; content_hash: string; updated_at: string } | undefined;
+  `).get(args.project, args.filename) as {
+    content: unknown;
+    content_hash: string;
+    updated_at: string;
+    instance_id: string | null;
+    state: string;
+  } | undefined;
 
   if (!row) {
     return {
@@ -186,15 +206,23 @@ function handleSessionFileGet(args: SessionFileGetInput): { content: { type: str
     };
   }
 
+  // TD-280: coerce a BLOB-stored content (better-sqlite3 returns a Buffer) to a
+  // UTF-8 string, mirroring the CLI read boundary (getSessionFileContent).
+  const content = Buffer.isBuffer(row.content)
+    ? row.content.toString('utf8')
+    : row.content == null ? null : String(row.content);
+
   return {
     content: [{
       type: 'text',
       text: JSON.stringify({
         project: args.project,
         filename: args.filename,
-        content: row.content,
+        content,
         content_hash: row.content_hash,
         updated_at: row.updated_at,
+        instance_id: row.instance_id,
+        state: row.state,
       }, null, 2),
     }],
   };
@@ -220,18 +248,40 @@ function handleSessionFileUpdate(args: SessionFileUpdateInput): { content: { typ
   }
 
   const db = getDb();
-  const contentHash = createHash('sha256').update(args.content).digest('hex');
+  // TD-279: coerce content to a UTF-8 string before hashing/binding so a
+  // Buffer input never lands as a BLOB in session_files.content (which would
+  // crash the CLI gather parse on read). Mirrors cli sessionFileUpsert.
+  const contentStr = Buffer.isBuffer(args.content)
+    ? args.content.toString('utf8')
+    : String(args.content);
+  const contentHash = createHash('sha256').update(contentStr).digest('hex');
   const id = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
 
+  // FR-130: thread per-instance keying + lifecycle state.
+  // - New rows: instance_id is NULL when the caller omits it; state falls
+  //   back to 'live' so legacy 3-arg callers keep working.
+  // - On conflict, COALESCE only overwrites when the caller actually
+  //   supplied a value — a legacy content-only update must NOT null a
+  //   previously-set instance_id or downgrade an existing state.
+  // The `state` arg is bound TWICE: once for the INSERT value (wrapped in
+  //   COALESCE(?, 'live') so a NULL omission still lands 'live' on a fresh
+  //   row), and once raw in the conflict clause's COALESCE so an omitted
+  //   state leaves an existing row's state untouched. The two bind sites
+  //   need the NULL-vs-'live' distinction, so they cannot share a value.
+  const instanceId = args.instance_id ?? null;
+  const stateArg: SessionFileState | null = args.state ?? null;
+
   db.prepare(`
-    INSERT INTO session_files (id, project, filename, content, content_hash, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO session_files (id, project, filename, content, content_hash, updated_at, instance_id, state)
+    VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, 'live'))
     ON CONFLICT(project, filename) DO UPDATE SET
       content = excluded.content,
       content_hash = excluded.content_hash,
-      updated_at = excluded.updated_at
-  `).run(id, args.project, args.filename, args.content, contentHash, now);
+      updated_at = excluded.updated_at,
+      instance_id = COALESCE(excluded.instance_id, session_files.instance_id),
+      state = COALESCE(?, session_files.state)
+  `).run(id, args.project, args.filename, contentStr, contentHash, now, instanceId, stateArg, stateArg);
 
   return {
     content: [{
@@ -242,11 +292,98 @@ function handleSessionFileUpdate(args: SessionFileUpdateInput): { content: { typ
         `Project: ${args.project}`,
         `Filename: ${args.filename}`,
         `Content hash: ${contentHash.substring(0, 12)}...`,
-        `Size: ${args.content.length} chars`,
+        `Size: ${contentStr.length} chars`,
       ].join('\n'),
     }],
   };
 }
 
-export { handleSessionSync, handleSessionRecall, handleSessionFileGet, handleSessionFileUpdate };
-export type { SessionSyncInput, SessionRecallInput, SessionFileGetInput, SessionFileUpdateInput };
+/**
+ * List session files for a project, optionally filtered by lifecycle state.
+ *
+ * Returns filename, instance_id, state, content_hash, and updated_at for each
+ * file. `content` is intentionally omitted to keep the list lightweight.
+ * Read-only — emits no event.
+ *
+ * L-133: preflights that the `session_files` table exists before querying;
+ * returns an empty list (not a throw) if the table is absent.
+ *
+ * @param args - Project slug and optional state filter
+ * @returns MCP-formatted response with the session-file list as JSON
+ */
+function handleSessionFileList(args: SessionFileListInput): { content: { type: string; text: string }[] } {
+  if (!args.project) {
+    return {
+      content: [{
+        type: 'text',
+        text: 'Error: "project" is required.',
+      }],
+    };
+  }
+
+  const db = getDb();
+
+  // L-133: preflight the table exists — return an empty list, not a throw,
+  // on a brain DB where the sessions migration never ran.
+  const tableExists = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='table' AND name='session_files'"
+  ).get() as { name: string } | undefined;
+
+  if (!tableExists) {
+    return {
+      content: [{
+        type: 'text',
+        text: JSON.stringify({ project: args.project, count: 0, files: [] }, null, 2),
+      }],
+    };
+  }
+
+  let sql = `
+    SELECT filename, instance_id, state, content_hash, updated_at
+    FROM session_files
+    WHERE project = ?
+  `;
+  const params: (string | undefined)[] = [args.project];
+
+  if (args.state) {
+    sql += ' AND state = ?';
+    params.push(args.state);
+  }
+
+  sql += ' ORDER BY updated_at DESC';
+
+  const rows = db.prepare(sql).all(...params) as {
+    filename: string;
+    instance_id: string | null;
+    state: string;
+    content_hash: string;
+    updated_at: string;
+  }[];
+
+  return {
+    content: [{
+      type: 'text',
+      text: JSON.stringify({
+        project: args.project,
+        count: rows.length,
+        files: rows,
+      }, null, 2),
+    }],
+  };
+}
+
+export {
+  handleSessionSync,
+  handleSessionRecall,
+  handleSessionFileGet,
+  handleSessionFileUpdate,
+  handleSessionFileList,
+};
+export type {
+  SessionSyncInput,
+  SessionRecallInput,
+  SessionFileGetInput,
+  SessionFileUpdateInput,
+  SessionFileListInput,
+  SessionFileState,
+};

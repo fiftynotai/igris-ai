@@ -1,12 +1,15 @@
 /**
- * Brain Engine v5.0 — Memory Component
+ * Brain Engine v7.0 — Memory Component
  *
  * Wraps the existing memory tool handlers as a BrainComponent.
  * Provides: igris_memory_store, igris_memory_search, igris_memory_recall,
- *           igris_pattern_suggest
+ *           igris_memory_get, igris_memory_hybrid_search,
+ *           igris_memory_backfill_embeddings,
+ *           igris_memory_update, igris_memory_delete, igris_memory_dashboard
+ *           (TD-171 M1), igris_pattern_suggest
  *
  * @module engine/components/memory
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -21,8 +24,12 @@ import {
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryMarkPromoted,
   handleMemoryHybridSearch,
   handleMemoryBackfillEmbeddings,
+  handleMemoryUpdate,
+  handleMemoryDelete,
+  handleMemoryDashboard,
   handlePatternSuggest,
 } from '../../../tools/memory.js';
 import type {
@@ -30,10 +37,18 @@ import type {
   MemorySearchInput,
   MemoryRecallInput,
   MemoryGetInput,
+  MemoryMarkPromotedInput,
   HybridSearchInput,
   BackfillInput,
+  MemoryUpdateInput,
+  MemoryDeleteInput,
+  MemoryDashboardInput,
   PatternSuggestInput,
 } from '../../../tools/memory.js';
+// FR-210: reuse the edges component's entity/edge vocabularies for the store
+// schema's `edges` param so the two surfaces stay in lockstep (const-only,
+// pure import — no runtime coupling; edge WRITES still route through the bus).
+import { VALID_ENTITY_TYPES, VALID_EDGE_TYPES } from '../edges/handlers.js';
 
 export function createMemoryComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
@@ -104,15 +119,61 @@ export function createMemoryComponent(): BrainComponent {
               },
               source_extractor: {
                 type: 'string',
-                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /distill passes "distill". Validated against VALID_SOURCE_EXTRACTOR.',
+                description: 'Which extractor produced this row (FR-109 + TD-066). Default "manual" for direct tool calls; perception passes "llm"; /harvest passes "distill" (the enum value stays "distill" after the /distill → /harvest rename — it is a persisted channel-tag, not the skill name). Validated against VALID_SOURCE_EXTRACTOR.',
+              },
+              edges: {
+                type: 'array',
+                description: 'FR-210: relationships to capture at store time. Supply the edges you reason about NOW (learning→learning "supersedes"/"related_to", learning→brief "derived_from"/"duplicates", learning→decision, …) instead of a follow-up igris_edge_create call — the "from" side is always this new learning. Each edge is written as provenance "observed". Setting source_brief already auto-creates the learning→brief "derived_from" net edge; use this array for everything else.',
+                items: {
+                  type: 'object',
+                  additionalProperties: false,
+                  properties: {
+                    to_type: {
+                      type: 'string',
+                      enum: [...VALID_ENTITY_TYPES],
+                      description: 'Type of the target entity',
+                    },
+                    to_id: {
+                      type: 'string',
+                      description: 'Stable id of the target entity (e.g. "FR-210", "950")',
+                    },
+                    edge_type: {
+                      type: 'string',
+                      enum: [...VALID_EDGE_TYPES],
+                      description: 'Edge type from the catalog (e.g. "supersedes", "related_to", "derived_from", "duplicates")',
+                    },
+                    confidence: {
+                      type: 'number',
+                      description: 'Confidence in [0, 1] (default 1.0)',
+                    },
+                    metadata: {
+                      type: 'object',
+                      description: 'Free-form metadata merged into the stored edge (default {})',
+                    },
+                  },
+                  required: ['to_type', 'to_id', 'edge_type'],
+                },
               },
             },
             required: ['project', 'category', 'title', 'content'],
           },
           handler: async (args) => {
             const result = await handleMemoryStore(args as unknown as MemoryStoreInput);
-            _ctx?.bus.emit('memory.stored', { project: (args as Record<string, unknown>).project });
-            return result;
+            // FR-210: enrich the payload so the edges component's onMemoryStored
+            // subscriber can populate learning→brief (source_brief) + model-supplied
+            // (edges[]) edges at store time. Additive fields — existing listeners
+            // (monitoring, sync) read only `project` and are unaffected.
+            const a = args as Record<string, unknown>;
+            _ctx?.bus.emit('memory.stored', {
+              project: a.project,
+              id: result.learningId,
+              category: a.category,
+              source_brief: a.source_brief,
+              edges: a.edges,
+            });
+            // Return only the MCP tool contract (`content`); `learningId` is an
+            // internal handoff to the emit above and is not part of the response.
+            return { content: result.content };
           },
         },
         {
@@ -124,7 +185,7 @@ export function createMemoryComponent(): BrainComponent {
             properties: {
               query: {
                 type: 'string',
-                description: 'Search query (FTS5 syntax supported: AND, OR, NOT, phrases)',
+                description: 'Search query (plain keywords — FTS5 operators, quotes, and punctuation are sanitized out; boolean/phrase syntax is not supported)',
               },
               project: {
                 type: 'string',
@@ -150,7 +211,7 @@ export function createMemoryComponent(): BrainComponent {
         },
         {
           name: 'igris_memory_recall',
-          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Updates access counts for returned results.',
+          description: 'Contextual recall of relevant learnings for the current project. Combines project-local and global learnings matching the given context. Optionally hard-filters to a single learning category. Updates access counts for returned results.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -166,6 +227,11 @@ export function createMemoryComponent(): BrainComponent {
               limit: {
                 type: 'number',
                 description: 'Maximum number of results (default: 5)',
+              },
+              category: {
+                type: 'string',
+                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
+                description: 'Optional: hard-filter recall to a single learning category. When omitted, all categories are searched.',
               },
             },
             required: ['project', 'context'],
@@ -187,6 +253,44 @@ export function createMemoryComponent(): BrainComponent {
             required: ['id'],
           },
           handler: (args) => handleMemoryGet(args as unknown as MemoryGetInput),
+        },
+        {
+          name: 'igris_memory_mark_promoted',
+          description: 'Mark a learning as promoted into a project-context doc (FR-200 M2). Sets promoted_to_doc (path[#anchor]) so igris_memory_recall surfaces a "Promoted → <doc>" pointer instead of re-printing the now-doc-owned content (one-fact-one-source). Called by /promote AFTER merging the standard into the doc and recording a derived_from lineage edge. The learning row is never deleted — it becomes a lineage stub. Separate axis from review_status.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to mark as promoted',
+              },
+              doc_path: {
+                type: 'string',
+                description: 'Target doc path the standard was merged into (e.g. "igris-ai:context/coding_guidelines.md" or the on-disk path under ~/.igris/projects/{name}/context/)',
+              },
+              doc_anchor: {
+                type: 'string',
+                description: 'Optional heading anchor within the doc (bare slug; a leading "#" is stripped). Appended as "#<anchor>" to the pointer.',
+              },
+            },
+            required: ['id', 'doc_path'],
+          },
+          handler: (args) => {
+            const result = handleMemoryMarkPromoted(args as unknown as MemoryMarkPromotedInput);
+            // Emit only when the handler actually marked a row (avoid emitting on
+            // validation errors / not-found). The success payload is JSON
+            // carrying "promoted_to_doc"; errors are plain "Validation error:" /
+            // "not found." text, so the marker is unambiguous.
+            const text = result.content[0]?.text ?? '';
+            if (text.includes('"promoted_to_doc"')) {
+              _ctx?.bus.emit('memory.promoted', {
+                id: (args as Record<string, unknown>).id,
+                doc_path: (args as Record<string, unknown>).doc_path,
+              });
+            }
+            return result;
+          },
         },
         {
           name: 'igris_memory_hybrid_search',
@@ -268,14 +372,131 @@ export function createMemoryComponent(): BrainComponent {
           },
           handler: (args) => handlePatternSuggest(args as unknown as PatternSuggestInput),
         },
+        // -------------------------------------------------------------------
+        // TD-171 M1 — update / delete / dashboard
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_memory_update',
+          description: 'Update mutable fields of an existing learning (title, content, tags, category, scope, confidence). Bumps updated_at. Provenance, review_status, and source_extractor are intentionally immutable through this surface — _delete + _store afresh if you need to rewrite them.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to update',
+              },
+              title: {
+                type: 'string',
+                description: 'Optional new title',
+              },
+              content: {
+                type: 'string',
+                description: 'Optional new content',
+              },
+              tags: {
+                type: 'string',
+                description: 'Optional comma-separated tags (replaces existing)',
+              },
+              category: {
+                type: 'string',
+                enum: ['pattern', 'decision', 'discovery', 'mistake', 'optimization'],
+                description: 'Optional new category',
+              },
+              scope: {
+                type: 'string',
+                enum: ['local', 'global'],
+                description: 'Optional new scope',
+              },
+              confidence: {
+                type: 'number',
+                description: 'Optional new confidence (0-1)',
+              },
+            },
+            required: ['id'],
+          },
+          handler: (args) => handleMemoryUpdate(args as unknown as MemoryUpdateInput),
+        },
+        {
+          name: 'igris_memory_delete',
+          description: 'Hard-delete a learning by ID and emit a memory.deleted bus event. Mirrors igris_perception_reject delete semantics. Use when a learning is provably wrong or duplicates a higher-quality entry; prefer igris_memory_update for fixable rows.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              id: {
+                type: 'number',
+                description: 'Learning ID to delete',
+              },
+              reason: {
+                type: 'string',
+                description: 'Optional human-readable reason for the audit log',
+              },
+            },
+            required: ['id'],
+          },
+          handler: async (args) => {
+            const result = handleMemoryDelete(args as unknown as MemoryDeleteInput);
+            // Only emit when the handler actually deleted (avoid emitting on
+            // validation errors / not-found). Look for the JSON marker in the
+            // text payload — same shape every successful delete returns.
+            const text = result.content[0]?.text ?? '';
+            if (text.includes('"deleted": true')) {
+              const id = (args as Record<string, unknown>).id;
+              const reason = (args as Record<string, unknown>).reason;
+              _ctx?.bus.emit('memory.deleted', {
+                id,
+                reason: typeof reason === 'string' ? reason : '',
+              });
+            }
+            return result;
+          },
+        },
+        {
+          name: 'igris_memory_dashboard',
+          description: 'Aggregate counts (by_category, by_scope, by_provenance, by_review_status) plus recent storage stats and top tags over the learnings table. CANONICAL _dashboard shape — TD-171 M2/M3/M4 mirror this structure. Honors summary_only to skip the samples array.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Optional project filter; omit for cross-project view',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only, no samples. Default false.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for "recent" stats (and top_tags). Default 30. Must be non-negative.',
+              },
+            },
+            required: [],
+          },
+          handler: (args) => handleMemoryDashboard(args as unknown as MemoryDashboardInput),
+        },
       ];
     },
 
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
-          { name: 'memory.stored', description: 'A new learning was stored' },
+          // FR-210: enriched payload { project, id, category, source_brief, edges }.
+          // Consumed by the edges component's onMemoryStored subscriber to populate
+          // learning-to-brief (source_brief) + model-supplied (edges array) edges at
+          // store time. Also the sync auto-push extension point; monitoring/sync
+          // listeners read only `project`, so the extra fields are backward-compatible.
+          { name: 'memory.stored', description: 'A new learning was stored (enriched payload: project, id, category, source_brief, edges — FR-210)' },
+          // TD-171 M1: emitted by igris_memory_delete after a successful hard-DELETE.
+          // Payload: { id: number, reason: string }. Currently no in-process
+          // listener — same orphan extension-point pattern as memory.stored.
+          { name: 'memory.deleted', description: 'A learning was hard-deleted via igris_memory_delete' },
+          // FR-200 M2: emitted by igris_memory_mark_promoted after a learning's
+          // standard was promoted into a project-context doc. Payload:
+          // { id: number, doc_path: string }. Orphan extension-point (no
+          // in-process listener yet) — same pattern as memory.stored/deleted.
+          { name: 'memory.promoted', description: 'A learning was promoted to a doc via igris_memory_mark_promoted' },
           // Note: promoteToGlobal() runs inline in handleMemoryStore and results are included in the response text. No separate event needed.
         ],
         listens: [],

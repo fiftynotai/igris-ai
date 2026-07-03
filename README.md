@@ -1,448 +1,249 @@
-# Igris AI
+![igris — the engineering OS for AI coding agents](docs/images/igris-banner.png)
 
-The engineering operating system for Claude Code.
+# IGRIS
 
-Brief-first. Brain-backed. Self-healing.
+they resume your chat — IGRIS resumes your work.
 
-Tools served via the `igris-brain` MCP server. Skills, agents, and rules
-shipped through the `igris` CLI from `~/.igris/core/`.
-
----
-
-## The Problem
-
-AI made coding faster. It did not make it better.
-
-- You shipped a 2000-line PR because the AI never stopped to plan.
-- Your context reset mid-task and you rebuilt everything from scratch.
-- Three developers prompted the same fix because nobody tracked who was doing what.
-- Your AI wrote code that passed tests but violated your architecture.
-- Technical debt compounded with every prompt because nothing enforced standards between sessions.
-
-Speed without structure is not engineering. It is chaos with better autocomplete.
+the engineering OS for AI coding agents: cross-harness work-state handoff, enforcement-as-code, and one brain across every harness.
 
 ---
 
-## What Igris Does
+## ai made coding faster. it did not make it better.
 
-Five pillars. Each one solves a failure mode that no prompt engineering can fix.
+you shipped a 2000-line pr because nothing stopped you. your context reset mid-task and you rebuilt from scratch. three sessions prompted the same fix because nobody tracked who was doing what.
 
-### 1. Brief-First Protocol
+speed without structure is not engineering. it is chaos with better autocomplete.
 
-Every file modification requires a tracked brief. No brief, no write access.
+IGRIS is the workbench around the model. it makes the brief the contract, makes the phase explicit, makes ownership atomic, and makes every write pass through gates the agent cannot talk its way around.
 
-Briefs define what to build, why it matters, how to verify it, and what constraints apply. Nine types cover the full engineering lifecycle:
+## what IGRIS adds.
 
-| Type | Prefix | Purpose |
-|------|--------|---------|
-| Bug/Feature | BR | General bugs and features |
-| Feature Request | FR | New feature ideas |
-| Technical Debt | TD | Code quality improvements |
-| Migration | MG | System migrations |
-| Testing | TS | Test additions/improvements |
-| Process Improvement | PI | Workflow improvements |
-| Dependency Update | DU | Dependency updates |
-| Performance | PF | Performance improvements |
-| Architecture Cleanup | AC | Architecture refactoring |
+| Spearhead | What changes |
+|-----------|--------------|
+| Cross-harness work-state handoff | A new harness resumes the actual work state: brief, phase, atomic claim, instance identity, supersession lifecycle, working tree, and agent log. |
+| Enforcement-as-code | Brief-first write gates, role tool restrictions, test phases, and review phases are installed as executable workflow constraints. |
+| One brain across every harness | SQLite + FTS5 at `~/.igris/memory/knowledge.db` stores briefs, sessions, plans, learnings, claims, and sync state for every registered project. |
 
-Each brief carries priority, effort estimate, acceptance criteria, test plan, and full lifecycle tracking from Draft through Archived. Read-only operations -- research, questions, listing -- do not require briefs. Everything that writes a file does.
+First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini CLI are supported bridges.
 
-This is not a convention. It is enforced. The system blocks file modifications without a brief.
+Cursor remains an onboarding target, not a shipped surface.
 
-### 2. Autonomous HUNT Workflow
+## the idea.
 
+most AI coding tools are a smarter autocomplete with memory bolted on. IGRIS inverts it: a persistent operating system the model runs inside.
+
+the model is the CPU. IGRIS is the OS. every session boots it, mounts your project, runs your work — then saves state back, so the next session picks up exactly where you left off.
+
+the payoff is an agent that actually knows your project — its conventions, its decisions, its open work, the mistakes already made — not for one chat, but across every session you run.
+
+## the flagship proof.
+
+On 2026-06-16, B2/G-14 passed across four vendors: Claude -> OpenCode -> Codex -> Antigravity. A hunt was interrupted mid-workflow, resumed zero-context in the next harness, picked up at the recorded phase, ran the missing tests, and preserved crash recovery plus force-reclaim behavior.
+
+That proof matters because IGRIS did not hand off a transcript. It handed off work-state: the brief, the phase, the claim, the instance, the supersession lifecycle, and the uncommitted code.
+
+The visual below is a later FR-175 handoff storyboard that shows the same class of failure: Claude stopped at a weekly limit after settling the next brief, then Codex booted and recommended that exact brief.
+
+![FR-175 cross-harness handoff storyboard](docs/images/launch/fr175-cross-harness-storyboard.gif)
+
+The storyboard uses two stills, not the original operator screen recording, and it is not the B2/G-14 proof asset. Provenance is tracked in [`docs/images/launch/README.md`](docs/images/launch/README.md).
+
+## the lifecycle.
+
+every session starts with `/boot` and ends with `/rest`. in between, the agent is grounded, not guessing.
+
+`/boot` runs the boot sequence:
+
+- **detect** — the harness (Claude, OpenCode, Antigravity, Codex, Gemini) and its capabilities.
+- **boot** — load the OS: who the agent is, how it must operate, what it can do.
+- **login** — load who you are and how you work.
+- **mount** — pull the brain, restore session state, surface where your work stands: active brief, phase, blockers, what's next.
+
+`/rest` closes the session: it writes your work-state — mode, active brief, next steps, the uncommitted lay of the land — to the brain and syncs it. nothing is a transcript; everything is state.
+
+so a `/boot` in a different harness resumes the actual work, not a summary of it. because the brain syncs to a central store, that state travels across machines too — full cross-machine handoff is the frontier we're proving now (see the edges below).
+
+## the core workflow.
+
+`/hunt` runs the pipeline end-to-end. architect plans, forger builds, sentinel tests, warden reviews, orchestrator commits. one command. bounded roles.
+
+```text
+$ /hunt TD-161
+
+[architect]  planning  · plan written to ~/.igris/projects/igris-ai/plans/TD-161-plan.md
+[forger]     building  · core/SOUL.md edited · mirror cp ~/.igris/core/SOUL.md
+[sentinel]   testing   · verify_mirror.sh -> verdict: MATCH (1 pair, 0 mismatch)
+[sentinel]   testing   · git grep "Crimson" -- ':!docs/archive/' ':!CHANGELOG.md' -> 0 matches
+[warden]     reviewing · brand canon audit · IGRIS-native register restored · APPROVE
+[orchestrator] CHANGELOG.md amended in place · TD-160 bullet refined with TD-161 note
+
+result: ready for commit · 1 file changed · 0 retries · PASS
 ```
-/hunt BR-005
-```
 
-One command. Full pipeline. No hand-holding.
+## the gates.
 
-HUNT triggers autonomous end-to-end implementation: plan, build, test, review, document, commit. Each phase is handled by a specialized agent. If tests fail, the system self-heals -- mender diagnoses, forger fixes, sentinel re-tests. Up to 3 retries before the brief enters BLOCKED state for human intervention.
+a rule in a prompt is a suggestion the model can rationalize its way past. IGRIS installs the rules as executable gates instead — enforcement the agent runs into, not reads.
 
-This is the hero feature. Details in [The HUNT Workflow](#the-hunt-workflow).
+- **brief-first.** no file gets written without a brief for the work. a pre-write hook blocks the edit; the escape hatch is logged and audited, not a sentence the agent can argue with.
+- **phase discipline.** the workflow is a state machine — plan, build, test, review, commit. a pre-commit gate blocks a commit made out of phase. you can't ship code that skipped review.
+- **bounded roles.** each agent gets only the tools its job needs. the tester can't write code; the reviewer can't edit; the builder can't self-approve. separation of duties, enforced by tool restriction, not by asking nicely.
+- **commit standards + secret scanning.** conventional-commit format and a secret scan run on every commit, at the hook level.
 
-### 3. The Brain
+the point isn't ceremony. it's that the guarantees hold even when the model is confident, tired, or wrong — because they're code, not vibes.
 
-Centralized at `~/.igris/`. SQLite WAL + FTS5. Tools served via the `igris-brain` MCP server, with a full HTTP API for cross-machine access.
+## grounding.
 
-The brain remembers across projects, sessions, and context resets. Error catalogs, pattern suggestions, velocity metrics, cross-project learnings -- all stored in a single database, all searchable with full-text search, all accessible via MCP or HTTP.
+a fresh model writes generic code. a grounded one writes your code.
 
-When your context resets, the brain does not. It tells your next session exactly where you left off and what to do next.
+`/ground` authors your project's context docs — coding guidelines, architecture map, design system, test standards, API patterns — and the OS consults the right one before it works. the agent follows your conventions and boundaries because they're written down and routed to it, not re-guessed every session.
 
-### 4. Seven Agents, Enforced Roles
+## the cognition layer.
 
-The architect plans. The forger builds. The sentinel tests. The warden reviews.
+memory you tell it is half the story. the cognition layer is the other half — memory the OS infers.
 
-These are not suggestions. Tool restrictions are enforced at the agent definition level. The architect has `Read, Grep, Glob` -- it cannot write files. The warden has the same constraint. Separation of concerns is not a guideline; it is a hard boundary.
+it's a host that runs small, single-purpose instances. each one observes the brain and proposes something for you to review. one job each:
 
-The seeker runs on `model: haiku` for fast, low-cost codebase exploration. Every agent has `memory: project`, persisting context across sessions in `.claude/agent-memory/<name>/`.
+- **perception** — reads your session transcripts, proposes the learnings worth keeping.
+- **subconscious** — reads the brain's state, surfaces suggestions: a stalled brief, a gap, a pattern worth acting on.
+- **synapse** — infers the relationships between learnings and draws the edges.
+- **janitor** — finds near-duplicate learnings and proposes the merge.
+- **arbiter** — catches two learnings that contradict and resolves which one wins.
+- **curator** — flags learnings that have gone stale and proposes pruning them.
+- **cartographer** — clusters related learnings and distills each cluster into one meta-learning.
 
-### 5. Zero-Drift Installation
+nothing here writes to your memory behind your back. every instance proposes; you approve. the OS sharpens itself while you're away — you stay in control of what it learns.
 
-Igris installs via symlinks from `~/.igris/core/` into your project. Update the brain once, every project gets the update instantly.
+and the layer is open. a new instance is a new self-describing file; the host doesn't change. teaching the OS a new kind of reflection is the same move as adding a skill or an agent — drop it in, it's discovered, it runs.
 
-No copy drift. No sync scripts. No version mismatch between projects. One source of truth, linked everywhere.
+it ships **off by default** — nothing is observed until you turn it on. enable the instances you want in `~/.igris/config.json` (`cognition.<instance>.enabled: true`); the flags, budgets, and review-gate knobs are documented in [`docs/COGNITION.md`](docs/COGNITION.md).
 
----
+## one fact, one home.
 
-## The HUNT Workflow
+the agent doesn't have "a memory." it has several knowledge bases, each holding one kind of knowledge, each authoritative for its kind:
 
-```
-/hunt BR-005
-```
+- **the brain** — *experience.* the lessons, decisions, and mistakes it accumulates by working: what worked, what broke, the non-obvious rationale. evolving, confidence-scored, searchable.
+- **context docs** — *standards.* your project's authoritative conventions: coding guidelines, architecture, design system, test standards, API patterns. structured, curated, the source of truth for how you build.
+- **the catalog** — *reusable assets.* the "lego" blocks worth reaching for again: templates, modules, packages, and where each one lives.
+- **the code** is ground truth and **git** is history — the agent reads them, it never copies them into memory.
 
-![HUNT Workflow](docs/images/hunt-workflow.png)
+the rule that keeps it clean: **one fact, one home.** each piece of knowledge routes to the store that matches its kind and lives in exactly one place. when a fact changes kind — a lesson that hardens into a standard — it moves, it isn't duplicated.
 
-**Eight phases, fully autonomous.** The orchestrator reads the brief, the architect plans (read-only), the forger builds, the sentinel tests, the warden reviews (read-only), and the orchestrator commits. Documenting runs conditionally for new APIs and component changes.
+the skills are the pipes between the stores:
 
-**Self-healing loop:** Test failures route through mender (diagnosis) and forger (fix) automatically. Three failures and the brief enters BLOCKED -- human intervention required. Review rejections follow the same pattern with a two-reject limit.
+- **`/ground`** authors your context docs — turns "how this project builds" into a written standard the agent consults before it works.
+- **`/harvest`** mines a finished project: the lessons flow into the brain, the reusable modules into the catalog, the shape of the project into the registry.
+- **`/promote`** graduates a hardened lesson out of the brain into a context doc — the brain is the staging area, the doc is the curated home, promotion is the pipeline (and it leaves a lineage breadcrumb behind).
+- **`/reuse`** reaches into the catalog before you rebuild something that already exists.
+- the **cognition layer** feeds the brain — proposed learnings, waiting for your review.
 
-**Context reset recovery:** If your session resets mid-HUNT, Igris reads `CURRENT_SESSION.md`, finds the active brief, checks its workflow phase, and resumes from the exact step. "TESTING phase, retry 2/3" -- not "start over."
+so when the agent needs to know something, it knows where to look: experience in the brain, standards in the docs, blocks in the catalog. no single bucket that rots into a junk drawer.
 
----
+## the architecture.
 
-## The Brain
+IGRIS is built like an OS so it can grow without rotting.
 
-![Brain Architecture](docs/images/brain-architecture.png)
+- **layers, not a monolith.** every concern — identity, conduct, capabilities, protocols, memory — is one layer with one job and one way to extend it. adding a skill, agent, harness, or doc-type is a known move, not a refactor.
+- **self-describing, self-assembling.** modules declare their own metadata; the OS discovers them and generates its own index. no hand-maintained registry to drift.
+- **contract vs. implementation.** what the model reads never names the code behind it, so any mechanism swaps without touching what the agent understands.
+- **agnostic core, per-harness adapters.** the skills and the OS are harness-neutral; each harness gets a thin adapter. one behavior, every surface.
 
-### MCP Tools
+that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
 
-Tools are available globally via the `igris-brain` MCP server, organized
-by component.
+## every harness, honestly.
 
-| Component | Purpose |
-|-----------|---------|
-| Memory | Store, search, recall, hybrid search, embedding backfill |
-| Errors | Lookup, similar errors, embedding backfill |
-| Projects | Register, list, status |
-| Metrics | Record, query, velocity dashboards |
-| Sessions | Sync, recall, file get/update |
-| Briefs | CRUD, sync, dashboard, file management, similar, velocity |
-| Tasks | Create, claim, assign, block, complete, fail, retry, list, results |
-| Instances | Heartbeat, list, remove, agent events |
-| Sync | Push/pull brain data, queue management, file/session/brief/definition sync |
-| Cache | Rebuild/clean brain-to-filesystem cache |
-| Context | Register, get, load, tree routing (v6) |
-| Schedules | Create, list, get, enable/disable, fire, delete |
-| Coordination | Auto-route, priorities, config, audit, agent capabilities |
-| Monitoring | Event log, event log cleanup |
-| Registry | Module/template registry: add, search, get, list, remove, update |
-| Edges | Typed graph edges + traversal: create/list/remove + neighbors/path/subgraph |
-| Perception | Subconscious gap/pattern/stalled detectors and event ingestion |
+IGRIS runs the same brain, briefs, and lifecycle across every harness it supports. what it won't do is pretend they're identical — so it adapts to each, and it's honest about where a harness falls short.
 
-### REST API
+the OS core is harness-agnostic; each harness gets a thin adapter that maps the OS onto what that harness actually exposes:
 
-Full HTTP API with API key authentication, rate limiting, and SSE streaming.
+- **skills, agents, and MCP** project to every supported harness — write a skill once, they all get it.
+- **enforcement gates are hooks**, so they need a hook API. Claude Code and OpenCode run the full set (brief-first, phase guard, commit + secret scans); Codex gets the session-level subset; Gemini and Antigravity expose no hook API, so there the gates soften to advisories — the workflow still runs, the blocking doesn't.
+- **delegation adapts.** a harness with native subagents uses them; one that defines its agents at runtime gets a per-harness recipe (its `harness-specific` file) so "delegate to the reviewer" resolves the same way everywhere — the skill never knows the difference.
 
-| Category | Highlights |
-|----------|------------|
-| Health & Status | Health check, brain stats, sync status |
-| Projects | List, budget get/set |
-| Briefs | List, velocity, brief content |
-| Sessions | List sessions, session files |
-| Tasks | List, next, claim, complete, fail, release |
-| Instances | List, heartbeat, delete, agent list, activity log |
-| Events | Query event log, SSE streaming |
-| Metrics | Agent summary, by-project, record |
-| Hooks | Hook event ingestion, agent event recording |
-| Sync | Push, pull, file push, file pull |
-| Definitions | Pull definitions |
+onboarding a new harness is declarative: describe it once in the manifest — agents, MCP, hooks, delegation model — and `/onboard-harness` projects every surface it can support and wires the adapter for the rest. a new harness is a descriptor, not a fork.
 
-### Brain Modes
+## it extends itself.
 
-| Mode | Entry Point | Use Case |
-|------|-------------|----------|
-| `local` | `igris-brain` (stdio) | Single machine, default |
-| `remote` | `igris-brain` (HTTP) | VPS brain, no local DB |
-| `dual` | Both (stdio + HTTP) | Full redundancy |
+most tools you extend by editing them. IGRIS you extend by declaring — and it wires the rest.
 
-Mode is selected by editing `~/.igris/config.json` `remote_brain` and
-`local_brain` blocks. The `igris-brain` MCP server reads them on startup.
+the agent knows how to grow itself in every direction, and each direction is a defined connection point:
 
-### Concurrency
+- **a surface** — a skill, an agent, an MCP server, a hook, or an identity — added with one command (`igris add skill …`) and projected to every harness at once. write it once; Claude, OpenCode, and Antigravity all get it.
+- **an OS module** — a new capability or rule: drop a self-describing file into the OS and it's discovered and indexed. no registry to hand-edit.
+- **a doc-type** — a new kind of project context doc: declare it in the catalog and the knowledge-map absorbs it.
+- **a cognition instance** — a new kind of background reflection: drop a self-describing extractor and the host runs it, unchanged.
+- **a harness** — a new CLI or IDE: onboard it, and every skill, agent, and gate it already has reaches the new surface.
 
-Multiple Claude sessions safely share the brain:
+the throughline: nothing here is ad-hoc. every extension is either self-describing and discovered, or it follows a defined procedure — never a one-off. the OS grows the same disciplined way it does everything else: a known move, not a rewrite. it even knows how to add a whole new layer to itself.
 
-- SQLite WAL mode for concurrent reads and serialized writes (~3ms each)
-- `busy_timeout=5000ms` for automatic retry on contention
-- Staging pattern: hooks write unique files, processed on next startup
+that is the line between a tool with plugins and an OS that extends itself — the agent doesn't just use its capabilities, it can add new ones, and know exactly where each belongs.
 
-### Worker Daemon
+## it checks its own health.
 
-`igris_worker.sh` runs as a background daemon, polling the brain for tasks and spawning Claude Code sessions to execute them autonomously. Six task handler types (dev, content, research, media-gen, operational, social-media) define how each task is processed. Concurrency control, heartbeat monitoring, and clean shutdown built in.
+an OS spread across harnesses, machines, and projects drifts: a hook goes stale, a symlink breaks, a config wanders from canonical. IGRIS finds that itself.
+
+`/igris-doctor` scans every registered project and each harness for drift — missing or stale hooks, broken bridges, config that no longer matches canonical — and reports every issue with its fix. `/boot` surfaces a one-line summary so you catch drift before it bites.
+
+the OS that installs itself and extends itself is the same one that keeps itself honest.
+
+## install in three commands.
 
 ```bash
-./scripts/igris_worker.sh start    # Start the daemon
-./scripts/igris_worker.sh status   # Check status
-./scripts/igris_worker.sh stop     # Clean shutdown
-```
-
----
-
-## Agents and Skills
-
-### 7 Agents
-
-Defined as native Claude Code agent files in `.claude/agents/`.
-
-| Agent | Tier | Role | Tools | Model |
-|-------|------|------|-------|-------|
-| **architect** | 1 - Core | Strategic planning, brief analysis | Read, Grep, Glob | inherit |
-| **forger** | 1 - Core | Code implementation | Read, Write, Edit, Bash, Grep, Glob | inherit |
-| **sentinel** | 1 - Core | Test execution, validation | Read, Bash, Grep | inherit |
-| **warden** | 1 - Core | Code review, security, auditing | Read, Grep, Glob | inherit |
-| **mender** | 3 - Maintenance | Error diagnosis, self-healing | Read, Grep, Glob, Bash | inherit |
-| **seeker** | 4 - Research | Codebase investigation | Read, Grep, Glob, Bash | haiku |
-| **sage** | 5 - Custom | Flutter MVVM + Actions patterns | Read, Write, Edit, Bash, Glob, Grep | inherit |
-
-**Design decisions:**
-
-- **Read-only enforcement.** Architect and warden cannot write files. This is not a prompt instruction -- it is a tool restriction in the agent definition. The planner cannot implement. The reviewer cannot fix.
-- **Lightweight research.** Seeker uses `model: haiku` for fast, low-cost codebase exploration. Research does not need the full model.
-- **Persistent memory.** Every agent has `memory: project`, storing learned context in `.claude/agent-memory/<name>/` across sessions. The architect remembers past plans. The warden remembers past review patterns.
-
-### 20 Skills
-
-Slash commands defined in `.claude/skills/*/SKILL.md`.
-
-| Skill | Purpose |
-|-------|---------|
-| `/scan` | System status report |
-| `/rest` | Pause or end session |
-| `/awaken` | Start or resume session |
-| `/register` | Create new brief |
-| `/archive` | Archive completed brief |
-| `/hunt` | Autonomous implementation (full pipeline) |
-| `/digivolve` | Agent management and status |
-| `/document` | Documentation generation |
-| `/release` | Release preparation, changelog, versioning |
-| `/standardize` | Generate coding guidelines (4 modes) |
-| `/ideate` | Feature brainstorming, generates FR briefs |
-| `/migrate-analyze` | Migration analysis and roadmap |
-| `/audit` | Codebase audit (7 types), generates briefs |
-| `/ui-design` | UI specs, design systems, accessibility |
-| `/team` | Parallel execution with Agent Teams |
-| `/projects` | List all brain-registered projects |
-| `/portfolio` | Cross-project dashboard |
-| `/dashboard` | Cross-project brief and session tracker |
-| `/sync` | VPS brain deployment and synchronization |
-| `/fifty-kit` | Fifty Flutter Kit expert |
-
-### Agent Teams
-
-An experimental parallel execution layer that spawns multiple independent Claude Code instances working simultaneously.
-
-**Requires:** `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS: 1` in `~/.claude/settings.json`
-
-| Mode | Command | What Happens |
-|------|---------|--------------|
-| Parallel HUNT | `/team hunt FR-022 FR-023` | Each brief gets its own Claude instance |
-| Multi-Angle Review | `/team review` | 3 reviewers: security, performance, standards |
-| Competitive Investigation | `/team investigate BR-015` | Multiple hypotheses tested in parallel |
-| Parallel Refactoring | `/team refactor mod-a mod-b` | Each module refactored independently |
-
-Quality gates are enforced via hooks: `TaskCompleted` verifies test evidence before allowing completion. `TeammateIdle` auto-assigns the next brain task to idle teammates.
-
-Single brief -- use `/hunt`. Multiple briefs -- use `/team hunt`.
-
----
-
-## Quick Start
-
-### Prerequisites
-
-| Required | Purpose |
-|----------|---------|
-| Git | Version control |
-| Claude Code CLI | AI engine |
-| Bash | macOS, Linux, or WSL |
-| Node.js 20+ | Brain MCP server |
-| Python 3 | JSON parsing, brain operations |
-| SQLite 3 (FTS5) | Brain database |
-
-**Optional:** jq (faster JSON parsing in hooks -- python3 fallback available)
-
-### Install
-
-```bash
-# Install the CLI globally from npm
 npm install -g igris-ai
-
-# Bootstrap the brain (one-time, fetches ~/.igris/core/ from a release tarball)
 igris init
-
-# Install Igris in your project
-cd /path/to/your-project
-igris install .
+cd /path/to/your-project && igris install .
 ```
 
-This creates `~/.igris/` with the brain database, the core/ directory
-(agents, skills, rules, prompts, context tree), and sets up
-`<project>/.claude/` symlinks. Registers the brain MCP server globally in
-`~/.claude.json`. Your project gets the full system with zero file
-duplication.
+`igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
-The CLI ships hooks by default. Pass `--no-hooks` to opt out (rare). For
-diagnostics across every registered project, use `igris doctor`. For a
-specific slug different from the directory basename, use
-`igris install --slug <slug> .`.
+Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
 
-### Upgrade from v6
+## project handoff.
 
-If you have an existing v6 install (`~/.igris/` populated by the
-retired shell scripts), the v7 CLI auto-detects it and offers an
-in-place upgrade that preserves your `knowledge.db`, `USER.md`, and
-`config.json` byte-for-byte:
+`/boot` and `/sync` move your work-state across your own machines through the central brain. `/handoff` moves a single project to someone else's installation — a colleague covering while you are out, a contractor, a fresh machine with its own brain — as a portable file. no shared brain required; the bundle is the transport.
 
-```bash
-# 1. Diagnose current state
-igris doctor
-
-# 2. Preview the upgrade (no writes, no network unless --channel changes)
-igris init --upgrade --dry-run
-
-# 3. Apply the upgrade
-igris init --upgrade
-
-# 4. Preview project propagation
-igris update --all --dry-run
-
-# 5. Propagate to all registered projects
-igris update --all
+```text
+$ /handoff export igris-ai
+# -> igris-ai.igris-pack.tar.gz  (briefs + brief graph + context docs + goals)
 ```
 
-`igris init --upgrade` swaps `~/.igris/core/` atomically (stages to
-`core.new.<pid>/`, renames the existing core to `core.bak.<ts>/`,
-promotes the staging dir, then deletes the bak after a successful
-swap). Failure at any step rolls back.
+hand the bundle over (slack, email, usb). on the other side:
 
-### Channels
-
-| Channel | Flag | What you get |
-|---------|------|--------------|
-| Latest release (default) | `igris init` | Newest published `vX.Y.Z` tag |
-| Bleeding edge | `igris init --channel main` | The current `main` branch (unstable) |
-| Pinned tag | `igris init --channel v7.0.0` | A specific tag |
-| Local source (contributors) | `igris init --from-source /path/to/igris-ai` | A local repo's `core/` directory; no network |
-
-`igris refresh` re-fetches `~/.igris/core/` using the same channel
-recorded at install time (or switches with `--channel`).
-
-### Contributing
-
-Contributors clone the repo and use `--from-source` for offline
-iteration. See [`cli/README.md`](cli/README.md) for the contributor
-flow.
-
-### First 5 Minutes
-
-```bash
-# Launch Claude Code
-claude
-
-# Generate coding guidelines from your codebase
-/standardize analyze
-
-# Register your first task
-"Register a bug: Login fails with special characters in password"
-
-# Autonomous implementation
-/hunt BR-001
+```text
+$ /handoff import igris-ai.igris-pack.tar.gz
+# preview: 604 new, 0 conflict -> confirm -> applied
 ```
 
-Igris plans (architect), implements (forger), tests (sentinel), reviews (warden), documents if needed, and commits with conventional format. One command.
+what travels is a **project slice**, not your whole brain: the project's briefs and their dependency graph, its context docs, and its goals by default (`--tier core` for briefs only; `--tier full` adds learnings, error fingerprints, and the concept graph). machine-local state never leaves — no sessions, no instance claims, no metrics, no secrets, and no executable code.
 
-### Essential Commands
+import is reviewed, never silent. it classifies every row as new, unchanged, or conflict against a local ancestor record, waits for your confirm, and applies the policy you choose (`--on-conflict theirs|mine|newer`). a row you and the other side both changed is flagged, not clobbered — so a hand-off today and a hand-back on your return each keep their own edits. re-importing the same bundle is a no-op. if the receiving machine does not know the project yet, import registers it automatically.
 
-| Command | What It Does |
-|---------|-------------|
-| `/hunt BR-XXX` | Autonomous implementation |
-| `/scan` | System status report |
-| `/register` | Create new brief |
-| `/archive BR-XXX` | Archive completed brief |
-| `/standardize analyze` | Generate coding guidelines |
-| `/audit code_quality` | Run codebase audit |
-| `/team hunt FR-001 FR-002` | Parallel implementation |
-| `/dashboard` | Cross-project brief tracker |
+## essential skills.
 
----
+| Need | Skills |
+|------|--------|
+| Start and end grounded work | `/boot`, `/rest` |
+| Create, run, inspect, and close briefs | `/register`, `/hunt`, `/scan`, `/archive` |
+| Capture and harden reusable knowledge | `/harvest`, `/promote` |
+| Reuse proven assets before rebuilding | `/reuse` |
+| Generate project context docs | `/ground` |
+| Sync code or brain data | `/sync` |
+| Hand off or take over a project | `/handoff` |
 
-## Why Igris
+## why not just compose other tools?
 
-Honest comparison. No competitor has all five pillars.
+You can get pieces of this elsewhere: spec-first planning, shared rule files, agent memory, and lightweight checkpointing. That stack is real, useful, and often enough.
 
-| Capability | Igris | Multi-Agent Frameworks | AI IDEs |
-|------------|-------|------------------------|---------|
-| Brief-first audit trail | Enforced -- 9 types, full lifecycle | No | No |
-| Cross-project brain | SQLite WAL + FTS5, 91 MCP tools | File-based or none | Session-only |
-| Self-healing pipeline | mender + sentinel, 3 retries | Manual intervention | Manual intervention |
-| Zero-drift install | Symlinks from single brain | Copy-based, drift-prone | N/A |
-| Tool-enforced roles | Agent definitions restrict tools | Prompt-based, bypassable | N/A |
-| Parallel execution | Agent Teams with quality gates | Some support | No |
-| Persistent memory | Survives resets, syncs cross-project | Memory banks (file-based) | Session-only |
-| Worker daemon | Background task execution | No | No |
-| Identity system | SOUL.md + USER.md, 4 mask levels | No | No |
+IGRIS is for the failure mode where pieces are not enough: multiple harnesses, multiple sessions, mid-workflow interruption, write enforcement, stale claims, crash recovery, cross-project memory, and sync all need one lifecycle. The detailed comparison is in [`docs/substitution.md`](docs/substitution.md).
 
-**What this means in practice:**
+## the unfinished edges.
 
-- **vs. multi-agent frameworks** (Ruflo, Oh-My-ClaudeCode, metaswarm): They have agents. Igris has agents with enforced tool restrictions, a persistent brain, brief-first audit trail, and self-healing pipelines. More agents is not the differentiator -- discipline is.
-- **vs. AI IDEs** (Cursor, Copilot): They accelerate typing. Igris manages engineering workflow. Different problems, different tools.
-- **vs. memory-focused tools** (Claude CodePro): File-based memory banks per project. Igris has a database-backed brain that works across projects, survives context resets, and serves 91 tools via MCP.
+- Agent teams (`/team hunt`) remain experimental. Parallelism works; the ergonomics are still being hardened.
+- Resume path was proven in B2, but deterministic phase entry is still being tightened so every harness follows the same skip/re-walk behavior.
+- Cross-machine B2 is the next frontier; same-machine cross-harness is proven.
+- Some brain components are mature and heavily used. Others are intentionally parked until a real workflow needs them.
 
----
+## three doors.
 
-## FAQ
-
-**Does Igris work with Claude.ai (web)?**
-No. Igris requires Claude Code CLI for hooks, subagents (Task tool), MCP tools, and skills. The web interface does not support these features.
-
-**Can I use Igris with other AI CLIs?**
-Currently built for Claude Code. The v6 context architecture is CLI-agnostic -- any tool that can query brain MCP tools can resolve the context tree. Cross-CLI adapters are on the roadmap.
-
-**Do I need briefs for everything?**
-Only for file modifications. Research, questions, analysis, listing -- all brief-free.
-
-**What happens when my context resets?**
-Igris reads session state and brief workflow phase, then resumes from the exact step. No restart. No rework.
-
-**Can I disable agents?**
-Yes. Remove or rename the agent `.md` file in `.claude/agents/`, or use `/digivolve disable {name}`.
-
-**Why is the architect read-only?**
-The agent that plans should not be the agent that implements. Tool restrictions enforce this at the definition level, not the prompt level. Same principle applies to the warden -- the reviewer cannot fix what it rejects.
-
-**How does self-healing work?**
-When sentinel detects test failure, mender analyzes the error, forger applies the fix, sentinel re-tests. Up to 3 cycles. If all fail, the brief enters BLOCKED state and waits for you.
-
-**What is the worker daemon?**
-`igris_worker.sh` runs in the background, polling the brain for queued tasks and spawning Claude Code sessions to execute them. Autonomous background processing with concurrency control.
-
----
-
-## Documentation
-
-| Resource | Location |
-|----------|----------|
-| Operating System | `~/.igris/core/prompts/igris_os.md` |
-| Context Tree | `~/.igris/core/igris_tree.json` |
-| Setup Guide | `docs/SETUP_GUIDE.md` |
-| Update Guide | `docs/UPDATE_GUIDE.md` |
-| Migration Guide | `docs/MIGRATION_GUIDE.md` |
-| Brand Book | `docs/IGRIS_BRAND_BOOK.md` |
-| Contributing | `CONTRIBUTING.md` |
-
----
-
-## Community
-
-- **Repository:** [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
-- **Issues:** [Report bugs, request features](https://github.com/fiftynotai/igris-ai/issues)
-- **Discussions:** [Share ideas, get help](https://github.com/fiftynotai/igris-ai/discussions)
-- **Example Project:** [igris_ai_flutter_example](https://github.com/fiftynotai/igris_ai_flutter_example)
-- **Contributing:** See [CONTRIBUTING.md](CONTRIBUTING.md)
-
----
-
-**Version 7.0.0** | [MIT License](LICENSE)
-
-Built by [Fifty.ai](https://github.com/fiftynotai)
+- build log -> [fifty.dev/journal](https://fifty.dev/journal)
+- the repo -> [github.com/fiftynotai/igris-ai](https://github.com/fiftynotai/igris-ai)
+- the license -> [mit](LICENSE)

@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Type Definitions
+ * Brain Engine v7.0 — Type Definitions
  *
  * Contracts for the modular engine architecture. Every domain component
  * implements BrainComponent. The engine wires components together via
@@ -8,7 +8,7 @@
  * No runtime code — just interfaces and type aliases.
  *
  * @module engine/types
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';

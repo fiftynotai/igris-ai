@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Schedules Component Handlers
+ * Brain Engine v7.0 — Schedules Component Handlers
  *
  * Handler functions for the 7 schedule management MCP tools.
  * Each handler takes Record<string, unknown> args, validates
@@ -9,7 +9,7 @@
  * Run IDs use the format: run-{first 8 chars of randomUUID()}
  *
  * @module engine/components/schedules/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { execFile } from 'node:child_process';
@@ -441,10 +441,12 @@ export async function handleScheduleFireNow(args: Record<string, unknown>): Prom
     runId,
   );
 
-  // Update schedule last_run_at
+  // Update schedule last_run_at (aligns with daemon.ts:166 — `last_run_at`
+  // is the fire-start instant, matching the daemon's claim-transaction
+  // semantics. `updated_at` keeps the "row last touched" finish instant.)
   db.prepare(`
     UPDATE schedules SET last_run_at = ?, updated_at = ? WHERE id = ?
-  `).run(finishedAt, finishedAt, scheduleId);
+  `).run(startedAt, finishedAt, scheduleId);
 
   const run = db.prepare('SELECT * FROM schedule_runs WHERE id = ?').get(runId) as Record<string, unknown>;
 

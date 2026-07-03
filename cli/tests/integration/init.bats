@@ -23,18 +23,15 @@ setup() {
 
 stage_source_repo() {
   local root="$1"
-  mkdir -p "$root/core/agents" "$root/core/skills/demo" "$root/core/rules" \
-           "$root/core/prompts" "$root/core/hooks" "$root/core/scripts" \
-           "$root/core/templates"
+  mkdir -p "$root/core/agents" "$root/core/skills/demo" \
+           "$root/core/prompts" "$root/core/hooks" "$root/core/scripts"
   printf '# soul (bats)\n' > "$root/core/SOUL.md"
   printf '{ "version": "fixture" }\n' > "$root/core/igris_tree.json"
   printf 'agents: []\n' > "$root/core/agents/manifest.yaml"
-  printf '# universal\n' > "$root/core/rules/00-igris-universal.md"
   printf '# demo skill\n' > "$root/core/skills/demo/SKILL.md"
   printf '{"hooks":{}}\n' > "$root/core/hooks/canonical-settings.json"
   printf '#!/bin/sh\necho noop\n' > "$root/core/scripts/verify_mirror.sh"
   chmod +x "$root/core/scripts/verify_mirror.sh"
-  printf '# CLAUDE template\n' > "$root/core/templates/CLAUDE.md.tmpl"
   printf '# igris_os\n' > "$root/core/prompts/igris_os.md"
 }
 
@@ -123,4 +120,30 @@ stage_source_repo() {
   run python3 -c "import json; d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json')); print(d['source'])"
   [ "$status" -eq 0 ]
   [ "$output" = "from-source" ]
+}
+
+@test "init registers igris-brain MCP in ~/.claude.json (TD-168)" {
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+  # HOME is overridden to $BATS_TEST_TMPDIR/home in setup(), so
+  # ~/.claude.json lands there.
+  [ -f "$HOME/.claude.json" ]
+  run python3 -c "import json; d=json.load(open('$HOME/.claude.json')); e=d['mcpServers']['igris-brain']; print(e['type'], e['command'])"
+  [ "$status" -eq 0 ]
+  [ "$output" = "stdio node" ]
+}
+
+@test "init does NOT corrupt a malformed ~/.claude.json (non-fatal)" {
+  # Pre-write a malformed ~/.claude.json. init must complete (exit 0,
+  # non-fatal MCP registration) and leave the broken file byte-unchanged.
+  printf '{ broken json,,, ' > "$HOME/.claude.json"
+  BEFORE_SHA=$(shasum -a 256 "$HOME/.claude.json" | awk '{print $1}')
+
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+
+  AFTER_SHA=$(shasum -a 256 "$HOME/.claude.json" | awk '{print $1}')
+  [ "$BEFORE_SHA" = "$AFTER_SHA" ]
+  # No backup or tmp litter from the refused write.
+  [ ! -f "$HOME/.claude.json.igris.bak" ]
 }

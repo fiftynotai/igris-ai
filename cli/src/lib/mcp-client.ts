@@ -22,6 +22,7 @@ import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { URL as NodeURL } from "node:url";
 import { configJsonPath } from "./paths.js";
+import { assertSyncTransportAllowed } from "./sync-transport.js";
 
 export interface RemoteBrainConfig {
   url: string;
@@ -124,6 +125,12 @@ export async function healthCheck(
   remoteUrl: string,
   timeoutMs = 5_000,
 ): Promise<{ statusCode: number | null; body: string }> {
+  // TD-252: refuse non-local http:// before the api_key path is exercised.
+  const gate = assertSyncTransportAllowed(remoteUrl);
+  if (!gate.ok) {
+    return { statusCode: null, body: gate.reason };
+  }
+
   let parsed: NodeURL;
   try {
     parsed = new NodeURL(`${remoteUrl.replace(/\/$/, "")}/health`);
@@ -178,6 +185,130 @@ export async function healthCheck(
   });
 }
 
+/** Result of a `GET /sync/pull` call against the remote brain. */
+export interface SyncPullResult {
+  /** HTTP status code (0 on network failure / timeout / malformed url). */
+  statusCode: number;
+  /**
+   * The `tables` map from the response body: `{ <table>: rows[] }`. Empty
+   * object when statusCode != 200, the body is not valid JSON, or it carried
+   * no `tables` field. (The brain omits tables with zero changed rows, so an
+   * empty map legitimately means "nothing newer remotely".)
+   */
+  tables: Record<string, Record<string, unknown>[]>;
+  /** Raw response body (utf-8) — surfaced for diagnostics on non-200. */
+  body: string;
+}
+
+/**
+ * `GET <remote_brain.url>/sync/pull?<since params>` — the VPS→local row-pull
+ * endpoint (`brain-mcp-server/src/index.ts:1690`). This is the CLIENT half of
+ * the brain's own `handleBrainPull` (`tools/sync.ts:913`): the CLI GETs the
+ * remote rows here and merges them into the LOCAL db (via
+ * `brain-db.ts#mergePulledTables`), rather than `mcpCall`-ing
+ * `igris_brain_pull` against the VPS — which would run the brain's pull handler
+ * on the VPS against the VPS's OWN db (VPS→VPS, circular; learning #169). A CLI
+ * process has no stdio MCP server, so it reproduces the pull's local half here.
+ *
+ * `sinceByTable` maps table name → the local `sync_state.last_pull_at` cursor;
+ * each becomes a `since_<table>=<ts>` query param (the brain defaults a missing
+ * param to the epoch, so the map need only carry the tables boot-sync pulls).
+ *
+ * Returns `{statusCode, tables, body}`. Promise NEVER rejects — a network
+ * failure surfaces as `{statusCode: 0, tables: {}, body: <message>}` so the
+ * caller records a skip and continues (boot-sync's never-block contract).
+ *
+ * Auth: `Authorization: Bearer <api_key>` (matches healthCheck / the brain's
+ * own pull, sync.ts:935). GET — no request body.
+ */
+export async function syncPull(
+  remote: RemoteBrainConfig,
+  sinceByTable: Record<string, string>,
+  timeoutMs = 30_000,
+): Promise<SyncPullResult> {
+  // TD-252: refuse non-local http:// before the Bearer header is sent.
+  const gate = assertSyncTransportAllowed(remote.url);
+  if (!gate.ok) {
+    return { statusCode: 0, tables: {}, body: gate.reason };
+  }
+
+  const params = new URLSearchParams();
+  for (const [table, since] of Object.entries(sinceByTable)) {
+    params.set(`since_${table}`, since);
+  }
+
+  let parsed: NodeURL;
+  try {
+    const qs = params.toString();
+    parsed = new NodeURL(
+      `${remote.url.replace(/\/$/, "")}/sync/pull${qs ? `?${qs}` : ""}`,
+    );
+  } catch {
+    return { statusCode: 0, tables: {}, body: "malformed url" };
+  }
+
+  const isHttps = parsed.protocol === "https:";
+  const requester = isHttps ? httpsRequest : httpRequest;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (result: SyncPullResult): void => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const req = requester(
+      {
+        method: "GET",
+        hostname: parsed.hostname,
+        port: parsed.port || (isHttps ? 443 : 80),
+        path: parsed.pathname + parsed.search,
+        headers: {
+          Authorization: `Bearer ${remote.apiKey}`,
+        },
+        timeout: timeoutMs,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c) => chunks.push(c as Buffer));
+        res.on("end", () => {
+          const respBody = Buffer.concat(chunks).toString("utf-8");
+          let tables: Record<string, Record<string, unknown>[]> = {};
+          if (res.statusCode === 200) {
+            try {
+              const json = JSON.parse(respBody) as {
+                tables?: Record<string, Record<string, unknown>[]>;
+              };
+              if (json && typeof json === "object" && json.tables && typeof json.tables === "object") {
+                tables = json.tables;
+              }
+            } catch {
+              tables = {};
+            }
+          }
+          settle({ statusCode: res.statusCode ?? 0, tables, body: respBody });
+        });
+        res.on("error", (err) =>
+          settle({ statusCode: 0, tables: {}, body: err.message }),
+        );
+      },
+    );
+    req.on("error", (err: Error) =>
+      settle({ statusCode: 0, tables: {}, body: err.message }),
+    );
+    req.on("timeout", () => {
+      try {
+        req.destroy();
+      } catch {
+        // ignore
+      }
+      settle({ statusCode: 0, tables: {}, body: "request timed out" });
+    });
+    req.end();
+  });
+}
+
 /**
  * Invoke an MCP tool over HTTP against the configured remote brain.
  *
@@ -208,6 +339,12 @@ export async function mcpCall(
   toolArgs: Record<string, unknown>,
   timeoutMs = 30_000,
 ): Promise<McpToolCallResult> {
+  // TD-252: refuse non-local http:// before the Bearer header is sent.
+  const gate = assertSyncTransportAllowed(remote.url);
+  if (!gate.ok) {
+    return { statusCode: 0, body: gate.reason, json: null };
+  }
+
   let parsed: NodeURL;
   try {
     parsed = new NodeURL(`${remote.url.replace(/\/$/, "")}/mcp`);

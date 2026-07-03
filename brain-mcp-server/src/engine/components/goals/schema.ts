@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Goals Component Schema
+ * Brain Engine v7.0 — Goals Component Schema
  *
  * Database migrations for the goals (outcome-level entities) component.
  * Creates the `goals` table with a UNIQUE constraint on `goal_id` and
@@ -15,7 +15,7 @@
  * and keeps schema ownership encapsulated.
  *
  * @module engine/components/goals/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

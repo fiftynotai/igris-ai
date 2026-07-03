@@ -1,7 +1,7 @@
 /**
- * Brain Engine v5.0 -- Monitoring Component
+ * Brain Engine v7.0 -- Monitoring Component
  *
- * Logs all orphan engine events (schedules, cache, coordination) into
+ * Logs all orphan engine events (schedules, cache, lifecycle) into
  * an event_log table for observability and audit purposes.
  *
  * Provides 2 MCP tools:
@@ -12,23 +12,16 @@
  * Listens: schedule.created, schedule.enabled, schedule.disabled,
  *          schedule.deleted, schedule.fire_now, schedule.run_start,
  *          schedule.run_complete, cache.rebuilt, cache.cleaned,
- *          coordination.self_heal, task.created, task.assigned,
- *          task.completed, task.blocked, task.unblocked,
- *          task.failed, task.claimed, brief.synced, brief.created,
+ *          brief.synced, brief.created,
  *          brief.completed, session.synced, session.file.updated,
- *          instance.heartbeat, memory.stored, error.stored,
+ *          instance.state_updated, memory.stored, error.stored,
  *          project.registered, metrics.recorded,
- *          subconscious.run_start, subconscious.run_complete,
- *          subconscious.suggestion_emitted,
- *          subconscious.suggestion_suppressed,
- *          subconscious.suggestion_verified,
- *          subconscious.suggestion_rejected_by_verifier,
  *          subconscious.bootstrap_failed,
  *          perception.run_started, perception.run_succeeded,
  *          perception.run_failed, perception.run_skipped
  *
  * @module engine/components/monitoring
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as os from 'node:os';
@@ -60,30 +53,20 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'schedule.run_complete': 'schedules',
   'cache.rebuilt': 'cache',
   'cache.cleaned': 'cache',
-  'coordination.self_heal': 'coordination',
-  'task.created': 'tasks',
-  'task.assigned': 'tasks',
-  'task.completed': 'tasks',
-  'task.blocked': 'tasks',
-  'task.unblocked': 'tasks',
-  'task.failed': 'tasks',
-  'task.claimed': 'tasks',
   'brief.synced': 'briefs',
   'brief.created': 'briefs',
   'brief.completed': 'briefs',
   'session.synced': 'sessions',
   'session.file.updated': 'sessions',
-  'instance.heartbeat': 'instances',
+  'instance.state_updated': 'instances',
   'memory.stored': 'memory',
   'error.stored': 'errors',
   'project.registered': 'projects',
   'metrics.recorded': 'metrics',
-  'subconscious.run_start': 'subconscious',
-  'subconscious.run_complete': 'subconscious',
-  'subconscious.suggestion_emitted': 'subconscious',
-  'subconscious.suggestion_suppressed': 'subconscious',
-  'subconscious.suggestion_verified': 'subconscious',
-  'subconscious.suggestion_rejected_by_verifier': 'subconscious',
+  // FR-118 M2: the subconscious run-lifecycle + per-suggestion + verifier
+  // events are no longer bus-emitted (the live path is the cognition engine,
+  // which writes `cognition.subconscious.*` directly to event_log). Only the
+  // schedule-bootstrap-failure event still rides the bus.
   'subconscious.bootstrap_failed': 'subconscious',
   'perception.run_started': 'perception',
   'perception.run_succeeded': 'perception',
@@ -163,7 +146,7 @@ export function createMonitoringComponent(): BrainComponent {
               },
               component: {
                 type: 'string',
-                description: 'Filter by source component (e.g. "schedules", "cache", "coordination")',
+                description: 'Filter by source component (e.g. "schedules", "cache", "briefs")',
               },
               project_slug: {
                 type: 'string',
@@ -224,30 +207,16 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'schedule.run_complete', description: 'Log schedule run completion events' },
           { name: 'cache.rebuilt', description: 'Log cache rebuild events' },
           { name: 'cache.cleaned', description: 'Log cache clean events' },
-          { name: 'coordination.self_heal', description: 'Log coordination self-healing events' },
-          { name: 'task.created', description: 'Log task creation events' },
-          { name: 'task.assigned', description: 'Log task assignment events' },
-          { name: 'task.completed', description: 'Log task completion events' },
-          { name: 'task.blocked', description: 'Log task blocked events' },
-          { name: 'task.unblocked', description: 'Log task unblocked events' },
-          { name: 'task.failed', description: 'Log task failure events' },
-          { name: 'task.claimed', description: 'Log task claimed events' },
           { name: 'brief.synced', description: 'Log brief sync events' },
           { name: 'brief.created', description: 'Log brief creation events' },
           { name: 'brief.completed', description: 'Log brief completion events' },
           { name: 'session.synced', description: 'Log session sync events' },
           { name: 'session.file.updated', description: 'Log session file update events' },
-          { name: 'instance.heartbeat', description: 'Log instance heartbeat events' },
+          { name: 'instance.state_updated', description: 'Log instance state update events' },
           { name: 'memory.stored', description: 'Log memory storage events' },
           { name: 'error.stored', description: 'Log error storage events' },
           { name: 'project.registered', description: 'Log project registration events' },
           { name: 'metrics.recorded', description: 'Log metrics recording events' },
-          { name: 'subconscious.run_start', description: 'Log subconscious detector run start events' },
-          { name: 'subconscious.run_complete', description: 'Log subconscious detector run completion events' },
-          { name: 'subconscious.suggestion_emitted', description: 'Log subconscious suggestion emission events' },
-          { name: 'subconscious.suggestion_suppressed', description: 'Log subconscious suggestion suppression events (dismiss-loop)' },
-          { name: 'subconscious.suggestion_verified', description: 'Log subconscious LLM-verified conflict suggestion events (FR-108)' },
-          { name: 'subconscious.suggestion_rejected_by_verifier', description: 'Log subconscious LLM-rejected heuristic conflict events (FR-108)' },
           { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
           { name: 'perception.run_started', description: 'Log perception extraction run start events (TD-074)' },
           { name: 'perception.run_succeeded', description: 'Log perception extraction run success events (TD-074)' },
@@ -273,30 +242,16 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('schedule.run_complete', onEventReceived);
       ctx.bus.on('cache.rebuilt', onEventReceived);
       ctx.bus.on('cache.cleaned', onEventReceived);
-      ctx.bus.on('coordination.self_heal', onEventReceived);
-      ctx.bus.on('task.created', onEventReceived);
-      ctx.bus.on('task.assigned', onEventReceived);
-      ctx.bus.on('task.completed', onEventReceived);
-      ctx.bus.on('task.blocked', onEventReceived);
-      ctx.bus.on('task.unblocked', onEventReceived);
-      ctx.bus.on('task.failed', onEventReceived);
-      ctx.bus.on('task.claimed', onEventReceived);
       ctx.bus.on('brief.synced', onEventReceived);
       ctx.bus.on('brief.created', onEventReceived);
       ctx.bus.on('brief.completed', onEventReceived);
       ctx.bus.on('session.synced', onEventReceived);
       ctx.bus.on('session.file.updated', onEventReceived);
-      ctx.bus.on('instance.heartbeat', onEventReceived);
+      ctx.bus.on('instance.state_updated', onEventReceived);
       ctx.bus.on('memory.stored', onEventReceived);
       ctx.bus.on('error.stored', onEventReceived);
       ctx.bus.on('project.registered', onEventReceived);
       ctx.bus.on('metrics.recorded', onEventReceived);
-      ctx.bus.on('subconscious.run_start', onEventReceived);
-      ctx.bus.on('subconscious.run_complete', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_emitted', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_suppressed', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_verified', onEventReceived);
-      ctx.bus.on('subconscious.suggestion_rejected_by_verifier', onEventReceived);
       ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
       ctx.bus.on('perception.run_started', onEventReceived);
       ctx.bus.on('perception.run_succeeded', onEventReceived);
@@ -330,30 +285,16 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('schedule.run_complete', onEventReceived);
         _ctx.bus.off('cache.rebuilt', onEventReceived);
         _ctx.bus.off('cache.cleaned', onEventReceived);
-        _ctx.bus.off('coordination.self_heal', onEventReceived);
-        _ctx.bus.off('task.created', onEventReceived);
-        _ctx.bus.off('task.assigned', onEventReceived);
-        _ctx.bus.off('task.completed', onEventReceived);
-        _ctx.bus.off('task.blocked', onEventReceived);
-        _ctx.bus.off('task.unblocked', onEventReceived);
-        _ctx.bus.off('task.failed', onEventReceived);
-        _ctx.bus.off('task.claimed', onEventReceived);
         _ctx.bus.off('brief.synced', onEventReceived);
         _ctx.bus.off('brief.created', onEventReceived);
         _ctx.bus.off('brief.completed', onEventReceived);
         _ctx.bus.off('session.synced', onEventReceived);
         _ctx.bus.off('session.file.updated', onEventReceived);
-        _ctx.bus.off('instance.heartbeat', onEventReceived);
+        _ctx.bus.off('instance.state_updated', onEventReceived);
         _ctx.bus.off('memory.stored', onEventReceived);
         _ctx.bus.off('error.stored', onEventReceived);
         _ctx.bus.off('project.registered', onEventReceived);
         _ctx.bus.off('metrics.recorded', onEventReceived);
-        _ctx.bus.off('subconscious.run_start', onEventReceived);
-        _ctx.bus.off('subconscious.run_complete', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_emitted', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_suppressed', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_verified', onEventReceived);
-        _ctx.bus.off('subconscious.suggestion_rejected_by_verifier', onEventReceived);
         _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
         _ctx.bus.off('perception.run_started', onEventReceived);
         _ctx.bus.off('perception.run_succeeded', onEventReceived);

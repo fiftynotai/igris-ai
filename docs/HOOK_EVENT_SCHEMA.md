@@ -94,20 +94,10 @@ the session end event only.
 
 ---
 
-### `SkillInvoke` — Skill Execution (via emit_skill_event.sh)
-
-Sent when a skill (slash command) is executed.
-
-```json
-{
-  "hook_event_name": "SkillInvoke",
-  "skill_name": "hunt",
-  "project_slug": "igris-ai"
-}
-```
-
-**Brain actions:**
-- Inserts into `event_log` table (event_name: hook.skillinvoke, component: hooks)
+> **SkillInvoke telemetry retired in FR-202 M7; restore portably via TD-260.**
+> The per-skill emitter (`emit_skill_event.sh`) was Claude-specific
+> (`$CLAUDE_PROJECT_DIR`) and had no in-repo consumer. TD-260 will reintroduce
+> skill-invocation telemetry as a harness-agnostic surface.
 
 ---
 
@@ -222,4 +212,4 @@ requests.post(
 
 ---
 
-**Maintained by:** Igris AI (Fifty.ai)
+**Maintained by:** Igris AI (fifty.dev)

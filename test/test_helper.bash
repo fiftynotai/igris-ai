@@ -32,13 +32,6 @@ setup_test_project() {
   export TEST_PROJECT_DIR="$TEST_TEMP_DIR/test-project"
 }
 
-# Initialize Igris AI in test project
-# Usage: init_igris_in_test_project
-init_igris_in_test_project() {
-  setup_test_project
-  "$SCRIPTS_DIR/igris_init.sh" "$TEST_PROJECT_DIR" <<< "y"
-}
-
 # =============================================================================
 # ASSERTION HELPERS
 # =============================================================================
@@ -203,7 +196,6 @@ mkdir -p "$TEST_TEMP_DIR"
 
 # Export helper functions
 export -f setup_test_project
-export -f init_igris_in_test_project
 export -f assert_file_exists
 export -f assert_dir_exists
 export -f assert_file_contains

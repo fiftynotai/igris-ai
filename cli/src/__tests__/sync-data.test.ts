@@ -57,12 +57,20 @@ function writeQueue(slug: string, lines: string[]): string {
 beforeEach(() => {
   tmpBrain = mkdtempSync(join(tmpdir(), "igris-cli-sync-data-"));
   envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
+  envBackup.IGRIS_ALLOW_INSECURE_SYNC = process.env.IGRIS_ALLOW_INSECURE_SYNC;
   process.env.IGRIS_BRAIN_DIR = tmpBrain;
+  // TD-252: start each test from the refuse-default (override UNSET).
+  delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
 });
 
 afterEach(() => {
   rmSync(tmpBrain, { recursive: true, force: true });
   process.env.IGRIS_BRAIN_DIR = envBackup.IGRIS_BRAIN_DIR;
+  if (envBackup.IGRIS_ALLOW_INSECURE_SYNC === undefined) {
+    delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
+  } else {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = envBackup.IGRIS_ALLOW_INSECURE_SYNC;
+  }
   vi.restoreAllMocks();
 });
 
@@ -512,6 +520,165 @@ describe("sync data — runSyncData", () => {
     }
   });
 
+  // ---------------------------------------------------------------------
+  // FR-128: atomic-drain integration tests.
+  //
+  // Test #8 (the AC bullet at the CLI integration layer): a sibling
+  // harness's append landing while runSyncData is mid-replay must
+  // survive — the appended line is processed by a SECOND runSyncData
+  // call, never lost.
+  //
+  // Test #9: a stale `.draining-*` file left by a crashed prior drain
+  // is recovered on the next runSyncData (the self-heal path).
+  // ---------------------------------------------------------------------
+  it("concurrent append during runSyncData is preserved on next runSyncData (FR-128 AC)", async () => {
+    // Deterministic barrier: the loopback's first response (the
+    // per-entry replay) only resolves AFTER the test has appended the
+    // sibling line. This pins the race that motivates FR-128 without
+    // depending on setTimeout/sleep.
+    let resolveBarrier!: () => void;
+    const barrier = new Promise<void>((resolve) => {
+      resolveBarrier = resolve;
+    });
+
+    const lb = makeLoopback(async (_call, idx) => {
+      if (idx === 0) {
+        // First call = per-entry replay. Hold response until the test
+        // simulates the sibling-harness append.
+        await barrier;
+      }
+      return { status: 200, body: JSON.stringify({ ok: true }) };
+    });
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const queuePath = writeQueue("demo", [
+      JSON.stringify({
+        operation: "brief_sync",
+        project: "demo",
+        brief_id: "TD-FR128-ORIG",
+        title: "original",
+        status: "ACTIVE",
+      }),
+    ]);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+
+      // Start the first drain (resolves once barrier releases).
+      const firstDrainPromise = runSyncData({ projectSlug: "demo" });
+
+      // Wait until the per-entry replay has actually hit the loopback
+      // (so we know the rename has already occurred — the canonical
+      // file is the renamed temp at this point). Spin-poll on lb.calls
+      // until the first call is observed.
+      for (let i = 0; i < 100; i++) {
+        if (lb.calls.length >= 1) break;
+        await new Promise<void>((r) => setImmediate(r));
+      }
+      expect(lb.calls.length).toBeGreaterThanOrEqual(1);
+
+      // Simulate the sibling-harness append landing AFTER the rename.
+      // The canonical name is free (the renamed temp holds the
+      // snapshot), so this creates a fresh `sync_queue.jsonl`.
+      writeFileSync(
+        queuePath,
+        JSON.stringify({
+          operation: "brief_sync",
+          project: "demo",
+          brief_id: "TD-FR128-SIBLING",
+          title: "sibling",
+          status: "ACTIVE",
+        }) + "\n",
+      );
+      expect(existsSync(queuePath)).toBe(true);
+
+      // Release the loopback → first drain completes.
+      resolveBarrier();
+      const code1 = await firstDrainPromise;
+      expect(code1).toBe(0);
+      // First drain made 2 calls: 1 per-entry + 1 brain-side drain.
+      expect(lb.calls.length).toBe(2);
+      expect(lb.calls[0].args?.brief_id).toBe("TD-FR128-ORIG");
+
+      // The sibling line is now the sole content of the canonical
+      // queue — drain it via a SECOND runSyncData.
+      const code2 = await runSyncData({ projectSlug: "demo" });
+      expect(code2).toBe(0);
+
+      // 2 more calls: the sibling replay + a second brain-side drain.
+      expect(lb.calls.length).toBe(4);
+      expect(lb.calls[2].toolName).toBe("igris_brief_sync");
+      expect(lb.calls[2].args?.brief_id).toBe("TD-FR128-SIBLING");
+
+      // Queue is now empty AND no `.draining-*` files remain.
+      expect(existsSync(queuePath)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("runSyncData recovers a stale .draining-* from a prior crashed drain (FR-128)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ ok: true }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    // Pre-seed ONLY a stale draining file (no canonical queue) —
+    // simulates the prior run crashing between rename and finalize.
+    const dir = join(tmpBrain, "projects", "demo");
+    mkdirSync(dir, { recursive: true });
+    const stalePath = join(dir, "sync_queue.jsonl.draining-99999-1");
+    writeFileSync(
+      stalePath,
+      [
+        JSON.stringify({
+          operation: "brief_sync",
+          project: "demo",
+          brief_id: "TD-CRASHED-1",
+          title: "crashed-a",
+          status: "ACTIVE",
+        }),
+        JSON.stringify({
+          operation: "brief_sync",
+          project: "demo",
+          brief_id: "TD-CRASHED-2",
+          title: "crashed-b",
+          status: "ACTIVE",
+        }),
+      ].join("\n") + "\n",
+    );
+    expect(existsSync(join(dir, "sync_queue.jsonl"))).toBe(false);
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+
+      // 2 per-entry replays + 1 brain-side drain = 3 calls.
+      expect(lb.calls.length).toBe(3);
+      expect(lb.calls[0].args?.brief_id).toBe("TD-CRASHED-1");
+      expect(lb.calls[1].args?.brief_id).toBe("TD-CRASHED-2");
+      expect(lb.calls[2].toolName).toBe("igris_sync_queue_drain");
+
+      // Stale file is reclaimed and queue is fully drained.
+      expect(existsSync(stalePath)).toBe(false);
+      expect(existsSync(join(dir, "sync_queue.jsonl"))).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
   it("brief_create with missing cache_path file: exit 1, queue preserved, drain NOT called (TD-119)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
@@ -545,6 +712,127 @@ describe("sync data — runSyncData", () => {
       expect(existsSync(queuePath)).toBe(true);
     } finally {
       await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+});
+
+describe("sync data — TD-252 transport guard (the 4-case matrix)", () => {
+  // #356: assert the REAL refusal/allow outcome, not "200 OK".
+
+  it("case 1: https URL is NOT refused by the guard (gate passes through)", async () => {
+    // Points at https://127.0.0.1:<closed-port> — the guard allows https, so
+    // the request is attempted and fails to CONNECT (network error), NOT
+    // short-circuited with the cleartext-key refusal. Proves https passes.
+    writeConfig({
+      remote_brain: { url: "https://127.0.0.1:1", api_key: "k" },
+    });
+    const { runSyncData } = await import("../lib/sync/data.js");
+    // Empty queue → drain-only path → callRemoteDrain → mcpCall. The TLS
+    // connection to a closed port fails (exit 1) but the guard did NOT block
+    // it. (If the guard wrongly refused https, exit would still be 1, so this
+    // test's value is the companion classifier unit test — kept for the
+    // wiring smoke.)
+    const code = await runSyncData({ projectSlug: "no-queue" });
+    expect(code).toBe(1);
+  });
+
+  it("case 2: localhost http proceeds (existing loopback fixtures still pass)", async () => {
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ drained: 0 }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // Loopback http is allowed → drain call reaches the server → exit 0.
+      expect(code).toBe(0);
+      expect(lb.calls.length).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 3: remote http, override UNSET → REFUSED, ZERO requests on the wire", async () => {
+    // A loopback server is started but the config points at a REMOTE host —
+    // if the guard leaked, a request would hit some endpoint; instead the
+    // guard short-circuits and the server records ZERO calls. The
+    // Authorization: Bearer header is NEVER built/sent (#356).
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: JSON.stringify({ drained: 0 }),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    // Remote hostname (NOT loopback) — guard classifies insecure-http.
+    writeConfig({
+      remote_brain: { url: "http://vps.example.invalid:3001", api_key: "k" },
+    });
+
+    const stderrBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // Refused → drain fails → exit 1.
+      expect(code).toBe(1);
+      // The decisive #356 assertion: NO request ever left the process.
+      expect(lb.calls.length).toBe(0);
+      // The refusal reason (with the cleartext-key risk + the fix) surfaces.
+      const out = stderrBuf.join("");
+      expect(out).toContain("cleartext");
+    } finally {
+      errSpy.mockRestore();
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 4: remote http + override=1 → request IS attempted (guard let it through) + warns", async () => {
+    process.env.IGRIS_ALLOW_INSECURE_SYNC = "1";
+    // Point at a REMOTE-looking host on the loopback closed port: the guard
+    // allows it (override active), so mcpCall ATTEMPTS the connection. We
+    // assert the guard did NOT short-circuit by checking the failure body is
+    // a NETWORK error, not the cleartext refusal, AND that the loud warning
+    // fired.
+    writeConfig({
+      remote_brain: { url: "http://vps.example.invalid:3001", api_key: "k" },
+    });
+
+    const stderrBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      // The connection to an invalid host fails → exit 1, but the guard
+      // ALLOWED the attempt (the request was built and dispatched).
+      expect(code).toBe(1);
+      const out = stderrBuf.join("");
+      // The loud per-sync override warning fired.
+      expect(out).toContain("WARNING");
+      expect(out).toContain("override active");
+      // The failure is a network/DNS error, NOT the cleartext refusal — proves
+      // the guard let the request through rather than short-circuiting.
+      expect(out).not.toContain("refusing to sync over http");
+    } finally {
+      errSpy.mockRestore();
     }
   });
 });

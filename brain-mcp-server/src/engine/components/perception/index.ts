@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Perception Component (FR-109)
+ * Brain Engine v7.0 — Perception Component (FR-109)
  *
  * Wires the perception channel into the engine:
  *   - Owns the `perception_watermarks` schema (v1).
@@ -13,7 +13,7 @@
  * persistence and the runner for orchestration.
  *
  * @module engine/components/perception
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import * as fs from 'node:fs';
@@ -33,14 +33,17 @@ import {
 } from './types.js';
 import {
   handlePerceptionApprove,
+  handlePerceptionDashboard,
   handlePerceptionExpireStale,
   handlePerceptionExtractNow,
+  handlePerceptionGet,
   handlePerceptionReject,
   handlePerceptionReviewPending,
   handlePerceptionSubmit,
   setHandlerContext,
 } from './handlers.js';
 import { selectLlmExtractor } from './extractors/llm_via_claude_code.js';
+import type { LlmExtractorGlobalConfig } from '../cognition/backend/env.js';
 
 // ---------------------------------------------------------------------------
 // Config resolution
@@ -49,24 +52,38 @@ import { selectLlmExtractor } from './extractors/llm_via_claude_code.js';
 /**
  * Resolve the active config via the 3-layer chain:
  *   1. `DEFAULT_PERCEPTION_CONFIG` (typed defaults)
- *   2. `~/.igris/config.json` `perception` section (operator override)
+ *   2. `~/.igris/config.json` `cognition.perception` section (operator override)
  *   3. Env vars: `IGRIS_PERCEPTION_LLM_ENABLED`, `IGRIS_PERCEPTION_LLM_TIMEOUT_MS`,
  *      `IGRIS_PERCEPTION_AUTO_APPROVE` (TD-066)
  *
- * Mirrors `subconscious/runner.ts` config handling. Failure to read the
- * file is silent — defaults still apply.
+ * FR-191: the operator-override section moved UP to the `cognition.perception`
+ * namespace (nested-only — the legacy top-level `perception` block is no longer
+ * read; the feature never shipped a consumer that relied on it). The section's
+ * `enabled` flag (what the config.json template + `applyPerceptionDefault` write)
+ * maps onto the internal `extractor_llm_enabled` knob so the install-time OFF
+ * default actually closes the door (FR-191 R-3b). Failure to read the file is
+ * silent — defaults still apply.
  */
 export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn: (m: string) => void }): PerceptionExtractorConfig {
   let cfg: PerceptionExtractorConfig = { ...DEFAULT_PERCEPTION_CONFIG };
 
-  // Layer 2: ~/.igris/config.json
+  // Layer 2: ~/.igris/config.json `cognition.perception`
   try {
     const configPath = path.join(os.homedir(), '.igris', 'config.json');
     const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const section = parsed.perception;
+    const cognition = parsed.cognition;
+    const section =
+      cognition && typeof cognition === 'object' && !Array.isArray(cognition)
+        ? (cognition as Record<string, unknown>).perception
+        : undefined;
     if (section && typeof section === 'object' && !Array.isArray(section)) {
-      cfg = { ...cfg, ...(section as Partial<PerceptionExtractorConfig>) };
+      const sec = section as Partial<PerceptionExtractorConfig> & { enabled?: boolean };
+      // `cognition.perception.enabled` is the canonical on/off flag (template +
+      // applyPerceptionDefault); it maps onto `extractor_llm_enabled`.
+      const { enabled, ...rest } = sec;
+      cfg = { ...cfg, ...rest };
+      if (typeof enabled === 'boolean') cfg.extractor_llm_enabled = enabled;
     }
   } catch {
     // file absent or malformed — defaults already in place
@@ -101,6 +118,29 @@ export function resolvePerceptionConfig(log?: { info: (m: string) => void; warn:
     );
   }
   return cfg;
+}
+
+/**
+ * Resolve the global `llm_extractor` config section (FR-118) — the shared
+ * cognition-backend harness default + fallback order. Read from
+ * `~/.igris/config.json`'s `llm_extractor` block; absent/malformed yields `{}`
+ * (the backend defaults the harness to `'claude'`, preserving perception's
+ * back-compat behavior). This is the section `resolveHarness` reads so a
+ * non-claude install can re-point the extraction harness globally.
+ */
+export function resolveLlmExtractorGlobalConfig(): LlmExtractorGlobalConfig {
+  try {
+    const configPath = path.join(os.homedir(), '.igris', 'config.json');
+    const raw = fs.readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const section = parsed.llm_extractor;
+    if (section && typeof section === 'object' && !Array.isArray(section)) {
+      return section as LlmExtractorGlobalConfig;
+    }
+  } catch {
+    // file absent or malformed — default harness ('claude') applies downstream
+  }
+  return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +267,7 @@ export function createPerceptionComponent(): BrainComponent {
         {
           name: 'igris_perception_extract_now',
           description:
-            'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /distill integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
+            'Manual perception extraction with optional force_llm bypass of the bytes-floor cost gate. Useful for /harvest integration and operator triage. Watermark advance is opt-in (defaults false) so manual runs do not shadow the next session_end.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -248,6 +288,55 @@ export function createPerceptionComponent(): BrainComponent {
             required: ['project'],
           },
           handler: (args) => handlePerceptionExtractNow(args),
+        },
+
+        // -------------------------------------------------------------------
+        // TD-171 M3 — igris_perception_get
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_perception_get',
+          description:
+            'Return the full row of a single pending_review learning. Use this when igris_perception_review_pending shows truncated content and you need the full candidate before approve/reject. Errors on approved/non-existent rows.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              learning_id: {
+                type: 'integer',
+                description: 'ID of the pending_review learning to fetch.',
+              },
+            },
+            required: ['learning_id'],
+          },
+          handler: (args) => handlePerceptionGet(args),
+        },
+
+        // -------------------------------------------------------------------
+        // TD-171 M3 — igris_perception_dashboard
+        // -------------------------------------------------------------------
+        {
+          name: 'igris_perception_dashboard',
+          description:
+            'Aggregate dashboard for the perception channel. Reports inbox size (pending), recent approve/reject volume, run outcomes (succeeded/failed/skipped) from event_log, and dedup rediscovery counts. Per L-152 strictly perception scope — no subconscious or janitor concerns.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Optional project filter — narrows totals AND recent windows.',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window for recent and *_last_n totals. Default 30.',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only — omit samples.top_extractors. Default false.',
+              },
+            },
+          },
+          handler: (args) => handlePerceptionDashboard(args),
         },
 
         // -------------------------------------------------------------------
@@ -329,7 +418,7 @@ export function createPerceptionComponent(): BrainComponent {
           {
             name: 'perception.rejected_pattern_recurring',
             description:
-              'A perception candidate matched a previously-rejected fingerprint. Declared but not emitted in TD-086 v1 — reject is hard DELETE today; activates when FR-116 introduces soft-delete.',
+              'A recurring candidate (seen_again_count > 0) was rejected. FR-116 M3 (Decision #10) flipped reject to a SOFT-delete on recurrence + emit; the janitor surfaceReEvalRejections tally reads this to surface a re_evaluate_rejection suggestion. The common first-time reject stays a hard DELETE and does not fire this.',
           },
         ],
         listens: [],
@@ -338,7 +427,12 @@ export function createPerceptionComponent(): BrainComponent {
 
     init(ctx: ComponentContext): void {
       const config = resolvePerceptionConfig(ctx.log);
-      const llmExtractor = selectLlmExtractor(config, ctx.log);
+      // FR-118 M1: the production extractor now rides the shared brain-isolated
+      // cognition backend (selectLlmExtractor → makeBackendLlmExtractor →
+      // runBackend). The harness is resolved via the shared 4-layer chain from
+      // the global `llm_extractor` config; perception's default stays 'claude'.
+      const globalConfig = resolveLlmExtractorGlobalConfig();
+      const llmExtractor = selectLlmExtractor(config, ctx.log, globalConfig);
       setHandlerContext({
         bus: ctx.bus,
         config,

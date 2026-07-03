@@ -1,5 +1,6 @@
 ---
 name: team
+tier: opt-in
 description: Parallel execution with Agent Teams - spawn teammates for parallel briefs, reviews, investigations
 disable-model-invocation: false
 allowed-tools:
@@ -66,12 +67,6 @@ Subcommands: `hunt`, `review`, `investigate`, `refactor`, `status`, `message`, `
 4. **Display mode (optional):** Set `"teammateMode": "tmux"` in `~/.claude/settings.json` for split-pane view (requires tmux or iTerm2). Default is `"in-process"` which works without extra dependencies.
 
 ## Pre-Flight Check
-
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "team" 2>/dev/null || true
-```
 
 Before every team spawn, execute these checks in order:
 
@@ -727,28 +722,21 @@ Agent Teams integrates two Claude Code hooks for automated quality enforcement:
 **Trigger:** When a teammate is about to go idle (finished all assigned work).
 
 **Behavior:**
-- Queries the brain task queue via `POST /api/tasks/next` for the project
-- If a task is found: exit code 2 sends the assignment as feedback, keeps teammate working
-- If no tasks available: exit code 0 allows the teammate to go idle
-- Assignment includes task ID, title, description, priority, and instructions
-- Events are logged to the brain API as `team.teammate_idle`
-
-**Task Assignment Flow:**
-1. Check local brain (localhost:3001)
-2. If no local brain, check remote brain (~/.igris/config.json)
-3. If a task is found, auto-assign it to the teammate
-4. Teammate receives the task description as feedback and continues working
+- The Lead surfaces the next piece of work from the active brief/plan for the project
+- If work remains: exit code 2 sends the assignment as feedback, keeps teammate working
+- If no work remains: exit code 0 allows the teammate to go idle
+- Assignment includes the work item's title, description, priority, and instructions
 
 ### Distinction: Agent Teams vs Brain-Level Quality Gates
 
 | Layer | Scope | Mechanism |
 |-------|-------|-----------|
 | **Agent Teams hooks** (CLI-native) | Intra-CLI parallelism | `TaskCompleted` exit code 2 prevents completion |
-| **Brain task verification** (universal) | Inter-CLI orchestration | `igris_task_complete` validates before status change |
+| **Brief status verification** (universal) | Inter-CLI orchestration | `igris_brief_update` records status across CLIs |
 
-Agent Teams hooks are CLI-specific quality gates that work within a single Claude Code session. Brain-level task completion verification (`igris_task_complete`) is the universal gate that works across all CLIs and agents, including non-Claude Code agents in v6 cross-CLI workflows.
+Agent Teams hooks are CLI-specific quality gates that work within a single Claude Code session. Brain-level brief-status tracking (`igris_brief_update`) is the universal record that works across all CLIs and agents, including non-Claude Code agents in cross-CLI workflows.
 
-Both layers can coexist: the Agent Teams hook provides fast, local quality enforcement, while the brain provides the source of truth for task status across all agents.
+Both layers can coexist: the Agent Teams hook provides fast, local quality enforcement, while the brain provides the source of truth for brief status across all agents.
 
 ---
 

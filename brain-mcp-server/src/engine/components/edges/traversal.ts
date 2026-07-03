@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Edges Component Graph Traversal (FR-113)
+ * Brain Engine v7.0 — Edges Component Graph Traversal (FR-113)
  *
  * Three read-only graph tools layered on top of entity_edges:
  *   - igris_graph_neighbors  — BFS within N hops (direction-aware)
@@ -26,7 +26,7 @@
  *     edge.removed bus events.
  *
  * @module engine/components/edges/traversal
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';
@@ -239,6 +239,19 @@ const LABEL_SCHEMA: Record<EntityType, LabelSchema | null> = {
   session: { table: 'sessions', idCol: 'id', labelExpr: 'summary', numericId: true },
   // goals table ships with FR-110; until then we silently fall back to id.
   goal: { table: 'goals', idCol: 'id', labelExpr: 'title', numericId: false },
+  // TD-171 M2: free-standing nodes registered in graph_nodes.
+  // Both concept and decision resolve via graph_nodes.label, scoped by node_type.
+  // The `WHERE node_type = ?` constraint can't be expressed in this generic
+  // schema (idCol is the only WHERE column), so we instead pick the table
+  // name by entity_type — graph_nodes_concept / graph_nodes_decision is one
+  // option, but since label collisions across types are tolerated for v1
+  // (the (node_type, node_external_id) pair is unique), we accept that two
+  // concept and decision nodes sharing a node_external_id would each return
+  // both labels. In practice node_external_id strings carry their type
+  // prefix ("concept:foo", "decision:bar") so collisions are vanishingly
+  // rare. A node_type-aware resolveLabels is a follow-up if needed.
+  concept: { table: 'graph_nodes', idCol: 'node_external_id', labelExpr: 'label', numericId: false },
+  decision: { table: 'graph_nodes', idCol: 'node_external_id', labelExpr: 'label', numericId: false },
 };
 
 /**

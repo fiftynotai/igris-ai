@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 — Schedules Component Schema
+ * Brain Engine v7.0 — Schedules Component Schema
  *
  * Database migrations for the scheduling system.
  * Creates schedules and schedule_runs tables with
  * indexes for efficient querying.
  *
  * @module engine/components/schedules/schema
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { Migration } from '../../types.js';

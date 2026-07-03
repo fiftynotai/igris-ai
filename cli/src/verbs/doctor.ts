@@ -8,50 +8,116 @@
  *   brain-core-missing      → ~/.igris/core/ absent or empty
  *   brain-core-stale        → ~/.igris/core/ content hash diverges from channel head
  *   bridge-missing          → CLI on PATH lacks configured bridge
+ *   mcp-unregistered        → ~/.claude.json lacks the igris-brain MCP entry
+ *                             (or it points at a missing file) — TD-168
+ *   secret-perms            → an Igris-written secret file (config.json,
+ *                             secrets.env) OR a harness config is group/world-
+ *                             readable or git-tracked — TD-220
+ *   skills-pollution        → a managed surface root (~/.claude/skills or
+ *                             ~/.claude/agents) is a legacy v6-era WHOLE-DIR
+ *                             symlink pointing AT the canonical source
+ *                             (~/.igris/core/{skills,agents}), OR a stray
+ *                             projection symlink leaked INTO that canonical
+ *                             source. The whole-dir symlink makes a live
+ *                             `igris harness compile --surface skills` write
+ *                             per-item symlinks INTO the canonical source
+ *                             (active damage). --fix migrates each root to a
+ *                             REAL dir of per-item symlinks (direct-materialize,
+ *                             never compile) and cleans the strays — TD-223
+ *                             (RE-SCOPED, corrected root cause).
+ *
+ * Brain-level (continued):
+ *   hooks-missing           → the GLOBAL ~/.claude/settings.json lacks the Igris
+ *                             SessionEnd hook (or is absent/malformed). FR-212d
+ *                             moved hooks global — there is no per-project hooks
+ *                             layer anymore, so this is a single (brain) row.
+ *   hooks-stale             → the global settings carry the Igris SessionEnd hook
+ *                             but at a non-canonical command path.
  *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
- *   not-installed           → path exists but .claude/ missing
- *   hooks-missing           → settings.json present but lacks SessionEnd Igris hook
- *                             (the TD-100 silent-failure class)
- *   hooks-stale             → settings.json has Igris hooks but their hash differs
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
  *   duplicate-path          → multiple slugs with the same realpath (fifty_eco_system)
  *   symlink-target          → row.path is itself a symlink
- *   clean                   → none of the above
+ *   clean                   → registered + path exists (the register-only happy path)
+ *
+ * FR-212d Phase 2: the `not-installed` class (path exists but `.claude/` missing)
+ * was RETIRED — `igris install` is register-only and no longer writes a
+ * per-project `.claude/` layer, so its absence no longer signals "not installed".
+ * A registered project whose path exists is clean.
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
- * channel-mismatch → bridge-missing → duplicate-path → not-installed →
- * hooks-missing → hooks-stale → symlink-target → slug-basename-mismatch → clean.
+ * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
+ * hooks-stale → secret-perms → skills-pollution → duplicate-path →
+ * symlink-target → slug-basename-mismatch → clean.
+ * (mcp-unregistered + hooks-missing/hooks-stale + secret-perms + skills-pollution
+ *  sit next to bridge-missing — all brain-level, config/state-driven, and
+ *  orthogonal to core state. skills-pollution is lowest brain-level precedence
+ *  — TD-223.)
  *
- * --fix repairs not-installed / hooks-missing / hooks-stale by re-running install,
- * brain-core-missing by invoking runRefresh(), bridge-missing by invoking
- * partial-mode runInit({ upgrade: true }).
+ * --fix repairs hooks-missing / hooks-stale by re-merging the GLOBAL Igris hooks
+ * (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
+ * re-install), brain-core-missing by invoking runRefresh(), bridge-missing by
+ * invoking partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
+ * registerBrainAcrossHarnesses() directly to backfill all Igris harnesses (FR-169;
+ * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
+ * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
+ * a git-tracked file stays flagged since chmod can't untrack it),
+ * skills-pollution by migrating each legacy whole-dir surface root into a REAL
+ * dir of per-item symlinks (direct-materialize from the canonical source +
+ * personal overlay — NEVER a compile, which would lose every skill + core
+ * agent) and cleaning each stray projection symlink leaked into the canonical
+ * source (TD-223 RE-SCOPED; backup-not-delete the old root symlink, atomic
+ * rename, realpath-contained, refuse-on-unexpected-target, idempotent — a stray
+ * that is not a loadout projection stays flagged for manual resolution; --fix
+ * prints the before/after enumeration as the no-loss proof).
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes).
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { createInterface } from "node:readline";
 import {
   listProjects,
   deleteProjectRow,
 } from "../lib/registry.js";
 import {
-  computeFeatureHashes,
-} from "../lib/installed-features.js";
-import {
-  projectSettingsPath,
+  claudeJsonPath,
+  claudeUserSettingsPath,
+  codexConfigTomlPath,
+  configJsonPath,
+  geminiSettingsPath,
+  opencodeConfigPath,
+  loadoutOverlayPath,
+  secretsEnvPath,
 } from "../lib/paths.js";
-import { runInstall } from "./install.js";
+import { extractVarName, parseSecretsEnv } from "../lib/secrets.js";
+import {
+  checkSecretFilePerms,
+  chmodSecretFile,
+} from "../lib/secret-perms.js";
+import {
+  classifyMigration,
+  migrateSurfaceRoot,
+  removeStraySourceSymlink,
+  coreSkillsSource,
+  coreAgentsSource,
+} from "../lib/skills-pollution.js";
+import {
+  inspectMcpRegistration,
+  registerBrainAcrossHarnesses,
+} from "../lib/mcp-register.js";
+import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
 import { runRefresh } from "./refresh.js";
 import { runInit } from "./init.js";
 import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
 import { detectBrainCoreStale } from "../lib/drift/brain-core-stale.js";
 import { detectChannelMismatch } from "../lib/drift/channel-mismatch.js";
 import { detectBridgeMissing } from "../lib/drift/bridge-missing.js";
+import { detectAntigravitySkillsLink } from "../lib/drift/antigravity-skills-link.js";
+import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { info, warn, error as logError } from "../lib/log.js";
 import type { DriftRow, RegistryRow } from "../types.js";
 
@@ -67,38 +133,76 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
 
   printDriftTable(drift);
 
+  // FR-165: read-only WARNING for MCP env refs whose VAR is resolvable nowhere
+  // (neither secrets.env nor process.env). Not a fixable drift-row — the fix is
+  // "add it to secrets.env", which doctor cannot do safely. Never echoes a value.
+  detectMissingSecrets();
+
+  // TD-220: in the read pass (no --fix), the harness-owned secret configs get a
+  // WARN — Igris does NOT auto-tighten them ("don't fight the
+  // harness"). The drift table already shows the row; this names it as
+  // harness-owned and offers --fix. (Igris-owned config.json/secrets.env are
+  // fixed proactively at init + under --fix, so they don't get this warn.)
+  if (!opts.fix) {
+    for (const row of drift) {
+      if (
+        row.driftClass === "secret-perms" &&
+        !isIgrisOwnedSecretFile(row.path)
+      ) {
+        warn(
+          `harness config '${row.path}' has loose/world-readable or ` +
+            `git-tracked perms — run 'igris doctor --fix' to chmod 600 ` +
+            `(metadata only; file contents are untouched).`,
+        );
+      }
+    }
+    // TD-223: in the read pass, name each polluted skills entry by skill name
+    // (NO body bytes — L-515 read-only posture). Divergent entries get an
+    // explicit manual-resolution warning since --fix will NEVER touch them.
+    if (drift.some((r) => r.driftClass === "skills-pollution")) {
+      warnSkillsPollutionEntries();
+    }
+  }
+
   let errored = 0;
   // TD-122: bridge-missing fix is invocation-bounded — a single partial
   // init resolves all bridge-missing rows in one pass. We track this
   // flag so subsequent bridge-missing rows skip re-invocation, but DO
-  // NOT `break` the loop: that would skip per-project drift classes
-  // (not-installed / hooks-* / brain-core-missing) that come after
-  // bridge-missing in `drift`.
+  // NOT `break` the loop: that would skip other drift classes
+  // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
+  // skills-pollution) that come after bridge-missing in `drift`.
   let bridgeFixApplied = false;
+  // TD-223: skills-pollution emits a single brain-level row, but guard against
+  // a repeated convert pass defensively (mirrors bridgeFixApplied).
+  let skillsPollutionFixApplied = false;
+
+  // FR-212d: hooks are global now (ONE block), so the hooks-missing/hooks-stale
+  // fix — re-merging `~/.claude/settings.json` — is a single brain-level action.
+  // Guard against re-running it per (brain) row defensively (there is only one).
+  let globalHooksFixApplied = false;
 
   if (opts.fix) {
     for (const row of drift) {
       if (
-        row.driftClass === "not-installed" ||
         row.driftClass === "hooks-missing" ||
         row.driftClass === "hooks-stale"
       ) {
-        info(`fix: re-running install for ${row.slug}`);
-        try {
-          const code = await runInstall({
-            path: row.path,
-            slug: row.slug,
-            installHooks: true,
-            skipSymlinkLayer: row.driftClass !== "not-installed",
-          });
-          if (code !== 0) {
-            errored++;
-            logError(`${row.slug}: fix returned exit ${code}`);
-          }
-        } catch (err) {
+        // FR-212d Phase 2: the per-project hooks layer was retired — hooks live
+        // in ONE global `~/.claude/settings.json` block. The fix is GLOBAL-only:
+        // re-merge the canonical Igris hooks (idempotent + no-clobber +
+        // never-throws). There is no per-project materialization to re-run, so
+        // this is NOT a per-project re-install — the row is brain-level.
+        if (globalHooksFixApplied) {
+          continue;
+        }
+        globalHooksFixApplied = true;
+        info("fix: hooks-missing/stale — refreshing the GLOBAL Igris hooks (~/.claude/settings.json)");
+        const gh = mergeGlobalCanonicalHooks();
+        if (gh.outcome === "failed") {
           errored++;
-          const msg = err instanceof Error ? err.message : String(err);
-          logError(`${row.slug}: ${msg}`);
+          logError(`global hooks refresh failed: ${gh.error}`);
+        } else {
+          info(`  global Igris hooks ${gh.outcome} -> ${gh.path}`);
         }
       } else if (row.driftClass === "brain-core-missing") {
         info(`fix: brain-core-missing — invoking 'igris refresh'`);
@@ -116,9 +220,9 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       } else if (row.driftClass === "bridge-missing") {
         // TD-122: a single partial-init resolves all bridge-missing rows
         // in one pass. Subsequent rows are skipped via the flag — but
-        // we MUST NOT `break` the outer loop, because per-project drift
-        // classes (not-installed / hooks-* / brain-core-missing) may
-        // still be waiting after the bridge-missing block.
+        // we MUST NOT `break` the outer loop, because other drift classes
+        // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
+        // skills-pollution) may still be waiting after the bridge-missing block.
         if (bridgeFixApplied) {
           continue;
         }
@@ -143,6 +247,73 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
           // help and may compound state damage).
           bridgeFixApplied = true;
         }
+      } else if (row.driftClass === "mcp-unregistered") {
+        // FR-169: register the bundled igris-brain MCP into every descriptor
+        // harness directly (the set is descriptor-driven via harnessIds()). Cheap
+        // — no need to re-run init. registerBrainAcrossHarnesses never throws; a
+        // per-harness failed outcome counts into `errored`. (Detection is still
+        // Claude-only via inspectMcpRegistration — the trigger fires on Claude,
+        // the fix backfills all harnesses. Broadening detection to all harnesses
+        // is a tracked FR-169 follow-up.)
+        info("fix: mcp-unregistered — registering igris-brain MCP across all Igris harnesses");
+        // FR-212d: doctor backfills the brain MCP via the IN-PROCESS custom
+        // merger (deterministic, no `add-mcp` subprocess — same robust posture as
+        // `igris init`). The harness-COMPILE projection delegates; this fix does
+        // not.
+        const results = registerBrainAcrossHarnesses(undefined, {
+          engine: "custom",
+        });
+        for (const { harness, result } of results) {
+          if (result.outcome === "failed") {
+            errored++;
+            logError(`mcp-unregistered fix (${harness}): ${result.error}`);
+          } else {
+            info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
+          }
+        }
+      } else if (row.driftClass === "antigravity-skills-link") {
+        // FR-179 Phase C (R2): create-or-repoint the antigravity skills parent
+        // symlink directly (the same idempotent-repair install runs — cheap, no
+        // need to re-run init). linkAntigravitySkills never throws; a refused
+        // (real non-empty dir) or failed outcome counts into `errored` and the
+        // row stays non-clean for manual resolution.
+        info(
+          "fix: antigravity-skills-link — linking ~/.gemini/antigravity-cli/skills -> ~/.agents/skills",
+        );
+        const link = linkAntigravitySkills();
+        if (link.outcome === "refused" || link.outcome === "failed") {
+          errored++;
+          logError(`antigravity-skills-link fix: ${link.error}`);
+        } else {
+          info(`  antigravity skills link ${link.outcome} -> ${link.target}`);
+        }
+      } else if (row.driftClass === "secret-perms") {
+        // TD-220: the actual chmod runs in the FINAL re-harden pass below
+        // (after the fix loop) — NOT here. Rationale: an mcp-unregistered fix
+        // earlier or later in this same loop re-writes a harness config via
+        // tmp+renameSync, which adopts the umask-default mode (644) and
+        // re-loosens it (Risk R1). Chmod'ing in-loop would race that rewrite.
+        // Deferring to a post-loop pass makes the chmod ordering-independent
+        // WITHOUT touching the FR-162/163 mergers (R1 stays a deferred
+        // follow-up). Here we only announce intent.
+        const owner = isIgrisOwnedSecretFile(row.path)
+          ? "Igris-owned"
+          : "harness-owned";
+        info(`fix: secret-perms (${owner}) — will chmod 600 ${row.path}`);
+      } else if (row.driftClass === "skills-pollution") {
+        // TD-223 (RE-SCOPED): migrate each legacy whole-dir surface root into a
+        // REAL dir of per-item symlinks (direct-materialize — never compile),
+        // then clean the stray projection symlinks leaked into the canonical
+        // source. The migrator backs up the old root symlink (rename, never rm),
+        // realpath-contains every mutation, and refuses an unexpected target.
+        // The before/after enumeration is PRINTED as the no-loss proof. A stray
+        // that is not a loadout projection is left untouched (manual review).
+        // There is ONE skills-pollution row, so guard against a repeated pass.
+        if (skillsPollutionFixApplied) {
+          continue;
+        }
+        skillsPollutionFixApplied = true;
+        errored += fixSkillsPollution();
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
@@ -151,6 +322,30 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       ) {
         warn(
           `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
+        );
+      }
+    }
+
+    // TD-220: FINAL re-harden pass — chmod 600 every flagged secret file AFTER
+    // all other fixes have run, so an install/MCP rewrite earlier in this loop
+    // (tmp+renameSync re-loosens to 644 — Risk R1) is corrected last. Pure
+    // doctor-side, never touches mcp-register.ts. chmod fixes the loose-bit
+    // dimension only — a git-tracked file stays flagged (chmod can't untrack).
+    for (const row of drift) {
+      if (row.driftClass !== "secret-perms") continue;
+      const ok = chmodSecretFile(row.path);
+      const verdict = checkSecretFilePerms(row.path);
+      // A failed chmod on a still-flagged present file is an error; a no-op on
+      // an absent/win32 file is NOT (it would already be "ok" and unflagged).
+      if (!ok && verdict !== "ok") {
+        errored++;
+        logError(`secret-perms fix: could not chmod 600 ${row.path}`);
+      } else if (verdict !== "ok") {
+        // chmod succeeded (or was a no-op) but the file is still flagged —
+        // i.e. git-tracked, which chmod cannot untrack.
+        warn(
+          `${row.path}: still flagged after --fix (git-tracked secret cannot ` +
+            `be untracked by chmod — remove it from git).`,
         );
       }
     }
@@ -167,21 +362,58 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   }
 
   // Exit code: 0 if all clean, 1 if any non-clean drift remains, 1 on fix errors.
-  const nonCleanRemaining = drift.some(
-    (r) =>
-      r.driftClass !== "clean" &&
-      // After --remove-orphans, path-missing is conceptually resolved.
-      !(opts.removeOrphans && r.driftClass === "path-missing") &&
+  const nonCleanRemaining = drift.some((r) => {
+    if (r.driftClass === "clean") return false;
+    // After --remove-orphans, path-missing is conceptually resolved.
+    if (opts.removeOrphans && r.driftClass === "path-missing") return false;
+    if (opts.fix) {
       // After --fix, the auto-fixable classes are conceptually resolved (best-effort).
-      !(
-        opts.fix &&
-        (r.driftClass === "not-installed" ||
-          r.driftClass === "hooks-missing" ||
-          r.driftClass === "hooks-stale" ||
-          r.driftClass === "brain-core-missing" ||
-          r.driftClass === "bridge-missing")
-      ),
-  );
+      if (
+        r.driftClass === "brain-core-missing" ||
+        r.driftClass === "bridge-missing" ||
+        r.driftClass === "mcp-unregistered"
+      ) {
+        return false;
+      }
+      // FR-212d: a hooks-missing/hooks-stale row resolves ONLY if a LIVE re-probe
+      // of the GLOBAL `~/.claude/settings.json` now finds the canonical Igris
+      // hooks present. A failed global-hooks merge (malformed/unwritable target)
+      // keeps the row non-clean (exit 1) — re-check rather than assume.
+      if (r.driftClass === "hooks-missing" || r.driftClass === "hooks-stale") {
+        return detectGlobalHooksDrift() !== null;
+      }
+      // TD-220: a secret-perms row is resolved by --fix ONLY if the post-fix
+      // verdict is "ok". A git-tracked row stays flagged (chmod can't untrack)
+      // — re-check the live verdict rather than assuming chmod cleared it.
+      if (r.driftClass === "secret-perms") {
+        return checkSecretFilePerms(r.path) !== "ok";
+      }
+      // TD-223 (RE-SCOPED): a skills-pollution row resolves to clean ONLY if a
+      // LIVE re-classification finds NO surface root still in the migration
+      // condition (or an unexpected-target symlink) AND no removable stray
+      // projection symlink remains (re-probe — don't assume --fix cleared
+      // everything). An unexpected-target root or a non-projection stray is
+      // never auto-fixed, so it keeps the row non-clean (exit 1) until resolved
+      // manually.
+      if (r.driftClass === "skills-pollution") {
+        const post = classifyMigration();
+        // Any remaining migration condition, unexpected-target symlink, OR stray
+        // projection symlink in the canonical source keeps the row non-clean.
+        return (
+          post.toMigrate.length > 0 ||
+          post.unexpected.length > 0 ||
+          post.strays.length > 0
+        );
+      }
+      // FR-179 Phase C: an antigravity-skills-link row resolves ONLY if a LIVE
+      // re-probe finds the link now correct. A refused real-non-empty-dir stays
+      // flagged (--fix never clobbered it) → keeps the row non-clean (exit 1).
+      if (r.driftClass === "antigravity-skills-link") {
+        return detectAntigravitySkillsLink() !== null;
+      }
+    }
+    return true;
+  });
 
   if (errored > 0) return 1;
   return nonCleanRemaining ? 1 : 0;
@@ -217,6 +449,50 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   const bridges = detectBridgeMissing();
   for (const b of bridges) out.push(b);
 
+  // mcp-unregistered (TD-168): brain-level, config-driven, sits next to
+  // bridge-missing. Flagged when ~/.claude.json lacks the igris-brain MCP
+  // entry OR the entry points at a missing file — in either case Claude
+  // Code serves zero brain tools.
+  const mcp = inspectMcpRegistration();
+  if (!mcp.registered || !mcp.pathExists) {
+    out.push({
+      slug: "(brain)",
+      path: claudeJsonPath(),
+      driftClass: "mcp-unregistered",
+      recommendedFix:
+        "run 'igris init --upgrade' or 'igris doctor --fix' to register the igris-brain MCP",
+    });
+  }
+
+  // hooks-missing / hooks-stale (FR-212d): brain-level, config-driven, sits
+  // next to mcp-unregistered. Under the global-projection model the Igris hooks
+  // are ONE block in `~/.claude/settings.json` (not per-project), so global
+  // hooks drift is a SINGLE `(brain)`-slug row — fired when the global settings
+  // lack the Igris SessionEnd hook (hooks-missing) or carry it at a non-canonical
+  // command path (hooks-stale).
+  const globalHooks = detectGlobalHooksDrift();
+  if (globalHooks !== null) out.push(globalHooks);
+
+  // secret-perms (TD-220): brain-level, config-driven, sits next to
+  // mcp-unregistered. Flags Igris-owned config.json/secrets.env + the 4
+  // harness configs when their perms are group/world-readable or git-tracked.
+  for (const sp of detectSecretFilePerms()) out.push(sp);
+
+  // skills-pollution (TD-223 RE-SCOPED): brain-level, state-driven, LOWEST
+  // brain-level precedence (sits after secret-perms). Flagged when a managed
+  // surface root (~/.claude/skills or ~/.claude/agents) is a legacy v6-era
+  // WHOLE-DIR symlink pointing at the canonical source, OR a stray projection
+  // symlink leaked into that canonical source.
+  const sp = detectSkillsPollution();
+  if (sp !== null) out.push(sp);
+
+  // antigravity-skills-link (FR-179 Phase C, R2): brain-level, CLI-detection-
+  // driven, sits next to bridge-missing. Fires when `agy` is detected but
+  // ~/.gemini/antigravity-cli/skills does NOT resolve to ~/.agents/skills, so
+  // antigravity loads zero Igris skills (the R2 silent gap).
+  const agSkills = detectAntigravitySkillsLink();
+  if (agSkills !== null) out.push(agSkills);
+
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
   // precedence, so we add its rows first and skip those slugs in the
@@ -239,20 +515,31 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
 
 /**
  * Classify every registry row into a single drift class. Returns one DriftRow
- * per registry row in the same order the registry returned them. Detects:
+ * per registry row in the same order the registry returned them.
  *
- * - path-missing: !existsSync(row.path)
- * - duplicate-path: any other row whose realpath(row.path) is identical to this one's
- * - not-installed: path exists but .claude/ missing
- * - hooks-missing: settings.json exists but no SessionEnd Igris hook
- * - hooks-stale: settings.json has Igris hooks but their hash differs from canonical
- * - slug-basename-mismatch: row.slug !== basename(row.path)
- * - symlink-target: row.path is a symlink (lstat says symlink)
- * - clean: none of the above
+ * FR-212d Phase 2 (register-only / global surfaces): `igris install` no longer
+ * materializes a per-project `.claude/` layer (no symlinks, no per-project
+ * `settings.json`, no `.igris_version`) — every surface projects GLOBALLY at
+ * `igris init`, and the Igris hooks live in ONE global `~/.claude/settings.json`
+ * block. So the per-project "install integrity" is reduced to: the registry row
+ * exists AND its path still exists on disk. The `not-installed` /
+ * `hooks-missing` / `hooks-stale` classes (which keyed on the now-deleted
+ * per-project `.claude/` layer) were RETIRED from the per-project pass. The
+ * global-hooks drift check moved to a single brain-level row in
+ * `classifyDriftAll` (`detectGlobalHooksDrift`), since hooks are global now.
  *
- * Precedence: path-missing > duplicate-path > not-installed > hooks-missing
- *           > hooks-stale > symlink-target > slug-basename-mismatch > clean.
- * (path-missing wins because if the path is gone, hooks-* and not-installed are vacuous.)
+ * Detects (per-project):
+ * - path-missing: !existsSync(row.path) — the registry row points at a deleted
+ *                 dir (the one genuinely-broken state a register-only project
+ *                 can still be in). Resolved via --remove-orphans.
+ * - duplicate-path: any other row whose realpath(row.path) is identical.
+ * - slug-basename-mismatch: row.slug !== basename(row.path) (informational).
+ * - symlink-target: row.path is a symlink (informational).
+ * - clean: registered + path exists (the register-only happy path).
+ *
+ * Precedence: path-missing > duplicate-path > slug-basename-mismatch >
+ *             symlink-target > clean.
+ * (path-missing wins because if the path is gone, everything else is vacuous.)
  */
 export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
   // Pre-pass: build realpath -> slugs map for duplicate-path detection.
@@ -271,12 +558,6 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
   }
 
   const out: DriftRow[] = [];
-  let canonicalHashes: ReturnType<typeof computeFeatureHashes> | null = null;
-  try {
-    canonicalHashes = computeFeatureHashes({ includeHooks: true });
-  } catch {
-    canonicalHashes = null;
-  }
 
   for (const r of rows) {
     if (!existsSync(r.path)) {
@@ -312,51 +593,10 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
       continue;
     }
 
-    const claudeDir = `${r.path}/.claude`;
-    if (!existsSync(claudeDir)) {
-      out.push({
-        slug: r.slug,
-        path: r.path,
-        driftClass: "not-installed",
-        recommendedFix: "run 'igris install <path>' or 'igris doctor --fix'",
-        resolvedPath,
-      });
-      continue;
-    }
-
-    const settings = projectSettingsPath(r.path);
-    const settingsState = inspectSettings(settings);
-    if (settingsState === "hooks-missing") {
-      out.push({
-        slug: r.slug,
-        path: r.path,
-        driftClass: "hooks-missing",
-        recommendedFix: "run 'igris install <path>' or 'igris doctor --fix'",
-        resolvedPath,
-      });
-      continue;
-    }
-
-    if (settingsState === "hooks-present") {
-      // Compare against canonical hash; if different, mark stale.
-      // We compute the hash by reading just the hooks section out of settings.json
-      // and comparing against canonical. For Phase 1, "stale" means the Igris-owned
-      // SessionEnd command is present but its hash diverges from the canonical file.
-      if (canonicalHashes !== null) {
-        const sessionEndCmd = extractSessionEndCommand(settings);
-        const canonicalCmd = "$HOME/.igris/core/hooks/shared/session_end.sh";
-        if (sessionEndCmd !== null && sessionEndCmd !== canonicalCmd) {
-          out.push({
-            slug: r.slug,
-            path: r.path,
-            driftClass: "hooks-stale",
-            recommendedFix: "run 'igris doctor --fix' to refresh hooks",
-            resolvedPath,
-          });
-          continue;
-        }
-      }
-    }
+    // FR-212d: a registered project whose path exists IS installed (register-
+    // only model). The old `.claude/`-presence + per-project `settings.json`
+    // hooks checks were deleted — they reflected a per-project layer `igris
+    // install` no longer writes. Global-hooks drift is a brain-level row.
 
     if (basename(r.path) !== r.slug) {
       out.push({
@@ -399,6 +639,453 @@ function realpathSyncSafe(p: string): string {
   } catch {
     return p;
   }
+}
+
+/**
+ * TD-220: the Igris-OWNED secret files. Igris authored these, so it owns
+ * their perms outright — proactively tightened at init AND fixed by doctor
+ * in the read pass (well, flagged in read; chmod'd under --fix). The 4
+ * harness configs are harness-owned: WARN-only in the read pass, chmod ONLY
+ * under --fix ("don't fight the harness").
+ */
+function igrisOwnedSecretFiles(): string[] {
+  return [configJsonPath(), secretsEnvPath()];
+}
+
+/** True when `path` is one of the Igris-owned secret files. */
+function isIgrisOwnedSecretFile(path: string): boolean {
+  return igrisOwnedSecretFiles().includes(path);
+}
+
+/**
+ * TD-220: classify the perms of every Igris-written secret-bearing file +
+ * the harness-owned secret configs into `secret-perms` drift rows. A row is emitted
+ * ONLY when the verdict is not "ok" (loose group/other bits, or git-tracked,
+ * or both). Absent files and win32 produce "ok" (no row) — see
+ * checkSecretFilePerms (never throws).
+ *
+ * NOTE (Risk R1 — atomic-rename re-loosens harness configs): the FR-162/163
+ * mergers in mcp-register.ts (and the mcp-grant.ts grant writers) write via
+ * tmp+renameSync, which adopts the tmp file's umask mode (often 644). The clean
+ * fix — chmod 600 after the rename, reusing TD-220's `chmodSecretFile` — has now
+ * SHIPPED on both Igris-owned writer paths: **TD-221** hardened the mergers and
+ * **TD-232** hardened the grant writers (notably the codex `~/.codex/config.toml`
+ * grant, which shares this secret-perms scope). These harness configs stay
+ * warn/--fix-only here (Decision 5) since doctor doesn't own them, but the Igris
+ * writers no longer re-loosen them on-write.
+ */
+function detectSecretFilePerms(): DriftRow[] {
+  const out: DriftRow[] = [];
+  const igrisOwned = igrisOwnedSecretFiles();
+  // TD-283: antigravity + cursor are intentionally NOT here — Igris writes only
+  // the env-free brain MCP entry to their config (no secret, L-588; nothing to
+  // chmod). See secret-perms.ts "Files in scope".
+  const harnessOwned = [
+    claudeJsonPath(),
+    geminiSettingsPath(),
+    codexConfigTomlPath(),
+    opencodeConfigPath(),
+  ];
+
+  for (const p of [...igrisOwned, ...harnessOwned]) {
+    const verdict = checkSecretFilePerms(p);
+    if (verdict === "ok") continue;
+
+    const owned = igrisOwned.includes(p);
+    const ownerTag = owned ? "Igris-owned" : "harness-owned";
+    // git-tracked is NOT resolved by chmod — name it explicitly so the
+    // operator knows --fix alone won't clear the row.
+    const tracked = verdict === "git-tracked" || verdict === "loose+git-tracked";
+    const recommendedFix = tracked
+      ? `${ownerTag} secret file is git-tracked — remove it from git (chmod alone won't untrack); 'igris doctor --fix' chmods 600`
+      : `${ownerTag} secret file has loose perms — run 'igris doctor --fix' to chmod 600`;
+
+    out.push({
+      slug: "(brain)",
+      path: p,
+      driftClass: "secret-perms",
+      recommendedFix,
+    });
+  }
+
+  return out;
+}
+
+/**
+ * TD-223 (RE-SCOPED): classify the managed surface roots (~/.claude/skills,
+ * ~/.claude/agents) + the canonical-source strays into a SINGLE brain-level
+ * `skills-pollution` row. The row is emitted ONLY when ≥1 root is in the
+ * migration condition (legacy whole-dir symlink), OR a root is a symlink to an
+ * unexpected target, OR a stray projection symlink leaked into the canonical
+ * source. A pure per-surface-model machine (real dirs, no strays) produces no
+ * row. The row.path is the first affected root/source (for the table) and
+ * `recommendedFix` summarizes what --fix will migrate/clean. Never throws
+ * (classifyMigration degrades to an empty report on any error / win32).
+ */
+function detectSkillsPollution(): DriftRow | null {
+  const report = classifyMigration();
+  if (
+    report.toMigrate.length === 0 &&
+    report.unexpected.length === 0 &&
+    report.strays.length === 0
+  ) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (report.toMigrate.length > 0) {
+    const roots = report.toMigrate.map((s) => s.kind).join("+");
+    parts.push(
+      `${report.toMigrate.length} legacy whole-dir symlink root(s) [${roots}] ` +
+        `to migrate (fixable via 'igris doctor --fix')`,
+    );
+  }
+  if (report.unexpected.length > 0) {
+    parts.push(
+      `${report.unexpected.length} root(s) symlinked to an UNEXPECTED target ` +
+        `(resolve manually — never auto-rewritten)`,
+    );
+  }
+  const removableStrays = report.strays.filter((s) => s.isLoadoutProjection);
+  const unknownStrays = report.strays.filter((s) => !s.isLoadoutProjection);
+  if (removableStrays.length > 0) {
+    parts.push(
+      `${removableStrays.length} stray projection symlink(s) in the canonical ` +
+        `source (fixable via 'igris doctor --fix')`,
+    );
+  }
+  if (unknownStrays.length > 0) {
+    parts.push(
+      `${unknownStrays.length} non-projection stray symlink(s) (resolve ` +
+        `manually — never auto-removed)`,
+    );
+  }
+  const affectedRoot =
+    report.toMigrate[0]?.root ??
+    report.unexpected[0]?.root ??
+    report.strays[0]?.path ??
+    "~/.claude/skills";
+  return {
+    slug: "(brain)",
+    path: affectedRoot,
+    driftClass: "skills-pollution",
+    recommendedFix: parts.join(", "),
+  };
+}
+
+/**
+ * TD-223 (RE-SCOPED): read-pass WARN — name each surface root to migrate, each
+ * unexpected-target root, and each stray projection symlink by PATH ONLY (NEVER
+ * file contents — L-515). Unexpected-target roots + non-projection strays get an
+ * explicit "resolve manually" warning since --fix will never touch them.
+ */
+function warnSkillsPollutionEntries(): void {
+  const report = classifyMigration();
+  for (const s of report.toMigrate) {
+    warn(
+      `skills-pollution: ${s.kind} surface root '${s.root}' is a legacy ` +
+        `whole-dir symlink → '${s.source}'. 'igris doctor --fix' will migrate ` +
+        `it to a REAL dir of per-item symlinks (the old symlink is backed up).`,
+    );
+  }
+  for (const s of report.unexpected) {
+    warn(
+      `skills-pollution: ${s.kind} surface root '${s.root}' is a symlink to an ` +
+        `UNEXPECTED target (not the canonical source '${s.source}') — NOT ` +
+        `auto-fixable. Resolve manually before recompiling.`,
+    );
+  }
+  for (const stray of report.strays) {
+    if (stray.isLoadoutProjection) {
+      warn(
+        `skills-pollution: stray projection symlink '${stray.path}' leaked into ` +
+          `the canonical source — 'igris doctor --fix' will unlink it (it is a ` +
+          `loadout projection, not core content).`,
+      );
+    } else {
+      warn(
+        `skills-pollution: stray symlink '${stray.path}' in the canonical source ` +
+          `does NOT resolve into the loadout — NOT auto-removed. Resolve ` +
+          `manually (verify it is not hand-authored, then remove).`,
+      );
+    }
+  }
+}
+
+/**
+ * TD-223 (RE-SCOPED) `--fix` worker: migrate each legacy whole-dir surface root
+ * to a REAL dir of per-item symlinks, then clean each stray projection symlink
+ * leaked into the canonical source. PRINTS the before/after enumeration as the
+ * no-loss proof. Returns the number of errors encountered (for the exit code).
+ *
+ * Order matters: migrate the roots FIRST so the personal per-item symlinks
+ * exist in the real surface dir, THEN clean the strays (removeStraySourceSymlink
+ * refuses until the migrated home exists — its precondition #3).
+ */
+function fixSkillsPollution(): number {
+  let errs = 0;
+  info(
+    "fix: skills-pollution — migrating legacy whole-dir surface roots to " +
+      "per-item symlinks (direct-materialize; never compile)",
+  );
+
+  // Re-classify LIVE at fix time (the read-pass report may be stale).
+  const report = classifyMigration();
+
+  // 1. Migrate each surface root in the migration condition.
+  for (const sr of report.toMigrate) {
+    const result = migrateSurfaceRoot({
+      kind: sr.kind,
+      root: sr.root,
+      source: sr.source,
+    });
+    if (result.outcome === "migrated") {
+      info(
+        `  migrated ${sr.kind} root '${sr.root}' -> REAL dir; old symlink ` +
+          `backed up to ${result.backupPath}`,
+      );
+      // The before/after enumeration is the no-loss safety proof (print names
+      // only — never contents). AFTER must ⊇ BEFORE.
+      const beforeNames = result.before.map((b) => b.name).sort();
+      const afterNames = result.after.map((a) => a.name).sort();
+      info(`    before (${beforeNames.length}): ${beforeNames.join(", ")}`);
+      info(`    after  (${afterNames.length}): ${afterNames.join(", ")}`);
+      const lost = beforeNames.filter((n) => !afterNames.includes(n));
+      if (lost.length > 0) {
+        // Should never happen — the inventory is the source walk + overlay. If
+        // it does, surface it loudly (the operator can restore from .bak).
+        errs++;
+        logError(
+          `skills-pollution fix: ${sr.kind} migration would lose name(s): ` +
+            `${lost.join(", ")} — old symlink preserved at ${result.backupPath}.`,
+        );
+      }
+    } else if (result.outcome === "refused-unexpected-target") {
+      errs++;
+      logError(
+        `skills-pollution fix: refused ${sr.kind} root '${sr.root}' — it is a ` +
+          `symlink to an UNEXPECTED target (not the canonical source). ` +
+          `Resolve manually.`,
+      );
+    } else if (result.outcome === "refused-containment") {
+      errs++;
+      logError(
+        `skills-pollution fix: refused ${sr.kind} root '${sr.root}' — a ` +
+          `staging/backup path escaped containment (#515).`,
+      );
+    } else if (result.outcome === "skipped-not-migratable") {
+      // No longer the migration condition at fix time (TOCTOU / already real
+      // dir) — informational, not an error.
+      info(
+        `  skipped ${sr.kind} root '${sr.root}' — no longer a whole-dir ` +
+          `symlink at fix time (already migrated).`,
+      );
+    } else {
+      errs++;
+      logError(`skills-pollution fix: failed to migrate ${sr.kind} root '${sr.root}'.`);
+    }
+  }
+
+  // Name unexpected-target roots that --fix deliberately leaves untouched (the
+  // read-pass WARN is gated behind !opts.fix). NEVER logs contents.
+  for (const sr of report.unexpected) {
+    warn(
+      `skills-pollution: ${sr.kind} root '${sr.root}' is a symlink to an ` +
+        `UNEXPECTED target — left untouched. Resolve manually.`,
+    );
+  }
+
+  // 2. Clean the stray projection symlinks AFTER migration (so the per-item
+  // home exists). Map each stray's source to the matching migrated surface root.
+  for (const stray of report.strays) {
+    const surfaceRoot = surfaceRootForStray(stray.path, report);
+    const outcome = removeStraySourceSymlink(stray.path, surfaceRoot);
+    if (outcome === "removed") {
+      info(`  removed stray projection symlink '${stray.path}'`);
+    } else if (outcome === "skipped-not-projection") {
+      warn(
+        `skills-pollution: stray '${stray.path}' is NOT a loadout projection ` +
+          `— left untouched. Resolve manually.`,
+      );
+    } else if (outcome === "skipped-no-migrated-target") {
+      // The migrated per-item home does not exist (e.g. the overlay does not
+      // declare this name) — leave the stray and tell the operator.
+      warn(
+        `skills-pollution: stray '${stray.path}' left in place — no migrated ` +
+          `per-item symlink at '${join(surfaceRoot, basename(stray.path))}'.`,
+      );
+    } else if (outcome === "skipped-not-symlink") {
+      info(`  skipped stray '${stray.path}' — no longer a symlink at fix time.`);
+    } else {
+      errs++;
+      logError(`skills-pollution fix: failed to remove stray '${stray.path}'.`);
+    }
+  }
+
+  return errs;
+}
+
+/**
+ * Map a stray symlink path (inside a canonical source) to the migrated surface
+ * root that should hold its per-item home. The stray lives in
+ * `~/.igris/core/skills` (→ `~/.claude/skills`) or `~/.igris/core/agents`
+ * (→ `~/.claude/agents`). Resolved from the report's surface list by matching
+ * the stray's parent dir against each surface's source. Falls back to
+ * `coreSkillsSource` vs `coreAgentsSource` lexical comparison.
+ */
+function surfaceRootForStray(
+  strayPath: string,
+  report: ReturnType<typeof classifyMigration>,
+): string {
+  const parent = dirname(strayPath);
+  for (const sr of report.surfaces) {
+    if (samePath(sr.source, parent)) return sr.root;
+  }
+  // Fallback: lexical match on the known source roots.
+  if (samePath(parent, coreAgentsSource())) {
+    const agents = report.surfaces.find((s) => s.kind === "agents");
+    if (agents) return agents.root;
+  }
+  const skills = report.surfaces.find((s) => s.kind === "skills");
+  if (skills) return skills.root;
+  // Last resort — derive `~/.claude/<kind>` from the source basename.
+  return samePath(parent, coreAgentsSource())
+    ? coreAgentsSource()
+    : coreSkillsSource();
+}
+
+/** realpath-equality of two paths (verbatim fallback when unresolvable). */
+function samePath(a: string, b: string): boolean {
+  return realpathSyncSafe(a) === realpathSyncSafe(b);
+}
+
+/**
+ * FR-165: read-only WARNING path for MCP env-var indirection refs that resolve
+ * NOWHERE — i.e. a `${VAR}` in some `surfaces.mcp_servers[*].canonical.env`
+ * that is absent from BOTH `~/.igris/secrets.env` AND `process.env`. claude /
+ * gemini / opencode resolve the ref + inherit exported env at launch, and the
+ * Codex compile (FR-164) reads `secrets.env` for the literal — so an unresolved
+ * VAR means that server will launch with an empty/missing value on at least one
+ * harness.
+ *
+ * This is a WARN, NOT a fixable drift-row: the fix is "add it to secrets.env",
+ * which doctor cannot do safely (it would be writing a secret). The warning
+ * names the VAR + the server only — there is NO value to log (the VAR is, by
+ * definition, missing), and we never echo a resolved env value either.
+ *
+ * Read-only: parses the overlay + secrets.env without writing anything.
+ * Servers with no `canonical.env` (e.g. igris-brain) never trip this — the
+ * natural iteration over `canonical.env` entries already scopes it correctly.
+ */
+function detectMissingSecrets(): void {
+  // Parse the personal overlay defensively — a malformed/absent overlay must
+  // not break doctor (it is best-effort advisory).
+  let mcpBlocks: Array<{
+    name?: unknown;
+    canonical?: { env?: unknown };
+  }> = [];
+  try {
+    const overlayPath = loadoutOverlayPath();
+    if (!existsSync(overlayPath)) {
+      return;
+    }
+    const parsed = JSON.parse(readFileSync(overlayPath, "utf-8")) as {
+      surfaces?: { mcp_servers?: unknown };
+    };
+    const blocks = parsed.surfaces?.mcp_servers;
+    if (Array.isArray(blocks)) {
+      mcpBlocks = blocks as typeof mcpBlocks;
+    }
+  } catch {
+    // Malformed overlay → skip the advisory check silently.
+    return;
+  }
+
+  if (mcpBlocks.length === 0) {
+    return;
+  }
+
+  const secrets = parseSecretsEnv();
+  for (const block of mcpBlocks) {
+    const env = block.canonical?.env;
+    if (env === null || typeof env !== "object" || Array.isArray(env)) {
+      continue;
+    }
+    const serverName = typeof block.name === "string" ? block.name : "(unnamed)";
+    for (const value of Object.values(env as Record<string, unknown>)) {
+      if (typeof value !== "string") {
+        continue;
+      }
+      const varName = extractVarName(value);
+      if (varName === null) {
+        continue; // not a ref (write-guard should prevent this, but be safe)
+      }
+      const inSecrets = Object.prototype.hasOwnProperty.call(secrets, varName);
+      const inProcessEnv = Object.prototype.hasOwnProperty.call(
+        process.env,
+        varName,
+      );
+      if (!inSecrets && !inProcessEnv) {
+        // Name the VAR + server ONLY — never a value (there is none to leak).
+        warn(
+          `MCP secret '${varName}' (server '${serverName}') is not set in ` +
+            `~/.igris/secrets.env or the environment. Add 'export ${varName}=...' ` +
+            `to ~/.igris/secrets.env (chmod 600) so Codex can resolve it and ` +
+            `claude/gemini/opencode inherit it at launch.`,
+        );
+      }
+    }
+  }
+}
+
+/**
+ * FR-212d: classify the GLOBAL Igris hooks block (`~/.claude/settings.json`)
+ * into a single brain-level drift row, or null when it is present + canonical.
+ *
+ * Under the global-projection model the Igris hooks fire for EVERY project on
+ * the machine via ONE user-level settings block (`igris init` merges it; the
+ * per-project `_gate.sh` de-no-ops them outside a registered project). There is
+ * no per-project hooks layer anymore, so this is the ONE place hooks drift is
+ * detected:
+ *   - hooks-missing: the global settings exist but lack the Igris SessionEnd
+ *                    hook (or the file is absent/malformed).
+ *   - hooks-stale:   the Igris SessionEnd hook is present but at a non-canonical
+ *                    command path.
+ *
+ * Both are repaired by the `--fix` global-hooks refresh (mergeGlobalCanonicalHooks).
+ * Read-only + never throws. `opts.settingsPath` overrides the target (tests
+ * sandbox HOME). When the canonical-hooks source can't be read (e.g. brain core
+ * missing), we skip the stale comparison but still flag a genuinely-absent hook.
+ */
+function detectGlobalHooksDrift(opts?: {
+  settingsPath?: string;
+}): DriftRow | null {
+  const target = opts?.settingsPath ?? claudeUserSettingsPath();
+  const canonicalCmd = "$HOME/.igris/core/hooks/shared/session_end.sh";
+
+  const state = inspectSettings(target);
+  if (state === "missing" || state === "malformed" || state === "hooks-missing") {
+    return {
+      slug: "(brain)",
+      path: target,
+      driftClass: "hooks-missing",
+      recommendedFix:
+        "run 'igris init' or 'igris doctor --fix' to merge the global Igris hooks",
+    };
+  }
+
+  // hooks-present: flag stale only when the SessionEnd command diverges from
+  // the canonical path.
+  const sessionEndCmd = extractSessionEndCommand(target);
+  if (sessionEndCmd !== null && sessionEndCmd !== canonicalCmd) {
+    return {
+      slug: "(brain)",
+      path: target,
+      driftClass: "hooks-stale",
+      recommendedFix: "run 'igris doctor --fix' to refresh the global hooks",
+    };
+  }
+
+  return null;
 }
 
 type SettingsState = "missing" | "hooks-missing" | "hooks-present" | "malformed";

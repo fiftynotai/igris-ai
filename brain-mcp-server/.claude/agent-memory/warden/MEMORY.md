@@ -1,0 +1,1 @@
+- [Brief Test Count Verification](feedback_brief_test_count_audit.md) — Brief claims about test additions (e.g., "+6 tests, X for Y, Z for W") should be verified file-by-file, not trusted from the orchestrator's summary. Forger has reported phantom tests before.

@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Description: Igris commit-msg hook. Hard-fails a commit whose summary (the
+#   first non-comment, non-blank line of the message) exceeds 72 characters.
+#   The locked convention is ≤72 (TD-180): a 72-char summary passes, 73 fails.
+#   See core/os/standards.md ("72-char summary") and
+#   core/templates/commit_message.md ("Max 72 characters").
+#
+# Usage: git invokes this as `.git/hooks/commit-msg <msg-file>`.
+#   Argument $1 is the path to the file holding the pending commit message.
+#
+# No `set -e`: `grep` returns non-zero when a pattern does not match (e.g. a
+#   comment-only message), which would abort the hook under `set -e`. Every
+#   step is guarded explicitly and the empty-message case falls through to
+#   exit 0 (let git handle an empty commit itself; don't block).
+#
+# Bypass: `git commit --no-verify` (git skips this hook entirely — native, no
+#   code here). Use sparingly.
+
+MSG_FILE="$1"
+
+# No message file (or it does not exist) -> nothing to measure; let git proceed.
+[ -n "$MSG_FILE" ] && [ -f "$MSG_FILE" ] || exit 0
+
+# Summary = the first line that is neither a `#` comment nor blank. Git's
+# default template puts comment lines (starting with `#`) below the summary;
+# a leading comment block (or verbose-mode diff) must be skipped so we measure
+# the real subject line.
+summary="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -vE '^[[:space:]]*$' | head -n1)"
+
+# Empty / comment-only message -> pass through (git will reject an empty commit
+# on its own; the length guard has nothing to enforce).
+[ -n "$summary" ] || exit 0
+
+# ${#var} counts CHARACTERS (not bytes) in a UTF-8 locale — the intended unit.
+# Commit summaries are near-universally ASCII, so this is exact in practice.
+len=${#summary}
+
+if [ "$len" -gt 72 ]; then
+  echo ""
+  echo "[commit-msg] summary too long: ${len} chars (max 72)"
+  echo "  summary: ${summary}"
+  echo "  shorten the first line to ≤72 chars (imperative mood). See core/os/standards.md."
+  echo "  bypass (discouraged): git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+exit 0

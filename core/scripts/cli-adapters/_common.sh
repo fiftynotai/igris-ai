@@ -13,6 +13,98 @@ if [ "${IGRIS_ADAPTER_COMMON_SOURCED:-0}" = "1" ]; then
 fi
 export IGRIS_ADAPTER_COMMON_SOURCED=1
 
+# FR-217: this file's own directory, captured at SOURCE time (BEFORE any cd — a
+# later `cd` would break BASH_SOURCE resolution; L-249-class trap). Used to
+# resolve the canonical harness descriptor (harness-manifest.json) relative to
+# the adapter tree (resolve_harness_descriptor_path below).
+IGRIS_ADAPTER_COMMON_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# ===========================================================================
+# Surface registry (FR-202 M0) — the ONE source of truth for the wiring
+# surfaces the orchestrator (compile_harnesses.sh) projects and the drift
+# engine (check_harness_drift.sh) verifies.
+#
+# A wiring SURFACE is a declarative plugin filling the 3-concern lifecycle the
+# core owns: declare → distribute → project → verify. Adding a surface =
+#   1. a `$defs/<x>_surface` block + `_contract` metadata in manifest.schema.json
+#   2. ONE entry here (the id + its empty-match noun fragment)
+#   3. a `project_<x>` plugin in compile_harnesses.sh
+#   4. a `verify_<x>` plugin in check_harness_drift.sh
+# …and NOTHING in the two top-level scripts' dispatch loops. A concept that
+# cannot fill declare→distribute→project→verify is NOT a wiring surface (it
+# belongs in core/os, a skill, or the brain). See README.md "Surface-plugin
+# contract" and MAINTAINING.md.
+#
+# bash 3.2 (macOS /bin/bash) constraint: NO associative arrays / namerefs.
+# The registry is two positionally-aligned space-delimited strings (the same
+# colon/space-delimited idiom the codebase already relies on, e.g.
+# TREE_CHECKED). Dispatch is function-name composition: "project_$surface" /
+# "verify_$surface". Accumulators stay GLOBAL (no namerefs in 3.2).
+#
+# IGRIS_SURFACE_IDS   — ordered surface ids (projection order). Used for the
+#                       `--surface` enum AND the `project_<id>`/`verify_<id>`
+#                       dispatch fn names. `--surface <id>` accepts these + `all`.
+# IGRIS_SURFACE_LABELS — positionally-aligned noun fragments for the empty-match
+#                       message ("No <labels joined by /> targets matched …").
+#                       Kept SEPARATE from the ids because the historical message
+#                       uses the singular "agent" while the id is plural "agents"
+#                       — a parser-coupled literal (parseHarnessOutput) that must
+#                       stay byte-identical. Both arrays MUST stay aligned.
+# ---------------------------------------------------------------------------
+IGRIS_SURFACE_IDS="agents skills mcp hook"
+IGRIS_SURFACE_LABELS="agent skills mcp hook"
+
+# igris_surface_is_valid <value>
+#   Returns 0 if <value> is a known surface id OR the literal `all`; 1 otherwise.
+#   Replaces the hard-coded `case "$SURFACE_KIND" in agents|skills|…|all)` enum
+#   in BOTH top scripts so the accepted set lives ONLY in IGRIS_SURFACE_IDS.
+igris_surface_is_valid() {
+  local want="$1"
+  if [ "$want" = "all" ]; then
+    return 0
+  fi
+  local s
+  for s in $IGRIS_SURFACE_IDS; do
+    if [ "$s" = "$want" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# igris_surface_selected <surface-id> <surface-kind>
+#   Returns 0 when the surface should run for the given --surface selection:
+#   either the selection is `all` or it exactly names this surface. The
+#   registry-driven dispatch loop in each top script uses this to decide
+#   whether to call the surface's plugin — replacing the inline
+#   `if [ "$SURFACE_KIND" = "X" ] || [ "$SURFACE_KIND" = "all" ]` pass-gates.
+igris_surface_selected() {
+  local surface="$1"
+  local kind="$2"
+  if [ "$kind" = "all" ] || [ "$kind" = "$surface" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# igris_surface_empty_match_nouns
+#   Echoes the surface noun fragments joined by `/` (e.g.
+#   "agent/skills/mcp/hook") for the shared empty-match message. The
+#   list is derived from IGRIS_SURFACE_LABELS so a new surface extends the
+#   message by adding its registry entry — no edit to the message site itself.
+igris_surface_empty_match_nouns() {
+  local out=""
+  local label
+  for label in $IGRIS_SURFACE_LABELS; do
+    if [ -z "$out" ]; then
+      out="$label"
+    else
+      out="$out/$label"
+    fi
+  done
+  printf '%s' "$out"
+}
+
 # ---------------------------------------------------------------------------
 # parse_frontmatter <skill-md-path>
 #
@@ -278,6 +370,1970 @@ sys.stdout.write(escaped)
 PY
 }
 
+# ---------------------------------------------------------------------------
+# read_canonical_version <md-path>
+#
+# Extracts the agent-prompt version marker from a canonical prompt file.
+# Strategy (TD-021):
+#   1. Look for a `> **Version:** X.Y` blockquote line in the body —
+#      content-pipeline prompts use this (confirmed in deck/system-prompt-*).
+#   2. Fall back to a `version:` top-level frontmatter key.
+# Emits the bare version string (e.g. `1.6`) to stdout, or an empty string
+# when neither marker is present (Igris-core agents carry no version marker —
+# the manifest declares them `versioned: false`, so empty is expected there).
+#
+# Returns 0 always.
+# ---------------------------------------------------------------------------
+read_canonical_version() {
+  local md_path="$1"
+  python3 - "$md_path" <<'PY'
+import re
+import sys
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as fh:
+        text = fh.read()
+except OSError:
+    print("")
+    sys.exit(0)
+# Strategy 1: `> **Version:** X.Y` blockquote line in the body.
+m = re.search(r'^\s*>\s*\*\*Version:\*\*\s*([0-9][0-9.]*)\s*$', text, re.MULTILINE)
+if m:
+    print(m.group(1))
+    sys.exit(0)
+# Strategy 2: `version:` frontmatter key (only inside the frontmatter block).
+if text.startswith("---"):
+    lines = text.splitlines(keepends=True)
+    body_start = None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\n") == "---":
+            body_start = i
+            break
+    if body_start is not None:
+        fm = "".join(lines[1:body_start])
+        fm_m = re.search(r'^\s*version:\s*["\']?([0-9][0-9.]*)["\']?\s*$',
+                         fm, re.MULTILINE)
+        if fm_m:
+            print(fm_m.group(1))
+            sys.exit(0)
+print("")
+PY
+}
+
+# ---------------------------------------------------------------------------
+# latest_canonical <dir> <basename-glob>
+#
+# Given a directory and a glob (e.g. `agents/deck` + `system-prompt-v*.md`),
+# resolves the highest-versioned matching file. Versions are compared with
+# `sort -V` so `v1.10` sorts after `v1.9`. Emits the absolute path of the
+# newest file to stdout.
+#
+# Returns 0 when a match was found and emitted; returns 1 when the directory
+# does not exist or no file matches the glob (callers should check status).
+# ---------------------------------------------------------------------------
+latest_canonical() {
+  local dir="$1"
+  local glob="$2"
+  if [ ! -d "$dir" ]; then
+    return 1
+  fi
+  local newest
+  # `find` for the matches, `sort -V` for version-aware ordering, take the
+  # last line as the highest. Newline-delimited: agent prompt filenames are
+  # plain ASCII (`system-prompt-vX.Y.md`), so embedded newlines are not a
+  # concern here and `tail -z` is unavailable on BSD/macOS tail anyway.
+  newest=$(
+    find "$dir" -mindepth 1 -maxdepth 1 -type f -name "$glob" 2>/dev/null \
+      | sort -V \
+      | tail -n 1
+  )
+  if [ -z "$newest" ]; then
+    return 1
+  fi
+  # Emit an absolute path for caller convenience.
+  ( cd "$(dirname "$newest")" && printf '%s/%s\n' "$(pwd)" "$(basename "$newest")" )
+}
+
+# ---------------------------------------------------------------------------
+# sha_body <md-path>
+#
+# Emits the sha256 hex digest of the markdown BODY only (frontmatter stripped
+# via strip_frontmatter). This is the idempotency / drift primitive used by
+# the harness compiler and the drift guard — comparing body shas ignores
+# intentional frontmatter divergence between canonical and harness copies.
+#
+# Emits the bare 64-char digest to stdout. Returns 0 always.
+# ---------------------------------------------------------------------------
+sha_body() {
+  local md_path="$1"
+  local body
+  body=$(strip_frontmatter "$md_path")
+  # Pass the body as an argv arg, not stdin — a `<<PY` heredoc on the python3
+  # call would otherwise override any piped stdin (shellcheck SC2259).
+  python3 - "$body" <<'PY'
+import hashlib
+import sys
+data = sys.argv[1].encode("utf-8")
+print(hashlib.sha256(data).hexdigest())
+PY
+}
+
+# ---------------------------------------------------------------------------
+# hash_agent_tree <dir>
+#
+# FR-156: stable content hash over a vendored agent tree (sorted relpath +
+# \0 + bytes, folded into one sha256). Bash counterpart to TS
+# `hashAgentTree` in cli/src/verbs/loadout.ts — must produce IDENTICAL hex
+# output for the same tree contents so drift-verify's pre-check pairs with
+# the recorded origin hash written by `igris loadout add/update`.
+#
+# Skip-list MUST stay byte-for-byte in sync with the TS side at
+# `cli/src/verbs/loadout.ts:isAgentTreeSkipped` (three sites, one rule —
+# any drift between them re-opens the L-430 "hash basis ≠ disk" trap).
+# Per-harness α-assembly outputs (`harness.claude.md`, `harness.gemini.md`)
+# are excluded from the basis because they are FR-152 / FR-158 DERIVED
+# OUTPUT — including either would make every assembly re-write register as
+# drift. Same posture as TS `hashAgentTree`.
+#
+# Returns 0 always; emits 64-char hex to stdout. Missing dir → empty sha256
+# (the well-known `e3b0c4...` digest), matching TS's `existsSync` guard.
+# ---------------------------------------------------------------------------
+hash_agent_tree() {
+  local tree_dir="$1"
+  python3 - "$tree_dir" <<'PY'
+import hashlib
+import os
+import sys
+
+# Skip-list: keep byte-for-byte in sync with THREE sites total — TS
+# cli/src/verbs/loadout.ts:isAgentTreeSkipped (FR-156), and the two
+# inline EXACT sets in check_harness_drift.sh (agent tree-diff at ~556,
+# skill tree-diff at ~912). REGISTRY-NOTICE.md is the TD-202 vendored-
+# copy sidecar — excluded from hash basis so its presence in the
+# loadout copy (and absence at the operator's source) does not flip
+# the hash → DRIFTED.
+EXACT = {"MAINTAINING.md", ".DS_Store", "node_modules", ".venv", "__pycache__", "REGISTRY-NOTICE.md"}
+
+
+def skipped(name):
+    if name in EXACT:
+        return True
+    if name.startswith(".git"):
+        return True  # .git, .gitignore, .gitkeep, .github
+    if name.endswith(".pyc"):
+        return True
+    return False
+
+
+tree = sys.argv[1]
+rels = []
+if os.path.isdir(tree):
+    for root, dirs, files in os.walk(tree):
+        # Filter dirs IN-PLACE so os.walk does not descend into skipped dirs
+        # (matches the TS recursive walk's pre-recursion skip check).
+        dirs[:] = [d for d in dirs if not skipped(d)]
+        for f in files:
+            if skipped(f):
+                continue
+            abs_path = os.path.join(root, f)
+            rel = os.path.relpath(abs_path, tree).replace(os.sep, "/")
+            # FR-152 / FR-158 / FR-159 / FR-171: exclude per-harness α-assembled
+            # outputs from the basis (top-level `harness.claude.md` /
+            # `harness.gemini.md` / `harness.codex.toml` / `harness.opencode.md`
+            # only — a nested file by either name would be legitimate operator
+            # content, same as the TS side).
+            if rel in ("harness.claude.md", "harness.gemini.md", "harness.codex.toml", "harness.opencode.md"):
+                continue
+            rels.append(rel)
+
+rels.sort()
+h = hashlib.sha256()
+for rel in rels:
+    h.update(rel.encode("utf-8"))
+    h.update(b"\x00")
+    with open(os.path.join(tree, rel), "rb") as fh:
+        h.update(fh.read())
+print(h.hexdigest())
+PY
+}
+
+# ---------------------------------------------------------------------------
+# resolve_harness_descriptor_path
+#
+# FR-217: resolve the canonical harness descriptor — the harness-manifest.json
+# that carries the `harnesses` block (the bash twin of the resolution in
+# cli/src/lib/harness-descriptor.ts). The repo keeps the manifest at the REPO
+# ROOT (sibling of core/); the runtime mirror stages it INTO core/
+# (~/.igris/core/harness-manifest.json, TD-096). Candidates are tried
+# first-existing-wins; echoes the resolved path on success.
+#
+# FR-217 M5: the hardcoded wiring consts were DELETED, so the descriptor is now
+# REQUIRED — there is nothing to fall back to. If NEITHER candidate exists the
+# tree is partial/unmaterialized (NOT a normal state): emit a clear, actionable
+# error to stderr and exit 1 (a loud hard-fail). This forecloses the FR-217
+# TESTING-phase trap where an empty path silently flowed into a downstream
+# read_harness_descriptor that died under `set -e`/pipefail as a SILENT exit 1.
+# ---------------------------------------------------------------------------
+resolve_harness_descriptor_path() {
+  # repo layout: <repo>/core/scripts/cli-adapters -> <repo>/harness-manifest.json
+  local repo_root="$IGRIS_ADAPTER_COMMON_DIR/../../../harness-manifest.json"
+  # runtime layout: ~/.igris/core/scripts/cli-adapters -> ~/.igris/core/harness-manifest.json
+  local runtime_core="$IGRIS_ADAPTER_COMMON_DIR/../../harness-manifest.json"
+  if [ -f "$repo_root" ]; then
+    echo "$repo_root"
+    return 0
+  elif [ -f "$runtime_core" ]; then
+    echo "$runtime_core"
+    return 0
+  fi
+  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. Run 'igris install' or 'igris refresh' to materialize ~/.igris/core/harness-manifest.json (the runtime mirror)." >&2
+  exit 1
+}
+
+# ---------------------------------------------------------------------------
+# read_harness_descriptor <manifest> <query>
+#
+# FR-217: the ONE bash reader of the canonical harness descriptor (the bash twin
+# of cli/src/lib/harness-descriptor.ts). Reads the `harnesses` block from
+# <manifest> and answers <query>. python3-backed (the same precedent as
+# validate_manifest). List queries print ONE item per line in manifest
+# declaration order; field lookups print a single value (empty when absent).
+#
+# Queries:
+#   harness_ids                  - all declared harness shape ids
+#   agent_ids                    - the agent_id (npx id) of each harness
+#   agent_target_types           - harnesses WITH an `agents` block
+#   agent_target_row_harnesses   - harnesses with agents.projection == "target-row"
+#   mcp_target_types             - harnesses WITH an `mcp` block
+#   hook_target_types            - harnesses with hooks.supported == true
+#   mcp_projected_harnesses      - harnesses with mcp.projected == true (TD-281:
+#                                  the surface-PROJECTED set, ≠ block presence;
+#                                  antigravity has an mcp block but is the FR-179
+#                                  carve-out → excluded)
+#   hook_projected_harnesses     - harnesses with hooks.projected == true (TD-281)
+#   grant_harnesses              - harnesses WITH a `grant` block
+#   grant_path:<harness>         - that harness's grant.path (empty if none)
+#   mcp_config_path:<harness>    - that harness's mcp.config_path (empty if none)
+# ---------------------------------------------------------------------------
+read_harness_descriptor() {
+  local manifest="$1"
+  local query="$2"
+  if [ ! -f "$manifest" ]; then
+    echo "Error: read_harness_descriptor: manifest '$manifest' does not exist" >&2
+    return 1
+  fi
+  python3 - "$manifest" "$query" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+query = sys.argv[2]
+
+try:
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+except Exception as exc:  # noqa: BLE001
+    sys.stderr.write(f"read_harness_descriptor: cannot read {manifest_path}: {exc}\n")
+    sys.exit(1)
+
+harnesses = manifest.get("harnesses")
+if not isinstance(harnesses, dict):
+    harnesses = {}
+
+# Declaration order = JSON object insertion order (preserved by json.load).
+ids = list(harnesses.keys())
+
+
+def _obj(h):
+    v = harnesses.get(h)
+    return v if isinstance(v, dict) else {}
+
+
+if query == "harness_ids":
+    for h in ids:
+        print(h)
+elif query == "agent_ids":
+    for h in ids:
+        aid = _obj(h).get("agent_id")
+        if isinstance(aid, str):
+            print(aid)
+elif query == "agent_target_types":
+    for h in ids:
+        if isinstance(_obj(h).get("agents"), dict):
+            print(h)
+elif query == "agent_target_row_harnesses":
+    for h in ids:
+        a = _obj(h).get("agents")
+        if isinstance(a, dict) and a.get("projection") == "target-row":
+            print(h)
+elif query == "mcp_target_types":
+    for h in ids:
+        if isinstance(_obj(h).get("mcp"), dict):
+            print(h)
+elif query == "hook_target_types":
+    for h in ids:
+        hk = _obj(h).get("hooks")
+        if isinstance(hk, dict) and hk.get("supported") is True:
+            print(h)
+elif query == "mcp_projected_harnesses":
+    # TD-281: the surface-PROJECTED mcp harnesses (mcp.projected == true) — the
+    # drift parity-guard's expected set, distinct from block presence
+    # (mcp_target_types). antigravity has an mcp block but projected:false.
+    for h in ids:
+        m = _obj(h).get("mcp")
+        if isinstance(m, dict) and m.get("projected") is True:
+            print(h)
+elif query == "hook_projected_harnesses":
+    # TD-281: the surface-PROJECTED hook harnesses (hooks.projected == true).
+    for h in ids:
+        hk = _obj(h).get("hooks")
+        if isinstance(hk, dict) and hk.get("projected") is True:
+            print(h)
+elif query == "grant_harnesses":
+    for h in ids:
+        if isinstance(_obj(h).get("grant"), dict):
+            print(h)
+elif query.startswith("grant_path:"):
+    h = query.split(":", 1)[1]
+    g = _obj(h).get("grant")
+    if isinstance(g, dict) and isinstance(g.get("path"), str):
+        print(g["path"])
+elif query.startswith("mcp_config_path:"):
+    h = query.split(":", 1)[1]
+    m = _obj(h).get("mcp")
+    if isinstance(m, dict) and isinstance(m.get("config_path"), str):
+        print(m["config_path"])
+else:
+    sys.stderr.write(f"read_harness_descriptor: unknown query '{query}'\n")
+    sys.exit(2)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# validate_manifest <manifest-path> <schema-path>
+#
+# Validates a harness manifest against the JSON Schema (FR-136). Two code
+# paths, chosen at runtime:
+#   1. If `python3 -c "import jsonschema"` succeeds -> full JSON Schema
+#      validation against the schema file (authoritative).
+#   2. Otherwise -> a structural fallback that asserts the load-bearing
+#      contract WITHOUT the jsonschema dependency: required top-level keys
+#      (version, agents), version == 1, each agent has name/canonical/targets,
+#      each target type is in {claude, codex, gemini}, and the
+#      versioned-glob / unversioned-file `oneOf` (versioned=true requires
+#      canonical.glob; versioned=false requires canonical.file).
+#
+# This helper NEVER no-ops: when jsonschema is absent the structural check
+# still runs. On failure it prints a clear, actionable message naming the
+# offending field/agent and returns non-zero. Returns 0 on a valid manifest.
+# Dependency posture matches the rest of _common.sh: python3 only, no jq.
+# ---------------------------------------------------------------------------
+validate_manifest() {
+  local manifest="$1"
+  local schema="$2"
+  if [ ! -f "$manifest" ]; then
+    echo "Error: manifest '$manifest' does not exist" >&2
+    return 1
+  fi
+  # FR-217: resolve the canonical harness descriptor and pass it as argv[3]. The
+  # per-surface harness enums derive from the descriptor (the schema enums become
+  # VALIDATED DERIVATIVES, §4 cross-check below); an empty path = partial tree, in
+  # which case the python falls back to the manifest's own block then the literals.
+  local descriptor_path
+  descriptor_path="$(resolve_harness_descriptor_path)"
+  python3 - "$manifest" "$schema" "$descriptor_path" <<'PY'
+import json
+import sys
+
+manifest_path = sys.argv[1]
+schema_path = sys.argv[2]
+# FR-217: the canonical harness descriptor path (resolve_harness_descriptor_path);
+# empty on a partial tree.
+descriptor_path = sys.argv[3] if len(sys.argv) > 3 else ""
+
+
+def fail(msg: str) -> None:
+    sys.stderr.write(f"Manifest validation failed ({manifest_path}): {msg}\n")
+    sys.exit(1)
+
+
+try:
+    with open(manifest_path, "r", encoding="utf-8") as fh:
+        manifest = json.load(fh)
+except json.JSONDecodeError as exc:
+    fail(f"not valid JSON: {exc}")
+except OSError as exc:
+    fail(f"cannot read manifest: {exc}")
+
+# ---- FR-217: descriptor-derived harness sets + schema<->descriptor cross-check -
+# The canonical descriptor (the `harnesses` block) is AUTHORITATIVE; the schema's
+# harness enums + the structural-fallback `valid_*` sets are VALIDATED DERIVATIVES
+# of it. We compute the descriptor sets ONCE here (used by BOTH the jsonschema and
+# structural paths) and assert each schema harness-enum equals the descriptor set
+# (§4 drift-foreclosure). Precedence: the resolved canonical descriptor → the
+# manifest's own `harnesses` block (igris-ai is self-describing) → empty.
+
+
+def _read_harnesses(path: str) -> dict:
+    if not path:
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            h = json.load(fh).get("harnesses")
+            return h if isinstance(h, dict) else {}
+    except Exception:  # noqa: BLE001 — an unreadable descriptor is a partial tree
+        return {}
+
+
+def _derive(harnesses: dict):
+    hids, agent, mcp, hook, grant = set(), set(), set(), set(), set()
+    for hk, hv in (harnesses or {}).items():
+        hids.add(hk)
+        if isinstance(hv, dict):
+            if isinstance(hv.get("agents"), dict):
+                agent.add(hk)
+            if isinstance(hv.get("mcp"), dict):
+                mcp.add(hk)
+            hb = hv.get("hooks")
+            if isinstance(hb, dict) and hb.get("supported") is True:
+                hook.add(hk)
+            if isinstance(hv.get("grant"), dict):
+                grant.add(hk)
+    return hids, agent, mcp, hook, grant
+
+
+_canon_h = _read_harnesses(descriptor_path)
+if not _canon_h:
+    _mh = manifest.get("harnesses")
+    _canon_h = _mh if isinstance(_mh, dict) else {}
+desc_hids, desc_agent, desc_mcp, desc_hook, _desc_grant = _derive(_canon_h)
+
+# Load the schema ONCE (the jsonschema path requires it; the structural path does
+# not; the cross-check uses it when present). None = unreadable.
+try:
+    with open(schema_path, "r", encoding="utf-8") as fh:
+        schema_doc = json.load(fh)
+except Exception:  # noqa: BLE001
+    schema_doc = None
+
+
+def _schema_enum(doc, path):
+    cur = doc
+    for k in path:
+        if not isinstance(cur, dict) or k not in cur:
+            return None
+        cur = cur[k]
+    return set(cur) if isinstance(cur, list) else None
+
+
+# §4 cross-check: each schema harness-enum MUST equal the descriptor-derived set.
+# Runs in BOTH paths. Skipped only when neither the descriptor nor a given schema
+# enum is available (partial tree); a present-but-divergent pair is a HARD fail.
+if schema_doc is not None and desc_hids:
+    _checks = [
+        ("harnesses propertyNames", desc_hids,
+         _schema_enum(schema_doc, ["properties", "harnesses", "propertyNames", "enum"])),
+        ("agents target", desc_agent,
+         _schema_enum(schema_doc, ["$defs", "agent", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+        ("mcp target", desc_mcp,
+         _schema_enum(schema_doc, ["$defs", "mcp_surface", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+        ("hook target", desc_hook,
+         _schema_enum(schema_doc, ["$defs", "hook_surface", "properties", "targets",
+                                   "items", "properties", "type", "enum"])),
+    ]
+    for _label, _desc_set, _schema_set in _checks:
+        if _schema_set is None:
+            continue
+        if _desc_set != _schema_set:
+            fail(f"FR-217 schema<->descriptor drift: {_label} enum "
+                 f"{sorted(_schema_set)} != descriptor-derived {sorted(_desc_set)} "
+                 f"— update manifest.schema.json or the harness descriptor so they agree")
+
+# The effective per-surface harness sets the structural fallback validates against:
+# the descriptor when resolved, else the canonical literals (safety net so a
+# missing descriptor never silently empties the enums; M5 may trim).
+if desc_hids:
+    eff_harness_types = desc_hids
+    eff_target_types = desc_agent
+    eff_mcp_target_types = desc_mcp
+    eff_hook_target_types = desc_hook
+else:
+    eff_harness_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    eff_target_types = {"claude", "codex", "gemini", "opencode"}
+    eff_mcp_target_types = {"claude", "codex", "gemini", "opencode", "antigravity"}
+    eff_hook_target_types = {"claude", "opencode", "antigravity"}
+
+try:
+    import jsonschema  # type: ignore
+    have_jsonschema = True
+except Exception:
+    have_jsonschema = False
+
+if have_jsonschema:
+    if schema_doc is None:
+        fail(f"cannot read schema '{schema_path}'")
+    try:
+        jsonschema.validate(instance=manifest, schema=schema_doc)
+    except jsonschema.ValidationError as exc:
+        loc = "/".join(str(p) for p in exc.absolute_path) or "<root>"
+        fail(f"at '{loc}': {exc.message}")
+    sys.exit(0)
+
+# ---- Structural fallback (no jsonschema available) ----
+if not isinstance(manifest, dict):
+    fail("top-level value must be an object")
+
+for required_key in ("version", "agents"):
+    if required_key not in manifest:
+        fail(f"missing required top-level key '{required_key}'")
+
+if manifest["version"] != 1:
+    fail(f"'version' must be 1 (got {manifest['version']!r})")
+
+allowed_top = {"$schema", "_comment", "_schema", "_harnesses_comment",
+               "version", "harnesses", "agents", "surfaces"}
+for key in manifest:
+    if key not in allowed_top:
+        fail(f"unknown top-level key '{key}' (additionalProperties:false)")
+
+# TD-244 (BI-3) / FR-217: structural validation of the per-harness descriptor
+# map. Mirrors the `harnesses` $def in manifest.schema.json so the structural
+# fallback AGREES with the jsonschema path. Absent → native-static default (no
+# delegation recipe). Each key must be a known harness type; each value an object
+# whose keys are a subset of the FR-217 descriptor fields. FR-217 EXTENDED the
+# block from `delegation_model`-only into the canonical harness descriptor; every
+# descriptor field is OPTIONAL at the harness level (per-surface participation is
+# derived from block PRESENCE), so a `delegation_model`-only block still validates
+# (back-compat). Only the keys WITHIN a present sub-object are required.
+harnesses = manifest.get("harnesses")
+if harnesses is not None:
+    if not isinstance(harnesses, dict):
+        fail("'harnesses' must be an object")
+    valid_harness_types = eff_harness_types  # FR-217: descriptor-derived (was a literal)
+    valid_delegation_models = {"native-static", "dynamic-define", "inline"}
+    allowed_harness_keys = {"delegation_model", "agent_id", "agents", "mcp",
+                            "grant", "hooks", "harness_specific_file"}
+    valid_agent_projections = {"symlink", "target-row"}
+    valid_mcp_formats = {"json", "toml"}
+    valid_entry_shapes = {"claude", "gemini", "codex", "opencode"}
+    valid_grant_kinds = {"json-array", "toml-folder", "json-folder", "covered"}
+    valid_hook_methods = {"settings-merge", "plugin", "config-merge"}
+    for hkey, hval in harnesses.items():
+        if hkey not in valid_harness_types:
+            fail(f"harnesses: unknown harness type '{hkey}' "
+                 f"(must be one of {sorted(valid_harness_types)})")
+        if not isinstance(hval, dict):
+            fail(f"harnesses['{hkey}'] must be an object")
+        for key in hval:
+            if key not in allowed_harness_keys:
+                fail(f"harnesses['{hkey}']: unknown key '{key}' "
+                     f"(additionalProperties:false; allowed: {sorted(allowed_harness_keys)})")
+        dm = hval.get("delegation_model")
+        if dm is not None and dm not in valid_delegation_models:
+            fail(f"harnesses['{hkey}'].delegation_model '{dm}' is not one of "
+                 f"{sorted(valid_delegation_models)}")
+
+        # FR-217: agent_id — the npx agent id (string).
+        agent_id = hval.get("agent_id")
+        if agent_id is not None and not isinstance(agent_id, str):
+            fail(f"harnesses['{hkey}'].agent_id must be a string")
+
+        # FR-217: agents block — { target_type (harness id), projection } both required.
+        agents_block = hval.get("agents")
+        if agents_block is not None:
+            if not isinstance(agents_block, dict):
+                fail(f"harnesses['{hkey}'].agents must be an object")
+            for key in agents_block:
+                if key not in {"target_type", "projection"}:
+                    fail(f"harnesses['{hkey}'].agents: unknown key '{key}' "
+                         "(additionalProperties:false; allowed: ['projection', 'target_type'])")
+            for req in ("target_type", "projection"):
+                if req not in agents_block:
+                    fail(f"harnesses['{hkey}'].agents missing required key '{req}'")
+            tt = agents_block["target_type"]
+            if tt not in valid_harness_types:
+                fail(f"harnesses['{hkey}'].agents.target_type '{tt}' is not one of "
+                     f"{sorted(valid_harness_types)}")
+            pj = agents_block["projection"]
+            if pj not in valid_agent_projections:
+                fail(f"harnesses['{hkey}'].agents.projection '{pj}' is not one of "
+                     f"{sorted(valid_agent_projections)}")
+
+        # FR-217: mcp block — config_path/format/map_key/entry_shape all required.
+        mcp_block = hval.get("mcp")
+        if mcp_block is not None:
+            if not isinstance(mcp_block, dict):
+                fail(f"harnesses['{hkey}'].mcp must be an object")
+            # TD-281: `projected` is the optional 'surface-projected vs carve-out'
+            # flag (boolean). Additive — allowed but not required (a block without
+            # it is treated as not-projected by the parity-guard).
+            allowed_mcp_keys = {"config_path", "format", "map_key", "entry_shape",
+                                "projected"}
+            for key in mcp_block:
+                if key not in allowed_mcp_keys:
+                    fail(f"harnesses['{hkey}'].mcp: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_mcp_keys)})")
+            for req in ("config_path", "format", "map_key", "entry_shape"):
+                if req not in mcp_block:
+                    fail(f"harnesses['{hkey}'].mcp missing required key '{req}'")
+            if not isinstance(mcp_block["config_path"], str):
+                fail(f"harnesses['{hkey}'].mcp.config_path must be a string")
+            if mcp_block["format"] not in valid_mcp_formats:
+                fail(f"harnesses['{hkey}'].mcp.format '{mcp_block['format']}' is not one of "
+                     f"{sorted(valid_mcp_formats)}")
+            if not isinstance(mcp_block["map_key"], str):
+                fail(f"harnesses['{hkey}'].mcp.map_key must be a string")
+            if mcp_block["entry_shape"] not in valid_entry_shapes:
+                fail(f"harnesses['{hkey}'].mcp.entry_shape '{mcp_block['entry_shape']}' "
+                     f"is not one of {sorted(valid_entry_shapes)}")
+            if "projected" in mcp_block and not isinstance(mcp_block["projected"], bool):
+                fail(f"harnesses['{hkey}'].mcp.projected must be a boolean")
+
+        # FR-217: grant block — kind required; path/token optional strings.
+        grant_block = hval.get("grant")
+        if grant_block is not None:
+            if not isinstance(grant_block, dict):
+                fail(f"harnesses['{hkey}'].grant must be an object")
+            allowed_grant_keys = {"kind", "path", "token"}
+            for key in grant_block:
+                if key not in allowed_grant_keys:
+                    fail(f"harnesses['{hkey}'].grant: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_grant_keys)})")
+            if "kind" not in grant_block:
+                fail(f"harnesses['{hkey}'].grant missing required key 'kind'")
+            if grant_block["kind"] not in valid_grant_kinds:
+                fail(f"harnesses['{hkey}'].grant.kind '{grant_block['kind']}' is not one of "
+                     f"{sorted(valid_grant_kinds)}")
+            if "path" in grant_block and not isinstance(grant_block["path"], str):
+                fail(f"harnesses['{hkey}'].grant.path must be a string")
+            if "token" in grant_block and not isinstance(grant_block["token"], str):
+                fail(f"harnesses['{hkey}'].grant.token must be a string")
+
+        # FR-217: hooks block — supported required (bool); config_path/method optional.
+        hooks_block = hval.get("hooks")
+        if hooks_block is not None:
+            if not isinstance(hooks_block, dict):
+                fail(f"harnesses['{hkey}'].hooks must be an object")
+            # TD-281: `projected` is the optional 'surface-projected vs carve-out'
+            # flag (boolean). Additive — allowed but not required.
+            allowed_hook_keys = {"supported", "config_path", "method", "projected"}
+            for key in hooks_block:
+                if key not in allowed_hook_keys:
+                    fail(f"harnesses['{hkey}'].hooks: unknown key '{key}' "
+                         f"(additionalProperties:false; allowed: {sorted(allowed_hook_keys)})")
+            if "supported" not in hooks_block:
+                fail(f"harnesses['{hkey}'].hooks missing required key 'supported'")
+            if not isinstance(hooks_block["supported"], bool):
+                fail(f"harnesses['{hkey}'].hooks.supported must be a boolean")
+            if "config_path" in hooks_block and not isinstance(hooks_block["config_path"], str):
+                fail(f"harnesses['{hkey}'].hooks.config_path must be a string")
+            if "method" in hooks_block and hooks_block["method"] not in valid_hook_methods:
+                fail(f"harnesses['{hkey}'].hooks.method '{hooks_block['method']}' is not one of "
+                     f"{sorted(valid_hook_methods)}")
+            if "projected" in hooks_block and not isinstance(hooks_block["projected"], bool):
+                fail(f"harnesses['{hkey}'].hooks.projected must be a boolean")
+
+        # FR-217: harness_specific_file — repo-relative path string.
+        hsf = hval.get("harness_specific_file")
+        if hsf is not None and not isinstance(hsf, str):
+            fail(f"harnesses['{hkey}'].harness_specific_file must be a string")
+
+agents = manifest["agents"]
+if not isinstance(agents, list):
+    fail("'agents' must be an array")
+
+valid_target_types = eff_target_types  # FR-217: descriptor-derived (was a literal)
+# FR-155: `scope` is allowed on agent + skills_surface entries. Absent → global
+# (default, back-compat). The structural shape ({type:"global"} OR
+# {type:"project", paths:[...]}) is validated by validate_scope_shape below.
+allowed_agent_keys = {"name", "layer", "canonical", "body_exception", "scope",
+                      "targets"}
+allowed_canon_keys = {"dir", "glob", "file", "versioned"}
+allowed_target_keys = {"type", "path"}
+
+
+def validate_scope_shape(scope, where):
+    """FR-155: structural validate of the `scope` field. Mirrors `$defs.scope`
+    in manifest.schema.json: oneOf {type:"global"} OR
+    {type:"project", paths:[non-empty array of strings]}.
+    `additionalProperties:false`. The caller is responsible for `where` (the
+    breadcrumb prefix). Returns on success; calls `fail` otherwise.
+    """
+    if not isinstance(scope, dict):
+        fail(f"{where}.scope must be an object")
+    t = scope.get("type")
+    if t == "global":
+        allowed = {"type"}
+        for key in scope:
+            if key not in allowed:
+                fail(f"{where}.scope: unknown key '{key}' "
+                     "(additionalProperties:false; scope.type=global allows only 'type')")
+    elif t == "project":
+        allowed = {"type", "paths"}
+        for key in scope:
+            if key not in allowed:
+                fail(f"{where}.scope: unknown key '{key}' "
+                     "(additionalProperties:false; scope.type=project allows only 'type'+'paths')")
+        if "paths" not in scope:
+            fail(f"{where}.scope: type=project requires 'paths'")
+        paths = scope["paths"]
+        if not isinstance(paths, list) or len(paths) < 1:
+            fail(f"{where}.scope.paths must be a non-empty array")
+        for k, p in enumerate(paths):
+            if not isinstance(p, str):
+                fail(f"{where}.scope.paths[{k}] must be a string")
+    else:
+        fail(f"{where}.scope.type '{t!r}' is not one of ['global', 'project']")
+
+for i, agent in enumerate(agents):
+    where = f"agents[{i}]"
+    if not isinstance(agent, dict):
+        fail(f"{where} must be an object")
+    for req in ("name", "canonical", "targets"):
+        if req not in agent:
+            fail(f"{where} missing required key '{req}'")
+    name = agent["name"]
+    where = f"agents[{i}] ('{name}')"
+    for key in agent:
+        if key not in allowed_agent_keys:
+            fail(f"{where}: unknown key '{key}' (additionalProperties:false)")
+
+    canon = agent["canonical"]
+    if not isinstance(canon, dict):
+        fail(f"{where}.canonical must be an object")
+    for req in ("dir", "versioned"):
+        if req not in canon:
+            fail(f"{where}.canonical missing required key '{req}'")
+    for key in canon:
+        if key not in allowed_canon_keys:
+            fail(f"{where}.canonical: unknown key '{key}' "
+                 "(additionalProperties:false)")
+    versioned = canon["versioned"]
+    if not isinstance(versioned, bool):
+        fail(f"{where}.canonical.versioned must be a boolean")
+    if versioned and "glob" not in canon:
+        fail(f"{where}.canonical: versioned=true requires 'glob'")
+    if not versioned and "file" not in canon:
+        fail(f"{where}.canonical: versioned=false requires 'file'")
+
+    targets = agent["targets"]
+    if not isinstance(targets, list) or len(targets) < 1:
+        fail(f"{where}.targets must be a non-empty array")
+    for j, target in enumerate(targets):
+        twhere = f"{where}.targets[{j}]"
+        if not isinstance(target, dict):
+            fail(f"{twhere} must be an object")
+        for req in ("type", "path"):
+            if req not in target:
+                fail(f"{twhere} missing required key '{req}'")
+        for key in target:
+            if key not in allowed_target_keys:
+                fail(f"{twhere}: unknown key '{key}' "
+                     "(additionalProperties:false)")
+        if target["type"] not in valid_target_types:
+            fail(f"{twhere}.type '{target['type']}' is not one of "
+                 f"{sorted(valid_target_types)}")
+
+    # FR-155: optional scope.
+    if "scope" in agent:
+        validate_scope_shape(agent["scope"], where)
+
+# ---- FR-137: structural validation of the surfaces.skills sub-shape --------
+# The structural fallback (no jsonschema) previously did NOT recurse into
+# `surfaces`, so a malformed surfaces block passed silently. Validate the
+# skills surface here so the "schema validates surfaces" contract holds in
+# BOTH code paths. os_context is left permissive (RESERVED for FR-140).
+surfaces = manifest.get("surfaces")
+if surfaces is not None:
+    if not isinstance(surfaces, dict):
+        fail("'surfaces' must be an object")
+    allowed_surface_keys = {"skills", "mcp_servers", "hooks", "os_context"}
+    for key in surfaces:
+        if key not in allowed_surface_keys:
+            fail(f"surfaces: unknown key '{key}' (additionalProperties:false)")
+
+    # TD-191: `surfaces.skills` is now an array of blocks (multi-source). The
+    # normalizer wraps a legacy single-object value as `[object]` so loaders
+    # accept stale overlays without a version bump. The jsonschema path uses
+    # the schema's array-only contract directly; this structural fallback
+    # mirrors it (the schema is the source of truth, validate_manifest just
+    # has to agree).
+    skills = surfaces.get("skills")
+    if skills is not None:
+        if isinstance(skills, dict):
+            skills_blocks = [skills]
+        elif isinstance(skills, list):
+            skills_blocks = skills
+        else:
+            fail("surfaces.skills must be an array of blocks "
+                 "(or a single legacy object — both normalize)")
+        if len(skills_blocks) < 1:
+            fail("surfaces.skills must be a non-empty array")
+        # FR-149/FR-151/FR-153/FR-171/FR-202: the per-type method allowlist
+        # (claude/symlink, agents/symlink, opencode/command) is enforced via
+        # `valid_pairs` below — mirrors the `oneOf` constraint in
+        # manifest.schema.json so both validation paths agree. FR-202 (M1):
+        # the dead codex/symlink + gemini/symlink standalone pairs (superseded
+        # by agents/symlink under FR-157 — codex+gemini read the `~/.agents/
+        # skills/` projection natively) and the long-retired codex/compiler
+        # (AGENTS.md aggregator) + gemini/converter (per-skill TOML) methods
+        # were dropped here in lockstep with the schema. No live manifest
+        # declared any removed value, so every live validate_manifest call still
+        # passes identically; only the rejected set narrows. See L-519.
+        valid_skill_types = {"claude", "agents", "opencode"}
+        valid_skill_methods = {"symlink", "command"}
+        valid_pairs = {("claude", "symlink"),
+                       ("agents", "symlink"),
+                       ("opencode", "command")}
+        allowed_skill_target_keys = {"type", "method", "path"}
+        # FR-155: `scope` is allowed on a skills_surface block (same shape as
+        # on an agent entry). Absent → global (default, back-compat).
+        allowed_skills_keys = {"source", "layer", "scope", "targets"}
+        for b_idx, skills_block in enumerate(skills_blocks):
+            bwhere = f"surfaces.skills[{b_idx}]"
+            if not isinstance(skills_block, dict):
+                fail(f"{bwhere} must be an object")
+            for key in skills_block:
+                if key not in allowed_skills_keys:
+                    fail(f"{bwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "targets" not in skills_block:
+                fail(f"{bwhere} missing required key 'targets'")
+            s_targets = skills_block["targets"]
+            if not isinstance(s_targets, list) or len(s_targets) < 1:
+                fail(f"{bwhere}.targets must be a non-empty array")
+            for k, st in enumerate(s_targets):
+                stwhere = f"{bwhere}.targets[{k}]"
+                if not isinstance(st, dict):
+                    fail(f"{stwhere} must be an object")
+                for req in ("type", "method", "path"):
+                    if req not in st:
+                        fail(f"{stwhere} missing required key '{req}'")
+                for key in st:
+                    if key not in allowed_skill_target_keys:
+                        fail(f"{stwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if st["type"] not in valid_skill_types:
+                    fail(f"{stwhere}.type '{st['type']}' is not one of "
+                         f"{sorted(valid_skill_types)}")
+                if st["method"] not in valid_skill_methods:
+                    fail(f"{stwhere}.method '{st['method']}' is not one of "
+                         f"{sorted(valid_skill_methods)}")
+                # FR-153: per-type method allowlist (mirrors schema `oneOf`).
+                pair = (st["type"], st["method"])
+                if pair not in valid_pairs:
+                    fail(f"{stwhere}: type/method pair "
+                         f"'{st['type']}/{st['method']}' is not allowed; "
+                         "valid pairs: claude/symlink, agents/symlink, "
+                         "opencode/command")
+            # FR-155: optional scope on the skills_surface block.
+            if "scope" in skills_block:
+                validate_scope_shape(skills_block["scope"], bwhere)
+
+    # ---- FR-161 (FR-160 epic): structural validation of surfaces.mcp_servers
+    # ARRAY of mcp_surface blocks. Mirrors $defs.mcp_surface so the structural
+    # fallback AGREES with the jsonschema path (the parity loop integration
+    # test #11 asserts). SEPARATE 4-harness target enum (opencode added); the
+    # method is the const "merge". v1 is GLOBAL-ONLY — scope is accepted for
+    # forward-compat but consumers treat every block as global.
+    mcp_servers = surfaces.get("mcp_servers")
+    if mcp_servers is not None:
+        if not isinstance(mcp_servers, list):
+            fail("surfaces.mcp_servers must be a non-empty array")
+        if len(mcp_servers) < 1:
+            fail("surfaces.mcp_servers must be a non-empty array")
+        valid_mcp_target_types = eff_mcp_target_types  # FR-217: descriptor-derived
+        allowed_mcp_keys = {"name", "layer", "scope", "canonical", "targets"}
+        allowed_mcp_canon_keys = {"command", "args", "env", "startup_timeout_sec"}
+        allowed_mcp_target_keys = {"type", "method", "enabled"}
+        for m_idx, mcp_block in enumerate(mcp_servers):
+            mwhere = f"surfaces.mcp_servers[{m_idx}]"
+            if not isinstance(mcp_block, dict):
+                fail(f"{mwhere} must be an object")
+            for key in mcp_block:
+                if key not in allowed_mcp_keys:
+                    fail(f"{mwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            for req in ("name", "canonical", "targets"):
+                if req not in mcp_block:
+                    fail(f"{mwhere} missing required key '{req}'")
+
+            canon = mcp_block["canonical"]
+            if not isinstance(canon, dict):
+                fail(f"{mwhere}.canonical must be an object")
+            for key in canon:
+                if key not in allowed_mcp_canon_keys:
+                    fail(f"{mwhere}.canonical: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "command" not in canon or not isinstance(canon["command"], str):
+                fail(f"{mwhere}.canonical.command is required and must be a string")
+
+            m_targets = mcp_block["targets"]
+            if not isinstance(m_targets, list) or len(m_targets) < 1:
+                fail(f"{mwhere}.targets must be a non-empty array")
+            for k, mt in enumerate(m_targets):
+                mtwhere = f"{mwhere}.targets[{k}]"
+                if not isinstance(mt, dict):
+                    fail(f"{mtwhere} must be an object")
+                for req in ("type", "method"):
+                    if req not in mt:
+                        fail(f"{mtwhere} missing required key '{req}'")
+                for key in mt:
+                    if key not in allowed_mcp_target_keys:
+                        fail(f"{mtwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if mt["type"] not in valid_mcp_target_types:
+                    fail(f"{mtwhere}.type '{mt['type']}' is not one of "
+                         f"{sorted(valid_mcp_target_types)}")
+                if mt["method"] != "merge":
+                    fail(f"{mtwhere}.method '{mt['method']}' must be 'merge'")
+
+            # v1 GLOBAL-ONLY: scope accepted for forward-compat (consumers
+            # treat every block as global). Same structural shape as agents.
+            if "scope" in mcp_block:
+                validate_scope_shape(mcp_block["scope"], mwhere)
+
+    # ---- FR-180 (D7): structural validation of surfaces.hooks ----------------
+    # ARRAY of hook_surface blocks. Mirrors $defs.hook_surface so the structural
+    # fallback AGREES with the jsonschema path (parity loop integration test).
+    # Targets carry the 2-harness enum (claude + opencode — the two with a
+    # native hook MERGE surface), the const method "merge", and `event` is one
+    # of the six portable events the canonical-settings.json block declares.
+    hooks = surfaces.get("hooks")
+    if hooks is not None:
+        if not isinstance(hooks, list) or len(hooks) < 1:
+            fail("surfaces.hooks must be a non-empty array")
+        valid_hook_events = {"SessionStart", "SessionEnd", "PreToolUse",
+                             "PostToolUse", "PreCompact", "PostCompact"}
+        valid_hook_target_types = eff_hook_target_types  # FR-217: descriptor-derived
+        allowed_hook_keys = {"name", "event", "layer", "scope", "canonical",
+                             "targets"}
+        allowed_hook_canon_keys = {"command", "matcher", "timeout"}
+        allowed_hook_target_keys = {"type", "method", "enabled"}
+        for h_idx, hook_block in enumerate(hooks):
+            hwhere = f"surfaces.hooks[{h_idx}]"
+            if not isinstance(hook_block, dict):
+                fail(f"{hwhere} must be an object")
+            for key in hook_block:
+                if key not in allowed_hook_keys:
+                    fail(f"{hwhere}: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            for req in ("name", "event", "canonical", "targets"):
+                if req not in hook_block:
+                    fail(f"{hwhere} missing required key '{req}'")
+            if hook_block["event"] not in valid_hook_events:
+                fail(f"{hwhere}.event '{hook_block['event']}' is not one of "
+                     f"{sorted(valid_hook_events)}")
+
+            canon = hook_block["canonical"]
+            if not isinstance(canon, dict):
+                fail(f"{hwhere}.canonical must be an object")
+            for key in canon:
+                if key not in allowed_hook_canon_keys:
+                    fail(f"{hwhere}.canonical: unknown key '{key}' "
+                         "(additionalProperties:false)")
+            if "command" not in canon or not isinstance(canon["command"], str) \
+                    or not canon["command"]:
+                fail(f"{hwhere}.canonical.command is required and must be a "
+                     "non-empty string")
+
+            h_targets = hook_block["targets"]
+            if not isinstance(h_targets, list) or len(h_targets) < 1:
+                fail(f"{hwhere}.targets must be a non-empty array")
+            for k, ht in enumerate(h_targets):
+                htwhere = f"{hwhere}.targets[{k}]"
+                if not isinstance(ht, dict):
+                    fail(f"{htwhere} must be an object")
+                for req in ("type", "method"):
+                    if req not in ht:
+                        fail(f"{htwhere} missing required key '{req}'")
+                for key in ht:
+                    if key not in allowed_hook_target_keys:
+                        fail(f"{htwhere}: unknown key '{key}' "
+                             "(additionalProperties:false)")
+                if ht["type"] not in valid_hook_target_types:
+                    fail(f"{htwhere}.type '{ht['type']}' is not one of "
+                         f"{sorted(valid_hook_target_types)}")
+                if ht["method"] != "merge":
+                    fail(f"{htwhere}.method '{ht['method']}' must be 'merge'")
+
+            # v1 GLOBAL-ONLY: scope accepted for forward-compat.
+            if "scope" in hook_block:
+                validate_scope_shape(hook_block["scope"], hwhere)
+
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# merge_overlay_manifest <base-manifest> <overlay-manifest-or-empty>
+#
+# Implements the FR-136 base+overlay merge seam (the FR-139 loadout seam,
+# plan section 2 Option B). Emits to stdout a merged manifest JSON whose
+# `agents[]` is base.agents ++ overlay.agents. The base manifest is the
+# Layer-1 (public, in-repo) data; the overlay is an OPTIONAL gitignored
+# Layer-2 (personal/customization) file in the runtime loadout.
+#
+# Guard: a personal (overlay) agent whose `name` collides with a base agent
+# name is a HARD ERROR (returns non-zero) - a customization must never
+# silently shadow a core agent. FR-139 inherits this guard for free.
+#
+# FR-137: the overlay may ALSO carry a `surfaces.skills` block whose
+# `targets[]` are merged additively into the base `surfaces.skills.targets[]`
+# (the FR-139 seam for projecting personal skills). A personal skill-target
+# whose `path` collides with a base (core) skill-target `path` is the same
+# HARD ERROR - a personal skill must not silently shadow a core skill. When
+# the base has no `surfaces.skills`, the overlay's block becomes the merged
+# one (still permissive enough that an absent overlay surfaces block is fine).
+#
+# When the overlay path is empty or absent, emits the base manifest verbatim.
+# Returns 0 on success, non-zero on a name/path collision or read error.
+# ---------------------------------------------------------------------------
+merge_overlay_manifest() {
+  local base="$1"
+  local overlay="${2:-}"
+  if [ -z "$overlay" ] || [ ! -f "$overlay" ]; then
+    cat "$base"
+    return 0
+  fi
+  python3 - "$base" "$overlay" <<'PY'
+import json
+import os
+import sys
+
+base_path = sys.argv[1]
+overlay_path = sys.argv[2]
+
+with open(base_path, "r", encoding="utf-8") as fh:
+    base = json.load(fh)
+with open(overlay_path, "r", encoding="utf-8") as fh:
+    overlay = json.load(fh)
+
+base_agents = base.get("agents", [])
+overlay_agents = overlay.get("agents", [])
+
+base_names = {a.get("name") for a in base_agents}
+for agent in overlay_agents:
+    nm = agent.get("name")
+    if nm in base_names:
+        sys.stderr.write(
+            f"Error: overlay agent '{nm}' collides with a base (core) agent "
+            "name; a personal customization must not shadow a core agent.\n"
+        )
+        sys.exit(1)
+
+merged = dict(base)
+merged["agents"] = list(base_agents) + list(overlay_agents)
+
+# FR-137 / TD-191 / BR-074: merge surfaces.skills as a MULTI-BLOCK ARRAY.
+# Personal blocks compile ALONGSIDE core (each carries its own source/layer/
+# targets), so the merge is a simple concatenation rather than the legacy "keep
+# base source + union targets" model. A target `path` is a consumer ROOT, not the
+# final per-skill output path; sibling personal blocks may share it because the
+# compiler appends each skill name below that root. Base/core target roots remain
+# reserved and still collide with overlay roots. Legacy single-object blocks
+# normalize to `[object]` so back-compat holds without a version bump.
+def _normalize_skills(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.skills must be an array of blocks (or a single "
+        "legacy object — both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_surfaces = base.get("surfaces", {}) or {}
+overlay_surfaces = overlay.get("surfaces", {}) or {}
+base_blocks = _normalize_skills(base_surfaces.get("skills"))
+overlay_blocks = _normalize_skills(overlay_surfaces.get("skills"))
+
+# `merged_surfaces` accumulates the skills, the FR-164 mcp_servers, and the
+# FR-180 (D7) hooks merges, so each is independent (an overlay carrying only one
+# of them still reaches the merged manifest). Start from the base surfaces and
+# overlay each block family in turn.
+merged_surfaces = None
+
+if base_blocks or overlay_blocks:
+    merged_skill_blocks = list(base_blocks) + list(overlay_blocks)
+    # Core path-collision guard: a personal skill-target root must not shadow
+    # a core/base root. Overlay-vs-overlay reuse is valid: two personal skill
+    # blocks can share ~/.agents/skills because they emit distinct
+    # ~/.agents/skills/<skill-name> children.
+    base_paths = {}
+    for b_idx, block in enumerate(base_blocks):
+        for t in (block or {}).get("targets", []) or []:
+            p = (t or {}).get("path")
+            if p is None:
+                continue
+            base_paths.setdefault(p, b_idx)
+    for o_idx, block in enumerate(overlay_blocks):
+        for t in (block or {}).get("targets", []) or []:
+            p = (t or {}).get("path")
+            if p is None:
+                continue
+            if p in base_paths:
+                prev = base_paths[p]
+                merged_idx = len(base_blocks) + o_idx
+                sys.stderr.write(
+                    f"Error: skill-target path '{p}' collides between "
+                    f"core surfaces.skills[{prev}] and overlay "
+                    f"surfaces.skills[{merged_idx}]; a personal skill must "
+                    "not shadow a core skill-target root.\n"
+                )
+                sys.exit(1)
+
+    # TD-268: scope-aware cross-block LEAF-collision guard. The root-reservation
+    # loop above forbids a personal root from shadowing a CORE/base root. This
+    # guard closes the genuine-clobber hole (risk #7): two skill blocks that
+    # would BOTH emit the same final skill location when their scopes overlap.
+    # The collision UNIT is the emitted LEAF (target-root, skill-name), NOT the
+    # raw root — the `skills` CLI places each skill at <root>/<basename(source)>,
+    # so content-pipeline + doc-pipeline legitimately share a root (distinct
+    # names → distinct leaves). Two blocks collide iff they share a leaf AND
+    # their scopes overlap; disjoint project scopes never collide (each emits
+    # only for its own --project-root). Runs over ALL merged blocks (base ++
+    # overlay) so a future core skills block is covered too. §18.1 twin:
+    # scopesOverlap / skillBlocksCollide in cli/src/verbs/loadout.ts. See TD-268.
+    def _scope_kind(scope):
+        if not scope:
+            return "global"
+        return scope.get("type") or "global"
+
+    def _resolve_scope_path(p):
+        # Mirrors the compile/drift filter resolution (compile_harnesses.sh
+        # L1401-1406) collapsed into one expression: `~` → $HOME, absolute
+        # verbatim, relative → cwd (the merge has no --project-root; the CLI
+        # always writes paths[] absolute, so the relative arm is a tolerated
+        # hand-edit fallback). realpath both for macOS /tmp ↔ /private/tmp.
+        return os.path.realpath(os.path.expanduser(p))
+
+    def _scopes_overlap(s1, s2):
+        if _scope_kind(s1) == "global" or _scope_kind(s2) == "global":
+            return True
+        p1 = {_resolve_scope_path(p) for p in (s1.get("paths") or [])}
+        p2 = {_resolve_scope_path(p) for p in (s2.get("paths") or [])}
+        return len(p1 & p2) > 0
+
+    def _block_leaves(block):
+        src = (block or {}).get("source")
+        if not isinstance(src, str) or not src:
+            return set()
+        sname = os.path.basename(src.rstrip("/"))
+        if not sname:
+            return set()
+        out = set()
+        for t in (block or {}).get("targets", []) or []:
+            tp = (t or {}).get("path")
+            if isinstance(tp, str) and tp:
+                out.add((tp, sname))
+        return out
+
+    for i in range(len(merged_skill_blocks)):
+        leaves_i = _block_leaves(merged_skill_blocks[i])
+        if not leaves_i:
+            continue
+        for j in range(i + 1, len(merged_skill_blocks)):
+            shared = leaves_i & _block_leaves(merged_skill_blocks[j])
+            if not shared:
+                continue
+            if _scopes_overlap((merged_skill_blocks[i] or {}).get("scope"),
+                               (merged_skill_blocks[j] or {}).get("scope")):
+                root, sname = sorted(shared)[0]
+                sys.stderr.write(
+                    f"Error: skill leaf ('{root}', '{sname}') collides between "
+                    f"surfaces.skills[{i}] and surfaces.skills[{j}] with "
+                    "overlapping scope; two skill blocks must not both project "
+                    "the same skill to the same root in overlapping scopes (the "
+                    "second would clobber the first). Use disjoint project "
+                    "scopes or distinct skill names.\n"
+                )
+                sys.exit(1)
+
+    merged_surfaces = dict(base_surfaces)
+    merged_surfaces["skills"] = merged_skill_blocks
+
+# FR-164 (FR-160 epic): merge surfaces.mcp_servers as a MULTI-BLOCK ARRAY
+# (base ++ overlay), mirroring the skills concat. WITHOUT this, a personal MCP
+# block written by `add-mcp` into the overlay would never reach the compile/
+# drift flatten (finding #2 gap). MCP identity is the block NAME — a personal
+# (overlay) block whose `name` collides with a base (core) block is a HARD
+# error (the analogue of the agent name-collision guard). Always normalizes
+# missing/single/list shapes; an absent mcp_servers surface contributes [].
+def _normalize_mcp(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.mcp_servers must be an array of blocks (or a single "
+        "object — both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_mcp = _normalize_mcp(base_surfaces.get("mcp_servers"))
+overlay_mcp = _normalize_mcp(overlay_surfaces.get("mcp_servers"))
+
+if base_mcp or overlay_mcp:
+    base_mcp_names = {m.get("name") for m in base_mcp}
+    for block in overlay_mcp:
+        nm = (block or {}).get("name")
+        if nm in base_mcp_names:
+            sys.stderr.write(
+                f"Error: overlay mcp_servers block '{nm}' collides with a base "
+                "(core) block name; a personal customization must not shadow a "
+                "core MCP server.\n"
+            )
+            sys.exit(1)
+    if merged_surfaces is None:
+        merged_surfaces = dict(base_surfaces)
+    merged_surfaces["mcp_servers"] = list(base_mcp) + list(overlay_mcp)
+
+# FR-180 (D7): merge surfaces.hooks as a MULTI-BLOCK ARRAY (base ++ overlay),
+# mirroring the skills + mcp_servers concat. WITHOUT this a
+# personal hook block written by `igris add hook` into the overlay would never
+# reach the compile/drift flatten (the same finding-#2 gap). A hook block IS
+# keyed on its `name`, so a personal (overlay) block whose `name` collides with
+# a base (core) block is a HARD error (the analogue of the agent / mcp name
+# guard). SEPARATELY, two blocks must never both own the same (event, target
+# type) cell — that would mean two Igris hooks fighting for the same harness
+# event slot — so an (event, type) cross-block collision is ALSO a hard error.
+def _normalize_hooks(value):
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return list(value)
+    sys.stderr.write(
+        "Error: surfaces.hooks must be an array of blocks (or a single "
+        "object - both normalize)\n"
+    )
+    sys.exit(1)
+
+
+base_hooks = _normalize_hooks(base_surfaces.get("hooks"))
+overlay_hooks = _normalize_hooks(overlay_surfaces.get("hooks"))
+
+if base_hooks or overlay_hooks:
+    base_hook_names = {h.get("name") for h in base_hooks}
+    for block in overlay_hooks:
+        nm = (block or {}).get("name")
+        if nm in base_hook_names:
+            sys.stderr.write(
+                f"Error: overlay hooks block '{nm}' collides with a base "
+                "(core) block name; a personal customization must not shadow a "
+                "core hook.\n"
+            )
+            sys.exit(1)
+    merged_hook_blocks = list(base_hooks) + list(overlay_hooks)
+    # Cross-block (event, target type) collision guard.
+    seen_hook_cells = {}
+    for b_idx, block in enumerate(merged_hook_blocks):
+        ev = (block or {}).get("event")
+        for t in (block or {}).get("targets", []) or []:
+            ttype = (t or {}).get("type")
+            if ev is None or ttype is None:
+                continue
+            cell = (ev, ttype)
+            if cell in seen_hook_cells:
+                prev = seen_hook_cells[cell]
+                sys.stderr.write(
+                    f"Error: hook cell ({ev}, {ttype}) collides between "
+                    f"surfaces.hooks[{prev}] and surfaces.hooks[{b_idx}]; two "
+                    "hooks must not both own the same event in the same harness "
+                    "(a personal hook must not shadow a core one, nor a sibling "
+                    "personal one).\n"
+                )
+                sys.exit(1)
+            seen_hook_cells[cell] = b_idx
+    if merged_surfaces is None:
+        merged_surfaces = dict(base_surfaces)
+    merged_surfaces["hooks"] = merged_hook_blocks
+
+if merged_surfaces is not None:
+    merged["surfaces"] = merged_surfaces
+
+sys.stdout.write(json.dumps(merged))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (S1): shared skill-name filter predicate.
+#
+# skill_name_matches_filter <skill-name> <name-glob>
+#
+# Returns 0 (keep) iff <name-glob> is the wildcard `*` (no filter) OR <skill-
+# name> matches the glob. Returns 1 (skip) otherwise. Used by the per-skill
+# walk in BOTH compile_harnesses.sh and check_harness_drift.sh so `--filter`
+# scopes the SKILLS surface the same way it already scopes the AGENTS surface
+# (the agent flatten applies `fnmatch` to the agent name). This is what makes
+# `igris add`'s scoped verify (S1) real: the check pass re-checks ONLY the
+# just-added skill, so pre-existing unrelated skill drift can't false-fail a
+# clean add. §18.1: ONE helper, identical application on both sides.
+# ---------------------------------------------------------------------------
+skill_name_matches_filter() {
+  local skill_name="$1"
+  local name_glob="$2"
+  # `*` (or empty) → no filter → always keep. Otherwise shell case-glob match
+  # (same matcher class as the agent flatten's python fnmatch — case-glob is
+  # the bash-native equivalent for the simple globs --filter accepts).
+  if [ -z "$name_glob" ] || [ "$name_glob" = "*" ]; then
+    return 0
+  fi
+  case "$skill_name" in
+    $name_glob) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (TD-235 / D5): shared core-ownership predicate.
+#
+# core_surfaces_owned <core-surfaces-path> <project-root>
+#
+# Returns 0 (owned) iff the realpath of <core-surfaces-path> is contained under
+# the realpath of <project-root> — the SAME `os.path.commonpath` ownership
+# signal the skills / mcp flatten gates use to decide whether to
+# union the core surfaces-manifest.json. Returns 1 (not owned) otherwise, and
+# also on any realpath/commonpath failure (safe default → core surfaces are
+# NOT unioned for an unrelated project).
+#
+# FR-218: this is LOAD-BEARING for the skills surface (no longer diagnostic-only).
+# It is one input to the skills core-union decision in BOTH
+# compile_harnesses.sh `project_skills` and check_harness_drift.sh `verify_skills`:
+#   _include_core = core_surfaces_owned(core_surfaces, project_root)
+#                   OR manifest_has_applicable_skill_block(merged_manifest, project_root)
+# When `_include_core` is true the core surfaces-manifest.json source IS unioned
+# into the skills flatten (so skills are GLOBAL — never pruned); when false an
+# agent-only / scoped-out / no-personal non-owner compile is a clean skills no-op.
+# A non-owner compile that DOES re-affirm core emits a loud, NON-pruning WARN
+# (the retired exit-0 "SKIPPED core surfaces" line is gone). Changing/removing
+# this helper changes projection behavior — do NOT treat it as diagnostic.
+# §18.1: ONE shared helper used by BOTH compile_harnesses.sh and check_harness_drift.sh.
+# ---------------------------------------------------------------------------
+core_surfaces_owned() {
+  local core_surfaces="$1"
+  local project_root="$2"
+  python3 - "$core_surfaces" "$project_root" <<'PY'
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+project_root = sys.argv[2]
+
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sys.exit(0)
+except (OSError, ValueError):
+    pass
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (TD-235 / D5): does the (merged + core) manifest set DECLARE any core
+# skills block at all? Used to decide whether a core-skip diagnostic is even
+# relevant — if the core surfaces-manifest.json declares no skills targets,
+# there is nothing to skip and no diagnostic is emitted. Reads the core
+# surfaces file only (the personal overlay is always unioned regardless of
+# ownership, so it is never the thing being skipped).
+#
+# core_skills_declared <core-surfaces-path>
+#   Returns 0 if the core surfaces-manifest.json declares ≥1 skills block with
+#   ≥1 target; 1 otherwise (or on read error).
+# ---------------------------------------------------------------------------
+core_skills_declared() {
+  local core_surfaces="$1"
+  python3 - "$core_surfaces" <<'PY'
+import json
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except OSError:
+    sys.exit(1)
+
+value = (data.get("surfaces") or {}).get("skills")
+if value is None:
+    sys.exit(1)
+blocks = [value] if isinstance(value, dict) else (value if isinstance(value, list) else [])
+for block in blocks:
+    if isinstance(block, dict) and (block.get("targets") or []):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-218 (mechanism B): does <manifest> declare >=1 skills block (with >=1
+# target) whose SCOPE APPLIES to <project-root>? This is the "a personal/project
+# skill is actually projected here" prune-trigger test that gates whether the
+# GLOBAL core skills source is (re)projected alongside it. Scope semantics MIRROR
+# the per-row filter in the compile/drift skills loops:
+#   - scope absent / type=global  → applies to every project root.
+#   - scope.type=project          → applies iff realpath(<project-root>) equals
+#     the realpath of >=1 entry in scope.paths[] (paths resolved `~`→$HOME,
+#     /abs verbatim, else <project-root>-relative — the FR-154 3-case resolver;
+#     both sides realpath'd for macOS /tmp ↔ /private/tmp equality).
+# A scope-FILTERED-OUT block does NOT count (it is not projected here, so it is
+# not a prune trigger and must NOT pull in the core source) — this keeps an
+# agent-only OR scoped-out compile a clean skills no-op (the FR-218 safety
+# property; otherwise a `--surface all` agent/scoped compile would `skills add`
+# the global core source needlessly). §18.1: ONE shared helper used by BOTH
+# compile_harnesses.sh and check_harness_drift.sh.
+#
+# manifest_has_applicable_skill_block <manifest-path> <project-root>
+#   Returns 0 if >=1 applicable block; 1 otherwise (or on read error).
+# ---------------------------------------------------------------------------
+manifest_has_applicable_skill_block() {
+  local manifest="$1"
+  local project_root="$2"
+  python3 - "$manifest" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+try:
+    with open(sys.argv[1], "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except OSError:
+    sys.exit(1)
+
+project_root = sys.argv[2]
+value = (data.get("surfaces") or {}).get("skills")
+blocks = [value] if isinstance(value, dict) else (value if isinstance(value, list) else [])
+
+try:
+    pr_real = os.path.realpath(project_root)
+except OSError:
+    pr_real = project_root
+
+
+def scope_applies(block):
+    scope = block.get("scope") or {}
+    if (scope.get("type") or "global") != "project":
+        return True  # absent / global → applies everywhere
+    for p in scope.get("paths") or []:
+        if not isinstance(p, str) or not p:
+            continue
+        if p.startswith("~/"):
+            p_abs = os.path.join(os.path.expanduser("~"), p[2:])
+        elif p.startswith("/"):
+            p_abs = p
+        else:
+            p_abs = os.path.join(project_root, p)
+        try:
+            p_real = os.path.realpath(p_abs)
+        except OSError:
+            p_real = p_abs
+        if p_real == pr_real:
+            return True
+    return False
+
+
+for block in blocks:
+    if not isinstance(block, dict):
+        continue
+    if not (block.get("targets") or []):
+        continue
+    if scope_applies(block):
+        sys.exit(0)
+sys.exit(1)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-164 (FR-160 epic): MCP projection helpers (shared by compile + drift).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# flatten_mcp_rows <merged-manifest> <core-surfaces> <target-kind> <project-root>
+#
+# Emits one TAB-separated row per (mcp-block, target). Mirrors the skills
+# flatten (compile_harnesses.sh): the core surfaces-manifest.json is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root). Rows are filtered by <target-kind> (the per-target emit
+# gate); "all" emits every target.
+#
+# Row columns (TAB-separated, fixed order):
+#   name <TAB> canonical_json <TAB> target_type <TAB> enabled <TAB>
+#   scope_type <TAB> scope_paths_csv
+#
+# `canonical_json` is the block's canonical launch spec as compact JSON (it can
+# carry tabs/newlines only inside JSON strings, which compact json.dumps
+# escapes — so the column stays a single physical line, safe for IFS=$'\t'
+# read). It NEVER contains a resolved secret — `canonical.env` holds the
+# ${VAR} REFERENCE; the literal is resolved only inside the TS projector /
+# drift compare, never in this row. `enabled` is `true`/`false`/`-` (sentinel
+# for absent). `scope_paths_csv` uses the `-` empty sentinel (mirrors skills).
+# v1 is GLOBAL-ONLY — scope columns are emitted for forward-compat but every
+# consumer treats blocks as global.
+# ---------------------------------------------------------------------------
+flatten_mcp_rows() {
+  local merged="$1"
+  local core_surfaces="$2"
+  local target_kind="$3"
+  local project_root="$4"
+  python3 - "$core_surfaces" "$merged" "$target_kind" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+merged_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_mcp(path):
+    # Returns a LIST of mcp_servers blocks. Legacy single-object normalized to
+    # `[object]`; missing/absent → []. Mirrors merge_overlay_manifest's
+    # _normalize_mcp + the skills loader shape.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return []
+    value = (data.get("surfaces") or {}).get("mcp_servers")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 surfaces. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — identical posture to the skills flatten. The merged agent
+# manifest (incl. the FR-139 personal overlay) is always read.
+sources = [merged_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+for src in sources:
+    for block in load_mcp(src):
+        if not isinstance(block, dict):
+            continue
+        name = block.get("name", "")
+        if not name:
+            continue
+        canonical = block.get("canonical") or {}
+        # Compact JSON (no spaces) keeps the column on one physical line; any
+        # embedded control chars inside JSON strings are escaped by json.dumps.
+        canonical_json = json.dumps(canonical, separators=(",", ":"))
+        # FR-155-style scope columns (absent → global). v1 consumers treat all
+        # as global, but we carry them for forward-compat + row-shape parity
+        # with the skills flatten.
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            if not ttype:
+                continue
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            enabled = (t or {}).get("enabled")
+            if enabled is True:
+                enabled_col = "true"
+            elif enabled is False:
+                enabled_col = "false"
+            else:
+                enabled_col = "-"
+            print("\t".join([
+                name,
+                canonical_json,
+                ttype,
+                enabled_col,
+                scope_type,
+                scope_paths_csv,
+            ]))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# extract_mcp_entry <config-path> <map-key> <name>
+#
+# Drift-side reader: reads the harness config (JSON for claude/gemini/opencode,
+# TOML for codex — dispatched by file extension), extracts the entry stored
+# under <map-key>.<name>, and emits it as canonical compact JSON on stdout.
+#
+# Status is signaled via the EXIT CODE (NEVER by printing a secret):
+#   0  → entry present; the entry JSON is on stdout.
+#   10 → config file absent OR <map-key> map absent OR <name> entry absent
+#        (MISSING). Stdout is empty.
+#   11 → config file present but UNPARSEABLE (malformed JSON/TOML). Stdout is
+#        empty. The caller maps this to a DRIFTED "unparseable" verdict.
+#
+# NEVER throws under `set -euo pipefail`: the python call's own rc is captured
+# and re-emitted, never a stack trace. TOML is parsed via tomllib (py3.11+) or
+# the `toml`/`tomli` shim; absent → treated as MISSING-safe (rc 10) so a host
+# without a TOML parser never crashes drift.
+# ---------------------------------------------------------------------------
+extract_mcp_entry() {
+  local config_path="$1"
+  local map_key="$2"
+  local name="$3"
+  python3 - "$config_path" "$map_key" "$name" <<'PY'
+import json
+import os
+import sys
+
+config_path = sys.argv[1]
+map_key = sys.argv[2]
+name = sys.argv[3]
+
+# Code 10 = MISSING (absent file / map / entry); 11 = malformed config.
+if not os.path.exists(config_path):
+    sys.exit(10)
+
+is_toml = config_path.endswith(".toml")
+
+try:
+    if is_toml:
+        data = None
+        try:
+            import tomllib  # py3.11+
+            with open(config_path, "rb") as fh:
+                data = tomllib.load(fh)
+        except ImportError:
+            loaded = False
+            for mod in ("tomli", "toml"):
+                try:
+                    m = __import__(mod)
+                    with open(config_path, "rb" if mod == "tomli" else "r",
+                              encoding=None if mod == "tomli" else "utf-8") as fh:
+                        data = m.load(fh)
+                    loaded = True
+                    break
+                except ImportError:
+                    continue
+            if not loaded:
+                # No TOML parser available — cannot read; treat as MISSING-safe
+                # rather than crash drift on a host without tomllib.
+                sys.exit(10)
+    else:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+except (ValueError, OSError):
+    # Malformed JSON / TOML — DRIFTED "unparseable" (compile refuses to write).
+    sys.exit(11)
+
+if not isinstance(data, dict):
+    sys.exit(11)
+
+server_map = data.get(map_key)
+if not isinstance(server_map, dict):
+    sys.exit(10)
+
+entry = server_map.get(name)
+if entry is None:
+    sys.exit(10)
+
+sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# normalize_mcp_shape <canonical-json> <harness> <enabled>
+#
+# The §18.1 / L-554 SHARED SHAPE HELPER. Given the canonical launch spec (as
+# JSON) it emits the EXPECTED native per-harness entry as canonical compact
+# JSON (sort_keys) — byte-identical to the TS `buildHarnessMcpEntry` (the
+# golden-fixture + bats parity tests pin the two together).
+#
+# Per-harness shapes (finding #8):
+#   claude   → {"type":"stdio","command":...,"args":[...],"env":{...}}
+#   gemini   → {"command":...,"args":[...],"env":{...}}        (NO "type")
+#   opencode → {"type":"local","command":[cmd,...args],"enabled":bool,
+#               "environment":{...}}   (cmd+args FUSED; env KEY is "environment")
+#   codex    → {"command":...,"args":[...],"env":{...}[,"startup_timeout_sec":n]}
+#
+# ENV VALUES are emitted as the REFERENCE per harness (NEVER a resolved secret):
+#   claude/gemini → ${VAR} verbatim
+#   opencode      → {env:VAR}
+#   codex         → ${VAR} as the drift-comparison STAND-IN (the codex value-
+#                   equality re-resolve happens in the drift compare, not here —
+#                   so this helper NEVER reads secrets.env and NEVER emits a
+#                   literal). A non-ref value passes through verbatim for all.
+#
+# `enabled` is "true"/"false"/"-" (the flatten sentinel); only opencode uses it
+# (absent → defaults true). The output is what the drift compare deep-equals
+# against the on-disk entry (with the codex env values swapped to literals at
+# compare time by the caller, never here).
+# ---------------------------------------------------------------------------
+normalize_mcp_shape() {
+  local canonical_json="$1"
+  local harness="$2"
+  local enabled="$3"
+  python3 - "$canonical_json" "$harness" "$enabled" <<'PY'
+import json
+import re
+import sys
+
+canonical = json.loads(sys.argv[1])
+harness = sys.argv[2]
+enabled_col = sys.argv[3]
+
+command = canonical.get("command", "")
+args = canonical.get("args", []) or []
+env = canonical.get("env", {}) or {}
+
+# Canonical ${VAR} grammar (byte-identical to ENV_VAR_REF in secrets.ts /
+# loadout.ts) + opencode {env:VAR} grammar. Used only to translate the
+# REFERENCE token per harness — a value is never resolved here.
+VAR_RE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+
+
+def var_name(value):
+    m = VAR_RE.match(value)
+    return m.group(1) if m else None
+
+
+def env_for(value):
+    if harness == "opencode":
+        nm = var_name(value)
+        return f"{{env:{nm}}}" if nm is not None else value
+    # claude / gemini / antigravity / codex → emit the ${VAR} reference verbatim
+    # (codex's literal re-resolve is the drift compare's job, not this helper's).
+    return value
+
+
+norm_env = {k: env_for(env[k]) for k in env}
+
+if harness == "claude":
+    entry = {"type": "stdio", "command": command, "args": args, "env": norm_env}
+elif harness == "gemini":
+    entry = {"command": command, "args": args, "env": norm_env}
+elif harness == "antigravity":
+    # FR-179: gemini-identical shape (no "type"; gemini lineage). Byte-for-byte
+    # the same JSON as the gemini branch — only the config PATH differs (drift
+    # side: ~/.gemini/config/mcp_config.json). Pinned by the §18.1 parity test.
+    entry = {"command": command, "args": args, "env": norm_env}
+elif harness == "opencode":
+    en = True if enabled_col == "true" else (False if enabled_col == "false" else True)
+    entry = {
+        "type": "local",
+        "command": [command] + list(args),
+        "enabled": en,
+        "environment": norm_env,
+    }
+elif harness == "codex":
+    entry = {"command": command, "args": args, "env": norm_env}
+    if "startup_timeout_sec" in canonical and canonical["startup_timeout_sec"] is not None:
+        entry["startup_timeout_sec"] = canonical["startup_timeout_sec"]
+else:
+    sys.stderr.write(f"normalize_mcp_shape: unknown harness '{harness}'\n")
+    sys.exit(2)
+
+sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# FR-180 (D7 - Option B): event-hook projection helpers (shared by compile +
+# drift). The hook surface projects ONE event-hook block per (block, target)
+# into each harness's native hook surface — claude → .claude/settings.json
+# `hooks.<Event>` array (config-MERGE, like MCP), opencode → the FR-104 plugin
+# (documented; the plugin already routes the six events to the shared scripts).
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# flatten_hook_rows <merged-manifest> <core-surfaces> <target-kind> <project-root>
+#
+# Emits one TAB-separated row per (hook-block, target). Mirrors flatten_mcp_rows:
+# the core surfaces-manifest.json is only unioned when the project being compiled
+# OWNS it (its realpath is under --project-root). Rows are filtered by
+# <target-kind>; "all" emits every target.
+#
+# Row columns (TAB-separated, fixed order):
+#   name <TAB> event <TAB> command <TAB> matcher <TAB> timeout <TAB>
+#   target_type <TAB> enabled <TAB> layer <TAB> scope_type <TAB> scope_paths_csv
+#
+# `-` is the empty sentinel for matcher (→ no matcher), timeout (→ none),
+# scope_paths. `enabled` is true/false/- (sentinel for absent). `layer` defaults
+# to non-empty "core" (no tab-collapse risk). The command NEVER carries a
+# secret — it is a script path the harness runs.
+# ---------------------------------------------------------------------------
+flatten_hook_rows() {
+  local merged="$1"
+  local core_surfaces="$2"
+  local target_kind="$3"
+  local project_root="$4"
+  python3 - "$core_surfaces" "$merged" "$target_kind" "$project_root" <<'PY'
+import json
+import os
+import sys
+
+core_surfaces_path = sys.argv[1]
+merged_manifest_path = sys.argv[2]
+target_kind = sys.argv[3]
+project_root = sys.argv[4]
+
+
+def load_hooks(path):
+    # Returns a LIST of hooks blocks. Legacy single-object normalized to
+    # `[object]`; missing/absent → []. Mirrors the mcp loader shape.
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+    except OSError:
+        return []
+    value = (data.get("surfaces") or {}).get("hooks")
+    if value is None:
+        return []
+    if isinstance(value, dict):
+        return [value]
+    if isinstance(value, list):
+        return value
+    return []
+
+
+# The core surfaces-manifest.json declares GLOBAL Layer-1 surfaces. It is only
+# unioned when the project being compiled OWNS it (its realpath is under
+# --project-root) — identical posture to the skills + MCP flattens.
+# The merged agent manifest (incl. the FR-139 personal overlay) is always read.
+sources = [merged_manifest_path]
+try:
+    cs_real = os.path.realpath(core_surfaces_path)
+    pr_real = os.path.realpath(project_root)
+    if os.path.commonpath([cs_real, pr_real]) == pr_real:
+        sources.insert(0, core_surfaces_path)
+except (OSError, ValueError):
+    pass
+
+for src in sources:
+    for block in load_hooks(src):
+        if not isinstance(block, dict):
+            continue
+        name = block.get("name", "")
+        event = block.get("event", "")
+        if not name or not event:
+            continue
+        canonical = block.get("canonical") or {}
+        command = canonical.get("command", "")
+        if not command:
+            continue
+        matcher = canonical.get("matcher") or "-"
+        timeout = canonical.get("timeout")
+        timeout_col = str(timeout) if isinstance(timeout, int) else "-"
+        layer = block.get("layer", "") or "core"
+        # FR-155-style scope columns (absent → global; `-` empty-paths sentinel).
+        scope = block.get("scope") or {}
+        scope_type = scope.get("type") or "global"
+        scope_paths_list = scope.get("paths") or []
+        scope_paths_csv = ",".join(scope_paths_list) if scope_paths_list else "-"
+        for t in block.get("targets", []) or []:
+            ttype = (t or {}).get("type", "")
+            if not ttype:
+                continue
+            if target_kind != "all" and ttype != target_kind:
+                continue
+            enabled = (t or {}).get("enabled")
+            if enabled is True:
+                enabled_col = "true"
+            elif enabled is False:
+                enabled_col = "false"
+            else:
+                enabled_col = "-"
+            print("\t".join([
+                name,
+                event,
+                command,
+                matcher,
+                timeout_col,
+                ttype,
+                enabled_col,
+                layer,
+                scope_type,
+                scope_paths_csv,
+            ]))
+PY
+}
+
+# ---------------------------------------------------------------------------
+# verify_hook_entry_present <settings-path> <event> <command>
+#
+# Drift-side reader for the claude hook surface. Reads .claude/settings.json and
+# emits a one-word VERDICT on stdout (NEVER a secret — the command is a path):
+#   MATCH   → hooks.<Event>[] contains a group whose first command == <command>.
+#   MISSING → file/hooks/event absent, OR no group with that command.
+#   ERROR   → settings.json present but UNPARSEABLE / unexpected shape.
+# Returns 0 always (the verdict is the signal). Mirrors extract_mcp_entry's
+# rc-as-status discipline, but as a verdict string (the drift loop reads it).
+# ---------------------------------------------------------------------------
+verify_hook_entry_present() {
+  local settings_path="$1"
+  local event="$2"
+  local command="$3"
+  python3 - "$settings_path" "$event" "$command" <<'PY'
+import json
+import os
+import sys
+
+settings_path = sys.argv[1]
+event = sys.argv[2]
+command = sys.argv[3]
+
+if not os.path.exists(settings_path):
+    print("MISSING")
+    sys.exit(0)
+
+try:
+    with open(settings_path, "r", encoding="utf-8") as fh:
+        data = json.load(fh)
+except (OSError, ValueError):
+    print("ERROR")
+    sys.exit(0)
+
+if not isinstance(data, dict):
+    print("ERROR")
+    sys.exit(0)
+
+hooks = data.get("hooks")
+if not isinstance(hooks, dict):
+    print("MISSING")
+    sys.exit(0)
+
+arr = hooks.get(event)
+if not isinstance(arr, list):
+    print("MISSING")
+    sys.exit(0)
+
+for group in arr:
+    if not isinstance(group, dict):
+        continue
+    for h in group.get("hooks", []) or []:
+        if isinstance(h, dict) and h.get("command") == command:
+            print("MATCH")
+            sys.exit(0)
+
+print("MISSING")
+PY
+}
+
 # Export functions for subshell use (bats tests spawn subshells).
 export -f parse_frontmatter
 export -f get_skill_field
@@ -285,3 +2341,21 @@ export -f strip_frontmatter
 export -f is_claude_only
 export -f toml_escape
 export -f toml_escape_description
+export -f read_canonical_version
+export -f latest_canonical
+export -f sha_body
+export -f validate_manifest
+export -f resolve_harness_descriptor_path  # FR-217
+export -f read_harness_descriptor          # FR-217
+export -f merge_overlay_manifest
+export -f flatten_mcp_rows
+export -f extract_mcp_entry
+export -f normalize_mcp_shape
+# FR-180 (D7): hook-surface helpers. Hook drift is PRESENCE-BASED (the hook is
+# identified by its command path in the merged settings.json, NOT a byte-shape
+# comparison), so there is NO bash hook shaper twin the way agents have
+# the α-assemblers — `verify_hook_entry_present` is
+# the whole drift contract. The TS `hook-shape.ts` shapes the PROJECTOR's output
+# and is pinned by a TS-only golden; it has no bash counterpart by design.
+export -f flatten_hook_rows
+export -f verify_hook_entry_present

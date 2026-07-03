@@ -1,6 +1,6 @@
 {
   "name": "igris-ai",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "description": "Igris AI unified CLI — init, refresh, install, update, sync, doctor, register-project for Igris projects.",
   "type": "module",
   "bin": {
@@ -9,16 +9,20 @@
   "main": "dist/index.js",
   "files": [
     "dist",
+    "!dist/brain-mcp-server/node_modules",
+    "scripts/postinstall.mjs",
     "README.md",
     "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc && bash scripts/copy-templates.sh",
+    "prepublishOnly": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",
-    "test:bats": "bats tests/integration"
+    "test:bats": "bats tests/integration",
+    "postinstall": "node scripts/postinstall.mjs"
   },
-  "author": "Fifty.ai",
+  "author": "fifty.dev",
   "license": "MIT",
   "homepage": "https://github.com/fiftynotai/igris-ai#readme",
   "repository": {
@@ -37,8 +41,11 @@
     "engineering"
   ],
   "dependencies": {
+    "@iarna/toml": "^2.2.5",
+    "add-mcp": "1.11.0",
     "better-sqlite3": "^11.0.0",
     "commander": "^12.1.0",
+    "skills": "1.5.13",
     "tar": "^7.5.14"
   },
   "devDependencies": {

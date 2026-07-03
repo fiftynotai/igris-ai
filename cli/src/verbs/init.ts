@@ -28,7 +28,6 @@
  */
 
 import {
-  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -42,12 +41,7 @@ import {
   atomicSwap,
   stagingDirFor,
 } from "../lib/atomic-extract.js";
-import {
-  cacheStore,
-  findCached,
-  TTL_INFINITE,
-  TTL_MAIN_MS,
-} from "../lib/cache.js";
+import { cacheStore, TTL_INFINITE, TTL_MAIN_MS } from "../lib/cache.js";
 import {
   ChannelResolveError,
   resolveChannel,
@@ -63,12 +57,28 @@ import {
 import { DryRunCollector } from "../lib/dry-run.js";
 import { copyFromSource, FromSourceError } from "../lib/from-source.js";
 import {
+  antigravityMcpConfigPath,
   brainDir,
-  cacheDir,
+  claudeJsonPath,
+  claudeUserSettingsPath,
+  codexConfigTomlPath,
   configJsonPath,
+  geminiSettingsPath,
   installSourcePath,
+  opencodeConfigPath,
+  secretsEnvPath,
   userMdPath,
 } from "../lib/paths.js";
+import { registerBrainAcrossHarnesses } from "../lib/mcp-register.js";
+import { applyPersona } from "../lib/persona.js";
+import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
+import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
+import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import {
+  antigravitySkillsLinkPath,
+  antigravityHooksConfigPath,
+} from "../lib/paths.js";
+import { chmodSecretFile } from "../lib/secret-perms.js";
 import {
   checkNetwork,
   checkNodeVersion,
@@ -85,25 +95,57 @@ import {
 import { writeInstallSource } from "../lib/install-source.js";
 import { closeDb } from "../lib/registry.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
-import type { CLITarget } from "../types.js";
+import {
+  gatherInitInputs,
+  type InitInputs,
+  type PromptFn,
+} from "../lib/init/prompts.js";
+import type { Channel, CLITarget } from "../types.js";
 
 export interface InitOptions {
   /** Local repo root for contributor mode. Skips network. */
   fromSource?: string;
-  /** Channel flag: undefined = latest release, "main" = main, else tag. */
+  /** Channel flag: undefined = latest release, "main" = main, else a tag or branch (TD-154). */
   channel?: string;
   /** Allow upgrading an existing install. */
   upgrade?: boolean;
   /** Skip the VPS prompt (no remote_brain config). */
   skipRemote?: boolean;
+  /**
+   * FR-122: apply a persona preset after the core swap (`--persona <name>`).
+   * When omitted the shipped `core/SOUL.md` is left as-is (the default
+   * character persona). An unknown name is a non-fatal WARN — init still
+   * completes (the install is otherwise valid).
+   */
+  persona?: string;
   /** Override auto-detected bridges. "none" or "claude,codex,..." */
   cliBridge?: string;
   /** Print plan only, no writes. */
   dryRun?: boolean;
   /** Skip confirmation prompts (e.g. channel switch). */
   yes?: boolean;
+  /**
+   * Contributor dev-loop flag (TD-168 §5). When set, the igris-brain MCP
+   * is registered pointing at the CLONE's brain-mcp-server
+   * (`<fromSource>/brain-mcp-server/dist/index.js`) instead of the bundled
+   * copy — so the operator's edit-rebuild-test loop is not broken by an
+   * `igris init` repointing the entry at a stale bundle. Requires
+   * `--from-source` (the path the clone is derived from).
+   */
+  dev?: boolean;
   /** Internal/test: override package version baked into config.json. */
   cliVersion?: string;
+  /**
+   * Test seam: inject a fake prompt function so vitest can drive the
+   * interactive prompts deterministically. Production callers omit this.
+   */
+  prompt?: PromptFn;
+  /**
+   * Test seam: override TTY detection. When undefined the prompt module
+   * falls back to `process.stdin.isTTY === true`. Production callers omit
+   * this; tests pass `false` to force the non-TTY auto-skip path.
+   */
+  isTTY?: boolean;
 }
 
 const DEFAULT_DIRS = ["memory", "projects", "logs", ".cache"];
@@ -153,6 +195,42 @@ export async function runInit(opts: InitOptions): Promise<number> {
     return 1;
   }
 
+  // --- --dev validation + path resolution (TD-168 §5) ------------------
+  // --dev (contributor dev-loop): register the igris-brain MCP from the
+  // --from-source clone instead of the bundled copy, so the operator's
+  // edit-rebuild-test loop is not broken by a repoint to a stale bundle.
+  // Validated EARLY (before the core fetch) so a misuse fails fast rather
+  // than after a multi-second download.
+  let devMcpPath: string | undefined;
+  if (opts.dev === true) {
+    if (opts.fromSource === undefined) {
+      logError(
+        "--dev requires --from-source <path> (the clone to register the MCP from).",
+      );
+      return 1;
+    }
+    devMcpPath = join(
+      pathResolve(opts.fromSource),
+      "brain-mcp-server",
+      "dist",
+      "index.js",
+    );
+  }
+
+  // --- Interactive prompts (TD-144) ------------------------------------
+  // Collect identity + remote_brain inputs BEFORE the network check so the
+  // user isn't asked their name AFTER a 5-second GitHub hang. The prompt
+  // module short-circuits to defaults for --yes / --upgrade / --dry-run
+  // and for non-TTY shells (curl|bash installers, CI).
+  const inputs: InitInputs = await gatherInitInputs({
+    yes: opts.yes === true,
+    skipRemote: opts.skipRemote === true,
+    upgrade: opts.upgrade === true,
+    dryRun: dryRun,
+    prompt: opts.prompt,
+    isTTY: opts.isTTY,
+  });
+
   // --- Network check ---------------------------------------------------
   const skipNetwork =
     opts.fromSource !== undefined || opts.skipRemote === true;
@@ -185,7 +263,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
 
   // --- 3. Resolve channel + fetch (or from-source copy) -----------------
   let channelRef: string;
-  let channelKind: "release" | "main" | "tag";
+  let channelKind: Channel;
   let tarballUrl: string | null = null;
   let contentSha256: string;
   let stagingPath: string;
@@ -263,10 +341,21 @@ export async function runInit(opts: InitOptions): Promise<number> {
     } else {
       wipeDir(stagingDir);
       mkdirSync(stagingDir, { recursive: true });
+      // TD-113 cache-seed TEE: fetchAndExtract writes the RAW gzip bytes to
+      // this sink path WHILE streaming them through gunzip→extract (one fetch,
+      // two consumers). After a successful extract we promote the sink + the
+      // extracted tree into the cache via cacheStore, so a later `igris refresh`
+      // at the same SHA can extract from the cache instead of re-downloading.
+      // The sink lives OUTSIDE stagingDir (a sibling) so (a) it isn't swept
+      // into the atomic swap of stagingDir/core, and (b) cacheStore can copy
+      // the WHOLE stagingDir as the extracted tree without dragging the archive
+      // into <sha>/extracted/.
+      const tarballSink = `${stagingDir}.tarball.tar.gz`;
       try {
         const fetched = await fetchAndExtract({
           url: tarballUrl,
           destDir: stagingDir,
+          cacheSinkPath: tarballSink,
         });
         contentSha256 = fetched.contentSha256;
       } catch (err) {
@@ -291,18 +380,38 @@ export async function runInit(opts: InitOptions): Promise<number> {
       }
       sourceKind = "github";
       stagingPath = stagingDir;
-      // Cache the fetched archive for refresh-without-redownload.
+      // Seed the cache from the freshly-fetched archive + extracted tree. Done
+      // HERE (before the step-5 atomic swap wipes stagingDir) while both the
+      // sink file and stagingDir/core exist. The extracted SOURCE is
+      // stagingDir/core (cacheStore copies it under <sha>/extracted/core/).
+      // Non-fatal: a cache-write failure WARNs and lets init finish — the core
+      // swap does not depend on the cache.
       try {
-        // Re-hash the tarball file is not needed because fetchAndExtract
-        // streamed the bytes; we already have contentSha256. We don't
-        // currently retain the raw bytes (they're consumed by gunzip);
-        // skipping cache write for fresh init — refresh is responsible
-        // for cache writes when it RE-DOWNLOADS the archive. Init
-        // streams once.
-        debug(`Fetched ${tarballUrl}; sha256=${contentSha256}`);
+        cacheStore(contentSha256, {
+          // extractedSourcePath is stagingDir (which CONTAINS core/), matching
+          // the cacheStore contract: the cache's extracted/ mirrors the tree
+          // that contains core/, so findCached().extractedPath/core/ resolves.
+          tarballSourcePath: tarballSink,
+          extractedSourcePath: stagingDir,
+          channel: channelKind,
+          ref: channelRef,
+          ttlMs:
+            channelKind === "main" ? TTL_MAIN_MS : TTL_INFINITE,
+        });
+        debug(
+          `Seeded cache <${contentSha256.slice(0, 12)}…> from ${tarballUrl}`,
+        );
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        warn(`cache-write skipped: ${msg}`);
+        warn(`cache-seed skipped: ${msg}`);
+      } finally {
+        // The sink served its purpose (copied into the cache). Remove the
+        // sibling archive so it doesn't linger next to the staging dir.
+        try {
+          if (existsSync(tarballSink)) rmSync(tarballSink, { force: true });
+        } catch {
+          /* best-effort */
+        }
       }
     }
     stagingPath = stagingDir;
@@ -422,7 +531,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // --- 9. Templates: USER.md and config.json (preserved if existing) ----
   const userMd = userMdPath();
   const configJson = configJsonPath();
-  const cliVersion = opts.cliVersion ?? "7.0.0";
+  const cliVersion = opts.cliVersion ?? "7.1.0";
   const installDate = new Date().toISOString();
 
   if (dry !== null) {
@@ -432,9 +541,31 @@ export async function runInit(opts: InitOptions): Promise<number> {
     if (!existsSync(configJson)) {
       dry.wouldWriteFile(configJson, "initial config.json");
     }
+    // TD-220: config.json always exists post-run (we write it if absent,
+    // preserve it otherwise), so it is always a chmod-600 candidate.
+    dry.wouldInvokeCommand(
+      "chmod",
+      ["600", configJson],
+      "harden secret-file perms (config.json)",
+    );
+    // secrets.env is tightened ONLY if it already exists — init never
+    // fabricates it (Decision 3). Mirror that condition in the dry plan.
+    if (existsSync(secretsEnvPath())) {
+      dry.wouldInvokeCommand(
+        "chmod",
+        ["600", secretsEnvPath()],
+        "harden secret-file perms (secrets.env)",
+      );
+    }
   } else {
     if (!existsSync(userMd)) {
-      writeFileSync(userMd, renderUserTemplate());
+      writeFileSync(
+        userMd,
+        renderUserTemplate({
+          userName: inputs.userName,
+          userEmail: inputs.userEmail,
+        }),
+      );
       info(`Wrote ${userMd}`);
     } else {
       debug(`USER.md exists at ${userMd}, preserved`);
@@ -446,12 +577,65 @@ export async function runInit(opts: InitOptions): Promise<number> {
           cliVersion,
           installDate,
           cliTargets: [...bridgeTargets],
-          skipRemote: opts.skipRemote === true,
+          remoteBrain: inputs.remoteBrain,
         }),
       );
       info(`Wrote ${configJson}`);
     } else {
       debug(`config.json exists at ${configJson}, preserved`);
+    }
+
+    // TD-220: harden the Igris-owned secret-bearing files to mode 600.
+    // config.json is Igris-authored, so we tighten it unconditionally —
+    // this covers BOTH the freshly-written case AND a pre-existing file
+    // that was sitting at a loose mode (e.g. 644 from an older install).
+    // chmodSecretFile is a no-op on win32 / absent and never throws; it
+    // changes metadata only, so it does NOT disturb the --upgrade byte-
+    // for-byte preservation gate (verifyPreservation hashes content).
+    chmodSecretFile(configJson);
+    // secrets.env is USER-authored (FR-165): tighten it ONLY if present —
+    // never fabricate an empty secrets.env (Decision 3).
+    if (existsSync(secretsEnvPath())) {
+      chmodSecretFile(secretsEnvPath());
+    }
+  }
+
+  // --- 9b. (FR-191) global ~/.claude/CLAUDE.md render retired -----------
+  // The TD-176 global re-template step was removed: `igris init` writes NO
+  // global identity file. The harness discovers Igris via the slash menu +
+  // the install/init success message.
+
+  // --- 9c. (FR-122) optional persona apply -----------------------------
+  // Runs AFTER the core swap (step 5) so the runtime SOUL templates exist.
+  // When --persona is set, copy the chosen SOUL.<name>.md over the runtime
+  // SOUL.md (+ canonical when in a checkout). Non-fatal: an unknown/invalid
+  // persona WARNs and lets init complete (the install is otherwise valid).
+  if (opts.persona !== undefined) {
+    if (dry !== null) {
+      dry.wouldWriteFile(
+        join(root, "core", "SOUL.md"),
+        `apply persona '${opts.persona}'`,
+      );
+    } else {
+      const personaResult = applyPersona(
+        opts.persona,
+        opts.fromSource !== undefined
+          ? pathResolve(opts.fromSource)
+          : process.cwd(),
+      );
+      if (personaResult.outcome === "template_missing") {
+        warn(
+          `persona '${opts.persona}' not found — leaving the shipped SOUL.md ` +
+            `(run \`igris configure\` to pick a persona later).`,
+        );
+      } else if (personaResult.outcome === "invalid_template") {
+        warn(
+          `persona '${opts.persona}' is missing required frontmatter — ` +
+            `leaving the shipped SOUL.md.`,
+        );
+      } else {
+        info(`Applied persona '${opts.persona}' (${personaResult.outcome}).`);
+      }
     }
   }
 
@@ -471,17 +655,130 @@ export async function runInit(opts: InitOptions): Promise<number> {
     info(`Wrote ${installSourcePath()}`);
   }
 
-  // --- 11. Cache the freshly-extracted core (refresh fast-path) --------
-  // Skipped for from-source (nothing to cache) and for dry-run.
-  if (dry === null && sourceKind === "github" && tarballUrl !== null) {
-    // We don't currently retain the raw bytes after fetchAndExtract — for
-    // M1 we accept that init doesn't seed the cache; refresh always
-    // re-fetches and CAN seed the cache by saving its raw bytes.
-    void TTL_MAIN_MS;
-    void TTL_INFINITE;
-    void cacheStore;
-    void findCached;
-    void cacheDir;
+  // --- 11. Cache seeding happened inline at step 3 (TD-113) ------------
+  // The github fetch path now seeds the cache via cacheStore() right after a
+  // successful fetchAndExtract (using the cache-sink TEE), so a later
+  // `igris refresh` at the same SHA extracts from the cache instead of
+  // re-downloading. No separate post-swap step is needed (and the staging dir
+  // is gone by here anyway).
+
+  // --- 13. Register igris-brain MCP in all Igris harness configs (FR-169) ----
+  // `npm install -g igris-ai` ships a bundled brain-mcp-server; a harness
+  // only serves its tools once the `igris-brain` entry exists in that
+  // harness's config. igris-brain is a CORE OS default (L-504), so init wires
+  // it into ALL supported harnesses (Claude, Gemini, Codex, OpenCode) via the
+  // proven FR-162/163 mergers. Non-fatal (mirrors step 9b): a per-harness
+  // failure WARNs and lets init complete with exit 0 — NEVER returns non-zero.
+  //
+  // --dev resolution happened early (right after pre-flight) — devMcpPath
+  // is the clone's MCP path when --dev was passed, else undefined.
+  if (dry !== null) {
+    // FR-212c: the GLOBAL canonical-hooks merge into ~/.claude/settings.json
+    // (the per-project install step 6 moved here — surfaces project globally
+    // at init; install is registration-only).
+    dry.wouldWriteFile(
+      claudeUserSettingsPath(),
+      "merge canonical Igris hooks block (global)",
+    );
+    dry.wouldWriteFile(claudeJsonPath(), "register igris-brain MCP (Claude)");
+    dry.wouldWriteFile(geminiSettingsPath(), "register igris-brain MCP (Gemini)");
+    dry.wouldWriteFile(codexConfigTomlPath(), "register igris-brain MCP (Codex)");
+    dry.wouldWriteFile(opencodeConfigPath(), "register igris-brain MCP (OpenCode)");
+    dry.wouldWriteFile(
+      antigravityMcpConfigPath(),
+      "register igris-brain MCP (Antigravity)",
+    );
+    // FR-179 Phase C: the antigravity skills parent symlink (R2). Only when
+    // antigravity is an effective bridge target (matches the live gate below).
+    if (bridgeTargets.has("antigravity")) {
+      dry.wouldWriteFile(
+        antigravitySkillsLinkPath(),
+        "link antigravity skills -> ~/.agents/skills",
+      );
+      // FR-181: the antigravity brief-first hooks (PreToolUse + PostToolUse).
+      dry.wouldWriteFile(
+        antigravityHooksConfigPath(),
+        "register Igris hooks (Antigravity)",
+      );
+    }
+  } else {
+    // --- 13a. GLOBAL canonical-hooks merge (FR-212c) ---------------------
+    // The Igris hooks project GLOBALLY via ONE ~/.claude/settings.json block
+    // (the per-project install step 6 moved here). The per-project `_gate.sh`
+    // de-no-ops them outside a registered Igris project. Engine + canonical
+    // source unchanged — only the target path moved. Non-fatal: a failure
+    // WARNs and init continues to exit 0.
+    const gh = mergeGlobalCanonicalHooks();
+    if (gh.outcome === "failed") {
+      warn(`global hooks merge skipped: ${gh.error}`);
+      warn(`  Manual fix: merge the canonical hooks block into ${gh.path}`);
+    } else if (gh.outcome === "unchanged") {
+      debug(`global Igris hooks already present -> ${gh.path}`);
+    } else {
+      info(`Merged global Igris hooks block -> ${gh.path}`);
+    }
+
+    // FR-212d Phase 2: `igris init` wires the brain MCP via the IN-PROCESS custom
+    // merger (deterministic native shapes, no `add-mcp`/`node` subprocess at
+    // init time — robust on restricted-PATH/offline boxes). The DELEGATE engine
+    // is the default for the harness-COMPILE projection (`runProjectMcp` →
+    // `add-mcp`), but the install/init/doctor brain-wiring keeps the proven
+    // in-process path (the same posture as `registerMcpInClaudeJson`). Antigravity
+    // is custom either way (FR-179 config-path).
+    const results = registerBrainAcrossHarnesses(
+      devMcpPath !== undefined ? { mcpEntryPath: devMcpPath } : undefined,
+      { engine: "custom" },
+    );
+    let anyWired = false;
+    for (const { harness, result } of results) {
+      if (result.outcome === "failed") {
+        warn(`MCP registration skipped for ${harness}: ${result.error}`);
+        warn(
+          `  Manual fix: add an "igris-brain" entry to ${result.claudeJsonPath}`,
+        );
+        warn(`  pointing at: ${result.mcpEntryPath}`);
+      } else if (result.outcome === "unchanged") {
+        debug(`igris-brain MCP already registered for ${harness} -> ${result.mcpEntryPath}`);
+      } else {
+        anyWired = true;
+        info(`Registered igris-brain MCP for ${harness} (${result.outcome})`);
+      }
+    }
+    if (anyWired) {
+      info("  Restart your harness(es) to pick up the new MCP server.");
+    }
+
+    // --- 13b. Antigravity skills parent symlink (FR-179 Phase C, R2) -----
+    // Antigravity loads skills from ~/.gemini/antigravity-cli/skills but does
+    // NOT self-create the symlink to the shared ~/.agents/skills (R2). Create
+    // it when antigravity is an effective bridge target so its native loader
+    // resolves through the link to the populated shared dir. Non-fatal +
+    // idempotent-repair (never throws); a refuse/failed outcome WARNs.
+    if (bridgeTargets.has("antigravity")) {
+      const link = linkAntigravitySkills();
+      if (link.outcome === "refused" || link.outcome === "failed") {
+        warn(`antigravity skills link skipped: ${link.error}`);
+      } else if (link.outcome === "unchanged") {
+        debug(`antigravity skills link already in place -> ${link.target}`);
+      } else {
+        info(
+          `Linked antigravity skills (${link.outcome}): ${link.linkPath} -> ${link.target}`,
+        );
+      }
+
+      // --- 13c. Antigravity brief-first hooks (FR-181) ------------------
+      // Config-merge the PreToolUse + PostToolUse groups into
+      // ~/.gemini/config/hooks.json (the gemini-cli trigger path) → the
+      // bridge scripts. Preserves any pre-existing hooks; never throws.
+      const hooks = installAntigravityHooks();
+      if (hooks.outcome === "failed") {
+        warn(`antigravity hooks registration skipped: ${hooks.error}`);
+      } else if (hooks.outcome === "unchanged") {
+        debug(`antigravity hooks already registered -> ${hooks.path}`);
+      } else {
+        info(`Registered Igris hooks for antigravity (${hooks.outcome}): ${hooks.path}`);
+      }
+    }
   }
 
   // --- 12. Final report -------------------------------------------------
@@ -577,14 +874,22 @@ function templateRoot(): string {
   return join(here, "..", "lib", "templates");
 }
 
-function renderUserTemplate(): string {
+/**
+ * Render the USER.md template with the given identity. Exported so the FR-122
+ * `configure` verb writes USER.md through the SAME template path as init (one
+ * source of truth for the USER.md shape).
+ */
+export function renderUserTemplate(args: {
+  userName: string;
+  userEmail: string;
+}): string {
   const path = join(templateRoot(), "USER.md.tmpl");
   if (!existsSync(path)) {
     throw new Error(`USER.md template missing at ${path}`);
   }
   let raw = readFileSync(path, "utf-8");
-  raw = raw.replace(/{{USER_NAME}}/g, process.env.USER ?? "you");
-  raw = raw.replace(/{{USER_EMAIL}}/g, process.env.IGRIS_USER_EMAIL ?? "");
+  raw = raw.replace(/{{USER_NAME}}/g, args.userName);
+  raw = raw.replace(/{{USER_EMAIL}}/g, args.userEmail);
   return raw;
 }
 
@@ -592,7 +897,13 @@ function renderConfigTemplate(args: {
   cliVersion: string;
   installDate: string;
   cliTargets: CLITarget[];
-  skipRemote: boolean;
+  /**
+   * Structured remote_brain config. Null → `remote_brain: null` in
+   * config.json (matches `--skip-remote` legacy behavior). Non-null →
+   * `{url, api_key}` literal (api_key may be null if the user provided a
+   * URL but left the key blank, signaling "set it later via config.json").
+   */
+  remoteBrain: { url: string; apiKey: string | null } | null;
 }): string {
   const path = join(templateRoot(), "config.json.tmpl");
   if (!existsSync(path)) {
@@ -604,10 +915,21 @@ function renderConfigTemplate(args: {
   const cliTargetsObj: Record<string, true> = {};
   for (const t of args.cliTargets) cliTargetsObj[t] = true;
   raw = raw.replace(/{{CLI_TARGETS_JSON}}/g, JSON.stringify(cliTargetsObj));
-  raw = raw.replace(
-    /{{REMOTE_BRAIN_JSON}}/g,
-    args.skipRemote ? "null" : '{"url": null, "api_key": null}',
-  );
+
+  // remoteBrain === null reproduces the legacy `--skip-remote` shape;
+  // when non-null, JSON.stringify escapes any user-supplied characters
+  // (backslashes, quotes, unicode) so the template substitution can't
+  // accidentally produce invalid JSON. The post-render JSON.parse below
+  // is the final guard.
+  const rbJson =
+    args.remoteBrain === null
+      ? "null"
+      : JSON.stringify({
+          url: args.remoteBrain.url,
+          api_key: args.remoteBrain.apiKey,
+        });
+  raw = raw.replace(/{{REMOTE_BRAIN_JSON}}/g, rbJson);
+
   // Validate by parsing — fail fast if our template substitution broke JSON.
   try {
     JSON.parse(raw);
@@ -617,8 +939,3 @@ function renderConfigTemplate(args: {
   }
   return raw;
 }
-
-// Suppress unused-import warnings for things wired in but not yet
-// consumed at the M1 boundary (cache pre-seed etc.). M2/M5 wire these.
-void rmSync;
-void copyFileSync;

@@ -70,6 +70,9 @@ import {
   handleMemorySearch,
   handleMemoryRecall,
   handleMemoryGet,
+  handleMemoryMarkPromoted,
+  handleMemoryHybridSearch,
+  handlePatternSuggest,
   promoteToGlobal,
   wordJaccardSimilarity,
   computeTechStackOverlap,
@@ -120,7 +123,9 @@ function makeTestDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed'
         CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
       review_status TEXT NOT NULL DEFAULT 'approved',
-      source_extractor TEXT NOT NULL DEFAULT 'manual'
+      source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- FR-200 M2: nullable promotion pointer (db.ts v16). NULL = not promoted.
+      promoted_to_doc TEXT
     );
 
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
@@ -168,6 +173,8 @@ function insertLearning(
     source_brief: string;
     confidence: number;
     access_count: number;
+    // FR-200 M2: optional pre-set promotion pointer (default null = not promoted).
+    promoted_to_doc: string | null;
   }> = {},
 ): number {
   const defaults = {
@@ -181,16 +188,17 @@ function insertLearning(
     source_brief: '',
     confidence: 0.8,
     access_count: 0,
+    promoted_to_doc: null as string | null,
   };
   const data = { ...defaults, ...overrides };
   const stmt = db.prepare(`
-    INSERT INTO learnings (project, category, title, content, tags, tech_stack, scope, source_brief, confidence, access_count)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO learnings (project, category, title, content, tags, tech_stack, scope, source_brief, confidence, access_count, promoted_to_doc)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     data.project, data.category, data.title, data.content,
     data.tags, data.tech_stack, data.scope, data.source_brief,
-    data.confidence, data.access_count,
+    data.confidence, data.access_count, data.promoted_to_doc,
   );
   return result.lastInsertRowid as number;
 }
@@ -1178,6 +1186,388 @@ describe('Memory Tools (FR-092)', () => {
       const id = parseInt(idMatch![1], 10);
       const row = db.prepare('SELECT source_extractor FROM learnings WHERE id = ?').get(id) as { source_extractor: string };
       expect(row.source_extractor).toBe('manual');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-200 M2: igris_memory_mark_promoted + recall promotion-pointer behavior
+  // -------------------------------------------------------------------------
+
+  describe('handleMemoryMarkPromoted (FR-200 M2)', () => {
+    it('sets promoted_to_doc to the doc_path (no anchor) and bumps updated_at', () => {
+      const id = insertLearning(db, { title: 'Promote me', content: 'Hardened standard worth a doc' });
+      const before = db.prepare('SELECT updated_at FROM learnings WHERE id = ?').get(id) as { updated_at: string };
+
+      const result = handleMemoryMarkPromoted({ id, doc_path: 'igris-ai:context/coding_guidelines.md' });
+
+      const payload = JSON.parse(result.content[0].text) as { id: number; promoted_to_doc: string; updated_at: string };
+      expect(payload.id).toBe(id);
+      expect(payload.promoted_to_doc).toBe('igris-ai:context/coding_guidelines.md');
+
+      const row = db.prepare('SELECT promoted_to_doc, updated_at FROM learnings WHERE id = ?')
+        .get(id) as { promoted_to_doc: string; updated_at: string };
+      expect(row.promoted_to_doc).toBe('igris-ai:context/coding_guidelines.md');
+      // updated_at is bumped to a fresh ISO timestamp (different from the seeded
+      // default datetime('now') format, and matches the returned value).
+      expect(row.updated_at).toBe(payload.updated_at);
+      expect(row.updated_at).not.toBe(before.updated_at);
+    });
+
+    it('appends "#<anchor>" when doc_anchor is given', () => {
+      const id = insertLearning(db, { title: 'Promote with anchor' });
+
+      const result = handleMemoryMarkPromoted({
+        id,
+        doc_path: 'igris-ai:context/architecture_map.md',
+        doc_anchor: 'layer-boundaries',
+      });
+
+      const payload = JSON.parse(result.content[0].text) as { promoted_to_doc: string };
+      expect(payload.promoted_to_doc).toBe('igris-ai:context/architecture_map.md#layer-boundaries');
+      const row = db.prepare('SELECT promoted_to_doc FROM learnings WHERE id = ?')
+        .get(id) as { promoted_to_doc: string };
+      expect(row.promoted_to_doc).toBe('igris-ai:context/architecture_map.md#layer-boundaries');
+    });
+
+    it('strips a leading "#" the caller included in doc_anchor (never doubles it)', () => {
+      const id = insertLearning(db, { title: 'Promote with hashed anchor' });
+
+      const result = handleMemoryMarkPromoted({
+        id,
+        doc_path: 'igris-ai:context/coding_guidelines.md',
+        doc_anchor: '#testing',
+      });
+
+      const payload = JSON.parse(result.content[0].text) as { promoted_to_doc: string };
+      expect(payload.promoted_to_doc).toBe('igris-ai:context/coding_guidelines.md#testing');
+    });
+
+    it('errors (not found) on a missing id and does not create a row', () => {
+      const result = handleMemoryMarkPromoted({ id: 99999, doc_path: 'igris-ai:context/coding_guidelines.md' });
+      expect(result.content[0].text).toContain('not found');
+
+      const count = db.prepare('SELECT COUNT(*) AS n FROM learnings WHERE id = ?').get(99999) as { n: number };
+      expect(count.n).toBe(0);
+    });
+
+    it('rejects a non-positive id', () => {
+      const result = handleMemoryMarkPromoted({ id: 0, doc_path: 'igris-ai:context/coding_guidelines.md' });
+      expect(result.content[0].text).toContain('id must be a positive integer');
+    });
+
+    it('rejects an empty doc_path', () => {
+      const id = insertLearning(db, { title: 'Promote empty path' });
+      const result = handleMemoryMarkPromoted({ id, doc_path: '' });
+      expect(result.content[0].text).toContain('doc_path must be a non-empty string');
+      // Row remains unpromoted.
+      const row = db.prepare('SELECT promoted_to_doc FROM learnings WHERE id = ?')
+        .get(id) as { promoted_to_doc: string | null };
+      expect(row.promoted_to_doc).toBeNull();
+    });
+
+    it('is idempotent: re-marking overwrites the pointer and re-bumps updated_at', async () => {
+      const id = insertLearning(db, { title: 'Re-promote me' });
+
+      const first = handleMemoryMarkPromoted({ id, doc_path: 'igris-ai:context/coding_guidelines.md' });
+      const firstAt = (JSON.parse(first.content[0].text) as { updated_at: string }).updated_at;
+
+      // Ensure a measurable clock tick so the second ISO timestamp differs.
+      await new Promise((r) => setTimeout(r, 5));
+
+      const second = handleMemoryMarkPromoted({
+        id,
+        doc_path: 'igris-ai:context/architecture_map.md',
+        doc_anchor: 'new-home',
+      });
+      const secondPayload = JSON.parse(second.content[0].text) as { promoted_to_doc: string; updated_at: string };
+
+      expect(secondPayload.promoted_to_doc).toBe('igris-ai:context/architecture_map.md#new-home');
+      expect(secondPayload.updated_at).not.toBe(firstAt);
+
+      const row = db.prepare('SELECT promoted_to_doc FROM learnings WHERE id = ?')
+        .get(id) as { promoted_to_doc: string };
+      expect(row.promoted_to_doc).toBe('igris-ai:context/architecture_map.md#new-home');
+    });
+  });
+
+  describe('handleMemoryRecall — promotion pointer (FR-200 M2)', () => {
+    it('surfaces a "Promoted → <doc>" pointer and suppresses raw content for a promoted row', async () => {
+      const longContent = 'RAWBODY '.repeat(50); // long enough to normally truncate at 200 chars
+      insertLearning(db, {
+        title: 'Promoted recall row',
+        content: longContent,
+        promoted_to_doc: 'igris-ai:context/coding_guidelines.md#promoted-standards',
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'Promoted recall row',
+      });
+      const text = result.content[0].text;
+
+      // The pointer is surfaced...
+      expect(text).toContain('Promoted: → igris-ai:context/coding_guidelines.md#promoted-standards');
+      // ...and the raw content is NOT double-surfaced (no Content: line, no body).
+      expect(text).not.toContain('Content: RAWBODY');
+      expect(text).not.toContain('RAWBODY');
+    });
+
+    it('still prints Content for a non-promoted row (no regression)', async () => {
+      insertLearning(db, {
+        title: 'Unpromoted recall row',
+        content: 'Plain visible body',
+        // promoted_to_doc defaults to null
+      });
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'Unpromoted recall row',
+      });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Content: Plain visible body');
+      expect(text).not.toContain('Promoted: →');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // FR-200 M2: sibling content-returning tools must ALSO suppress raw content
+  // for a promoted row (warden C1/C2 — these are what /promote P1
+  // calls; the recall-only fix left these leaking).
+  // -------------------------------------------------------------------------
+
+  describe('handleMemorySearch — promotion pointer (FR-200 M2)', () => {
+    it('surfaces the pointer and suppresses the FULL raw content for a promoted row', () => {
+      // search prints the ENTIRE untruncated body (Content: ${row.content}), so
+      // this leak is the most severe — a distinctive marker proves it is gone.
+      const body = 'SEARCHLEAKBODY full untruncated standard text that must not appear';
+      insertLearning(db, {
+        title: 'Promoted search row',
+        content: body,
+        promoted_to_doc: 'igris-ai:context/coding_guidelines.md#promoted-standards',
+      });
+
+      const result = handleMemorySearch({ query: 'Promoted search row' });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Promoted: → igris-ai:context/coding_guidelines.md#promoted-standards');
+      expect(text).not.toContain('Content: SEARCHLEAKBODY');
+      expect(text).not.toContain('SEARCHLEAKBODY');
+    });
+
+    it('still prints Content for a non-promoted row (no regression)', () => {
+      insertLearning(db, {
+        title: 'Unpromoted search row',
+        content: 'Plainly searchable body',
+      });
+
+      const result = handleMemorySearch({ query: 'Unpromoted search row' });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Content: Plainly searchable body');
+      expect(text).not.toContain('Promoted: →');
+    });
+  });
+
+  describe('handleMemoryHybridSearch — promotion pointer (FR-200 M2)', () => {
+    it('surfaces the pointer and suppresses raw content for a promoted row (BM25-only fallback path)', async () => {
+      // sqlite-vec is mocked unavailable in this suite, so hybrid_search takes
+      // the BM25-only fallback, which formats bm25Rows directly through
+      // formatHybridResult — exactly the path the C1 fix repaired.
+      const body = 'HYBRIDLEAKBODY truncatable standard body that must not appear';
+      insertLearning(db, {
+        title: 'Promoted hybrid row',
+        content: body,
+        promoted_to_doc: 'igris-ai:context/architecture_map.md#layer-boundaries',
+      });
+
+      const result = await handleMemoryHybridSearch({ query: 'Promoted hybrid row' });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Promoted: → igris-ai:context/architecture_map.md#layer-boundaries');
+      expect(text).not.toContain('Content: HYBRIDLEAKBODY');
+      expect(text).not.toContain('HYBRIDLEAKBODY');
+    });
+
+    it('still prints Content for a non-promoted row (no regression)', async () => {
+      insertLearning(db, {
+        title: 'Unpromoted hybrid row',
+        content: 'Plainly hybrid-searchable body',
+      });
+
+      const result = await handleMemoryHybridSearch({ query: 'Unpromoted hybrid row' });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Content: Plainly hybrid-searchable body');
+      expect(text).not.toContain('Promoted: →');
+    });
+  });
+
+  describe('handlePatternSuggest — promotion pointer (FR-200 M2)', () => {
+    it('surfaces the pointer and suppresses the raw content for a promoted row', () => {
+      // pattern_suggest prints the full learning body (- **Content:** ${row.content})
+      // in its "From Knowledge Base" section; a distinctive marker proves it is gone
+      // once the row is promoted (TD-245 enrolled this as a suppressing read path).
+      insertLearning(db, {
+        title: 'PATTERNLEAK promoted row',
+        content: 'PATTERNLEAKBODY full standard text that must not appear',
+        promoted_to_doc: 'igris-ai:context/coding_guidelines.md#promoted-standards',
+      });
+
+      const result = handlePatternSuggest({
+        project: 'test-project',
+        context: 'PATTERNLEAK promoted row',
+      });
+      const text = result.content[0].text;
+
+      expect(text).toContain('Promoted: → igris-ai:context/coding_guidelines.md#promoted-standards');
+      expect(text).not.toContain('PATTERNLEAKBODY');
+    });
+
+    it('still prints Content for a non-promoted row (no regression)', () => {
+      insertLearning(db, {
+        title: 'PATTERNKEEP unpromoted row',
+        content: 'PATTERNKEEPBODY plainly visible advisory body',
+      });
+
+      const result = handlePatternSuggest({
+        project: 'test-project',
+        context: 'PATTERNKEEP unpromoted row',
+      });
+      const text = result.content[0].text;
+
+      expect(text).toContain('PATTERNKEEPBODY plainly visible advisory body');
+      expect(text).not.toContain('Promoted: →');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-093: optional `category` param hard-filters recall to a single
+  // category across every fetch path. The fixture has no learnings_vec, so
+  // recall runs BM25-only — this directly exercises the `bm25Sql` category
+  // predicate.
+  // -------------------------------------------------------------------------
+  describe('handleMemoryRecall — category filter (TD-093)', () => {
+    /**
+     * Seed a `pattern` row ranked ABOVE a `mistake` row (higher confidence +
+     * access_count => lower composite_score => ranks first) that both match
+     * the same FTS term. This proves category filtering excludes the
+     * higher-ranked row rather than merely re-ordering.
+     */
+    function seedRankedPair(): void {
+      insertLearning(db, {
+        category: 'pattern',
+        title: 'Retry backoff pattern',
+        content: 'Exponential retry backoff strategy for transient network failures',
+        confidence: 1.0,
+        access_count: 100,
+      });
+      insertLearning(db, {
+        category: 'mistake',
+        title: 'Retry backoff mistake',
+        content: 'Exponential retry backoff strategy caused a thundering herd regression',
+        confidence: 0.3,
+        access_count: 0,
+      });
+    }
+
+    it('returns ONLY the requested category even when another category ranks higher', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        category: 'mistake',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Category: mistake');
+      // The higher-ranked pattern row must be excluded by the hard filter.
+      expect(text).not.toContain('Category: pattern');
+    });
+
+    it('surfaces all categories when category is omitted (zero regression)', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        limit: 5,
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Category: pattern');
+      expect(text).toContain('Category: mistake');
+    });
+
+    it('returns a validation error for an invalid category without throwing', async () => {
+      seedRankedPair();
+
+      const result = await handleMemoryRecall({
+        project: 'test-project',
+        context: 'retry backoff strategy',
+        // @ts-expect-error — deliberately invalid enum value for the guard test
+        category: 'bogus',
+      });
+
+      const text = result.content[0].text;
+      expect(text).toContain('Validation error: Invalid category');
+      expect(text).not.toContain('Category: pattern');
+      expect(text).not.toContain('Category: mistake');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-290: FTS5-unsafe input must NEVER crash a search surface. A literal
+  // `?` used to survive the denylist sanitizer and reach `MATCH '?'`, which
+  // threw an FTS5 syntax error in handleMemorySearch (recall/hybrid/pattern
+  // swallowed it via try/catch, but returned nothing). The whitelist
+  // sanitizer + per-caller try/catch make all four surfaces degrade
+  // gracefully and consistently.
+  // -------------------------------------------------------------------------
+  describe('FTS5-unsafe input resilience (TD-290)', () => {
+    beforeEach(() => {
+      // A normal, findable row — proves that after neutralizing the unsafe
+      // punctuation the surviving barewords still match real content.
+      insertLearning(db, {
+        title: 'How do I configure caching?',
+        content: 'Use Redis to configure caching for frequently accessed data',
+      });
+    });
+
+    for (const query of ['?', '???', '()', '*', 'what?', 'how to cache?']) {
+      it(`handleMemorySearch does not throw on ${JSON.stringify(query)}`, () => {
+        expect(() => handleMemorySearch({ query })).not.toThrow();
+        const result = handleMemorySearch({ query });
+        // Normal shape: a single text content item (results or "No learnings").
+        expect(Array.isArray(result.content)).toBe(true);
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handleMemoryRecall does not throw on ${JSON.stringify(query)}`, async () => {
+        await expect(
+          handleMemoryRecall({ project: 'test-project', context: query }),
+        ).resolves.toBeDefined();
+        const result = await handleMemoryRecall({ project: 'test-project', context: query });
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handleMemoryHybridSearch does not throw on ${JSON.stringify(query)}`, async () => {
+        await expect(handleMemoryHybridSearch({ query })).resolves.toBeDefined();
+        const result = await handleMemoryHybridSearch({ query });
+        expect(typeof result.content[0].text).toBe('string');
+      });
+
+      it(`handlePatternSuggest does not throw on ${JSON.stringify(query)}`, () => {
+        expect(() => handlePatternSuggest({ project: 'test-project', context: query })).not.toThrow();
+      });
+    }
+
+    it('a `?`-terminated query still finds a matching learning (degrades to bareword search)', () => {
+      // "How do I configure caching?" → sanitizes to "How do I configure caching"
+      // which matches the seeded row instead of throwing or returning empty.
+      const result = handleMemorySearch({ query: 'configure caching?' });
+      expect(result.content[0].text).toContain('How do I configure caching?');
     });
   });
 });

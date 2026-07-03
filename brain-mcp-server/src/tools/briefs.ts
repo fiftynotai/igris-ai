@@ -10,12 +10,13 @@
  * - igris_brief_dashboard: Cross-project brief dashboard
  *
  * @module tools/briefs
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
+import { normalizePhase, normalizePriority, normalizeBriefType } from './brief-normalize.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
 
@@ -140,12 +141,13 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
   `).run(
     args.project,
     args.brief_id,
-    args.brief_type ?? null,
+    // TD-238: normalize metadata only (phase/brief_type/priority); never content.
+    normalizeBriefType(args.brief_type),
     args.title,
     args.status,
-    args.priority ?? null,
+    normalizePriority(args.priority),
     args.effort ?? null,
-    args.phase ?? null
+    normalizePhase(args.phase)
   );
 
   return {
@@ -527,12 +529,14 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
     `).run(
       args.project,
       args.brief_id,
-      args.brief_type ?? null,
+      // TD-238: normalize metadata only (phase/brief_type/priority); content
+      // (the brief_files INSERT above) is never touched.
+      normalizeBriefType(args.brief_type),
       args.title,
       status,
-      args.priority ?? null,
+      normalizePriority(args.priority),
       args.effort ?? null,
-      args.phase ?? null,
+      normalizePhase(args.phase),
       now
     );
   })();
@@ -694,14 +698,19 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
     }
 
     // Update brief_status if metadata fields provided
-    // Whitelist of allowed columns to prevent SQL injection
+    // Whitelist of allowed columns to prevent SQL injection.
+    // TD-238: normalize metadata only (phase/brief_type/priority) and ONLY
+    // when the field was actually provided — preserve partial-update semantics
+    // (an undefined field stays undefined so the loop below skips it; never
+    // turn a not-provided field into an explicit null write). Content/title/
+    // status are never normalized.
     const allowedColumns: Record<string, unknown> = {
       title: args.title,
       status: args.status,
-      priority: args.priority,
+      priority: args.priority !== undefined ? normalizePriority(args.priority) : undefined,
       effort: args.effort,
-      phase: args.phase,
-      brief_type: args.brief_type,
+      phase: args.phase !== undefined ? normalizePhase(args.phase) : undefined,
+      brief_type: args.brief_type !== undefined ? normalizeBriefType(args.brief_type) : undefined,
     };
 
     const setClauses: string[] = [];
@@ -734,10 +743,11 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
           args.brief_id,
           args.title ?? '',
           args.status ?? 'Ready',
-          args.priority ?? null,
+          // TD-238: normalize metadata only (phase/brief_type/priority).
+          normalizePriority(args.priority),
           args.effort ?? null,
-          args.phase ?? null,
-          args.brief_type ?? null,
+          normalizePhase(args.phase),
+          normalizeBriefType(args.brief_type),
           now
         );
         updated.push('brief_status (created)');
@@ -937,6 +947,19 @@ async function handleBriefSimilar(args: BriefSimilarInput): Promise<{ content: {
   try {
     queryEmbedding = await generateEmbedding(args.query);
   } catch (err) {
+    // BR-070: when the embeddings backend is unavailable (transformers
+    // absent, offline cold-cache, or native-load failure), return a clean
+    // capability message mirroring the sqlite-vec-unavailable branch above
+    // rather than leaking a raw ERR_MODULE_NOT_FOUND string. Other errors
+    // still surface their detail for diagnosis.
+    if (err instanceof EmbeddingsUnavailableError) {
+      return {
+        content: [{
+          type: 'text',
+          text: 'Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).',
+        }],
+      };
+    }
     return {
       content: [{
         type: 'text',

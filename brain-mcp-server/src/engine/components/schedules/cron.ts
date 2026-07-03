@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — Minimal 5-Field Cron Parser
+ * Brain Engine v7.0 — Minimal 5-Field Cron Parser
  *
  * Parses standard 5-field cron expressions (minute, hour, day-of-month,
  * month, day-of-week) and computes the next occurrence after a given date.
@@ -9,7 +9,7 @@
  * NO external dependencies — fully inline implementation.
  *
  * @module engine/components/schedules/cron
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 // ---------------------------------------------------------------------------

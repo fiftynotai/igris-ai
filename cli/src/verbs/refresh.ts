@@ -22,12 +22,16 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { dirname, join, resolve as pathResolve } from "node:path";
+import { join, resolve as pathResolve } from "node:path";
 import {
   AtomicExtractError,
   atomicSwap,
   stagingDirFor,
 } from "../lib/atomic-extract.js";
+import {
+  cacheEvict,
+  findCached,
+} from "../lib/cache.js";
 import {
   ChannelResolveError,
   resolveChannel,
@@ -39,19 +43,21 @@ import {
   installSourcePath,
 } from "../lib/paths.js";
 import {
+  fetchAndExtractFromFile,
   fetchAndExtract,
+  hashTarballFile,
   NetworkError,
   TarballError,
   wipeDir,
   ZipSlipError,
 } from "../lib/tarball.js";
+import type { Channel } from "../types.js";
 import {
   readInstallSource,
   writeInstallSource,
 } from "../lib/install-source.js";
 import { runUpdate } from "./update.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
-import type { Channel } from "../types.js";
 
 export interface RefreshOptions {
   fromSource?: string;
@@ -62,19 +68,22 @@ export interface RefreshOptions {
   /** Test seam: pre-resolve the channel via injected fn (skips network). */
   latestReleaseTagFn?: () => Promise<string>;
   /**
+   * Test seam (TD-154): swap the tag-vs-branch git-ref probe so a
+   * `--channel=<branch|tag>` switch resolves without touching the network.
+   * Threaded straight into resolveChannel; production callers omit it.
+   */
+  classifyFn?: (ref: string) => Promise<"tag" | "branch" | "none">;
+  /**
    * Test seam: when set, calls `confirmFn(promptText)` instead of
    * blocking on stdin. Returns true → proceed with switch.
    */
   confirmFn?: (prompt: string) => boolean;
 }
 
-const FAKE_DIRNAME = ".";
-
 /**
  * Re-fetch and atomically swap brain core. Returns process exit code.
  */
 export async function runRefresh(opts: RefreshOptions): Promise<number> {
-  void FAKE_DIRNAME; // reserved for future cache-aware swap path
   const dryRun = opts.dryRun === true;
   const dry = dryRun ? new DryRunCollector() : null;
 
@@ -113,6 +122,7 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
       resolved = await resolveChannel({
         flag,
         latestReleaseTagFn: opts.latestReleaseTagFn,
+        classifyFn: opts.classifyFn,
       });
       channelKind = resolved.kind;
       channelRef = resolved.ref;
@@ -195,6 +205,32 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
     } else {
       wipeDir(stagingPath);
       mkdirSync(stagingPath, { recursive: true });
+
+      // ── TD-113 cache check (BEFORE the network) ──────────────────────
+      // When the channel is UNCHANGED (no switch) and the cache holds an entry
+      // for the SHA recorded in .install-source.json, the brain is already at
+      // that content — extract from the cached tarball instead of hitting the
+      // network. A `--channel=<other>` switch skips this entirely (the entry's
+      // channel won't match the requested one, and the switch invalidates any
+      // hit). The cached tarball is RE-HASHED on read (cheap for ~100KB); a
+      // mismatch evicts the corrupt entry and falls through to the network.
+      const channelUnchanged = requestedFlag === recordedFlag;
+      const cacheHandled = channelUnchanged
+        ? await tryCacheHit({
+            recordedSha: installSrc.content_sha256,
+            channelKind,
+            stagingPath,
+          })
+        : null;
+      if (cacheHandled === "hit-noop") {
+        wipeDir(stagingPath);
+        info(
+          `Refresh: brain core already at ${channelKind}/${channelRef} (cache hit, no network).`,
+        );
+        return 0;
+      }
+      // cacheHandled is null (miss / corrupt / channel switch) → network fetch.
+
       try {
         const fetched = await fetchAndExtract({
           url: tarballUrl,
@@ -218,7 +254,9 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
         throw err;
       }
 
-      // Cache fast-path: same sha → no swap needed.
+      // Cache fast-path: same sha → no swap needed (the network fetch produced
+      // the same bytes already on disk). Seed/refresh the cache from this fetch
+      // so the NEXT refresh can take the no-network path above.
       if (contentSha256 === installSrc.content_sha256) {
         debug(`refresh: same sha as recorded; no swap needed`);
         wipeDir(stagingPath);
@@ -320,6 +358,74 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
 }
 
 /**
+ * TD-113 cache check. Returns:
+ *   - "hit-noop": the cache holds a VALID entry for `recordedSha` on the SAME
+ *     channel; the cached tarball re-hashes correctly and extracts cleanly into
+ *     `stagingPath`. The brain is already at this content → caller skips the
+ *     network AND the swap (no-op refresh).
+ *   - null: cache miss, channel mismatch, corrupt entry (evicted), or a
+ *     re-extract failure → caller falls through to the network fetch.
+ *
+ * Corruption safety: the cached tarball is RE-HASHED on read. A SHA mismatch
+ * (bit-rot, truncated write that escaped the init-time guard) evicts the entry
+ * and returns null so the network path produces a clean copy. The re-extract
+ * into staging is the final proof the cached bytes gunzip+untar without error.
+ */
+async function tryCacheHit(args: {
+  recordedSha: string;
+  channelKind: Channel;
+  stagingPath: string;
+}): Promise<"hit-noop" | null> {
+  const hit = findCached(args.recordedSha);
+  if (hit === null) {
+    debug(`refresh: no cache entry for ${args.recordedSha.slice(0, 12)}…`);
+    return null;
+  }
+  // A different channel's bytes must never satisfy a refresh for THIS channel,
+  // even on a (theoretical) SHA collision — a channel switch always re-fetches.
+  if (hit.meta.channel !== args.channelKind) {
+    debug(
+      `refresh: cache entry channel '${hit.meta.channel}' != requested '${args.channelKind}'; ignoring`,
+    );
+    return null;
+  }
+  // Corruption check: re-hash the cached tarball bytes.
+  let actualSha: string;
+  try {
+    actualSha = await hashTarballFile(hit.tarballPath);
+  } catch (err) {
+    debug(
+      `refresh: cached tarball unreadable (${err instanceof Error ? err.message : String(err)}); evicting`,
+    );
+    cacheEvict(args.recordedSha);
+    return null;
+  }
+  if (actualSha !== args.recordedSha) {
+    warn(
+      `refresh: cached tarball for ${args.recordedSha.slice(0, 12)}… is corrupt ` +
+        `(re-hash ${actualSha.slice(0, 12)}…); evicting and re-fetching.`,
+    );
+    cacheEvict(args.recordedSha);
+    return null;
+  }
+  // Prove the cached bytes extract cleanly (gunzip + untar) into staging.
+  try {
+    await fetchAndExtractFromFile(hit.tarballPath, args.stagingPath);
+  } catch (err) {
+    warn(
+      `refresh: cached tarball failed to extract (${err instanceof Error ? err.message : String(err)}); evicting and re-fetching.`,
+    );
+    cacheEvict(args.recordedSha);
+    wipeDir(args.stagingPath);
+    return null;
+  }
+  debug(
+    `refresh: cache HIT for ${args.recordedSha.slice(0, 12)}… (${args.channelKind}); skipping network`,
+  );
+  return "hit-noop";
+}
+
+/**
  * Convert a recorded channel kind + ref back into a flag-style string
  * for resolveChannel's input. Used so we can re-resolve the same
  * channel without round-tripping through a flag.
@@ -328,6 +434,7 @@ function recordedChannelToFlag(channel: Channel, ref: string): string {
   if (channel === "main") return "main";
   if (channel === "release") return ref; // tag name verbatim
   if (channel === "tag") return ref;
+  if (channel === "branch") return ref; // branch name verbatim (TD-154)
   return ref;
 }
 
@@ -357,7 +464,6 @@ function defaultConfirm(prompt: string): boolean {
   // Simpler: just read up to 1024 bytes from /dev/tty.
   try {
     const fs = require("node:fs");
-    void dirname; // keep imports anchored under noUnusedLocals
     const buf = Buffer.alloc(1024);
     const fd = fs.openSync("/dev/tty", "r");
     const n = fs.readSync(fd, buf, 0, 1024, null);

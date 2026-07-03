@@ -156,3 +156,69 @@ describe("mergeCanonicalHooks — invariants", () => {
     expect(fromUndef).toEqual({ hooks: CANONICAL.hooks });
   });
 });
+
+describe("R2 — personal hook survives the canonical re-merge (FR-180 D7, MERGE GATE)", () => {
+  // A personal-added hook (the loadout-provenance command an `igris add hook`
+  // writes) MUST NOT be clobbered when install/update/doctor --fix re-merge the
+  // canonical hooks. This is the central R2 hazard the Phase-5 design closes.
+  const personalGroup = {
+    matcher: "Write|Edit",
+    hooks: [
+      {
+        type: "command",
+        command: "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
+      },
+    ],
+  };
+
+  it("re-merge PRESERVES the personal (loadout-prefix) hook", () => {
+    const withPersonal: Record<string, unknown> = {
+      hooks: { PreToolUse: [personalGroup] },
+    };
+    const out = mergeCanonicalHooks(withPersonal, CANONICAL);
+    const pre = out.hooks as Record<string, unknown[]>;
+    const cmds = pre.PreToolUse.map(
+      (g) => (g as { hooks: { command: string }[] }).hooks[0].command,
+    );
+    // The personal hook is still present...
+    expect(cmds).toContain("$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh");
+    // ...AND the canonical core hook was (re)applied alongside it.
+    expect(cmds.some((c) => c.startsWith("$HOME/.igris/core/hooks/"))).toBe(true);
+  });
+
+  it("re-merge is idempotent for a personal hook (no duplication)", () => {
+    const withPersonal: Record<string, unknown> = {
+      hooks: { PreToolUse: [personalGroup] },
+    };
+    const once = mergeCanonicalHooks(withPersonal, CANONICAL);
+    const twice = mergeCanonicalHooks(once, CANONICAL);
+    expect(twice).toEqual(once);
+    const pre = (twice.hooks as Record<string, unknown[]>).PreToolUse;
+    const personalCount = pre.filter(
+      (g) =>
+        (g as { hooks: { command: string }[] }).hooks[0].command ===
+        "$HOME/.igris/loadout/hooks/my-guard/PreToolUse.sh",
+    ).length;
+    expect(personalCount).toBe(1);
+  });
+
+  it("a CORE-prefix hook IS dropped-then-reapplied (only personal is preserved verbatim)", () => {
+    // A stale/old core hook with a different path under the core prefix is
+    // stripped by the re-merge (the canonical set replaces it) — proving the
+    // carve-out is SPECIFIC to the loadout prefix, not all Igris prefixes.
+    const staleCore = {
+      hooks: [
+        { type: "command", command: "$HOME/.igris/core/hooks/shared/OLD.sh" },
+      ],
+    };
+    const input: Record<string, unknown> = {
+      hooks: { SessionStart: [staleCore] },
+    };
+    const out = mergeCanonicalHooks(input, CANONICAL);
+    const ss = (out.hooks as Record<string, unknown[]>).SessionStart;
+    const cmds = ss.map(
+      (g) => (g as { hooks: { command: string }[] }).hooks[0].command,
+    );
+    expect(cmds).not.toContain("$HOME/.igris/core/hooks/shared/OLD.sh");
+  });
+});

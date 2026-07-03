@@ -1,12 +1,13 @@
 /**
- * Brain Engine v5.0 — Goals Component Handlers
+ * Brain Engine v7.0 — Goals Component Handlers
  *
- * Pure handlers for the five goal MCP tools:
- *   - igris_goal_create   — server-side GL-XXX allocation, atomic insert
- *   - igris_goal_list     — filtered query with optional upcoming_days
- *   - igris_goal_get      — goal + serving briefs/learnings (via entity_edges)
- *   - igris_goal_update   — partial patch with status->achieved auto-stamp
- *   - igris_goal_progress — count-based completion across serving briefs
+ * Pure handlers for the goal MCP tools:
+ *   - igris_goal_create    — server-side GL-XXX allocation, atomic insert
+ *   - igris_goal_list      — filtered query with optional upcoming_days
+ *   - igris_goal_get       — goal + serving briefs/learnings (via entity_edges)
+ *   - igris_goal_update    — partial patch with status->achieved auto-stamp
+ *   - igris_goal_progress  — count-based completion across serving briefs
+ *   - igris_goal_dashboard — status counts, upcoming deadlines, stalled goals
  *
  * Handlers are pure functions: they take Record<string, unknown> args,
  * validate at runtime, and return a ToolResult. They do NOT emit events;
@@ -14,7 +15,7 @@
  * stay reusable from contexts without a bus.
  *
  * @module engine/components/goals/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { getDb } from '../../../db.js';
@@ -289,7 +290,7 @@ export function handleGoalCreate(args: Record<string, unknown>): ToolResult {
   }
   // project is required by the brief but goals may also be cross-project
   // (project_slug = NULL). Accept undefined/empty -> stored as NULL so the
-  // /portfolio surface can render "Cross-project" without a sentinel value.
+  // /ops surface can render "Cross-project" without a sentinel value.
   const projectSlugCol: string | null =
     projectSlug && projectSlug.length > 0 ? projectSlug : null;
 
@@ -692,5 +693,227 @@ export function handleGoalProgress(args: Record<string, unknown>): ToolResult {
     completion_pct: completionPct,
     serving_learnings_count: learningsCount,
   };
+  return successResult(JSON.stringify(result, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// handleGoalDashboard (TD-171 M4)
+// ---------------------------------------------------------------------------
+
+/**
+ * Aggregate dashboard over the `goals` table (TD-171 M4).
+ *
+ * Mirrors the canonical TD-171 `_dashboard` shape established by M1's
+ * `handleMemoryDashboard` and reused by M2/M3 dashboards:
+ *
+ *   {
+ *     totals: {
+ *       total: N,
+ *       by_status: { active, achieved, abandoned, deferred },
+ *     },
+ *     recent: {
+ *       upcoming_deadlines: [
+ *         { goal_id, title, deadline, days_remaining,
+ *           serving_brief_count, completed_brief_count }, ...
+ *       ],
+ *     },
+ *     samples: {
+ *       stalled_goals: [
+ *         { goal_id, title, project_slug, days_since_update,
+ *           serving_brief_count, completed_brief_count }, ...
+ *       ],
+ *     },                                                // omitted when summary_only
+ *     project?: 'foo',                                  // echoed when filter set
+ *   }
+ *
+ * Filter semantics:
+ *   - `project`: scopes totals + recent + samples to one project's goals.
+ *   - `summary_only`: omits `samples` (counts + upcoming deadlines still
+ *     computed because they are headline-line content, not detail).
+ *
+ * Per L-152, scope is strictly the goals component — no perception or
+ * memory aggregations leak in. Serving-brief counts are read via the
+ * existing `entity_edges` JOIN reused from `handleGoalProgress`'s helpers
+ * so the math is consistent across `_progress` and `_dashboard`.
+ *
+ * "Stalled" = active goal with no `goal.updated` event in the last 30 days
+ * (proxy: `updated_at >= 30 days ago`). Goals never updated since creation
+ * are always candidates if active.
+ */
+export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
+  const summaryOnly = args.summary_only === true;
+  const projectFilter =
+    typeof args.project === 'string' && args.project.length > 0 ? args.project : null;
+
+  const db = getDb();
+
+  const projectWhere = projectFilter ? 'WHERE project_slug = ?' : '';
+  const projectParams: string[] = projectFilter ? [projectFilter] : [];
+
+  // --- totals.total ---
+  const totalRow = db
+    .prepare(`SELECT COUNT(*) AS n FROM goals ${projectWhere}`)
+    .get(...projectParams) as { n: number };
+
+  // --- totals.by_status ---
+  // Initialize every VALID_GOAL_STATUSES key to zero so downstream UI never
+  // has to handle missing keys (canonical-shape contract per M1 dashboard).
+  const statusRows = db
+    .prepare(`SELECT status, COUNT(*) AS n FROM goals ${projectWhere} GROUP BY status`)
+    .all(...projectParams) as { status: string; n: number }[];
+  const byStatus: Record<string, number> = {};
+  for (const s of VALID_GOAL_STATUSES) byStatus[s] = 0;
+  for (const r of statusRows) byStatus[r.status] = r.n;
+
+  // --- recent.upcoming_deadlines ---
+  // Active goals with deadlines in the next 30 days. Limit 10 — this is a
+  // quick-glance surface, not a full report. Days-remaining is computed in
+  // SQL (julianday diff) so callers get an integer rather than re-parsing.
+  // Serving-brief counts are subqueries on entity_edges (mirrors handleGoalList).
+  const upcomingSql = projectFilter
+    ? `SELECT
+         g.goal_id,
+         g.title,
+         g.deadline,
+         CAST(julianday(g.deadline) - julianday('now') AS INTEGER) AS days_remaining,
+         (
+           SELECT COUNT(*) FROM entity_edges e
+           WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+             AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+         ) AS serving_brief_count,
+         (
+           SELECT COUNT(*) FROM entity_edges e
+           JOIN brief_status bs ON bs.brief_id = e.from_id
+           WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+             AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+             AND bs.status IN ('Done', 'Archived')
+             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+         ) AS completed_brief_count
+       FROM goals g
+       WHERE g.project_slug = ?
+         AND g.status = 'active'
+         AND g.deadline IS NOT NULL
+         AND date(g.deadline) <= date('now', '+30 days')
+       ORDER BY g.deadline ASC
+       LIMIT 10`
+    : `SELECT
+         g.goal_id,
+         g.title,
+         g.deadline,
+         CAST(julianday(g.deadline) - julianday('now') AS INTEGER) AS days_remaining,
+         (
+           SELECT COUNT(*) FROM entity_edges e
+           WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+             AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+         ) AS serving_brief_count,
+         (
+           SELECT COUNT(*) FROM entity_edges e
+           JOIN brief_status bs ON bs.brief_id = e.from_id
+           WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+             AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+             AND bs.status IN ('Done', 'Archived')
+             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+         ) AS completed_brief_count
+       FROM goals g
+       WHERE g.status = 'active'
+         AND g.deadline IS NOT NULL
+         AND date(g.deadline) <= date('now', '+30 days')
+       ORDER BY g.deadline ASC
+       LIMIT 10`;
+  const upcomingDeadlines = db
+    .prepare(upcomingSql)
+    .all(...projectParams) as {
+      goal_id: string;
+      title: string;
+      deadline: string;
+      days_remaining: number;
+      serving_brief_count: number;
+      completed_brief_count: number;
+    }[];
+
+  // --- samples.stalled_goals (omitted when summary_only) ---
+  // Active goals whose updated_at is older than 30 days. These are the
+  // candidates for revisit/abandon during a release/quarterly review.
+  let samples: Record<string, unknown> | undefined;
+  if (!summaryOnly) {
+    const stalledSql = projectFilter
+      ? `SELECT
+           g.goal_id,
+           g.title,
+           g.project_slug,
+           CAST(julianday('now') - julianday(g.updated_at) AS INTEGER) AS days_since_update,
+           (
+             SELECT COUNT(*) FROM entity_edges e
+             WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+               AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+               AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+           ) AS serving_brief_count,
+           (
+             SELECT COUNT(*) FROM entity_edges e
+             JOIN brief_status bs ON bs.brief_id = e.from_id
+             WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+               AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+               AND bs.status IN ('Done', 'Archived')
+               AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+           ) AS completed_brief_count
+         FROM goals g
+         WHERE g.project_slug = ?
+           AND g.status = 'active'
+           AND g.updated_at <= datetime('now', '-30 days')
+         ORDER BY g.updated_at ASC
+         LIMIT 10`
+      : `SELECT
+           g.goal_id,
+           g.title,
+           g.project_slug,
+           CAST(julianday('now') - julianday(g.updated_at) AS INTEGER) AS days_since_update,
+           (
+             SELECT COUNT(*) FROM entity_edges e
+             WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+               AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+               AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+           ) AS serving_brief_count,
+           (
+             SELECT COUNT(*) FROM entity_edges e
+             JOIN brief_status bs ON bs.brief_id = e.from_id
+             WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
+               AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
+               AND bs.status IN ('Done', 'Archived')
+               AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
+           ) AS completed_brief_count
+         FROM goals g
+         WHERE g.status = 'active'
+           AND g.updated_at <= datetime('now', '-30 days')
+         ORDER BY g.updated_at ASC
+         LIMIT 10`;
+    const stalledGoals = db.prepare(stalledSql).all(...projectParams) as {
+      goal_id: string;
+      title: string;
+      project_slug: string | null;
+      days_since_update: number;
+      serving_brief_count: number;
+      completed_brief_count: number;
+    }[];
+    samples = { stalled_goals: stalledGoals };
+  }
+
+  const result: Record<string, unknown> = {
+    totals: {
+      total: totalRow.n,
+      by_status: byStatus,
+    },
+    recent: {
+      upcoming_deadlines: upcomingDeadlines,
+    },
+  };
+  if (!summaryOnly) {
+    result.samples = samples;
+  }
+  if (projectFilter) {
+    result.project = projectFilter;
+  }
+
   return successResult(JSON.stringify(result, null, 2));
 }

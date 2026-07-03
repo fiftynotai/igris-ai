@@ -105,9 +105,19 @@ function stageProject(): string {
   return dir;
 }
 
+// FR-212d: sandbox HOME so the register-only install's `~/.claude.json` MCP
+// write AND `igris update`'s global-hooks refresh (`~/.claude/settings.json`)
+// land in tmp, never the developer's real home. `os.homedir()` honors $HOME on
+// this platform (verified), so this redirects both writes.
+let homeBackup: string | undefined;
+
 beforeEach(async () => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-update-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
+  homeBackup = process.env.HOME;
+  const homeOverride = join(tmpRoot, "home");
+  mkdirSync(homeOverride, { recursive: true });
+  process.env.HOME = homeOverride;
   stageBrain();
   const ch = await import("../lib/canonical-hooks.js");
   ch.clearCache();
@@ -125,25 +135,30 @@ afterEach(async () => {
   projectDirs.length = 0;
   delete process.env.IGRIS_BRAIN_DIR;
   delete process.env.IGRIS_KEEP_BAK;
+  process.env.HOME = homeBackup;
 });
 
 describe("update verb", () => {
   it("update --slug skips a project that is up to date", async () => {
     const { runInstall } = await import("../verbs/install.js");
     const { runUpdate } = await import("../verbs/update.js");
+    const ifs = await import("../lib/installed-features.js");
 
     const proj = stageProject();
     await runInstall({
       path: proj,
       slug: "alpha",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
 
-    const before = readFileSync(join(proj, ".claude", "settings.json"), "utf-8");
+    // FR-212d: register-only install writes no per-project settings.json — the
+    // up-to-date signal is the features-file hash, not a settings.json. A fresh
+    // install left the features file matching canonical, so update SKIPS it
+    // (the features file is byte-stable across the no-op update).
+    const before = JSON.stringify(ifs.readInstalledFeatures("alpha"));
     const code = await runUpdate({ all: false, slug: "alpha" });
     expect(code).toBe(0);
-    const after = readFileSync(join(proj, ".claude", "settings.json"), "utf-8");
+    const after = JSON.stringify(ifs.readInstalledFeatures("alpha"));
     expect(after).toBe(before);
   });
 
@@ -176,8 +191,8 @@ describe("update verb", () => {
 
     const a = stageProject();
     const b = stageProject();
-    await runInstall({ path: a, slug: "a", installHooks: true, skipSymlinkLayer: true });
-    await runInstall({ path: b, slug: "b", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: a, slug: "a", installHooks: true });
+    await runInstall({ path: b, slug: "b", installHooks: true });
 
     const code = await runUpdate({ all: true });
     expect(code).toBe(0);
@@ -189,7 +204,7 @@ describe("update verb", () => {
     const reg = await import("../lib/registry.js");
 
     const a = stageProject();
-    await runInstall({ path: a, slug: "alive", installHooks: true, skipSymlinkLayer: true });
+    await runInstall({ path: a, slug: "alive", installHooks: true });
     reg.upsertProject({
       slug: "ghost",
       name: "ghost",
@@ -265,28 +280,25 @@ describe("update verb", () => {
       path: fresh,
       slug: "fresh-proj",
       installHooks: true,
-      skipSymlinkLayer: true,
     });
-    // Capture fresh project's settings.json before dry-run to verify no
-    // mutation occurs.
-    const freshSettingsBefore = readFileSync(
-      join(fresh, ".claude", "settings.json"),
-      "utf-8",
+    // FR-212d: register-only install writes no per-project settings.json. The
+    // fresh project's features file is the dry-run no-mutation witness.
+    const ifs = await import("../lib/installed-features.js");
+    const freshFeaturesBefore = JSON.stringify(
+      ifs.readInstalledFeatures("fresh-proj"),
     );
 
     const code = await runUpdate({ all: true, dryRun: true });
     expect(code).toBe(0);
 
     // The stale project should NOT have a features file written by dry-run.
-    const ifs = await import("../lib/installed-features.js");
     expect(ifs.readInstalledFeatures("stale-proj")).toBeNull();
 
-    // The fresh project's settings.json must be byte-identical (no rewrite).
-    const freshSettingsAfter = readFileSync(
-      join(fresh, ".claude", "settings.json"),
-      "utf-8",
+    // The fresh project's features file must be byte-identical (no rewrite).
+    const freshFeaturesAfter = JSON.stringify(
+      ifs.readInstalledFeatures("fresh-proj"),
     );
-    expect(freshSettingsAfter).toBe(freshSettingsBefore);
+    expect(freshFeaturesAfter).toBe(freshFeaturesBefore);
 
     // No npm/execFile calls — --self was not requested.
     expect(selfUpdateCalls.length).toBe(0);

@@ -1,22 +1,32 @@
 # Git Hooks
 
-Igris ships local git hooks that catch drift between the actor-facing prompt (`core/prompts/igris_os.md`), the routing tree (`core/igris_tree.json`), and the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`). Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
+Igris ships local git hooks that catch drift between the brain stewardship doc (`core/prompts/brain_stewardship.md`), the brain MCP schema (`brain-mcp-server/src/engine/components/memory/index.ts`), and the workspace lockfile. Hooks run **only when relevant files are staged**, so unrelated commits stay fast.
 
 ## What's installed
 
-A single `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes two validators based on which files are in the staging area.
+Two hook types:
+
+- A `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
+- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) that hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180). This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change). The ≤72 limit matches `core/os/standards.md` and `core/templates/commit_message.md`; bypass with `git commit --no-verify`.
+
+The `pre-commit` dispatcher's validators:
 
 | Validator | What it asserts | Brief |
 |---|---|---|
-| `scripts/validate_memory_agency_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072 |
-| `scripts/validate_igris_tree_lineranges.py` | Every section declared in `igris_tree.json` has a matching `<!-- SECTION: <name> -->` marker at the declared start line and a `<!-- /SECTION: <name> -->` marker at the declared end line in `igris_os.md`. | TD-070 / DRIFT-3 |
+| `scripts/validate_brain_stewardship_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072, TD-092 (renamed in TD-148) |
 | `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
+| `gitleaks protect --staged --config .gitleaks.toml` | No secret-shaped string reaches a commit (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family). **Runs unconditionally** (gitleaks scans the staged set itself — no file trigger). HARD-fails on any finding; degrades gracefully (WARN + skip) if `gitleaks` is absent so a contributor without it isn't blocked. Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md). | TD-159 |
 
-All three validators are also runnable standalone:
+> The full validator roster lives in the dispatcher's header comment
+> (`scripts/git-hooks/pre-commit`); this table summarizes the load-bearing
+> ones. Several validators (TD-219 SKILL.md YAML, TD-248 harness-leak, FR-135
+> harness drift, FR-186 contract consumers, TD-257 brief-state reconciliation)
+> are wired in addition to the rows above.
+
+Both core validators are also runnable standalone:
 
 ```bash
-bash scripts/validate_memory_agency_enums.sh
-python3 scripts/validate_igris_tree_lineranges.py
+bash scripts/validate_brain_stewardship_enums.sh
 bash scripts/validate_lockfile_in_sync.sh
 ```
 
@@ -26,16 +36,15 @@ Each prints `OK: ...` on success or a precise drift report on failure.
 
 The pre-commit dispatcher only runs validators whose tracked files are staged. Validators not listed for a staged file do not run.
 
-| Staged file | Enum validator | Line-range validator | Lockfile validator |
-|---|---|---|---|
-| `core/prompts/igris_os.md` | yes | yes | no |
-| `core/igris_tree.json` | no | yes | no |
-| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no | no |
-| `package.json` (root) | no | no | yes |
-| `package-lock.json` | no | no | yes |
-| `cli/package.json` | no | no | yes |
-| `brain-mcp-server/package.json` | no | no | yes |
-| anything else | no | no | no |
+| Staged file | Enum validator | Lockfile validator |
+|---|---|---|
+| `core/prompts/brain_stewardship.md` | yes | no |
+| `brain-mcp-server/src/engine/components/memory/index.ts` | yes | no |
+| `package.json` (root) | no | yes |
+| `package-lock.json` | no | yes |
+| `cli/package.json` | no | yes |
+| `brain-mcp-server/package.json` | no | yes |
+| anything else | no | no |
 
 If no validator triggers, the hook exits 0 silently — there is no per-commit overhead for unrelated work.
 
@@ -77,6 +86,8 @@ To add a new hook type (e.g., `commit-msg`, `pre-push`):
 2. Make it executable.
 3. The installer (`install_git_hooks.sh`) will symlink any file in `scripts/git-hooks/` into `.git/hooks/` — no installer changes needed.
 4. Document the new hook in this file.
+
+The `commit-msg` hook (TD-180) was added via exactly this recipe: dropped at `scripts/git-hooks/commit-msg` (executable), auto-symlinked by `install_git_hooks.sh` with zero installer change, and documented in "What's installed" above. Adding a brand-new hook TYPE does require contributors to re-run `install_git_hooks.sh` once (the symlink for a new hook name doesn't exist yet); subsequent script updates propagate through the existing symlink.
 
 ## Why local hooks (not Husky / pre-commit framework)
 

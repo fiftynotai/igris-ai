@@ -8,7 +8,7 @@
  * duplicating the RRF logic in each domain module.
  *
  * @module utils/hybrid-search
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { VectorSearchResult } from './vector-search.js';

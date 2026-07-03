@@ -1,12 +1,12 @@
 /**
- * Brain Engine v5.0 -- Cache Component Handlers
+ * Brain Engine v7.0 -- Cache Component Handlers
  *
  * Handler functions for filesystem cache generation. Writes markdown
  * files from brain DB into ~/.igris/projects/{project}/ so that agents
  * can read briefs/sessions without querying the MCP server.
  *
  * @module engine/components/cache/handlers
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs';

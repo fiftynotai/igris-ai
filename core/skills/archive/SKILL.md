@@ -1,6 +1,7 @@
 ---
 name: archive
-description: Archive a completed brief - usage: /archive BR-008
+tier: essential
+description: "Archive a completed brief - usage: /archive BR-008"
 disable-model-invocation: false
 allowed-tools:
   - Read
@@ -34,12 +35,6 @@ Move a completed brief to the archive directory.
 `$ARGUMENTS` should be a brief ID (e.g., BR-008, MG-004, TD-005).
 
 ## Execution
-
-### 0. Track Invocation
-Silently emit a skill invocation event (never blocks execution):
-```bash
-bash "$CLAUDE_PROJECT_DIR/scripts/emit_skill_event.sh" "archive" 2>/dev/null || true
-```
 
 ### 1. Find Brief File
 

@@ -42,11 +42,18 @@ const INFRASTRUCTURE_EVENTS = new Set([
 // Helpers
 // ---------------------------------------------------------------------------
 
-/** Get all component directories */
+/**
+ * Get all component directories. A component dir is one that exposes an
+ * `index.ts` (its factory). Host sub-mechanism dirs that ship without a
+ * component factory yet — e.g. `cognition/` in FR-118 M0, the agnostic
+ * extraction host whose factory lands in a later milestone — have no `index.ts`
+ * and are intentionally excluded: they register no events to integrity-check.
+ */
 function getComponentDirs(): string[] {
   return readdirSync(COMPONENTS_DIR, { withFileTypes: true })
     .filter((d) => d.isDirectory())
-    .map((d) => d.name);
+    .map((d) => d.name)
+    .filter((name) => existsSync(join(COMPONENTS_DIR, name, 'index.ts')));
 }
 
 /** Get all source files for a component (index.ts, handlers.ts, daemon.ts) */

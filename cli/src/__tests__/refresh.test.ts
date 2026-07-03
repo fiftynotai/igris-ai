@@ -63,11 +63,10 @@ function stageSourceRepo(root: string): void {
   writeFileSync(join(core, "SOUL.md"), "# initial soul\n");
   mkdirSync(join(core, "agents"), { recursive: true });
   writeFileSync(join(core, "agents", "manifest.yaml"), "agents: []\n");
-  mkdirSync(join(core, "rules"), { recursive: true });
-  writeFileSync(
-    join(core, "rules", "00-igris-universal.md"),
-    "# universal\n",
-  );
+  // FR-187: the layered core/os/ set replaces the retired universal rule.
+  mkdirSync(join(core, "os"), { recursive: true });
+  writeFileSync(join(core, "os", "INDEX.md"), "# Igris OS — Module Index\n");
+  writeFileSync(join(core, "os", "standards.md"), "# Universal Standards\n");
   mkdirSync(join(core, "skills", "demo"), { recursive: true });
   writeFileSync(join(core, "skills", "demo", "SKILL.md"), "# demo\n");
   mkdirSync(join(core, "hooks"), { recursive: true });
@@ -155,6 +154,138 @@ describe("refresh — channel switch confirmation", () => {
     });
     expect(code).toBe(0);
     expect(calledPrompt).toBe(false);
+  });
+});
+
+// TD-113: refresh checks the cache BEFORE the network. We seed a github-style
+// install (the `IGRIS_TARBALL_FILE` seam streams the committed clean fixture so
+// no live GitHub is touched, and init seeds the cache from that fetch). The
+// SECOND refresh must take the cache no-network path; the `IGRIS_BLOCK_NETWORK`
+// seam makes ANY real fetch throw, so a cache MISS would surface as a failure —
+// a clean exit 0 proves the network was never reached. A `--channel` switch, by
+// contrast, must re-fetch: with the network blocked the switch fails (exit 1),
+// proving the cache was deliberately bypassed.
+describe("refresh — cache hit avoids network (TD-113)", () => {
+  const FIXTURE = join(
+    __dirname,
+    "fixtures",
+    "tarballs",
+    "clean-core.tar.gz",
+  );
+
+  /** Re-seed the brain via a hermetic github init (replaces the from-source
+   *  seed the shared beforeEach installed). Returns the recorded sha. */
+  async function seedGithubInstall(): Promise<string> {
+    const reg = await import("../lib/registry.js");
+    reg.closeDb();
+    // Drop the from-source v7 install the beforeEach created so a fresh github
+    // init doesn't trip the "existing v7" guard.
+    rmSync(brainRoot, { recursive: true, force: true });
+    const { runInit } = await import("../verbs/init.js");
+    const prev = process.env.IGRIS_TARBALL_FILE;
+    process.env.IGRIS_TARBALL_FILE = FIXTURE;
+    try {
+      expect(
+        await runInit({ channel: "main", skipRemote: true, yes: true }),
+      ).toBe(0);
+    } finally {
+      if (prev === undefined) delete process.env.IGRIS_TARBALL_FILE;
+      else process.env.IGRIS_TARBALL_FILE = prev;
+    }
+    const isj = JSON.parse(
+      readFileSync(join(brainRoot, ".install-source.json"), "utf-8"),
+    ) as { source: string; content_sha256: string };
+    expect(isj.source).toBe("github");
+    return isj.content_sha256;
+  }
+
+  it("uses cache when SHA matches (2nd refresh, no network)", async () => {
+    const sha = await seedGithubInstall();
+    // The cache was seeded by init.
+    const { cacheTarballPath } = await import("../lib/cache.js");
+    expect(existsSync(cacheTarballPath(sha))).toBe(true);
+
+    const { runRefresh } = await import("../verbs/refresh.js");
+    // Block the network: if refresh tries to fetch, httpsGet throws and the
+    // verb returns 1. A cache hit short-circuits before that.
+    const prevBlock = process.env.IGRIS_BLOCK_NETWORK;
+    process.env.IGRIS_BLOCK_NETWORK = "1";
+    // Ensure the fixture seam is OFF so the only way to "succeed" is the cache.
+    const prevFixture = process.env.IGRIS_TARBALL_FILE;
+    delete process.env.IGRIS_TARBALL_FILE;
+    let code: number;
+    try {
+      code = await runRefresh({ channel: "main", noPropagate: true });
+    } finally {
+      if (prevBlock === undefined) delete process.env.IGRIS_BLOCK_NETWORK;
+      else process.env.IGRIS_BLOCK_NETWORK = prevBlock;
+      if (prevFixture !== undefined) process.env.IGRIS_TARBALL_FILE = prevFixture;
+    }
+    // Exit 0 with NO network access → the cache hit was honored.
+    expect(code).toBe(0);
+    // The recorded sha is unchanged (no swap, brain already at this content).
+    const isj = JSON.parse(
+      readFileSync(join(brainRoot, ".install-source.json"), "utf-8"),
+    ) as { content_sha256: string };
+    expect(isj.content_sha256).toBe(sha);
+  });
+
+  it("channel switch re-fetches (does NOT use the cache)", async () => {
+    await seedGithubInstall();
+    const { runRefresh } = await import("../verbs/refresh.js");
+    // Switch from the recorded `main` to a DIFFERENT channel (`--channel=develop`,
+    // classified as a branch via the hermetic classifyFn seam). The switch must
+    // bypass the cache and hit the network — which is blocked, so the fetch
+    // fails (exit 1). Proof: a cache hit would have returned 0 with no network,
+    // but a channel switch is REQUIRED to re-fetch.
+    const prevBlock = process.env.IGRIS_BLOCK_NETWORK;
+    process.env.IGRIS_BLOCK_NETWORK = "1";
+    const prevFixture = process.env.IGRIS_TARBALL_FILE;
+    delete process.env.IGRIS_TARBALL_FILE;
+    let code: number;
+    try {
+      code = await runRefresh({
+        channel: "develop", // a switch away from the recorded `main`
+        yes: true, // skip the switch-confirm prompt
+        noPropagate: true,
+        classifyFn: () => Promise.resolve("branch"), // hermetic ref classification
+      });
+    } finally {
+      if (prevBlock === undefined) delete process.env.IGRIS_BLOCK_NETWORK;
+      else process.env.IGRIS_BLOCK_NETWORK = prevBlock;
+      if (prevFixture !== undefined) process.env.IGRIS_TARBALL_FILE = prevFixture;
+    }
+    // The blocked network fetch surfaced as a failure → the cache was NOT used
+    // for the channel switch.
+    expect(code).toBe(1);
+  });
+
+  it("corrupt cached tarball is evicted and the refresh falls back to network", async () => {
+    const sha = await seedGithubInstall();
+    const { cacheTarballPath, findCached } = await import("../lib/cache.js");
+    // Corrupt the cached tarball so its re-hash no longer matches `sha`.
+    writeFileSync(cacheTarballPath(sha), "CORRUPTED-NOT-THE-REAL-BYTES");
+
+    const { runRefresh } = await import("../verbs/refresh.js");
+    // Network blocked: the corrupt entry must be evicted, then the network
+    // fallback is attempted (and fails because it's blocked → exit 1). The
+    // KEY assertion is the eviction (the cache no longer serves bad bytes).
+    const prevBlock = process.env.IGRIS_BLOCK_NETWORK;
+    process.env.IGRIS_BLOCK_NETWORK = "1";
+    const prevFixture = process.env.IGRIS_TARBALL_FILE;
+    delete process.env.IGRIS_TARBALL_FILE;
+    try {
+      const code = await runRefresh({ channel: "main", noPropagate: true });
+      // The network fallback was blocked → exit 1 (the cache did NOT serve the
+      // corrupt bytes as a false hit).
+      expect(code).toBe(1);
+    } finally {
+      if (prevBlock === undefined) delete process.env.IGRIS_BLOCK_NETWORK;
+      else process.env.IGRIS_BLOCK_NETWORK = prevBlock;
+      if (prevFixture !== undefined) process.env.IGRIS_TARBALL_FILE = prevFixture;
+    }
+    // The corrupt entry was evicted (no longer a findable hit).
+    expect(findCached(sha)).toBe(null);
   });
 });
 

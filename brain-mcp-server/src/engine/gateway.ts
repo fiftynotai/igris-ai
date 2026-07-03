@@ -1,5 +1,5 @@
 /**
- * Brain Engine v5.0 — API Gateway
+ * Brain Engine v7.0 — API Gateway
  *
  * Dynamic tool registry that replaces the two 27-case switch statements
  * in the monolithic index.ts. Tools are registered by domain components
@@ -8,7 +8,7 @@
  * See ../../CLAUDE.md for the strict-input contract this gateway enforces (TD-128).
  *
  * @module engine/gateway
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type { ToolDefinition, ToolResult } from './types.js';

@@ -26,7 +26,8 @@ import {
 } from "../lib/installed-features.js";
 import { runInstall } from "./install.js";
 import { runSelfUpdate } from "../lib/self-update.js";
-import { info, warn, error as logError } from "../lib/log.js";
+import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import { info, warn, debug, error as logError } from "../lib/log.js";
 
 export interface UpdateOptions {
   all: boolean;
@@ -91,12 +92,14 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
     const wantHooks = previouslyInstalledHooks || features === null;
 
     const currentHashes = computeFeatureHashes({ includeHooks: wantHooks });
+    // FR-187: rules_version is a deprecated always-null vestige (the universal
+    // rule retired; baseline → core/os/standards.md). It carries no
+    // install-integrity signal, so it is not part of the up-to-date check.
     const upToDate =
       features !== null &&
       features.hooks_version === currentHashes.hooks_version &&
       features.agents_version === currentHashes.agents_version &&
-      features.skills_version === currentHashes.skills_version &&
-      features.rules_version === currentHashes.rules_version;
+      features.skills_version === currentHashes.skills_version;
 
     if (upToDate) {
       results.push({ slug: row.slug, outcome: "skipped", reason: "up to date" });
@@ -115,15 +118,20 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
       continue;
     }
 
-    info(`${row.slug}: re-running install (stale or no features file)`);
+    info(`${row.slug}: re-running install (refresh features + global surfaces)`);
     try {
-      // skipSymlinkLayer=true: we trust the existing project install was correct;
-      // update only refreshes the materialized layer (hooks + features file).
+      // FR-212d Phase 2: `igris install` is register-only — it refreshes the
+      // registry row + installed_features.json + (idempotently) the global
+      // igris-brain MCP registration. There is no per-project layer to
+      // re-materialize. The GLOBAL hooks/skills/agents are refreshed by
+      // `igris init`; `igris update --all` re-runs that global refresh once below
+      // (after the per-project feature-hash sweep) so a stale global surface is
+      // corrected too. The per-project re-install here just re-stamps the
+      // features file the up-to-date check reads.
       const code = await runInstall({
         path: row.path,
         slug: row.slug,
         installHooks: wantHooks,
-        skipSymlinkLayer: true,
       });
       if (code === 0) {
         results.push({ slug: row.slug, outcome: "updated" });
@@ -138,6 +146,26 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
       const msg = err instanceof Error ? err.message : String(err);
       results.push({ slug: row.slug, outcome: "errored", reason: msg });
       logError(`${row.slug}: ${msg}`);
+    }
+  }
+
+  // FR-212d Phase 2: refresh the GLOBAL hooks surface. In the register-only
+  // model the canonical Igris hooks live in ONE `~/.claude/settings.json` block
+  // (the per-project hooks merge was retired); `igris update` keeps that global
+  // block fresh. Idempotent + no-clobber (a stale block is re-merged; an
+  // unchanged one is a no-op). NEVER fails the update — a write/merge failure
+  // warns and continues (the per-project feature sweep already ran). Skipped in
+  // dry-run (no writes). The global skills/agents surfaces are content-addressed
+  // and re-projected by `igris init`/`igris refresh`; update's job is the
+  // registry/features sweep + this global-hooks refresh.
+  if (!dryRun) {
+    const gh = mergeGlobalCanonicalHooks();
+    if (gh.outcome === "merged") {
+      info(`Refreshed global Igris hooks -> ${gh.path}`);
+    } else if (gh.outcome === "failed") {
+      warn(`global hooks refresh skipped: ${gh.error}`);
+    } else {
+      debug(`global Igris hooks already up to date (${gh.path})`);
     }
   }
 

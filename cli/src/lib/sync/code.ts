@@ -94,14 +94,25 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "dist/",
   "build/",
   // Igris symlinks + local agent memory (each project's VPS has its own ~/.igris)
+  // (FR-187 retired the .claude/rules/ symlink layer — no rules dir to exclude.)
   ".claude/agent-memory/",
+  // Per-developer local Claude settings — may embed machine-local secrets (TD-159).
+  ".claude/settings.local.json",
   ".claude/agents/",
-  ".claude/rules/",
   ".claude/skills/",
+  // Machine-local version stamp written by the CLI installer (per-host)
+  ".igris_version",
   // Local dev overrides + secrets
   "CLAUDE.local.md",
   ".env",
   ".env.local",
+  // FR-165 MCP secrets — real file lives at ~/.igris/secrets.env (outside repo);
+  // mirror the .gitignore belt-and-suspenders so the TD-140 contract stays green.
+  "secrets.env",
+  // TD-220 — ~/.igris/config.json (may carry remote_brain credentials) lives
+  // outside the repo at mode 600; mirror the .gitignore defense-in-depth so the
+  // TD-140 bidirectional contract stays green. MUST NOT ship to the VPS.
+  "config.json",
   // Logs
   "*.log",
   "logs/",
@@ -122,6 +133,7 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "temp/",
   // Python caches (any tooling) — mirror .gitignore's `*.py[cod]` glob.
   "__pycache__/",
+  ".pytest_cache/",
   "*.pyc",
   "*.pyo",
   "*.pyd",
@@ -131,6 +143,21 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // Tarballs / archives (fixture tarballs are workstation-only)
   "*.zip",
   "*.tar.gz",
+  // Image-generation staging (Higgsfield raw outputs — committed PNGs live at docs/images/*.png)
+  "docs/images/generated/",
+  // Generated memory-eval scorecards (FR-188 — regenerate via `npm run eval:memory`).
+  // Mirror the .gitignore glob so the TD-140 bidirectional contract stays green
+  // and these never rsync to the VPS.
+  "brain-mcp-server/eval-memory-scorecard.*",
+  // Generated harness projections (FR-137) — mechanically derived from canonical
+  // sources by `igris harness compile`; never committed (regenerated on demand,
+  // drift-checked against canonical). Mirror the .gitignore entries so the
+  // TD-140 bidirectional contract stays green. These MUST NOT ship to the VPS.
+  // NB: `/AGENTS.md` was removed from this list by TD-233 — the FR-153 codex
+  // skills aggregator it ignored was retired, and project-root AGENTS.md is
+  // now the COMMITTED orchestrator-identity file (mirrors .gitignore).
+  ".codex/",
+  ".gemini/",
 ] as const;
 
 function rsyncExcludeFlags(): string[] {
@@ -146,8 +173,9 @@ function rsyncExcludeFlags(): string[] {
  * does NOT abort.
  */
 const CLAUDE_SYMLINK_PATHS = [
+  // FR-187 retired the .claude/rules/ symlink layer — install creates only
+  // agents + skills symlinks now.
   ".claude/agents",
-  ".claude/rules",
   ".claude/skills",
 ] as const;
 
@@ -239,7 +267,7 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
   }
   const pm2AppName = opts.pm2AppName ?? "igris-brain";
 
-  // TD-139: advisory check — warn if .claude/{agents,rules,skills}/ are
+  // TD-139: advisory check — warn if .claude/{agents,skills}/ are
   // real dirs rather than symlinks. RSYNC_EXCLUDES treats them as symlinks
   // per the v6 install model; a real directory would have its contents
   // silently stripped at deploy time. Does NOT abort.

@@ -1,11 +1,12 @@
 /**
- * Brain Engine v5.0 — Metrics Component
+ * Brain Engine v7.0 — Metrics Component
  *
  * Wraps the existing metrics tool handlers as a BrainComponent.
- * Provides: igris_metrics_record, igris_metrics_query, igris_metrics_velocity
+ * Provides: igris_metrics_record, igris_metrics_query, igris_metrics_velocity,
+ *           igris_metrics_dashboard
  *
  * @module engine/components/metrics
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type {
@@ -19,11 +20,13 @@ import {
   handleMetricsRecord,
   handleMetricsQuery,
   handleMetricsVelocity,
+  handleMetricsDashboard,
 } from '../../../tools/metrics.js';
 import type {
   MetricsRecordInput,
   MetricsQueryInput,
   MetricsVelocityInput,
+  MetricsDashboardInput,
 } from '../../../tools/metrics.js';
 
 export function createMetricsComponent(): BrainComponent {
@@ -126,6 +129,33 @@ export function createMetricsComponent(): BrainComponent {
             },
           },
           handler: (args) => handleMetricsVelocity(args as unknown as MetricsVelocityInput),
+        },
+        {
+          name: 'igris_metrics_dashboard',
+          description: 'Aggregate dashboard over agent_metrics — totals.total_invocations, by_agent (invocations/success_rate/avg_duration_ms/retries), by_action, by_result; recent (invocations in last N days + week_over_week_delta_pct); samples.top_durations (top 10 longest-running invocations). Optional project + agent filters scope all aggregations; summary_only=true omits samples. Use during /scan or /dashboard for a one-shot agent-utilization view; pair with igris_brief_velocity for completion-rate context.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Filter all aggregations to a single project slug',
+              },
+              days: {
+                type: 'number',
+                description: 'Time window in days for recent.invocations (default: 30)',
+              },
+              agent: {
+                type: 'string',
+                description: 'Optional agent filter (combinable with project; both ANDed)',
+              },
+              summary_only: {
+                type: 'boolean',
+                description: 'Counts only — omit samples.top_durations (default false)',
+              },
+            },
+          },
+          handler: (args) => handleMetricsDashboard(args as unknown as MetricsDashboardInput),
         },
       ];
     },

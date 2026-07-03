@@ -17,7 +17,7 @@
  * MCP.
  *
  * @module engine/components/perception/runner
- * @author Fifty.ai
+ * @author fifty.dev
  */
 
 import type Database from 'better-sqlite3';
@@ -35,9 +35,20 @@ import type {
 import { noopLlmExtractor } from './extractors/llm_via_claude_code.js';
 import type { PerceptionEventName } from './events.js';
 import { writePerceptionEvent } from './events.js';
-import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../../../utils/embeddings.js';
-import { isVectorSearchAvailable, insertEmbedding } from '../../../utils/vector-search.js';
-import { findNearestMatch, normalizeForDedup, recordRediscovery } from './dedup.js';
+import { dedupeByTitle } from './dedup.js';
+import {
+  createPerceptionInstance,
+  type PerceptionContext,
+} from '../cognition/extractors/perception.js';
+
+// FR-118 M4a: `dedupeByTitle` moved to `dedup.ts` (the perception-shared dedup
+// home) so the cognition perception instance reuses ONE implementation. Re-export
+// it here so the runner's public surface (and `runner.test.ts`'s
+// `import { dedupeByTitle } from '../runner.js'`) is unchanged. The cosine dedup
+// pre-filter + the `learnings` INSERT now live in the instance's
+// `persistCandidate` (M4a flip) — the runner's duplicate persist was deleted, so
+// the embedding / findNearestMatch / recordRediscovery imports moved with it.
+export { dedupeByTitle } from './dedup.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -175,145 +186,6 @@ export function evaluateLlmGate(
     return { shouldRun: false, status: 'skipped:bytes' };
   }
   return { shouldRun: true, status: 'ran' };
-}
-
-// ---------------------------------------------------------------------------
-// Dedupe (intra-run)
-// ---------------------------------------------------------------------------
-
-/** Normalize a title for dedupe equality: lowercase, collapse whitespace. */
-function dedupeKey(c: PerceptionCandidate): string {
-  return c.title.toLowerCase().replace(/\s+/g, ' ').trim();
-}
-
-/**
- * Within-run dedupe by normalized title. Highest-confidence wins; on a tie,
- * the first occurrence is kept (insertion order is stable). Rule-vs-LLM
- * tie-break logic was dropped in TD-066 — only LLM emits candidates now.
- */
-export function dedupeByTitle(
-  candidates: PerceptionCandidate[],
-): { kept: PerceptionCandidate[]; suppressed: number } {
-  const buckets = new Map<string, PerceptionCandidate[]>();
-  for (const c of candidates) {
-    const key = dedupeKey(c);
-    const list = buckets.get(key);
-    if (list) list.push(c);
-    else buckets.set(key, [c]);
-  }
-  const kept: PerceptionCandidate[] = [];
-  let suppressed = 0;
-  for (const list of buckets.values()) {
-    if (list.length === 1) {
-      kept.push(list[0]);
-      continue;
-    }
-    list.sort((a, b) => b.confidence - a.confidence);
-    kept.push(list[0]);
-    suppressed += list.length - 1;
-  }
-  return { kept, suppressed };
-}
-
-// ---------------------------------------------------------------------------
-// Persistence
-// ---------------------------------------------------------------------------
-
-/**
- * Persist a candidate row. Generates an embedding (best-effort — failure
- * does not block the INSERT) so approval is a pure status flip without a
- * re-embed.
- *
- * `review_status` is `'approved'` when `config.auto_approve_enabled=true`
- * (TD-066 — operator opt-in), otherwise `'pending_review'`. `provenance`
- * stays `'inferred'` regardless so the forensic trail survives approval.
- *
- * Tags are joined with comma to match the existing comma-separated convention
- * in `learnings.tags`.
- */
-async function persistCandidate(
-  db: Database.Database,
-  candidate: PerceptionCandidate,
-  project: string,
-  briefId: string | undefined,
-  source: string,
-  config: PerceptionExtractorConfig,
-): Promise<number> {
-  // `source` is the extraction trigger (e.g. 'session_end', 'pre_compact',
-  // 'extract_now') — distinct from `candidate.source_extractor`, which names
-  // the extractor that produced the row (llm | manual | distill). Both are
-  // part of the forensic story: source_extractor is persisted on the row
-  // (column added in v15 migration), trigger source is currently bus-only.
-  void source;
-
-  // Truncate to schema-friendly bounds without risking ALTER TABLE collisions.
-  const safeTitle = candidate.title.slice(0, 500);
-  const safeContent = candidate.content.slice(0, 1_000_000);
-  const tags = candidate.tags.join(',');
-
-  // Store the brief id (or empty string when none) in `source_brief` — the
-  // existing recall path reads this column so the link surfaces in the UI
-  // without a schema change. Evidence proper lives in the candidate's
-  // `evidence` field at extraction time but is NOT persisted today; if we
-  // later want it on the row, add an `evidence` JSON column rather than
-  // overloading source_brief. (TD-063 — corrects an earlier comment that
-  // claimed evidence was JSON-tagged into this field.)
-  const sourceBrief = briefId ? briefId : '';
-
-  const reviewStatus = config.auto_approve_enabled ? 'approved' : 'pending_review';
-
-  const stmt = db.prepare(`
-    INSERT INTO learnings
-      (project, category, title, content, tags, tech_stack, source_brief,
-       scope, confidence, provenance, review_status, source_extractor)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-  const result = stmt.run(
-    project,
-    candidate.category,
-    safeTitle,
-    safeContent,
-    tags,
-    candidate.tech_stack ?? '',
-    sourceBrief,
-    'local',
-    candidate.confidence,
-    'inferred',
-    reviewStatus,
-    candidate.source_extractor,
-  );
-  const id = result.lastInsertRowid as number;
-
-  // Best-effort embedding — same shape as memory.handleMemoryStore.
-  try {
-    if (isVectorSearchAvailable(db)) {
-      // TD-087: keep dedup geometry consistent with stored geometry. The
-      // dedup query in `findNearestMatch` embeds
-      //   `${normalizeForDedup(title)} ${normalizeForDedup(content)}`
-      // so the persist path normalises identically — otherwise the dedup
-      // pre-filter would compare a normalised query vector against a raw
-      // stored vector for fresh inserts, and cosine would drop. Pre-TD-087
-      // rows still carry raw embeddings; the read path tolerates both
-      // (insert-narrow / read-widen) — stale rows phase out via the
-      // pending_review TTL, and there is no forced backfill (per Phase 1
-      // backfill decision documented in operations doc).
-      const fingerprint = `${normalizeForDedup(safeTitle)} ${normalizeForDedup(safeContent)}`.trim();
-      const embedding = await generateEmbedding(fingerprint);
-      db.prepare('UPDATE learnings SET embedding = ?, embedding_model = ? WHERE id = ?').run(
-        embeddingToBuffer(embedding),
-        EMBEDDING_MODEL,
-        id,
-      );
-      insertEmbedding(db, id, embedding);
-    }
-  } catch (err) {
-    console.error(
-      '[perception] auto-embed failed for row',
-      id,
-      err instanceof Error ? err.message : String(err),
-    );
-  }
-  return id;
 }
 
 // ---------------------------------------------------------------------------
@@ -462,51 +334,54 @@ export async function runPerception(
     const { kept, suppressed } = dedupeByTitle(llmCandidates);
     result.suppressed = suppressed;
 
-    // 3. Persist (review_status = 'approved' iff config.auto_approve_enabled).
-    // TD-086: a cheap embeddings-cosine pre-filter runs BEFORE persistCandidate
-    // when `config.dedup_enabled`. On a near-duplicate (cosine ≥ threshold
-    // against any existing learning, status-aware), we skip the INSERT,
-    // bump `seen_again_count` on the matched row, and emit a single
-    // `perception.rediscovery` event whose payload carries the matched
-    // status. The flag exists as an instant operator kill switch — flip
-    // off via env or config.json if the threshold misbehaves in production.
+    // 3. Persist via the COGNITION PERCEPTION INSTANCE (FR-118 M4a flip).
+    //
+    // The instance is now the SINGLE owner of perception persistence: the
+    // cosine dedup pre-filter (`config.dedup_enabled` → `findNearestMatch` →
+    // `recordRediscovery` + the `perception.rediscovery` event) AND the
+    // `learnings` INSERT + embedding live in `persistCandidate`. The runner's
+    // duplicate `persistCandidate` was DELETED. `runPerception` keeps owning the
+    // cost gate + intra-run title dedup + the lifecycle envelope (the oracle),
+    // and drives the instance's persist slot per kept candidate.
+    //
+    // CONCURRENCY INVARIANT: a FRESH instance bundle is built per run here
+    // (`createPerceptionInstance(config)` — config-resolved at run time, never a
+    // singleton), so the instance's `currentCtx` + outcome accumulator are run-
+    // private and cannot race across concurrent `runPerception` calls.
+    const bundle = createPerceptionInstance(config);
+    const runCtx: PerceptionContext = {
+      events,
+      project,
+      config,
+      transcript_bytes: transcriptBytes,
+      trigger,
+    };
+    if (briefId) runCtx.brief_id = briefId;
+    bundle.beginRun(runCtx);
+
     for (const c of kept) {
       try {
-        if (config.dedup_enabled) {
-          const match = await findNearestMatch(db, c, config.dedup_cosine_threshold);
-          if (match) {
-            recordRediscovery(db, match.matched_id);
-            result.deduped += 1;
-            result.deduped_ids.push(match.matched_id);
-            // Single event per Q2 — cleaner API than two distinct event
-            // names. The `existing_status` field lets downstream readers
-            // distinguish pending-vs-approved rediscoveries.
-            // TODO(FR-116): when reject becomes soft-delete (review_status='rejected'),
-            // this branch will start surfacing `match.status === 'rejected'`,
-            // and handlers.ts will activate the `perception.rejected_pattern_recurring`
-            // emit. Until then, only pending_review and approved matches are
-            // reachable here — the helper has no rejected rows to find because
-            // reject is a hard DELETE today.
-            writePerceptionEvent(db, 'perception.rediscovery', {
-              project,
-              existing_learning_id: match.matched_id,
-              existing_status: match.status,
-              similarity_score: match.similarity,
-              transcript_window_ts: new Date().toISOString(),
-              trigger,
-            });
-            continue;
-          }
-        }
-        const id = await persistCandidate(db, c, project, briefId, source, config);
-        result.inserted_ids.push(id);
-        result.inserted += 1;
-        result.by_source[c.source_extractor] += 1;
+        await bundle.instance.persistCandidate(db, c);
       } catch (err) {
         console.error(
           '[perception] persist or dedup failed for candidate, skipping:',
           err instanceof Error ? err.message : String(err),
         );
+      }
+    }
+
+    // Shape the result from the instance's per-candidate outcomes. The instance
+    // recorded one outcome per persist call (inserted with id + source_extractor,
+    // or deduped with matched id) — drain them to fill the legacy
+    // `RunPerceptionResult` counts the handler + oracle assert against.
+    for (const outcome of bundle.takeOutcomes()) {
+      if (outcome.kind === 'inserted') {
+        result.inserted_ids.push(outcome.id);
+        result.inserted += 1;
+        result.by_source[outcome.source_extractor] += 1;
+      } else {
+        result.deduped += 1;
+        result.deduped_ids.push(outcome.matched_id);
       }
     }
 

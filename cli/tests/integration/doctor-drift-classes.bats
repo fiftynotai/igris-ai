@@ -43,8 +43,11 @@ setup() {
 }
 
 @test "drift class 2/8: hooks-missing — settings.json present but no Igris SessionEnd" {
+  # FR-212d: hooks are GLOBAL ($HOME/.claude/settings.json), so inject the drift
+  # into an isolated HOME (TD-299) — a per-project settings.json is no longer read.
+  HOME_DIR="$(stage_home)"
   PROJ="$(stage_project hm)"
-  cat > "$PROJ/.claude/settings.json" <<EOF
+  cat > "$HOME_DIR/.claude/settings.json" <<EOF
 { "includeGitInstructions": false }
 EOF
   sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
@@ -55,17 +58,20 @@ EOF
     );
     INSERT INTO projects (slug, name, path, igris_version) VALUES ('hm','hm','$PROJ','7.0.0');
   "
-  run $CLI_BIN doctor
+  HOME="$HOME_DIR" run $CLI_BIN doctor
   [ "$status" -eq 1 ]
   [[ "$output" =~ "hooks-missing" ]]
-  # --fix repairs it.
-  run $CLI_BIN doctor --fix
+  # --fix repairs it (merges the canonical global hooks into the isolated HOME).
+  HOME="$HOME_DIR" run $CLI_BIN doctor --fix
   [ "$status" -eq 0 ]
 }
 
 @test "drift class 3/8: hooks-stale — Igris SessionEnd command path differs from canonical" {
+  # FR-212d: hooks are GLOBAL, so inject a non-canonical SessionEnd command into
+  # the isolated HOME's $HOME/.claude/settings.json (TD-299).
+  HOME_DIR="$(stage_home)"
   PROJ="$(stage_project hs)"
-  cat > "$PROJ/.claude/settings.json" <<'EOF'
+  cat > "$HOME_DIR/.claude/settings.json" <<'EOF'
 {
   "hooks": {
     "SessionEnd": [
@@ -82,11 +88,11 @@ EOF
     );
     INSERT INTO projects (slug, name, path, igris_version) VALUES ('hs','hs','$PROJ','7.0.0');
   "
-  run $CLI_BIN doctor
+  HOME="$HOME_DIR" run $CLI_BIN doctor
   [ "$status" -eq 1 ]
   [[ "$output" =~ "hooks-stale" ]]
-  # --fix repairs it.
-  run $CLI_BIN doctor --fix
+  # --fix repairs it (refreshes the global hooks in the isolated HOME).
+  HOME="$HOME_DIR" run $CLI_BIN doctor --fix
   [ "$status" -eq 0 ]
 }
 

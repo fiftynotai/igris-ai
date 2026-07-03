@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Igris AI Centralized Brain MCP Server v5.0
+ * Igris AI Centralized Brain MCP Server v7.1
  *
  * Modular engine architecture. Domain components are loaded via the
  * component registry, tools are dispatched through the API gateway,
@@ -10,8 +10,8 @@
  * - stdio  (default) — for local Claude Code integration
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
- * @version 5.0.0
- * @author Fifty.ai
+ * @version 7.1.0
+ * @author fifty.dev
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -36,22 +36,26 @@ import type { Engine, EngineConfig } from './engine/index.js';
 // REST API helpers (used by HTTP endpoints, not MCP tools)
 import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
-import { handleInstanceRemove, handleInstanceHeartbeat } from './tools/instances.js';
-import { handleTaskNext, handleTaskClaim, handleTaskComplete, handleTaskFail, handleTaskUpdate } from './engine/components/tasks/handlers.js';
+import { handleInstanceRemove, handleInstanceState } from './tools/instances.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
 import { handleMetricsRecord } from './tools/metrics.js';
 import type { MetricsRecordInput } from './tools/metrics.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
-import { SYNC_TABLES, processSyncPush } from './tools/sync.js';
-
-// Staging processor
-import { processStagingFiles } from './staging.js';
+import { SYNC_TABLES, processSyncPush, scheduleLearningEmbedAfterMerge } from './tools/sync.js';
 
 // Database lifecycle
 import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
 import * as os from 'node:os';
+
+// stdio lifecycle — teardown, per-client pidfile registry, stale-instance reaper (BR-067)
+import {
+  installStdioTeardown,
+  registerInstance,
+  deregisterInstance,
+  reapStaleInstances,
+} from './stdio-lifecycle.js';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
@@ -66,6 +70,7 @@ const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 interface ServerConfig {
   mode: 'stdio' | 'http';
   port: number;
+  host: string | undefined;
   apiKey: string | undefined;
 }
 
@@ -73,15 +78,16 @@ interface ServerConfig {
  * Parse CLI arguments and environment variables to build the server config.
  *
  * Precedence (highest to lowest):
- *   1. CLI flags: --http, --port <number>
- *   2. Environment variables: BRAIN_HTTP, BRAIN_PORT, BRAIN_API_KEY
- *   3. Defaults: mode=stdio, port=3001, apiKey=undefined
+ *   1. CLI flags: --http, --port <number>, --host <host>
+ *   2. Environment variables: BRAIN_HTTP, BRAIN_PORT, BRAIN_HOST, BRAIN_API_KEY
+ *   3. Defaults: mode=stdio, port=3001, host=undefined, apiKey=undefined
  */
 function parseConfig(): ServerConfig {
   const args = process.argv.slice(2);
 
   let mode: 'stdio' | 'http' = 'stdio';
   let port = 3001;
+  let host: string | undefined;
   const apiKey = process.env.BRAIN_API_KEY || undefined;
 
   // CLI: --http flag
@@ -98,6 +104,15 @@ function parseConfig(): ServerConfig {
     }
   }
 
+  // CLI: --host <host>
+  const hostIdx = args.indexOf('--host');
+  if (hostIdx !== -1 && hostIdx + 1 < args.length) {
+    const parsed = args[hostIdx + 1].trim();
+    if (parsed) {
+      host = parsed;
+    }
+  }
+
   // Env fallbacks (only when CLI didn't set them)
   if (mode === 'stdio' && process.env.BRAIN_HTTP) {
     mode = 'http';
@@ -108,8 +123,14 @@ function parseConfig(): ServerConfig {
       port = parsed;
     }
   }
+  if (hostIdx === -1 && process.env.BRAIN_HOST) {
+    const parsed = process.env.BRAIN_HOST.trim();
+    if (parsed) {
+      host = parsed;
+    }
+  }
 
-  return { mode, port, apiKey };
+  return { mode, port, host, apiKey };
 }
 
 // ---------------------------------------------------------------------------
@@ -188,7 +209,7 @@ function createBrainServer(): Server {
   const server = new Server(
     {
       name: 'igris-brain',
-      version: '5.0.0',
+      version: '7.1.0',
     },
     {
       capabilities: {
@@ -234,32 +255,61 @@ function createBrainServer(): Server {
 
 /**
  * Run the brain server with stdio transport (default, local mode).
+ *
+ * BR-067 lifecycle hardening:
+ *   - On boot, opportunistically reap provably-orphaned stale instances
+ *     (alive server whose recorded parent is dead) — never SIGKILL, never
+ *     `pkill`, never a server whose parent is still alive.
+ *   - Register a per-client pidfile so the next process's reaper can find
+ *     this instance.
+ *   - Wire stdin EOF/close → graceful shutdown so this server exits when
+ *     its Claude Code client disconnects (the H2 leak fix), sharing one
+ *     idempotent shutdown function with the SIGINT/SIGTERM handlers.
  */
 async function runStdio(): Promise<void> {
+  // BR-067 Phase 4: opportunistic stale-instance reap on boot. Runs before
+  // engine boot so a leak that has already accumulated is bounded even if
+  // this boot itself were to fail later. Cheap (a few pidfile reads).
+  try {
+    const swept = reapStaleInstances();
+    if (swept.reaped.length > 0 || swept.prunedStale.length > 0) {
+      console.error(
+        `[brain] reap sweep: SIGTERM'd ${swept.reaped.length} orphan(s), ` +
+        `pruned ${swept.prunedStale.length} stale pidfile(s), ` +
+        `left ${swept.skippedAlive.length} live instance(s) untouched`,
+      );
+    }
+  } catch (err) {
+    console.error(`[brain] reap sweep failed (non-fatal): ${errMsg(err)}`);
+  }
+
   // Boot engine (also bridges db.ts)
   const engine = getEngine();
-
-  // Process any pending staging files before accepting connections
-  try {
-    processStagingFiles();
-  } catch (err) {
-    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
-  }
 
   const server = createBrainServer();
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('Igris Brain MCP Server v5.0.0 started (stdio)');
+  console.error('Igris Brain MCP Server v7.1.0 started (stdio)');
 
-  // Clean up on exit
-  process.on('SIGINT', () => {
-    engine.shutdown();
-    process.exit(0);
+  // BR-067 Phase 4: register a per-client pidfile (keyed by parent PID).
+  // Registration failure is non-fatal — the server still serves.
+  const ppid = process.ppid;
+  registerInstance({
+    pid: process.pid,
+    ppid,
+    started_at: new Date().toISOString(),
+    db_path: DB_PATH,
   });
-  process.on('SIGTERM', () => {
-    engine.shutdown();
-    process.exit(0);
+
+  // BR-067 Phase 2: one idempotent shutdown wired to stdin EOF/close AND
+  // SIGINT/SIGTERM. The stdin handlers are the leak fix — a client that
+  // simply exits (no signal) now reliably tears down its server.
+  installStdioTeardown({
+    onShutdown: () => {
+      deregisterInstance(ppid);
+      engine.shutdown();
+    },
   });
 }
 
@@ -292,13 +342,6 @@ function safeCompare(a: string, b: string): boolean {
 async function runHttp(config: ServerConfig): Promise<void> {
   // Boot engine (also bridges db.ts)
   const engine = getEngine();
-
-  // Process any pending staging files before accepting connections
-  try {
-    processStagingFiles();
-  } catch (err) {
-    console.error(`[brain] Staging processing error: ${errMsg(err)}`);
-  }
 
   // Require API key for HTTP mode — refuse to start without auth
   if (!config.apiKey) {
@@ -420,29 +463,20 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Protected by authMiddleware via app.use('/api', ...) above.
   // -----------------------------------------------------------------------
 
-  // GET /api/instances — list all live instances with stale-marking
+  // GET /api/instances — list instances without read-time liveness mutation
   app.get('/api/instances', (req: Request, res: Response) => {
     try {
       const db = getDb();
       const includeStale = req.query.include_stale === 'true';
-
-      // Purge instances stale for >4 hours
-      db.prepare(
-        "DELETE FROM instances WHERE last_heartbeat_at < datetime('now', '-240 minutes')"
-      ).run();
 
       // Purge agent_events older than 7 days
       db.prepare(
         "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
       ).run();
 
-      db.prepare(
-        `UPDATE instances SET status = 'stale' WHERE last_heartbeat_at < datetime('now', '-45 minutes') AND status != 'stale'`
-      ).run();
-
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
       const rows = db.prepare(
-        `SELECT id, machine_hostname, machine_os, project_slug, project_path, current_brief, current_phase, current_task, status, last_heartbeat_at, started_at FROM instances ${whereClause} ORDER BY last_heartbeat_at DESC`
+        `SELECT * FROM instances ${whereClause} ORDER BY last_activity_at DESC`
       ).all();
       res.json({ instances: rows, count: rows.length });
     } catch (err) {
@@ -464,21 +498,21 @@ async function runHttp(config: ServerConfig): Promise<void> {
     }
   });
 
-  // POST /api/instances/heartbeat — register/update worker instance
-  app.post('/api/instances/heartbeat', express.json(), (req: Request, res: Response) => {
+  // POST /api/instances/state — register/update worker instance state
+  app.post('/api/instances/state', express.json(), (req: Request, res: Response) => {
     try {
       if (!req.body.machine_hostname) {
         res.status(400).json({ error: 'Missing required field: machine_hostname' });
         return;
       }
-      const result = handleInstanceHeartbeat(req.body);
+      const result = handleInstanceState(req.body);
       const text = result.content[0].text;
       const idMatch = text.match(/:\s*(.+)$/);
       const instanceId = idMatch ? idMatch[1].trim() : null;
       res.json({ ok: true, message: text, instance_id: instanceId });
     } catch (err) {
       const message = errMsg(err);
-      console.error('[brain] POST /api/instances/heartbeat error:', message);
+      console.error('[brain] POST /api/instances/state error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -602,7 +636,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       }
 
       res.json({
-        version: '5.0.0',
+        version: '7.1.0',
         db_size_bytes: dbSizeBytes,
         counts: {
           projects: countTable('projects'),
@@ -786,181 +820,6 @@ async function runHttp(config: ServerConfig): Promise<void> {
       if (!res.headersSent) {
         res.status(500).json({ error: message });
       }
-    }
-  });
-
-  // GET /api/tasks — query the tasks table with filters, pagination, and summary
-  app.get('/api/tasks', (req: Request, res: Response) => {
-    try {
-      const db = getDb();
-
-      const status = req.query.status as string | undefined;
-      const taskType = req.query.task_type as string | undefined;
-      const projectSlug = req.query.project_slug as string | undefined;
-      const assignee = req.query.assignee as string | undefined;
-      const scope = req.query.scope as string | undefined;
-      const limit = Math.min(Math.max(1, parseInt(req.query.limit as string, 10) || 50), 500);
-      const offset = Math.max(0, parseInt(req.query.offset as string, 10) || 0);
-
-      const conditions: string[] = [];
-      const params: unknown[] = [];
-
-      if (status) {
-        conditions.push('status = ?');
-        params.push(status);
-      }
-      if (taskType) {
-        conditions.push('task_type = ?');
-        params.push(taskType);
-      }
-      if (projectSlug) {
-        conditions.push('project_slug = ?');
-        params.push(projectSlug);
-      }
-      if (assignee) {
-        conditions.push('assignee = ?');
-        params.push(assignee);
-      }
-      if (scope) {
-        conditions.push('scope = ?');
-        params.push(scope);
-      }
-
-      const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-      const tasks = db.prepare(
-        `SELECT id, task_type, scope, title, description, brief_id, project_slug, parent_id, status, priority, assignee, due_at, defer_until, created_by, required_capabilities, retry_count, max_retries, fail_reason, metadata, created_at, updated_at FROM tasks ${whereClause} ORDER BY priority ASC, created_at ASC LIMIT ? OFFSET ?`
-      ).all(...params, limit, offset);
-
-      const countRow = db.prepare(
-        `SELECT COUNT(*) as total FROM tasks ${whereClause}`
-      ).get(...params) as { total: number };
-
-      // Summary counts by status (unfiltered to show full picture)
-      const summaryRows = db.prepare(
-        `SELECT status, COUNT(*) as count FROM tasks GROUP BY status`
-      ).all() as { status: string; count: number }[];
-
-      const summary: Record<string, number> = {
-        pending: 0, active: 0, blocked: 0, done: 0, cancelled: 0, failed: 0,
-      };
-      for (const row of summaryRows) {
-        summary[row.status] = row.count;
-      }
-
-      res.json({ tasks, total: countRow.total, limit, offset, summary });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] GET /api/tasks error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/tasks/next — get next available task with capability filtering
-  app.post('/api/tasks/next', express.json(), (req: Request, res: Response) => {
-    try {
-      const args: Record<string, unknown> = {};
-      if (req.body.capabilities) args.capabilities = req.body.capabilities;
-      if (req.body.agent_name) args.agent = req.body.agent_name;
-      if (req.body.project_slug) args.project_slug = req.body.project_slug;
-      if (req.body.scope) args.scope = req.body.scope;
-      if (req.body.task_type) args.task_type = req.body.task_type;
-
-      const result = handleTaskNext(args);
-      if (result.isError) {
-        res.status(400).json({ error: result.content[0].text });
-        return;
-      }
-      const parsed = JSON.parse(result.content[0].text);
-      res.json({ ok: true, ...parsed });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/tasks/next error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/tasks/:id/claim — atomically claim a task
-  app.post('/api/tasks/:id/claim', express.json(), (req: Request, res: Response) => {
-    try {
-      const agent = req.body.agent as string | undefined;
-      if (!agent) {
-        res.status(400).json({ error: 'Missing required field: agent' });
-        return;
-      }
-      const result = handleTaskClaim({ task_id: req.params.id, agent });
-      if (result.isError) {
-        res.status(400).json({ error: result.content[0].text });
-        return;
-      }
-      const parsed = JSON.parse(result.content[0].text);
-      res.json({ ok: true, ...parsed });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/tasks/:id/claim error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/tasks/:id/complete — mark task as complete
-  app.post('/api/tasks/:id/complete', express.json(), (req: Request, res: Response) => {
-    try {
-      const result = handleTaskComplete({ task_id: req.params.id, result: req.body.result });
-      if (result.isError) {
-        res.status(400).json({ error: result.content[0].text });
-        return;
-      }
-      const parsed = JSON.parse(result.content[0].text);
-      res.json({ ok: true, ...parsed });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/tasks/:id/complete error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/tasks/:id/fail — mark task as failed
-  app.post('/api/tasks/:id/fail', express.json(), (req: Request, res: Response) => {
-    try {
-      const reason = req.body.reason as string | undefined;
-      if (!reason) {
-        res.status(400).json({ error: 'Missing required field: reason' });
-        return;
-      }
-      const result = handleTaskFail({ task_id: req.params.id, reason });
-      if (result.isError) {
-        res.status(400).json({ error: result.content[0].text });
-        return;
-      }
-      const parsed = JSON.parse(result.content[0].text);
-      res.json({ ok: true, ...parsed });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/tasks/:id/fail error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/tasks/:id/release — unclaim a task back to pending (no retry burn)
-  app.post('/api/tasks/:id/release', express.json(), (req: Request, res: Response) => {
-    try {
-      const reason = (req.body.reason as string) || 'Released by worker';
-      const result = handleTaskUpdate({
-        task_id: req.params.id,
-        status: 'pending',
-        assignee: '',
-        metadata: { last_release_reason: reason },
-      });
-      if (result.isError) {
-        res.status(400).json({ error: result.content[0].text });
-        return;
-      }
-      const parsed = JSON.parse(result.content[0].text);
-      res.json({ ok: true, ...parsed });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/tasks/:id/release error:', message);
-      res.status(500).json({ error: message });
     }
   });
 
@@ -1650,6 +1509,10 @@ async function runHttp(config: ServerConfig): Promise<void> {
       // handleSyncQueueDrain, pushTables auto-push) inspect the body.
       const status = ok ? 200 : 207;
       res.status(status).json({ ok, results, errors });
+      // FR-220: fire the fire-and-forget post-merge embed pass AFTER the
+      // response is queued. Non-blocking (setImmediate inside), so it never
+      // delays the sync response; a no-op when the merge touched no learnings.
+      scheduleLearningEmbedAfterMerge(db, results);
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] Sync push error:', message);
@@ -1858,9 +1721,15 @@ async function runHttp(config: ServerConfig): Promise<void> {
   });
 
   // Start listening
-  app.listen(config.port, () => {
-    console.error(`Igris Brain MCP Server v5.0.0 started (http, port ${config.port})`);
-  });
+  const onListening = () => {
+    const bind = config.host ? `${config.host}:${config.port}` : `port ${config.port}`;
+    console.error(`Igris Brain MCP Server v7.1.0 started (http, ${bind})`);
+  };
+  if (config.host) {
+    app.listen(config.port, config.host, onListening);
+  } else {
+    app.listen(config.port, onListening);
+  }
 
   // Graceful shutdown
   const shutdownHttp = async () => {
