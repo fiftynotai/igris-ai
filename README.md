@@ -129,6 +129,27 @@ and the layer is open. a new instance is a new self-describing file; the host do
 
 it ships **off by default** — nothing is observed until you turn it on. enable the instances you want in `~/.igris/config.json` (`cognition.<instance>.enabled: true`); the flags, budgets, and review-gate knobs are documented in [`docs/COGNITION.md`](docs/COGNITION.md).
 
+## one fact, one home.
+
+the agent doesn't have "a memory." it has several knowledge bases, each holding one kind of knowledge, each authoritative for its kind:
+
+- **the brain** — *experience.* the lessons, decisions, and mistakes it accumulates by working: what worked, what broke, the non-obvious rationale. evolving, confidence-scored, searchable.
+- **context docs** — *standards.* your project's authoritative conventions: coding guidelines, architecture, design system, test standards, API patterns. structured, curated, the source of truth for how you build.
+- **the catalog** — *reusable assets.* the "lego" blocks worth reaching for again: templates, modules, packages, and where each one lives.
+- **the code** is ground truth and **git** is history — the agent reads them, it never copies them into memory.
+
+the rule that keeps it clean: **one fact, one home.** each piece of knowledge routes to the store that matches its kind and lives in exactly one place. when a fact changes kind — a lesson that hardens into a standard — it moves, it isn't duplicated.
+
+the skills are the pipes between the stores:
+
+- **`/ground`** authors your context docs — turns "how this project builds" into a written standard the agent consults before it works.
+- **`/harvest`** mines a finished project: the lessons flow into the brain, the reusable modules into the catalog, the shape of the project into the registry.
+- **`/promote`** graduates a hardened lesson out of the brain into a context doc — the brain is the staging area, the doc is the curated home, promotion is the pipeline (and it leaves a lineage breadcrumb behind).
+- **`/reuse`** reaches into the catalog before you rebuild something that already exists.
+- the **cognition layer** feeds the brain — proposed learnings, waiting for your review.
+
+so when the agent needs to know something, it knows where to look: experience in the brain, standards in the docs, blocks in the catalog. no single bucket that rots into a junk drawer.
+
 ## essential skills.
 
 | Need | Skills |
