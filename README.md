@@ -150,6 +150,22 @@ the skills are the pipes between the stores:
 
 so when the agent needs to know something, it knows where to look: experience in the brain, standards in the docs, blocks in the catalog. no single bucket that rots into a junk drawer.
 
+## it extends itself.
+
+most tools you extend by editing them. IGRIS you extend by declaring — and it wires the rest.
+
+the agent knows how to grow itself in every direction, and each direction is a defined connection point:
+
+- **a surface** — a skill, an agent, an MCP server, a hook, or an identity — added with one command (`igris add skill …`) and projected to every harness at once. write it once; Claude, OpenCode, and Antigravity all get it.
+- **an OS module** — a new capability or rule: drop a self-describing file into the OS and it's discovered and indexed. no registry to hand-edit.
+- **a doc-type** — a new kind of project context doc: declare it in the catalog and the knowledge-map absorbs it.
+- **a cognition instance** — a new kind of background reflection: drop a self-describing extractor and the host runs it, unchanged.
+- **a harness** — a new CLI or IDE: onboard it, and every skill, agent, and gate it already has reaches the new surface.
+
+the throughline: nothing here is ad-hoc. every extension is either self-describing and discovered, or it follows a defined procedure — never a one-off. the OS grows the same disciplined way it does everything else: a known move, not a rewrite. it even knows how to add a whole new layer to itself.
+
+that is the line between a tool with plugins and an OS that extends itself — the agent doesn't just use its capabilities, it can add new ones, and know exactly where each belongs.
+
 ## essential skills.
 
 | Need | Skills |
