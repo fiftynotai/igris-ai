@@ -120,6 +120,18 @@ IGRIS is built like an OS so it can grow without rotting.
 
 that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
 
+## every harness, honestly.
+
+IGRIS runs the same brain, briefs, and lifecycle across every harness it supports. what it won't do is pretend they're identical — so it adapts to each, and it's honest about where a harness falls short.
+
+the OS core is harness-agnostic; each harness gets a thin adapter that maps the OS onto what that harness actually exposes:
+
+- **skills, agents, and MCP** project to every supported harness — write a skill once, they all get it.
+- **enforcement gates are hooks**, so they need a hook API. Claude Code and OpenCode run the full set (brief-first, phase guard, commit + secret scans); Codex gets the session-level subset; Gemini and Antigravity expose no hook API, so there the gates soften to advisories — the workflow still runs, the blocking doesn't.
+- **delegation adapts.** a harness with native subagents uses them; one that defines its agents at runtime gets a per-harness recipe (its `harness-specific` file) so "delegate to the reviewer" resolves the same way everywhere — the skill never knows the difference.
+
+onboarding a new harness is declarative: describe it once in the manifest — agents, MCP, hooks, delegation model — and `/onboard-harness` projects every surface it can support and wires the adapter for the rest. a new harness is a descriptor, not a fork.
+
 ## the cognition layer.
 
 memory you tell it is half the story. the cognition layer is the other half — memory the OS infers.
