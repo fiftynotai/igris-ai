@@ -103,6 +103,12 @@ if [ -f "$MCP_SRC/package-lock.json" ]; then
   cp -p "$MCP_SRC/package-lock.json" "$MCP_DEST/package-lock.json"
 fi
 cp -R "$MCP_SRC/scripts" "$MCP_DEST/"
+# TD-298: prune vendored test source from the staged bundle. The wholesale
+# scripts/ copy drags in scripts/__tests__/ (8 *.test.ts) and scripts/fixtures/
+# (~150KB), which must never ship in the published tarball — and which vitest
+# globs out of dist/, producing phantom suite-collection failures. Runtime
+# scripts (backfill_brief_edges.ts, gen-egress-manifest.ts, etc.) are kept.
+rm -rf "$MCP_DEST/scripts/__tests__" "$MCP_DEST/scripts/fixtures"
 
 # Fail loud if the staged entrypoint is missing — a publish with a broken
 # bundle must abort rather than ship a half-package.

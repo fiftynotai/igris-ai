@@ -52,14 +52,24 @@ sections below are for contributors working on the CLI source.
 | Verb | What it does |
 |---|---|
 | `igris init` | Bootstrap `~/.igris/` (or upgrade an existing install) |
+| `igris configure` | Re-runnable onboarding dial for an existing install (persona, identity, VPS, perception toggles) |
 | `igris refresh` | Re-fetch `~/.igris/core/` from the configured channel |
 | `igris install <path>` | Register a project with the brain; no repo-local surfaces are copied |
 | `igris update [--all\|--slug X\|--self] [--dry-run]` | Update materialized layer |
 | `igris register-project [path]` | Write the brain registry row only |
+| `igris add <skill\|agent\|mcp\|hook> [name]` | One-step add of a surface — materialize, project to all harnesses, verify drift-clean |
+| `igris remove <skill\|agent\|mcp\|hook> [name]` | Symmetric inverse of `add` — un-project from every harness and verify absent |
+| `igris harness <compile\|check>` | Regenerate or drift-check the per-harness agent-prompt projections |
+| `igris loadout <action>` | Register Layer-2 personal customizations into the overlay (superseded by `igris add`) |
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
 | `igris doctor [--fix\|--remove-orphans]` | Diagnose and repair drift |
 
 `--dry-run` is supported on every state-changing verb.
+
+> **Internal / skill-invoked verbs.** `detect`, `boot-sync`, `session`,
+> `instance`, `housekeeping`, `assess`, and `context-docs` are lifecycle verbs
+> shelled out by skills and hooks (awaken, rest, session handoff) — not typed by
+> hand. They are hidden from `igris --help` but remain directly callable.
 
 End-user docs (install, upgrade, channels) live in the repo-root
 [`README.md`](https://github.com/fiftynotai/igris-ai#readme).

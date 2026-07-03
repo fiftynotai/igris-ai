@@ -409,7 +409,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("loadout <action>")
+    .command("loadout <action>", { hidden: true })
     .description(
       "Register Layer-2 personal customizations into the overlay (FR-141/FR-142/FR-143/FR-148/FR-162/FR-180). " +
         "Actions: add (copy-vendors the canonical files), add-skill (references a skills source dir into surfaces.skills), add-mcp (registers a global MCP server into surfaces.mcp_servers), add-hook (registers an event-hook block into surfaces.hooks + writes the loadout hook script), list, remove, update (re-vendors from origin). " +
@@ -915,7 +915,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("detect")
+    .command("detect", { hidden: true })
     .description(
       "FR-195: L0 capability detection. Prints a JSON digest (harness, brain_db, sqlite3, remote_brain, mode) the awaken skill reads. Exit 0 even when degraded.",
     )
@@ -926,7 +926,7 @@ async function main(argv: string[]): Promise<void> {
     });
 
   program
-    .command("boot-sync")
+    .command("boot-sync", { hidden: true })
     .description(
       "FR-195: the REMOTE channel (SKILL.md §3.6). Drains the local sync queue (reusing the `sync data` primitive) AND pulls VPS→local rows over GET /sync/pull, merging them last-write-wins into the LOCAL brain DB (the directionally-correct reproduction of igris_brain_pull). Each part is independent + skip-on-fail. Prints a JSON digest. Exit 0 even when degraded (remote unconfigured/unreachable = local-only run, never blocks).",
     )
@@ -946,7 +946,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("session <action>")
+    .command("session <action>", { hidden: true })
     .description(
       "FR-195/FR-190: session-lifecycle verbs. Actions: gather (the Lock-2/3 classifier — enumerate + classify session files against per-instance liveness metadata, pick THE handoff); register (instance metadata upsert + write the LIVE per-instance file, seeded from the handoff). Prints a JSON digest to stdout. Unknown action → exit 2.",
     )
@@ -991,7 +991,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("instance <action>")
+    .command("instance <action>", { hidden: true })
     .description(
       "FR-190/TD-277: explicit instance lifecycle verbs. Actions: list (classify local liveness), state (update display/lease state), deregister (remove a cleanly closed instance). Activity time is not a liveness primitive.",
     )
@@ -1040,7 +1040,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("housekeeping")
+    .command("housekeeping", { hidden: true })
     .description(
       "FR-195: the crash-robust, idempotent archive sweep (SKILL.md §3.8 H0–H3). Retires the legacy CURRENT_SESSION.md, archives superseded RESTED files, rolls >30d archive files into month digests, and applies the 150-file ceiling. Touches only session/archive/ + the RESTED set — never LIVE files, never the brief DB. Prints a JSON digest. Exit 0 even when degraded.",
     )
@@ -1101,7 +1101,7 @@ async function main(argv: string[]): Promise<void> {
     );
 
   program
-    .command("assess")
+    .command("assess", { hidden: true })
     .description(
       "FR-195: the MINIMAL system-assessment digest (D-A). Brief-status summary counts + active blockers (session/BLOCKERS.md) + git snapshot + active-instance count + upcoming goals (14d). Deliberately omits the task queue, perception pending, and cross-project recall. Prints a JSON digest. Exit 0 even when degraded.",
     )
@@ -1119,7 +1119,7 @@ async function main(argv: string[]): Promise<void> {
     });
 
   program
-    .command("context-docs <action>")
+    .command("context-docs <action>", { hidden: true })
     .description(
       "FR-209: inspect shared context-doc catalog coverage for one project. Action: inventory.",
     )

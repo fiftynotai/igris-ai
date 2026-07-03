@@ -145,6 +145,10 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   "*.tar.gz",
   // Image-generation staging (Higgsfield raw outputs — committed PNGs live at docs/images/*.png)
   "docs/images/generated/",
+  // Generated memory-eval scorecards (FR-188 — regenerate via `npm run eval:memory`).
+  // Mirror the .gitignore glob so the TD-140 bidirectional contract stays green
+  // and these never rsync to the VPS.
+  "brain-mcp-server/eval-memory-scorecard.*",
   // Generated harness projections (FR-137) — mechanically derived from canonical
   // sources by `igris harness compile`; never committed (regenerated on demand,
   // drift-checked against canonical). Mirror the .gitignore entries so the
