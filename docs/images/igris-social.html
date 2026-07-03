@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anton&family=Instrument+Serif:ital@1&family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{ --bg:#0d0a08; --fg:#f6efe6; --accent:#ff5a1f; --muted:rgba(246,239,230,.55); --line:rgba(246,239,230,.14);
+    --display:'Anton',sans-serif; --ui:'Space Grotesk',system-ui,sans-serif; --serif:'Instrument Serif',Georgia,serif; --mono:'JetBrains Mono',monospace; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1200px;height:630px;overflow:hidden}
+  body{background:var(--bg);color:var(--fg);font-family:var(--ui);font-weight:300;-webkit-font-smoothing:antialiased;position:relative}
+  body::after{content:"";position:absolute;inset:0;pointer-events:none;opacity:.06;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");}
+  body::before{content:"";position:absolute;left:50%;top:-220px;width:820px;height:820px;transform:translateX(-50%);border-radius:50%;
+    background:radial-gradient(circle,rgba(255,90,31,.14),transparent 60%);pointer-events:none}
+  .wrap{position:absolute;inset:0;padding:50px 72px;display:flex;flex-direction:column;justify-content:space-between}
+  .top{display:flex;justify-content:space-between;align-items:center}
+  .eyebrow{font-family:var(--mono);font-weight:500;font-size:16px;letter-spacing:.24em;text-transform:uppercase;color:var(--accent)}
+  .mark{font-family:var(--display);text-transform:uppercase;letter-spacing:-.02em;font-size:22px;color:var(--fg)}
+  .mark .accent{color:var(--accent)}
+  .mid{margin-top:4px}
+  h1{font-family:var(--display);font-weight:400;text-transform:uppercase;letter-spacing:-.02em;line-height:.88;font-size:94px}
+  h1 .accent{color:var(--accent)}
+  .rail{font-family:var(--mono);font-weight:500;font-size:15px;letter-spacing:.2em;text-transform:uppercase;color:var(--accent);margin-top:22px;text-align:right}
+  .rail .en{color:var(--muted);margin-left:14px}
+  .tag{font-family:var(--serif);font-style:italic;color:var(--fg);font-size:29px;line-height:1.25;margin-top:16px;max-width:36ch}
+  .tag .a{color:var(--accent)}
+  .stats{display:flex;gap:0;border:.5px solid var(--line);margin-top:6px}
+  .stat{flex:1;padding:16px 22px;border-right:.5px solid var(--line)}
+  .stat:last-child{border-right:0}
+  .sv{font-family:var(--display);font-size:38px;line-height:1;color:var(--accent)}
+  .sl{font-family:var(--mono);font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-top:9px;line-height:1.35}
+  .foot{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:13px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-top:20px}
+  .foot b{color:var(--fg);font-weight:600}
+</style></head>
+<body><div class="wrap">
+  <div class="top">
+    <div class="eyebrow">// IGRIS · THE ENGINEERING OS FOR AI CODING AGENTS</div>
+    <div class="mark">fifty<span class="accent">.</span>dev</div>
+  </div>
+  <div class="mid">
+    <h1>It boots.<br>It enforces.<br>It never<span class="accent"> resets.</span></h1>
+    <div class="rail">one brain · every harness · every machine<span class="en">claude · codex · gemini · opencode</span></div>
+    <div class="tag">The engineering OS for AI coding agents. <span class="a">they resume your chat. it resumes your work.</span></div>
+  </div>
+  <div>
+    <div class="stats">
+      <div class="stat"><div class="sv">5</div><div class="sl">harnesses<br>· one brain</div></div>
+      <div class="stat"><div class="sv">MCP</div><div class="sl">sqlite + fts5<br>memory</div></div>
+      <div class="stat"><div class="sv">/hunt</div><div class="sl">bounded role<br>pipeline</div></div>
+      <div class="stat"><div class="sv">0</div><div class="sl">ungated<br>writes</div></div>
+    </div>
+    <div class="foot"><span>brief-first · atomic claims · cross-harness handoff</span><span><b>IGRIS · fifty.dev open source</b></span></div>
+  </div>
+</div></body></html>
