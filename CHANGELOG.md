@@ -7,11 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [7.1.0] - 2026-07-04
 
 ### Added
 
+- **`igris export <project>` — the cross-installation project-handoff PRODUCER (FR-229)** — a read-only verb that serializes a project's brain slice into a portable `.igris-pack.tar.gz` bundle: briefs + brief-graph + context docs + goals by default, `+learnings/errors/concept-graph` at `--tier full`. Supports `--out`, `--tier core|standard|full`, `--include`, `--since`. The producer half of the project-handoff line; see FR-230 below for the consumer. (FR-229)
+
 - **`igris import <bundle>` — the cross-owner project-handoff CONSUMER (FR-230)** — the ingress twin of the FR-229 `igris export` producer. Imports a portable `.igris-pack.tar.gz` back into a local brain with a REVIEWED, ancestor-based merge that is safe across owners: it verifies the payload checksum and rejects executable-surface/unknown stores BEFORE any DB write, then classifies every row NEW/UNCHANGED/INCOMING/LOCAL_ONLY/CONFLICT via a 3-way compare (bundle hash vs local hash vs a recorded ancestor hash — NOT a naive `updated_at` LWW), and applies the chosen `--on-conflict ask|theirs|mine|newer` policy in ONE transaction. Reuses `mergeRows`' mechanics (natural-key upsert, tag-union / max-counter, per-row try/catch) but NEVER its silent last-writer-wins branch — the engine decides each row's action before writing. `--dry-run` previews with zero writes; `--as <slug>` imports under a different project slug. Re-importing the same bundle after a clean apply is idempotent. On a fresh machine the target `projects` row is auto-registered INSIDE the apply transaction (so the `brief_status` foreign key is satisfied atomically) — `--project-path <path>` (default cwd) sets its path, and an already-registered project keeps its real path/name. A partial apply (any row fails) prints a loud failure sample, exits with a distinct non-zero code (`3`), and is NOT marked applied, so a corrective re-import lands the previously-failed rows (the digest reports `applied: full|partial|none`). Provenance, the ancestor index, and the applied-bundle set live in a CLI-local ledger under `~/.igris/projects/{slug}/imports/` (no brain-schema change; create-never). `claimed_by`/`claimed_at` are structurally unwriteable (the `EXPORT_TABLES` column set is the write allowlist); context docs are classified + conflict-protected + backed up before overwrite. Imported learnings/briefs land with NULL embeddings (re-derived by the FR-220 backfill). A corrupt/tampered bundle or missing brain DB is a hard failure (exit 1, zero writes). (FR-230)
+
+- **`/handoff` skill + project-slice portability contract (FR-231)** — wraps the FR-229/FR-230 verbs with an in-chat preview/confirm ceremony. Records project-slice portability in the OS contract: `knowledge-map` gains the bundle export/import sync mode and a project-slice definition (tiers + exclusions); `os-architecture` records the two-mode portability decision (VPS sync for same-owner/continuous access vs. bundle export/import for cross-owner/point-in-time handoff). Completes the project-handoff line. (FR-231)
+
+- **README project-handoff section + brand assets (FR-232)** — documents the `/handoff` export/import workflow (project-slice tiers, reviewed cross-owner merge, auto-register) grounded in the shipped FR-229/FR-230/FR-231 verbs; adds a top brand banner and a 2400×1260 OG/social preview card, both generated via the fifty.dev `oss-readme` asset pipeline. (FR-232)
+
+- **Multi-harness distribution redesign** — per-harness wiring (agents, skills, MCP servers, hooks) consolidated onto one descriptor model, with `igris harness` (compile/check) and `igris registry` (Layer-2 overlay writer) as the unified surfaces. Cursor onboarded as a 6th first-class harness alongside Claude, Codex, Gemini, OpenCode, and Antigravity; drift-guard parity extended to cover MCP and hook surfaces in addition to agents/skills. Builds on the FR-150 unification epic already noted under 7.0.0. (FR-161, FR-164, FR-165, FR-171, FR-172, FR-179, FR-202, FR-217, TD-283 and related harness/registry work)
+
+- **Cognition engine — incremental hardening + onboarding** — following FR-118's 7.0.0 launch (perception/subconscious/synapse/janitor/arbiter/curator/cartographer, all review-gated and off by default), this release adds the `igris configure` onboarding verb for persona/VPS/cognition opt-ins and fixes several cognition/perception instances misclassifying a valid empty (`[]`) LLM verdict as a parse error instead of a legitimate zero-result success.
+
+- **Knowledge-graph cluster growth** — additional graph tooling (node CRUD, search, dashboard, graph render/visualization) and store-time knowledge-graph edge population feeding the FR-116 cartographer/Leiden-clustering pipeline already noted under 7.0.0.
 
 ### Changed
 

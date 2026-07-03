@@ -1,6 +1,6 @@
 {
   "name": "igris-ai-monorepo",
-  "version": "7.0.0",
+  "version": "7.1.0",
   "private": true,
   "description": "Igris AI monorepo — brain MCP server + CLI.",
   "workspaces": [
