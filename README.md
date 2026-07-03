@@ -34,17 +34,17 @@ the model is the CPU. IGRIS is the OS. every session boots it, mounts your proje
 
 the payoff is an agent that actually knows your project — its conventions, its decisions, its open work, the mistakes already made — not for one chat, but across every session you run.
 
-## install in three commands.
+## the flagship proof.
 
-```bash
-npm install -g igris-ai
-igris init
-cd /path/to/your-project && igris install .
-```
+On 2026-06-16, B2/G-14 passed across four vendors: Claude -> OpenCode -> Codex -> Antigravity. A hunt was interrupted mid-workflow, resumed zero-context in the next harness, picked up at the recorded phase, ran the missing tests, and preserved crash recovery plus force-reclaim behavior.
 
-`igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
+That proof matters because IGRIS did not hand off a transcript. It handed off work-state: the brief, the phase, the claim, the instance, the supersession lifecycle, and the uncommitted code.
 
-Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+The visual below is a later FR-175 handoff storyboard that shows the same class of failure: Claude stopped at a weekly limit after settling the next brief, then Codex booted and recommended that exact brief.
+
+![FR-175 cross-harness handoff storyboard](docs/images/launch/fr175-cross-harness-storyboard.gif)
+
+The storyboard uses two stills, not the original operator screen recording, and it is not the B2/G-14 proof asset. Provenance is tracked in [`docs/images/launch/README.md`](docs/images/launch/README.md).
 
 ## the lifecycle.
 
@@ -60,26 +60,6 @@ every session starts with `/boot` and ends with `/rest`. in between, the agent i
 `/rest` closes the session: it writes your work-state — mode, active brief, next steps, the uncommitted lay of the land — to the brain and syncs it. nothing is a transcript; everything is state.
 
 so a `/boot` in a different harness resumes the actual work, not a summary of it. because the brain syncs to a central store, that state travels across machines too — full cross-machine handoff is the frontier we're proving now (see the edges below).
-
-## grounding.
-
-a fresh model writes generic code. a grounded one writes your code.
-
-`/ground` authors your project's context docs — coding guidelines, architecture map, design system, test standards, API patterns — and the OS consults the right one before it works. the agent follows your conventions and boundaries because they're written down and routed to it, not re-guessed every session.
-
-the brain holds the experience (what worked, what broke, why); the context docs hold the standards. a lesson that hardens into a standard graduates from one to the other. one fact, one home.
-
-## the flagship proof.
-
-On 2026-06-16, B2/G-14 passed across four vendors: Claude -> OpenCode -> Codex -> Antigravity. A hunt was interrupted mid-workflow, resumed zero-context in the next harness, picked up at the recorded phase, ran the missing tests, and preserved crash recovery plus force-reclaim behavior.
-
-That proof matters because IGRIS did not hand off a transcript. It handed off work-state: the brief, the phase, the claim, the instance, the supersession lifecycle, and the uncommitted code.
-
-The visual below is a later FR-175 handoff storyboard that shows the same class of failure: Claude stopped at a weekly limit after settling the next brief, then Codex booted and recommended that exact brief.
-
-![FR-175 cross-harness handoff storyboard](docs/images/launch/fr175-cross-harness-storyboard.gif)
-
-The storyboard uses two stills, not the original operator screen recording, and it is not the B2/G-14 proof asset. Provenance is tracked in [`docs/images/launch/README.md`](docs/images/launch/README.md).
 
 ## the core workflow.
 
@@ -109,28 +89,11 @@ a rule in a prompt is a suggestion the model can rationalize its way past. IGRIS
 
 the point isn't ceremony. it's that the guarantees hold even when the model is confident, tired, or wrong — because they're code, not vibes.
 
-## the architecture.
+## grounding.
 
-IGRIS is built like an OS so it can grow without rotting.
+a fresh model writes generic code. a grounded one writes your code.
 
-- **layers, not a monolith.** every concern — identity, conduct, capabilities, protocols, memory — is one layer with one job and one way to extend it. adding a skill, agent, harness, or doc-type is a known move, not a refactor.
-- **self-describing, self-assembling.** modules declare their own metadata; the OS discovers them and generates its own index. no hand-maintained registry to drift.
-- **contract vs. implementation.** what the model reads never names the code behind it, so any mechanism swaps without touching what the agent understands.
-- **agnostic core, per-harness adapters.** the skills and the OS are harness-neutral; each harness gets a thin adapter. one behavior, every surface.
-
-that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
-
-## every harness, honestly.
-
-IGRIS runs the same brain, briefs, and lifecycle across every harness it supports. what it won't do is pretend they're identical — so it adapts to each, and it's honest about where a harness falls short.
-
-the OS core is harness-agnostic; each harness gets a thin adapter that maps the OS onto what that harness actually exposes:
-
-- **skills, agents, and MCP** project to every supported harness — write a skill once, they all get it.
-- **enforcement gates are hooks**, so they need a hook API. Claude Code and OpenCode run the full set (brief-first, phase guard, commit + secret scans); Codex gets the session-level subset; Gemini and Antigravity expose no hook API, so there the gates soften to advisories — the workflow still runs, the blocking doesn't.
-- **delegation adapts.** a harness with native subagents uses them; one that defines its agents at runtime gets a per-harness recipe (its `harness-specific` file) so "delegate to the reviewer" resolves the same way everywhere — the skill never knows the difference.
-
-onboarding a new harness is declarative: describe it once in the manifest — agents, MCP, hooks, delegation model — and `/onboard-harness` projects every surface it can support and wires the adapter for the rest. a new harness is a descriptor, not a fork.
+`/ground` authors your project's context docs — coding guidelines, architecture map, design system, test standards, API patterns — and the OS consults the right one before it works. the agent follows your conventions and boundaries because they're written down and routed to it, not re-guessed every session.
 
 ## the cognition layer.
 
@@ -173,6 +136,29 @@ the skills are the pipes between the stores:
 
 so when the agent needs to know something, it knows where to look: experience in the brain, standards in the docs, blocks in the catalog. no single bucket that rots into a junk drawer.
 
+## the architecture.
+
+IGRIS is built like an OS so it can grow without rotting.
+
+- **layers, not a monolith.** every concern — identity, conduct, capabilities, protocols, memory — is one layer with one job and one way to extend it. adding a skill, agent, harness, or doc-type is a known move, not a refactor.
+- **self-describing, self-assembling.** modules declare their own metadata; the OS discovers them and generates its own index. no hand-maintained registry to drift.
+- **contract vs. implementation.** what the model reads never names the code behind it, so any mechanism swaps without touching what the agent understands.
+- **agnostic core, per-harness adapters.** the skills and the OS are harness-neutral; each harness gets a thin adapter. one behavior, every surface.
+
+that discipline is why the same brief, brain, and lifecycle work identically whether you boot Claude, OpenCode, or Antigravity.
+
+## every harness, honestly.
+
+IGRIS runs the same brain, briefs, and lifecycle across every harness it supports. what it won't do is pretend they're identical — so it adapts to each, and it's honest about where a harness falls short.
+
+the OS core is harness-agnostic; each harness gets a thin adapter that maps the OS onto what that harness actually exposes:
+
+- **skills, agents, and MCP** project to every supported harness — write a skill once, they all get it.
+- **enforcement gates are hooks**, so they need a hook API. Claude Code and OpenCode run the full set (brief-first, phase guard, commit + secret scans); Codex gets the session-level subset; Gemini and Antigravity expose no hook API, so there the gates soften to advisories — the workflow still runs, the blocking doesn't.
+- **delegation adapts.** a harness with native subagents uses them; one that defines its agents at runtime gets a per-harness recipe (its `harness-specific` file) so "delegate to the reviewer" resolves the same way everywhere — the skill never knows the difference.
+
+onboarding a new harness is declarative: describe it once in the manifest — agents, MCP, hooks, delegation model — and `/onboard-harness` projects every surface it can support and wires the adapter for the rest. a new harness is a descriptor, not a fork.
+
 ## it extends itself.
 
 most tools you extend by editing them. IGRIS you extend by declaring — and it wires the rest.
@@ -196,6 +182,18 @@ an OS spread across harnesses, machines, and projects drifts: a hook goes stale,
 `/igris-doctor` scans every registered project and each harness for drift — missing or stale hooks, broken bridges, config that no longer matches canonical — and reports every issue with its fix. `/boot` surfaces a one-line summary so you catch drift before it bites.
 
 the OS that installs itself and extends itself is the same one that keeps itself honest.
+
+## install in three commands.
+
+```bash
+npm install -g igris-ai
+igris init
+cd /path/to/your-project && igris install .
+```
+
+`igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
+
+Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
 
 ## essential skills.
 
