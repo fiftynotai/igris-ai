@@ -98,6 +98,17 @@ $ /hunt TD-161
 result: ready for commit · 1 file changed · 0 retries · PASS
 ```
 
+## the gates.
+
+a rule in a prompt is a suggestion the model can rationalize its way past. IGRIS installs the rules as executable gates instead — enforcement the agent runs into, not reads.
+
+- **brief-first.** no file gets written without a brief for the work. a pre-write hook blocks the edit; the escape hatch is logged and audited, not a sentence the agent can argue with.
+- **phase discipline.** the workflow is a state machine — plan, build, test, review, commit. a pre-commit gate blocks a commit made out of phase. you can't ship code that skipped review.
+- **bounded roles.** each agent gets only the tools its job needs. the tester can't write code; the reviewer can't edit; the builder can't self-approve. separation of duties, enforced by tool restriction, not by asking nicely.
+- **commit standards + secret scanning.** conventional-commit format and a secret scan run on every commit, at the hook level.
+
+the point isn't ceremony. it's that the guarantees hold even when the model is confident, tired, or wrong — because they're code, not vibes.
+
 ## the architecture.
 
 IGRIS is built like an OS so it can grow without rotting.
@@ -165,6 +176,14 @@ the agent knows how to grow itself in every direction, and each direction is a d
 the throughline: nothing here is ad-hoc. every extension is either self-describing and discovered, or it follows a defined procedure — never a one-off. the OS grows the same disciplined way it does everything else: a known move, not a rewrite. it even knows how to add a whole new layer to itself.
 
 that is the line between a tool with plugins and an OS that extends itself — the agent doesn't just use its capabilities, it can add new ones, and know exactly where each belongs.
+
+## it checks its own health.
+
+an OS spread across harnesses, machines, and projects drifts: a hook goes stale, a symlink breaks, a config wanders from canonical. IGRIS finds that itself.
+
+`/igris-doctor` scans every registered project and each harness for drift — missing or stale hooks, broken bridges, config that no longer matches canonical — and reports every issue with its fix. `/boot` surfaces a one-line summary so you catch drift before it bites.
+
+the OS that installs itself and extends itself is the same one that keeps itself honest.
 
 ## essential skills.
 
