@@ -267,7 +267,7 @@ Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context
 | **Brief management** | `/register`, `/archive`, `/scan` |
 | **Documentation & quality** | `/document`, `/audit`, `/ground` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |
-| **Collaboration & visibility** | `/team`, `/ops` |
+| **Collaboration & visibility** | `/team`, `/ops`, `/handoff` |
 | **Utilities** | `/sync`, `/release`, `/ideate` |
 | **Brand & design** | `/visualize` |
 | **Migrations & harness** | `/migrate-analyze`, `/onboard-harness` |
@@ -286,7 +286,7 @@ still projects exactly as before.
 | Tier | Skills | Meaning |
 |------|--------|---------|
 | **essential** (13) | `/boot`, `/rest`, `/register`, `/hunt`, `/scan`, `/archive`, `/harvest`, `/promote`, `/reuse`, `/ground`, `/sync`, `/igris-doctor`, `/ops` | The core workflow, diagnostics, and cross-project command center — shipped to every default install (FR-191's filter target). |
-| **opt-in** (7) | `/team`, `/audit`, `/document`, `/release`, `/ideate`, `/migrate-analyze`, `/visualize` | Useful but not core — distributed opt-in (FR-206's channel target); FR-205 only classifies them, does NOT remove them from projection. |
+| **opt-in** (8) | `/team`, `/audit`, `/document`, `/release`, `/ideate`, `/migrate-analyze`, `/visualize`, `/handoff` | Useful but not core — distributed opt-in (FR-206's channel target); FR-205 only classifies them, does NOT remove them from projection. |
 | **personal** (1) | `fifty-kit` | Machine/operator-personal; moved out of `core/skills/` to the FR-155 project-scoped personal overlay (no longer in consumer projection). |
 | **pending** (1) | `/onboard-harness` (TD-266) | Tiering DEFERRED to the owning brief — left untagged by FR-205. |
 

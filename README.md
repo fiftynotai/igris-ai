@@ -205,6 +205,7 @@ Restart your harness afterward so it loads the `igris-brain` MCP server, then ru
 | Reuse proven assets before rebuilding | `/reuse` |
 | Generate project context docs | `/ground` |
 | Sync code or brain data | `/sync` |
+| Hand off or take over a project | `/handoff` |
 
 ## why not just compose other tools?
 
