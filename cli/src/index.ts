@@ -43,6 +43,7 @@ import { runLoadout, type LoadoutAction } from "./verbs/loadout.js";
 import { runAdd } from "./verbs/add.js";
 import { runRemove } from "./verbs/remove.js";
 import { runDetect } from "./verbs/detect.js";
+import { runOnboarding } from "./verbs/onboarding.js";
 import { runBootSync } from "./verbs/boot-sync.js";
 import { runSession, type SessionAction } from "./verbs/session.js";
 import { runInstance, type InstanceAction } from "./verbs/instance.js";
@@ -925,6 +926,17 @@ async function main(argv: string[]): Promise<void> {
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action((opts: { json?: boolean }): void => {
       const code = runDetect({ json: opts.json !== false });
+      process.exitCode = code;
+    });
+
+  program
+    .command("onboarding <action>", { hidden: true })
+    .description(
+      "FR-235: first-run onboarding state. Actions: status (print {completed, boot_welcomed, first_run} JSON — first_run = !completed), welcomed (stamp onboarding.boot_welcomed=true), complete (stamp onboarding.completed=true). Config-absent degrades to first_run:true. Exit 0 for all three actions; unknown action → exit 2. Read by the /boot Welcome + /setup skill.",
+    )
+    .option("--json", "emit the status digest as JSON to stdout (default; on for the boot/setup path)", true)
+    .action((action: string, opts: { json?: boolean }): void => {
+      const code = runOnboarding(action, { json: opts.json !== false });
       process.exitCode = code;
     });
 

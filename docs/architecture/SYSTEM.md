@@ -263,7 +263,7 @@ Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context
 
 | Group | Skills |
 |-------|--------|
-| **Lifecycle** | `/boot`, `/rest`, `/hunt`, `/igris-doctor` |
+| **Lifecycle** | `/setup`, `/boot`, `/rest`, `/hunt`, `/igris-doctor` |
 | **Brief management** | `/register`, `/archive`, `/scan` |
 | **Documentation & quality** | `/document`, `/audit`, `/ground` |
 | **Knowledge & reuse** | `/harvest`, `/promote`, `/reuse` |

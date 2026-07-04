@@ -202,7 +202,7 @@ cd /path/to/your-project && igris install .
 
 `igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
-Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/register feature "first brief"` and `/hunt BR-001`. Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
+Restart your harness afterward so it loads the `igris-brain` MCP server, then run `/boot` and follow the first-run prompt into `/setup` — a 2-minute guided first hunt that teaches the register → hunt → rest loop (and later reconfigures your install). Install matrix, verification commands, and upgrade paths live in [`docs/SETUP_GUIDE.md`](docs/SETUP_GUIDE.md) and [`docs/UPDATE_GUIDE.md`](docs/UPDATE_GUIDE.md).
 
 ## project handoff.
 
@@ -228,6 +228,7 @@ import is reviewed, never silent. it classifies every row as new, unchanged, or 
 
 | Need | Skills |
 |------|--------|
+| Onboard a new install, or reconfigure later | `/setup` |
 | Start and end grounded work | `/boot`, `/rest` |
 | Create, run, inspect, and close briefs | `/register`, `/hunt`, `/scan`, `/archive` |
 | Capture and harden reusable knowledge | `/harvest`, `/promote` |

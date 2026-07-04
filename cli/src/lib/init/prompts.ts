@@ -28,6 +28,7 @@ import {
 } from "../sync-transport.js";
 import { configJsonPath, userMdPath } from "../paths.js";
 import { inferActivePersona, listPersonas } from "../persona.js";
+import { readUserMdPrefs, type UserMdPrefs } from "../user-md.js";
 import { EGRESS_DISCLOSURE_LINES } from "../sync/egress-manifest.generated.js";
 
 /**
@@ -474,6 +475,8 @@ export interface ConfigureInputs {
   persona: string;
   perceptionEnabled: boolean;
   subconsciousEnabled: boolean;
+  /** FR-235: the three USER.md operator prefs (addressing / notification / auto-approve). */
+  prefs: UserMdPrefs;
 }
 
 /** Options for {@link gatherConfigureInputs}. */
@@ -496,6 +499,8 @@ export interface ConfigureSeed {
   persona: string;
   perceptionEnabled: boolean;
   subconsciousEnabled: boolean;
+  /** FR-235: current USER.md operator prefs (the seed for the pref prompts). */
+  prefs: UserMdPrefs;
 }
 
 /** Parse `- name: X` / `- email: Y` out of USER.md (the init template shape). */
@@ -571,6 +576,7 @@ export function readConfigureSeed(): ConfigureSeed {
     persona,
     perceptionEnabled,
     subconsciousEnabled,
+    prefs: readUserMdPrefs(),
   };
 }
 
@@ -612,6 +618,7 @@ export async function gatherConfigureInputs(
       persona: seededPersona,
       perceptionEnabled: seed.perceptionEnabled,
       subconsciousEnabled: seed.subconsciousEnabled,
+      prefs: seed.prefs,
     };
   }
 
@@ -674,6 +681,28 @@ export async function gatherConfigureInputs(
       seed.subconsciousEnabled,
     );
 
+    // FR-235: the three USER.md operator prefs. Seeded from the current file so
+    // Enter keeps the existing value (parse + rewrite in place on apply).
+    info("");
+    info("Preferences (written to ~/.igris/USER.md).");
+    const addressingRaw = (
+      await ask(`How should Igris address you? [${seed.prefs.addressing}]: `)
+    ).trim();
+    const addressing =
+      addressingRaw === "" ? seed.prefs.addressing : addressingRaw;
+
+    const notificationRaw = (
+      await ask(`Notification style [${seed.prefs.notificationStyle}]: `)
+    ).trim();
+    const notificationStyle =
+      notificationRaw === "" ? seed.prefs.notificationStyle : notificationRaw;
+
+    const autoApproveRaw = (
+      await ask(`Auto-approve threshold [${seed.prefs.autoApprove}]: `)
+    ).trim();
+    const autoApprove =
+      autoApproveRaw === "" ? seed.prefs.autoApprove : autoApproveRaw;
+
     return {
       userName,
       userEmail,
@@ -681,6 +710,7 @@ export async function gatherConfigureInputs(
       persona,
       perceptionEnabled,
       subconsciousEnabled,
+      prefs: { addressing, notificationStyle, autoApprove },
     };
   } finally {
     if (rl !== null) (rl as ReturnType<typeof createInterface>).close();

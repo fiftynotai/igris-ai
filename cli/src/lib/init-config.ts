@@ -31,6 +31,7 @@ import {
   isInsecureSyncAllowed,
 } from "./sync-transport.js";
 import { warn } from "./log.js";
+import type { OnboardingState } from "../types.js";
 
 export type CognitionDefaultOutcome =
   | "config_missing"   // config.json doesn't exist — no-op
@@ -277,4 +278,69 @@ export function setRemoteBrain(
   };
   writeConfigAtomic(next);
   return "written";
+}
+
+// --------------------------------------------------------------------
+// FR-235: first-run onboarding state (config.json `onboarding.*`)
+// --------------------------------------------------------------------
+
+/**
+ * Read the `config.json` `onboarding` block, mapping an absent/malformed config
+ * (or a missing `onboarding` key) to the first-run default `{completed:false,
+ * boot_welcomed:false}`. Never throws — a missing brain config is the fresh
+ * install case, not an error (the caller renders the first-run experience).
+ *
+ * See {@link OnboardingState} for the meaning of each flag.
+ */
+export function readOnboardingState(): OnboardingState {
+  const cfg = readConfig();
+  if (cfg === null) return { completed: false, boot_welcomed: false };
+  const onboarding = (cfg.onboarding ?? null) as Record<string, unknown> | null;
+  return {
+    completed: onboarding?.completed === true,
+    boot_welcomed: onboarding?.boot_welcomed === true,
+  };
+}
+
+/**
+ * Set a single `onboarding.<field>` flag to `true`, preserving every sibling
+ * config key (and any other `onboarding` field). Atomic tmp+rename + chmod 600
+ * (TD-220 — config.json carries the api_key). Idempotent: stamping an already-set
+ * flag re-writes the same value. Returns the {@link SetConfigOutcome} so callers
+ * can log; a missing/malformed config is a graceful no-op (never throws).
+ */
+function setOnboardingField(
+  field: "completed" | "boot_welcomed",
+): SetConfigOutcome {
+  const cfg = readConfig();
+  if (cfg === null) {
+    return existsSync(configJsonPath()) ? "config_malformed" : "config_missing";
+  }
+  const onboarding = (cfg.onboarding ?? null) as Record<string, unknown> | null;
+  const next: Record<string, unknown> = {
+    ...cfg,
+    onboarding: {
+      ...(onboarding ?? {}),
+      [field]: true,
+    },
+  };
+  writeConfigAtomic(next);
+  return "written";
+}
+
+/**
+ * Stamp `onboarding.boot_welcomed=true` — the idempotency cap the `/boot`
+ * first-run Welcome sets after rendering, so it shows at most once.
+ */
+export function setOnboardingWelcomed(): SetConfigOutcome {
+  return setOnboardingField("boot_welcomed");
+}
+
+/**
+ * Stamp `onboarding.completed=true` — the shared teach-vs-configure signal.
+ * Written by the `/setup` teach path on completion and by `init --upgrade`
+ * (returning users are never onboarded).
+ */
+export function setOnboardingComplete(): SetConfigOutcome {
+  return setOnboardingField("completed");
 }

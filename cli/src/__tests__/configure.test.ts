@@ -539,6 +539,132 @@ describe("configure — dry-run writes nothing", () => {
   });
 });
 
+describe("USER.md prefs helpers (FR-235) — in-place parse + rewrite", () => {
+  it("rewrites the 3 managed fields in place, preserving every other line + round-trips", async () => {
+    // Rich, hand-authored USER.md with the shipped bold pref lines + unrelated
+    // content that MUST survive the field rewrite.
+    writeFileSync(
+      join(brainRoot, "USER.md"),
+      [
+        "# Igris AI — User Configuration",
+        "",
+        "## Identity",
+        "",
+        "- **Name:** Fifty.ai",
+        "- **Default Addressing:** Partner",
+        "",
+        "## Preferences",
+        "",
+        "- **Default Mask:** full",
+        "- **Notification Style:** concise",
+        "- **Auto-approve Plans:** S and M effort only (L/XL require approval)",
+        "",
+        "## Notes",
+        "",
+        "keep me verbatim",
+        "",
+      ].join("\n"),
+    );
+
+    const { readUserMdPrefs, writeUserMdPrefs } = await import(
+      "../lib/user-md.js"
+    );
+    // Read parses the current values (tolerant of the bold markup).
+    expect(readUserMdPrefs()).toEqual({
+      addressing: "Partner",
+      notificationStyle: "concise",
+      autoApprove: "S and M effort only (L/XL require approval)",
+    });
+
+    writeUserMdPrefs({
+      addressing: "Boss",
+      notificationStyle: "verbose",
+      autoApprove: "everything",
+    });
+
+    const md = readFileSync(join(brainRoot, "USER.md"), "utf-8");
+    // Managed fields rewritten (bold prefix preserved).
+    expect(md).toContain("- **Default Addressing:** Boss");
+    expect(md).toContain("- **Notification Style:** verbose");
+    expect(md).toContain("- **Auto-approve Plans:** everything");
+    // Unrelated lines preserved verbatim.
+    expect(md).toContain("- **Name:** Fifty.ai");
+    expect(md).toContain("- **Default Mask:** full");
+    expect(md).toContain("keep me verbatim");
+    // Round-trip read reflects the new values.
+    expect(readUserMdPrefs()).toEqual({
+      addressing: "Boss",
+      notificationStyle: "verbose",
+      autoApprove: "everything",
+    });
+  });
+
+  it("absent file → defaults; write appends the managed lines under ## Preferences", async () => {
+    const { readUserMdPrefs, writeUserMdPrefs } = await import(
+      "../lib/user-md.js"
+    );
+    // No USER.md → the shipped defaults.
+    expect(readUserMdPrefs().addressing).toBe("Partner");
+
+    writeUserMdPrefs({
+      addressing: "Chief",
+      notificationStyle: "terse",
+      autoApprove: "S only",
+    });
+    const md = readFileSync(join(brainRoot, "USER.md"), "utf-8");
+    expect(md).toContain("## Preferences");
+    expect(md).toContain("- **Default Addressing:** Chief");
+    expect(readUserMdPrefs()).toEqual({
+      addressing: "Chief",
+      notificationStyle: "terse",
+      autoApprove: "S only",
+    });
+  });
+});
+
+describe("configure — the 3 USER.md prefs round-trip through the verb (FR-235)", () => {
+  it("prompts for + persists the prefs, and a --yes re-run preserves them", async () => {
+    stageBrainCore();
+    writeConfig(baselineConfig());
+    writeUserMd("you", "");
+
+    const { runConfigure } = await import("../verbs/configure.js");
+    const { readUserMdPrefs } = await import("../lib/user-md.js");
+
+    // Queue (blank URL → no apiKey prompt): name, email, persona, url,
+    // perception, subconscious, addressing, notification, autoApprove.
+    const code = await runConfigure({
+      isTTY: true,
+      prompt: queuePrompt([
+        "you",
+        "",
+        "character",
+        "", // url blank → no VPS (skips apiKey)
+        "n",
+        "n",
+        "Captain",
+        "loud",
+        "M and below",
+      ]),
+    });
+    expect(code).toBe(0);
+    expect(readUserMdPrefs()).toEqual({
+      addressing: "Captain",
+      notificationStyle: "loud",
+      autoApprove: "M and below",
+    });
+
+    // --yes seeds from USER.md and preserves the prefs (no-op round-trip).
+    const code2 = await runConfigure({ yes: true });
+    expect(code2).toBe(0);
+    expect(readUserMdPrefs()).toEqual({
+      addressing: "Captain",
+      notificationStyle: "loud",
+      autoApprove: "M and below",
+    });
+  });
+});
+
 describe("init --persona", () => {
   it("from-source init applies the professional persona to the runtime SOUL.md", async () => {
     // Stage a from-source repo with a core/ tree carrying the persona templates.

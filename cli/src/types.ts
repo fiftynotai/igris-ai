@@ -226,6 +226,22 @@ export interface DetectResult {
 }
 
 /**
+ * FR-235 — first-run onboarding state, persisted under the `config.json`
+ * `onboarding` key.
+ *
+ * `completed` is the shared teach-vs-configure signal (read by `/boot` and
+ * `/setup`): the `/setup` teach path is its sole writer, and `init --upgrade`
+ * stamps it true for returning users. `boot_welcomed` is the idempotency cap so
+ * the `/boot` first-run Welcome renders at most once. A fresh install writes
+ * neither key — an absent `onboarding` block reads as `{completed:false,
+ * boot_welcomed:false}` (first-run).
+ */
+export interface OnboardingState {
+  completed: boolean;
+  boot_welcomed: boolean;
+}
+
+/**
  * FR-195 (M1) — the chosen handoff inside the `session gather` digest, or a
  * null-island when this is a fresh start (no genuine handoff found).
  *
