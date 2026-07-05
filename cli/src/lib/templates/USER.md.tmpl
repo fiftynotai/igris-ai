@@ -11,8 +11,11 @@ project repo (because the brain is per-user, not per-project).
 
 ## Notes
 
-This file is YOURS. Igris will never overwrite it. The only operation that
-touches USER.md is the very-first `igris init` (which writes the initial
-template); subsequent `igris init --upgrade` runs preserve it byte-for-byte.
+This file is YOURS. `igris init --upgrade` preserves it byte-for-byte and never
+clobbers your notes. The identity fields and the `## Preferences` block are
+managed for you — `igris init`, `igris configure`, and `/setup` write them when
+you update your settings; edit any other content freely and it is preserved.
 
-Edit freely — Igris reads this file for display only, not for runtime behavior.
+Some fields drive runtime behavior, not just display: e.g. your addressing
+preference feeds the persona greeting at boot. Change these via `igris configure`
+or `/setup` (each edit is shown and confirmed) rather than by hand when you can.

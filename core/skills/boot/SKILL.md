@@ -152,6 +152,31 @@ My capabilities:
 - Quality gates, protocol enforcement
 ```
 
+### 4.2.1 First-run Welcome (FR-235)
+
+A one-time orientation for a brand-new install. Verb-driven and harness-agnostic — ZERO per-harness branches.
+
+Run the onboarding-status verb:
+```bash
+igris onboarding status --json
+```
+It prints `{ "completed": <bool>, "boot_welcomed": <bool>, "first_run": <bool> }`. `first_run` is `!completed`.
+
+- **If `first_run == true` AND `boot_welcomed == false`:** render the compact Welcome, then mark it shown so it never repeats:
+  ```
+  Welcome to IGRIS — an AI engineering OS that runs on your harness.
+  It turns intent into shipped work through a simple loop:
+    register (capture the work) → hunt (build it, tested + reviewed) → rest (bank the session).
+
+  New here? Run /setup for a 2-minute guided first hunt.
+  ```
+  Then run:
+  ```bash
+  igris onboarding welcomed
+  ```
+- **Else** (returning user, or the Welcome already rendered once): render NOTHING. Returning boots are silent here.
+- If `igris onboarding status` is unavailable or errors (older CLI, degraded shell), degrade silently — render nothing, never block session start.
+
 ### 4.3 Query Brain for Context (Optional)
 
 If the `igris-brain` MCP server is available:

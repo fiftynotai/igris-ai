@@ -57,14 +57,35 @@ stage_source_repo() {
   [[ "$output" == *"--upgrade"* ]]
 }
 
-@test "init --upgrade preserves USER.md and config.json byte-for-byte" {
+@test "init --upgrade preserves USER.md byte-for-byte and config.json user-data (additive onboarding stamp only)" {
   run $CLI_BIN init --from-source "$SOURCE_REPO"
   [ "$status" -eq 0 ]
 
   # User mutates state files.
   printf 'my custom user notes\n' > "$IGRIS_BRAIN_DIR/USER.md"
   USER_BEFORE_SHA=$(shasum -a 256 "$IGRIS_BRAIN_DIR/USER.md" | awk '{print $1}')
-  CFG_BEFORE_SHA=$(shasum -a 256 "$IGRIS_BRAIN_DIR/config.json" | awk '{print $1}')
+
+  # config.json user-data fingerprint = the config's semantic VALUES with the
+  # FR-235 onboarding lifecycle key removed. This isolates "did any user-authored
+  # config value change" from (a) the intentional additive onboarding stamp and
+  # (b) the value-preserving reserialization the stamp's rewrite performs (e.g.
+  # JS JSON.stringify collapsing 1.0 -> 1). Numbers are coerced to float and keys
+  # sorted so only a real value change moves the hash.
+  cfg_userdata_sha() {
+    python3 - "$IGRIS_BRAIN_DIR/config.json" <<'PY'
+import json, hashlib, sys
+def norm(x):
+    if isinstance(x, bool): return x           # bool before int (bool is-a int)
+    if isinstance(x, (int, float)): return float(x)
+    if isinstance(x, dict): return {k: norm(v) for k, v in x.items()}
+    if isinstance(x, list): return [norm(v) for v in x]
+    return x
+d = json.load(open(sys.argv[1]))
+d.pop("onboarding", None)
+print(hashlib.sha256(json.dumps(norm(d), sort_keys=True).encode()).hexdigest())
+PY
+  }
+  CFG_USERDATA_BEFORE=$(cfg_userdata_sha)
 
   # Mutate the source between init and upgrade.
   printf '# soul (bats v2)\n' > "$SOURCE_REPO/core/SOUL.md"
@@ -72,10 +93,20 @@ stage_source_repo() {
   run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
   [ "$status" -eq 0 ]
 
+  # USER.md stays byte-for-byte — the upgrade never writes it.
   USER_AFTER_SHA=$(shasum -a 256 "$IGRIS_BRAIN_DIR/USER.md" | awk '{print $1}')
-  CFG_AFTER_SHA=$(shasum -a 256 "$IGRIS_BRAIN_DIR/config.json" | awk '{print $1}')
   [ "$USER_BEFORE_SHA" = "$USER_AFTER_SHA" ]
-  [ "$CFG_BEFORE_SHA" = "$CFG_AFTER_SHA" ]
+
+  # config.json: no user-authored value changed (fingerprint minus onboarding
+  # is identical) — the ONLY permitted delta is the additive onboarding stamp.
+  CFG_USERDATA_AFTER=$(cfg_userdata_sha)
+  [ "$CFG_USERDATA_BEFORE" = "$CFG_USERDATA_AFTER" ]
+
+  # And that additive stamp landed: a returning (--upgrade) user is marked
+  # onboarded so /boot's Welcome + /setup's teach path never fire (BR-077).
+  run python3 -c "import json; print(json.load(open('$IGRIS_BRAIN_DIR/config.json')).get('onboarding', {}).get('completed'))"
+  [ "$status" -eq 0 ]
+  [ "$output" = "True" ]
 
   # And core itself was upgraded.
   run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"

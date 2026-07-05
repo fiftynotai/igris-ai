@@ -93,6 +93,7 @@ import {
   ZipSlipError,
 } from "../lib/tarball.js";
 import { writeInstallSource } from "../lib/install-source.js";
+import { setOnboardingComplete } from "../lib/init-config.js";
 import { closeDb } from "../lib/registry.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
 import {
@@ -531,7 +532,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // --- 9. Templates: USER.md and config.json (preserved if existing) ----
   const userMd = userMdPath();
   const configJson = configJsonPath();
-  const cliVersion = opts.cliVersion ?? "7.1.0";
+  const cliVersion = opts.cliVersion ?? "7.2.0";
   const installDate = new Date().toISOString();
 
   if (dry !== null) {
@@ -555,6 +556,14 @@ export async function runInit(opts: InitOptions): Promise<number> {
         "chmod",
         ["600", secretsEnvPath()],
         "harden secret-file perms (secrets.env)",
+      );
+    }
+    // FR-235: --upgrade stamps onboarding.completed so returning users are
+    // never onboarded. Fresh install writes nothing (absent = first-run).
+    if (opts.upgrade === true) {
+      dry.wouldWriteFile(
+        configJson,
+        "stamp onboarding.completed=true (returning user)",
       );
     }
   } else {
@@ -597,6 +606,24 @@ export async function runInit(opts: InitOptions): Promise<number> {
     // never fabricate an empty secrets.env (Decision 3).
     if (existsSync(secretsEnvPath())) {
       chmodSecretFile(secretsEnvPath());
+    }
+
+    // FR-235 / BR-077: a returning user (--upgrade) has already been through
+    // the first-run experience — stamp onboarding.completed=true so /boot's
+    // Welcome and /setup's teach path never fire for them. Fresh install
+    // leaves the key absent (= first-run).
+    //
+    // This runs AFTER verifyPreservation (step 6), so the runtime preservation
+    // gate — which protects USER-authored config content — is honored. It does,
+    // by design, add the `onboarding.completed` key to the final config.json:
+    // an ADDITIVE, sibling-preserving system write (setOnboardingComplete
+    // spreads the existing config and never touches a user-authored value). So
+    // `--upgrade` preserves user config DATA, but is NOT a raw byte-for-byte
+    // no-op on config.json — the additive onboarding lifecycle key is the one
+    // permitted delta. The init.bats upgrade test asserts exactly that.
+    if (opts.upgrade === true) {
+      setOnboardingComplete();
+      debug("onboarding.completed stamped (upgrade — returning user)");
     }
   }
 
@@ -745,7 +772,10 @@ export async function runInit(opts: InitOptions): Promise<number> {
       }
     }
     if (anyWired) {
-      info("  Restart your harness(es) to pick up the new MCP server.");
+      // FR-235: the single human next-step in the final report already tells
+      // the user to restart their harness — keep this MCP-specific note behind
+      // --verbose so the default finish stays one clean line.
+      debug("Restart your harness(es) to pick up the new MCP server.");
     }
 
     // --- 13b. Antigravity skills parent symlink (FR-179 Phase C, R2) -----
@@ -791,15 +821,20 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // (L-130 native-extension teardown discipline).
   closeDb();
 
+  // FR-235: lead with the ONE human next-step. The technical install details
+  // (brain root / channel / ref / source / bridges / baked core) are demoted
+  // behind --verbose (routed through debug → stderr) — an operator debugging an
+  // install passes --verbose; everyone else sees a single clean line.
   info("");
-  info("Igris init complete.");
-  info(`  brain root:       ${root}`);
-  info(`  channel:          ${channelKind}`);
-  info(`  ref:              ${channelRef}`);
-  info(`  source:           ${sourceKind}${sourcePath ? ` (${sourcePath})` : ""}`);
-  info(`  bridges:          ${[...bridgeTargets].join(",") || "(none)"}`);
+  info("✓ IGRIS installed. Restart your harness, then run /boot.");
+  debug("Igris init complete.");
+  debug(`  brain root:       ${root}`);
+  debug(`  channel:          ${channelKind}`);
+  debug(`  ref:              ${channelRef}`);
+  debug(`  source:           ${sourceKind}${sourcePath ? ` (${sourcePath})` : ""}`);
+  debug(`  bridges:          ${[...bridgeTargets].join(",") || "(none)"}`);
   if (bakPath !== null) {
-    info(`  prior core baked: ${bakPath}`);
+    debug(`  prior core baked: ${bakPath}`);
   }
 
   return 0;

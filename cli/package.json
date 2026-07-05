@@ -1,6 +1,6 @@
 {
   "name": "igris-ai",
-  "version": "7.1.0",
+  "version": "7.2.0",
   "description": "Igris AI unified CLI — init, refresh, install, update, sync, doctor, register-project for Igris projects.",
   "type": "module",
   "bin": {

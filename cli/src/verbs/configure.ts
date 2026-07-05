@@ -32,6 +32,7 @@ import {
 import { applyPersona } from "../lib/persona.js";
 import { configJsonPath, soulMdPath, userMdPath } from "../lib/paths.js";
 import { gatherConfigureInputs, type PromptFn } from "../lib/init/prompts.js";
+import { writeUserMdPrefs } from "../lib/user-md.js";
 import { renderUserTemplate } from "./init.js";
 import { info, warn, error as logError } from "../lib/log.js";
 
@@ -95,6 +96,12 @@ export async function runConfigure(opts: ConfigureOptions): Promise<number> {
       `set cognition.subconscious.enabled=${inputs.subconsciousEnabled}`,
     );
     dry.wouldWriteFile(userMdPath(), "write USER.md identity");
+    dry.wouldWriteFile(
+      userMdPath(),
+      `write USER.md prefs (addressing='${inputs.prefs.addressing}', ` +
+        `notification='${inputs.prefs.notificationStyle}', ` +
+        `auto-approve='${inputs.prefs.autoApprove}')`,
+    );
     dry.print();
     return 0;
   }
@@ -147,6 +154,16 @@ export async function runConfigure(opts: ConfigureOptions): Promise<number> {
   );
   info(`Identity: ${inputs.userName}${inputs.userEmail ? ` <${inputs.userEmail}>` : ""}`);
 
+  // 4e. USER.md operator prefs (FR-235). Parse + rewrite the three managed
+  // field lines IN PLACE, preserving the rest of the file. Runs AFTER the
+  // identity write so the prefs land on the freshly-rendered USER.md.
+  writeUserMdPrefs(inputs.prefs);
+  info(
+    `Prefs: addressing='${inputs.prefs.addressing}', ` +
+      `notification='${inputs.prefs.notificationStyle}', ` +
+      `auto-approve='${inputs.prefs.autoApprove}'`,
+  );
+
   // --- 5. Summary ------------------------------------------------------
   info("");
   info("Igris configure complete.");
@@ -154,6 +171,9 @@ export async function runConfigure(opts: ConfigureOptions): Promise<number> {
   info(`  remote brain: ${inputs.remoteBrain === null ? "off" : inputs.remoteBrain.url}`);
   info(`  perception:   ${inputs.perceptionEnabled ? "on" : "off"}`);
   info(`  subconscious: ${inputs.subconsciousEnabled ? "on" : "off"}`);
+  info(`  addressing:   ${inputs.prefs.addressing}`);
+  info(`  notification: ${inputs.prefs.notificationStyle}`);
+  info(`  auto-approve: ${inputs.prefs.autoApprove}`);
 
   return 0;
 }

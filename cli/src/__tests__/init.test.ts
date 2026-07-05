@@ -320,8 +320,21 @@ describe("init — secret-file perms hardening (TD-220)", () => {
     const code = await runInit({ fromSource: sourceRepo, upgrade: true });
     expect(code).toBe(0);
     expect(statSync(cfg).mode & 0o777).toBe(0o600);
-    // Content preserved byte-for-byte (chmod is metadata-only).
-    expect(readFileSync(cfg).equals(cfgBytes)).toBe(true);
+    // FR-235: --upgrade ADDITIVELY stamps onboarding.completed (after the
+    // runtime preservation gate). Every original key/value survives; only the
+    // onboarding block is added.
+    const after = JSON.parse(readFileSync(cfg, "utf-8")) as Record<
+      string,
+      unknown
+    >;
+    const original = JSON.parse(cfgBytes.toString("utf-8")) as Record<
+      string,
+      unknown
+    >;
+    for (const [k, v] of Object.entries(original)) {
+      expect(after[k]).toEqual(v);
+    }
+    expect((after.onboarding as { completed?: boolean }).completed).toBe(true);
   });
 
   it("T8: a pre-existing secrets.env at 644 is tightened to 600", async () => {
@@ -398,14 +411,27 @@ describe("init — --upgrade preservation (CRITICAL gate for M1.10)", () => {
     });
     expect(code).toBe(0);
 
-    // Verify all three user-state files are byte-identical.
+    // USER.md + knowledge.db are byte-identical (not stamped).
     expect(readFileSync(join(brainRoot, "USER.md")).equals(userBytes)).toBe(
       true,
     );
-    expect(readFileSync(join(brainRoot, "config.json")).equals(cfgBytes)).toBe(
+    expect(readFileSync(join(brainRoot, "memory", "knowledge.db")).equals(dbBytes)).toBe(
       true,
     );
-    expect(readFileSync(join(brainRoot, "memory", "knowledge.db")).equals(dbBytes)).toBe(
+    // config.json: original content preserved + the additive FR-235 onboarding
+    // stamp (the swap itself preserved it byte-for-byte — verifyPreservation
+    // runs before the post-swap stamp).
+    const afterCfg = JSON.parse(
+      readFileSync(join(brainRoot, "config.json"), "utf-8"),
+    ) as Record<string, unknown>;
+    const origCfg = JSON.parse(cfgBytes.toString("utf-8")) as Record<
+      string,
+      unknown
+    >;
+    for (const [k, v] of Object.entries(origCfg)) {
+      expect(afterCfg[k]).toEqual(v);
+    }
+    expect((afterCfg.onboarding as { completed?: boolean }).completed).toBe(
       true,
     );
 
@@ -1148,5 +1174,91 @@ describe("init — cache seed after a github fetch (TD-113)", () => {
     // the recorded sha) — proves the TEE captured the raw archive faithfully.
     const { hashTarballFile } = await import("../lib/tarball.js");
     expect(await hashTarballFile(cacheTarballPath(sha))).toBe(sha);
+  });
+});
+
+describe("init — FR-235 finish copy + onboarding stamp", () => {
+  it("fresh init leads with the human next-step and omits the technical block by default", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const outBuf: string[] = [];
+    const errBuf: string[] = [];
+    const outSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        outBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        errBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    let code = -1;
+    try {
+      code = await runInit({ fromSource: sourceRepo, cliVersion: "7.0.0" });
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
+    }
+    expect(code).toBe(0);
+    const stdout = outBuf.join("");
+    // The single human next-step leads.
+    expect(stdout).toContain(
+      "✓ IGRIS installed. Restart your harness, then run /boot.",
+    );
+    // The technical block is demoted behind --verbose (routed via debug → not
+    // on default stdout OR stderr).
+    expect(stdout).not.toContain("brain root:");
+    expect(errBuf.join("")).not.toContain("brain root:");
+  });
+
+  it("--verbose surfaces the technical install block (on stderr via debug)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const { setVerbosity } = await import("../lib/log.js");
+    const errBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: string | Uint8Array): boolean => {
+        errBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    setVerbosity("verbose");
+    let code = -1;
+    try {
+      code = await runInit({ fromSource: sourceRepo, cliVersion: "7.0.0" });
+    } finally {
+      setVerbosity("default");
+      errSpy.mockRestore();
+    }
+    expect(code).toBe(0);
+    const stderr = errBuf.join("");
+    expect(stderr).toContain("Igris init complete.");
+    expect(stderr).toContain("brain root:");
+    expect(stderr).toContain("channel:");
+  });
+
+  it("fresh install leaves onboarding absent (= first-run); --upgrade stamps onboarding.completed", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    const reg = await import("../lib/registry.js");
+
+    // Fresh install writes NOTHING under onboarding (absent = first-run).
+    expect(await runInit({ fromSource: sourceRepo, cliVersion: "7.0.0" })).toBe(
+      0,
+    );
+    reg.closeDb();
+    const cfgPath = join(brainRoot, "config.json");
+    const fresh = JSON.parse(readFileSync(cfgPath, "utf-8")) as {
+      onboarding?: unknown;
+    };
+    expect(fresh.onboarding).toBeUndefined();
+
+    // --upgrade stamps onboarding.completed=true (returning users never onboard).
+    expect(await runInit({ fromSource: sourceRepo, upgrade: true })).toBe(0);
+    reg.closeDb();
+    const upgraded = JSON.parse(readFileSync(cfgPath, "utf-8")) as {
+      onboarding?: { completed?: boolean };
+    };
+    expect(upgraded.onboarding?.completed).toBe(true);
   });
 });
