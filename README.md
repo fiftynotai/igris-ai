@@ -21,6 +21,7 @@ IGRIS is the workbench around the model. it makes the brief the contract, makes 
 | Spearhead | What changes |
 |-----------|--------------|
 | Bounded-role delivery pipeline | `/hunt` takes one brief through architect -> forger -> sentinel -> warden -> commit, each a separate role with its own tools. A failing test or a review REJECT loops back and re-verifies before anything lands. |
+| Self-healing test failures | A failed test routes to a diagnosis role that looks the error up against a memory of fingerprinted failures — known cause and fix, matched by cause not file or line — before it retries, and records every verified fix so the next occurrence resolves on sight. It recovers up to three times, then stops and hands you a diagnosed blocker instead of thrashing. |
 | Cross-harness work-state handoff | A new harness resumes the actual work state: brief, phase, atomic claim, instance identity, supersession lifecycle, working tree, and agent log. |
 | Enforcement-as-code | Brief-first write gates, role tool restrictions, test phases, and review phases are installed as executable workflow constraints the agent cannot talk its way around. |
 | One brain across every harness | SQLite + FTS5 at `~/.igris/memory/knowledge.db` stores briefs, sessions, plans, learnings, claims, and sync state for every registered project. |
@@ -84,6 +85,8 @@ $ /hunt TD-161
 
 result: ready for commit · 1 file changed · 0 retries · PASS
 ```
+
+and when a test fails, the pipeline doesn't just retry and hope. it routes to a diagnosis role that first looks the error up in a memory of past failures — fingerprinted by cause, not file or line, so a fix learned once matches the same break anywhere — applies the known remedy, and re-verifies. a fix confirmed by a green test is recorded, so the next time that failure appears it resolves on sight. three misses and it stops and hands you a diagnosed blocker, not a thrashing loop.
 
 ## the gates.
 
