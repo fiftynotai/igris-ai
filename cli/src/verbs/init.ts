@@ -608,11 +608,19 @@ export async function runInit(opts: InitOptions): Promise<number> {
       chmodSecretFile(secretsEnvPath());
     }
 
-    // FR-235: a returning user (--upgrade) has already been through the
-    // first-run experience — stamp onboarding.completed=true (after the
-    // preservation gate at step 6, so it does not disturb the byte-for-byte
-    // config.json check) so /boot's Welcome and /setup's teach path never
-    // fire for them. Fresh install leaves the key absent (= first-run).
+    // FR-235 / BR-077: a returning user (--upgrade) has already been through
+    // the first-run experience — stamp onboarding.completed=true so /boot's
+    // Welcome and /setup's teach path never fire for them. Fresh install
+    // leaves the key absent (= first-run).
+    //
+    // This runs AFTER verifyPreservation (step 6), so the runtime preservation
+    // gate — which protects USER-authored config content — is honored. It does,
+    // by design, add the `onboarding.completed` key to the final config.json:
+    // an ADDITIVE, sibling-preserving system write (setOnboardingComplete
+    // spreads the existing config and never touches a user-authored value). So
+    // `--upgrade` preserves user config DATA, but is NOT a raw byte-for-byte
+    // no-op on config.json — the additive onboarding lifecycle key is the one
+    // permitted delta. The init.bats upgrade test asserts exactly that.
     if (opts.upgrade === true) {
       setOnboardingComplete();
       debug("onboarding.completed stamped (upgrade — returning user)");
