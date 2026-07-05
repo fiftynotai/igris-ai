@@ -45,15 +45,13 @@ the payoff is an agent that actually knows your project — its conventions, its
 
 ## the flagship proof.
 
-On 2026-06-16, B2/G-14 passed across four vendors: Claude -> OpenCode -> Codex -> Antigravity. A hunt was interrupted mid-workflow, resumed zero-context in the next harness, picked up at the recorded phase, ran the missing tests, and preserved crash recovery plus force-reclaim behavior.
+your agent hits its weekly usage limit in the middle of a task. you switch to a different tool, from a different vendor — and it starts up already knowing exactly what to pick up next.
 
-That proof matters because IGRIS did not hand off a transcript. It handed off work-state: the brief, the phase, the claim, the instance, the supersession lifecycle, and the uncommitted code.
+the storyboard below is exactly that: Claude stops at its limit right after settling on the next task to run, then Codex — a separate agent — boots fresh and recommends that same task on its own. nothing was copied between them: no prompt, no pasted transcript.
 
-The visual below is a later FR-175 handoff storyboard that shows the same class of failure: Claude stopped at a weekly limit after settling the next brief, then Codex booted and recommended that exact brief.
+![Claude stops at its usage limit; Codex boots and recommends the exact next task](docs/images/launch/fr175-cross-harness-storyboard.gif)
 
-![FR-175 cross-harness handoff storyboard](docs/images/launch/fr175-cross-harness-storyboard.gif)
-
-The storyboard uses two stills, not the original operator screen recording, and it is not the B2/G-14 proof asset. Provenance is tracked in [`docs/images/launch/README.md`](docs/images/launch/README.md).
+that works because IGRIS never hands off a conversation. it hands off your work state — the task, where it sits in the workflow, and the code already in progress — so whichever harness you open next continues instead of restarting. the same handoff has been proven end-to-end across four tools: Claude, OpenCode, Codex, and Antigravity.
 
 ## the lifecycle.
 
