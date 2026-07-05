@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.2.0] - 2026-07-05
+
+### Added
+
+- **`/setup` — first-run onboarding + reconfiguration (FR-235)** — fresh installs get a guided first run: `igris init` ends with a human next-step, `/boot` shows a one-time Welcome, and the new `/setup` skill teaches the register→hunt→rest loop with a consented, repo-safe first `/ground`. Returning users get a re-runnable settings editor (shells the existing `igris configure` verb) covering identity, remote brain, and cognition toggles, plus three new `USER.md` preferences (addressing, notification style, auto-approve threshold). Adds a hidden `igris onboarding` verb and a `config.json` `onboarding.{completed,boot_welcomed}` first-run flag.
+
+### Changed
+
+- **`igris init` final report** now leads with the human next-step; technical details move behind `--verbose`.
+- README/OG-card polish (6 commits since 7.1.0): brand banner, OG social card, and harness-rail copy fixes.
+
+### Fixed
+
+- **`igris init --upgrade` tripped the config.json preservation guard on the onboarding stamp (BR-077)** — the FR-235 onboarding-completed stamp reserialized `config.json` on upgrade, breaking the byte-for-byte preservation test. The stamp is an additive, sibling-preserving system write — all user-authored config values are provably unchanged. Corrected the misleading `init.ts` comment and refined the `init.bats` upgrade test to assert `USER.md` byte-for-byte and `config.json` user-data unchanged (number-normalized), with the additive onboarding key as the only permitted delta.
+
+---
+
 ## [7.1.0] - 2026-07-04
 
 ### Added
