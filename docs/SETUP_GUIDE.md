@@ -50,15 +50,17 @@ igris install .
 
 Project state (sessions, briefs, plans, generated context docs) lives under `~/.igris/projects/<slug>/` — **not** in the project repo. FR-212d made `igris install` register-only: it writes **no files into the project repo** (FR-191 zero-config already removed the `CLAUDE.md` render; FR-212d removed the `.claude/` symlink layer + `.igris_version`).
 
-### Onboarding (`igris configure`)
+### Onboarding (`/setup` and `igris configure`)
 
-A fresh install is deliberately **zero-config**: no persona override, no VPS, and both LLM-extraction engines (perception + subconscious) **OFF**. `igris configure` is the opt-in onboarding verb — a re-runnable dial of an existing install. Run it any time after `igris init`:
+A fresh install is deliberately **zero-config**: no persona override, no VPS, and both LLM-extraction engines (perception + subconscious) **OFF**.
+
+The guided path is the **`/setup`** skill. On a fresh brain, `/boot` shows a one-time Welcome and points you into `/setup`, which teaches the register → hunt → rest loop with a consented, repo-safe first `/ground`. Run `/setup` again any time later and it becomes a **re-runnable settings editor** (and can re-play the tour). Under the hood `/setup`'s reconfigure path shells the `igris configure` verb described below — so you can also run that verb directly:
 
 ```bash
 igris configure
 ```
 
-It walks you through four things, **seeding every prompt from your current state** (press Enter to keep the current value):
+It walks you through five things, **seeding every prompt from your current state** (press Enter to keep the current value):
 
 1. **Identity** — your name + email (written to `~/.igris/USER.md`).
 2. **Persona** — pick a shipped SOUL preset:
@@ -68,6 +70,7 @@ It walks you through four things, **seeding every prompt from your current state
    The chosen preset is copied over `~/.igris/core/SOUL.md`. Every preset carries the required `layer/tier/scope/summary` frontmatter, so the OS-index generator stays valid.
 3. **Remote brain (VPS)** — **by address presence**: enter a URL to enable cross-machine sync, or leave it **blank to disable** it. A non-local `http://` URL is **refused** (your `api_key` would travel in cleartext) unless you set `IGRIS_ALLOW_INSECURE_SYNC=1`; use `https://` instead. The `api_key` is stored in `~/.igris/config.json`, which is always chmod-tightened to `600`. Before you enter the URL, the prompt discloses exactly what egresses to the VPS; local filesystem paths are relativized before any row leaves your machine. Full disclosure: [`docs/reference/sync-egress-manifest.md`](reference/sync-egress-manifest.md).
 4. **Cognition toggles** — turn perception and/or subconscious ON or OFF. These write the nested `cognition.perception.enabled` / `cognition.subconscious.enabled` keys in `config.json`.
+5. **Preferences** — addressing (how Igris refers to you), notification style, and the auto-approve effort threshold, all written to the `## Preferences` block of `~/.igris/USER.md`.
 
 **Flags:**
 
