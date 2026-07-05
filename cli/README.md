@@ -52,7 +52,7 @@ sections below are for contributors working on the CLI source.
 | Verb | What it does |
 |---|---|
 | `igris init` | Bootstrap `~/.igris/` (or upgrade an existing install) |
-| `igris configure` | Re-runnable onboarding dial for an existing install (persona, identity, VPS, perception toggles) |
+| `igris configure` | Re-runnable settings editor for an existing install (persona, identity, VPS, cognition toggles, `USER.md` prefs). The `/setup` skill wraps it as guided onboarding + reconfigure |
 | `igris refresh` | Re-fetch `~/.igris/core/` from the configured channel |
 | `igris install <path>` | Register a project with the brain; no repo-local surfaces are copied |
 | `igris update [--all\|--slug X\|--self] [--dry-run]` | Update materialized layer |
