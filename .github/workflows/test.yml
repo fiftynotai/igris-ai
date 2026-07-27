@@ -4,12 +4,24 @@ on:
   push:
     branches: [ main, develop ]
   pull_request:
-    branches: [ main ]
+    # TD-303: widened from `[ main ]` to `["**"]`. Previously a PR into
+    # `develop` (the default working branch) ran NO tests at all — the shell
+    # suite below only gated PRs targeting `main`. `secrets-scan.yml` already
+    # uses `["**"]`; this matches it. Side effect (intended): the 2-OS shell
+    # matrix now also runs on develop PRs.
+    branches: [ "**" ]
+  # Allows a manual rehearsal run of either job before making it a required
+  # status check in branch protection.
+  workflow_dispatch:
 
 jobs:
   test:
     name: Test on ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
+
+    # Least privilege: this job only reads the checkout.
+    permissions:
+      contents: read
 
     strategy:
       fail-fast: false
@@ -90,3 +102,95 @@ jobs:
           echo "Test suite completed"
           echo "OS: ${{ matrix.os }}"
           echo "Note: Tests run sequentially to avoid bats parallel execution issues"
+
+  # ---------------------------------------------------------------------------
+  # TD-303 — CLI bats integration suite.
+  #
+  # WHAT IT GUARDS: the 86 integration contracts under cli/tests/integration/,
+  # including the `init --upgrade` config.json user-data preservation guard
+  # (init.bats, "init --upgrade preserves USER.md byte-for-byte and config.json
+  # user-data"), the repo-root CLAUDE.md no-enumeration invariant
+  # (install-symlinks.bats — MAINTAINING.md row #98's mechanical guard), and the
+  # boot lifecycle detect-JSON shape (awaken-verbs.bats — row #80's guard).
+  #
+  # WHY IT EXISTS: this suite ran in NO workflow. It was enforced only by
+  # developer discipline, which is how BR-077 (an FR-235 regression that
+  # mutated config.json on `init --upgrade`) reached HEAD despite a test
+  # existing that catches it.
+  #
+  # UBUNTU-ONLY BY DESIGN: the 2-OS matrix stays on the shell suite above. This
+  # job exercises the CLI's Node build, which npm-publish.yml already gates on
+  # ubuntu only. No test in the suite is skipped — every one of the 86 runs.
+  # ---------------------------------------------------------------------------
+  cli-bats:
+    name: CLI bats integration
+    runs-on: ubuntu-latest
+
+    # Least privilege: this job only reads the checkout. Deliberate here —
+    # `npm ci` + `npm run build` execute third-party package install scripts
+    # (copy-templates.sh runs a nested `npm install` to vendor the brain MCP),
+    # and since the PR trigger now covers every base branch this runs on
+    # untrusted PR contributions.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        # Parity with npm-publish.yml (node 20). `cache: npm` with no explicit
+        # cache-dependency-path keys off the REPO-ROOT lockfile only — the
+        # nested brain-mcp-server/package-lock.json is not part of the key.
+        # That is sufficient here: the root lockfile covers the workspaces,
+        # which is what `npm ci` below installs.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install sqlite3 CLI
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y sqlite3
+
+      - name: Verify suite prerequisites
+        # The suite shells out to all three. Fail loud on a missing tool
+        # rather than letting a test mis-assert against a "command not found".
+        run: |
+          sqlite3 --version
+          shasum -a 256 /dev/null
+          python3 --version
+
+      - name: Install bats (pinned)
+        # PINNED deliberately. cli/tests/integration/awaken-verbs.bats calls
+        # `bats_require_minimum_version 1.5.0`, a function that only exists in
+        # bats-core >= 1.7.0 — on an older distro bats that call is a
+        # "command not found" and the whole file errors at LOAD, silently
+        # taking 9 tests (and MAINTAINING row #80's guard) with it. apt's bats
+        # is a moving target this repo does not control, so pin it here.
+        run: |
+          npm install -g bats@1.11.1
+          bats --version
+
+      - name: Install dependencies (workspaces)
+        # Root install: /package-lock.json is the only lockfile covering the
+        # `cli` workspace (there is no cli/package-lock.json), and workspaces
+        # install devDependencies — tarball-zip-slip.bats shells out to
+        # `npx vitest`, so cli devDeps are load-bearing.
+        run: npm ci
+
+      - name: Build CLI
+        # _helpers.bash resolves CLI_DIST by cd-ing into cli/dist; with no
+        # build EVERY .bats file fails at load rather than reporting a test
+        # failure. Full `npm run build` mirrors npm-publish.yml's proven
+        # sequence (it also vendors the brain MCP bundle).
+        working-directory: cli
+        run: npm run build
+
+      - name: Run CLI bats integration suite
+        # Invoke the npm script, never an inlined `bats tests/integration`, so
+        # the CI command and the local/sentinel command cannot drift.
+        # MAINTAINING.md maps the `test:bats` script name for this reason.
+        working-directory: cli
+        run: npm run test:bats

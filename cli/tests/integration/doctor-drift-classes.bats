@@ -18,9 +18,35 @@
 
 load _helpers.bash
 
+# TD-303: every test in this file gets a sandboxed HOME with a CLEAN doctor
+# baseline, mirroring doctor.bats:19-40 (TD-299).
+#
+# Before this, `stage_brain` sandboxed only IGRIS_BRAIN_DIR. Tests 2/3 called
+# stage_home() and test 8 passed a stub HOME per-invocation, but tests 1/4/5/6/7
+# ran under the developer's REAL $HOME — and four of them invoke
+# `doctor --fix`, which (doctor.ts) merges global canonical hooks into
+# ~/.claude/settings.json from the STUB hooks in _helpers.bash, re-points the
+# igris-brain MCP entry + writes no-prompt grant files across ~/.claude.json /
+# ~/.gemini / ~/.codex, and can migrate the real ~/.claude/skills + agents roots
+# from a coreSkillsSource() that does not exist under stage_brain.
+#
+# It also made the file order-dependent: `bats tests/integration` runs
+# alphabetically, so default-install-installs-hooks.bats mutated the same real
+# ~/.claude.json this file then read.
+#
+# stage_home() (not a bare empty HOME) is used deliberately: it seeds a clean
+# baseline so ONLY the drift a test deliberately injects fires. A bare sandbox
+# would add ambient hooks-missing/mcp-unregistered rows and make these tests
+# pass by permissiveness — the thing this change exists to remove.
+#
+# Tests 2/3 re-call stage_home() and tests 2/3/8 pass HOME= explicitly per
+# invocation; both remain correct (stage_home is idempotent and resolves the
+# same $BATS_TEST_TMPDIR/home path).
 setup() {
   stage_brain
   export IGRIS_KEEP_BAK=0
+  HOME="$(stage_home)"
+  export HOME
 }
 
 # ---- Phase 1 classes (existing detector exercise) ------------------

@@ -101,9 +101,11 @@ jobs:
         working-directory: cli
         run: npm test
 
-      # bats integration is run in the existing test.yml workflow; we
-      # avoid double-booking the macos runner here. The publish gate is
-      # vitest-only — bats failure surfaces in the test workflow upstream.
+      # The cli/tests/integration/*.bats suite runs in test.yml's `cli-bats`
+      # job (wired by TD-303 — before that it ran in no workflow at all, and
+      # this comment was aspirational). The publish gate here stays
+      # vitest-only to avoid double-booking a second build; a bats failure
+      # surfaces upstream on the push/PR that introduced it.
 
       - name: Inspect tarball contents (sanity)
         working-directory: cli

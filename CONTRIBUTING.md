@@ -128,8 +128,13 @@ Follow the coding guidelines:
 # Run shellcheck on modified scripts
 shellcheck scripts/*.sh
 
-# Run bash tests
+# Suite 1 — repo shell/script tests (test/*.test.bash)
 bats test/
+
+# Suite 2 — CLI integration tests (cli/tests/integration/*.bats)
+# Requires a built cli/dist/ — see "Testing" below for why.
+npm ci                       # repo root (workspaces)
+cd cli && npm run build && npm run test:bats && cd ..
 
 # TypeScript (if modifying MCP server)
 cd brain-mcp-server && npm run build
@@ -139,6 +144,10 @@ node cli/dist/index.js init --from-source .
 mkdir -p /tmp/test-project
 node cli/dist/index.js install /tmp/test-project
 ```
+
+Both suites are CI-enforced by `.github/workflows/test.yml` — on pushes to
+`main`/`develop` and on every pull request regardless of base branch. Run both
+before opening a PR.
 
 ### 3.1 Brief-gate escape hatch (emergency only)
 
@@ -267,7 +276,14 @@ How was this tested?
 
 ### Automated Testing
 
-Igris AI has a comprehensive test suite using the bats framework. Test files use the `.test.bash` extension.
+Igris AI has **two** bats suites. They are separate on purpose — different
+extensions, different roots, different prerequisites — and **both are gated by
+CI** (`.github/workflows/test.yml`).
+
+| Suite | Root | Extension | Run with | CI job |
+|---|---|---|---|---|
+| Repo shell/script tests | `test/` | `.test.bash` | `bats test/` | `test` (ubuntu + macOS matrix) |
+| CLI integration tests | `cli/tests/integration/` | `.bats` | `cd cli && npm run test:bats` | `cli-bats` (ubuntu) |
 
 **Test Framework:** [bats-core](https://github.com/bats-core/bats-core)
 
@@ -280,6 +296,14 @@ brew install bats-core
 # Ubuntu/Debian
 sudo apt install bats
 ```
+
+> The CLI integration suite needs **bats ≥ 1.7.0** —
+> `cli/tests/integration/awaken-verbs.bats` calls
+> `bats_require_minimum_version`, which older builds do not define (the file
+> then errors at *load*, not as a test failure). CI pins `bats@1.11.1` via
+> `npm install -g`; do the same locally if your distro ships an older build.
+
+#### Suite 1 — repo shell/script tests
 
 **Run all tests:**
 
@@ -298,6 +322,61 @@ bats test/verify_mirror.test.bash
 ```bash
 bats test/ --tap
 ```
+
+#### Suite 2 — CLI integration tests
+
+These drive the compiled CLI end-to-end (`igris init`, `install`, `doctor`,
+`refresh`, `sync`, the awaken verbs, …). They are the sole enforcement point
+for several install/lifecycle contracts — notably the `init --upgrade`
+config.json user-data preservation guard in `init.bats` (the BR-077 regression
+class).
+
+**Prerequisites — the #1 reason a first run fails:**
+
+```bash
+npm ci                  # at the REPO ROOT: /package-lock.json is the only
+                        # lockfile covering the `cli` workspace
+cd cli && npm run build # tests/integration/_helpers.bash resolves CLI_DIST
+                        # from cli/dist — without a build EVERY file fails at load
+```
+
+Also needed on PATH: `node` ≥ 20, `python3`, `sqlite3`, `shasum`, `tar`.
+
+**Run the suite:**
+
+```bash
+cd cli && npm run test:bats
+```
+
+**Run a single file:**
+
+```bash
+cd cli && npx bats tests/integration/init.bats
+```
+
+Nothing in this suite is skipped, and nothing should be: a `skip` here
+silently disarms a mapped contract (see `MAINTAINING.md` rows for
+`install-symlinks.bats` and `awaken-verbs.bats`). If a test is
+environment-coupled, isolate it with the `stage_home()` helper in
+`tests/integration/_helpers.bash` rather than skipping it.
+
+> **Heads-up for local runs.** Three files — `install.bats`,
+> `install-symlinks.bats`, `default-install-installs-hooks.bats` — do not
+> override `$HOME`. They run `igris install`, whose register-only path writes
+> your real `~/.claude.json` and leaves a `~/.claude.json.igris.bak` beside it
+> (measured against a clean throwaway `$HOME`; no other global surface is
+> touched). Harmless on an ephemeral CI runner; back the file up if that
+> matters to you locally. Sandboxing these three is tracked as a follow-up —
+> the fix is to adopt `stage_home()` in their `setup()`, as
+> `doctor-drift-classes.bats` now does.
+>
+> Note the contrast: `doctor --fix` has a much wider reach than `install`. It
+> writes `~/.claude.json`, `~/.claude/settings.json`, `~/.codex/config.toml`,
+> `~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json`,
+> `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json` and can migrate the
+> `~/.claude/skills` + `~/.claude/agents` roots. That is why every test in
+> `doctor.bats` and `doctor-drift-classes.bats` sandboxes `$HOME` — never add a
+> `doctor --fix` test that does not.
 
 ### Writing Tests
 
@@ -359,9 +438,10 @@ node cli/dist/index.js install /tmp/test-project
 ### CI/CD
 
 Tests run automatically on:
-- Every push to `main` branch
-- Every pull request
-- Both Ubuntu and macOS environments
+- Every push to `main` and `develop`
+- Every pull request (any target branch)
+- `test` job: repo shell suite, Ubuntu **and** macOS
+- `cli-bats` job: CLI integration suite, Ubuntu only
 
 See `.github/workflows/test.yml` for CI configuration.
 
