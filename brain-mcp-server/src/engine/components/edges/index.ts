@@ -2,12 +2,13 @@
  * Brain Engine v7.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 11 MCP tools:
+ * Provides 12 MCP tools:
  *   CRUD (FR-105):                igris_edge_create / list / remove
  *   Graph traversal (FR-113):     igris_graph_neighbors / path / subgraph
  *   Node CRUD + search (TD-171 M2): igris_graph_node_create / node_get /
  *                                    search / dashboard
  *   Visualization (FR-111):       igris_brief_graph_render
+ *   Whole-brain graph (FR-237):   igris_graph_brain
  * Subscribes to brief.created so structural Parent edges are captured
  * at insert time without coupling the briefs component to edge logic.
  * FR-210: also subscribes to the enriched memory.stored so learning→brief
@@ -52,6 +53,7 @@ import {
   invalidateSubgraphCache,
 } from './traversal.js';
 import { handleBriefGraphRender } from './visualization-tool.js';
+import { handleGraphBrain } from './whole-graph-tool.js';
 import {
   handleGraphNodeCreate,
   handleGraphNodeGet,
@@ -246,7 +248,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.3.0',
+    version: '1.4.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -655,6 +657,42 @@ export function createEdgesComponent(): BrainComponent {
           },
           handler: (args) => handleBriefGraphRender(args),
         },
+
+        // -----------------------------------------------------------------
+        // FR-237: igris_graph_brain
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_brain',
+          description:
+            'Return the WHOLE brain as one typed graph — every project, every knowledge layer (briefs, learnings, goals, errors, concept/decision nodes) plus the typed edges between them. Nodes are keyed on the composite triple (type, project, id) so two same-id briefs in different projects stay separate nodes. Pass `project` to drill into that subgraph PLUS its depth-1 boundary nodes (same code path, no second query; boundary nodes are flagged). NO body content is returned (labels + display attrs only) — fetch detail per node via igris_graph_node_get / igris_brief_get. `entity_edges` has no project column, so ambiguous edges are projected intra-project with declared multiplicity: every response carries an `edge_resolution` report and every replica carries `source_edge_id` + `resolution` (filter `resolution === "unique"` for a strict view). A degraded brain returns an empty graph, never an error.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description:
+                  'Optional project slug. Returns that project\'s subgraph plus depth-1 boundary nodes, in the identical response shape.',
+              },
+              node_types: {
+                type: 'array',
+                // BY REFERENCE (MAINTAINING row #104 lockstep) — never a
+                // hand-copied literal.
+                items: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
+                description:
+                  'Optional node-type filter, intersected with the active set (brief, learning, goal, error, concept, decision, session).',
+              },
+              max_edge_replicas: {
+                type: 'integer',
+                description:
+                  'Maximum intra-project instances one ambiguous edge may spawn before it is dropped and reported (default 8, 1-32). 1 gives exclusion semantics.',
+                minimum: 1,
+                maximum: 32,
+              },
+            },
+          },
+          handler: (args) => handleGraphBrain(args),
+        },
       ];
     },
 
@@ -700,7 +738,7 @@ export function createEdgesComponent(): BrainComponent {
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.3.0 — TD-171 M2 graph nodes)');
+      ctx.log.info('Edges component initialized (v1.4.0 — FR-237 whole-brain graph)');
     },
 
     destroy(): void {

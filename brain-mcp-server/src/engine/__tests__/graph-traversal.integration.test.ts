@@ -90,7 +90,8 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     vi.restoreAllMocks();
   });
 
-  it('exposes 11 MCP tools (3 edge CRUD + 3 traversal + 4 node tools + 1 visualization)', () => {
+  // FR-237 added igris_graph_brain (whole-brain graph data layer), 11 -> 12.
+  it('exposes 12 MCP tools (3 edge CRUD + 3 traversal + 4 node tools + 1 visualization + 1 whole-brain)', () => {
     const comp = createEdgesComponent();
     const tools = comp.tools();
     const names = tools.map((t) => t.name).sort();
@@ -99,6 +100,7 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
       'igris_edge_create',
       'igris_edge_list',
       'igris_edge_remove',
+      'igris_graph_brain',
       'igris_graph_dashboard',
       'igris_graph_neighbors',
       'igris_graph_node_create',
@@ -109,9 +111,9 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     ]);
   });
 
-  it('reports version 1.3.0 (TD-171 M2 bump — graph node tools)', () => {
+  it('reports version 1.4.0 (FR-237 bump — whole-brain graph data layer)', () => {
     const comp = createEdgesComponent();
-    expect(comp.version).toBe('1.3.0');
+    expect(comp.version).toBe('1.4.0');
   });
 
   it('declares edge.removed emit and self-listens on edge.created/edge.removed', () => {

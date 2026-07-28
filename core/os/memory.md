@@ -147,7 +147,7 @@ igris_memory_store({
 
 ## 2. Knowledge Graph (`igris_graph_*`)
 
-**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`.
+**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`, `igris_graph_brain`.
 
 **What's there:** typed nodes and edges (relates-to, supersedes, blocks, derived-from). The graph captures relationships a flat learnings table cannot: chains of supersession, dependency trees between briefs, lineage of decisions. Most nodes are **references** to rows in other stores — a brief, learning, goal, error, or session, addressed by `(type, id)`. The only nodes stored IN the graph table are free-standing **`concept`** nodes (an abstract idea with no home elsewhere).
 
@@ -185,6 +185,10 @@ Use `igris_graph_search` to find `concept` nodes by partial name when you only k
 
 Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/boot` — counts only, fast on large graphs. The full call surfaces the top nodes by total degree — reach for it before refactoring to spot god-nodes whose extraction would touch many edges.
 
+### When to View the Whole Brain
+
+Use `igris_graph_brain` when the question spans **more than one project** — "what does the whole brain look like?", "which projects are actually connected?", "where does this knowledge cluster?" — or when you need one typed graph over briefs, learnings, goals, errors and concept nodes in a single call. Every other graph tool starts from a seed node or a single project; this one starts from everything. Pass `project` to drill into that subgraph plus its one-hop boundary nodes — same call, same response shape, no second query. Nodes are keyed on the triple (type, project, id), so two same-id briefs in different projects stay separate nodes (`BR-001` exists in 25 projects and they are never fused). Because `entity_edges` carries no project column, ambiguous edges are projected intra-project with declared multiplicity — read the `edge_resolution` block for the counts, and keep only edges whose `resolution` reads "unique" when you need a strict view. No body text is returned; reach for `igris_graph_node_get` or `igris_brief_get` for one node's detail. A degraded brain returns an empty graph, never an error.
+
 ### Example invocation
 
 ```jsonc
@@ -203,6 +207,10 @@ igris_edge_create({
 
 // Topology snapshot before a refactor.
 igris_graph_dashboard({ project: "igris-ai", summary_only: true })
+
+// The whole brain in one call, then drill into one project.
+igris_graph_brain({})
+igris_graph_brain({ project: "igris-ai" })
 
 // Find a node by partial label.
 igris_graph_search({ query: "memory capability rename", limit: 5 })
