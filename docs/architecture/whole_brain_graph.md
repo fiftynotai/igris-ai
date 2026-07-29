@@ -45,7 +45,8 @@ encodeSeg(s) = s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|")
 | `concept\|igris-ai\|concept:vector-search` | a `graph_nodes` row |
 
 **Three segments, not two.** The pre-existing two-part form `${type}|${id}`
-(`traversal.ts` visited set, `visualization.ts:98`) cannot express the project
+(`visualization.ts`'s `GraphNode.id`; and `traversal.ts`'s visited set until
+BR-078 retrofitted it) cannot express the project
 axis. `brief_status` is UNIQUE on `(project, brief_id)`, so a brief id is
 project-scoped: **`BR-001` exists in 25 projects** on the live brain and **1 273
 of 1 698 brief rows (75 %) are collision-involved**. A two-part key fuses all 25
@@ -87,7 +88,7 @@ attributed* (we never invent an owner).
 `id` is the row's stable external id: `brief_id`, `String(learnings.id)`,
 `goal_id`, `String(errors.id)`, `node_external_id`, `String(sessions.id)`. The
 `String(id)` form for integer-PK tables is the settled `numericId` convention
-(`traversal.ts:237`, `MAINTAINING.md` row #104) — not a new one.
+(`traversal.ts:415`, `MAINTAINING.md` row #104) — not a new one.
 
 **`session` is adjacency-only:** it materialises as a node only when it is an
 endpoint of a surviving edge. Sessions are unbounded and carry no
@@ -188,6 +189,38 @@ no-bridge guarantee anyway. The claim was false, and the disproof was sitting
 unasserted in the test suite (a proj-c-only brief blocking a brief that lives in
 proj-a and proj-b would emit two fabricated bridges). Both are now asserted; see
 the `AMBIGUOUS_UNRESOLVED` and `GUARANTEE` cases in `whole-graph.test.ts`.
+
+### This rule now has a SECOND implementer (BR-078)
+
+`resolveEdgeProjects` is no longer the only code that decides which projects an
+`entity_edges` row connects. BR-078 re-keyed `traversal.ts` on the same triple,
+and `brain-mcp-server/src/engine/components/edges/node-project.ts` implements
+the same rule in the strictly simpler form traversal needs: one endpoint is
+always already fixed, so it evaluates the branch table above and then asks the
+one extra question this builder never has to — *is the instance the rule
+resolved onto the one we are standing on?* Its three outcomes are walk, skip
+because the edge belongs to another instance of the same id, and skip because
+the data cannot say (the only one counted as a loss, surfaced per-response as
+`unresolved_hops`).
+
+**It does not import `resolveEdgeProjects`, deliberately.** That function's
+signature is edge-row-shaped, it requires a `ProjectIndex` built by loading every
+node row in the brain (absurd for a depth-1 query), and it can return replica
+instances traversal must never produce. The **anti-fork mechanism is a test, not
+an import** — an import could not have caught a divergence anyway, since the
+shapes differ:
+
+- `graph-traversal.integration.test.ts` (BR-078 T7) asserts
+  `igris_graph_neighbors` and `igris_graph_brain` agree on a fabricated
+  collision fixture, and that neither invents a cross-project edge.
+- `node-project.test.ts` asserts agreement at the RULE level, calling
+  `resolveEdgeProjects` directly and checking the hop rule reaches the same
+  verdict.
+
+**Obligation:** any change to the branch table above, to the no-bridge
+guarantee, or to `ambiguous_unresolved` / `dangling` semantics MUST re-check
+both tests and `node-project.ts` in the same commit. See the BR-078 row in
+`MAINTAINING.md`.
 
 ### Why replication rather than exclusion
 
@@ -451,7 +484,7 @@ dashboard must render an empty brain, not an error envelope.
 | Item | Why it is not here |
 |---|---|
 | **`entity_edges` project-scoping migration** | The justification is the `edge_resolution` numbers above: 245 replicated sources + 36 over-replicated rows. A schema change to carry project on the edge row would collapse all of it. Worth its own brief now that the count is measured. |
-| **`traversal.ts` shared-key retrofit** | `igris_graph_neighbors` / `_path` / `_subgraph` have the identical exposure: a two-part visited-set key, and a `LABEL_SCHEMA.brief` comment (`traversal.ts:232-236`) that admits it picks the first project's title. Fixing it changes the **result set** of three shipped tools (a colliding brief currently merges its neighbourhoods; keyed properly it would split) — a behaviour change with its own test surface and review. `graph-keys.ts` is written dependency-free **precisely so** that follow-up can `import { encodeNodeKey }` without moving anything. |
+| **`traversal.ts` shared-key retrofit** | **DONE — BR-078.** `igris_graph_neighbors` / `_path` / `_subgraph` had the identical exposure (a two-part visited-set key, plus a `LABEL_SCHEMA.brief` comment that admitted it picked the first project's title). BR-078 re-keyed every traversal site on the triple, importing `encodeNodeKey` from `graph-keys.ts` unmoved — exactly the reuse this module's dependency-free design was written for. It did change the **result set** of three shipped tools; see `docs/architecture/graph_traversal.md`. |
 | **Retiring the single-project HTML renderer** | TD-308 owns `igris_brief_graph_render` / `/visualize`. |
 | **New edge inference** | FR-211 (Archived). This layer reads `entity_edges`; it writes nothing and infers nothing. |
 | **Rendering, layout, styling** | FR-238 (dashboard server) and FR-239 (graph view). |
@@ -461,8 +494,8 @@ dashboard must render an empty brain, not an error envelope.
 
 ## Related
 
-- `docs/architecture/graph_traversal.md` — FR-113 BFS traversal (the sibling that
-  still carries the two-part key).
+- `docs/architecture/graph_traversal.md` — FR-113 BFS traversal. **The
+  resolution rule below now has a SECOND implementer.**
 - `docs/architecture/typed_edges.md` — FR-105 `entity_edges` schema + vocabulary.
 - `MAINTAINING.md` — the whole-brain graph payload contract row and row #104
   (`VALID_EDGE_TYPES` / `VALID_ENTITY_TYPES` lockstep).

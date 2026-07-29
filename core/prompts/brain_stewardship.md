@@ -223,6 +223,20 @@ backing row elsewhere. Register those explicitly via
   module/concept node (depth: 2, direction: 'in') to surface dependents
   and prior decisions. Use `igris_graph_path` for shortest-path between two
   known nodes and `igris_graph_subgraph` for the connected component.
+- **Seeding on a brief? Qualify the project.** A brief id is unique only
+  WITHIN a project — `BR-001` names a different brief in each of 25 projects.
+  Pass `node_project` / `from_project` + `to_project` / `seed_node_project`
+  alongside the id. They qualify the SEED only and do NOT filter the result,
+  so the traversal still legitimately reaches other projects through
+  cross-project edges. Omit them when the id is unique brain-wide — the tool
+  resolves it for you. An **ambiguous seed with no project is an ERROR** that
+  names the id, the count and the candidate slugs: the tool refusing to fuse
+  unrelated projects, not a failure to answer. Pass one of the listed slugs
+  and re-run. Every response also carries `unresolved_hops` — non-zero means
+  `entity_edges` (which has no project column) could not say which project
+  some edges belonged to, so they were dropped rather than guessed; see
+  `igris_graph_brain`'s `edge_resolution` for the same loss measured
+  brain-wide.
 - When the user asks "why did we change X to Y?" — `igris_graph_search` the
   concept node and walk `supersedes` edges.
 - When stitching together a broader context for an architect prompt — the

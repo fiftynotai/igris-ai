@@ -38,15 +38,29 @@ function createTestDb(): Database.Database {
   for (const migration of edgeMigrations) {
     db.exec(migration.sql);
   }
-  // Minimal label tables so resolveLabels has somewhere to look.
+  // Label tables so resolveLabels has somewhere to look. BR-078 T7 compares
+  // against igris_graph_brain, whose loaders select a wider column set — a
+  // narrower shape here makes buildBrainGraph degrade to an empty graph and the
+  // consistency assertion would pass vacuously, so these carry the real columns.
   db.exec(`
     CREATE TABLE IF NOT EXISTS brief_status (
       project TEXT NOT NULL, brief_id TEXT NOT NULL, title TEXT NOT NULL,
+      brief_type TEXT, status TEXT, priority TEXT, effort TEXT, phase TEXT,
+      updated_at TEXT,
       PRIMARY KEY (project, brief_id)
     );
-    CREATE TABLE IF NOT EXISTS learnings (id INTEGER PRIMARY KEY, title TEXT, content TEXT);
-    CREATE TABLE IF NOT EXISTS errors (id INTEGER PRIMARY KEY, message TEXT);
-    CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY, summary TEXT);
+    CREATE TABLE IF NOT EXISTS learnings (
+      id INTEGER PRIMARY KEY, project TEXT, title TEXT, content TEXT,
+      category TEXT, scope TEXT, confidence REAL, source_brief TEXT, updated_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS errors (
+      id INTEGER PRIMARY KEY, project TEXT, message TEXT,
+      occurrence_count INTEGER, scope TEXT, resolved_at TEXT
+    );
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY, project TEXT, summary TEXT,
+      brief_id TEXT, phase TEXT, started_at TEXT, ended_at TEXT
+    );
   `);
   return db;
 }
@@ -111,9 +125,231 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     ]);
   });
 
-  it('reports version 1.4.0 (FR-237 bump — whole-brain graph data layer)', () => {
+  it('reports version 1.5.0 (BR-078 bump — project-qualified traversal)', () => {
     const comp = createEdgesComponent();
-    expect(comp.version).toBe('1.4.0');
+    expect(comp.version).toBe('1.5.0');
+  });
+
+  // -------------------------------------------------------------------------
+  // BR-078 T7 — cross-tool consistency (the anti-fork mechanism)
+  // -------------------------------------------------------------------------
+  //
+  // `node-project.ts` re-implements FR-237's resolution rule in its degenerate
+  // one-endpoint-fixed form rather than importing `resolveEdgeProjects` (whose
+  // signature is edge-row-shaped, whose ProjectIndex costs a whole-brain load,
+  // and which can return replicas traversal must never produce). This test —
+  // not an import — is what stops the two implementations drifting into two
+  // different truths about the same graph.
+  it('BR-078 T7: igris_graph_neighbors agrees with igris_graph_brain on a collision fixture', () => {
+    const comp = createEdgesComponent();
+    comp.init(makeCtx(bus));
+
+    // proj-a and proj-b BOTH have a BR-001. One edge is really A's, one is
+    // really B's, and entity_edges cannot tell them apart.
+    const insBrief = db.prepare(
+      'INSERT INTO brief_status (project, brief_id, title) VALUES (?,?,?)',
+    );
+    insBrief.run('proj-a', 'BR-001', "A's BR-001");
+    insBrief.run('proj-b', 'BR-001', "B's BR-001");
+    insBrief.run('proj-a', 'BR-002', "A's BR-002");
+    insBrief.run('proj-b', 'BR-009', "B's BR-009");
+
+    const create = comp.tools().find((t) => t.name === 'igris_edge_create')!;
+    for (const to of ['BR-002', 'BR-009']) {
+      create.handler({
+        from_type: 'brief',
+        from_id: 'BR-001',
+        to_type: 'brief',
+        to_id: to,
+        edge_type: 'depends_on',
+      });
+    }
+
+    const neighbors = comp.tools().find((t) => t.name === 'igris_graph_neighbors')!;
+    const nb = parseResult<{
+      neighbors: Array<{ type: string; id: string; project: string | null }>;
+    }>(
+      neighbors.handler({
+        node_type: 'brief',
+        node_id: 'BR-001',
+        node_project: 'proj-a',
+        depth: 1,
+        direction: 'both',
+      }),
+    );
+
+    const brainTool = comp.tools().find((t) => t.name === 'igris_graph_brain')!;
+    const brain = parseResult<{
+      nodes: Array<{ key: string; type: string; id: string; project: string | null }>;
+      edges: Array<{ from: string; to: string }>;
+      degraded: { reason: string | null };
+    }>(brainTool.handler({ project: 'proj-a' }));
+
+    // Guard against a vacuous pass: an empty/degraded whole-brain graph would
+    // make every "is a subset of" assertion below trivially true.
+    expect(brain.degraded.reason).toBeNull();
+    expect(brain.nodes.length).toBeGreaterThan(0);
+    expect(nb.neighbors.length).toBeGreaterThan(0);
+
+    // 1. Every neighbour the traversal returned exists as a node in the SAME
+    //    (type, project, id) identity in the whole-brain graph.
+    for (const n of nb.neighbors) {
+      const match = brain.nodes.find(
+        (bn) => bn.type === n.type && bn.id === n.id && bn.project === n.project,
+      );
+      expect(match, `whole-brain graph is missing ${n.type}/${n.project}/${n.id}`).toBeTruthy();
+    }
+
+    // 2. Every neighbour is in the depth-1 neighbourhood of A's BR-001 there.
+    //    SCOPE: this holds for THIS fixture, whose edges are all branch 2/3
+    //    (max |P| = 2 on one endpoint only, so the both-ambiguous branch 4 is
+    //    unreachable here). It is NOT a universal — an edge with
+    //    |A ∩ C| > max_edge_replicas is walked by traversal and dropped by
+    //    igris_graph_brain, deliberately. Branch 4 is covered on both sides of
+    //    the cap by the two tests below; do not generalise this assertion.
+    const seedKey = brain.nodes.find(
+      (bn) => bn.type === 'brief' && bn.id === 'BR-001' && bn.project === 'proj-a',
+    )!.key;
+    const adjacentKeys = new Set<string>();
+    for (const e of brain.edges) {
+      if (e.from === seedKey) adjacentKeys.add(e.to);
+      if (e.to === seedKey) adjacentKeys.add(e.from);
+    }
+    for (const n of nb.neighbors) {
+      const key = brain.nodes.find(
+        (bn) => bn.type === n.type && bn.id === n.id && bn.project === n.project,
+      )!.key;
+      expect(adjacentKeys.has(key), `${n.id} is not adjacent to the seed in igris_graph_brain`).toBe(
+        true,
+      );
+    }
+
+    // 3. Neither tool invents a cross-project edge: B's BR-009 is absent from
+    //    the traversal, and no proj-a edge in the whole-brain graph touches it.
+    expect(nb.neighbors.map((n) => n.id)).not.toContain('BR-009');
+    const bKey = brain.nodes.find((bn) => bn.id === 'BR-009' && bn.project === 'proj-b')?.key;
+    if (bKey) {
+      expect(brain.edges.some((e) => e.from === seedKey && e.to === bKey)).toBe(false);
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // BR-078 — branch 4 cross-tool coverage (warden r1 M-1)
+  // -------------------------------------------------------------------------
+  //
+  // T7 above reaches only branches 2/3: its fixture maxes out at |P| = 2 on ONE
+  // endpoint, so `resolveEdgeProjects` never takes the both-ambiguous path.
+  // These two tests are the branch-4 coverage that was missing, and they
+  // bracket the replica cap from both sides.
+
+  /** Put `briefId` in every one of `projects`, so |P(briefId)| = projects.length. */
+  function seedInProjects(briefId: string, projects: string[]): void {
+    const ins = db.prepare(
+      'INSERT INTO brief_status (project, brief_id, title) VALUES (?,?,?)',
+    );
+    for (const p of projects) ins.run(p, briefId, `${briefId} in ${p}`);
+  }
+
+  it('BR-078 branch 4 UNDER the cap: neighbors and igris_graph_brain agree', () => {
+    const comp = createEdgesComponent();
+    comp.init(makeCtx(bus));
+
+    // |A ∩ C| = 2 <= max_edge_replicas (8) -> whole-graph REPLICATES, one
+    // strictly intra-project instance per shared project.
+    seedInProjects('BR-100', ['p1', 'p2']);
+    seedInProjects('BR-200', ['p1', 'p2']);
+    comp.tools().find((t) => t.name === 'igris_edge_create')!.handler({
+      from_type: 'brief', from_id: 'BR-100', to_type: 'brief', to_id: 'BR-200',
+      edge_type: 'depends_on',
+    });
+
+    const nb = parseResult<{ neighbors: Array<{ id: string; project: string | null }> }>(
+      comp.tools().find((t) => t.name === 'igris_graph_neighbors')!.handler({
+        node_type: 'brief', node_id: 'BR-100', node_project: 'p1', depth: 1, direction: 'both',
+      }),
+    );
+    const brain = parseResult<{
+      nodes: Array<{ key: string; type: string; id: string; project: string | null }>;
+      edges: Array<{ from: string; to: string; resolution: string }>;
+      edge_resolution: { replicated_sources: number; over_replicated: number };
+      degraded: { reason: string | null };
+    }>(comp.tools().find((t) => t.name === 'igris_graph_brain')!.handler({}));
+
+    expect(brain.degraded.reason).toBeNull();
+    // The fixture really does exercise the replicating branch.
+    expect(brain.edge_resolution.replicated_sources).toBe(1);
+    expect(brain.edge_resolution.over_replicated).toBe(0);
+
+    // Traversal walks it, staying in p1.
+    expect(nb.neighbors).toEqual([{ id: 'BR-200', project: 'p1' }].map((x) => expect.objectContaining(x)));
+
+    // ...and the whole-brain graph HAS that exact edge. Agreement.
+    const keyOf = (id: string, project: string): string =>
+      brain.nodes.find((n) => n.type === 'brief' && n.id === id && n.project === project)!.key;
+    expect(
+      brain.edges.some((e) => e.from === keyOf('BR-100', 'p1') && e.to === keyOf('BR-200', 'p1')),
+    ).toBe(true);
+  });
+
+  it('BR-078 branch 4 OVER the cap: the divergence is DELIBERATE and pinned here', () => {
+    const comp = createEdgesComponent();
+    comp.init(makeCtx(bus));
+
+    // |A ∩ C| = 10 > max_edge_replicas (8) -> whole-graph drops the edge for
+    // EVERY project (`over_replicated`), while traversal still walks it.
+    const projects = Array.from({ length: 10 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`);
+    seedInProjects('BR-300', projects);
+    seedInProjects('BR-400', projects);
+    comp.tools().find((t) => t.name === 'igris_edge_create')!.handler({
+      from_type: 'brief', from_id: 'BR-300', to_type: 'brief', to_id: 'BR-400',
+      edge_type: 'depends_on',
+    });
+
+    const nb = parseResult<{ neighbors: Array<{ id: string; project: string | null }> }>(
+      comp.tools().find((t) => t.name === 'igris_graph_neighbors')!.handler({
+        node_type: 'brief', node_id: 'BR-300', node_project: 'p01', depth: 1, direction: 'both',
+      }),
+    );
+    const brainTool = comp.tools().find((t) => t.name === 'igris_graph_brain')!;
+    const brain = parseResult<{
+      nodes: Array<{ key: string; type: string; id: string; project: string | null }>;
+      edges: Array<{ from: string; to: string }>;
+      edge_resolution: { over_replicated: number; over_replicated_edge_ids: number[] };
+    }>(brainTool.handler({}));
+
+    // whole-graph really did drop it, for everyone.
+    expect(brain.edge_resolution.over_replicated).toBe(1);
+    expect(brain.edges).toHaveLength(0);
+
+    // Traversal DOES return the neighbour. This assertion is the decision made
+    // executable: the replica cap is a replication-noise control for the
+    // whole-brain payload, and traversal emits at most one instance per hop, so
+    // it is deliberately not modelled here. Applying it would mean "the more
+    // projects share an id, the fewer neighbours you get".
+    expect(nb.neighbors.map((n) => `${n.project}/${n.id}`)).toEqual(['p01/BR-400']);
+
+    // The divergence, stated outright so neither side can be silently
+    // "corrected" into the other later.
+    const seedKey = brain.nodes.find(
+      (n) => n.type === 'brief' && n.id === 'BR-300' && n.project === 'p01',
+    )!.key;
+    expect(brain.edges.some((e) => e.from === seedKey)).toBe(false);
+
+    // ...and it is PURELY the cap: raise it above |A ∩ C| and the two agree
+    // again. This is what proves the deviation is one parameter, not a
+    // different rule.
+    const raised = parseResult<{
+      nodes: Array<{ key: string; type: string; id: string; project: string | null }>;
+      edges: Array<{ from: string; to: string }>;
+      edge_resolution: { over_replicated: number; replicated_sources: number };
+    }>(brainTool.handler({ max_edge_replicas: 16 }));
+    expect(raised.edge_resolution.over_replicated).toBe(0);
+    expect(raised.edge_resolution.replicated_sources).toBe(1);
+    const rKey = (id: string, project: string): string =>
+      raised.nodes.find((n) => n.type === 'brief' && n.id === id && n.project === project)!.key;
+    expect(
+      raised.edges.some((e) => e.from === rKey('BR-300', 'p01') && e.to === rKey('BR-400', 'p01')),
+    ).toBe(true);
   });
 
   it('declares edge.removed emit and self-listens on edge.created/edge.removed', () => {
@@ -396,6 +632,34 @@ describe('FR-113 graph traversal — real DB smoke', () => {
   const REAL_DB_PATH = join(homedir(), '.igris', 'memory', 'knowledge.db');
   const haveDb = existsSync(REAL_DB_PATH);
 
+  /**
+   * BR-078: pick a seed AND the project qualifier it needs.
+   *
+   * These smoke tests seed on `entity_edges LIMIT 1`, which on the live brain
+   * is a brief whose id exists in many projects. Pre-BR-078 that call silently
+   * fused them; it now returns the ambiguity error, so an unqualified call is
+   * no longer a valid smoke. Resolving the project here is what a real caller
+   * does, and it keeps the benchmark measuring the traversal rather than an
+   * early error return.
+   */
+  function pickSeed(
+    realDb: Database.Database,
+  ): { type: string; id: string; project?: string } | undefined {
+    const seed = realDb
+      .prepare('SELECT from_type, from_id FROM entity_edges LIMIT 1')
+      .get() as { from_type: string; from_id: string } | undefined;
+    if (!seed) return undefined;
+
+    let project: string | undefined;
+    if (seed.from_type === 'brief') {
+      const rows = realDb
+        .prepare('SELECT DISTINCT project FROM brief_status WHERE brief_id = ? ORDER BY project')
+        .all(seed.from_id) as Array<{ project: string }>;
+      if (rows.length > 1) project = rows[0].project;
+    }
+    return { type: seed.from_type, id: seed.from_id, ...(project ? { project } : {}) };
+  }
+
   it.skipIf(!haveDb)('runs neighbors against real igris-ai DB without throwing', async () => {
     const realDb = new Database(REAL_DB_PATH, { readonly: true });
     try {
@@ -404,10 +668,8 @@ describe('FR-113 graph traversal — real DB smoke', () => {
 
       const { handleGraphNeighbors } = await import('../components/edges/traversal.js');
 
-      // Pick a known seed: the first edge's from_type/from_id
-      const seed = realDb
-        .prepare('SELECT from_type, from_id FROM entity_edges LIMIT 1')
-        .get() as { from_type: string; from_id: string } | undefined;
+      // Pick a known seed: the first edge's from_type/from_id, qualified.
+      const seed = pickSeed(realDb);
 
       if (!seed) {
         // eslint-disable-next-line no-console
@@ -417,21 +679,29 @@ describe('FR-113 graph traversal — real DB smoke', () => {
 
       const start = performance.now();
       const result = handleGraphNeighbors({
-        node_type: seed.from_type,
-        node_id: seed.from_id,
+        node_type: seed.type,
+        node_id: seed.id,
+        ...(seed.project ? { node_project: seed.project } : {}),
         depth: 2,
         direction: 'both',
       });
       const elapsed = performance.now() - start;
       // eslint-disable-next-line no-console
       console.log(
-        `[bench] real DB neighbors(depth=2) from ${seed.from_type}:${seed.from_id} took ${elapsed.toFixed(2)}ms`,
+        `[bench] real DB neighbors(depth=2) from ${seed.type}:${seed.project ?? '-'}:${seed.id} took ${elapsed.toFixed(2)}ms`,
       );
 
       expect(result.isError).toBeUndefined();
-      const parsed = JSON.parse(result.content[0].text) as { neighbors: unknown[] };
+      const parsed = JSON.parse(result.content[0].text) as {
+        neighbors: unknown[];
+        unresolved_hops: number;
+      };
+      // BR-078: the residual counter is on every response, real data included.
+      expect(typeof parsed.unresolved_hops).toBe('number');
       // eslint-disable-next-line no-console
-      console.log(`[bench] real DB returned ${parsed.neighbors.length} neighbors`);
+      console.log(
+        `[bench] real DB returned ${parsed.neighbors.length} neighbors, unresolved_hops=${parsed.unresolved_hops}`,
+      );
     } finally {
       realDb.close();
     }
@@ -445,15 +715,14 @@ describe('FR-113 graph traversal — real DB smoke', () => {
 
       const { handleGraphSubgraph } = await import('../components/edges/traversal.js');
 
-      const seed = realDb
-        .prepare('SELECT from_type, from_id FROM entity_edges LIMIT 1')
-        .get() as { from_type: string; from_id: string } | undefined;
+      const seed = pickSeed(realDb);
       if (!seed) return;
 
       const start = performance.now();
       const result = handleGraphSubgraph({
-        seed_node_type: seed.from_type,
-        seed_node_id: seed.from_id,
+        seed_node_type: seed.type,
+        seed_node_id: seed.id,
+        ...(seed.project ? { seed_node_project: seed.project } : {}),
         max_nodes: 20,
       });
       const elapsed = performance.now() - start;

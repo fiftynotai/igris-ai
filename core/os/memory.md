@@ -156,6 +156,7 @@ Brief / learning / error / session / goal nodes live in their own surfaces and a
 ### When to call
 
 - Before proposing a refactor: `igris_graph_neighbors` from the affected module/concept node (depth: 2, direction: 'in') to surface dependents and prior decisions. Use `igris_graph_path` for shortest-path between two known nodes and `igris_graph_subgraph` for the connected component.
+- **Seeding on a brief? Qualify the project.** A brief id is unique only WITHIN a project — `BR-001` names a different brief in each of 25 projects. Pass `node_project` / `from_project` + `to_project` / `seed_node_project` alongside the id. These qualify the SEED only; they do not filter the result, so a traversal legitimately still reaches other projects. Omit them when the id is unique brain-wide (most `FR-`/`TD-` ids in one project) — the tool resolves it for you. If the id is ambiguous the call ERRORS and lists the candidate projects: that is the tool refusing to fuse them, not a failure. Read `unresolved_hops` on every response — non-zero means `entity_edges` could not say which project some edges belonged to and they were dropped rather than guessed.
 - When the user asks "why did we change X to Y?" — `igris_graph_search` the concept node and walk `supersedes` edges.
 - When stitching together a broader context for an architect prompt — the graph gives structured ancestry that recall does not.
 

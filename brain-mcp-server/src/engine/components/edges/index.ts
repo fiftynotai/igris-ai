@@ -144,7 +144,7 @@ export function createEdgesComponent(): BrainComponent {
    *     `learning → <to_type>` edge of the given `edge_type`.
    *
    * The learning node id is `String(id)` — the settled `numericId` convention
-   * (traversal.ts:237); learning nodes auto-register on first edge reference.
+   * (traversal.ts:415); learning nodes auto-register on first edge reference.
    * Errors are logged, never thrown (mirrors `onBriefCreated`).
    */
   function onMemoryStored(payload: EventPayload): void {
@@ -248,7 +248,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.4.0',
+    version: '1.5.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -395,7 +395,7 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_neighbors',
           description:
-            "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100.",
+            "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100. Nodes are addressed by the triple (type, project, id) and every returned node carries its `project`: a brief id is unique only WITHIN a project, so `BR-001` names a different brief in each of the 25 projects that use it. `node_project` is optional — when the id lives in exactly one project it is resolved for you; when it is ambiguous the call ERRORS and lists the candidate projects rather than fusing them. Because `entity_edges` has no project column, hops the data cannot disambiguate are dropped and counted in `unresolved_hops` (see igris_graph_brain's `edge_resolution` for the same loss measured brain-wide).",
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -408,6 +408,11 @@ export function createEdgesComponent(): BrainComponent {
               node_id: {
                 type: 'string',
                 description: 'Stable id of the seed entity',
+              },
+              node_project: {
+                type: 'string',
+                description:
+                  'Qualifies the seed only — it does not filter the result to that project (a traversal seeded in one project legitimately reaches another through a cross-project edge). Optional: omit it when node_id is unique brain-wide. Required in practice only for an ambiguous id, where omitting it returns an error naming the candidate projects.',
               },
               depth: {
                 type: 'integer',
@@ -447,15 +452,25 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_path',
           description:
-            'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default.',
+            'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default. BOTH endpoints are addressed by the triple (type, project, id) and both are qualified independently, so there is correctly NO path between two same-id briefs in different projects. `from_project` / `to_project` are optional — a unique id is resolved for you; an ambiguous one ERRORS and lists the candidate projects. Hops the data cannot disambiguate are dropped and counted in `unresolved_hops`.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               from_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               from_id: { type: 'string' },
+              from_project: {
+                type: 'string',
+                description:
+                  'Qualifies the source seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous from_id returns an error naming the candidate projects.',
+              },
               to_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               to_id: { type: 'string' },
+              to_project: {
+                type: 'string',
+                description:
+                  'Qualifies the target seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous to_id returns an error naming the candidate projects.',
+              },
               edge_types: {
                 type: 'array',
                 items: { type: 'string', enum: [...VALID_EDGE_TYPES] },
@@ -483,13 +498,18 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_subgraph',
           description:
-            'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes; cache invalidated by edge mutations.',
+            'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes (the cache key carries the resolved seed project, so one project\'s subgraph is never served to another\'s query); cache invalidated by edge mutations. Nodes are addressed by the triple (type, project, id) and each carries its `project`. `seed_node_project` is optional — a unique id is resolved for you; an ambiguous one ERRORS and lists the candidate projects. Hops the data cannot disambiguate are dropped and counted in `unresolved_hops`.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               seed_node_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               seed_node_id: { type: 'string' },
+              seed_node_project: {
+                type: 'string',
+                description:
+                  'Qualifies the seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous seed_node_id returns an error naming the candidate projects.',
+              },
               max_nodes: {
                 type: 'integer',
                 description: 'Maximum nodes to include (default 20, max 100)',
@@ -738,7 +758,7 @@ export function createEdgesComponent(): BrainComponent {
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.4.0 — FR-237 whole-brain graph)');
+      ctx.log.info('Edges component initialized (v1.5.0 — BR-078 project-qualified traversal)');
     },
 
     destroy(): void {
