@@ -450,3 +450,120 @@ function buildAbsoluteEntryTarball(work: string): string {
   fs.writeFileSync(out, gz);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// FR-238 (T9) — the PUBLISHED PACKAGE MANIFEST.
+//
+// `cli/package.json` `files` lists `"dist"`, so `dist/dashboard/**` ships with
+// no manifest change. That is convenient and it is also exactly why it needs a
+// test: nothing declares the dashboard, so nothing would notice it silently
+// disappearing (a `files` edit, an `.npmignore`, a build-order change).
+//
+// This asserts against `npm pack --dry-run --json` — the real packer, not a
+// reimplementation of its glob semantics.
+// ---------------------------------------------------------------------------
+
+interface PackEntry {
+  path: string;
+  size: number;
+}
+interface PackReport {
+  entryCount: number;
+  size: number;
+  unpackedSize: number;
+  files: PackEntry[];
+}
+
+/**
+ * The dashboard budget (plan D2) is +250 KB packed with a hard ceiling of
+ * +400 KB. The CEILING is asserted here rather than the budget, so an ordinary
+ * CLI change does not fail the suite — but a bundle that doubles does.
+ *
+ * PROVENANCE OF THE CONSTANT, stated because it is softer than it looks:
+ * 1_301_851 was measured on the FR-238 authoring checkout (739 files /
+ * 5_475_927 unpacked). A CLEAN worktree measures ~1_277_864 (715 files /
+ * 5_394_552) — `cli/dist` is never cleaned by the build, so a long-lived
+ * checkout accumulates orphan artifacts from deleted sources (~91 KB of
+ * `subconscious/` leftovers at the time of writing) that a fresh clone does
+ * not have.
+ *
+ * Direction of the error, stated plainly: the constant is ~24 KB HIGHER than a
+ * clean baseline, so on a clean tree (where CI runs) the computed delta
+ * UNDER-reports the true one by ~24 KB and the ceiling is that much more
+ * permissive. It does not invalidate the assertion — this is a one-sided
+ * tripwire with ~200 KB of headroom either way — but do not read the number as
+ * a precise per-commit delta. If dist-cleaning ever lands, re-measure on a
+ * clean worktree and update this constant together with this provenance note.
+ */
+const PACK_BASELINE_PACKED = 1_301_851;
+const PACK_HARD_CEILING_DELTA = 400 * 1024;
+
+/**
+ * Memoised. `npm pack --dry-run` walks the whole package and takes a couple of
+ * seconds; running it once per file rather than once per assertion keeps the
+ * suite fast, and computing it LAZILY (not in the describe body) keeps it out
+ * of collection for a filtered run of any other test in this file.
+ */
+let packReportCache: PackReport | null = null;
+function packReport(): PackReport {
+  if (packReportCache !== null) return packReportCache;
+  const childProcess = require("node:child_process") as typeof import("node:child_process");
+  const cliRoot = require("node:path").join(__dirname, "..", "..") as string;
+  const raw = childProcess.execFileSync("npm", ["pack", "--dry-run", "--json"], {
+    cwd: cliRoot,
+    encoding: "utf-8",
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  packReportCache = (JSON.parse(raw) as PackReport[])[0];
+  return packReportCache;
+}
+
+function packedPaths(): Set<string> {
+  return new Set(packReport().files.map((f) => f.path));
+}
+
+describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
+
+  it("includes dist/dashboard/index.html", () => {
+    expect(packedPaths().has("dist/dashboard/index.html")).toBe(true);
+  });
+
+  it("includes the three vendored woff2 fonts", () => {
+    const paths = packedPaths();
+    for (const f of [
+      "dist/dashboard/fonts/anton-latin-400-normal.woff2",
+      "dist/dashboard/fonts/space-grotesk-latin-wght-normal.woff2",
+      "dist/dashboard/fonts/jetbrains-mono-latin-400-normal.woff2",
+    ]) {
+      expect(paths.has(f), `missing from tarball: ${f}`).toBe(true);
+    }
+  });
+
+  it("includes the hashed JS and CSS assets", () => {
+    const assets = [...packedPaths()].filter((p) => p.startsWith("dist/dashboard/assets/"));
+    expect(assets.some((p) => p.endsWith(".js"))).toBe(true);
+    expect(assets.some((p) => p.endsWith(".css"))).toBe(true);
+  });
+
+  it("still ships the vendored brain engine the FR-238 bridge imports", () => {
+    // The bridge is a path-literal dependency on this artifact (R2). If the
+    // `files` exclusion list ever widens to drop it, the dashboard's graph
+    // readout degrades silently — so assert it here, loudly.
+    expect(
+      packedPaths().has(
+        "dist/brain-mcp-server/dist/engine/components/edges/whole-graph.js",
+      ),
+    ).toBe(true);
+  });
+
+  it("stays under the FR-238 hard packed-size ceiling (+400 KB over baseline)", () => {
+    const report = packReport();
+    const delta = report.size - PACK_BASELINE_PACKED;
+    expect(
+      delta,
+      `packed delta ${(delta / 1024).toFixed(1)} KB exceeds the +400 KB ceiling ` +
+        `(packed ${report.size}, baseline ${PACK_BASELINE_PACKED})`,
+    ).toBeLessThan(PACK_HARD_CEILING_DELTA);
+  });
+});

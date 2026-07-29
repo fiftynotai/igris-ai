@@ -1,0 +1,125 @@
+/* Matches fifty_dev/src/app/globals.css:1 — the brand sheet is authored ON TOP
+   of Tailwind's preflight, so the port keeps the same base layer. Must be the
+   first at-rule in the sheet (CSS `@import` ordering). */
+@import "tailwindcss";
+
+/* ───────────────────────────────────────────────────────────
+   FR-238 — fifty.dev design tokens, ported for the Igris dashboard.
+
+   PORT PROVENANCE: fifty_dev/src/app/globals.css:23-149 (the `:root`
+   token block + the four `body[data-palette]` overrides). Values are
+   VERBATIM. See cli/dashboard/PORTING.md for the file-by-file map and
+   the two recorded divergences (the font indirection below, and the
+   dropped `data-display` swaps).
+
+   DIVERGENCE 1 — font plumbing. Upstream resolves `--display` / `--ui` /
+   `--mono` through `next/font/google`-injected `--font-*` variables. There is
+   no Vite equivalent, and AC #4 forbids a runtime CDN fetch, so the three
+   families are vendored as woff2 under `public/fonts/` and declared with
+   `@font-face` below. The token NAMES and the fallback stacks are unchanged.
+
+   DIVERGENCE 2 — `--serif`. Instrument Serif is NOT vendored (D1): the brief
+   names four PALETTES, not display swaps, and a fourth family is pure weight.
+   `--serif` keeps its upstream fallback tail (Georgia, serif) so every ported
+   rule that reads it still resolves.
+   ─────────────────────────────────────────────────────────── */
+
+/* ─── Vendored type (D1-A: latin subset, woff2 only) ─────────
+   Sources — all SIL OFL 1.1, see public/fonts/OFL.txt:
+     Anton 400            @fontsource/anton@5.3.0
+     Space Grotesk 300-700 @fontsource-variable/space-grotesk@5.3.0
+     JetBrains Mono 400   @fontsource/jetbrains-mono@5.3.0
+   `unicode-range` is copied from each package's latin CSS so the browser
+   can skip a family it will never paint. */
+@font-face {
+  font-family: "Anton";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/anton-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Space Grotesk";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 300 700;
+  src: url("/fonts/space-grotesk-latin-wght-normal.woff2")
+    format("woff2-variations");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url("/fonts/jetbrains-mono-latin-400-normal.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6,
+    U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+  --bg: #0d0a08;
+  --fg: #f6efe6;
+  --accent: #ff5a1f;
+  --accent-deep: #7a2410;
+  --muted: rgba(246, 239, 230, 0.55);
+  --line: rgba(246, 239, 230, 0.14);
+
+  /* Status pill semantic colors — tied to lifecycle, not palette.
+     LIVE is always green; WIP reuses --accent. */
+  --status-lab: #a78bfa;
+  --status-soon: #facc15;
+  --status-dormant: #8a857d;
+
+  /* Type stack: display / ui / mono. Families resolved by the @font-face
+     declarations above rather than by next/font (divergence 1). */
+  --display: "Anton", "Archivo Black", sans-serif;
+  --ui: "Space Grotesk", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, monospace;
+  --serif: Georgia, serif;
+
+  --grain: 0.18;
+  --density: 1;
+  --motion: 1;
+
+  /* Shell chrome geometry. NOT an upstream token block — the dashboard is a
+     fixed-nav application shell, not a scroll-driven marketing page, so the
+     upstream `--section-pad-*` / `--hero-pad-*` responsive ladder does not
+     apply. Recorded as divergence 3 in PORTING.md. */
+  --nav-h: 56px;
+  --shell-pad-x: 28px;
+  --shell-pad-y: 32px;
+}
+
+/* Palette overrides — applied via body[data-palette="…"].
+   `blood` is the default and therefore has no block: it IS `:root`. */
+body[data-palette="cyber"] {
+  --bg: #06080d;
+  --fg: #e9f2ff;
+  --accent: #3b82f6;
+  --accent-deep: #0b1d4a;
+  --muted: rgba(233, 242, 255, 0.55);
+  --line: rgba(233, 242, 255, 0.12);
+}
+body[data-palette="acid"] {
+  --bg: #0a0d05;
+  --fg: #f1ffd6;
+  --accent: #c5f200;
+  --accent-deep: #3a4a00;
+  --muted: rgba(241, 255, 214, 0.55);
+  --line: rgba(241, 255, 214, 0.14);
+}
+body[data-palette="mono"] {
+  --bg: #0a0a0a;
+  --fg: #ededed;
+  --accent: #ededed;
+  --accent-deep: #2a2a2a;
+  --muted: rgba(237, 237, 237, 0.5);
+  --line: rgba(237, 237, 237, 0.12);
+}

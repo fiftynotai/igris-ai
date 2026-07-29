@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>IGRIS — dashboard</title>
+  </head>
+  <body data-palette="blood" data-cursor="dot">
+    <!--
+      Pre-hydration palette stamp. Ported from fifty_dev/src/app/layout.tsx's
+      TWEAKS_INIT_SCRIPT (the `beforeInteractive` tweaks-init script). Placed
+      as the first child of <body> — not in <head> — because it stamps
+      attributes ON <body>, which must therefore exist. Runs before React
+      mounts, so a reload never flashes the default palette.
+
+      Storage key is namespaced to this surface (`igris.dashboard.tweaks`) so
+      it cannot collide with fifty.dev's own `fifty.tweaks`. Fails silently and
+      OPEN: no storage, no stamp, default palette.
+
+      AC #4: this is INLINE. There is no external script tag anywhere in this
+      document and no external stylesheet — Vite injects only same-origin
+      hashed assets under ./assets/.
+    -->
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem("igris.dashboard.tweaks");
+          if (!raw) return;
+          var t = JSON.parse(raw);
+          var b = document.body;
+          if (t.palette) b.setAttribute("data-palette", t.palette);
+          if (t.cursor) b.setAttribute("data-cursor", t.cursor);
+          if (t.motion) b.setAttribute("data-motion", t.motion);
+          if (typeof t.grain === "number")
+            document.documentElement.style.setProperty(
+              "--grain",
+              String(t.grain),
+            );
+        } catch (e) {
+          /* fail open — default palette */
+        }
+      })();
+    </script>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

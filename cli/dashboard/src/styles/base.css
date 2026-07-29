@@ -1,0 +1,834 @@
+/* ───────────────────────────────────────────────────────────
+   FR-238 — base layer + the ported brand component classes.
+
+   PORT PROVENANCE: fifty_dev/src/app/globals.css. Each block below carries the
+   upstream line range it was copied from. This is a SUBSET, not the whole
+   1800+-line sheet: only the classes the seven ported components and the shell
+   chrome actually depend on. Shell-only classes (`.shell-*`, `.nav-*`) are
+   NEW and marked as such.
+
+   BRAND_RULES non-negotiables held here:
+     2. no border-radius on cards/buttons (the one exception is `.chip`, which
+        upstream deliberately keeps at 9999px — a tag circle, not a rounded box)
+     3. the 3-tier font stack (display / ui / mono)
+     4. grain overlay
+     5. glitch on section headings
+     6. palette switching across every component (tokens only, no hard-coded
+        brand colours in a component rule)
+     7. prefers-reduced-motion honoured
+   ─────────────────────────────────────────────────────────── */
+
+/* ─── Reset + document (globals.css:163-181) ─────────────────
+   `overflow-x: clip` upstream guards a position:sticky Lab stage that does not
+   exist here, but it is harmless and keeps the port byte-aligned. */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--ui);
+  overflow-x: clip;
+}
+#root {
+  min-height: 100vh;
+}
+
+/* ─── Skip link (globals.css:189-214) ──────────────────────── */
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  z-index: 200;
+}
+.skip-link:focus,
+.skip-link:focus-visible {
+  position: fixed;
+  left: 12px;
+  top: 12px;
+  width: auto;
+  height: auto;
+  padding: 10px 16px;
+  background: var(--fg);
+  color: var(--bg);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-decoration: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ─── Grain overlay (globals.css:216-226) ────────────────────
+   SVG turbulence as a data-URI, NOT a raster asset — zero extra tarball
+   bytes beyond this rule and zero extra HTTP requests. */
+.grain {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 80;
+  opacity: var(--grain);
+  mix-blend-mode: overlay;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='220' height='220'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .9 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+}
+
+/* ─── Custom cursor (globals.css:228-300) ────────────────────
+   The dashboard ships only the `dot` (ring + dot) and `default` modes — the
+   crosshair/blob tweaks are TweaksPanel surface area with no shell consumer.
+   Recorded as divergence 4 in PORTING.md. */
+body[data-cursor="dot"],
+body[data-cursor="dot"] a,
+body[data-cursor="dot"] button,
+body[data-cursor="dot"] [data-cursor] {
+  cursor: none;
+}
+.cur-dot {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  z-index: 9999;
+  pointer-events: none;
+  mix-blend-mode: difference;
+  transform: translate(-50%, -50%);
+}
+.cur-ring {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+  z-index: 9998;
+  pointer-events: none;
+  transform: translate(-50%, -50%);
+  transition: width 0.25s, height 0.25s, opacity 0.2s, border-color 0.2s;
+}
+body[data-cursor="default"] .cur-dot,
+body[data-cursor="default"] .cur-ring {
+  display: none;
+}
+
+/* ─── Keyframes (globals.css:332-340, 6461-6465) ───────────── */
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+@keyframes fr111-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ─── Motion (globals.css:585-600) ───────────────────────────
+   BRAND_RULES #7. The `!important` duration zeroing is the CSS backstop; the
+   GSAP side is gated by `useReducedMotion` so no timeline is even created
+   (R9). Both layers exist deliberately. */
+body[data-motion="low"] *,
+body[data-motion="low"] *::before,
+body[data-motion="low"] *::after {
+  animation-duration: 0s !important;
+  transition-duration: 0.05s !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    transition-duration: 0.05s !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ─── Buttons (globals.css:1167-1236) ────────────────────── */
+.btn {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  padding: 14px 22px;
+  border: 0.5px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  cursor: pointer;
+  transition: all 0.18s;
+  font-weight: 400;
+}
+.btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn:focus-visible {
+  outline: 0.5px solid var(--accent);
+  outline-offset: 2px;
+}
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #0a0a0a;
+  border-color: var(--accent);
+}
+.btn-primary:hover {
+  background: transparent;
+  color: var(--accent);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--fg);
+  border-color: var(--line);
+}
+.btn-secondary:hover {
+  background: transparent;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.btn-ghost {
+  border-color: transparent;
+  color: var(--muted);
+}
+.btn-ghost:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.btn-sm {
+  padding: 8px 14px;
+  font-size: 10px;
+}
+.btn-lg {
+  padding: 18px 28px;
+  font-size: 12px;
+}
+
+/* ─── Inputs (globals.css:1238-1288) ─────────────────────── */
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+.field-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.input {
+  font-family: var(--ui);
+  font-size: 14px;
+  font-weight: 300;
+  padding: 12px 14px;
+  border: 0.5px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  outline: none;
+  transition: border-color 0.18s;
+}
+.input::placeholder {
+  color: var(--muted);
+}
+.input:focus {
+  border-color: var(--accent);
+}
+.field-help {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+.field.invalid .input {
+  border-color: #dc2626;
+}
+.field.invalid .field-help {
+  color: #fca5a5;
+}
+
+/* ─── Card (globals.css:1289-1333) ───────────────────────── */
+.card {
+  padding: 24px;
+  border: 0.5px solid var(--line);
+  background: rgba(255, 255, 255, 0.02);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.card-eye {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+.card-title {
+  font-family: var(--display);
+  font-size: 36px;
+  line-height: 0.96;
+  letter-spacing: -0.005em;
+  margin: 0;
+  font-weight: 400;
+}
+.card-body {
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0;
+  font-weight: 300;
+}
+.card-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--line);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* ─── Badge (globals.css:1334-1376) ──────────────────────── */
+.badge {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 3px 6px;
+  background: var(--accent);
+  color: #0a0a0a;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.badge-muted {
+  background: transparent;
+  color: var(--muted);
+  border: 0.5px solid var(--line);
+}
+.badge-live {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 0.5px solid rgba(34, 197, 94, 0.4);
+}
+.badge-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse 1.6s infinite;
+}
+.badge-alarm {
+  background: rgba(220, 38, 38, 0.15);
+  color: #fca5a5;
+  border: 0.5px solid rgba(220, 38, 38, 0.4);
+}
+
+/* ─── StatusPill (globals.css:1377-1423) ─────────────────── */
+.status-pill {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border: 0.5px solid currentColor;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  line-height: 1;
+  background: transparent;
+}
+.status-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse 1.6s infinite;
+}
+.status-pill-live {
+  color: #22c55e;
+}
+.status-pill-wip {
+  color: var(--accent);
+}
+.status-pill-coming-soon {
+  color: var(--status-soon);
+}
+.status-pill-in-lab {
+  color: var(--status-lab);
+}
+.status-pill-dormant {
+  color: var(--status-dormant);
+  opacity: 0.85;
+}
+.status-pill-dormant::before {
+  background: transparent;
+  border: 1px solid currentColor;
+  animation: none;
+  opacity: 0.5;
+}
+
+/* ─── Chip (globals.css:1425-1458) ───────────────────────── */
+.chip {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  border: 0.5px solid var(--line);
+  color: var(--muted);
+  background: transparent;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.chip:hover {
+  color: var(--fg);
+  border-color: var(--fg);
+}
+.chip.on {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(255, 90, 31, 0.08);
+}
+.chip.on::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ─── Tweaks chip (globals.css:1088-1115) — sharp-cornered variant,
+   used by the palette switcher radiogroup. ─────────────────── */
+.tweaks-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tweaks-chip {
+  appearance: none;
+  background: transparent;
+  border: 0.5px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 5px 10px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+@media (hover: none) {
+  .tweaks-chip {
+    padding: 10px 12px;
+    font-size: 10px;
+  }
+}
+.tweaks-chip:hover {
+  border-color: var(--fg);
+  color: var(--fg);
+}
+.tweaks-chip.on {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(255, 90, 31, 0.08);
+}
+
+/* ─── Glitch (globals.css:1559-1596) — BRAND_RULES #5 ─────────
+   Hover-only single burst. The PRM block above zeroes the duration, so no
+   extra guard is needed. */
+.glitch {
+  position: relative;
+  display: inline-block;
+}
+.glitch:hover {
+  animation: glitch 0.4s steps(2) 1;
+}
+@keyframes glitch {
+  0% {
+    transform: translate(0);
+  }
+  20% {
+    transform: translate(-2px, 1px);
+    text-shadow: 1px 0 var(--accent), -1px 0 #00f7ff;
+  }
+  40% {
+    transform: translate(2px, -1px);
+    text-shadow: -1px 0 var(--accent), 1px 0 #00f7ff;
+  }
+  60% {
+    transform: translate(-1px, 2px);
+    text-shadow: 1px 0 var(--accent), -1px 0 #00f7ff;
+  }
+  80% {
+    transform: translate(1px, -2px);
+  }
+  100% {
+    transform: translate(0);
+    text-shadow: none;
+  }
+}
+
+/* ─── StatePage (globals.css:6287-6430) ─────────────────────
+   Ported so `EmptyState` keeps its upstream shape rather than inventing a
+   different empty-state (plan Phase 3.3). The `data-inset` modifier is NEW —
+   the shell renders these inside a routed panel, not as a full page, so the
+   100vh floor is lifted. Recorded as divergence 5 in PORTING.md. */
+.state-page {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 120px 28px 60px;
+  text-align: center;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+.state-page[data-inset="true"] {
+  min-height: 320px;
+  padding: 48px 28px;
+  border: 0.5px solid var(--line);
+  background: transparent;
+}
+.state-page[data-inset="true"] .state-page-headline {
+  font-size: clamp(32px, 5vw, 56px);
+}
+.state-page[data-inset="true"] .state-page-message {
+  font-size: 15px;
+}
+.state-page-headline {
+  font-family: var(--display);
+  font-size: clamp(72px, 12vw, 200px);
+  line-height: 0.86;
+  letter-spacing: -0.02em;
+  margin: 0;
+  color: var(--fg);
+  z-index: 2;
+}
+.state-page-headline em,
+.state-page-message em {
+  font-family: var(--serif);
+  font-style: italic;
+  font-weight: normal;
+  color: var(--accent);
+}
+.state-page-message {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: 22px;
+  line-height: 1.4;
+  color: var(--muted);
+  max-width: 560px;
+  margin: 0;
+  z-index: 2;
+}
+.state-page-cta {
+  margin-top: 16px;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--fg);
+  text-decoration: none;
+  border: 0.5px solid var(--line);
+  padding: 14px 22px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+.state-page-meta {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+  z-index: 2;
+}
+.state-page-spinner {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: fr111-spin 0.8s linear infinite;
+  z-index: 2;
+}
+.state-page-scanline {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0 3px,
+    rgba(246, 239, 230, 0.02) 3px 4px
+  );
+  z-index: 1;
+}
+.state-page[data-variant="loading"] .state-page-cta,
+.state-page[data-variant="empty"] .state-page-cta {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.state-page[data-variant="offline"] .state-page-headline em,
+.state-page[data-variant="offline"] .state-page-message em {
+  color: #facc15;
+}
+.state-page[data-variant="offline"] .state-page-cta {
+  border-color: #facc15;
+  color: #facc15;
+}
+.state-page[data-variant="error"] .state-page-headline em,
+.state-page[data-variant="error"] .state-page-message em {
+  color: #dc2626;
+}
+.state-page[data-variant="error"] .state-page-cta {
+  border-color: #dc2626;
+  color: #dc2626;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   SHELL CHROME — NEW in FR-238. No fifty.dev origin: the dashboard is a
+   fixed-nav application shell, not a scroll-driven page. Built entirely from
+   the ported tokens so BRAND_RULES #2/#3/#6 hold by construction.
+   ═══════════════════════════════════════════════════════════ */
+
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.shell-nav {
+  position: sticky;
+  top: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  height: var(--nav-h);
+  padding: 0 var(--shell-pad-x);
+  border-bottom: 0.5px solid var(--line);
+  background: var(--bg);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.shell-brand {
+  font-family: var(--display);
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  line-height: 1;
+  text-decoration: none;
+  color: var(--fg);
+}
+.shell-brand span {
+  color: var(--accent);
+}
+.shell-nav-links {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.shell-nav-link {
+  padding: 6px 10px;
+  border: 0.5px solid transparent;
+  color: var(--muted);
+  background: transparent;
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.shell-nav-link:hover {
+  color: var(--fg);
+  border-color: var(--line);
+}
+.shell-nav-link[aria-current="page"] {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.shell-nav-link[aria-disabled="true"] {
+  color: var(--muted);
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.shell-nav-spacer {
+  flex: 1 1 auto;
+}
+/* dataviz.md forward obligation (a): a Tier-C canvas must ship a real,
+   tap-target-compliant search control in the surrounding chrome. The slot is
+   reserved now because retrofitting nav geometry later is expensive. FR-239
+   fills it. */
+.shell-search-slot {
+  min-width: 180px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.shell-search-slot .input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.shell-main {
+  flex: 1 1 auto;
+  padding: var(--shell-pad-y) var(--shell-pad-x) 64px;
+}
+
+.shell-h1 {
+  font-family: var(--display);
+  font-size: clamp(44px, 7vw, 88px);
+  line-height: 0.92;
+  letter-spacing: -0.01em;
+  margin: 0 0 8px;
+  font-weight: 400;
+}
+.shell-eye {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 10px;
+}
+.shell-lede {
+  font-family: var(--ui);
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--muted);
+  max-width: 62ch;
+  margin: 0 0 32px;
+}
+
+.shell-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.shell-metric {
+  font-family: var(--display);
+  font-size: 56px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+.shell-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 6px 0;
+  border-bottom: 0.5px solid var(--line);
+}
+.shell-kv:last-child {
+  border-bottom: 0;
+}
+.shell-kv b {
+  color: var(--fg);
+  font-weight: 400;
+}
+
+/* Skeleton — loading placeholders drawn in --line, per plan Phase 4.3. */
+.shell-skel {
+  height: 12px;
+  background: var(--line);
+  animation: pulse 1.4s infinite;
+}
+.shell-skel + .shell-skel {
+  margin-top: 8px;
+}
+
+/* Live indicator — dataviz.md permits `// LOOP` motion in CHROME (never on
+   the canvas). This is the one looping element in the shell. */
+.shell-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.shell-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  animation: pulse 1.6s infinite;
+}
+.shell-live[data-state="degraded"] {
+  color: var(--status-soon);
+}
+.shell-live[data-state="degraded"]::before {
+  background: var(--status-soon);
+}
+.shell-live[data-state="offline"] {
+  color: #fca5a5;
+}
+.shell-live[data-state="offline"]::before {
+  background: #dc2626;
+  animation: none;
+}
+
+/* Degraded banner — R2's "silent degrade becomes a visible one". */
+.shell-banner {
+  border: 0.5px solid var(--status-soon);
+  color: var(--status-soon);
+  background: rgba(250, 204, 21, 0.06);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 10px 14px;
+  margin-bottom: 24px;
+}

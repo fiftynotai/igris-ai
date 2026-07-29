@@ -290,6 +290,50 @@ export function bundledMcpEntryPath(): string {
 }
 
 /**
+ * FR-238: absolute path to the bundled brain ENGINE directory —
+ * `cli/dist/brain-mcp-server/dist/engine/`.
+ *
+ * Same walk-up idiom (and therefore the same source/compiled duality) as
+ * {@link bundledMcpEntryPath}. This is the root `brain-bridge.ts` dynamic-
+ * `import()`s the FR-237 pure builder from; `cli/package.json` `files` ships it
+ * under `"dist"` and excludes only `dist/brain-mcp-server/node_modules`.
+ *
+ * MAINTAINING contract: this is a PATH-LITERAL dependency on a build artifact.
+ * A change to `copy-templates.sh`'s staging layout or to the brain's compiled
+ * `engine/components/` tree MUST re-point this helper and `brain-bridge.ts`
+ * together, or the bridge degrades silently to `null` (R2).
+ */
+export function bundledBrainEngineDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "brain-mcp-server", "dist", "engine");
+}
+
+/**
+ * FR-238: absolute path to the built dashboard bundle root —
+ * `cli/dist/dashboard/`.
+ *
+ * Resolved by the same walk-up idiom as {@link bundledMcpEntryPath}, which is
+ * exactly why it survives a global install: `dirname(fileURLToPath(
+ * import.meta.url))` resolves through a symlinked npm bin to the real package
+ * directory, so `npm i -g` and a repo checkout both land on the real
+ * `dist/dashboard/` (R1).
+ */
+export function dashboardBundleDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "dashboard");
+}
+
+/**
+ * FR-238: absolute path to the single-instance lockfile
+ * `~/.igris/dashboard.lock`. Honors IGRIS_BRAIN_DIR via brainDir() — the same
+ * sandbox seam every other helper uses, so the bats/vitest suites can exercise
+ * double-invocation without touching the operator's real lock.
+ */
+export function dashboardLockPath(): string {
+  return join(brainDir(), "dashboard.lock");
+}
+
+/**
  * FR-162 (FR-160 epic): absolute path to Gemini's settings file:
  * `~/.gemini/settings.json` (carries the `mcpServers` map). Staged here for
  * FR-164's compile-time MCP projection; `add-mcp` itself writes only the

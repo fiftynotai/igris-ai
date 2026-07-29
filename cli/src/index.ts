@@ -24,6 +24,12 @@
  * Lifecycle pattern: top-level `main()` sets `process.exitCode` rather than
  * calling `process.exit(code)` so any pending async cleanup can flush.
  * better-sqlite3 itself is sync and explicitly closed in registry.ts.
+ *
+ * ONE EXCEPTION to "run and exit" (FR-238): `dashboard` is a LONG-LIVED
+ * foreground verb. Its action awaits a promise that does not resolve until
+ * SIGINT/SIGTERM arrives, so the exit code is set on shutdown rather than
+ * synchronously. Everything else about the pattern is unchanged — it still
+ * sets `process.exitCode` and never calls `process.exit`.
  */
 
 import { Command } from "commander";
@@ -50,6 +56,7 @@ import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
+import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
 import type { ExportTier, OnConflictPolicy } from "./types.js";
@@ -1153,6 +1160,44 @@ async function main(argv: string[]): Promise<void> {
         process.exitCode = code;
       },
     );
+
+  // FR-238 — the CLI's first LONG-LIVED verb. Visible (not hidden): the
+  // dashboard is a product surface, not an internal boot-lifecycle step.
+  // NOTE the lifecycle exception: `runDashboard` does not resolve until a
+  // signal arrives, so `process.exitCode` is set after the await rather than
+  // synchronously. That is the whole point of a foreground server.
+  program
+    .command("dashboard")
+    .description(
+      "FR-238: start the local IGRIS dashboard — a loopback-only read-only " +
+        "server (127.0.0.1, zero write endpoints) serving a live lens over the " +
+        "brain, and open it in the browser. Runs in the foreground; Ctrl-C " +
+        "stops it. A second invocation re-opens the running instance instead " +
+        "of binding a second port.",
+    )
+    .option(
+      "--port <n>",
+      "exact port to bind. Without this the verb tries 7317, then an OS-assigned port. An explicit port that is taken is a hard failure — explicit intent is never silently reassigned.",
+    )
+    .option("--no-open", "do not launch a browser")
+    .option("--smoke", "hidden self-check: start, probe, print a JSON digest, exit", false)
+    .action(async (opts: { port?: string; open?: boolean; smoke?: boolean }) => {
+      let port: number | undefined;
+      if (opts.port !== undefined) {
+        port = Number.parseInt(opts.port, 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          logError(`dashboard: --port must be an integer 1-65535 (got "${opts.port}")`);
+          process.exitCode = 2;
+          return;
+        }
+      }
+      process.exitCode = await runDashboard({
+        port,
+        noOpen: opts.open === false,
+        smoke: opts.smoke === true,
+        cliVersion: readPackageVersion(),
+      });
+    });
 
   program
     .command("export <project>")

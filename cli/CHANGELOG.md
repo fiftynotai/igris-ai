@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`igris dashboard` — the local server verb + application shell (FR-238)** — the first persistent visual surface. `igris dashboard` starts a loopback-only (`127.0.0.1`) read-only HTTP server and opens a browser at it. Nothing is regenerated: reload and you see the state on disk right now. The shell ports the fifty.dev design language — four runtime palettes (`blood`/`cyber`/`acid`/`mono`), the 3-tier type stack (Anton / Space Grotesk / JetBrains Mono, **vendored as woff2 — no CDN, no network fetch at runtime**), sharp corners, hairline borders, grain overlay, ring+dot cursor, and a `prefers-reduced-motion` block that zeroes every animation (GSAP timelines are gated, not merely slowed). Four read-only endpoints — `/api/health`, `/api/projects`, `/api/summary`, `/api/graph/stats` — all of which return HTTP 200 with a `degraded` field for a missing, empty, unmigrated or corrupt brain, never a 500. FR-239 (graph), FR-240 (layer views) and FR-241 (cognition triage) mount inside this shell.
+  - **First external consumer of the FR-237 pure brain-graph builder.** `cli/src/lib/brain-bridge.ts` dynamic-`import()`s the vendored compiled `buildBrainGraph` and calls it with its own read-only handle, honouring MAINTAINING row 105 without breaking the `cli/` ↔ `brain-mcp-server/` zero-cross-import rule. `/api/graph/stats` strips `nodes` and `edges` at the route layer, so the shell physically cannot render a graph that FR-239 owns.
+  - **The server layer holds zero SQL.** Reads go through the FR-237 pure builder or the existing MAINTAINING-pinned CLI accessors (`listProjects`, `briefStatusSummary`, `listInstances`) — asserted mechanically in the test suite.
+  - **New lifecycle convention.** The CLI's first long-lived verb: foreground, single-instance via `~/.igris/dashboard.lock` over `process-liveness.ts` (pid + start-time, so a recycled pid cannot masquerade as live), signal-released. A second invocation re-opens the running URL and exits 0 rather than binding a second port.
+  - **Security posture.** Loopback bind only, `Host`-header allowlist (defeats DNS rebinding), no CORS headers, `nosniff` + `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` + `Referrer-Policy: no-referrer` on every response, path-traversal guard, and zero write endpoints.
+  - **Zero new runtime dependencies.** Vite/React/Tailwind/GSAP are `devDependencies`; the server is `node:http`. Measured tarball cost: **+156.8 KB packed** against a +250 KB budget.
+  - Adds `cli/src/lib/open-url.ts`, a TypeScript port of the cross-platform browser ladder that until now existed only as bash inside `core/skills/visualize/SKILL.md`. The bash original is deliberately left in place — collapsing the two is TD-308's job.
+  - Docs: `docs/dashboard.md` (verb, API, lifecycle, security posture) and `cli/dashboard/PORTING.md` (every ported file mapped to its fifty.dev origin, with each deliberate divergence recorded).
+
+### Fixed
+
+- **The `cli` vitest suite ran in no push/PR workflow** — `cd cli && npm test` was gated only by `npm-publish.yml`, which triggers on version tags, so a cli unit test could be red for weeks and only surface at release. Added a `Run CLI vitest suite` step to `test.yml`'s existing `cli-bats` job (which already does `npm ci` + build). Same gap class TD-303 closed for the bats suite. The new `cli/dashboard/` app had the identical problem for a different reason — `vite build` strips types without checking them and the app's tsconfig is isolated from the CLI's — so a `typecheck:dashboard` script and a matching CI step were added beside it.
+
+---
+
 ## [7.2.0] - 2026-07-05
 
 ### Added

@@ -762,3 +762,127 @@ export interface DryRunPlan {
    */
   would_copy: Array<{ from: string; to: string; reason: string }>;
 }
+
+// ---------------------------------------------------------------------------
+// FR-238 — `igris dashboard` (local server verb + application shell).
+//
+// These are the SHARED payload interfaces. `cli/dashboard/src/lib/api.ts`
+// mirrors them browser-side; a rename here MUST sweep that file, `routes.ts`,
+// the tests, and `docs/dashboard.md` in the same commit (MAINTAINING contract).
+// ---------------------------------------------------------------------------
+
+/** Flags accepted by `igris dashboard`. */
+export interface DashboardOptions {
+  /** Exact port. When taken, the verb HARD-FAILS — explicit intent is never silently reassigned. */
+  port?: number;
+  /** Do not launch a browser. */
+  noOpen?: boolean;
+  /** Hidden self-check: start, probe `/` + `/api/health`, print a JSON digest, exit. */
+  smoke?: boolean;
+}
+
+/**
+ * The single-instance lockfile written to `~/.igris/dashboard.lock`.
+ *
+ * `process_start_time` is what makes the guard pid-reuse-proof: a recycled pid
+ * belonging to an unrelated process has a different `ps -o lstart=` value, so
+ * the lock is correctly classified stale. Same discipline as the FR-190
+ * instance-liveness model (`process-liveness.ts`).
+ */
+export interface DashboardLock {
+  pid: number;
+  port: number;
+  url: string;
+  started_at: string;
+  /** `ps -p <pid> -o lstart=` at write time; null when unobtainable. */
+  process_start_time: string | null;
+}
+
+/** Uniform degradation signal. EVERY endpoint carries this; null means healthy. */
+export interface DashboardDegraded {
+  reason: string;
+}
+
+/** `GET /api/health`. */
+export interface HealthPayload {
+  ok: boolean;
+  cli_version: string;
+  brain: {
+    present: boolean;
+    path: string;
+  };
+  /** R2: a silent bridge degrade is converted into a visible one via this flag. */
+  bridge: {
+    available: boolean;
+    reason: string | null;
+  };
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** One row of `GET /api/projects`. */
+export interface DashboardProject {
+  slug: string;
+  name: string;
+  path: string;
+  status: string;
+  last_session_at: string;
+}
+
+/** `GET /api/projects`. */
+export interface ProjectsPayload {
+  projects: DashboardProject[];
+  /**
+   * The slug the shell should select on FIRST load, resolved server-side by
+   * `dashboard/default-project.ts`'s ladder (cwd project -> most recently
+   * active -> first alphabetically). Server-side because the top rung is the
+   * directory the CLI was invoked from, which the browser cannot know. `null`
+   * only when the list is empty or the brain is unreachable. It is an INITIAL
+   * selection, not a constraint — the browser switches projects freely.
+   */
+  default_project: string | null;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** `GET /api/summary?project=<slug>`. */
+export interface SummaryPayload {
+  project: string | null;
+  briefs: AssessBriefs;
+  instances: { active: number };
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * `GET /api/graph/stats?project=<slug>` — the FR-237 `BrainGraph` payload with
+ * `nodes` and `edges` STRIPPED at the route layer.
+ *
+ * The stripping is a structural fence, not a discipline one (R8): the shell
+ * physically cannot render a graph from this, so FR-239's scope cannot leak
+ * backwards into FR-238. It also keeps the response a few KB regardless of
+ * brain size.
+ */
+export interface BrainGraphStatsPayload {
+  project: string | null;
+  /** Mirrors `BrainGraphStats` from `whole-graph.ts`; null when the bridge is unavailable. */
+  stats: Record<string, unknown> | null;
+  /** Mirrors `EdgeResolutionReport`; null when the bridge is unavailable. */
+  edge_resolution: Record<string, unknown> | null;
+  truncated: boolean;
+  truncation_reason: string | null;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** What `igris dashboard --smoke` prints to stdout. */
+export interface DashboardDigest {
+  ok: boolean;
+  url: string;
+  port: number;
+  bundle_dir: string;
+  bundle_present: boolean;
+  checks: Array<{ path: string; status: number; ok: boolean }>;
+  brain_present: boolean;
+  bridge_available: boolean;
+}

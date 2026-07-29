@@ -194,3 +194,47 @@ jobs:
         # MAINTAINING.md maps the `test:bats` script name for this reason.
         working-directory: cli
         run: npm run test:bats
+
+      # -----------------------------------------------------------------------
+      # FR-238 — CLI vitest suite.
+      #
+      # WHAT IT GUARDS: every `cli/src/__tests__/*.test.ts` file. Among them the
+      # FR-238 dashboard contracts that have no bats arm — the Host-header
+      # allowlist and CORS absence, the four endpoints' payload shapes, the four
+      # degraded-brain shapes (200 + `degraded`, never a 500), the "routes.ts
+      # holds zero SQL" scope assertion, the AC-#4 no-network bundle scan, the
+      # TD-276 stale-bundle freshness guard, and the `npm pack` manifest +
+      # size-ceiling assertions.
+      #
+      # WHY IT EXISTS: `cd cli && npm test` ran ONLY in npm-publish.yml, which
+      # triggers on version tags. So a cli vitest file was not gated on push or
+      # PR at all — a new test could be red for weeks and only surface at
+      # release. Same gap class TD-303 closed for the bats suite above and
+      # TD-312 records for brain-mcp-server.
+      #
+      # PLACED IN THIS JOB DELIBERATELY: `cli-bats` already does `npm ci` +
+      # `npm run build`, which is everything the vitest suite needs (several
+      # tests assert against `cli/dist/`). The marginal cost is one step.
+      # -----------------------------------------------------------------------
+      - name: Run CLI vitest suite
+        working-directory: cli
+        run: npm test
+
+      # -----------------------------------------------------------------------
+      # FR-238 — dashboard app typecheck.
+      #
+      # WHAT IT GUARDS: cli/dashboard/**, the Vite/React app. Its tsconfig.json
+      # is isolated from cli/tsconfig.json (the app must not enter `rootDir:
+      # ./src`), which means the `tsc` in `npm run build` never sees it.
+      #
+      # WHY IT EXISTS: `vite build` does NOT typecheck. esbuild strips types
+      # without checking them, so a genuine type error compiles clean and ships
+      # — verified: an injected `const x: number = "str"` produced
+      # `error TS2322` under this script while `vite build` reported
+      # "✓ built in 150ms". Without this step the app surface would ship with
+      # its typecheck ungated, which is the same gap class the step above
+      # closes for the vitest suite.
+      # -----------------------------------------------------------------------
+      - name: Typecheck dashboard app
+        working-directory: cli
+        run: npm run typecheck:dashboard
