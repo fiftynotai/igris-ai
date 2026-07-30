@@ -875,6 +875,81 @@ export interface BrainGraphStatsPayload {
   degraded: DashboardDegraded | null;
 }
 
+/**
+ * `GET /api/graph?project=<slug>` — FR-239. The node/edge arrays `/api/graph/
+ * stats` deliberately strips, plus a SERVER-COMPOSED query twin.
+ *
+ * WHY THIS IS A SECOND ENDPOINT AND NOT A FLAG ON THE FIRST. `/api/graph/stats`
+ * is the cheap, always-safe readout the Overview polls every 5 s; this one is a
+ * ~1 MB body fetched ONCE per scope (D8). Merging them would either make the
+ * Overview's poll expensive or make this one's payload optional — and an
+ * optional payload is a shape the browser has to branch on forever.
+ *
+ * FR-237's own caps (15,000 nodes / 20,000 edges) are the ONLY ceiling. No
+ * second render cap is applied here: a second ceiling can silently disagree
+ * with `whole_brain_graph.md` §5, and density is a RENDERING concern that the
+ * dataviz degradation ladder already owns (D3).
+ */
+export interface BrainGraphPayload {
+  project: string | null;
+  /** Mirrors `BrainGraphNode[]` from `whole-graph.ts:117`. Empty when degraded. */
+  nodes: BrainGraphNodePayload[];
+  /** Mirrors `BrainGraphEdge[]` from `whole-graph.ts:142`. Empty when degraded. */
+  edges: BrainGraphEdgePayload[];
+  /** Mirrors `BrainGraphStats`; null when the bridge is unavailable. */
+  stats: Record<string, unknown> | null;
+  truncated: boolean;
+  truncation_reason: string | null;
+  /**
+   * dataviz.md exemption 04 — "the query is the twin". Composed SERVER-side on
+   * purpose: a twin the browser assembles is a caption the client invented, not
+   * a statement of what produced the node set.
+   */
+  query: GraphQueryTwin;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** One node on the wire. Field-for-field `BrainGraphNode` (whole-graph.ts:117). */
+export interface BrainGraphNodePayload {
+  key: string;
+  type: string;
+  id: string;
+  project: string | null;
+  label: string;
+  attrs: Record<string, unknown>;
+  degree: number;
+  boundary?: true;
+  phantom?: true;
+}
+
+/** One edge on the wire. Field-for-field `BrainGraphEdge` (whole-graph.ts:142). */
+export interface BrainGraphEdgePayload {
+  id: string;
+  source_edge_id: number;
+  from: string;
+  to: string;
+  type: string;
+  confidence: number;
+  provenance: string;
+  resolution: "unique" | "replicated";
+}
+
+/**
+ * The dataviz exemption-04 twin, and the replacement for diagram rules 06/08:
+ * a surface ID, the query that produced the set, and an as-of stamp.
+ */
+export interface GraphQueryTwin {
+  /** Stable surface identifier — the `FIG. N` equivalent. */
+  surface: string;
+  /** The query, as displayable lines. Mono, rendered verbatim. */
+  query: string[];
+  /** ISO timestamp the node set was produced at. */
+  as_of: string;
+  /** `2,422 NODES · 1,003 EDGES`, or the degraded/truncated rendering. */
+  scale: string;
+}
+
 /** What `igris dashboard --smoke` prints to stdout. */
 export interface DashboardDigest {
   ok: boolean;

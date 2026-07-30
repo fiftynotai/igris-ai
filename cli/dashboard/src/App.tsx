@@ -6,11 +6,13 @@
  * beat), routing, and the degraded/empty/loading states. It owns no domain
  * rendering beyond the Overview counters.
  */
+import { useState } from "react";
 import { Grain } from "./components/chrome/Grain";
 import { Cursor } from "./components/chrome/Cursor";
 import { Nav } from "./components/chrome/Nav";
 import { StatePage } from "./components/ui/StatePage";
 import { Overview } from "./pages/Overview";
+import { Graph } from "./pages/Graph";
 import { useLive } from "./lib/useLive";
 import { usePalette } from "./lib/usePalette";
 import { PENDING_ROUTES, ROUTE_LABELS, useRoute } from "./router";
@@ -19,6 +21,16 @@ export function App() {
   const [palette, setPalette] = usePalette();
   const [route, navigate] = useRoute();
   const live = useLive();
+
+  /**
+   * Search text, owned HERE rather than by `Graph`.
+   *
+   * dataviz.md §04 requires a Tier C canvas to ship its search control in the
+   * SURROUNDING CHROME, and FR-238 reserved the nav slot for exactly this. The
+   * control and its consumer therefore sit on opposite sides of the shell, so
+   * the state has to live at their common ancestor.
+   */
+  const [search, setSearch] = useState("");
 
   const pendingBrief = PENDING_ROUTES[route];
 
@@ -32,6 +44,8 @@ export function App() {
         palette={palette}
         onPalette={setPalette}
         live={live}
+        search={search}
+        onSearch={setSearch}
       />
       <main id="main" className="shell-main">
         {pendingBrief ? (
@@ -46,6 +60,8 @@ export function App() {
             message={`${ROUTE_LABELS[route]} ships with ${pendingBrief}. The shell is ready for it.`}
             meta={`${pendingBrief} · pending`}
           />
+        ) : route === "graph" ? (
+          <Graph search={search} />
         ) : (
           <Overview live={live} />
         )}

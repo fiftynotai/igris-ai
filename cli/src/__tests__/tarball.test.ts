@@ -475,11 +475,42 @@ interface PackReport {
 }
 
 /**
- * The dashboard budget (plan D2) is +250 KB packed with a hard ceiling of
- * +400 KB. The CEILING is asserted here rather than the budget, so an ordinary
- * CLI change does not fail the suite — but a bundle that doubles does.
+ * The dashboard packed-size gate is **one number: a hard ceiling of +400 KB**
+ * over `PACK_BASELINE_PACKED`, asserted below. An ordinary CLI change does not
+ * fail the suite; a bundle that doubles does.
  *
- * PROVENANCE OF THE CONSTANT, stated because it is softer than it looks:
+ * WHY THERE IS ONLY ONE NUMBER NOW — read this before adding a second.
+ * FR-238 shipped a PAIR: a +250 KB "budget" and a +400 KB asserted ceiling.
+ * FR-239's plan (D4) proposed raising the ceiling to +550 KB, reasoning that
+ * the operator's budget increase to +400 KB left budget == ceiling and so
+ * nothing for the gate to trip on.
+ *
+ * That argument was made BEFORE the change was measured, and measurement
+ * refuted it. **FR-239 lands at +283.4 KB** — it clears the ORIGINAL +400 KB
+ * ceiling with ~117 KB to spare and never came near it. Loosening a gate by
+ * 150 KB on behalf of a change that never approached it is how a gate stops
+ * meaning anything, so the ceiling was restored to +400 KB.
+ *
+ * The soft "budget" is retired rather than restored, and that is deliberate:
+ * two numbers where only ONE is asserted is exactly what produced this drift.
+ * The +550 figure survived in three separate places after the constant went
+ * back to 400 — here, `docs/dashboard.md`, and MAINTAINING row 108 — because a
+ * number nothing executes has no way to be caught when it goes stale. What
+ * replaces it is the asserted ceiling plus a recorded MEASUREMENT.
+ *
+ * Measured, cumulative over the family (`cd cli && npm pack --dry-run --json`):
+ *   FR-238 shipped      +187.9 KB
+ *   FR-239 shipped      +283.4 KB   (force-graph +55.3 KB measured in
+ *                                    isolation; ~+40 KB paint layer, view,
+ *                                    CSS and tests)
+ *   headroom remaining  ~116.6 KB   for FR-240 + FR-241
+ *
+ * The budget is CUMULATIVE across the family, not per-brief: a per-brief
+ * reading lets three views bust the ceiling with every individual brief
+ * passing. Subtract the shipped delta before claiming headroom, and measure
+ * rather than estimate. `PACK_BASELINE_PACKED` is UNCHANGED.
+ *
+ * PROVENANCE OF THE BASELINE CONSTANT, stated because it is softer than it looks:
  * 1_301_851 was measured on the FR-238 authoring checkout (739 files /
  * 5_475_927 unpacked). A CLEAN worktree measures ~1_277_864 (715 files /
  * 5_394_552) — `cli/dist` is never cleaned by the build, so a long-lived
@@ -557,13 +588,33 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
     ).toBe(true);
   });
 
-  it("stays under the FR-238 hard packed-size ceiling (+400 KB over baseline)", () => {
+  it("stays under the hard packed-size ceiling (+400 KB over baseline)", () => {
     const report = packReport();
     const delta = report.size - PACK_BASELINE_PACKED;
     expect(
       delta,
-      `packed delta ${(delta / 1024).toFixed(1)} KB exceeds the +400 KB ceiling ` +
+      `packed delta ${(delta / 1024).toFixed(1)} KB exceeds the ` +
+        `+${PACK_HARD_CEILING_DELTA / 1024} KB ceiling ` +
         `(packed ${report.size}, baseline ${PACK_BASELINE_PACKED})`,
     ).toBeLessThan(PACK_HARD_CEILING_DELTA);
+  });
+
+  it("ships the vendored graph library — bundled, never fetched (AC #4)", () => {
+    // `force-graph` is a devDependency BUNDLED BY VITE into the dashboard's
+    // hashed JS chunk. It must never appear as a runtime dependency, and it
+    // must never be reached over the network. The absence of a
+    // `dist/node_modules/force-graph` entry is the first half of that; the
+    // artifact test's off-origin scan is the second.
+    const paths = packedPaths();
+    expect(
+      [...paths].some((p) => p.includes("node_modules/force-graph")),
+      "force-graph must be bundled by Vite, not shipped as a runtime dep",
+    ).toBe(false);
+    expect(
+      [...paths].some(
+        (p) => p.startsWith("dist/dashboard/assets/") && p.endsWith(".js"),
+      ),
+      "the hashed dashboard chunk that carries it is missing",
+    ).toBe(true);
   });
 });

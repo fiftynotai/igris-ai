@@ -138,12 +138,106 @@ motion, pose, grain-slider and display-swap controls are not.
 
 ---
 
-## 4. Missing doc
+## 4. FR-239 — the data-viz consumption
+
+**Brief:** FR-239 · **Source spec:** `fifty_dev/docs/brand/dataviz.md` +
+`motion.md` (commit `dc9da4a`) · **Ported:** 2026-07-29
+
+FR-238 ported a design *language*. FR-239 is the first surface built against
+`dataviz.md`, whose §08 worked example is literally this view. Three things it
+added to the token layer, all in `styles/tokens.css`:
+
+| Added | Source | Note |
+|---|---|---|
+| `--t-instant` / `--t-quick` / `--t-std` / `--t-slow` / `--t-cine` | `motion.md` "Six durations" | **Five, not six.** `// LOOP` is the one duration `dataviz.md` forbids on a canvas, so it has no alias. Its absence is the guardrail. |
+| `--e-linear` / `--e-std` / `--e-spring` / `--e-step` | `motion.md` "Four easings" | Values verbatim. Resolved at runtime and evaluated as curves so the canvas and the CSS cannot disagree about what `// STD` means. |
+| `--s-1` … `--s-8` | `space.md` 8-pt scale | Node size floors are expressed against this, never as bare pixels. |
+| `--dataviz-bone/-accent/-muted/-grid/-edge-dim` | `dataviz.md` §02 | The complete sanctioned list — "and no others". |
+
+**D12 — the `--dataviz-*` aliases are declared on `body`, not `:root`.**
+Upstream has no data-viz consumer, so this has no counterpart to diverge from —
+but it is the single most important line in the block. A `var()` inside a custom
+property is substituted using the computed values **of the element it is
+declared on**. The palette overrides live on `body[data-palette=…]`, so a
+`:root` declaration substitutes against `html`'s values — the default `blood`
+palette — and freezes there. Every palette then renders identically. That is not
+a hypothetical: it was the first version, and it took a real browser to catch
+(the unit tests drive the *reader* over an injected style source and never touch
+the cascade). Guarded now by a mechanical assertion in `graph/__tests__/palette.test.ts`.
+
+**D13 — `force-graph` is vendored, and the paint layer is still ours.** The
+library owns force integration, the pan/zoom camera, drag, resize and
+hit-testing. Every painted pixel — five shapes, four edge roles, the density
+ladder, labels — is ours, drawn through `nodeCanvasObject`. No library can
+express the spec's silhouettes without approximating them.
+
+### The three findings, recorded
+
+**F1 · Why not cytoscape.** At ~3,400 elements cytoscape's usual remedies are
+`textureOnViewport` and `hideEdgesOnViewport`. Both are visual degradations —
+but they are *cytoscape's* ladder, fired by a trigger (viewport motion) the spec
+does not recognise, and `hideEdgesOnViewport` drops every edge at once, skipping
+ladder rungs 3, 4 and 5 to land past rung 5. Under `force-graph` the degradation
+is entirely ours, expressed through accessors, so the ladder is the spec's.
+`graph/__tests__/tier.test.ts` asserts no tier skips a rung.
+
+**F2 · The library's camera easing fights the tokens, in exactly two places.**
+`centerAt(x, y, ms)` and `zoom(k, ms)` accept a duration but apply the library's
+own easing, which is not one of `motion.md`'s four. **We never call their timed
+form.** Every camera move is a GSAP tween on a token duration and token easing
+whose `onUpdate` calls the instantaneous variants. Pinned by a source scan in
+`dashboard-graph-source.test.ts`, and structurally by the `Camera` interface,
+which has no duration parameter to pass one through.
+
+**F3 · The library deletes less code than it looks like it will.** What it
+genuinely takes off us is the risky ~40%. The paint layer is brand
+implementation and stays. Stated so the expectation is right before anyone reads
+the file list and wonders why there is so much of it.
+
+### Two integration hazards this cost real time to find
+
+Both were invisible to unit tests and were caught by driving a real browser.
+They are written down because the next person to wire a canvas library will meet
+at least one of them.
+
+1. **`autoPauseRedraw` must be OFF.** It skips a redraw when the library judges
+   nothing changed — but it can only judge *its own* props. Every visual state
+   here (hover emphasis, filter progress, selection ring, active palette) lives
+   in a mutable object the accessors read and the library knows nothing about.
+   With it on, a `data-palette` swap resolved all five tokens correctly in CSS
+   and the canvas kept painting the old palette, byte for byte.
+
+2. **`pauseAnimation()` cannot be called inline from `onEngineStop`.** The
+   library fires that callback from *inside* its frame callback, which re-arms
+   the next frame after the callback returns. An inline pause cancels a frame
+   that already fired and is immediately undone — the loop never stops. Measured:
+   state reported `still`, the pixel hash was stable, and a painted-frame counter
+   climbed 68 → 501 over 17 seconds. **The AC #5 pixel diff passes in that
+   state**, which is exactly the weakness the plan named when the library path
+   was chosen. The halt is now deferred by one macrotask, and the checkpoint in
+   `docs/dashboard.md` gained a frame-count reading so the two cases can be told
+   apart.
+
+---
+
+## 5. Missing doc
 
 There is no `design_system` context doc in
 `~/.igris/projects/igris-ai/context/`. It is **applicable but absent**, and more
-salient here than usual: this brief ports an entire design language into a repo
-that had never had a UI. Authoring it is a follow-up (`/ground design_system`),
-not part of FR-238 — writing a design-system doc from a shell that did not yet
-exist would have been fiction. This file is the interim provenance record and
-the natural seed for it.
+salient after FR-239 than it was after FR-238.
+
+FR-238's reason still stands: this repo ported an entire design language into a
+codebase that had never had a UI. FR-239 sharpens it. The project now carries
+four palettes, a 3-tier type stack, five durations, four easings, an 8-pt scale,
+**a five-shape / four-edge data-viz vocabulary, and a documented mapping of that
+vocabulary onto a specific third-party engine's accessors** — plus a
+settle-then-still contract whose verification is empirical and whose two failure
+modes are recorded above.
+
+That last part exists nowhere upstream and cannot: `fifty_dev`'s brand book has
+no reason to know `force-graph` exists. FR-240 and FR-241 would re-derive it from
+scratch.
+
+Authoring it is a follow-up (`/ground design_system`), now with a shipped
+consumer to write it from. This file remains the interim provenance record and
+the natural seed.

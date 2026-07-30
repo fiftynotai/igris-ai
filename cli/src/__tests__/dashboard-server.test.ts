@@ -308,7 +308,16 @@ describe("T2 — Host allowlist and CORS absence", () => {
 
   it("sets Cache-Control: no-store on every /api/* response", async () => {
     await start();
-    for (const p of ["/api/health", "/api/projects", "/api/summary", "/api/graph/stats"]) {
+    // FR-239 added `/api/graph` as the FIFTH endpoint (row 108). It is listed
+    // here rather than only in its own file because this is the surface-wide
+    // posture assertion — an endpoint that skips it is the regression.
+    for (const p of [
+      "/api/health",
+      "/api/projects",
+      "/api/summary",
+      "/api/graph/stats",
+      "/api/graph",
+    ]) {
       const r = await req(p);
       expect(r.headers["cache-control"]).toBe("no-store");
     }
@@ -438,6 +447,7 @@ const ALL_ENDPOINTS = [
   "/api/projects",
   "/api/summary?project=demo",
   "/api/graph/stats?project=demo",
+  "/api/graph?project=demo", // FR-239 — the fifth endpoint (row 108)
 ];
 
 async function expectAllDegradeCleanly(): Promise<void> {
@@ -545,6 +555,30 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       /\bnew Database\b/,
     ]) {
       expect(kw.test(code), `routes.ts must not match ${kw}`).toBe(false);
+    }
+  });
+
+  it("graph-query.ts holds no SQL and does no I/O (FR-239 — it is PURE)", () => {
+    const src = readFileSync(
+      new URL("../lib/dashboard/graph-query.ts", import.meta.url),
+      "utf-8",
+    );
+    const code = src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    for (const kw of [
+      /\bSELECT\s/i,
+      /\.prepare\s*\(/,
+      /\bnew Database\b/,
+      // Purity, not just SQL-freedom: the twin composer must be reachable from
+      // a unit test with no brain, no clock and no filesystem. `generatedAt` is
+      // a parameter for exactly this reason.
+      /\bnew Date\b/,
+      /\bDate\.now\b/,
+      /\bnode:fs\b/,
+      /\bexistsSync\b/,
+    ]) {
+      expect(kw.test(code), `graph-query.ts must not match ${kw}`).toBe(false);
     }
   });
 

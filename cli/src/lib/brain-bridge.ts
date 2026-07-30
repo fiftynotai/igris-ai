@@ -55,7 +55,58 @@ import { brainDbPath, bundledBrainEngineDir } from "./paths.js";
 // edges/whole-graph.ts`. MAINTAINING row 105 pins this mirror.
 // ---------------------------------------------------------------------------
 
-/** whole-graph.ts:192 — `EdgeResolutionReport`. Fields copied verbatim. */
+/**
+ * whole-graph.ts:117 — `BrainGraphNode`.
+ *
+ * FR-239 widened this from `unknown[]`: `/api/graph` is the first endpoint that
+ * actually SERVES nodes, so the mirror now has a consumer and MAINTAINING row
+ * 105's per-field annotation discipline applies to it.
+ */
+export interface BrainGraphNode {
+  /** whole-graph.ts:119 — `encodeNodeKey({ type, project, id })`. */
+  key: string;
+  /** whole-graph.ts:121 — entity type. */
+  type: string;
+  /** whole-graph.ts:123 — stable external id, verbatim from the source table. */
+  id: string;
+  /** whole-graph.ts:125 — owning project slug; null only when genuinely unowned. */
+  project: string | null;
+  /** whole-graph.ts:127 — human-readable display label. */
+  label: string;
+  /** whole-graph.ts:129 — per-type display attributes. Never body content. */
+  attrs: Record<string, unknown>;
+  /** whole-graph.ts:131 — in+out degree over the RETURNED edges (self-loops 2). */
+  degree: number;
+  /** whole-graph.ts:133 — set when pulled in by adjacency on a project call. */
+  boundary?: true;
+  /** whole-graph.ts:135 — set when this endpoint has no backing row anywhere. */
+  phantom?: true;
+}
+
+/** whole-graph.ts:139 — `EdgeResolution`. */
+export type EdgeResolution = "unique" | "replicated";
+
+/** whole-graph.ts:142 — `BrainGraphEdge`. `from`/`to` are composite node keys. */
+export interface BrainGraphEdge {
+  /** whole-graph.ts:144 — `"417"`, or `"417#igris-ai"` for a replica instance. */
+  id: string;
+  /** whole-graph.ts:146 — `entity_edges.id`, always the ORIGINAL row. */
+  source_edge_id: number;
+  /** whole-graph.ts:148 — composite key of the source endpoint. */
+  from: string;
+  /** whole-graph.ts:150 — composite key of the target endpoint. */
+  to: string;
+  /** whole-graph.ts:152 — `edge_type`, verbatim from the catalog. */
+  type: string;
+  /** whole-graph.ts:154 — original confidence, divided by replica count. */
+  confidence: number;
+  /** whole-graph.ts:156 — `entity_edges.provenance`, verbatim. */
+  provenance: string;
+  /** whole-graph.ts:158 — `'unique'` when unambiguous, `'replicated'` otherwise. */
+  resolution: EdgeResolution;
+}
+
+/** whole-graph.ts:162 — `EdgeResolutionReport`. Fields copied verbatim. */
 export interface EdgeResolutionReport {
   rule: "intra_project_projection";
   max_edge_replicas: number;
@@ -71,7 +122,7 @@ export interface EdgeResolutionReport {
   by_endpoint_pair: Record<string, number>;
 }
 
-/** whole-graph.ts:222 — `BrainGraphStats`. */
+/** whole-graph.ts:194 — `BrainGraphStats`. */
 export interface BrainGraphStats {
   node_count: number;
   edge_count: number;
@@ -81,7 +132,7 @@ export interface BrainGraphStats {
   boundary_node_count: number;
 }
 
-/** whole-graph.ts:236 — `BrainGraphDegraded`. */
+/** whole-graph.ts:208 — `BrainGraphDegraded`. */
 export interface BrainGraphDegraded {
   missing_tables: string[];
   phantom_nodes: number;
@@ -89,18 +140,18 @@ export interface BrainGraphDegraded {
 }
 
 /**
- * whole-graph.ts:246 — `BrainGraph`.
+ * whole-graph.ts:218 — `BrainGraph`.
  *
- * `nodes` / `edges` are typed as unknown[] DELIBERATELY: FR-238 never reads
- * them (R8 strips both at the route layer), so mirroring `BrainGraphNode` /
- * `BrainGraphEdge` here would create a drift surface with no consumer. FR-239
- * adds them when it actually renders a graph.
+ * FR-238 typed `nodes`/`edges` as `unknown[]` because it never read them (R8
+ * stripped both at the route layer) and an unread mirror is pure drift surface.
+ * **FR-239 gives them a consumer** — `/api/graph` serves both arrays and the
+ * browser renders them — so they are now mirrored properly above.
  */
 export interface BrainGraph {
   generated_at: string;
   project: string | null;
-  nodes: unknown[];
-  edges: unknown[];
+  nodes: BrainGraphNode[];
+  edges: BrainGraphEdge[];
   stats: BrainGraphStats;
   edge_resolution: EdgeResolutionReport;
   truncated: boolean;
@@ -108,7 +159,7 @@ export interface BrainGraph {
   degraded: BrainGraphDegraded;
 }
 
-/** whole-graph.ts:258 — `BuildOpts`, narrowed to the options FR-238 passes. */
+/** whole-graph.ts:232 — `BuildOpts`, narrowed to the options the CLI passes. */
 export interface BuildOpts {
   project?: string;
   node_types?: string[];

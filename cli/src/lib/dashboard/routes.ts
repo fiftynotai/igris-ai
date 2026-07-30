@@ -1,5 +1,7 @@
 /**
- * FR-238 — the four read-only JSON endpoints.
+ * FR-238 — the four read-only JSON endpoints. FR-239 adds a fifth
+ * (`/api/graph`), which reaches the brain through the SAME `bridge.buildGraph`
+ * door as `graphStats` and therefore inherits the zero-SQL scan below for free.
  *
  * THIS FILE CONTAINS ZERO SQL. That is a hard scope requirement of the brief,
  * and it is mechanically asserted by `dashboard-server.test.ts`.
@@ -26,7 +28,9 @@ import { listProjects } from "../registry.js";
 import { brainDbPath } from "../paths.js";
 import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
+import { composeQueryTwin } from "./graph-query.js";
 import type {
+  BrainGraphPayload,
   BrainGraphStatsPayload,
   DashboardProject,
   HealthPayload,
@@ -209,5 +213,92 @@ export async function graphStats(
               reason: `brain tables absent: ${graph.degraded.missing_tables.join(", ")}`,
             }
           : null,
+  };
+}
+
+/**
+ * `GET /api/graph?project=<slug>` — FR-239. The node/edge arrays themselves.
+ *
+ * SAME DOOR AS `graphStats`. This handler holds no query logic of its own: it
+ * calls `bridge.buildGraph()` and forwards the result. That is what keeps the
+ * zero-SQL rule true by construction rather than by discipline, and it is why
+ * whole-brain and project drill-down are the same code path (row 105 —
+ * "the filter is applied to the assembled graph").
+ *
+ * NO SECOND CAP (D3). FR-237's `maxNodes`/`maxEdges` are the only ceilings; a
+ * render-side cap here could silently disagree with `whole_brain_graph.md` §5,
+ * and density is the degradation ladder's job, not the transport's.
+ *
+ * The response is ~1 MB over loopback and is fetched ONCE per scope (D8) — the
+ * shell's 5-second `live.tick` deliberately does NOT drive it.
+ */
+export async function graph(project: string | null): Promise<BrainGraphPayload> {
+  const degradedPayload = (reason: string): BrainGraphPayload => {
+    const at = now();
+    return {
+      project,
+      nodes: [],
+      edges: [],
+      stats: null,
+      truncated: false,
+      truncation_reason: null,
+      // The twin is composed even when the read failed. A canvas with no twin
+      // is unreproducible (exemption 04), and "why is it empty" is exactly the
+      // question a reader has in this state — so the twin answers it.
+      query: composeQueryTwin({
+        project,
+        nodeCount: 0,
+        edgeCount: 0,
+        truncated: false,
+        truncationReason: null,
+        degradedReason: reason,
+        generatedAt: at,
+      }),
+      generated_at: at,
+      degraded: { reason },
+    };
+  };
+
+  if (!brainPresent()) {
+    return degradedPayload(`brain database not found at ${brainDbPath()}`);
+  }
+
+  const result = await bridge.buildGraph(project === null ? {} : { project });
+  if (!result.ok) {
+    // Discriminated cause, verbatim — same reasoning as `graphStats`.
+    return degradedPayload(result.reason);
+  }
+  const g = result.graph;
+
+  const builderDegraded =
+    g.degraded.reason !== null
+      ? g.degraded.reason
+      : g.degraded.missing_tables.length > 0
+        ? `brain tables absent: ${g.degraded.missing_tables.join(", ")}`
+        : null;
+
+  return {
+    project: g.project,
+    // Forwarded VERBATIM. Any reshaping here would be a second definition of
+    // the node/edge contract living outside `whole-graph.ts` (row 105).
+    nodes: g.nodes,
+    edges: g.edges,
+    stats: g.stats as unknown as Record<string, unknown>,
+    truncated: g.truncated,
+    truncation_reason: g.truncation_reason,
+    query: composeQueryTwin({
+      project: g.project,
+      nodeCount: g.nodes.length,
+      edgeCount: g.edges.length,
+      truncated: g.truncated,
+      truncationReason: g.truncation_reason,
+      // A partial degradation (a missing table) still produced a real node
+      // set, so the twin reports the SCALE, not the degradation — the payload's
+      // own `degraded` field carries that.
+      degradedReason: null,
+      generatedAt: g.generated_at,
+    }),
+    generated_at: g.generated_at,
+    degraded: builderDegraded !== null ? { reason: builderDegraded } : null,
   };
 }

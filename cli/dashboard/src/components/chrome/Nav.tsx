@@ -13,6 +13,7 @@
  */
 import { PaletteSwitcher } from "./PaletteSwitcher";
 import { LiveIndicator } from "./LiveIndicator";
+import { Input } from "../ui/Input";
 import { ROUTES, ROUTE_LABELS, PENDING_ROUTES, type Route } from "../../router";
 import type { Palette } from "../../lib/usePalette";
 import type { Live } from "../../lib/useLive";
@@ -23,9 +24,20 @@ export interface NavProps {
   palette: Palette;
   onPalette: (next: Palette) => void;
   live: Live;
+  /** FR-239 — the Tier C search control. State lives in `App`. */
+  search: string;
+  onSearch: (next: string) => void;
 }
 
-export function Nav({ route, onNavigate, palette, onPalette, live }: NavProps) {
+export function Nav({
+  route,
+  onNavigate,
+  palette,
+  onPalette,
+  live,
+  search,
+  onSearch,
+}: NavProps) {
   return (
     <nav className="shell-nav" aria-label="Dashboard sections">
       <a className="shell-brand" href="#/overview">
@@ -63,8 +75,28 @@ export function Nav({ route, onNavigate, palette, onPalette, live }: NavProps) {
 
       <span className="shell-nav-spacer" />
 
-      {/* dataviz.md forward obligation (a) — reserved, filled by FR-239. */}
-      <div className="shell-search-slot" data-slot="search" aria-hidden />
+      {/*
+        dataviz.md §04's Tier C obligation, filled by FR-239: "A Tier C canvas
+        must also ship a real, tap-target-compliant search or filter control in
+        the surrounding chrome. Pointing at a specific node is never the only
+        way to reach it."
+
+        Rendered ONLY on the graph route. On every other route the slot stays
+        empty and keeps its 44 px min-height, so the nav geometry does not shift
+        as the operator navigates — which is why FR-238 reserved it in the first
+        place.
+      */}
+      <div className="shell-search-slot" data-slot="search">
+        {route === "graph" && (
+          <Input
+            type="search"
+            value={search}
+            placeholder="FIND A NODE"
+            aria-label="Search the graph by label or id"
+            onChange={(e) => onSearch(e.target.value)}
+          />
+        )}
+      </div>
 
       <LiveIndicator live={live} />
       <PaletteSwitcher palette={palette} onChange={onPalette} />

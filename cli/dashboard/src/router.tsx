@@ -19,9 +19,13 @@ import { useEffect, useState } from "react";
 export const ROUTES = ["overview", "graph", "layers", "triage"] as const;
 export type Route = (typeof ROUTES)[number];
 
-/** Routes whose owning brief has not shipped yet. Rendered, but not enterable. */
+/**
+ * Routes whose owning brief has not shipped yet. Rendered, but not enterable.
+ *
+ * `graph` left this map when FR-239 shipped — one line deleted and a page
+ * mounted, which is the whole pattern FR-240 and FR-241 inherit.
+ */
 export const PENDING_ROUTES: Partial<Record<Route, string>> = {
-  graph: "FR-239",
   layers: "FR-240",
   triage: "FR-241",
 };

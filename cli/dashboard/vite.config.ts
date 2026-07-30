@@ -23,7 +23,15 @@ export default defineConfig({
     assetsInlineLimit: 4096,
     sourcemap: false,
     // Keep the tarball honest — a silent chunk-size regression is a budget
-    // regression (D2).
-    chunkSizeWarningLimit: 400,
+    // regression (FR-238 D2).
+    //
+    // Raised 400 -> 520 by FR-239. The vendored `force-graph` is ~178 KB
+    // minified (+55.3 KB packed, measured), which puts the single app chunk at
+    // ~477 KB and made this warning fire on EVERY build. A warning that always
+    // fires is a warning people learn to scroll past, which is worse than no
+    // warning at all — so the threshold moves to sit just above the real
+    // post-FR-239 size and keeps its ability to catch the next surprise.
+    // The authoritative gate remains `tarball.test.ts`'s packed-size ceiling.
+    chunkSizeWarningLimit: 520,
   },
 });

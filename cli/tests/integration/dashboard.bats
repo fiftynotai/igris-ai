@@ -192,6 +192,112 @@ EOF
 
 # --- degraded brain --------------------------------------------------------
 
+# --- T22 (FR-239) — /api/graph on a seeded brain and on a missing one ------
+#
+# The node/edge endpoint is the one surface where the CLI, the vendored FR-237
+# builder, and a real `better-sqlite3` handle all have to line up in an
+# INSTALLED layout. A unit test drives the same code path, but only this one
+# proves the bridge still resolves when the verb is launched as a real process.
+
+@test "T22: /api/graph serves node and edge arrays from a seeded brain" {
+  # A minimal real brain: two briefs and one edge between them.
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE brief_status (
+      brief_id TEXT PRIMARY KEY, project TEXT NOT NULL, brief_type TEXT,
+      title TEXT, status TEXT NOT NULL, priority TEXT, effort TEXT,
+      phase TEXT, updated_at TEXT
+    );
+    INSERT INTO brief_status VALUES
+      ('FR-1','alpha','Feature','First','pending','P1-High','M',NULL,'2026-07-01'),
+      ('FR-2','alpha','Feature','Second','pending','P2-Medium','S',NULL,'2026-07-02');
+    CREATE TABLE entity_edges (
+      id INTEGER PRIMARY KEY, from_type TEXT, from_id TEXT, to_type TEXT,
+      to_id TEXT, edge_type TEXT, confidence REAL, provenance TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+    INSERT INTO entity_edges VALUES
+      (1,'brief','FR-1','brief','FR-2','parent_of',0.9,'observed','{}');
+  "
+
+  local port; port="$(free_port)"
+  $CLI_BIN dashboard --no-open --port "$port" >/dev/null 2>&1 &
+  DASH_PID=$!
+  run wait_for_url "http://127.0.0.1:$port/api/health"
+  [ "$status" -eq 0 ]
+
+  run node -e "
+    require('node:http').get('http://127.0.0.1:$port/api/graph', {agent:false}, r => {
+      let b = '';
+      r.on('data', c => b += c);
+      r.on('end', () => {
+        if (r.statusCode !== 200) { console.error('status', r.statusCode); process.exit(1); }
+        const g = JSON.parse(b);
+        if (!Array.isArray(g.nodes) || g.nodes.length !== 2) { console.error('nodes', g.nodes && g.nodes.length); process.exit(1); }
+        if (!Array.isArray(g.edges) || g.edges.length !== 1) { console.error('edges', g.edges && g.edges.length); process.exit(1); }
+        // The composite key is the builder's, not a bare id.
+        if (g.nodes[0].key !== 'brief|alpha|FR-1') { console.error('key', g.nodes[0].key); process.exit(1); }
+        // Exemption 04 — the twin is composed SERVER-side and always ships.
+        if (!g.query || g.query.surface !== 'igris-brain-graph') { console.error('twin', JSON.stringify(g.query)); process.exit(1); }
+        if (g.query.as_of !== g.generated_at) { console.error('as_of drift'); process.exit(1); }
+        console.log('ok', g.query.scale);
+      });
+    }).on('error', e => { console.error(e.message); process.exit(1); });
+  "
+  [ "$status" -eq 0 ]
+  echo "$output" | grep -q '2 NODES · 1 EDGES'
+
+  # The project drill-down is the SAME endpoint with a scope (D6).
+  run node -e "
+    require('node:http').get('http://127.0.0.1:$port/api/graph?project=alpha', {agent:false}, r => {
+      let b = '';
+      r.on('data', c => b += c);
+      r.on('end', () => {
+        const g = JSON.parse(b);
+        if (g.project !== 'alpha') process.exit(1);
+        if (g.query.surface !== 'igris-brain-graph/alpha') process.exit(1);
+        process.exit(0);
+      });
+    }).on('error', () => process.exit(1));
+  "
+  [ "$status" -eq 0 ]
+
+  kill -TERM "$DASH_PID"
+  wait "$DASH_PID" || true
+  DASH_PID=""
+}
+
+@test "T22: /api/graph on a MISSING brain degrades with 200, never a 500" {
+  [ ! -f "$IGRIS_BRAIN_DIR/memory/knowledge.db" ]
+  local port; port="$(free_port)"
+  $CLI_BIN dashboard --no-open --port "$port" >/dev/null 2>&1 &
+  DASH_PID=$!
+  run wait_for_url "http://127.0.0.1:$port/api/health"
+  [ "$status" -eq 0 ]
+
+  run node -e "
+    require('node:http').get('http://127.0.0.1:$port/api/graph', {agent:false}, r => {
+      let b = '';
+      r.on('data', c => b += c);
+      r.on('end', () => {
+        if (r.statusCode !== 200) { console.error('status', r.statusCode); process.exit(1); }
+        const g = JSON.parse(b);
+        if (g.degraded === null) { console.error('expected degraded'); process.exit(1); }
+        if (g.nodes.length !== 0 || g.edges.length !== 0) process.exit(1);
+        // A canvas with no twin is unreproducible, so the twin ships even here.
+        if (!g.query.scale.startsWith('DEGRADED')) { console.error('twin', g.query.scale); process.exit(1); }
+        // No stack trace ever reaches the wire.
+        if (b.includes('    at ')) process.exit(1);
+        console.log('ok');
+      });
+    }).on('error', () => process.exit(1));
+  "
+  [ "$status" -eq 0 ]
+
+  kill -TERM "$DASH_PID"
+  wait "$DASH_PID" || true
+  DASH_PID=""
+}
+
 @test "a MISSING brain DB yields an empty state, not a stack trace" {
   # stage_brain creates memory/ but no knowledge.db — that IS the missing case.
   [ ! -f "$IGRIS_BRAIN_DIR/memory/knowledge.db" ]

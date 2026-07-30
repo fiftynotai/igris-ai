@@ -79,6 +79,77 @@ export interface GraphStatsPayload {
   degraded: DashboardDegraded | null;
 }
 
+// ---------------------------------------------------------------------------
+// FR-239 — `/api/graph`. The node/edge arrays `/api/graph/stats` strips.
+//
+// These mirror `BrainGraphNodePayload` / `BrainGraphEdgePayload` in
+// `cli/src/types.ts`, which in turn mirror `BrainGraphNode` (whole-graph.ts:117)
+// and `BrainGraphEdge` (whole-graph.ts:142). MAINTAINING row 105 names THIS FILE
+// as a consumer: a node-field rename now sweeps four files, not three.
+// ---------------------------------------------------------------------------
+
+/** Mirrors `BrainGraphNodePayload`. */
+export interface GraphNode {
+  /** Composite key `type|project|id` — the identity used everywhere. */
+  key: string;
+  type: string;
+  id: string;
+  project: string | null;
+  label: string;
+  attrs: Record<string, unknown>;
+  degree: number;
+  /** Pulled in by adjacency during a project drill-down (D6). */
+  boundary?: true;
+  /** An edge endpoint with no backing row anywhere. */
+  phantom?: true;
+}
+
+/** Mirrors `BrainGraphEdgePayload`. */
+export interface GraphEdge {
+  id: string;
+  source_edge_id: number;
+  from: string;
+  to: string;
+  type: string;
+  confidence: number;
+  provenance: string;
+  resolution: "unique" | "replicated";
+}
+
+/**
+ * Mirrors `GraphQueryTwin` — dataviz exemption 04.
+ *
+ * Rendered VERBATIM. The browser must never compose or amend these strings:
+ * the whole point of the server composing them is that the twin states what
+ * produced the node set rather than what the client received.
+ */
+export interface GraphQueryTwin {
+  surface: string;
+  query: string[];
+  as_of: string;
+  scale: string;
+}
+
+/** Mirrors `BrainGraphPayload`. */
+export interface GraphPayload {
+  project: string | null;
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  stats: {
+    node_count: number;
+    edge_count: number;
+    by_node_type: Record<string, number>;
+    by_edge_type: Record<string, number>;
+    project_count: number;
+    boundary_node_count: number;
+  } | null;
+  truncated: boolean;
+  truncation_reason: string | null;
+  query: GraphQueryTwin;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
 /** A network/parse failure, distinct from a server-reported `degraded`. */
 export class ApiError extends Error {
   constructor(
@@ -129,6 +200,20 @@ export const api = {
       project === null
         ? "api/graph/stats"
         : `api/graph/stats?project=${encodeURIComponent(project)}`,
+      signal,
+    ),
+
+  /**
+   * FR-239 — the full node/edge payload, ~1 MB over loopback.
+   *
+   * Called ONCE per scope (D8), never on `live.tick`. See `pages/Graph.tsx` for
+   * why that is a deliberate divergence from the shell's page pattern.
+   */
+  graph: (project: string | null, signal?: AbortSignal): Promise<GraphPayload> =>
+    getJson<GraphPayload>(
+      project === null
+        ? "api/graph"
+        : `api/graph?project=${encodeURIComponent(project)}`,
       signal,
     ),
 };

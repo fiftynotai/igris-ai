@@ -20,7 +20,7 @@ import {
   readdirSync,
   statSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -40,8 +40,21 @@ function walk(dir: string): string[] {
   return out;
 }
 
+/**
+ * Newest mtime of files that can actually change the BUNDLE.
+ *
+ * `__tests__` is excluded, and the exclusion is load-bearing rather than
+ * cosmetic. FR-239 put the graph engine's unit tests under
+ * `dashboard/src/graph/__tests__/` (per `coding_guidelines.md` §12, so the
+ * `cli` vitest run reaches them). Nothing in `main.tsx`'s module graph imports
+ * them, so Vite never sees them and they cannot make `dist/dashboard` stale —
+ * but an unfiltered mtime walk counts them anyway, and a guard that fires on
+ * an edit it knows is irrelevant is a guard people start ignoring.
+ */
 function newestMtime(dir: string): number {
-  return walk(dir).reduce((max, f) => Math.max(max, statSync(f).mtimeMs), 0);
+  return walk(dir)
+    .filter((f) => !f.includes(`${sep}__tests__${sep}`))
+    .reduce((max, f) => Math.max(max, statSync(f).mtimeMs), 0);
 }
 
 describe("T7 — the bundle is present", () => {

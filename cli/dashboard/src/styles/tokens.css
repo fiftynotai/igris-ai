@@ -95,6 +95,85 @@
   --nav-h: 56px;
   --shell-pad-x: 28px;
   --shell-pad-y: 32px;
+
+  /* ─── FR-239 · motion tokens ──────────────────────────────────
+     Source: fifty_dev/docs/brand/motion.md "Six durations" + "Four easings".
+     CSS alias spelling is fixed by docs/brand/code.md and referenced by name
+     from dataviz.md §02 — do not rename these.
+
+     FIVE durations, not six. `// LOOP` (1600ms) is deliberately ABSENT: it is
+     the only duration dataviz.md forbids on a canvas ("`// LOOP` never touches
+     the canvas", rule 07), and the surrounding chrome that legitimately loops
+     — the live dot — already carries its own timing in base.css. Adding
+     `--t-loop` here would put the forbidden value one autocomplete away from
+     the graph code. Its absence is the guardrail. */
+  --t-instant: 120ms;   /* hover, focus */
+  --t-quick: 180ms;     /* UI default */
+  --t-std: 320ms;       /* card reveal, expand */
+  --t-slow: 600ms;      /* page transition */
+  --t-cine: 1400ms;     /* hero entrance — the canvas entrance settle */
+
+  --e-linear: linear;                          /* tickers, traversals */
+  --e-std: cubic-bezier(0.4, 0, 0.2, 1);       /* UI default */
+  --e-spring: cubic-bezier(0.34, 1.56, 0.64, 1); /* success, spawn */
+  --e-step: steps(8, end);                     /* terminal, counter */
+
+  /* ─── FR-239 · the 8-pt space scale ───────────────────────────
+     Source: fifty_dev/docs/brand/space.md, referenced by dataviz.md §02.
+     dataviz.md requires node size floors to be "expressed against this scale,
+     never as bare pixels" — `--s-1` is the Tier C absolute floor and `--s-2`
+     the Tier B one. */
+  --s-1: 8px;
+  --s-2: 16px;
+  --s-3: 24px;
+  --s-4: 32px;
+  --s-5: 40px;
+  --s-6: 48px;
+  --s-7: 56px;
+  --s-8: 64px;
+
+}
+
+/* ─── FR-239 · dataviz role aliases ─────────────────────────────
+   dataviz.md §02: "A data-viz surface may define exactly these custom
+   properties, and no others." This is that list, verbatim and complete.
+
+   They DEREFERENCE the active palette rather than restating a value, which is
+   what makes AC #3 ("zero colours outside the fifty.dev role tokens") hold
+   through a `data-palette` swap with no re-binding code: `palette.ts` re-reads
+   these five from computed style and force-graph asks for colours at paint
+   time.
+
+   THEY ARE DECLARED ON `body`, NOT ON `:root`, AND THAT IS LOAD-BEARING.
+   A custom property's `var()` references are substituted using the computed
+   values OF THE ELEMENT IT IS DECLARED ON, and the result is what descendants
+   inherit. The four palette overrides below set `--fg` / `--accent` / `--muted`
+   / `--line` on `body[data-palette=...]`. So an alias declared on `:root`
+   (i.e. `html`) would substitute against HTML's values — the default `blood`
+   palette — and freeze there: `body` would inherit an already-resolved
+   `#f6efe6` and every palette would render identically.
+
+   That is not hypothetical. It was the FIRST version of this block, and the
+   FR-239 end-to-end browser run caught it: all four palettes reported
+   `bone: #f6efe6`. The unit tests could not have — they drive `readPalette`
+   over an injected style source, so they test the READER, not the cascade.
+   Declaring on `body` puts the substitution on the same element that carries
+   the palette stamp, which is the only place it can be correct.
+
+   There is no per-type hue anywhere in this brief. Category is carried by
+   SHAPE (dataviz DON'T — "no rainbow categorical palettes"). */
+body {
+  --dataviz-bone: var(--fg);
+  --dataviz-accent: var(--accent);
+  --dataviz-muted: var(--muted);
+  --dataviz-grid: var(--line);
+  /* The single derived alias — Tier C resting edges. Defined once here,
+     referenced by name thereafter. */
+  /* Derived from the ROLE ALIAS, not from `--muted` directly. Identical
+     today, but referencing `--dataviz-muted` is what makes the alias chain
+     provable: a future change to the muted role reaches the dimmed edge by
+     construction rather than because two declarations happen to agree. */
+  --dataviz-edge-dim: color-mix(in srgb, var(--dataviz-muted) 38%, transparent);
 }
 
 /* Palette overrides — applied via body[data-palette="…"].

@@ -156,6 +156,12 @@ async function handle(
     sendJson(res, 200, await routes.graphStats(project));
     return;
   }
+  // FR-239. Ordered AFTER `/api/graph/stats` for readability only — these are
+  // exact-match comparisons, not prefixes, so neither can shadow the other.
+  if (pathname === "/api/graph") {
+    sendJson(res, 200, await routes.graph(project));
+    return;
+  }
   if (pathname.startsWith("/api/")) {
     sendJson(res, 404, { error: `no such endpoint: ${pathname}` });
     return;
