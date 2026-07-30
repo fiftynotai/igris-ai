@@ -1,0 +1,2336 @@
+#!/usr/bin/env node
+/**
+ * FR-240 §3.4 — the REAL-BROWSER behavioural gates, driven over CDP.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS FILE EXISTS AS A FILE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FR-239 shipped two bugs that 1,612 green tests could not see, and both fell
+ * out in minutes under headless Chrome — a canvas that was still BECAUSE IT WAS
+ * DEAD (the halt cancelled the library's hit-testing loop, so clicking a node
+ * deselected instead of selecting), and a render loop that repainted identical
+ * pixels forever while every stillness reading passed. That run was ad-hoc: a
+ * scratch script, an operator recipe in `docs/dashboard.md`, and a memory note.
+ * Nothing re-runnable survived, so the gate could not be independently re-run by
+ * a reviewer — which is the property that makes a gate worth anything.
+ *
+ * This file is that run, checked in. `docs/dashboard.md` §"The FR-240 browser
+ * gate" documents how to invoke it and what each gate does and does NOT prove.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * NO NEW DEPENDENCY (plan §3.4: "CDP, no new dependency")
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Node 24 has global `fetch` and global `WebSocket`, so the Chrome DevTools
+ * Protocol is drivable directly. There is no puppeteer, no playwright, no `ws`.
+ * The one non-builtin thing this file touches is `typescript` — a devDependency
+ * the build already uses — and only to TRANSPILE the shared brain fixture
+ * (`cli/src/__tests__/dashboard-layers-fixture.ts`) so this harness seeds the
+ * SAME rows the vitest suites assert on. A second hand-rolled fixture would
+ * drift, and a browser gate reading different rows from the endpoint gate proves
+ * nothing about the endpoint gate.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * EVERY GATE HAS A DEMONSTRATED FAILING COUNTERPART (FR-239 learnings 1092-1094)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A guard whose only observed output is "pass" is indistinguishable from a
+ * broken one. So each gate below carries a `--mutate=<name>` that breaks it ON
+ * PURPOSE, and in mutation mode this script INVERTS its own verdict: the run
+ * SUCCEEDS only if the named gate actually reports FAIL. A mutation run in which
+ * everything still passes is reported as `VACUOUS` and exits non-zero.
+ *
+ *   node cli/scripts/browser-gate.mjs                      # all gates must pass
+ *   node cli/scripts/browser-gate.mjs --mutate=br1-fuse-projects
+ *   node cli/scripts/browser-gate.mjs --list-mutations
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE BRAIN IS ALWAYS A SANDBOX. NEVER THE OPERATOR'S.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Every server this script starts runs with `IGRIS_BRAIN_DIR` pointed at a fresh
+ * `mkdtemp` directory (`cli/src/lib/paths.ts#brainDir` is the seam) and `HOME`
+ * pointed inside it. There is no code path here that opens
+ * `~/.igris/memory/knowledge.db`. That is deliberate and load-bearing: the
+ * dashboard tier is read-only, but a harness that pointed at the live brain
+ * would still be one typo away from a `VACUUM INTO` over it.
+ *
+ * FOUR WORLDS, because three of the gates are about DISAGREEMENT between them:
+ *   seeded  — the shared fixture. Rows in every layer.
+ *   vec     — the fixture PLUS a `learnings_vec` index, so hybrid recall runs.
+ *   empty   — the fixture's schema with every row deleted. `empty` empty-state.
+ *   missing — no `knowledge.db` at all. `degraded` empty-state.
+ * A single-world gate cannot tell "the empty state renders" from "the empty
+ * state always renders", which is exactly the vacuity learning 1092 describes.
+ *
+ * @module scripts/browser-gate
+ */
+
+import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
+import { createServer } from "node:net";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const CLI_ROOT = join(HERE, "..");
+const CLI_ENTRY = join(CLI_ROOT, "dist", "index.js");
+const FIXTURE_TS = join(CLI_ROOT, "src", "__tests__", "dashboard-layers-fixture.ts");
+
+const CHROME =
+  process.env.CHROME_BIN ??
+  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+
+/**
+ * Mutations, each naming the gate it breaks and HOW.
+ *
+ * The `how` string is printed in the run header, so the recorded output of a
+ * mutation run states the injected defect rather than leaving a reader to infer
+ * it from a diff.
+ */
+const MUTATIONS = {
+  "br1-fuse-projects": {
+    gate: "G-BR-1d",
+    how: "assert the two BR-001 detail titles are EQUAL — the exact BR-078 fusion signature",
+  },
+  "br2-skip-click": {
+    gate: "G-BR-2a",
+    how: "assert the FILTERED row count without ever clicking the filter chip",
+  },
+  "br3-empty-on-seeded": {
+    gate: "G-BR-3a",
+    how: "look for the degraded empty-state in the SEEDED world, where there is data",
+  },
+  "br4-same-palette": {
+    gate: "G-BR-4d",
+    how: "read the `blood` palette four times and assert the four readings differ",
+  },
+  "br4-measure-motion": {
+    gate: "G-BR-4a",
+    how: "take the first at-rest reading on the GRAPH — a surface known to move — so both `awaitQuiet` and the rAF window must report it",
+  },
+  "br5-absent-text": {
+    gate: "G-BR-5a",
+    how: "assert a sentence that is not in the fixture brief body",
+  },
+  "br6-no-emulation": {
+    gate: "G-BR-6a",
+    how: "assert reduced-motion WITHOUT setting the emulated media feature",
+  },
+  "br7-refetch-backout": {
+    gate: "G-BR-7b",
+    how: "REFRESH during the back-out, so the whole-brain payload is paid for twice — the exact defect the graphCache hoist exists to prevent",
+  },
+};
+
+// ---------------------------------------------------------------------------
+// CLI args
+// ---------------------------------------------------------------------------
+
+const args = process.argv.slice(2);
+if (args.includes("--list-mutations")) {
+  for (const [name, m] of Object.entries(MUTATIONS)) {
+    process.stdout.write(`${name.padEnd(22)} ${m.gate.padEnd(9)} ${m.how}\n`);
+  }
+  process.exit(0);
+}
+const mutateArg = args.find((a) => a.startsWith("--mutate="));
+const MUTATE = mutateArg === undefined ? null : mutateArg.slice("--mutate=".length);
+if (MUTATE !== null && !(MUTATE in MUTATIONS)) {
+  process.stderr.write(`unknown mutation: ${MUTATE}\n--list-mutations to see them\n`);
+  process.exit(2);
+}
+const KEEP = args.includes("--keep");
+/** True when the named mutation is active. Gates branch on this, nothing else. */
+const mut = (name) => MUTATE === name;
+
+// ---------------------------------------------------------------------------
+// Verdict ledger
+// ---------------------------------------------------------------------------
+
+const results = [];
+let currentGate = "";
+
+function gate(id, title) {
+  currentGate = id;
+  process.stdout.write(`\n${id}  ${title}\n`);
+}
+
+/**
+ * Record one check.
+ *
+ * `detail` is ALWAYS printed, pass or fail. A gate that prints only "PASS"
+ * hides the reading that produced it, and a reader cannot tell a real
+ * measurement from a hard-coded `true` (learning 1094).
+ */
+function check(id, ok, detail) {
+  results.push({ gate: currentGate, id, ok: ok === true });
+  process.stdout.write(
+    `  ${ok === true ? "PASS" : "FAIL"}  ${id.padEnd(9)} ${detail}\n`,
+  );
+}
+
+/** A note that is not a verdict — a measurement, or a stated limit. */
+function note(text) {
+  process.stdout.write(`  ....            ${text}\n`);
+}
+
+/**
+ * Record one check as NOT RUN, with a named reason.
+ *
+ * A skip is NOT a pass. It is kept in its own ledger, printed in the summary, and
+ * a run with skips says so in the verdict line — so "green" can never be read as
+ * "everything was exercised". There is deliberately no silent-skip path: the
+ * only way a check is omitted is through this function, which demands a reason
+ * (the F4 failure mode was a gate that quietly fetched 90 MB from the network
+ * rather than either skipping loudly or refusing to reach it).
+ */
+const skipped = [];
+function skip(id, reason) {
+  skipped.push({ gate: currentGate, id, reason });
+  process.stdout.write(`  SKIP  ${id.padEnd(9)} NOT RUN — ${reason}\n`);
+}
+
+/** Run one gate; a throw becomes a recorded failure rather than a lost ledger. */
+async function runGate(id, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    currentGate = id;
+    check("threw", false, `${id} aborted: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sandbox construction
+// ---------------------------------------------------------------------------
+
+/**
+ * Transpile the shared fixture once; return its ESM source text.
+ *
+ * `createRequire` rather than `import`, because `typescript` is CJS and this is
+ * the only non-builtin module the harness touches. Memoised: `transpileModule`
+ * runs four times otherwise, once per world.
+ */
+let cachedFixtureSource = null;
+function fixtureSource() {
+  if (cachedFixtureSource !== null) return cachedFixtureSource;
+  const ts = createRequire(import.meta.url)("typescript");
+  const src = readFileSync(FIXTURE_TS, "utf-8");
+  cachedFixtureSource = ts.transpileModule(src, {
+    compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  return cachedFixtureSource;
+}
+
+/**
+ * Run a node snippet with the transpiled fixture in scope, from `cli/` so bare
+ * specifiers (`better-sqlite3`) resolve against the repo's installed tree.
+ *
+ * `--input-type=module -e` rather than a written temp file: a temp file outside
+ * the repo cannot resolve `better-sqlite3`, and a temp file INSIDE `cli/dist`
+ * would land in `package.json` `files` and change the packed-size measurement
+ * this brief is gated on.
+ */
+function runSeedScript(body, env) {
+  const code = `${fixtureSource()}\n${body}\n`;
+  return execFileSync(process.execPath, ["--input-type=module", "-e", code], {
+    cwd: CLI_ROOT,
+    env: { ...process.env, ...env },
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+}
+
+/** Two catalog entries, chosen so ONE applies to the fixture project and one does not. */
+function seedCatalog(brain) {
+  const dir = join(brain, "core", "context-doc-types");
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "INDEX.md"), "# Catalog index — skipped by readCatalogDocs\n");
+  const entry = (type, applies, summary) =>
+    [
+      "---",
+      `type: ${type}`,
+      `target: ${type}.md`,
+      `applies_when: ${applies}`,
+      "optional: false",
+      `summary: ${summary}`,
+      "---",
+      "",
+      "Body of the catalog entry.",
+    ].join("\n");
+  writeFileSync(
+    join(dir, "coding_guidelines.md"),
+    entry("coding_guidelines", "writing or reviewing code", "Code conventions and naming rules"),
+  );
+  writeFileSync(
+    join(dir, "architecture_map.md"),
+    entry("architecture_map", "working across module boundaries", "How the system fits together"),
+  );
+}
+
+/** The one project context doc the ContextDocs layer reads in G-BR-5c. */
+const DOC_BODY = [
+  "# Demo guidelines",
+  "",
+  "The browser must be able to READ this sentence, not merely receive it.",
+  "",
+  "- one",
+  "- two",
+].join("\n");
+
+/**
+ * HERMETIC BY CONSTRUCTION — the harness must never reach the HuggingFace Hub.
+ *
+ * Any `/api/learnings/search` whose handle HAS `sqlite-vec` makes the reader ask
+ * for a query embedding, and transformers.js v3 caches PACKAGE-LOCALLY — inside
+ * `cli/dist/brain-mcp-server/node_modules/@huggingface/transformers/.cache/`,
+ * which `scripts/copy-templates.sh` `rm -rf`s on every build. So on a freshly
+ * built tree there is no cache, and an unguarded run FETCHES ~90 MB from the
+ * network. That happened: the FR-240 sentinel run downloaded the model while
+ * G-BR-3f asserted `mode === "hybrid"` with no precondition and no skip path,
+ * which is a gate that passes because of a side effect it never declared.
+ *
+ * `dashboard-learnings-search.test.ts` had already solved this for vitest with
+ * `env.allowRemoteModels = false` plus a read-back that the flag STUCK. This is
+ * the same guard for a CHILD PROCESS: a `--import` preload sets the flag before
+ * `dist/index.js` runs, and writes a RECEIPT so the gate can assert the arming
+ * instead of assuming it (learning 1094 — a guard whose only observed outcome is
+ * "pass" is indistinguishable from one that never ran).
+ *
+ * Local loading stays enabled, so a warm cache is still used when one is present.
+ * The no-cache path is not a fiction: it is the production state of an offline
+ * host or a fresh install, which must degrade to a REPORTED `bm25_only`.
+ */
+const TRANSFORMERS_ENTRY = join(
+  CLI_ROOT,
+  "dist",
+  "brain-mcp-server",
+  "node_modules",
+  "@huggingface",
+  "transformers",
+  // `package.json` `exports.node.import.default` for v3.x — the exact file the
+  // vendored `embeddings.js` resolves to, so the ESM registry hands both the
+  // same module object. Here, unlike in vitest, a DIRECTORY import really does
+  // throw ERR_UNSUPPORTED_DIR_IMPORT: this preload runs under plain Node ESM
+  // with no bundler resolver in front of it.
+  "dist",
+  "transformers.node.mjs",
+);
+
+function writeHermeticPreload(brain) {
+  const receipt = join(brain, "hermetic.json");
+  const file = join(brain, "no-remote-models.mjs");
+  writeFileSync(
+    file,
+    [
+      'import { writeFileSync } from "node:fs";',
+      `const receipt = ${JSON.stringify(receipt)};`,
+      "let armed = false;",
+      'let reason = "not attempted";',
+      "try {",
+      `  const mod = await import(${JSON.stringify(pathToFileURL(TRANSFORMERS_ENTRY).href)});`,
+      "  if (mod.env === undefined) reason = 'transformers module exposes no `env`';",
+      "  else {",
+      "    mod.env.allowRemoteModels = false;",
+      "    armed = mod.env.allowRemoteModels === false;",
+      '    reason = armed ? null : "flag did not stick";',
+      "  }",
+      "} catch (err) {",
+      "  reason = err && err.message ? err.message : String(err);",
+      "}",
+      "writeFileSync(receipt, JSON.stringify({ armed, reason }));",
+      "",
+    ].join("\n"),
+  );
+  return { file, receipt };
+}
+
+/** Read a world's hermetic receipt. `armed:false` with a reason when unwritten. */
+function hermeticState(world) {
+  if (!existsSync(world.hermetic.receipt)) {
+    return { armed: false, reason: "the preload never wrote its receipt" };
+  }
+  try {
+    return JSON.parse(readFileSync(world.hermetic.receipt, "utf-8"));
+  } catch (err) {
+    return { armed: false, reason: `unreadable receipt: ${err.message}` };
+  }
+}
+
+function makeWorld(kind) {
+  const brain = mkdtempSync(join(tmpdir(), `igris-fr240-gate-${kind}-`));
+  mkdirSync(join(brain, "memory"), { recursive: true });
+  mkdirSync(join(brain, "home"), { recursive: true });
+  const db = join(brain, "memory", "knowledge.db");
+
+  if (kind !== "missing") {
+    // The shared fixture, plus TWO gate-local additions:
+    //
+    //  1. an `errors` row + an edge to it. `error` is a real whole-graph node
+    //     type (`whole-graph.ts:509`) that NO FR-240 layer shows, and G-BR-1e
+    //     asserts the inspector says so explicitly instead of rendering a blank
+    //     panel. The shared fixture has no such type, so the gate seeds one
+    //     rather than asserting a state it cannot reach.
+    //  2. for `empty`, every row is then DELETED — schema present, data absent.
+    //     That is the only way `empty` and `degraded` can be told apart, and
+    //     telling them apart is G-BR-3's whole job.
+    let extra = `
+      const db2 = new (await import('better-sqlite3')).default(process.env.GATE_DB);
+      db2.exec(\`
+        CREATE TABLE errors (
+          id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT, message TEXT NOT NULL,
+          occurrence_count INTEGER DEFAULT 1, scope TEXT DEFAULT 'local', resolved_at TEXT
+        );
+      \`);
+      db2.prepare("INSERT INTO errors (project, message) VALUES ('demo','SQLITE_READONLY on a lens write')").run();
+      db2.prepare(\`INSERT INTO entity_edges (from_type,from_id,to_type,to_id,edge_type,confidence,provenance,metadata)
+                   VALUES ('brief','FR-240','error','1','caused_by',1.0,'observed','{}')\`).run();
+    `;
+    if (kind === "empty") {
+      extra += `
+        for (const t of ['brief_status','brief_files','learnings','goals','entity_edges','errors']) {
+          db2.prepare('DELETE FROM ' + t).run();
+        }
+      `;
+    }
+    if (kind === "vec") {
+      // A well-formed `learnings_vec`, so `hybridSearchLearnings` takes its
+      // HYBRID arm. The vectors are deterministic and L2-normalised rather than
+      // real embeddings — this gate asserts the retrieval MODE and the banner it
+      // drives, never ranking quality. Copied in shape from
+      // `dashboard-learnings-search.test.ts#seedVectorIndex`.
+      extra += `
+        const vec = await import(process.env.GATE_VEC_ENTRY);
+        vec.load(db2);
+        db2.exec('CREATE VIRTUAL TABLE IF NOT EXISTS learnings_vec USING vec0(embedding float[384])');
+        const ids = db2.prepare('SELECT id FROM learnings').all().map(r => r.id);
+        const ins = db2.prepare('INSERT OR REPLACE INTO learnings_vec(rowid, embedding) VALUES (?, ?)');
+        for (const id of ids) {
+          const v = new Float32Array(384);
+          let norm = 0;
+          for (let i = 0; i < 384; i++) { v[i] = Math.sin((id + 1) * (i + 1) * 0.017); norm += v[i] * v[i]; }
+          norm = Math.sqrt(norm);
+          for (let i = 0; i < 384; i++) v[i] /= norm;
+          ins.run(BigInt(id), Buffer.from(v.buffer, v.byteOffset, v.byteLength));
+        }
+      `;
+    }
+    extra += "\n      db2.close();\n";
+    runSeedScript(`seedLayerBrain(process.env.GATE_DB);\n${extra}`, {
+      GATE_DB: db,
+      GATE_VEC_ENTRY: join(
+        CLI_ROOT,
+        "dist",
+        "brain-mcp-server",
+        "node_modules",
+        "sqlite-vec",
+        "index.mjs",
+      ),
+    });
+  }
+
+  seedCatalog(brain);
+  if (kind !== "missing") {
+    const ctx = join(brain, "projects", "demo", "context");
+    mkdirSync(ctx, { recursive: true });
+    writeFileSync(join(ctx, "coding_guidelines.md"), DOC_BODY);
+  }
+  return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+}
+
+// ---------------------------------------------------------------------------
+// Server + Chrome lifecycle
+// ---------------------------------------------------------------------------
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const s = createServer();
+    s.on("error", reject);
+    s.listen(0, "127.0.0.1", () => {
+      const { port } = s.address();
+      s.close(() => resolve(port));
+    });
+  });
+}
+
+async function waitForHttp(url, ms, label) {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    try {
+      const r = await fetch(url);
+      if (r.ok) return await r.text();
+    } catch {
+      /* not up yet */
+    }
+    if (Date.now() > deadline) throw new Error(`timeout waiting for ${label} (${url})`);
+    await sleep(120);
+  }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const children = [];
+
+async function startServer(world) {
+  const port = await freePort();
+  const child = spawn(process.execPath, [CLI_ENTRY, "dashboard", "--no-open", "--port", String(port)], {
+    cwd: tmpdir(), // NOT a registered project dir — `default_project` must not be inherited from cwd
+    env: {
+      ...process.env,
+      IGRIS_BRAIN_DIR: world.brain,
+      HOME: join(world.brain, "home"),
+      // See `writeHermeticPreload`. `--import` is awaited before the entry
+      // module runs, so the flag is set before any pipeline is constructed.
+      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(world.hermetic.file).href}`.trim(),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  children.push(child);
+  const log = [];
+  child.stdout.on("data", (c) => log.push(String(c)));
+  child.stderr.on("data", (c) => log.push(String(c)));
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    await waitForHttp(`${url}/api/health`, 20_000, `${world.kind} dashboard`);
+  } catch (err) {
+    process.stderr.write(log.join(""));
+    throw err;
+  }
+  return { ...world, url, port, log };
+}
+
+async function startChrome() {
+  const port = await freePort();
+  const profile = mkdtempSync(join(tmpdir(), "igris-fr240-gate-chrome-"));
+  const child = spawn(
+    CHROME,
+    [
+      "--headless=new",
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${profile}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+      "--disable-gpu",
+      "--window-size=1440,900",
+      "about:blank",
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+  children.push(child);
+  const version = await waitForHttp(`http://127.0.0.1:${port}/json/version`, 20_000, "chrome");
+  return { port, profile, version: JSON.parse(version).Browser };
+}
+
+function teardown() {
+  for (const c of children) {
+    try {
+      c.kill("SIGTERM");
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CDP client — id/resolver pump over the global WebSocket
+// ---------------------------------------------------------------------------
+
+/**
+ * The independent instrument, installed with
+ * `Page.addScriptToEvaluateOnNewDocument` so it runs BEFORE the bundle.
+ *
+ * `docs/dashboard.md` §"Use an independent instrument where you can" is explicit
+ * that the app's own `__igrisGraphStillness.paints()` is the weaker reading —
+ * a self-witnessing counter. These three witnesses are ours:
+ *   raf        — every `requestAnimationFrame` CALLBACK that actually ran
+ *   clearRect  — every canvas clear, i.e. real paint work
+ *   mut        — DOM mutation records, which is the only motion a DOM view has
+ *   graphFetch — every `/api/graph` REQUEST the page issued (G-BR-7)
+ *
+ * `graphFetch` is what makes the FR-240 scope-cache hoist observable in a real
+ * browser: "backing out of a drill served the whole brain from the shared cache"
+ * is exactly "the page issued no second `/api/graph`". Counting requests HERE
+ * rather than in the server log is deliberate — it is the browser's own
+ * behaviour that is under test, and a server-side count cannot tell the graph
+ * page's read from the record detail's.
+ */
+const INSTRUMENT = `
+(() => {
+  const w = window;
+  w.__gate = { raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0 };
+  const raf = w.requestAnimationFrame.bind(w);
+  w.requestAnimationFrame = (cb) => raf((t) => { w.__gate.raf++; return cb(t); });
+  if (w.CanvasRenderingContext2D) {
+    const cr = w.CanvasRenderingContext2D.prototype.clearRect;
+    w.CanvasRenderingContext2D.prototype.clearRect = function (...a) {
+      w.__gate.clearRect++;
+      return cr.apply(this, a);
+    };
+  }
+  const origFetch = w.fetch;
+  w.fetch = function (...a) {
+    const first = a[0];
+    const url = String(typeof first === 'string' ? first : (first && first.url) || '');
+    w.__gate.fetch++;
+    // \`/api/graph\` EXACTLY — not \`/api/graph/stats\`, which the overview polls.
+    if (/(^|\\/)api\\/graph(\\?|$)/.test(url)) w.__gate.graphFetch++;
+    return origFetch.apply(w, a);
+  };
+  const observe = () => {
+    if (!document.documentElement) return;
+    new w.MutationObserver((recs) => { w.__gate.mut += recs.length; })
+      .observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true });
+  };
+  if (document.documentElement) observe();
+  else document.addEventListener('readystatechange', observe, { once: true });
+})();
+`;
+
+class Tab {
+  constructor(ws) {
+    this.ws = ws;
+    this.id = 0;
+    this.pending = new Map();
+    ws.addEventListener("message", (ev) => {
+      const msg = JSON.parse(ev.data);
+      const p = this.pending.get(msg.id);
+      if (p !== undefined) {
+        this.pending.delete(msg.id);
+        if (msg.error !== undefined) p.reject(new Error(JSON.stringify(msg.error)));
+        else p.resolve(msg.result);
+      }
+    });
+  }
+
+  send(method, params = {}) {
+    const id = ++this.id;
+    return new Promise((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.ws.send(JSON.stringify({ id, method, params }));
+      setTimeout(() => {
+        if (this.pending.delete(id)) reject(new Error(`CDP timeout: ${method}`));
+      }, 60_000);
+    });
+  }
+
+  /** Evaluate an expression in the page and return its value by value. */
+  async eval(expression) {
+    const r = await this.send("Runtime.evaluate", {
+      expression: `(() => { ${expression} })()`,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+    if (r.exceptionDetails !== undefined) {
+      throw new Error(
+        `page threw: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`,
+      );
+    }
+    return r.result.value;
+  }
+
+  /** Poll an expression until it is truthy. Returns the value. */
+  async until(expression, { timeout = 30_000, label = expression } = {}) {
+    const deadline = Date.now() + timeout;
+    for (;;) {
+      const v = await this.eval(expression);
+      if (v !== null && v !== undefined && v !== false && v !== 0 && v !== "") return v;
+      if (Date.now() > deadline) throw new Error(`timeout: ${label}`);
+      await sleep(150);
+    }
+  }
+
+  /**
+   * Bring this tab to the front.
+   *
+   * NOT cosmetic, and NOT optional. Chrome throttles `requestAnimationFrame` to
+   * ZERO in a background tab, so a rAF counter read on a backgrounded tab
+   * reports `+0` for a page that is animating flat out — which would turn
+   * G-BR-4a into exactly the vacuous gate this whole file exists to avoid. Four
+   * tabs are open (one per world), so at most one is ever foreground; every
+   * navigation and every measurement therefore claims focus first, G-BR-4a
+   * prints the observed `visibilityState`, and G-BR-4b is the live proof that
+   * rAF can still fire in the tab that was measured.
+   */
+  async focus() {
+    await this.send("Page.bringToFront");
+  }
+
+  /** Navigate to a hash route and wait for the shell to have re-rendered. */
+  async goto(url) {
+    await this.send("Page.navigate", { url });
+    await this.until("return document.querySelector('#main') !== null ? 1 : 0", {
+      label: `shell mount at ${url}`,
+    });
+    return this.settle();
+  }
+
+  /**
+   * Reload the current document, keeping the hash.
+   *
+   * G-BR-7 needs this and nothing else does: the scope cache it measures is
+   * MODULE-LEVEL state that deliberately outlives every component, so a gate
+   * about "was this scope fetched?" has to start from a document where nothing
+   * has been fetched yet. Earlier gates have already warmed both scopes.
+   * `addScriptToEvaluateOnNewDocument` re-runs on a reload, so `window.__gate`
+   * comes back zeroed — which is also what makes the counters below deltas from
+   * a known start rather than from wherever gate 1 left them.
+   */
+  async reload() {
+    await this.focus();
+    await this.send("Page.reload", { ignoreCache: false });
+    await this.until("return document.querySelector('#main') !== null ? 1 : 0", {
+      label: "shell mount after reload",
+    });
+    await this.settle();
+  }
+
+  /** Set `location.hash` (a same-document navigation) and wait for the route. */
+  async hash(h) {
+    await this.focus();
+    await this.eval(`location.hash = ${JSON.stringify(h)}; return 1;`);
+    await this.settle();
+  }
+
+  /**
+   * A beat, HOST-side.
+   *
+   * Deliberately not an in-page `requestAnimationFrame` await: rAF never fires
+   * in a background tab, so an in-page frame wait DEADLOCKS the evaluate (60 s
+   * CDP timeout) on three of the four tabs. Real synchronisation is `until()`
+   * polling; this is only the slack React's effects need after it.
+   */
+  async settle(ms = 400) {
+    await sleep(ms);
+  }
+
+  /**
+   * A REAL mouse click at the centre of a selector's box.
+   *
+   * `settle:false` returns the instant the mouse events are dispatched. G-BR-7
+   * needs that: it measures the FIRST ~1.4 s of the transition a click starts,
+   * and the default 400 ms settle would swallow most of the window it is trying
+   * to observe.
+   */
+  async click(selector, { settle = true } = {}) {
+    const box = await this.eval(`
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (el === null) return null;
+      el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    `);
+    if (box === null) throw new Error(`click: no element for ${selector}`);
+    await this.clickAt(box.x, box.y, { settle });
+  }
+
+  async clickAt(x, y, { settle = true } = {}) {
+    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x,
+      y,
+      button: "left",
+      clickCount: 1,
+    });
+    if (settle) await this.settle();
+  }
+
+  async moveTo(x, y) {
+    await this.send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, button: "none" });
+  }
+
+  /** Focus an input and type into it, so React sees real native input events. */
+  async type(selector, text) {
+    await this.eval(`
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (el === null) return null;
+      el.focus();
+      return 1;
+    `);
+    await this.send("Input.insertText", { text });
+    await this.settle();
+  }
+
+  async instrument() {
+    return this.eval("return { ...window.__gate };");
+  }
+
+  /**
+   * Start recording a coarse "ink map" of the graph canvas on a timer.
+   *
+   * A 24x24 grid of summed premultiplied luminance, sampled every 70 ms. Coarse
+   * ON PURPOSE: the question is HOW MUCH THE PICTURE MOVED, not what it looked
+   * like, and a full-resolution comparison would be dominated by antialiasing.
+   *
+   * Returns immediately (the sampler is an interval) so the caller can start it
+   * BEFORE the click whose transition it wants to measure. `stopInk()` returns
+   * the samples.
+   */
+  async startInk() {
+    return this.eval(`
+      if (document.querySelector('.graph-canvas-host canvas') === null) return null;
+      const G = 24;
+      window.__gateInk = [];
+      const sample = () => {
+        // RE-QUERIED every sample, not captured once. A scope change DESTROYS
+        // the force-graph instance and its canvas; a captured handle would keep
+        // reading a detached element and report a frozen picture as stillness.
+        const canvas = document.querySelector('.graph-canvas-host canvas');
+        if (canvas === null) return;
+        const ctx2 = canvas.getContext('2d');
+        const w = canvas.width, h = canvas.height;
+        if (w === 0 || h === 0) return;
+        const px = ctx2.getImageData(0, 0, w, h).data;
+        const cells = new Array(G * G).fill(0);
+        const cw = w / G, ch = h / G;
+        for (let y = 0; y < h; y += 3) {
+          const gy = Math.min(G - 1, (y / ch) | 0);
+          for (let x = 0; x < w; x += 3) {
+            const i = (y * w + x) * 4;
+            cells[gy * G + Math.min(G - 1, (x / cw) | 0)] +=
+              (px[i] + px[i + 1] + px[i + 2]) * (px[i + 3] / 255);
+          }
+        }
+        window.__gateInk.push(cells);
+      };
+      // 30 ms, not 70. The cold entrance is over in a few hundred milliseconds,
+      // so a slow sampler catches the clump at a different point on every run and
+      // the reading wanders — measured 43.9% / 56.2% / 43.9% at 70 ms.
+      window.__gateInkTimer = window.setInterval(sample, 30);
+      sample();
+      return 1;
+    `);
+  }
+
+  async stopInk() {
+    return this.eval(`
+      window.clearInterval(window.__gateInkTimer);
+      const out = window.__gateInk || [];
+      window.__gateInk = [];
+      return out;
+    `);
+  }
+
+  /** One ink frame, right now. Used for the SETTLED reference reading. */
+  async sampleInk() {
+    await this.startInk();
+    return (await this.stopInk())[0] ?? null;
+  }
+
+  /**
+   * Wait until the animation system has actually gone QUIET, and report whether
+   * it did.
+   *
+   * REACHING rest is a PRECONDITION of "measure this surface at rest"; it is not
+   * the assertion. Without it the first 4a reading inherited whatever the
+   * PREVIOUS gate left running — G-BR-3 types into a search box and clicks a
+   * filter, which wakes GSAP's ticker (`gsap.ticker`'s own rAF loop, identified
+   * from a captured call stack during the FR-240 warden pass), and its tail
+   * landed inside the window on roughly half of all runs as a constant
+   * `rAF +9 · clearRect +0 · mut +0`. Two failures in five runs, always the
+   * first view measured, never the other three.
+   *
+   * This CANNOT mask the defect 4a exists to catch. A real render loop never
+   * goes quiet, so it times out and returns `false` — and the caller reports
+   * that as a FAILURE with the observed rate, which is a louder signal than the
+   * loop's own zero would have been.
+   */
+  async awaitQuiet({ window = 400, tries = 25 } = {}) {
+    await this.focus();
+    for (let i = 0; i < tries; i++) {
+      const a = (await this.instrument()).raf;
+      await sleep(window);
+      const b = (await this.instrument()).raf;
+      if (b - a === 0) return { quiet: true, waited: i * window, rate: 0 };
+    }
+    const a = (await this.instrument()).raf;
+    await sleep(window);
+    const b = (await this.instrument()).raf;
+    return { quiet: false, waited: tries * window, rate: b - a };
+  }
+
+  /** Delta of the independent witnesses across a quiet window. */
+  async witnessDelta(ms) {
+    await this.focus();
+    const a = await this.instrument();
+    await sleep(ms);
+    const b = await this.instrument();
+    return { raf: b.raf - a.raf, clearRect: b.clearRect - a.clearRect, mut: b.mut - a.mut };
+  }
+
+  async reducedMotion(on) {
+    await this.send("Emulation.setEmulatedMedia", {
+      features: on ? [{ name: "prefers-reduced-motion", value: "reduce" }] : [],
+    });
+  }
+}
+
+async function openTab(cdpPort, url) {
+  const res = await fetch(
+    `http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent("about:blank")}`,
+    { method: "PUT" },
+  );
+  const target = await res.json();
+  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", reject, { once: true });
+  });
+  const tab = new Tab(ws);
+  await tab.send("Page.enable");
+  await tab.send("Runtime.enable");
+  await tab.send("Page.addScriptToEvaluateOnNewDocument", { source: INSTRUMENT });
+  await tab.goto(url);
+  return tab;
+}
+
+// ---------------------------------------------------------------------------
+// DOM readers — one place, so a selector change is one edit
+// ---------------------------------------------------------------------------
+
+const READ = {
+  rowTitles: `return [...document.querySelectorAll('.record-row-title')].map(e => e.textContent.trim());`,
+  rowEyes: `return [...document.querySelectorAll('.record-row-eye')].map(e => e.textContent.trim());`,
+  detailTitle: `const e = document.querySelector('.record-detail-title'); return e === null ? null : e.textContent.trim();`,
+  detailBody: `const e = document.querySelector('.record-detail-body'); return e === null ? null : e.textContent.trim();`,
+  detailMeta: `
+    const out = {};
+    for (const kv of document.querySelectorAll('.record-detail-meta .shell-kv')) {
+      const k = kv.querySelector('span'); const v = kv.querySelector('b');
+      if (k !== null && v !== null) out[k.textContent.trim()] = v.textContent.trim();
+    }
+    return out;`,
+  emptyKind: `const e = document.querySelector('[data-empty-kind]'); return e === null ? null : e.getAttribute('data-empty-kind');`,
+  banners: `return [...document.querySelectorAll('.shell-banner')].map(e => e.textContent.trim());`,
+  readouts: `return [...document.querySelectorAll('.record-readout')].map(e => e.textContent.trim());`,
+  inspectorTitle: `const e = document.querySelector('.graph-inspector-title'); return e === null ? null : e.textContent.trim();`,
+  inspectorEye: `const e = document.querySelector('.graph-inspector-eye'); return e === null ? null : e.textContent.trim();`,
+  inspectorMore: `const e = document.querySelector('.graph-inspector-more'); return e === null ? null : e.textContent.trim();`,
+  openRecordHref: `const a = [...document.querySelectorAll('.graph-inspector a')].find(x => x.textContent.trim() === 'OPEN RECORD'); return a === null || a === undefined ? null : a.getAttribute('href');`,
+  /** `TIER A · 13 NODES · 3 EDGES` — the scope's identity, in one string. */
+  graphReadout: `const e = document.querySelector('.graph-readout'); return e === null ? null : e.textContent.trim().replace(/\\s+/g, ' ');`,
+  graphScope: `const s = document.querySelector('.graph-drill select'); return s === null ? null : s.value;`,
+  hash: `return location.hash;`,
+};
+
+/** Selector for the nth `.record-row` anchor. */
+const rowN = (n) => `.record-list > li:nth-child(${n}) .record-row`;
+
+/**
+ * An `until()` expression: "this selector is present".
+ *
+ * A helper rather than string-concatenating a `READ.*` reader, because every
+ * `READ.*` value is a STATEMENT BLOCK ending in `return`. Appending `!== null`
+ * to one produces `return e.textContent; !== null` — a SyntaxError that surfaces
+ * as a page throw, not as a failed assertion.
+ */
+const has = (sel) =>
+  `return document.querySelector(${JSON.stringify(sel)}) !== null ? 1 : 0;`;
+
+/** An `until()` expression: "this selector's text is present and not `text`". */
+const textOtherThan = (sel, text) => `
+  const e = document.querySelector(${JSON.stringify(sel)});
+  if (e === null) return 0;
+  const t = e.textContent.trim();
+  return t.length > 0 && t !== ${JSON.stringify(text)} ? 1 : 0;
+`;
+
+/**
+ * Wait until the rendered row set has stopped changing.
+ *
+ * REQUIRED BEFORE MEASURING A CHIP'S COORDINATES. `useLayerList` deliberately
+ * keeps the previous payload on screen during a refetch (a beat must not blank a
+ * list the operator is reading), so a filter click is followed by a window in
+ * which the OLD rows are still rendered. The filter vocabularies are derived
+ * from those rows, so the strip re-flows when the new payload lands — and a
+ * click dispatched at coordinates measured just before that re-flow lands on the
+ * WRONG chip. Observed exactly once while writing this file: the run reported
+ * `priority=P3-Low -> 0 rows` for a filter that has one, because the click had
+ * actually hit a neighbouring chip.
+ *
+ * Two consecutive equal readings, not one — a single reading cannot distinguish
+ * "settled" from "between renders".
+ */
+async function untilListStable(tab, { timeout = 15_000 } = {}) {
+  const deadline = Date.now() + timeout;
+  let prev = null;
+  for (;;) {
+    const now = await tab.eval(`
+      return document.querySelectorAll('.record-row').length + ':' +
+             document.querySelectorAll('.record-filters .tweaks-chip').length + ':' +
+             (document.querySelector('.shell-skel') === null ? 'idle' : 'loading');
+    `);
+    if (prev === now && now.endsWith("idle")) return now;
+    prev = now;
+    if (Date.now() > deadline) return now;
+    await sleep(250);
+  }
+}
+
+/** An `until()` expression: the filter's checked chip is exactly `value` (null = none). */
+const chipStateIs = (label, value) => `
+  const g = [...document.querySelectorAll('.record-filters [role=radiogroup]')]
+    .find(x => x.getAttribute('aria-label') === ${JSON.stringify(label)});
+  if (g === undefined) return ${value === null ? 1 : 0};
+  const b = [...g.querySelectorAll('button')].find(x => x.getAttribute('aria-checked') === 'true');
+  const cur = b === undefined ? null : b.textContent.trim();
+  return cur === ${JSON.stringify(value)} ? 1 : 0;
+`;
+
+/**
+ * Click the chip whose text is `value` inside the filter labelled `label`, then
+ * CONFIRM the control took it and the list re-settled.
+ *
+ * `expect` is the chip state to wait for afterwards — `value` when setting, and
+ * `null` when the click is a clear (re-clicking the active chip clears it).
+ */
+async function setFilterChip(tab, label, value, expect = value) {
+  await untilListStable(tab);
+  const box = await tab.eval(`
+    const groups = [...document.querySelectorAll('.record-filters [role=radiogroup]')];
+    const g = groups.find(x => x.getAttribute('aria-label') === ${JSON.stringify(label)});
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(value)});
+    if (b === undefined) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error(`no chip "${value}" in filter "${label}"`);
+  await tab.clickAt(box.x, box.y);
+  await tab.until(chipStateIs(label, expect), {
+    timeout: 10_000,
+    label: `filter ${label} -> ${JSON.stringify(expect)}`,
+  });
+  await untilListStable(tab);
+}
+
+/**
+ * The project slug the Layers page has scoped itself to, or `null`.
+ *
+ * Load-bearing for G-BR-2: `Layers.tsx` selects `default_project` on first load,
+ * so the list is ALREADY scoped when it renders. Comparing the rendered row
+ * count against an UNSCOPED `/api/briefs` would fail for a correct page, and
+ * "make the numbers agree" is how a reviewer talks themselves into deleting the
+ * scope from the comparison instead of naming it.
+ */
+async function activeProject(tab) {
+  return tab.eval(`
+    const g = [...document.querySelectorAll('[role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'Project scope');
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.getAttribute('aria-checked') === 'true');
+    return b === undefined ? null : b.textContent.trim();
+  `);
+}
+
+/** Click a project-scope chip (re-clicking the active one clears the scope). */
+async function clickProjectChip(tab, slug) {
+  const box = await tab.eval(`
+    const g = [...document.querySelectorAll('[role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'Project scope');
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(slug)});
+    if (b === undefined) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error(`no project chip "${slug}"`);
+  await tab.clickAt(box.x, box.y);
+  await tab.settle(600);
+}
+
+/** Type into the NAV's text mute (the `// QUICK` client-side filter). */
+async function navMute(tab, text) {
+  await tab.eval(`
+    const el = document.querySelector('.shell-search-slot input');
+    if (el === null) return null;
+    el.focus();
+    el.setSelectionRange(0, el.value.length);
+    return 1;
+  `);
+  if (text.length === 0) {
+    await tab.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Backspace",
+      code: "Backspace",
+      windowsVirtualKeyCode: 8,
+      nativeVirtualKeyCode: 8,
+    });
+    await tab.send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Backspace",
+      code: "Backspace",
+      windowsVirtualKeyCode: 8,
+      nativeVirtualKeyCode: 8,
+    });
+  } else {
+    await tab.send("Input.insertText", { text });
+  }
+  await tab.settle(500);
+}
+
+/** Click a palette chip in the shell chrome. */
+async function setPalette(tab, name) {
+  const box = await tab.eval(`
+    const g = [...document.querySelectorAll('[role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'Colour palette');
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(name)});
+    if (b === undefined) return null;
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error(`no palette chip "${name}"`);
+  await tab.clickAt(box.x, box.y);
+}
+
+async function apiJson(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+/** Change the graph's `// DRILL` scope select — a real `change` event. */
+async function graphDrill(tab, slug) {
+  const ok = await tab.eval(`
+    const sel = document.querySelector('.graph-drill select');
+    if (sel === null) return null;
+    sel.value = ${JSON.stringify(slug)};
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+    return 1;
+  `);
+  if (ok === null) throw new Error("graphDrill: no `// DRILL` select on this page");
+}
+
+/** Click a `<button>` by its exact label. `settle:false` for a timed window. */
+async function clickButton(tab, label, opts = {}) {
+  const box = await tab.eval(`
+    const b = [...document.querySelectorAll('button')]
+      .find(x => x.textContent.trim() === ${JSON.stringify(label)});
+    if (b === undefined) return null;
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error(`no button labelled "${label}"`);
+  await tab.clickAt(box.x, box.y, opts);
+}
+
+/**
+ * The RMS radius of one ink frame about its own centroid, in grid cells.
+ *
+ * This is the measurement that separates a RESTORED layout from a SECOND
+ * ENTRANCE, and the choice is forced by how d3-force works. A node with no
+ * coordinates is initialised on a phyllotaxis spiral of radius `10*sqrt(i)`, so
+ * a COLD layout starts as a tight clump at the origin and expands to its settled
+ * extent. A SEEDED layout starts AT that extent and stays there. So the spread
+ * over time collapses toward zero in one case and never does in the other.
+ *
+ * Deliberately NOT a frame-to-frame image difference: the ink is a dozen small
+ * blobs on a 1440x900 canvas, so any motion at all moves a blob across a cell
+ * boundary and an L1 image distance saturates near 100% for both cases. Measured
+ * during FR-240's warden pass — back-out 105.8% vs cold 146.0%, a 1.4x
+ * separation with no headroom. The spread trajectory separates by ~an order of
+ * magnitude because it measures the SHAPE of the layout rather than its pixels.
+ */
+function inkSpread(cells, G = 24) {
+  let total = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < cells.length; i++) {
+    const v = cells[i];
+    if (v <= 0) continue;
+    total += v;
+    cx += v * (i % G);
+    cy += v * ((i / G) | 0);
+  }
+  if (total <= 0) return null;
+  cx /= total;
+  cy /= total;
+  let m2 = 0;
+  for (let i = 0; i < cells.length; i++) {
+    const v = cells[i];
+    if (v <= 0) continue;
+    const dx = (i % G) - cx;
+    const dy = ((i / G) | 0) - cy;
+    m2 += v * (dx * dx + dy * dy);
+  }
+  return Math.sqrt(m2 / total);
+}
+
+/**
+ * How far the layout COLLAPSED at any point during the transition, as a fraction
+ * of the extent it eventually SETTLED at.
+ *
+ * `collapse ≈ 1` — the picture was never more compact than its settled form: the
+ * nodes were already where they ended up. `collapse ≪ 1` — the picture was a
+ * clump at some point and expanded out of it: a second entrance.
+ *
+ * TWO CHOICES THAT ARE LOAD-BEARING, both found by measuring rather than by
+ * reasoning:
+ *
+ *  1. The DENOMINATOR is a reading taken AFTER `state() === 'still'`, not the
+ *     last frame of the window. A 1.6 s window can end mid-settle, and dividing
+ *     by a half-settled extent reported the back-out as 73% when it is 85-100%.
+ *
+ *  2. The LEADING frames that are BYTE-IDENTICAL to frame 0 are dropped. The
+ *     recorder starts before the click on purpose (so no frame is lost to a CDP
+ *     round trip), and the canvas is still at that point — so every pre-click
+ *     frame is identical to the first. Those frames show the PREVIOUS SCOPE,
+ *     whose node set is different and whose extent is therefore unrelated: on the
+ *     back-out they were contributing the minimum, which measured the demo
+ *     subgraph's size instead of the whole brain's entrance.
+ */
+function l1(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  return d;
+}
+
+function inkCollapse(samples, settledSpread) {
+  if (!Array.isArray(samples) || samples.length < 3) return null;
+  if (typeof settledSpread !== "number" || settledSpread <= 0) return null;
+
+  const first = samples[0];
+  let start = 1;
+  while (start < samples.length && l1(samples[start], first) === 0) start++;
+
+  const moved = samples.slice(start);
+  const spreads = moved.map((s) => inkSpread(s)).filter((v) => v !== null && v > 0);
+  if (spreads.length < 2) return null;
+  // The MEAN of the first frames of the transition, not the single minimum. The
+  // minimum is one sample and therefore a sampling-phase lottery; the mean of the
+  // opening window is the same physical claim ("how compact was the layout when
+  // it first appeared") with the phase noise averaged out.
+  const opening = spreads.slice(0, Math.min(6, spreads.length));
+  const early = opening.reduce((a, b) => a + b, 0) / opening.length;
+  return {
+    samples: samples.length,
+    /** How many leading frames were the PREVIOUS, still canvas. */
+    dropped: start,
+    read: spreads.length,
+    opening: opening.length,
+    min: Number(Math.min(...spreads).toFixed(3)),
+    early: Number(early.toFixed(3)),
+    settled: Number(settledSpread.toFixed(3)),
+    collapse: early / settledSpread,
+  };
+}
+
+const pct = (x) => (x === null || x === undefined ? "n/a" : `${(x * 100).toFixed(1)}%`);
+
+// ---------------------------------------------------------------------------
+// The gates
+// ---------------------------------------------------------------------------
+
+/**
+ * G-BR-1 — the AC #3 cross-link round trip, on real data with real clicks.
+ *
+ * PROVES: a click on a list row reaches the right record; LOCATE IN GRAPH
+ * selects the matching node; OPEN RECORD comes back to the same address; and
+ * `BR-001` in two projects resolves to two DIFFERENT records.
+ * DOES NOT PROVE: correctness for a node type with no detail view — 1e asserts
+ * that state explicitly instead. Nor ranking, nor payload shape (G-EP-1/2).
+ */
+async function gBr1(tab) {
+  gate("G-BR-1", "cross-link round trip (AC #3) — real clicks, real routing");
+
+  await tab.hash("#/layers/briefs");
+  await tab.until("return document.querySelectorAll('.record-row').length;", {
+    label: "briefs rows",
+  });
+  const titles = await tab.eval(READ.rowTitles);
+  const idx = titles.indexOf("Dashboard layer views") + 1;
+  check(
+    "1a-rows",
+    idx > 0,
+    `briefs list rendered ${titles.length} rows; "Dashboard layer views" at row ${idx}`,
+  );
+
+  await tab.click(rowN(idx));
+  const dTitle = await tab.eval(READ.detailTitle);
+  const dMeta = await tab.eval(READ.detailMeta);
+  check(
+    "1a",
+    dTitle === "Dashboard layer views" &&
+      dMeta.project === "demo" &&
+      dMeta["brief id"] === "FR-240",
+    `row click -> detail title=${JSON.stringify(dTitle)} project=${dMeta.project} id=${dMeta["brief id"]}`,
+  );
+
+  // --- 1b · LOCATE IN GRAPH ------------------------------------------------
+  const locate = await tab.eval(`
+    const a = [...document.querySelectorAll('.record-detail-actions a')]
+      .find(x => x.textContent.trim() === 'LOCATE IN GRAPH');
+    return a === undefined ? null : a.getAttribute('href');
+  `);
+  check(
+    "1b-href",
+    locate === "#/graph?focus=brief/demo/FR-240",
+    `LOCATE IN GRAPH href = ${JSON.stringify(locate)}`,
+  );
+  const locBox = await tab.eval(`
+    const a = [...document.querySelectorAll('.record-detail-actions a')]
+      .find(x => x.textContent.trim() === 'LOCATE IN GRAPH');
+    if (a === undefined) return null;
+    const r = a.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  await tab.clickAt(locBox.x, locBox.y);
+  // The entrance has to settle before `graph.select` can move the camera, so
+  // this waits on the INSPECTOR rather than on a fixed sleep.
+  await tab.until(has(".graph-inspector-title"), {
+    timeout: 45_000,
+    label: "graph selects the focused node",
+  });
+  const insTitle = await tab.eval(READ.inspectorTitle);
+  const insEye = await tab.eval(READ.inspectorEye);
+  check(
+    "1b",
+    insTitle === "Dashboard layer views" && insEye.includes("BRIEF"),
+    `graph inspector title=${JSON.stringify(insTitle)} eye=${JSON.stringify(insEye)}`,
+  );
+
+  // --- 1c · OPEN RECORD, the return trip -----------------------------------
+  const orHref = await tab.eval(READ.openRecordHref);
+  const orBox = await tab.eval(`
+    const a = [...document.querySelectorAll('.graph-inspector a')].find(x => x.textContent.trim() === 'OPEN RECORD');
+    if (a === undefined) return null;
+    const r = a.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  await tab.clickAt(orBox.x, orBox.y);
+  await tab.until(has(".record-detail-title"), { label: "record detail after OPEN RECORD" });
+  const backTitle = await tab.eval(READ.detailTitle);
+  const backHash = await tab.eval(READ.hash);
+  check(
+    "1c",
+    orHref === "#/layers/briefs/demo/FR-240" &&
+      backHash === "#/layers/briefs/demo/FR-240" &&
+      backTitle === "Dashboard layer views",
+    `OPEN RECORD href=${JSON.stringify(orHref)} -> hash=${JSON.stringify(backHash)} title=${JSON.stringify(backTitle)}`,
+  );
+
+  // --- 1d · BR-078, the same id in two projects ----------------------------
+  await tab.hash("#/layers/briefs/demo/BR-001");
+  await tab.until(has(".record-detail-title"), { label: "demo BR-001" });
+  const demoTitle = await tab.eval(READ.detailTitle);
+  await tab.hash("#/layers/briefs/other/BR-001");
+  await tab
+    .until(textOtherThan(".record-detail-title", demoTitle), { label: "other BR-001" })
+    // A tolerated timeout: if the two titles are IDENTICAL the wait can never
+    // satisfy, and that is precisely the state 1d must then REPORT as a failure
+    // rather than crash on.
+    .catch(() => {});
+  const otherTitle = await tab.eval(READ.detailTitle);
+  // The MUTATION asserts EQUALITY — the exact signature of a router that
+  // dropped the project segment and fused the two records.
+  const ok1d = mut("br1-fuse-projects")
+    ? demoTitle === otherTitle
+    : demoTitle === "Demo-project bug" && otherTitle === "Other-project bug";
+  check(
+    "1d",
+    ok1d,
+    `BR-001 in demo=${JSON.stringify(demoTitle)} · in other=${JSON.stringify(otherTitle)}${
+      mut("br1-fuse-projects") ? "  [MUTATED: asserting they are EQUAL]" : ""
+    }`,
+  );
+
+  // --- 1e · a node type NO layer shows -------------------------------------
+  await tab.hash("#/graph?focus=error/demo/1");
+  await tab.until(has(".graph-inspector-title"), {
+    timeout: 45_000,
+    label: "graph selects the error node",
+  });
+  const moreText = await tab.eval(READ.inspectorMore);
+  const errHref = await tab.eval(READ.openRecordHref);
+  check(
+    "1e",
+    errHref === null && moreText !== null && moreText.includes("NO DETAIL VIEW FOR ERROR"),
+    `error node: OPEN RECORD=${JSON.stringify(errHref)} · stated=${JSON.stringify(moreText)}`,
+  );
+  note(
+    "1e is the STATED-ABSENCE case only. It does not prove session/concept/decision " +
+      "render the same way — those types are not in this fixture; `layers/model.ts` " +
+      "`recordHrefForNode` returns null for every type with no descriptor and its unit " +
+      "test covers the mapping.",
+  );
+
+}
+
+/**
+ * G-BR-2 — the filter controls and the search box are WIRED to the endpoints.
+ *
+ * PROVES: clicking a chip changes the rendered row set, and the rendered count
+ * agrees with the endpoint's own `count` for the same filter. The fixture's
+ * partitions DISAGREE, so an assertion here cannot pass with a WHERE deleted.
+ * DOES NOT PROVE: ranking, or that the SQL binds — G-EP-1 owns that.
+ */
+async function gBr2(tab, seeded) {
+  gate("G-BR-2", "filters and search through the DOM");
+
+  await tab.hash("#/layers/briefs");
+  await tab.until("return document.querySelectorAll('.record-row').length;", { label: "briefs rows" });
+
+  // The page scopes itself to `default_project` on first load, so the FIRST
+  // comparison has to be against that same scope. Named rather than normalised
+  // away — see `activeProject`'s header.
+  const scope = await activeProject(tab);
+  const scopedRows = (await tab.eval(READ.rowTitles)).length;
+  const scopedApi = await apiJson(
+    `${seeded.url}/api/briefs?project=${encodeURIComponent(scope ?? "")}`,
+  );
+  check(
+    "2a-scope",
+    scope !== null && scopedRows === scopedApi.count,
+    `page scoped to project=${JSON.stringify(scope)} · DOM rows=${scopedRows} · endpoint count=${scopedApi.count}`,
+  );
+
+  // Clearing the scope (re-click the active chip) must make the count RISE to
+  // the unscoped total. Assert-then-diff: 2a-scope alone would also pass if the
+  // project chip were decorative.
+  await clickProjectChip(tab, scope);
+  const clearedScope = await activeProject(tab);
+  const allRows = (await tab.eval(READ.rowTitles)).length;
+  const allApi = await apiJson(`${seeded.url}/api/briefs`);
+  check(
+    "2a-clear",
+    clearedScope === null && allRows === allApi.count && allRows > scopedRows,
+    `scope cleared -> active=${JSON.stringify(clearedScope)} · DOM rows=${allRows} (was ${scopedRows}) · endpoint count=${allApi.count}`,
+  );
+
+  if (!mut("br2-skip-click")) await setFilterChip(tab, "status", "Pending");
+  const filtered = await tab.eval(READ.rowTitles);
+  const eyes = await tab.eval(READ.rowEyes);
+  const filteredApi = await apiJson(`${seeded.url}/api/briefs?status=Pending`);
+  const includesTd = eyes.some((e) => e.includes("TD-312"));
+  const excludesFr = !eyes.some((e) => e.includes("FR-240"));
+  check(
+    "2a",
+    filtered.length === filteredApi.count && includesTd && excludesFr,
+    `status=Pending DOM rows=${filtered.length} · endpoint count=${filteredApi.count} · TD-312 present=${includesTd} · FR-240 excluded=${excludesFr}${
+      mut("br2-skip-click") ? "  [MUTATED: chip never clicked]" : ""
+    }`,
+  );
+
+  // The `priority` vocabulary comes from the LOADED ROWS (`Briefs.tsx` explains
+  // why), so `P3-Low` only has a chip once the scope is cleared — which it is.
+  await setFilterChip(tab, "status", "Pending", null); // re-click clears
+  await setFilterChip(tab, "priority", "P3-Low");
+  const p3 = await tab.eval(READ.rowEyes);
+  const p3Api = await apiJson(`${seeded.url}/api/briefs?priority=P3-Low`);
+  check(
+    "2b",
+    p3.length === p3Api.count && p3.length === 1 && p3[0].includes("BR-001"),
+    `priority=P3-Low DOM rows=${p3.length} (${JSON.stringify(p3)}) · endpoint count=${p3Api.count}`,
+  );
+  await setFilterChip(tab, "priority", "P3-Low", null); // clear
+
+  // The FILTERED empty state, reached through the NAV's client-side text mute —
+  // the one narrowing control that is not a server filter. It must render
+  // `filtered`, not the `empty` copy an empty brain shows (G-BR-3b).
+  await navMute(tab, "zzz-no-such-brief");
+  const mutedKind = await tab.eval(READ.emptyKind);
+  const mutedRows = (await tab.eval(READ.rowTitles)).length;
+  await navMute(tab, "");
+  await tab.eval(
+    "const el = document.querySelector('.shell-search-slot input'); if (el !== null) { el.value = ''; el.dispatchEvent(new Event('input', { bubbles: true })); } return 1;",
+  );
+  await tab.settle(500);
+  const restoredRows = (await tab.eval(READ.rowTitles)).length;
+  check(
+    "2b-mute",
+    mutedRows === 0 && mutedKind === "filtered" && restoredRows > 0,
+    `nav text mute "zzz-no-such-brief" -> rows=${mutedRows} emptyKind=${JSON.stringify(mutedKind)}; cleared -> rows=${restoredRows}`,
+  );
+
+  // --- learnings hybrid search through the box ------------------------------
+  await tab.hash("#/layers/learnings");
+  await tab.until("return document.querySelectorAll('.record-row').length;", { label: "learnings rows" });
+  await tab.type(".record-search input", "wrapper");
+  await tab.click(".record-filter-run");
+  // The first search on a cold host loads the embedding model; the endpoint
+  // still answers, but it can take several seconds.
+  await tab.until(
+    `return [...document.querySelectorAll('.shell-banner, .record-readout')].some(e => /HYBRID|BM25|VECTOR|NONE/.test(e.textContent)) ? 1 : 0;`,
+    { timeout: 60_000, label: "search returns and reports a retrieval mode" },
+  );
+  const searchRows = await tab.eval(READ.rowTitles);
+  const searchApi = await apiJson(`${seeded.url}/api/learnings/search?q=wrapper`);
+  const kilnAbsent = !searchRows.some((t) => t.includes("Ceramic kiln"));
+  check(
+    "2c",
+    searchRows.length === searchApi.count && kilnAbsent,
+    `search "wrapper" DOM rows=${searchRows.length} · endpoint count=${searchApi.count} · zero-overlap row excluded=${kilnAbsent} (mode=${searchApi.retrieval.mode})`,
+  );
+  note(
+    `2c asserts the DOM agrees with the endpoint. It does NOT assert which arm produced ` +
+      `the rows — retrieval.mode was ${searchApi.retrieval.mode} here; G-HS-1/G-HS-2 in ` +
+      `dashboard-learnings-search.test.ts own the arm attribution.`,
+  );
+
+  // --- goals, a third layer through the same control -----------------------
+  await tab.hash("#/layers/goals");
+  await tab.until("return document.querySelectorAll('.record-row').length;", { label: "goals rows" });
+  const goalsAll = (await tab.eval(READ.rowEyes)).length;
+  await setFilterChip(tab, "status", "achieved");
+  const goalsEyes = await tab.eval(READ.rowEyes);
+  const achievedApi = await apiJson(`${seeded.url}/api/goals?status=achieved`);
+  check(
+    "2d",
+    goalsEyes.length === achievedApi.count &&
+      goalsEyes.some((e) => e.includes("GL-003")) &&
+      !goalsEyes.some((e) => e.includes("GL-001")),
+    `goals all=${goalsAll} · status=achieved DOM=${goalsEyes.length} endpoint=${achievedApi.count} · rows=${JSON.stringify(goalsEyes)}`,
+  );
+}
+
+/**
+ * G-BR-3 — the empty, degraded and retrieval-mode states are VISIBLE.
+ *
+ * PROVES: the four layer views render a DISTINGUISHED empty state per cause
+ * (`degraded` on a missing brain, `empty` on an empty one, none at all when
+ * there is data), and the learnings view banners its retrieval mode loudly when
+ * hybrid recall did not run.
+ * DOES NOT PROVE: the copy is right — that is operator review.
+ */
+async function gBr3(tabs, worlds) {
+  gate("G-BR-3", "empty / degraded / retrieval-mode states are visible in pixels");
+
+  const layers = ["briefs", "learnings", "goals"];
+
+  // 3a — MISSING brain: every layer must say `degraded`.
+  const missingTab = mut("br3-empty-on-seeded") ? tabs.seeded : tabs.missing;
+  const missingKinds = {};
+  for (const l of layers) {
+    await missingTab.hash(`#/layers/${l}`);
+    await missingTab.settle(700);
+    missingKinds[l] = await missingTab.eval(READ.emptyKind);
+  }
+  check(
+    "3a",
+    layers.every((l) => missingKinds[l] === "degraded"),
+    `missing brain -> ${JSON.stringify(missingKinds)}${
+      mut("br3-empty-on-seeded") ? "  [MUTATED: read from the SEEDED world]" : ""
+    }`,
+  );
+
+  // 3b — EMPTY brain: the SAME views, a DIFFERENT kind. This is the
+  // assert-then-diff that makes 3a mean something.
+  const emptyKinds = {};
+  for (const l of layers) {
+    await tabs.empty.hash(`#/layers/${l}`);
+    await tabs.empty.settle(700);
+    emptyKinds[l] = await tabs.empty.eval(READ.emptyKind);
+  }
+  check(
+    "3b",
+    layers.every((l) => emptyKinds[l] === "empty") &&
+      layers.some((l) => emptyKinds[l] !== missingKinds[l]),
+    `empty brain -> ${JSON.stringify(emptyKinds)} (differs from the missing-brain reading)`,
+  );
+
+  // 3c — SELF-NEGATIVE-CONTROL for the detector: with data, there is no
+  // empty-state element at all. Without this, 3a/3b could both be reading a
+  // constant.
+  const seededKinds = {};
+  for (const l of layers) {
+    await tabs.seeded.hash(`#/layers/${l}`);
+    await tabs.seeded.until("return document.querySelectorAll('.record-row').length;", {
+      label: `${l} rows in the seeded world`,
+    });
+    seededKinds[l] = await tabs.seeded.eval(READ.emptyKind);
+  }
+  check(
+    "3c",
+    layers.every((l) => seededKinds[l] === null),
+    `seeded brain -> ${JSON.stringify(seededKinds)} (no empty-state element anywhere)`,
+  );
+
+  // 3d — context docs, the layer with NO brain read (D8), and the FOURTH empty
+  // kind. `no-project` exists because this layer cannot be read without a scope;
+  // without it the view would show `empty`, which reads as "this project has no
+  // docs" for a question that was never asked.
+  await tabs.seeded.hash("#/layers/context-docs");
+  await tabs.seeded.settle(900);
+  const scopeNow = await activeProject(tabs.seeded);
+  if (scopeNow !== null) await clickProjectChip(tabs.seeded, scopeNow);
+  await tabs.seeded.settle(700);
+  const noProjKind = await tabs.seeded.eval(READ.emptyKind);
+  check(
+    "3d-noproject",
+    noProjKind === "no-project",
+    `context docs with the scope CLEARED -> kind=${JSON.stringify(noProjKind)} (the fourth EmptyKind; all four are now observed)`,
+  );
+
+  await clickProjectChip(tabs.seeded, "demo");
+  await tabs.seeded.until("return document.querySelectorAll('.record-row').length;", {
+    timeout: 15_000,
+    label: "context-doc inventory rows",
+  });
+  const ctxRows = await tabs.seeded.eval(READ.rowEyes);
+  const ctxKind = await tabs.seeded.eval(READ.emptyKind);
+  check(
+    "3d",
+    ctxRows.length > 0 && ctxKind === null,
+    `context docs scoped to demo -> inventory rows=${ctxRows.length} kind=${JSON.stringify(ctxKind)}`,
+  );
+
+  // 3e — the retrieval banner is LOUD when hybrid recall did not run…
+  await tabs.seeded.hash("#/layers/learnings");
+  await tabs.seeded.until("return document.querySelectorAll('.record-row').length;", {
+    label: "learnings rows",
+  });
+  await tabs.seeded.type(".record-search input", "wrapper");
+  await tabs.seeded.click(".record-filter-run");
+  await tabs.seeded.until(
+    `return [...document.querySelectorAll('.shell-banner, .record-readout')].some(e => /HYBRID|BM25|VECTOR|NONE/.test(e.textContent)) ? 1 : 0;`,
+    { timeout: 60_000, label: "retrieval readout" },
+  );
+  const seededBanners = await tabs.seeded.eval(READ.banners);
+  const bm25Api = await apiJson(`${worlds.seeded.url}/api/learnings/search?q=wrapper`);
+  const loud = seededBanners.find((b) => /^BM25 ONLY/.test(b)) ?? null;
+  check(
+    "3e",
+    bm25Api.retrieval.mode === "bm25_only" && loud !== null,
+    `no learnings_vec -> endpoint mode=${bm25Api.retrieval.mode} · DOM banner=${JSON.stringify(loud === null ? seededBanners : loud.slice(0, 110))}`,
+  );
+
+  // 3-hermetic — the network guard is ARMED, asserted rather than assumed.
+  // Without this, everything below could be passing because the server quietly
+  // downloaded a 90 MB model, which is a side effect no gate declared.
+  const herm = hermeticState(worlds.vec);
+  check(
+    "3-hermetic",
+    herm.armed === true,
+    `vec server \`env.allowRemoteModels = false\` armed=${herm.armed} reason=${JSON.stringify(herm.reason)} — the HF Hub is unreachable from this run, so a warm LOCAL cache is the only way an embedding can be produced`,
+  );
+
+  // …and the vec world, where `vector_available` is TRUE. Which mode it reports
+  // then depends on ONE remaining variable — whether a local MiniLM cache
+  // exists — and the gate asserts the mode is CONSISTENT with that capability
+  // rather than assuming one branch.
+  await tabs.vec.hash("#/layers/learnings");
+  await tabs.vec.until("return document.querySelectorAll('.record-row').length;", {
+    label: "learnings rows (vec world)",
+  });
+  await tabs.vec.type(".record-search input", "wrapper");
+  await tabs.vec.click(".record-filter-run");
+  await tabs.vec.until(
+    `return [...document.querySelectorAll('.shell-banner, .record-readout')].some(e => /HYBRID|BM25|VECTOR|NONE/.test(e.textContent)) ? 1 : 0;`,
+    { timeout: 60_000, label: "retrieval readout (vec world)" },
+  );
+  const vecBanners = await tabs.vec.eval(READ.banners);
+  const vecReadouts = await tabs.vec.eval(READ.readouts);
+  const vecApi = await apiJson(`${worlds.vec.url}/api/learnings/search?q=wrapper`);
+  const vecLoud = vecBanners.some((b) => /^BM25 ONLY/.test(b));
+  const vecQuiet = vecReadouts.some((r) => /HYBRID/.test(r));
+  const vecRet = vecApi.retrieval;
+  const embeddable = vecRet.embedding_available === true;
+
+  // 3f — the FIELD-SEPARATION contract, asserted in the browser's own world:
+  // `vector_available` reports the CONNECTION (the extension loaded and the
+  // index is queryable) and MUST be true here regardless of the model, while
+  // `mode` reports what actually ran. Both directions can fail: `hybrid` with no
+  // embedding, or `bm25_only` with one, are both reported as FAIL.
+  check(
+    "3f",
+    vecRet.vector_available === true &&
+      vecRet.mode === (embeddable ? "hybrid" : "bm25_only"),
+    `learnings_vec present -> vector_available=${vecRet.vector_available} embedding_available=${embeddable} mode=${vecRet.mode} (must be ${embeddable ? "hybrid" : "bm25_only"}) reason=${JSON.stringify(vecRet.reason)}`,
+  );
+
+  if (embeddable) {
+    // A local cache exists, so the HYBRID arm really ran: the banner must go
+    // QUIET. This is 3e's assert-then-diff partner.
+    check(
+      "3f-hybrid",
+      !vecLoud && vecQuiet,
+      `hybrid ran -> loud banner=${vecLoud} · quiet readout=${vecQuiet} (${JSON.stringify(vecReadouts.filter((r) => /HYBRID/.test(r)))})`,
+    );
+    skip(
+      "3f-loud",
+      "the vec world reached HYBRID, so its embedding-missing degradation is not on this run's path (3e covers the no-index degradation)",
+    );
+  } else {
+    // No local cache and no network. That is a REAL production state — an
+    // offline host, or any freshly built tree, since `copy-templates.sh` wipes
+    // the package-local model cache. It must be LOUD, and it is a DIFFERENT
+    // cause from 3e's (no index at all) with `vector_available` still true.
+    check(
+      "3f-loud",
+      vecLoud && !vecQuiet,
+      `no local model cache -> the degradation is loud in the DOM too: banner=${JSON.stringify((vecBanners.find((b) => /^BM25 ONLY/.test(b)) ?? "").slice(0, 110))} · HYBRID readout=${vecQuiet}`,
+    );
+    skip(
+      "3f-hybrid",
+      "no local MiniLM cache under cli/dist (copy-templates.sh wipes it on every build) and the hermetic preload forbids the ~90 MB Hub fetch, so the HYBRID-quiet rendering was NOT exercised END-TO-END here. The COMPONENT is covered by record.test.tsx (\"hybrid renders a quiet readout, NOT a banner\"); what is unexercised is the page-level wiring of a hybrid value — see the note below",
+    );
+  }
+
+  note(
+    "3e/3f are an assert-then-diff PAIR over the retrieval MODE: `vector_available` " +
+      "and `mode` are separate fields and the gate asserts their relationship, so a " +
+      "pass cannot come from a banner that always renders. The `vec` world's vectors " +
+      "are deterministic, not real embeddings — this proves the MODE plumbing, never " +
+      "recall quality.",
+  );
+  note(
+    "STATED LIMIT (learning 1095). This gate NEVER downloads a model: the server " +
+      "runs with `allowRemoteModels = false`, asserted by 3-hermetic. On a tree " +
+      "built in the normal way there is therefore no embedding backend, so exactly " +
+      "one of 3f-hybrid / 3f-loud runs and the other is SKIPPED with its reason. " +
+      "The unexercised arm on a cold tree is the PAGE-LEVEL WIRING of a quiet " +
+      "hybrid readout. Siblings, stated precisely (learning 1095): " +
+      "`record.test.tsx` (\"hybrid renders a quiet readout, NOT a banner\") DOES " +
+      "cover the component's hybrid rendering via react-dom/server; " +
+      "`dashboard-learnings-search.test.ts` proves the endpoint's field separation " +
+      "offline; `memory-read.test.ts` proves the recall semantics. What none of " +
+      "them covers is this page passing a hybrid `retrieval` value through to that " +
+      "component — and note 3f-loud DOES exercise that same wiring for the " +
+      "bm25_only value, so the residual gap is the hybrid value on that path only. To " +
+      "exercise it deliberately, warm the package-local cache ONCE (this one DOES " +
+      "hit the network, ~90 MB) and re-run:\n" +
+      "                  node --input-type=module -e \"const m = await import('./cli/dist/brain-mcp-server/dist/utils/embeddings.js'); await m.generateEmbedding('warm');\"\n" +
+      "                  node cli/scripts/browser-gate.mjs\n" +
+      "                  — 3f-hybrid then runs and 3f-loud is the one that skips. The next " +
+      "`npm run build` wipes the cache again (copy-templates.sh:98).",
+  );
+}
+
+/**
+ * G-BR-4 — no idling render loop, and the palettes really differ.
+ *
+ * PROVES (4a): across a 3-second quiet window on each of the four layer views,
+ * ZERO `requestAnimationFrame` callbacks and ZERO canvas clears run, measured
+ * by instruments installed BEFORE the bundle.
+ * DOES NOT PROVE: that DOM mutations are zero. They are not, by design — the
+ * layer lists follow the shell's 5-second `live.tick` beat. The mutation count
+ * is MEASURED and printed rather than asserted, because asserting 0 there would
+ * be asserting the refetch away.
+ * (4c) re-runs the FR-239 stillness checkpoint verbatim, because FR-240 hoisted
+ * `graphCache` out of `pages/Graph.tsx` and that cache is AC-load-bearing there.
+ */
+async function gBr4(tabs) {
+  gate("G-BR-4", "no render loop · palettes differ · FR-239 stillness re-run");
+
+  // 4a — the four layer views at rest.
+  for (const l of ["briefs", "learnings", "context-docs", "goals"]) {
+    // The mutation points the FIRST reading at the graph — a surface that is
+    // known to move — without changing anything else. It exercises both halves:
+    // `awaitQuiet` cannot reach rest, and the 3s window reads non-zero.
+    const moving = mut("br4-measure-motion") && l === "briefs";
+    await tabs.seeded.hash(moving ? "#/graph" : `#/layers/${l}`);
+    if (moving) {
+      await tabs.seeded.until("return document.querySelector('.graph-canvas-host canvas') !== null ? 1 : 0;", {
+        timeout: 45_000,
+        label: "graph canvas (MUTATED 4a target)",
+      });
+    } else
+    // SYNCHRONISE ON THE VIEW BEING THERE, then sleep. Not the other way round.
+    //
+    // This used to be `settle(900)` alone, and it FLAKED — measured 2 failures
+    // in 5 runs during the FR-240 warden pass, always `4a-briefs` (the FIRST
+    // view visited, the one that pays the endpoint round trip) and always the
+    // same `rAF +17 · clearRect +0 · mut +0`: a fixed ~280 ms row-entrance
+    // animation that had not finished before the window opened. The check was
+    // therefore measuring a view still ARRIVING while claiming to measure one AT
+    // REST, and a guard that reds 40% of the time for the wrong reason teaches
+    // people to re-run reds — which is worse than not having it.
+    //
+    // `.record-row` OR an empty-state, because `context-docs` starts scoped and
+    // three of the four worlds can legitimately render no rows.
+    await tabs.seeded.until(
+      "return (document.querySelectorAll('.record-row').length > 0 || document.querySelector('[data-empty-kind]') !== null) ? 1 : 0;",
+      { timeout: 20_000, label: `${l} view rendered` },
+    );
+    await tabs.seeded.settle(400);
+    // Then wait for QUIET before opening the window. See `awaitQuiet`: a surface
+    // that never reaches rest fails here, loudly, with its observed rate.
+    const q = await tabs.seeded.awaitQuiet(moving ? { window: 400, tries: 4 } : {});
+    const vis = await tabs.seeded.eval(
+      "return document.visibilityState + '/' + (document.hasFocus() ? 'focused' : 'blurred');",
+    );
+    const d = await tabs.seeded.witnessDelta(3000);
+    check(
+      `4a-${l}`,
+      q.quiet === true && d.raf === 0 && d.clearRect === 0 && vis.startsWith("visible"),
+      q.quiet
+        ? `${l} at rest for 3s [tab ${vis}, quiet after ${q.waited}ms]: rAF +${d.raf} · clearRect +${d.clearRect} · DOM mutations +${d.mut} (mutations are the live beat, not asserted)`
+        : `${l} NEVER REACHED REST — still running ~${q.rate} rAF callbacks per 400 ms after ${q.waited}ms of waiting; the 3s window then read rAF +${d.raf} · clearRect +${d.clearRect}${
+            moving ? "  [MUTATED: measured the GRAPH, a surface known to move]" : ""
+          }`,
+    );
+  }
+
+  // 4b — NEGATIVE CONTROL FOR THE INSTRUMENT. If the counters cannot move, 4a's
+  // zeros are worthless. The graph entrance is a surface known to move.
+  await tabs.seeded.hash("#/graph");
+  const moving = await tabs.seeded.witnessDelta(2500);
+  check(
+    "4b",
+    moving.raf > 0 && moving.clearRect > 0,
+    `graph entrance (a surface known to move): rAF +${moving.raf} · clearRect +${moving.clearRect} — the instrument CAN report motion`,
+  );
+
+  // 4c — the FR-239 checkpoint, unchanged, after the graphCache hoist.
+  await tabs.seeded.until("return window.__igrisGraphStillness !== undefined ? 1 : 0;", {
+    timeout: 45_000,
+    label: "graph diagnostic",
+  });
+  await tabs.seeded.until(
+    "return window.__igrisGraphStillness.state() === 'still' ? 1 : 0;",
+    { timeout: 60_000, label: "graph settles to still" },
+  );
+  const atRest = await tabs.seeded.eval(
+    "return window.__igrisGraphStillness.probe(3000);",
+  );
+  const restWitness = await tabs.seeded.witnessDelta(3000);
+  const appPaintsBefore = await tabs.seeded.eval("return window.__igrisGraphStillness.paints();");
+  await sleep(3000);
+  const appPaintsAfter = await tabs.seeded.eval("return window.__igrisGraphStillness.paints();");
+  check(
+    "4c-rest",
+    atRest.identical === true &&
+      restWitness.raf === 0 &&
+      restWitness.clearRect === 0 &&
+      appPaintsAfter - appPaintsBefore === 0,
+    `AT REST: probe identical=${atRest.identical} samples=${atRest.samples} · independent rAF +${restWitness.raf} clearRect +${restWitness.clearRect} · app paints +${appPaintsAfter - appPaintsBefore}`,
+  );
+
+  // 4c-live — STILL is not DEAD. The wake-up path exercised here is a REAL
+  // POINTER on the canvas host, which is the path the FR-239 defect broke; a
+  // palette switch would have passed while the canvas was dead.
+  const canvasBox = await tabs.seeded.eval(`
+    const host = document.querySelector('.graph-canvas-host');
+    if (host === null) return null;
+    const r = host.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  `);
+  const beforeMove = await tabs.seeded.instrument();
+  await tabs.seeded.moveTo(canvasBox.x - 40, canvasBox.y - 20);
+  await tabs.seeded.moveTo(canvasBox.x, canvasBox.y);
+  await sleep(600);
+  const afterMove = await tabs.seeded.instrument();
+  check(
+    "4c-live",
+    afterMove.clearRect - beforeMove.clearRect > 0,
+    `POINTER over the canvas: clearRect +${afterMove.clearRect - beforeMove.clearRect} · rAF +${afterMove.raf - beforeMove.raf} — the canvas is ALIVE, not merely still`,
+  );
+
+  // 4c-click — the exact FR-239 defect: a click on the centred node must
+  // SELECT, never deselect. The focused node was centred by `graph.select`.
+  await tabs.seeded.hash("#/graph?focus=brief/demo/FR-240");
+  await tabs.seeded.until(has(".graph-inspector-title"), {
+    timeout: 45_000,
+    label: "focus selects",
+  });
+  await tabs.seeded.click(".graph-inspector-close");
+  const afterClose = await tabs.seeded.eval(READ.inspectorTitle);
+  const box2 = await tabs.seeded.eval(`
+    const host = document.querySelector('.graph-canvas-host');
+    const r = host.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  await tabs.seeded.moveTo(box2.x, box2.y);
+  await sleep(400);
+  await tabs.seeded.clickAt(box2.x, box2.y);
+  await sleep(600);
+  const afterClick = await tabs.seeded.eval(READ.inspectorTitle);
+  check(
+    "4c-click",
+    afterClose === null && afterClick !== null,
+    `deselect -> inspector=${JSON.stringify(afterClose)}; click the centred node -> inspector=${JSON.stringify(afterClick)} (a DEAD canvas reads null here — the FR-239 defect)`,
+  );
+
+  // 4d — palettes. FR-240 declares ZERO custom properties (it dereferences the
+  // role tokens directly), which is what makes the FR-239 `:root` cascade bug
+  // unreachable by construction — so there is nothing named `--record-*` to
+  // read. The gate therefore reads the resolved COLOURS instead.
+  await tabs.seeded.hash("#/layers/briefs");
+  await tabs.seeded.until("return document.querySelectorAll('.record-row').length;", {
+    label: "briefs rows",
+  });
+  const readColours = `
+    const eye = document.querySelector('.record-row-eye');
+    const title = document.querySelector('.record-row-title');
+    const filters = document.querySelector('.record-filters');
+    if (eye === null || title === null || filters === null) return null;
+    const ce = getComputedStyle(eye), ct = getComputedStyle(title), cf = getComputedStyle(filters);
+    return {
+      palette: document.body.dataset.palette,
+      accent: ce.color,
+      fg: ct.color,
+      line: cf.borderBottomColor,
+      // A palette-INDEPENDENT reading, so a probe returning noise is detectable.
+      invariant: ce.letterSpacing,
+    };
+  `;
+  const palettes = ["blood", "cyber", "acid", "mono"];
+  const readings = [];
+  for (const p of palettes) {
+    await setPalette(tabs.seeded, mut("br4-same-palette") ? "blood" : p);
+    await tabs.seeded.settle(250);
+    readings.push(await tabs.seeded.eval(readColours));
+  }
+  const tuples = readings.map((r) => `${r.accent}|${r.fg}|${r.line}`);
+  const distinct = new Set(tuples).size;
+  check(
+    "4d",
+    distinct === 4,
+    `computed .record-* colours across ${palettes.join("/")}: ${distinct}/4 distinct${
+      mut("br4-same-palette") ? "  [MUTATED: read `blood` four times]" : ""
+    }\n                  ${readings.map((r) => `${r.palette}: accent=${r.accent} fg=${r.fg}`).join("\n                  ")}`,
+  );
+  const invariants = new Set(readings.map((r) => r.invariant));
+  check(
+    "4d-nc",
+    invariants.size === 1,
+    `palette-INDEPENDENT reading (.record-row-eye letter-spacing) stayed ${[...invariants].join(",")} across all four — the probe is not returning noise`,
+  );
+  const repeat = [];
+  await setPalette(tabs.seeded, "cyber");
+  await tabs.seeded.settle(250);
+  repeat.push(await tabs.seeded.eval(readColours));
+  await tabs.seeded.settle(250);
+  repeat.push(await tabs.seeded.eval(readColours));
+  check(
+    "4d-nc2",
+    repeat[0].accent === repeat[1].accent && repeat[0].fg === repeat[1].fg,
+    `re-reading the SAME palette twice is identical (${repeat[0].accent}) — so 4d's four differences are caused by the palette`,
+  );
+  await setPalette(tabs.seeded, "blood");
+}
+
+/**
+ * G-BR-5 — prove ACCESS, not bytes (learning 1096).
+ *
+ * PROVES: the operator can READ a specific brief's body, a specific learning's
+ * content and a context doc's text in the live DOM, and that two different
+ * records render two different bodies.
+ * DOES NOT PROVE: markdown fidelity or XSS safety — `markdown/__tests__/` own
+ * both, including the tag allowlist.
+ */
+async function gBr5(tab) {
+  gate("G-BR-5", "prove ACCESS, not bytes — the body text is readable in the DOM");
+
+  const BRIEF_SENTENCE = mut("br5-absent-text")
+    ? "This sentence is not in the fixture at all."
+    : "Mount four read-only browse views in the dashboard shell.";
+
+  await tab.hash("#/layers/briefs/demo/FR-240");
+  await tab.until(has(".record-detail-body"), { label: "brief body" });
+  const briefBody = await tab.eval(READ.detailBody);
+  const mdHeading = await tab.eval(
+    `const e = document.querySelector('.record-detail-body .record-md-h'); return e === null ? null : e.tagName + ':' + e.textContent.trim();`,
+  );
+  check(
+    "5a",
+    briefBody !== null && briefBody.includes(BRIEF_SENTENCE),
+    `brief body ${briefBody === null ? "MISSING" : `${briefBody.length} chars`}, contains the asserted sentence=${briefBody !== null && briefBody.includes(BRIEF_SENTENCE)}${
+      mut("br5-absent-text") ? "  [MUTATED: asserting a sentence not in the fixture]" : ""
+    }`,
+  );
+  // The claim is exactly "a heading ELEMENT rendered" — not which level. The
+  // renderer offsets levels so a body `#` cannot outrank the page's own `h2`,
+  // and pinning the level here would restate a mapping `Markdown.test.tsx` owns.
+  check(
+    "5a-md",
+    mdHeading !== null && /^H[1-6]:/.test(mdHeading),
+    `the markdown RAN (heading element = ${JSON.stringify(mdHeading)}), so the body is parsed React elements, not a text dump`,
+  );
+
+  // 5b — a DIFFERENT brief renders a DIFFERENT body. Assert-then-diff, so 5a
+  // cannot be satisfied by a body slot showing a constant.
+  await tab.hash("#/layers/briefs/demo/BR-001");
+  await tab.until(has(".record-detail-title"), { label: "BR-001 detail" });
+  await tab.settle(400);
+  const otherBody = await tab.eval(READ.detailBody);
+  const note1 = await tab.eval(
+    `const e = document.querySelector('.record-note'); return e === null ? null : e.textContent.trim();`,
+  );
+  check(
+    "5b",
+    otherBody !== briefBody,
+    `BR-001 (no brief_files row) body=${JSON.stringify((otherBody ?? note1 ?? "").slice(0, 80))} — differs from FR-240's`,
+  );
+
+  // 5c — a learning's content.
+  await tab.hash("#/layers/learnings/demo/1");
+  await tab.until(has(".record-detail-body"), { label: "learning body" });
+  const learnBody = await tab.eval(READ.detailBody);
+  check(
+    "5c",
+    learnBody !== null &&
+      learnBody.includes("The MCP handler becomes a thin wrapper over the pure reader."),
+    `learning 1 body = ${JSON.stringify((learnBody ?? "").slice(0, 90))}`,
+  );
+
+  // 5d — a context doc read from DISK (D8 — no brain involvement).
+  await tab.hash("#/layers/context-docs");
+  await tab.settle(900);
+  const docRow = await tab.eval(`
+    const rows = [...document.querySelectorAll('.record-row')];
+    const r = rows.find(x => x.textContent.includes('coding_guidelines'));
+    if (r === undefined) return null;
+    r.scrollIntoView({ block: 'center' });
+    const b = r.getBoundingClientRect();
+    return { x: b.left + b.width / 2, y: b.top + b.height / 2 };
+  `);
+  if (docRow === null) {
+    check("5d", false, "no coding_guidelines row in the context-doc inventory");
+  } else {
+    await tab.clickAt(docRow.x, docRow.y);
+    await tab.until(has(".record-detail-body"), { timeout: 15_000, label: "doc body" });
+    const docBody = await tab.eval(READ.detailBody);
+    check(
+      "5d",
+      docBody !== null &&
+        docBody.includes("The browser must be able to READ this sentence, not merely receive it."),
+      `context doc body = ${JSON.stringify((docBody ?? "").slice(0, 90))}`,
+    );
+  }
+}
+
+/**
+ * G-BR-6 — `prefers-reduced-motion`, which only a browser can report.
+ *
+ * PROVES: under emulated `reduce` the media query matches in the page and the
+ * global PRM block collapses animation to `0s`; and with emulation CLEARED the
+ * same reads come back non-zero, so the check is not reading a constant.
+ * DOES NOT PROVE: that every individual animation is gated in JS — `Cursor.tsx`
+ * and `graph/instance.ts` have their own unit coverage (`motion.test.ts` T17).
+ */
+async function gBr6(tab) {
+  gate("G-BR-6", "prefers-reduced-motion, measured in the page");
+
+  const readMotion = `
+    const h1 = document.querySelector('.shell-h1') ?? document.querySelector('h1');
+    const row = document.querySelector('.record-row');
+    if (h1 === null || row === null) return null;
+    return {
+      matches: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      animation: getComputedStyle(h1).animationDuration,
+      transition: getComputedStyle(row).transitionDuration,
+    };
+  `;
+
+  await tab.reducedMotion(false);
+  await tab.hash("#/layers/briefs");
+  await tab.until("return document.querySelectorAll('.record-row').length;", { label: "briefs rows" });
+  const normal = await tab.eval(readMotion);
+
+  if (!mut("br6-no-emulation")) await tab.reducedMotion(true);
+  await tab.settle(400);
+  const reduced = await tab.eval(readMotion);
+
+  check(
+    "6a",
+    reduced.matches === true && reduced.transition === "0.05s",
+    `reduce emulated -> matchMedia=${reduced.matches} animation=${reduced.animation} transition=${reduced.transition}${
+      mut("br6-no-emulation") ? "  [MUTATED: emulation never set]" : ""
+    }`,
+  );
+  check(
+    "6b",
+    normal.matches === false && normal.transition !== reduced.transition,
+    `NEGATIVE CONTROL — no emulation -> matchMedia=${normal.matches} transition=${normal.transition}, which DIFFERS from the reduced reading`,
+  );
+  await tab.reducedMotion(false);
+}
+
+/**
+ * G-BR-7 — DRILL IN, BACK OUT. The hoisted scope cache, in a real browser.
+ *
+ * WHY THIS GATE EXISTS
+ * --------------------
+ * FR-240 phase 3 hoisted the scope cache out of `pages/Graph.tsx` into
+ * `lib/graphCache.ts` so a record detail and the graph page share one
+ * `/api/graph` read (D6). The behaviour that hoist must not break is FR-239's,
+ * and it is AC-load-bearing THERE: *"Backing out restores the cached whole-brain
+ * payload AND its settled positions, so it is a page transition rather than a
+ * second entrance"* (`pages/Graph.tsx`'s D6 header). G-BR-4c re-runs the FR-239
+ * stillness checkpoint, which is a DIFFERENT property — a settled canvas reads
+ * still whether or not the positions survived the round trip.
+ *
+ * PROVES
+ *   7a  A drill is a real scope change and a real read: the readout changes and
+ *       EXACTLY ONE new `/api/graph` request leaves the page.
+ *   7b  Backing out issues ZERO new `/api/graph` requests and restores the
+ *       whole-brain readout — the payload came from the shared cache.
+ *   7c  NEGATIVE CONTROL for 7b: REFRESH on the very same surface issues exactly
+ *       one. So 7b's zero is a measured zero, not a counter that cannot move.
+ *   7d  The back-out's first painted frame is already where it settles, while
+ *       the REFRESH's is not — positions restored versus a second entrance,
+ *       measured in pixels with 7c's refresh as the paired control.
+ *
+ * DOES NOT PROVE
+ *   The cache's own mechanics — sharing, the `positions` reset, per-scope
+ *   isolation, the `force` in-flight join. **Sibling:**
+ *   `cli/dashboard/src/lib/__tests__/graphCache.test.ts`, which asserts all four
+ *   against a stubbed `api.graph`.
+ *   Nor that the RESTORED coordinates equal the pre-drill ones to the pixel.
+ *   They cannot be read from the page (`__igrisGraphStillness` exposes
+ *   `probe`/`state`/`paints` and nothing positional), and a settled-frame
+ *   comparison would NOT discriminate: d3-force initialises unplaced nodes
+ *   deterministically, so a cold re-layout of the same node array converges to
+ *   the same picture. What separates the two cases is the JOURNEY, which is what
+ *   7d measures.
+ */
+async function gBr7(tab) {
+  gate("G-BR-7", "drill in / back out — the hoisted scope cache, in a real browser");
+
+  const stillnessReady = "return window.__igrisGraphStillness !== undefined ? 1 : 0;";
+  const isStill = "return window.__igrisGraphStillness.state() === 'still' ? 1 : 0;";
+  const settleGraph = async (label) => {
+    await tab.until(stillnessReady, { timeout: 45_000, label: `${label}: graph mounts` });
+    await tab.until(isStill, { timeout: 60_000, label: `${label}: settles` });
+  };
+  const graphFetches = async () => (await tab.instrument()).graphFetch;
+
+  // A FRESH DOCUMENT. The cache is module-level and outlives components on
+  // purpose, so earlier gates have already warmed both scopes; measuring "was
+  // this fetched?" needs a page where nothing has been.
+  await tab.hash("#/graph");
+  await tab.reload();
+  await settleGraph("whole brain");
+  // NO reference frame is captured here on purpose. A settled-frame comparison
+  // CANNOT discriminate a restored layout from a cold one — d3-force's cold
+  // layout for a fixed node array is deterministic, so both converge to the same
+  // picture. 7d reads opening-vs-settled ink SPREAD within each arm instead; see
+  // the STATED LIMIT note below.
+  const wholeReadout = await tab.eval(READ.graphReadout);
+  const gWhole = await graphFetches();
+  check(
+    "7-pre",
+    gWhole === 1 && wholeReadout !== null,
+    `fresh document -> /api/graph requests=${gWhole} · readout=${JSON.stringify(wholeReadout)} (the counter starts from a known 1, so every delta below is measured)`,
+  );
+
+  // 7a — DRILL. A real scope change: `// SLOW`, one new read.
+  await graphDrill(tab, "demo");
+  await tab.until(textOtherThan(".graph-readout", wholeReadout), {
+    timeout: 30_000,
+    label: "the drilled readout",
+  });
+  await settleGraph("demo scope");
+  const demoReadout = await tab.eval(READ.graphReadout);
+  const gDemo = await graphFetches();
+  check(
+    "7a",
+    gDemo - gWhole === 1 && demoReadout !== wholeReadout,
+    `drill to demo -> +${gDemo - gWhole} /api/graph · readout ${JSON.stringify(wholeReadout)} -> ${JSON.stringify(demoReadout)}`,
+  );
+
+  // 7b — BACK OUT via the WHOLE BRAIN crumb. Served from the shared cache, so
+  // ZERO new reads. The ink recorder runs across the transition for 7d.
+  await tab.startInk();
+  await tab.click(".graph-crumb", { settle: false });
+  await sleep(1600);
+  const backSamples = await tab.stopInk();
+  if (mut("br7-refetch-backout")) {
+    // The injected defect: pay for the payload again, which is exactly what the
+    // hoist exists to avoid. 7b must notice.
+    await clickButton(tab, "REFRESH");
+  }
+  await tab.until(textOtherThan(".graph-readout", demoReadout), {
+    timeout: 30_000,
+    label: "the backed-out readout",
+  });
+  await settleGraph("back out");
+  const backSettledInk = await tab.sampleInk();
+  const backSettledSpread = inkSpread(backSettledInk);
+  const backReadout = await tab.eval(READ.graphReadout);
+  const gBack = await graphFetches();
+  check(
+    "7b",
+    gBack - gDemo === 0 && backReadout === wholeReadout,
+    `back out -> +${gBack - gDemo} /api/graph (the shared cache answered) · readout back to ${JSON.stringify(backReadout)}${
+      mut("br7-refetch-backout") ? "  [MUTATED: REFRESH clicked during the back-out]" : ""
+    }`,
+  );
+
+  // 7c — the same surface, a REFRESH: the counter CAN move, and `force:true`
+  // resets `positions`, so this is also 7d's cold-layout control.
+  await tab.startInk();
+  await clickButton(tab, "REFRESH", { settle: false });
+  await sleep(1600);
+  const refreshSamples = await tab.stopInk();
+  await settleGraph("after refresh");
+  const coldSettledSpread = inkSpread(await tab.sampleInk());
+  const gRefresh = await graphFetches();
+  check(
+    "7c",
+    gRefresh - gBack === 1,
+    `NEGATIVE CONTROL — REFRESH on the SAME surface -> +${gRefresh - gBack} /api/graph, so 7b's zero is a measured zero`,
+  );
+
+  // 7d — restored versus re-entranced, in pixels.
+  const back = inkCollapse(backSamples, backSettledSpread);
+  const cold = inkCollapse(refreshSamples, coldSettledSpread);
+  if (back === null || cold === null) {
+    check(
+      "7d",
+      false,
+      `ink spread unreadable (back=${JSON.stringify(back)} cold=${JSON.stringify(cold)}) — the canvas produced too few ink-bearing frames in the window`,
+    );
+  } else {
+    check(
+      "7d",
+      back.collapse > 0.75 && back.collapse - cold.collapse > 0.15,
+      `opening layout extent vs settled — BACK-OUT ${pct(back.collapse)} (opening mean ${back.early} over ${back.opening} frames, min ${back.min}, settled ${back.settled}), COLD REFRESH ${pct(cold.collapse)} (opening mean ${cold.early} over ${cold.opening}, min ${cold.min}, settled ${cold.settled}). The back-out opens NEAR its settled extent; the cold refresh opens as a clump at the origin and expands out of it.`,
+    );
+  }
+  note(
+    "7d is a PAIRED reading, not a tolerance: the same measurement over the same " +
+      "surface with only the position seed differing. Both absolute numbers are " +
+      "printed so a future regression shows up as a drift rather than only as a flip. " +
+      "Measured repeatability on darwin/Chrome, five runs: back-out 84.3-85.3% " +
+      "(spread 1.0pp), cold 61.2-61.9% (spread 0.7pp, mode 61.9%). Worst-case " +
+      "separation 22.4pp against the 15pp threshold; worst-case absolute 84.3% " +
+      "against 75%. The settled extents repeat to three decimals because d3-force " +
+      "is deterministic — that is the mechanical reason this metric is stable.",
+  );
+  note(
+    "STATED LIMIT (learning 1095). The back-out reads ~85%, NOT ~100%, and that is " +
+      "the real behaviour rather than a tolerance: `instance.ts` seeds coordinates " +
+      "but does not FIX them (no `fx`/`fy`), so the simulation restarts at alpha=1 " +
+      "from the seeded configuration and relaxes further — the settled extent itself " +
+      "moves (6.73 seeded vs 6.12 cold here). So what this gate proves is that a " +
+      "back-out OPENS at its settled extent instead of expanding into it. It does " +
+      "NOT prove the restored coordinates equal the pre-drill ones; nothing in the " +
+      "page exposes coordinates, and a settled-frame comparison cannot discriminate " +
+      "because d3-force's cold layout for a fixed node array is deterministic. " +
+      "The cache MECHANICS are the sibling: " +
+      "`cli/dashboard/src/lib/__tests__/graphCache.test.ts`.",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// main
+// ---------------------------------------------------------------------------
+
+async function main() {
+  if (!existsSync(CLI_ENTRY)) {
+    process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
+    process.exit(2);
+  }
+  if (!existsSync(CHROME)) {
+    process.stderr.write(`Chrome not found at ${CHROME}\nSet CHROME_BIN to override.\n`);
+    process.exit(2);
+  }
+
+  const worldDirs = [];
+  const worlds = {};
+  const tabs = {};
+  try {
+    for (const kind of ["seeded", "vec", "empty", "missing"]) {
+      const w = makeWorld(kind);
+      worldDirs.push(w.brain);
+      worlds[kind] = await startServer(w);
+    }
+    const chrome = await startChrome();
+
+    process.stdout.write("FR-240 · G-BR — real-browser behavioural gates (CDP, no new dependency)\n");
+    process.stdout.write(`node        ${process.version}\n`);
+    process.stdout.write(`chrome      ${chrome.version}\n`);
+    for (const kind of Object.keys(worlds)) {
+      process.stdout.write(`${`${kind} brain`.padEnd(12)}${worlds[kind].brain}  ->  ${worlds[kind].url}\n`);
+    }
+    process.stdout.write(
+      `hermetic    allowRemoteModels=false in every server: ${Object.keys(worlds)
+        .map((k) => `${k}=${hermeticState(worlds[k]).armed ? "armed" : `NOT ARMED (${hermeticState(worlds[k]).reason})`}`)
+        .join(" · ")}\n`,
+    );
+    process.stdout.write(
+      `mutation    ${MUTATE === null ? "none — every gate must PASS" : `${MUTATE} (${MUTATIONS[MUTATE].gate}): ${MUTATIONS[MUTATE].how}`}\n`,
+    );
+
+    for (const kind of Object.keys(worlds)) {
+      tabs[kind] = await openTab(chrome.port, `${worlds[kind].url}/#/overview`);
+    }
+
+    // Each gate runs inside a barrier. A THROW is recorded as a failed check and
+    // the run continues: an injected defect frequently makes a LATER step
+    // unreachable (a chip that was never set cannot be cleared), and losing the
+    // rest of the ledger to that would hide which checks the mutation reached.
+    await runGate("G-BR-1", () => gBr1(tabs.seeded));
+    await runGate("G-BR-2", () => gBr2(tabs.seeded, worlds.seeded));
+    await runGate("G-BR-3", () => gBr3(tabs, worlds));
+    await runGate("G-BR-4", () => gBr4(tabs));
+    await runGate("G-BR-5", () => gBr5(tabs.seeded));
+    await runGate("G-BR-6", () => gBr6(tabs.seeded));
+    // LAST, because it RELOADS the seeded tab: the scope cache it measures is
+    // module-level, so it needs a document nothing has fetched in yet.
+    await runGate("G-BR-7", () => gBr7(tabs.seeded));
+  } finally {
+    teardown();
+    if (!KEEP) for (const d of worldDirs) rmSync(d, { recursive: true, force: true });
+  }
+
+  const failed = results.filter((r) => !r.ok);
+  process.stdout.write(
+    `\n${results.length - failed.length}/${results.length} checks passed`,
+  );
+  process.stdout.write(
+    skipped.length === 0 ? ", 0 skipped\n" : `, ${skipped.length} SKIPPED\n`,
+  );
+  // A skip is not a pass, so it is named in the summary and in the verdict line.
+  // "Green with skips" must never be readable as "everything was exercised".
+  for (const s of skipped) {
+    process.stdout.write(`SKIPPED ${s.gate} ${s.id} — ${s.reason}\n`);
+  }
+
+  if (MUTATE === null) {
+    if (failed.length > 0) {
+      for (const f of failed) process.stdout.write(`FAILED  ${f.gate} ${f.id}\n`);
+      process.stdout.write("VERDICT: FAIL\n");
+      process.exitCode = 1;
+      return;
+    }
+    process.stdout.write(
+      skipped.length === 0
+        ? "VERDICT: PASS — every gate green, every negative control green, nothing skipped\n"
+        : `VERDICT: PASS WITH ${skipped.length} SKIPPED — every gate that RAN is green, every negative control green. The skipped checks above were NOT exercised.\n`,
+    );
+    return;
+  }
+
+  // Mutation mode INVERTS the verdict. A mutation run where nothing fails means
+  // the gate could not have caught the defect, which is the vacuity FR-239's
+  // learning 1094 is about — and it is reported as a failure of the GATE.
+  const expected = MUTATIONS[MUTATE].gate;
+  // Prefix match, not equality: a gate's checks are sub-ids (`4a-briefs` under
+  // `G-BR-4a`), and an equality test reported every one of those as "caught by a
+  // different check than predicted" — a false note on a correct run.
+  const want = expected.replace(/^G-BR-/, "");
+  const hit = failed.some((f) => f.id === want || f.id.startsWith(`${want}-`));
+  process.stdout.write(
+    `\nexpected the mutation to break ${expected}; failures observed: ${failed.map((f) => `${f.gate}/${f.id}`).join(", ") || "NONE"}\n`,
+  );
+  if (failed.length === 0) {
+    process.stdout.write(
+      "VERDICT: VACUOUS — the injected defect did NOT fail any check. The gate proves nothing.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(
+    `VERDICT: PASS (mutation caught${hit ? "" : " — note: by a different check than predicted, listed above"})\n`,
+  );
+}
+
+process.on("SIGINT", () => {
+  teardown();
+  process.exit(130);
+});
+
+await main();

@@ -32,6 +32,20 @@ export default defineConfig({
     // warning at all — so the threshold moves to sit just above the real
     // post-FR-239 size and keeps its ability to catch the next surprise.
     // The authoritative gate remains `tarball.test.ts`'s packed-size ceiling.
-    chunkSizeWarningLimit: 520,
+    //
+    // Raised 520 -> 560 by FR-240 for the SAME reason, not a different one. Its
+    // four views, the shared record components and the in-repo markdown renderer
+    // put the chunk at 524.69 KB minified (measured), 4.69 KB past the FR-239
+    // threshold — so the warning had started firing on every build again. It
+    // moves to sit just above the real post-FR-240 size.
+    //
+    // FR-240 deliberately did NOT touch `PACK_HARD_CEILING_DELTA`: the packed
+    // delta measured +48.4 KB for this brief, +331.8 KB cumulative against the
+    // +400 KB ceiling, leaving ~68.2 KB for FR-241 (re-measured at the end of
+    // the warden pass — `tarball.test.ts` carries the full provenance and the
+    // two earlier, now-superseded readings). Note the two numbers move very
+    // differently — this one is one minified chunk, that one is the whole
+    // gzipped tarball. Only that one is a gate.
+    chunkSizeWarningLimit: 560,
   },
 });

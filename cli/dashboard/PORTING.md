@@ -220,7 +220,68 @@ at least one of them.
 
 ---
 
-## 5. Missing doc
+## 5. FR-240 — the record layer
+
+**Brief:** FR-240 · **Ported:** nothing. **Original:** everything.
+
+That last sentence is the whole provenance record, and it is the reason this
+section exists rather than being left implicit. FR-238 ported a design
+*language*; FR-239 ported a data-viz *spec* and mapped it onto a third-party
+engine. FR-240 built a **browse/detail surface, and `fifty_dev` has no
+counterpart to port from** — it is a marketing site with no record layer, no
+list/detail pattern and no filter strip.
+
+So the `.record-*` block in `styles/base.css` (~370 lines) and the
+`components/record/{RecordList,RecordDetail,FilterBar}.tsx` family are original
+to this repo. They are held to the ported language by CONSTRUCTION rather than by
+resemblance:
+
+| Property | How it holds |
+|---|---|
+| Zero colour literals | every colour dereferences a role token (`--fg` / `--muted` / `--accent` / `--line` / `--status-*`). Scanned by `dashboard-layers-source.test.ts`, and the FR-239 scan in `dashboard-graph-source.test.ts` runs to end-of-file so a hex here fails two suites |
+| **Zero new custom properties** | the block declares none at all. See D14 |
+| Sharp corners, `.5px` hairlines | BRAND_RULES #2 — the one rounded thing on the page is still `.chip`, upstream's deliberate exception (§3) |
+| 3-tier type | `--display` on the detail title, `--ui` on row titles, `--mono` on every eye line and readout |
+| No new control vocabulary | the filter strip composes the PORTED `Chip` / `Input` / `Button`; the empty states compose the ported `EmptyState` over `StatePage` |
+
+**D14 — the `.record-*` block declares NO custom property, and that absence is
+the guardrail.** FR-239's cascade bug (D12) was a `--dataviz-*` alias declared on
+`:root` instead of `body`, which froze every palette to `blood`. FR-240 cannot
+reproduce it, because it never declares an alias: every rule reads the role
+tokens directly, and those are already declared where the palette stamp lives.
+This is the same shape as the missing `--t-loop` — a thing deliberately not
+declared, so it cannot be referenced by accident. It is asserted mechanically
+(the CSS block must match zero `--record-` declarations) and, empirically, by
+`cli/scripts/browser-gate.mjs` G-BR-4d, which reads the resolved colours of
+`.record-row-eye` and `.record-row-title` under all four palettes and requires
+four distinct readings.
+
+Consequence for anyone reading the FR-240 plan: its §3.4 G-BR-4 asks for
+`getComputedStyle` of "the new `.record-*` custom properties". There are none to
+read, and that is the correct outcome rather than a gap — the gate reads computed
+COLOURS instead. Recorded here because a future reader comparing plan to code
+will otherwise think a check was dropped.
+
+**D15 — a row is an `<a href>`, not a click handler.** The whole navigation state
+is the URL (`#/layers/<layer>/<project>/<id>`), so middle-click opens a second
+window, the address is copyable, the browser's back button works, and the bar
+states the `(type, project, id)` triple being read. The project SCOPE is the
+deliberate exception: it is a filter, not an address, so it stays out of the URL —
+sharing a link to "briefs" must not force the recipient into the sender's
+project.
+
+**One integration hazard, found by the browser gate.** A "clear the scope"
+affordance and a 5-second refetch effect that resolves a DEFAULT are in direct
+conflict: `Layers.tsx` re-ran the `default_project` ladder whenever the scope was
+`null`, so clearing it was undone on the next `live.tick`. The unit suite could
+not see it (it renders the view with a `project` prop and never runs the beat).
+The fix is to make "never chosen" (`undefined`) distinguishable from "chose every
+project" (`null`) — write it down because the next component with a
+default-resolving beat will meet the same trap.
+
+---
+
+## 6. Missing doc
 
 There is no `design_system` context doc in
 `~/.igris/projects/igris-ai/context/`. It is **applicable but absent**, and more
@@ -238,6 +299,15 @@ That last part exists nowhere upstream and cannot: `fifty_dev`'s brand book has
 no reason to know `force-graph` exists. FR-240 and FR-241 would re-derive it from
 scratch.
 
-Authoring it is a follow-up (`/ground design_system`), now with a shipped
-consumer to write it from. This file remains the interim provenance record and
-the natural seed.
+**FR-240 did re-derive it, and that is the cost landing.** §5 above is a design
+decision record wearing a provenance file's clothes: the token-only rule, the
+zero-custom-property rule, the shared list/detail/filter family, the
+`<a href>`-not-onClick rule and the default-vs-cleared trap are all *conventions*,
+not port notes. They belong in a catalog-routed `design_system` doc that loads for
+every agent on every harness; they are here because no such doc exists, and a
+free-standing unregistered file would not load at all. FR-241 will re-derive them
+a third time.
+
+Authoring it is a follow-up (`/ground design_system`), now with **two** shipped
+consumers to write it from. This file remains the interim provenance record and
+the natural seed — §2 (D1-D11), §4 (D12-D13) and §5 (D14-D15) are its outline.

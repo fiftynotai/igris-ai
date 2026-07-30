@@ -950,6 +950,289 @@ export interface GraphQueryTwin {
   scale: string;
 }
 
+// ---------------------------------------------------------------------------
+// FR-240 — the four layer views (briefs, learnings, context docs, goals).
+//
+// Nine read-only endpoints. Same rules as the FR-238/239 block above: these are
+// the SHARED interfaces, `cli/dashboard/src/lib/api.ts` mirrors them
+// browser-side, and a rename here sweeps that file, `routes.ts`, the tests and
+// `docs/dashboard.md` in the same commit (MAINTAINING row 108).
+//
+// EVERY list payload carries the same `{items, count, total, limit, offset}`
+// envelope shape borrowed from `igris_brief_list` / `igris_goal_list`, and NONE
+// carries body content (D7). Body text is detail-only.
+// ---------------------------------------------------------------------------
+
+/**
+ * Notes about inputs the endpoint clamped, dropped or did not recognise.
+ *
+ * Distinct from `degraded`, deliberately. `degraded` means "the DATA is
+ * incomplete"; this means "your REQUEST was adjusted". Conflating them would
+ * make a mistyped filter look like a broken brain.
+ */
+export type DashboardParamNotes = string[];
+
+/** `GET /api/briefs` — one row. Field-for-field `briefs-read.ts` list columns. */
+export interface BriefListRowPayload {
+  project: string;
+  brief_id: string;
+  brief_type: string | null;
+  title: string;
+  status: string;
+  priority: string | null;
+  effort: string | null;
+  phase: string | null;
+  updated_at: string;
+}
+
+/** `GET /api/briefs?project=&status=&priority=&effort=&brief_type=&limit=&offset=`. */
+export interface BriefsPayload {
+  items: BriefListRowPayload[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  /** Inputs that were clamped/dropped. Empty when the request was clean. */
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * `GET /api/brief?project=<slug>&id=<brief_id>` — mirrors
+ * `briefs-read.ts:87#BriefRecord`.
+ *
+ * BOTH params are REQUIRED (BR-078): `BR-001` names a different brief in 25
+ * projects, so an id-only lookup would fuse records across projects. A missing
+ * `project` is a REFUSAL, not a first-match.
+ */
+export interface BriefDetailPayload {
+  brief: {
+    project: string;
+    brief_id: string;
+    content: string | null;
+    filename: string | null;
+    content_hash: string | null;
+    title: string | null;
+    status: string | null;
+    priority: string | null;
+    effort: string | null;
+    phase: string | null;
+    brief_type: string | null;
+    updated_at: string | null;
+  } | null;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** `GET /api/learnings` — one row. NO `content` (D7); `content_length` instead. */
+export interface LearningListRowPayload {
+  id: number;
+  project: string;
+  category: string;
+  title: string;
+  tags: string;
+  tech_stack: string;
+  scope: string;
+  source_brief: string;
+  confidence: number;
+  created_at: string;
+  access_count: number;
+  provenance: string;
+  review_status: string;
+  source_extractor: string;
+  promoted_to_doc: string | null;
+  content_length: number;
+}
+
+/**
+ * `GET /api/learnings?project=&category=&scope=&provenance=&review_status=&limit=&offset=`.
+ *
+ * D9: `review_status` defaults to `approved`. `pending_review` rows are
+ * reachable but only when explicitly asked for, and the UI banners them. FR-241
+ * owns triage; this brief ships no approve/reject control.
+ */
+export interface LearningsPayload {
+  items: LearningListRowPayload[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  /** Echoed so the UI can banner a non-default value without re-parsing the URL. */
+  review_status: string;
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * Which retrieval arms ran on a `/api/learnings/search` call —
+ * `memory-read.ts:98#RetrievalReport`, forwarded verbatim.
+ *
+ * D3, and the thing that makes AC #2 assertable. `mode: "bm25_only"` is a
+ * LEGITIMATE state (no sqlite-vec, or a cold/absent HF model cache) and must
+ * render as a visible banner. Without this block the degradation is invisible:
+ * BM25-only still returns plausible rows.
+ */
+export interface RetrievalPayload {
+  mode: "hybrid" | "bm25_only" | "vector_only" | "none";
+  vector_available: boolean;
+  embedding_available: boolean;
+  bm25_hits: number;
+  vector_hits: number;
+  rrf_k: number;
+  weights: { bm25: number; vector: number };
+  /** Why the vector arm degraded, verbatim; null when it ran. */
+  reason: string | null;
+}
+
+/** One ranked search hit. `rrf_score`/ranks are null on the BM25-only arm. */
+export interface LearningSearchRowPayload {
+  id: number;
+  project: string;
+  category: string;
+  title: string;
+  /** Truncated preview, not the body — full text is `/api/learning`'s job. */
+  preview: string;
+  tags: string;
+  scope: string;
+  confidence: number;
+  provenance: string;
+  created_at: string;
+  promoted_to_doc: string | null;
+  rrf_score: number | null;
+  bm25_rank: number | null;
+  vector_rank: number | null;
+}
+
+/** `GET /api/learnings/search?q=<query>&project=<slug>&limit=`. */
+export interface LearningsSearchPayload {
+  query: string;
+  items: LearningSearchRowPayload[];
+  count: number;
+  retrieval: RetrievalPayload;
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** `GET /api/learning?id=<n>` — the full row, body included. */
+export interface LearningDetailPayload {
+  learning: {
+    id: number;
+    project: string;
+    category: string;
+    title: string;
+    content: string;
+    tags: string;
+    tech_stack: string;
+    scope: string;
+    source_brief: string;
+    confidence: number;
+    created_at: string;
+    access_count: number;
+    provenance: string;
+  } | null;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * `GET /api/context-docs?project=<slug>` — the `igris context-docs inventory`
+ * digest, forwarded.
+ *
+ * D8: NO brain involvement. `applies_when` is evaluated by the verb and is
+ * deliberately not re-derived server-side.
+ */
+export interface ContextDocsPayload {
+  project: string | null;
+  archetype: string | null;
+  tech_stack: string | null;
+  /** The digest's own degraded flag — profile or catalog data was incomplete. */
+  inventory_degraded: boolean;
+  docs: ContextDocInventoryRow[];
+  /** Types that apply but are absent. */
+  missing_applicable: string[];
+  /** `/ground <type>` per missing doc — the DIGEST's array, never hand-written. */
+  remediation: string[];
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * `GET /api/context-doc?project=<slug>&type=<doc type>`.
+ *
+ * Addressed by catalog TYPE, not by filename. The filename comes from the
+ * digest row, which is what makes path traversal unreachable rather than merely
+ * filtered (`context-docs-read.ts`).
+ */
+export interface ContextDocPayload {
+  project: string | null;
+  type: string | null;
+  /** The doc's filename from the digest row, e.g. `coding_guidelines.md`. */
+  target: string | null;
+  content: string | null;
+  bytes: number;
+  /** True when the body was cut at the read cap. */
+  truncated: boolean;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** A `goals` row on the wire. Field-for-field `goals/read.ts:43#GoalRow`. */
+export interface GoalRowPayload {
+  id: number;
+  goal_id: string;
+  project_slug: string | null;
+  title: string;
+  description: string | null;
+  outcome: string;
+  deadline: string | null;
+  status: string;
+  priority: string;
+  created_at: string;
+  updated_at: string;
+  achieved_at: string | null;
+  metadata: string;
+}
+
+/**
+ * `GET /api/goals` — one row. `goals/read.ts:60#GoalListRow`.
+ *
+ * `serving_briefs_count` is present on the LIST rows only; the detail endpoint
+ * returns the briefs themselves, so a count there would be redundant (and the
+ * reader does not compute one).
+ */
+export interface GoalListRowPayload extends GoalRowPayload {
+  serving_briefs_count: number;
+}
+
+/** `GET /api/goals?project=&status=&upcoming_days=&limit=&offset=`. */
+export interface GoalsPayload {
+  items: GoalListRowPayload[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/** `GET /api/goal?id=<GL-XXX>` — `goals/read.ts:97#GoalDetail`. */
+export interface GoalDetailPayload {
+  goal: GoalRowPayload | null;
+  serving_briefs: Array<{
+    brief_id: string;
+    title: string;
+    status: string;
+    priority: string;
+  }>;
+  serving_learnings_count: number;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
 /** What `igris dashboard --smoke` prints to stdout. */
 export interface DashboardDigest {
   ok: boolean;

@@ -24,13 +24,19 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
+  brainBundleCandidates,
   brainEngineCandidates,
   buildGraph,
   lastBridgeFailure,
+  lastLayerReadersFailure,
   loadBuildBrainGraph,
+  loadLayerReaders,
   openBrainReadonly,
+  openBrainReadonlyWithVec,
   probe,
   resetBrainBridge,
+  resetLayerReaders,
+  resolveBundleModule,
   resolveWholeGraphModulePath,
 } from "../lib/brain-bridge.js";
 
@@ -41,10 +47,12 @@ beforeEach(() => {
   sandbox = mkdtempSync(join(tmpdir(), "igris-bridge-"));
   process.env.IGRIS_BRAIN_DIR = sandbox;
   resetBrainBridge();
+  resetLayerReaders();
 });
 
 afterEach(() => {
   resetBrainBridge();
+  resetLayerReaders();
   if (prevBrain === undefined) delete process.env.IGRIS_BRAIN_DIR;
   else process.env.IGRIS_BRAIN_DIR = prevBrain;
   rmSync(sandbox, { recursive: true, force: true });
@@ -299,5 +307,227 @@ describe("bridge — degradation contract (never throws, and NAMES the cause)", 
     expect(graph).toHaveProperty("degraded.missing_tables");
     expect(Array.isArray(graph.degraded.missing_tables)).toBe(true);
     expect(typeof graph.truncated).toBe("boolean");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-240 — the pure `db`-param READ layer, reached through the SAME door.
+//
+// MAINTAINING row 107's rot guard, extended. The row's own warning applies
+// verbatim to the three new modules: this is a PATH-LITERAL dependency on a
+// build artifact, and it fails SILENTLY — a moved path makes the import throw,
+// `loadLayerReaders()` returns null, and every layer endpoint serves a degraded
+// empty list that looks exactly like an empty brain.
+//
+// The row states the shape the guard must take: assert each module RESOLVES in a
+// BUILT tree. A degradation-only test is exactly the vacuous gate the row warns
+// about, because it passes in a tree where nothing was ever staged.
+// ---------------------------------------------------------------------------
+
+/** The three compiled reader artifacts, relative to the bundle ROOT. */
+const READER_RELS = [
+  join("tools", "briefs-read.js"),
+  join("tools", "memory-read.js"),
+  join("engine", "components", "goals", "read.js"),
+];
+
+const readersStaged = READER_RELS.every((r) => resolveBundleModule(r) !== null);
+
+describe("FR-240 bridge — the bundle-ROOT resolver (row 107)", () => {
+  it("anchors on dist/ROOT, not on dist/engine — the two tools/ modules live outside engine/", () => {
+    // THE TRAP THIS PINS. FR-238's `bundledBrainEngineDir()` returns
+    // `…/dist/engine`, and two of the three FR-240 readers are under
+    // `dist/tools/`. An `engine/`-anchored resolver would have needed `../tools/`
+    // escape paths, which is how a path literal starts rotting.
+    const roots = brainBundleCandidates();
+    expect(roots).toHaveLength(2);
+    expect(roots[0]).toContain(join("dist", "brain-mcp-server", "dist"));
+    expect(roots[0].endsWith(join("dist", "engine"))).toBe(false);
+    expect(roots[1]).toContain(join("brain-mcp-server", "dist"));
+    expect(roots[1].endsWith(join("dist", "engine"))).toBe(false);
+  });
+
+  it("brainEngineCandidates() still names engine/ — derived, not re-walked", () => {
+    // The FR-238 helper is retained (row 107 and this suite both cite it) but is
+    // now a named sub-path of the root. Two independent literals for one location
+    // is the drift the row warns about.
+    const roots = brainBundleCandidates();
+    const engines = brainEngineCandidates();
+    expect(engines).toEqual(roots.map((r) => join(r, "engine")));
+  });
+
+  it("resolves EACH of the three reader artifacts in a built tree", () => {
+    for (const rel of READER_RELS) {
+      const resolved = resolveBundleModule(rel);
+      if (!readersStaged) {
+        // Honest fallback for a tree where neither candidate is built: assert
+        // the degraded answer rather than skipping silently.
+        expect(resolved).toBeNull();
+        continue;
+      }
+      expect(resolved, `${rel} did not resolve`).not.toBeNull();
+      expect(resolved as string).toContain(rel);
+      expect(existsSync(resolved as string)).toBe(true);
+    }
+  });
+
+  it("returns null for a module that is not there, without throwing", () => {
+    expect(resolveBundleModule(join("tools", "no-such-module.js"))).toBeNull();
+  });
+});
+
+describe("FR-240 bridge — loadLayerReaders()", () => {
+  it("loads all seven reader functions from the bundle (or degrades to null)", async () => {
+    const readers = await loadLayerReaders();
+    if (!readersStaged) {
+      expect(readers).toBeNull();
+      expect(lastLayerReadersFailure()).toContain("not found");
+      return;
+    }
+    expect(readers).not.toBeNull();
+    for (const name of [
+      "listBriefs",
+      "getBrief",
+      "listLearnings",
+      "getLearning",
+      "hybridSearchLearnings",
+      "listGoals",
+      "getGoal",
+    ] as const) {
+      expect(
+        typeof (readers as NonNullable<typeof readers>)[name],
+        `${name} missing from the loaded reader set`,
+      ).toBe("function");
+    }
+  });
+
+  it("memoises — a second load returns the same object", async () => {
+    const a = await loadLayerReaders();
+    const b = await loadLayerReaders();
+    expect(a).toBe(b);
+  });
+
+  it("resetLayerReaders() clears the memo so a test can re-sandbox", async () => {
+    const a = await loadLayerReaders();
+    resetLayerReaders();
+    const b = await loadLayerReaders();
+    if (a === null) {
+      expect(b).toBeNull();
+      return;
+    }
+    // A NEW object, not the cached one — otherwise a suite that swapped
+    // sandboxes would silently keep the previous tree's handles.
+    expect(b).not.toBe(a);
+  });
+
+  it("returns null (never throws) when the bundle is absent", async () => {
+    // Isolated-root technique, same as the `engine_unavailable` test above: a
+    // temp package root with no `dist/brain-mcp-server/` anywhere.
+    const {
+      existsSync: exists,
+      mkdirSync,
+      readFileSync,
+      symlinkSync,
+      writeFileSync,
+    } = await import("node:fs");
+
+    const copyStripped = (from: string, to: string): void => {
+      writeFileSync(
+        to,
+        readFileSync(from, "utf-8").replace(/\n\/\/# sourceMappingURL=.*$/m, "\n"),
+      );
+    };
+
+    const cliRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const compiledBridge = join(cliRoot, "dist", "lib", "brain-bridge.js");
+    const compiledPaths = join(cliRoot, "dist", "lib", "paths.js");
+    if (!exists(compiledBridge) || !exists(compiledPaths)) return;
+
+    const isolated = mkdtempSync(join(tmpdir(), "igris-bridge-noreaders-"));
+    try {
+      const libDir = join(isolated, "dist", "lib");
+      mkdirSync(libDir, { recursive: true });
+      copyStripped(compiledBridge, join(libDir, "brain-bridge.js"));
+      copyStripped(compiledPaths, join(libDir, "paths.js"));
+      for (const nm of [
+        join(cliRoot, "..", "node_modules"),
+        join(cliRoot, "node_modules"),
+      ]) {
+        if (exists(join(nm, "better-sqlite3"))) {
+          symlinkSync(nm, join(isolated, "node_modules"), "dir");
+          break;
+        }
+      }
+
+      const iso = (await import(
+        pathToFileURL(join(libDir, "brain-bridge.js")).href
+      )) as typeof import("../lib/brain-bridge.js");
+
+      // Self-verify the harness before trusting its verdict.
+      expect(iso.resolveBundleModule(join("tools", "briefs-read.js"))).toBeNull();
+
+      const readers = await iso.loadLayerReaders();
+      expect(readers).toBeNull();
+      // NAMES the missing module, not a generic "unavailable" — an operator
+      // debugging an empty layer view needs to know which artifact moved.
+      expect(iso.lastLayerReadersFailure()).toContain("briefs-read.js");
+      expect(iso.lastLayerReadersFailure()).toContain("not found");
+    } finally {
+      rmSync(isolated, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("FR-240 bridge — query_only on both open paths (D2)", () => {
+  it("openBrainReadonly arms query_only and refuses a write", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(sandbox, "memory"), { recursive: true });
+    const path = join(sandbox, "memory", "knowledge.db");
+    const seed = new Database(path);
+    seed.exec("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1);");
+    seed.close();
+
+    const handle = openBrainReadonly();
+    expect(handle).not.toBeNull();
+    if (handle === null) return;
+    try {
+      expect(handle.pragma("query_only", { simple: true })).toBe(1);
+      expect(() => handle.prepare("UPDATE t SET a = 2").run()).toThrow();
+      // Reads still work — an unusable handle would also refuse writes.
+      expect(handle.prepare("SELECT a FROM t").get()).toEqual({ a: 1 });
+    } finally {
+      handle.close();
+    }
+  });
+
+  it("openBrainReadonlyWithVec reports the extension's state rather than assuming it", async () => {
+    const Database = (await import("better-sqlite3")).default;
+    const { mkdirSync } = await import("node:fs");
+    mkdirSync(join(sandbox, "memory"), { recursive: true });
+    const seed = new Database(join(sandbox, "memory", "knowledge.db"));
+    seed.exec("CREATE TABLE t (a INTEGER)");
+    seed.close();
+
+    const handle = await openBrainReadonlyWithVec();
+    expect(handle).not.toBeNull();
+    if (handle === null) return;
+    try {
+      expect(handle.db.pragma("query_only", { simple: true })).toBe(1);
+      // Either it loaded, or it did not AND said why. A `vector_available:false`
+      // with a null reason would be the silent degrade D3 exists to remove.
+      if (handle.vector_available) {
+        expect(handle.vector_reason).toBeNull();
+        expect(handle.db.prepare("SELECT vec_version()").get()).toBeDefined();
+      } else {
+        expect(handle.vector_reason).not.toBeNull();
+      }
+    } finally {
+      handle.db.close();
+    }
+  });
+
+  it("openBrainReadonlyWithVec returns null when the brain file is absent", async () => {
+    expect(await openBrainReadonlyWithVec()).toBeNull();
   });
 });

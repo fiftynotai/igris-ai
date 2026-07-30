@@ -503,7 +503,33 @@ interface PackReport {
  *   FR-239 shipped      +283.4 KB   (force-graph +55.3 KB measured in
  *                                    isolation; ~+40 KB paint layer, view,
  *                                    CSS and tests)
- *   headroom remaining  ~116.6 KB   for FR-240 + FR-241
+ *   FR-240 shipped      +331.8 KB   measured 2026-07-30 at the END of the
+ *                                   warden pass, after the LAST code-touching
+ *                                   step: 1_641_599 packed / 6_439_794
+ *                                   unpacked / 786 entries. FR-240's OWN
+ *                                   contribution is therefore +48.4 KB — four
+ *                                   views, a markdown renderer, the shared
+ *                                   record components and three vendored brain
+ *                                   read modules, for about a sixth of what
+ *                                   FR-239 spent. D4 (no markdown dependency)
+ *                                   is most of the reason.
+ *   headroom remaining  ~68.2 KB    for FR-241
+ *
+ * (TWO earlier readings are recorded so the git history is not read as a drift.
+ * +329.6 KB was taken BEFORE the `--smoke` probe list landed in
+ * `verbs/dashboard.ts`. +330.6 KB / 1_640_403 was taken at the end of phase 5,
+ * before the warden pass added the `params.ts` empty-value rule and
+ * `context-docs-read.ts#cutToBytes` — the only two warden-pass edits that SHIP,
+ * worth +1 196 B between them; everything else that pass touched is tests,
+ * `scripts/` and docs, none of which `package.json` `files` includes. The rule
+ * this keeps re-teaching: measure LAST, or the figure you write down is one
+ * commit stale on arrival.)
+ *
+ * READ THAT LAST LINE BEFORE PLANNING FR-241. It is the whole remaining budget
+ * for the first WRITE path plus cognition triage, and it is SMALLER than what
+ * FR-240 spent. If FR-241 needs more, the answer is to cut or to vendor less —
+ * NOT to raise `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above
+ * spend thirty lines on.
  *
  * The budget is CUMULATIVE across the family, not per-brief: a per-brief
  * reading lets three views bust the ceiling with every individual brief
@@ -586,6 +612,44 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         "dist/brain-mcp-server/dist/engine/components/edges/whole-graph.js",
       ),
     ).toBe(true);
+  });
+
+  it("ships the three FR-240 pure READ modules the layer endpoints import", () => {
+    // MAINTAINING row 107, extended by FR-240. Same failure mode as the builder
+    // above and the same reason it needs a packaging assertion rather than a
+    // runtime one: `loadLayerReaders()` DEGRADES when a module is missing, so a
+    // dropped artifact serves four empty layer views that look exactly like an
+    // empty brain. Nothing at runtime would say "the tarball is incomplete".
+    //
+    // Note two of these are under `dist/tools/`, OUTSIDE `dist/engine/` — the
+    // trap that forced the bridge resolver to anchor on the bundle ROOT.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/briefs-read.js",
+      "dist/brain-mcp-server/dist/tools/memory-read.js",
+      "dist/brain-mcp-server/dist/engine/components/goals/read.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
+  });
+
+  it("ships the MCP wrappers whose SQL those readers now hold", () => {
+    // The wrappers import the readers. Shipping a reader without its wrapper (or
+    // vice versa) would break the MCP surface `/hunt` and `/awaken` depend on,
+    // and the failure would appear as a module-resolution error at brain boot —
+    // far from its cause.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/briefs.js",
+      "dist/brain-mcp-server/dist/tools/memory.js",
+      "dist/brain-mcp-server/dist/engine/components/goals/handlers.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
   });
 
   it("stays under the hard packed-size ceiling (+400 KB over baseline)", () => {

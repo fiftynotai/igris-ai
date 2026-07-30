@@ -57,6 +57,12 @@ import {
   type Box,
   type LabelCandidate,
 } from "./labels";
+import {
+  buildAdjacency,
+  buildNodeIndex,
+  incidentEdgeIds,
+  neighboursFrom,
+} from "./neighbours";
 import { policyFor, shouldAggregate, type TierPolicy } from "./tier";
 import {
   INTERACTIONS,
@@ -169,26 +175,16 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
   const paints = useRef(0);
 
   // ---- derived, memoised -------------------------------------------------
-  const nodesByKey = useMemo(() => {
-    const m = new Map<string, GraphNode>();
-    for (const n of opts.nodes) m.set(n.key, n);
-    return m;
-  }, [opts.nodes]);
+  //
+  // FR-240 moved these three computations — the index, the adjacency map and
+  // the 1-hop hydration below — into `graph/neighbours.ts`, unchanged, so the
+  // brief detail view can ask the SAME question of the SAME payload and get the
+  // same answer by construction (D6). They are still memoised HERE because
+  // their lifetime is the payload's, not the selection's.
+  const nodesByKey = useMemo(() => buildNodeIndex(opts.nodes), [opts.nodes]);
 
   /** Adjacency, built once per payload. The 1-hop reveal reads it per select. */
-  const adjacency = useMemo(() => {
-    const m = new Map<string, Set<string>>();
-    const add = (a: string, b: string): void => {
-      const s = m.get(a);
-      if (s === undefined) m.set(a, new Set([b]));
-      else s.add(b);
-    };
-    for (const e of opts.edges) {
-      add(e.from, e.to);
-      add(e.to, e.from);
-    }
-    return m;
-  }, [opts.edges]);
+  const adjacency = useMemo(() => buildAdjacency(opts.edges), [opts.edges]);
 
   const policy = useMemo(() => policyFor(opts.nodes.length), [opts.nodes.length]);
 
@@ -613,22 +609,16 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       if (node === undefined) return;
 
       // The 1-hop neighbourhood — the only nodes regaining labels, full-role
-      // edges and arrowheads.
-      const hop = adjacency.get(key) ?? new Set<string>();
+      // edges and arrowheads. ONE definition, shared with the record detail
+      // (`graph/neighbours.ts`, D6): the canvas and the detail view cannot
+      // disagree about a node's neighbours because there is nothing to disagree
+      // with. `__tests__/neighbours.test.ts` pins the extraction against a
+      // verbatim copy of the pre-extraction code.
+      const { hop, neighbours } = neighboursFrom(nodesByKey, adjacency, key);
       s.active = new Set([key, ...hop]);
-      s.activeEdges = new Set(
-        opts.edges
-          .filter((e) => e.from === key || e.to === key)
-          .map((e) => e.id),
-      );
+      s.activeEdges = incidentEdgeIds(opts.edges, key);
 
-      setSelection({
-        node,
-        neighbours: [...hop]
-          .map((k) => nodesByKey.get(k))
-          .filter((n): n is GraphNode => n !== undefined)
-          .sort((a, b) => b.degree - a.degree || (a.key < b.key ? -1 : 1)),
-      });
+      setSelection({ node, neighbours });
 
       // Interaction 3 — focus/select on `// STD` (D7: NOT spring; SPRING is an
       // easing and the spec assigns focus STD/STD)...

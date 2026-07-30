@@ -31,6 +31,11 @@ import { isVectorSearchAvailable, insertEmbedding, vectorSearch } from '../utils
 import { embedNullLearnings } from '../utils/learning-embed.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
+// FR-240 D1 — the pure `db`-param read layer. This file is the MCP WRAPPER over
+// it. `memory-read.ts` imports no singleton and issues no writes, which is what
+// lets the FR-238 dashboard reach the same recall with its own read-only
+// handle. The `access_count` bump stays on THIS side (TD-092).
+import { getLearning, hybridSearchLearnings } from './memory-read.js';
 import type { SourceExtractor } from '../engine/components/perception/types.js';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -759,14 +764,10 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
 function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
-  // INTENTIONAL: no review_status filter — perception-review surface fetches pending rows by ID for approval UI
-  const row = db.prepare(`
-    SELECT id, project, category, title, content, tags,
-           tech_stack, scope, source_brief, confidence,
-           created_at, access_count, provenance
-    FROM learnings
-    WHERE id = ?
-  `).get(args.id) as Record<string, unknown> | undefined;
+  // FR-240 D1: the SELECT lives in `memory-read.ts#getLearning` (which does NOT
+  // bump access_count). The bump below stays HERE — TD-092 records it as
+  // correct and load-bearing, and a reader the dashboard calls must not write.
+  const row = getLearning(db, args.id);
 
   if (!row) {
     return {
@@ -1077,146 +1078,51 @@ async function handleMemoryHybridSearch(args: HybridSearchInput): Promise<{ cont
     return { content: [{ type: 'text', text: `Validation error: query must be 1-${MAX_QUERY_LENGTH} characters.` }] };
   }
 
-  const db = getDb();
-  const limit = args.limit ?? 10;
-  const bm25Weight = args.bm25_weight ?? 0.5;
-  const vectorWeight = args.vector_weight ?? 0.5;
-  const k = args.rrf_k ?? 60;
-
-  // --- 1. BM25 search via FTS5 ---
-  const sanitized = sanitizeFts5Query(args.query);
-  let bm25Rows: Bm25Row[] = [];
-
-  if (sanitized) {
-    // FR-109 filter: hybrid search is part of the conscious channel.
-    // Pending_review rows must not surface here — only `igris_perception_*`
-    // tools see them.
-    let bm25Sql = `
-      SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
-             l.tech_stack, l.scope, l.source_brief, l.confidence,
-             l.created_at, l.access_count, l.provenance, l.promoted_to_doc, rank
-      FROM learnings_fts fts
-      JOIN learnings l ON l.id = fts.rowid
-      WHERE learnings_fts MATCH ?
-        AND l.review_status = 'approved'
-    `;
-    const bm25Params: (string | number)[] = [sanitized];
-
-    if (args.project) {
-      bm25Sql += ' AND l.project = ?';
-      bm25Params.push(args.project);
-    }
-
-    bm25Sql += ' ORDER BY rank LIMIT ?';
-    bm25Params.push(limit * 2);
-
-    try {
-      bm25Rows = db.prepare(bm25Sql).all(...bm25Params) as Bm25Row[];
-    } catch {
-      bm25Rows = [];
-    }
-  }
-
-  // --- 2. Vector search (with graceful fallback) ---
-  let vecResults: VectorSearchResult[] = [];
-  let vectorAvailable = false;
-
-  try {
-    if (isVectorSearchAvailable(db)) {
-      const queryEmbedding = await generateEmbedding(args.query);
-      vecResults = vectorSearch(db, queryEmbedding, limit * 2);
-      vectorAvailable = true;
-
-      // If project filter is set, filter vector results to matching project.
-      // FR-109: always gate on review_status='approved' (whether or not the
-      // caller passed a project filter) so pending_review rows are hidden
-      // from the conscious channel via the vector path too.
-      if (vecResults.length > 0) {
-        const ids = vecResults.map(r => r.rowid);
-        const placeholders = ids.map(() => '?').join(',');
-        let filterSql = `SELECT id FROM learnings WHERE id IN (${placeholders}) AND review_status = 'approved'`;
-        const filterParams: unknown[] = [...ids];
-        if (args.project) {
-          filterSql += ' AND project = ?';
-          filterParams.push(args.project);
-        }
-        const filterRows = db.prepare(filterSql).all(...filterParams) as { id: number }[];
-        const filterIdSet = new Set(filterRows.map(r => r.id));
-        vecResults = vecResults.filter(r => filterIdSet.has(r.rowid));
-      }
-    }
-  } catch (err) {
-    console.error('[memory] Vector search failed, using BM25 only:', err);
-  }
-
-  // --- 3. No results at all ---
-  if (bm25Rows.length === 0 && vecResults.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: `No learnings found matching "${args.query}".`,
-      }],
-    };
-  }
-
-  // --- 4. BM25-only fallback if vector unavailable ---
-  if (!vectorAvailable || vecResults.length === 0) {
-    const results = bm25Rows.slice(0, limit).map((row, i) => formatHybridResult(row, i, null, null, null));
-    return {
-      content: [{
-        type: 'text',
-        text: `Found ${results.length} learning(s) matching "${args.query}" (BM25 only):\n\n${results.join('\n\n')}`,
-      }],
-    };
-  }
-
-  // --- 5. RRF merge ---
-  const rrfEntries = computeRRF(bm25Rows, vecResults, bm25Weight, vectorWeight, k);
-  const topEntries = rrfEntries.slice(0, limit);
-
-  // Fetch full records for top results
-  const topIds = topEntries.map(e => e.id);
-  if (topIds.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: `No learnings found matching "${args.query}".`,
-      }],
-    };
-  }
-
-  const placeholders = topIds.map(() => '?').join(',');
-  // TD-059: defense-in-depth `review_status='approved'` filter on the hybrid
-  // search hydration path. `bm25Rows` and `vecResults` already exclude
-  // pending_review rows upstream, but a future caller bypassing those filters
-  // must not leak unapproved rows through this hydration step. Kept symmetric
-  // with the same filter on the recall hydration query above.
-  const fullRows = db.prepare(
-    `SELECT id, project, category, title, content, tags, tech_stack, scope,
-            source_brief, confidence, created_at, access_count, provenance,
-            promoted_to_doc
-     FROM learnings
-     WHERE id IN (${placeholders})
-       AND review_status = 'approved'`,
-  ).all(...topIds) as Bm25Row[];
-
-  // Build lookup by ID
-  const rowMap = new Map<number, Bm25Row>();
-  for (const row of fullRows) {
-    rowMap.set(row.id, row);
-  }
-
-  // Format results in RRF order
-  const results = topEntries.map((entry, i) => {
-    const row = rowMap.get(entry.id);
-    if (!row) return `--- Result ${i + 1} ---\nID: ${entry.id}\n(record not found)`;
-    return formatHybridResult(row, i, entry.score, entry.bm25_rank, entry.vector_rank);
+  // FR-240 D1: the two arms, the FR-109/TD-059 gates and the RRF merge live in
+  // `memory-read.ts#hybridSearchLearnings`, which returns STRUCTURED entries.
+  // This wrapper adds only the prose. `/hunt` and `/awaken` parse that prose,
+  // so the three shapes below are byte-pinned by
+  // `__tests__/wrapper-wire-parity.test.ts`.
+  const { rows, retrieval } = await hybridSearchLearnings(getDb(), {
+    query: args.query,
+    project: args.project,
+    limit: args.limit,
+    bm25_weight: args.bm25_weight,
+    vector_weight: args.vector_weight,
+    rrf_k: args.rrf_k,
   });
+
+  if (rows.length === 0) {
+    return {
+      content: [{
+        type: 'text',
+        text: `No learnings found matching "${args.query}".`,
+      }],
+    };
+  }
+
+  // The label follows the ARM that ran, not the mode: `vector_only` took the
+  // fusion path and therefore renders as "hybrid BM25 + vector", exactly as it
+  // did before the extraction. The richer `retrieval.mode` is for the
+  // dashboard, which needs to tell those two apart; the prose must not change.
+  const label = retrieval.mode === 'bm25_only' ? 'BM25 only' : 'hybrid BM25 + vector';
+
+  const results = rows.map((entry, i) =>
+    entry.row === null
+      ? `--- Result ${i + 1} ---\nID: ${entry.id}\n(record not found)`
+      : formatHybridResult(
+          entry.row as unknown as Bm25Row,
+          i,
+          entry.rrf_score,
+          entry.bm25_rank,
+          entry.vector_rank,
+        ),
+  );
 
   return {
     content: [{
       type: 'text',
-      text: `Found ${results.length} learning(s) matching "${args.query}" (hybrid BM25 + vector):\n\n${results.join('\n\n')}`,
+      text: `Found ${results.length} learning(s) matching "${args.query}" (${label}):\n\n${results.join('\n\n')}`,
     }],
   };
 }

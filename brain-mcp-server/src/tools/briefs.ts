@@ -15,6 +15,11 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { getDb } from '../db.js';
+// FR-240 D1 — the pure `db`-param read layer. This file is the MCP WRAPPER over
+// it; `briefs-read.ts` holds the SQL and imports no singleton, which is what
+// lets the FR-238 dashboard reach the same queries with its own read-only
+// handle. Do not move query logic back up here.
+import { listBriefs, getBrief } from './briefs-read.js';
 import { normalizePhase, normalizePriority, normalizeBriefType } from './brief-normalize.js';
 import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
@@ -322,65 +327,16 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
     };
   }
 
-  const db = getDb();
+  // FR-240 D1: the SQL lives in `briefs-read.ts#getBrief` so the dashboard can
+  // reach the SAME query with its own read-only handle. This wrapper owns only
+  // the handle, the validation above, and the wire format below.
+  const record = getBrief(getDb(), args.project, args.brief_id);
 
-  // Try JOIN first for full data (content + metadata)
-  const joined = db.prepare(`
-    SELECT bf.content, bf.filename, bf.content_hash, bf.updated_at AS file_updated_at,
-           bs.title, bs.status, bs.priority, bs.effort, bs.phase, bs.brief_type,
-           bs.updated_at AS status_updated_at
-    FROM brief_files bf
-    LEFT JOIN brief_status bs ON bs.project = bf.project AND bs.brief_id = bf.brief_id
-    WHERE bf.project = ? AND bf.brief_id = ?
-  `).get(args.project, args.brief_id) as Record<string, unknown> | undefined;
-
-  if (joined) {
+  if (record === null) {
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify({
-          project: args.project,
-          brief_id: args.brief_id,
-          content: joined.content,
-          filename: joined.filename,
-          content_hash: joined.content_hash,
-          title: joined.title ?? null,
-          status: joined.status ?? null,
-          priority: joined.priority ?? null,
-          effort: joined.effort ?? null,
-          phase: joined.phase ?? null,
-          brief_type: joined.brief_type ?? null,
-          updated_at: joined.status_updated_at ?? joined.file_updated_at,
-        }, null, 2),
-      }],
-    };
-  }
-
-  // Fallback: metadata-only from brief_status
-  const statusOnly = db.prepare(`
-    SELECT title, status, priority, effort, phase, brief_type, updated_at
-    FROM brief_status
-    WHERE project = ? AND brief_id = ?
-  `).get(args.project, args.brief_id) as Record<string, unknown> | undefined;
-
-  if (statusOnly) {
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          project: args.project,
-          brief_id: args.brief_id,
-          content: null,
-          filename: null,
-          content_hash: null,
-          title: statusOnly.title,
-          status: statusOnly.status,
-          priority: statusOnly.priority ?? null,
-          effort: statusOnly.effort ?? null,
-          phase: statusOnly.phase ?? null,
-          brief_type: statusOnly.brief_type ?? null,
-          updated_at: statusOnly.updated_at,
-        }, null, 2),
+        text: `Brief not found: ${args.brief_id} in project ${args.project}`,
       }],
     };
   }
@@ -388,7 +344,7 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
   return {
     content: [{
       type: 'text',
-      text: `Brief not found: ${args.brief_id} in project ${args.project}`,
+      text: JSON.stringify(record, null, 2),
     }],
   };
 }
@@ -403,74 +359,25 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
  * @returns MCP-formatted response with brief array
  */
 function handleBriefList(args: BriefListInput): { content: { type: string; text: string }[] } {
-  const db = getDb();
-
-  // Resolve pagination params (0 = return all, default 25, clamped to non-negative integers)
-  const limit = args.limit === 0 ? 0 : Math.max(1, Math.floor(args.limit ?? 25));
-  const offset = Math.max(0, Math.floor(args.offset ?? 0));
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (args.project) {
-    conditions.push('bs.project = ?');
-    params.push(args.project);
-  }
-  if (args.status) {
-    conditions.push('bs.status = ?');
-    params.push(args.status);
-  }
-  if (args.brief_type) {
-    conditions.push('bs.brief_type = ?');
-    params.push(args.brief_type);
-  }
-  if (args.priority) {
-    conditions.push('bs.priority = ?');
-    params.push(args.priority);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  // Total count (same filters, no pagination)
-  const countRow = db.prepare(`
-    SELECT COUNT(*) AS total FROM brief_status bs ${whereClause}
-  `).get(...params) as { total: number };
-  const total = countRow.total;
-
-  const includeContent = args.include_content === true;
-
-  const selectCols = includeContent
-    ? `bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
-       bs.priority, bs.effort, bs.phase, bs.updated_at,
-       bf.content, bf.filename, bf.content_hash`
-    : `bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
-       bs.priority, bs.effort, bs.phase, bs.updated_at`;
-
-  const joinClause = includeContent
-    ? 'LEFT JOIN brief_files bf ON bf.project = bs.project AND bf.brief_id = bs.brief_id'
-    : '';
-
-  // Build LIMIT/OFFSET clause conditionally
-  const dataParams = [...params];
-  let limitClause = '';
-  if (limit > 0) {
-    limitClause = 'LIMIT ? OFFSET ?';
-    dataParams.push(limit, offset);
-  }
-
-  const rows = db.prepare(`
-    SELECT ${selectCols}
-    FROM brief_status bs
-    ${joinClause}
-    ${whereClause}
-    ORDER BY bs.updated_at DESC
-    ${limitClause}
-  `).all(...dataParams) as Record<string, unknown>[];
+  // FR-240 D1: pagination resolution, filter binding and the SELECTs all live
+  // in `briefs-read.ts#listBriefs`. The returned object IS the wire payload —
+  // its key order is the contract the calling SKILLS parse (see briefs-read.ts's
+  // note on how to re-derive that list rather than trust it), and
+  // `__tests__/wrapper-wire-parity.test.ts` pins it.
+  const result = listBriefs(getDb(), {
+    project: args.project,
+    status: args.status,
+    brief_type: args.brief_type,
+    priority: args.priority,
+    include_content: args.include_content,
+    limit: args.limit,
+    offset: args.offset,
+  });
 
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify({ briefs: rows, count: rows.length, total, limit, offset }, null, 2),
+      text: JSON.stringify(result, null, 2),
     }],
   };
 }

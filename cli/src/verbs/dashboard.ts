@@ -20,8 +20,8 @@
  *   idempotent and ownership-checked.
  *
  * `--smoke` is the hidden self-check that makes the packaging AC testable: it
- * starts, probes `/` and `/api/health` over real HTTP, prints a JSON digest and
- * exits. `dashboard.bats` drives it from an extracted tarball (T8).
+ * starts, probes `/` and every `/api/*` path over real HTTP, prints a JSON
+ * digest and exits. `dashboard.bats` drives it from an extracted tarball (T8).
  */
 
 import { get as httpGet } from "node:http";
@@ -54,6 +54,53 @@ function probeStatus(url: string): Promise<number> {
     req.on("error", () => resolve(0));
   });
 }
+
+/**
+ * Every path `--smoke` probes. MAINTAINING row 108's `--smoke` obligation.
+ *
+ * WHAT A 200 HERE PROVES, EXACTLY: the path is ROUTED and the handler returned
+ * without throwing. Nothing more — and the understatement is deliberate, because
+ * every `/api/*` endpoint answers **200 with a `degraded` field** on a missing,
+ * empty or unreadable brain (that IS the FR-238 contract), so a 200 is not
+ * evidence that data arrived.
+ *
+ * WHAT IT DOES CATCH, which is why the list must stay complete: a path that was
+ * added to `routes.ts`/`types.ts`/`lib/api.ts` and never wired into
+ * `server.ts` falls through to the `/api/` catch-all and answers **404**. That
+ * is a whole-endpoint outage a unit test can miss (it calls the handler
+ * directly) and it is exactly the drift row 108 warns about, since FR-239 and
+ * FR-240 both extended this surface. It is also the only check that runs against
+ * a PACKED-AND-EXTRACTED tarball (T8 in `dashboard.bats`), where a missing
+ * bundled artifact shows up as a degraded read rather than a crash.
+ *
+ * Detail endpoints are probed WITHOUT their identifiers on purpose: `/api/brief`
+ * with no `project`/`id` is a stated refusal that still answers 200, so the
+ * probe stays free of fixture data and works against any brain, including none.
+ *
+ * `/api/graph` is the one expensive probe (~1 MB on a real brain, ~22 ms warm).
+ * It is in the list because FR-239 added the path and never added the probe —
+ * the exact gap this constant now closes.
+ */
+const SMOKE_PROBE_PATHS: readonly string[] = [
+  "/",
+  // FR-238
+  "/api/health",
+  "/api/projects",
+  "/api/summary",
+  "/api/graph/stats",
+  // FR-239
+  "/api/graph",
+  // FR-240 — the four layers, nine paths
+  "/api/briefs",
+  "/api/brief",
+  "/api/learnings",
+  "/api/learnings/search",
+  "/api/learning",
+  "/api/context-docs",
+  "/api/context-doc",
+  "/api/goals",
+  "/api/goal",
+];
 
 function openBrowser(url: string): void {
   const result = openUrl(url);
@@ -141,7 +188,7 @@ export async function runDashboard(
   // --- 3. Smoke mode: probe, report, exit --------------------------------
   if (opts.smoke === true) {
     const checks: DashboardDigest["checks"] = [];
-    for (const path of ["/", "/api/health", "/api/projects", "/api/graph/stats"]) {
+    for (const path of SMOKE_PROBE_PATHS) {
       const status = await probeStatus(`${srv.url.replace(/\/$/, "")}${path}`);
       checks.push({ path, status, ok: status === 200 });
     }

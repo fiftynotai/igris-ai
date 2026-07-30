@@ -13,13 +13,14 @@ import { Nav } from "./components/chrome/Nav";
 import { StatePage } from "./components/ui/StatePage";
 import { Overview } from "./pages/Overview";
 import { Graph } from "./pages/Graph";
+import { Layers } from "./pages/Layers";
 import { useLive } from "./lib/useLive";
 import { usePalette } from "./lib/usePalette";
 import { PENDING_ROUTES, ROUTE_LABELS, useRoute } from "./router";
 
 export function App() {
   const [palette, setPalette] = usePalette();
-  const [route, navigate] = useRoute();
+  const [{ route, layer, address, focus }, navigate] = useRoute();
   const live = useLive();
 
   /**
@@ -29,6 +30,11 @@ export function App() {
    * SURROUNDING CHROME, and FR-238 reserved the nav slot for exactly this. The
    * control and its consumer therefore sit on opposite sides of the shell, so
    * the state has to live at their common ancestor.
+   *
+   * FR-240 is the second consumer: on the layers route the same box is a
+   * client-side text mute over the loaded rows. Both consumers treat it as a
+   * MUTE over data in memory, never as a query — so sharing one state cannot
+   * make one of them silently issue a request the other would not.
    */
   const [search, setSearch] = useState("");
 
@@ -61,7 +67,9 @@ export function App() {
             meta={`${pendingBrief} · pending`}
           />
         ) : route === "graph" ? (
-          <Graph search={search} />
+          <Graph search={search} focus={focus} />
+        ) : route === "layers" ? (
+          <Layers live={live} search={search} layer={layer} address={address} />
         ) : (
           <Overview live={live} />
         )}

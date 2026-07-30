@@ -1,0 +1,445 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`WIRE GOLDEN — handleBriefGet > JOIN path (brief_files row exists) 1`] = `
+"{
+  "project": "igris-ai",
+  "brief_id": "FR-240",
+  "content": "# FR-240\\n\\nMount four read-only views.",
+  "filename": "FR-240.md",
+  "content_hash": "deadbeef",
+  "title": "Dashboard layer views",
+  "status": "In Progress",
+  "priority": "P1-High",
+  "effort": "XL",
+  "phase": "BUILDING",
+  "brief_type": "feature",
+  "updated_at": "2026-07-30 09:00:00"
+}"
+`;
+
+exports[`WIRE GOLDEN — handleBriefGet > metadata-only fallback (no brief_files row) 1`] = `
+"{
+  "project": "igris-ai",
+  "brief_id": "TD-312",
+  "content": null,
+  "filename": null,
+  "content_hash": null,
+  "title": "CI does not run brain vitest",
+  "status": "Pending",
+  "priority": "P2-Medium",
+  "effort": "S",
+  "phase": null,
+  "brief_type": "tech-debt",
+  "updated_at": "2026-07-29 08:00:00"
+}"
+`;
+
+exports[`WIRE GOLDEN — handleBriefGet > missing args 1`] = `"Error: "project" and "brief_id" are required."`;
+
+exports[`WIRE GOLDEN — handleBriefGet > not found 1`] = `"Brief not found: NOPE-1 in project igris-ai"`;
+
+exports[`WIRE GOLDEN — handleBriefList > limit 0 returns all with limit echoed as 0 1`] = `
+"{
+  "briefs": [
+    {
+      "project": "igris-ai",
+      "brief_id": "FR-240",
+      "brief_type": "feature",
+      "title": "Dashboard layer views",
+      "status": "In Progress",
+      "priority": "P1-High",
+      "effort": "XL",
+      "phase": "BUILDING",
+      "updated_at": "2026-07-30 09:00:00"
+    },
+    {
+      "project": "igris-ai",
+      "brief_id": "TD-312",
+      "brief_type": "tech-debt",
+      "title": "CI does not run brain vitest",
+      "status": "Pending",
+      "priority": "P2-Medium",
+      "effort": "S",
+      "phase": null,
+      "updated_at": "2026-07-29 08:00:00"
+    },
+    {
+      "project": "other-proj",
+      "brief_id": "BR-001",
+      "brief_type": "bug",
+      "title": "Duplicate id across projects",
+      "status": "Pending",
+      "priority": "P3-Low",
+      "effort": "M",
+      "phase": null,
+      "updated_at": "2026-07-28 07:00:00"
+    }
+  ],
+  "count": 3,
+  "total": 3,
+  "limit": 0,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleBriefList > offset paginates 1`] = `
+"{
+  "briefs": [
+    {
+      "project": "igris-ai",
+      "brief_id": "TD-312",
+      "brief_type": "tech-debt",
+      "title": "CI does not run brain vitest",
+      "status": "Pending",
+      "priority": "P2-Medium",
+      "effort": "S",
+      "phase": null,
+      "updated_at": "2026-07-29 08:00:00"
+    }
+  ],
+  "count": 1,
+  "total": 3,
+  "limit": 1,
+  "offset": 1
+}"
+`;
+
+exports[`WIRE GOLDEN — handleBriefList > project + status filters, include_content 1`] = `
+"{
+  "briefs": [
+    {
+      "project": "igris-ai",
+      "brief_id": "FR-240",
+      "brief_type": "feature",
+      "title": "Dashboard layer views",
+      "status": "In Progress",
+      "priority": "P1-High",
+      "effort": "XL",
+      "phase": "BUILDING",
+      "updated_at": "2026-07-30 09:00:00",
+      "content": "# FR-240\\n\\nMount four read-only views.",
+      "filename": "FR-240.md",
+      "content_hash": "deadbeef"
+    }
+  ],
+  "count": 1,
+  "total": 1,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleBriefList > unfiltered, default pagination 1`] = `
+"{
+  "briefs": [
+    {
+      "project": "igris-ai",
+      "brief_id": "FR-240",
+      "brief_type": "feature",
+      "title": "Dashboard layer views",
+      "status": "In Progress",
+      "priority": "P1-High",
+      "effort": "XL",
+      "phase": "BUILDING",
+      "updated_at": "2026-07-30 09:00:00"
+    },
+    {
+      "project": "igris-ai",
+      "brief_id": "TD-312",
+      "brief_type": "tech-debt",
+      "title": "CI does not run brain vitest",
+      "status": "Pending",
+      "priority": "P2-Medium",
+      "effort": "S",
+      "phase": null,
+      "updated_at": "2026-07-29 08:00:00"
+    },
+    {
+      "project": "other-proj",
+      "brief_id": "BR-001",
+      "brief_type": "bug",
+      "title": "Duplicate id across projects",
+      "status": "Pending",
+      "priority": "P3-Low",
+      "effort": "M",
+      "phase": null,
+      "updated_at": "2026-07-28 07:00:00"
+    }
+  ],
+  "count": 3,
+  "total": 3,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleGoalGet > goal with no edges 1`] = `
+"{
+  "goal": {
+    "id": 2,
+    "goal_id": "GL-002",
+    "project_slug": "igris-ai",
+    "title": "No deadline goal",
+    "description": null,
+    "outcome": "Sorts last",
+    "deadline": null,
+    "status": "active",
+    "priority": "P2-Medium",
+    "created_at": "2026-06-03 10:00:00",
+    "updated_at": "2026-06-03 10:00:00",
+    "achieved_at": null,
+    "metadata": "{}"
+  },
+  "serving_briefs": [],
+  "serving_learnings_count": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleGoalGet > goal with serving briefs and learnings 1`] = `
+"{
+  "goal": {
+    "id": 1,
+    "goal_id": "GL-001",
+    "project_slug": "igris-ai",
+    "title": "Ship the lens",
+    "description": "Four read-only views",
+    "outcome": "Operator can browse the brain",
+    "deadline": "2026-08-31",
+    "status": "active",
+    "priority": "P1-High",
+    "created_at": "2026-06-01 10:00:00",
+    "updated_at": "2026-06-02 10:00:00",
+    "achieved_at": null,
+    "metadata": "{}"
+  },
+  "serving_briefs": [
+    {
+      "brief_id": "FR-240",
+      "title": "Dashboard layer views",
+      "status": "In Progress",
+      "priority": "P1-High"
+    }
+  ],
+  "serving_learnings_count": 1
+}"
+`;
+
+exports[`WIRE GOLDEN — handleGoalGet > missing goal_id 1`] = `"Error: Missing required field: goal_id"`;
+
+exports[`WIRE GOLDEN — handleGoalGet > not found 1`] = `"Error: Goal not found: GL-999"`;
+
+exports[`WIRE GOLDEN — handleGoalList > invalid status is refused by the wrapper 1`] = `"Error: Invalid status filter: bogus. Must be one of: active, achieved, abandoned, deferred"`;
+
+exports[`WIRE GOLDEN — handleGoalList > project + status filters 1`] = `
+"{
+  "goals": [
+    {
+      "id": 1,
+      "goal_id": "GL-001",
+      "project_slug": "igris-ai",
+      "title": "Ship the lens",
+      "description": "Four read-only views",
+      "outcome": "Operator can browse the brain",
+      "deadline": "2026-08-31",
+      "status": "active",
+      "priority": "P1-High",
+      "created_at": "2026-06-01 10:00:00",
+      "updated_at": "2026-06-02 10:00:00",
+      "achieved_at": null,
+      "metadata": "{}",
+      "serving_briefs_count": 1
+    },
+    {
+      "id": 2,
+      "goal_id": "GL-002",
+      "project_slug": "igris-ai",
+      "title": "No deadline goal",
+      "description": null,
+      "outcome": "Sorts last",
+      "deadline": null,
+      "status": "active",
+      "priority": "P2-Medium",
+      "created_at": "2026-06-03 10:00:00",
+      "updated_at": "2026-06-03 10:00:00",
+      "achieved_at": null,
+      "metadata": "{}",
+      "serving_briefs_count": 0
+    }
+  ],
+  "count": 2,
+  "total": 2,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleGoalList > unfiltered — deadline ASC nulls last 1`] = `
+"{
+  "goals": [
+    {
+      "id": 3,
+      "goal_id": "GL-003",
+      "project_slug": "other-proj",
+      "title": "Achieved goal",
+      "description": null,
+      "outcome": "Done already",
+      "deadline": "2026-07-01",
+      "status": "achieved",
+      "priority": "P3-Low",
+      "created_at": "2026-05-01 10:00:00",
+      "updated_at": "2026-05-02 10:00:00",
+      "achieved_at": "2026-07-01 12:00:00",
+      "metadata": "{}",
+      "serving_briefs_count": 0
+    },
+    {
+      "id": 1,
+      "goal_id": "GL-001",
+      "project_slug": "igris-ai",
+      "title": "Ship the lens",
+      "description": "Four read-only views",
+      "outcome": "Operator can browse the brain",
+      "deadline": "2026-08-31",
+      "status": "active",
+      "priority": "P1-High",
+      "created_at": "2026-06-01 10:00:00",
+      "updated_at": "2026-06-02 10:00:00",
+      "achieved_at": null,
+      "metadata": "{}",
+      "serving_briefs_count": 1
+    },
+    {
+      "id": 2,
+      "goal_id": "GL-002",
+      "project_slug": "igris-ai",
+      "title": "No deadline goal",
+      "description": null,
+      "outcome": "Sorts last",
+      "deadline": null,
+      "status": "active",
+      "priority": "P2-Medium",
+      "created_at": "2026-06-03 10:00:00",
+      "updated_at": "2026-06-03 10:00:00",
+      "achieved_at": null,
+      "metadata": "{}",
+      "serving_briefs_count": 0
+    }
+  ],
+  "count": 3,
+  "total": 3,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleGoalList > upcoming_days narrows to deadlined active goals 1`] = `
+"{
+  "goals": [
+    {
+      "id": 1,
+      "goal_id": "GL-001",
+      "project_slug": "igris-ai",
+      "title": "Ship the lens",
+      "description": "Four read-only views",
+      "outcome": "Operator can browse the brain",
+      "deadline": "2026-08-31",
+      "status": "active",
+      "priority": "P1-High",
+      "created_at": "2026-06-01 10:00:00",
+      "updated_at": "2026-06-02 10:00:00",
+      "achieved_at": null,
+      "metadata": "{}",
+      "serving_briefs_count": 1
+    }
+  ],
+  "count": 1,
+  "total": 1,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`WIRE GOLDEN — handleMemoryGet > found row renders the key: value block 1`] = `
+"ID: 1
+Project: igris-ai
+Category: pattern
+Title: Pure db-param readers
+Content: Extract a pure db-param reader; the MCP handler becomes its wrapper.
+Tags: brain,pattern
+Tech Stack: typescript
+Scope: global
+Source Brief: FR-237
+Confidence: 0.9
+Provenance: observed
+Created: 2026-07-01 10:00:00
+Access Count: 4"
+`;
+
+exports[`WIRE GOLDEN — handleMemoryGet > missing row 1`] = `"Learning with ID 999 not found."`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > BM25-only arm (sqlite-vec unavailable) 1`] = `
+"Found 1 learning(s) matching "reader" (BM25 only):
+
+--- Result 1 ---
+ID: 1
+Project: igris-ai
+Category: pattern
+Title: Pure db-param readers
+Content: Extract a pure db-param reader; the MCP handler becomes its wrapper.
+Tags: brain,pattern
+Scope: global
+Confidence: 0.9
+Provenance: observed"
+`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > hybrid arm (vector results present) 1`] = `
+"Found 2 learning(s) matching "reader" (hybrid BM25 + vector):
+
+--- Result 1 ---
+ID: 1
+Project: igris-ai
+Category: pattern
+Title: Pure db-param readers
+Content: Extract a pure db-param reader; the MCP handler becomes its wrapper.
+Tags: brain,pattern
+Scope: global
+Confidence: 0.9
+Provenance: observed
+RRF Score: 0.016261
+BM25 Rank: 1
+Vector Rank: 2
+
+--- Result 2 ---
+ID: 2
+Project: igris-ai
+Category: mistake
+Title: Stillness is not liveness
+Content: A negative control must exercise the same wake-up path as the thing under test.
+Tags: testing
+Scope: local
+Confidence: 0.85
+Provenance: observed
+RRF Score: 0.008197
+Vector Rank: 1"
+`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > no matches 1`] = `"No learnings found matching "zzzznotpresent"."`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > pending_review rows never surface (FR-109 gate) 1`] = `"No learnings found matching "conscious channel"."`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > promoted row renders the pointer, not the content 1`] = `
+"Found 1 learning(s) matching "standard" (BM25 only):
+
+--- Result 1 ---
+ID: 3
+Project: other-proj
+Category: decision
+Title: Promoted example
+Promoted: → coding_guidelines.md#12 (this standard now lives in the doc; see it there)
+Tags: docs
+Scope: local
+Confidence: 0.7
+Provenance: inferred"
+`;
+
+exports[`WIRE GOLDEN — handleMemoryHybridSearch > validation error 1`] = `"Validation error: query must be 1-10000 characters."`;

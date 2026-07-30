@@ -162,6 +162,53 @@ async function handle(
     sendJson(res, 200, await routes.graph(project));
     return;
   }
+
+  // FR-240 — the four layer views, nine paths. All exact-match, so
+  // `/api/learnings/search` cannot be shadowed by `/api/learnings` regardless of
+  // order; it is listed adjacent to its sibling for readability.
+  //
+  // The handlers take the WHOLE `URLSearchParams` rather than pre-extracted
+  // strings: filter sets differ per layer, and threading 5 nullable strings per
+  // route through this switch would put the parameter contract in two places.
+  // `params.ts` owns the clamping and allowlisting; this function stays a router.
+  const query = url.searchParams;
+  if (pathname === "/api/briefs") {
+    sendJson(res, 200, await routes.briefs(query));
+    return;
+  }
+  if (pathname === "/api/brief") {
+    sendJson(res, 200, await routes.brief(query));
+    return;
+  }
+  if (pathname === "/api/learnings/search") {
+    sendJson(res, 200, await routes.learningsSearch(query));
+    return;
+  }
+  if (pathname === "/api/learnings") {
+    sendJson(res, 200, await routes.learnings(query));
+    return;
+  }
+  if (pathname === "/api/learning") {
+    sendJson(res, 200, await routes.learning(query));
+    return;
+  }
+  if (pathname === "/api/context-docs") {
+    sendJson(res, 200, routes.contextDocs(query));
+    return;
+  }
+  if (pathname === "/api/context-doc") {
+    sendJson(res, 200, routes.contextDoc(query));
+    return;
+  }
+  if (pathname === "/api/goals") {
+    sendJson(res, 200, await routes.goals(query));
+    return;
+  }
+  if (pathname === "/api/goal") {
+    sendJson(res, 200, await routes.goal(query));
+    return;
+  }
+
   if (pathname.startsWith("/api/")) {
     sendJson(res, 404, { error: `no such endpoint: ${pathname}` });
     return;

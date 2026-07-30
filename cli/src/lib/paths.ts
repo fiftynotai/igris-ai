@@ -290,22 +290,55 @@ export function bundledMcpEntryPath(): string {
 }
 
 /**
- * FR-238: absolute path to the bundled brain ENGINE directory —
- * `cli/dist/brain-mcp-server/dist/engine/`.
+ * FR-240: absolute path to the bundled brain's compiled ROOT —
+ * `cli/dist/brain-mcp-server/dist/`.
  *
  * Same walk-up idiom (and therefore the same source/compiled duality) as
- * {@link bundledMcpEntryPath}. This is the root `brain-bridge.ts` dynamic-
- * `import()`s the FR-237 pure builder from; `cli/package.json` `files` ships it
- * under `"dist"` and excludes only `dist/brain-mcp-server/node_modules`.
+ * {@link bundledMcpEntryPath}.
+ *
+ * WHY THE ROOT AND NOT THE `engine/` DIR. FR-238 only ever imported
+ * `engine/components/edges/whole-graph.js`, so {@link bundledBrainEngineDir}
+ * was anchored one level too deep to be reusable. FR-240's pure read layer puts
+ * two of its three modules under `dist/tools/`, which is OUTSIDE `dist/engine/`
+ * — so the resolver is anchored here and every consumer supplies its own
+ * relative path.
  *
  * MAINTAINING contract: this is a PATH-LITERAL dependency on a build artifact.
  * A change to `copy-templates.sh`'s staging layout or to the brain's compiled
- * `engine/components/` tree MUST re-point this helper and `brain-bridge.ts`
- * together, or the bridge degrades silently to `null` (R2).
+ * tree MUST re-point this helper and `brain-bridge.ts` together, or the bridge
+ * degrades silently to `null` (R2).
+ */
+export function bundledBrainDistRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "brain-mcp-server", "dist");
+}
+
+/**
+ * FR-238: absolute path to the bundled brain ENGINE directory —
+ * `cli/dist/brain-mcp-server/dist/engine/`.
+ *
+ * Retained as a NAMED sub-path of {@link bundledBrainDistRoot} rather than a
+ * second walk-up: two independent literals for one location is exactly the
+ * drift the MAINTAINING row warns about.
  */
 export function bundledBrainEngineDir(): string {
+  return join(bundledBrainDistRoot(), "engine");
+}
+
+/**
+ * FR-240: absolute path to the bundled brain's VENDORED `node_modules` —
+ * `cli/dist/brain-mcp-server/node_modules/`.
+ *
+ * `sqlite-vec` and `@huggingface/transformers` are PRODUCTION dependencies of
+ * `brain-mcp-server`, so they live here rather than in the CLI's own tree. This
+ * is the one directory `cli/package.json` `files` EXCLUDES from the published
+ * tarball; `scripts/postinstall.mjs` restores it on a consumer machine. A
+ * dashboard reaching for the vector arm before that postinstall has run must
+ * therefore degrade, not throw.
+ */
+export function bundledBrainNodeModulesDir(): string {
   const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
-  return join(here, "..", "..", "dist", "brain-mcp-server", "dist", "engine");
+  return join(here, "..", "..", "dist", "brain-mcp-server", "node_modules");
 }
 
 /**

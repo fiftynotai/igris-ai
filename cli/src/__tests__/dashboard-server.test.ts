@@ -589,4 +589,73 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       expect(/\bnew Database\b/.test(src)).toBe(false);
     }
   });
+
+  /**
+   * FR-240 G-EP-5. Two new server-layer files landed with the layer views, and
+   * a new server-layer file OUTSIDE this scan is an unguarded file — the scan's
+   * coverage is enumerated, not inferred, so it silently shrinks in relative
+   * terms every time the directory grows.
+   *
+   * PAIRING (FR-239 learning 1095). This proves the CLI side of the fence: no
+   * SQL above the bridge. It does NOT prove the brain-side readers are pure —
+   * that they import no `db.js` singleton and issue no writes. Its sibling on
+   * the other side of the boundary is
+   * `brain-mcp-server/src/tools/__tests__/pure-read-purity.test.ts`. Both are
+   * required: SQL-free routes calling an impure reader would still mutate the
+   * operator's brain.
+   */
+  it("params.ts and context-docs-read.ts hold no SQL (FR-240 G-EP-5)", () => {
+    for (const rel of [
+      "../lib/dashboard/params.ts",
+      "../lib/dashboard/context-docs-read.ts",
+    ]) {
+      const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
+      const code = src
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      for (const kw of [
+        /\bSELECT\s/i,
+        /\bINSERT\s+INTO\b/i,
+        /\bUPDATE\s+\w+\s+SET\b/i,
+        /\bDELETE\s+FROM\b/i,
+        /\bCREATE\s+TABLE\b/i,
+        /\.prepare\s*\(/,
+        /\bnew Database\b/,
+      ]) {
+        expect(kw.test(code), `${rel} must not match ${kw}`).toBe(false);
+      }
+    }
+  });
+
+  /**
+   * Self-negative-control for the scan above (FR-239 learning 1094).
+   *
+   * Every assertion in this describe block observes only "did not match". That
+   * outcome is indistinguishable between "the files are clean" and "the regexes
+   * are broken". Running the SAME patterns over a string that MUST match makes
+   * the difference observable.
+   */
+  it("the zero-SQL scan can actually fire", () => {
+    const dirty = `
+      const rows = db.prepare("SELECT * FROM learnings").all();
+      db.prepare("INSERT INTO learnings (id) VALUES (1)").run();
+      db.prepare("UPDATE learnings SET access_count = 1").run();
+      db.prepare("DELETE FROM learnings WHERE id = 1").run();
+      db.exec("CREATE TABLE t (a INT)");
+      const handle = new Database(":memory:");
+    `;
+    for (const kw of [
+      /\bSELECT\s/i,
+      /\bINSERT\s+INTO\b/i,
+      /\bUPDATE\s+\w+\s+SET\b/i,
+      /\bDELETE\s+FROM\b/i,
+      /\bCREATE\s+TABLE\b/i,
+      /\.prepare\s*\(/,
+      /\bnew Database\b/,
+    ]) {
+      expect(kw.test(dirty), `pattern ${kw} did not fire on the dirty fixture`).toBe(
+        true,
+      );
+    }
+  });
 });

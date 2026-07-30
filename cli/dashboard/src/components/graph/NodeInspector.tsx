@@ -1,24 +1,33 @@
 /**
  * FR-239 — the selected entity's payload attributes.
  *
- * **THIS COMPONENT ISSUES NO FETCH, AND THAT IS A SCOPE FENCE (R11).** Every
- * field it renders is already in the `/api/graph` payload — `label`, `type`,
- * `project`, `degree`, and the per-type `attrs` bag the builder assembled.
+ * **THIS COMPONENT STILL ISSUES NO FETCH, AND THAT IS A SCOPE FENCE (R11).**
+ * Every field it renders is already in the `/api/graph` payload — `label`,
+ * `type`, `project`, `degree`, and the per-type `attrs` bag the builder
+ * assembled.
  *
- * The moment this needs a second endpoint — a brief's body, a learning's
- * content, a session transcript — it has become FR-240's, not FR-239's. That is
- * not a stylistic preference: FR-237's whole scale argument is that this layer
- * *"returns NO body content"*, and a per-node detail fetch is an existing
- * tool's job (`igris_graph_node_get`, `igris_brief_get`). Adding one here would
- * quietly reintroduce the superlinear payload term the builder was designed to
- * remove.
+ * FR-239's version of this note said: *"the moment this needs a second endpoint
+ * — a brief's body, a learning's content, a session transcript — it has become
+ * FR-240's, not FR-239's."* FR-240 arrived, and the resolution is that this file
+ * STILL issues no fetch. It gained a LINK. `OPEN RECORD` navigates to
+ * `#/layers/<layer>/<project>/<id>`, and the record view does its own read.
  *
- * It is deliberately plain. FR-240 builds the real one; this is the hand-off
- * seam, and it renders the truth it has rather than pretending to more.
+ * That distinction is the whole scope fence. FR-237's scale argument is that
+ * this layer *"returns NO body content"*, so a per-node detail fetch HERE would
+ * reintroduce the superlinear payload term the builder was designed to remove —
+ * a graph of 2,400 nodes would become 2,400 potential body reads hanging off a
+ * hover. A link costs nothing and moves the read to a surface that shows one
+ * record at a time.
+ *
+ * The href is built from `node.type` / `node.project` / `node.id` — the
+ * STRUCTURED triple — and never from `node.key`. `graph-keys.ts:26-29`:
+ * *"Consumers should read the structured fields and treat `key` as an opaque
+ * handle."* (D5. Porting the key form would make a fourth mirror of it.)
  */
 
 import type { GraphNode } from "../../lib/api";
 import { shapeFor } from "../../graph/shapes";
+import { recordHrefForNode } from "../../layers/model";
 
 export interface NodeInspectorProps {
   node: GraphNode;
@@ -55,6 +64,7 @@ export function NodeInspector({
   onClose,
 }: NodeInspectorProps) {
   const attrs = Object.entries(node.attrs);
+  const recordHref = recordHrefForNode(node);
 
   return (
     <aside className="graph-inspector" aria-label="Selected entity">
@@ -74,6 +84,32 @@ export function NodeInspector({
       </div>
 
       <h2 className="graph-inspector-title">{node.label}</h2>
+
+      {/*
+        AC #3, the graph → record direction. An `<a href>` rather than a click
+        handler, so the address bar states the record's `(type, project, id)`
+        triple and the link is copyable, middle-clickable and back-buttonable.
+      */}
+      {recordHref !== null ? (
+        <a
+          className="graph-control graph-inspector-trace"
+          href={recordHref}
+          data-cursor="hover"
+        >
+          OPEN RECORD
+        </a>
+      ) : (
+        /*
+          NOT every node type has a detail view, and saying so is information.
+          Session, concept, decision and cluster nodes are real graph nodes that
+          FR-240 does not render — a missing control here would read as a bug and
+          a dead control would be worse. The browser gate (G-BR-1) asserts THIS
+          state for those types rather than asserting a blank page.
+        */
+        <span className="graph-inspector-more">
+          // NO DETAIL VIEW FOR {node.type.toUpperCase()}
+        </span>
+      )}
 
       <button
         type="button"

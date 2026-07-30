@@ -81,18 +81,29 @@ export function Nav({
         the surrounding chrome. Pointing at a specific node is never the only
         way to reach it."
 
-        Rendered ONLY on the graph route. On every other route the slot stays
-        empty and keeps its 44 px min-height, so the nav geometry does not shift
-        as the operator navigates — which is why FR-238 reserved it in the first
-        place.
+        Rendered on the two routes that have something to mute. On every other
+        route the slot stays empty and keeps its 44 px min-height, so the nav
+        geometry does not shift as the operator navigates — which is why FR-238
+        reserved it in the first place.
+
+        FR-240 REUSES THE SAME STATE, WITH DIFFERENT COPY, ON PURPOSE. On both
+        routes this control is a CLIENT-SIDE MUTE over data already in memory
+        (`// QUICK`) — it never issues a request. The learnings layer's HYBRID
+        RECALL is a different operation with a different cost, so it has its own
+        box inside the view rather than borrowing this one. Two controls, because
+        there are two operations; the placeholders say which is which.
       */}
       <div className="shell-search-slot" data-slot="search">
-        {route === "graph" && (
+        {(route === "graph" || route === "layers") && (
           <Input
             type="search"
             value={search}
-            placeholder="FIND A NODE"
-            aria-label="Search the graph by label or id"
+            placeholder={route === "graph" ? "FIND A NODE" : "FILTER THIS PAGE"}
+            aria-label={
+              route === "graph"
+                ? "Search the graph by label or id"
+                : "Filter the loaded rows by text"
+            }
             onChange={(e) => onSearch(e.target.value)}
           />
         )}

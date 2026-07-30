@@ -31,8 +31,13 @@
  * positions, so it is a page transition rather than a second entrance.
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, ApiError, type GraphPayload, type ProjectsPayload } from "../lib/api";
+import {
+  cachedScope,
+  fetchScope,
+  rememberPositions,
+} from "../lib/graphCache";
 import { StatePage } from "../components/ui/StatePage";
 import { EmptyState } from "../components/ui/EmptyState";
 import { GraphSurface } from "../components/graph/GraphSurface";
@@ -40,20 +45,23 @@ import { GraphControls } from "../components/graph/GraphControls";
 import { QueryTwin } from "../components/graph/QueryTwin";
 import { NodeInspector } from "../components/graph/NodeInspector";
 import { useGraph } from "../graph/useGraph";
-import type { PositionCache } from "../graph/instance";
+import { findNode, type NodeTriple } from "../layers/model";
 
 export interface GraphProps {
   /** Search text, owned by `App` and shared with the nav's reserved slot. */
   search: string;
+  /**
+   * FR-240 — a node to select and centre on arrival (`#/graph?focus=…`).
+   *
+   * The return half of AC #3's cross-link. It carries the STRUCTURED triple, not
+   * a composite key: the node is found by matching `type`/`project`/`id`
+   * (`layers/model.ts#findNode`), so no key form is ever parsed browser-side
+   * (D5) and `BR-001` in two projects focuses two different nodes.
+   */
+  focus?: NodeTriple | null;
 }
 
-/** One fetched scope, plus the positions it settled at. */
-interface ScopeCache {
-  payload: GraphPayload;
-  positions: PositionCache;
-}
-
-export function Graph({ search }: GraphProps) {
+export function Graph({ search, focus = null }: GraphProps) {
   const [scope, setScope] = useState<string | null>(null);
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [projects, setProjects] = useState<ProjectsPayload | null>(null);
@@ -68,11 +76,17 @@ export function Graph({ search }: GraphProps) {
    */
   const [transition, setTransition] = useState<"entrance" | "drill">("entrance");
 
-  /**
-   * Cached scopes, so backing out of a drill is instant and does not re-enter
-   * the entrance. Keyed by scope; `""` is the whole brain.
+  /*
+   * SCOPE CACHE — cached scopes, so backing out of a drill is instant and does
+   * not re-enter the entrance. Keyed by scope; `""` is the whole brain.
+   *
+   * It used to be a `useRef<Map<...>>` right here. FR-240 hoisted the store to
+   * `lib/graphCache.ts` — same key, same entry shape, same reset-on-fetch rule —
+   * so the record detail view shares this page's fetch instead of paying for a
+   * second ~1 MB payload (D6). The logic below is unchanged; only the Map moved,
+   * and with it the LIFETIME: the cache now outlives this component, which is
+   * the whole point of sharing it.
    */
-  const cache = useRef<Map<string, ScopeCache>>(new Map());
 
   // Projects list — cheap, and the ONE thing here that may follow the beat.
   useEffect(() => {
@@ -87,20 +101,21 @@ export function Graph({ search }: GraphProps) {
   // The payload. Keyed on scope + an explicit REFRESH nonce, and on NOTHING
   // else — in particular not on `live.tick`. See the header.
   useEffect(() => {
-    const key = scope ?? "";
-    const cached = cache.current.get(key);
+    const cached = cachedScope(scope);
     if (cached !== undefined && nonce === 0) {
       setPayload(cached.payload);
       return;
     }
     const ctrl = new AbortController();
     setBusy(true);
-    api
-      .graph(scope, ctrl.signal)
+    // `force` on an explicit REFRESH only. The signal is the ABANDONMENT check,
+    // not a cancellation: the request is shared with the record detail, so
+    // aborting it here would cancel someone else's read (`graphCache.ts` header).
+    fetchScope(scope, { force: nonce > 0 })
       .then((p) => {
+        if (ctrl.signal.aborted) return;
         setPayload(p);
         setFatal(null);
-        cache.current.set(key, { payload: p, positions: {} });
       })
       .catch((err: unknown) => {
         if (ctrl.signal.aborted) return;
@@ -117,7 +132,7 @@ export function Graph({ search }: GraphProps) {
 
   // The seed for a back-out: the positions this scope settled at last time.
   const seed = useMemo(
-    () => cache.current.get(scope ?? "")?.positions,
+    () => cachedScope(scope)?.positions,
     // Read at mount of each payload; `nodes` identity is the payload identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [nodes],
@@ -129,10 +144,36 @@ export function Graph({ search }: GraphProps) {
   // paying a second entrance for a payload we already have.
   useEffect(() => {
     if (!graph.settled) return;
-    const key = scope ?? "";
-    const entry = cache.current.get(key);
-    if (entry !== undefined) entry.positions = graph.positions();
+    rememberPositions(scope, graph.positions());
   }, [graph.settled, graph, scope]);
+
+  /**
+   * FR-240 — the focus target, resolved against the payload in memory.
+   *
+   * `null` while there is no focus; `undefined`-free by construction. When a
+   * focus is asked for and the node is NOT in this payload, `focusNode` stays
+   * null and the banner below says so — most often because the operator arrived
+   * from a record in a project while the canvas is truncated, or scoped
+   * elsewhere. Silently doing nothing would look like a broken link.
+   */
+  const focusNode = useMemo(
+    () => (focus === null ? null : findNode(nodes, focus)),
+    [focus, nodes],
+  );
+
+  // Select and centre it once the simulation has positions to centre on.
+  // `graph.select` moves the camera only if the node has settled coordinates
+  // (`useGraph`'s `ctrl.positions()[key]` guard), so this waits for `settled`
+  // rather than firing at mount and losing the camera move.
+  useEffect(() => {
+    if (focusNode === null) return;
+    if (!graph.settled) return;
+    graph.select(focusNode.key);
+    // `graph.select`'s identity changes with the payload; depending on it would
+    // re-select on every payload identity change and fight the operator's own
+    // clicks. The focus key and the settle latch are the real triggers.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusNode?.key, graph.settled]);
 
   const types = useMemo(() => {
     const counts = new Map<string, number>();
@@ -201,6 +242,16 @@ export function Graph({ search }: GraphProps) {
       {payload.degraded !== null && (
         <div className="shell-banner" role="status">
           GRAPH DEGRADED — {payload.degraded.reason}
+        </div>
+      )}
+      {focus !== null && focusNode === null && (
+        <div className="shell-banner" role="status">
+          FOCUS NODE NOT IN THIS SCOPE — {focus.type} {focus.id}
+          {focus.project !== null ? ` (${focus.project})` : " (global)"} is not in
+          the payload on screen.{" "}
+          {payload.truncated
+            ? "This payload is truncated; drill into the project to reach it."
+            : "Drill into its project to reach it."}
         </div>
       )}
       {payload.truncated && (

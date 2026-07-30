@@ -1103,3 +1103,449 @@ body[data-motion="low"] *::after {
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ─── FR-240 · the record layer (briefs / learnings / context docs / goals) ──
+   Original to FR-240 — fifty.dev has no browse/detail consumer to port from,
+   which is the same `design_system.md` gap PORTING.md §6 records for FR-239.
+   This block's own decisions are PORTING.md §5 (D14, D15).
+   Built ENTIRELY from the ported tokens and the `.shell-*` / ported-primitive
+   classes, so BRAND_RULES #2 (sharp corners), #3 (3-tier type) and #6 (palette
+   switching) hold BY CONSTRUCTION rather than by review.
+
+   TWO MECHANICAL PROPERTIES OF THIS BLOCK, both asserted by
+   `cli/src/__tests__/dashboard-layers-source.test.ts`:
+
+   1. ZERO COLOUR LITERALS. Every colour dereferences a role token
+      (`--fg` / `--muted` / `--accent` / `--line` / `--status-*`). Note the
+      FR-239 scan in `dashboard-graph-source.test.ts` runs from its own marker
+      to END OF FILE, so this block is already inside it — a hex here fails two
+      suites.
+
+   2. ZERO NEW CUSTOM PROPERTIES. FR-239's cascade bug was a `--dataviz-*` alias
+      declared on `:root` instead of `body`, which froze every palette to
+      `blood` (PORTING.md D12). This block cannot reproduce it, because it
+      declares no custom property at all: it reads the role tokens directly, and
+      those are already declared where the palette stamp lives. The absence is
+      the guardrail — the same reasoning as the missing `--t-loop`.
+
+   BORDERS ARE `0.5px solid var(--line)` and RADII ARE ZERO, everywhere. The one
+   rounded thing on the page remains `.chip`, which is upstream's deliberate
+   exception (PORTING.md §3).
+   ─────────────────────────────────────────────────────────── */
+
+/* ─── Filter strip ─── */
+.record-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: 0.5px solid var(--line);
+}
+.record-filters-spacer {
+  flex: 1 1 auto;
+}
+.record-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.record-filter-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.record-search {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--s-1);
+  min-width: 280px;
+}
+.record-search .field {
+  flex: 1 1 auto;
+}
+/* Every control clears the 44px tap target the coding guidelines require. */
+.record-filter-run,
+.record-page-btn {
+  min-height: 44px;
+  min-width: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-1);
+  padding: 0 14px;
+  border: 0.5px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color var(--t-quick) var(--e-std),
+    border-color var(--t-quick) var(--e-std);
+}
+.record-filter-run:hover:not([disabled]),
+.record-page-btn:hover:not([disabled]) {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+.record-filter-run[disabled],
+.record-page-btn[disabled] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.record-readout {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* ─── Layer switcher ─── */
+.record-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-bottom: var(--s-3);
+}
+
+/* ─── The list ─── */
+.record-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 0.5px solid var(--line);
+}
+.record-list > li {
+  border-bottom: 0.5px solid var(--line);
+}
+.record-row {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  /* A row is >= 44px tall by content, but state it so a one-line row still is. */
+  min-height: 44px;
+  padding: 12px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--ui);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background var(--t-instant) var(--e-std);
+}
+.record-row:hover {
+  background: var(--accent-deep);
+}
+.record-row:focus-visible {
+  outline: 0.5px solid var(--accent);
+  outline-offset: -1px;
+}
+.record-row[data-active="true"] {
+  border-left: 0.5px solid var(--accent);
+  padding-left: 10px;
+}
+.record-row[data-disabled="true"] {
+  cursor: default;
+  opacity: 0.62;
+}
+.record-row[data-disabled="true"]:hover {
+  background: transparent;
+}
+.record-row-eye {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.record-row-title {
+  font-family: var(--ui);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  color: var(--fg);
+}
+.record-row-trail {
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--muted);
+  /* Two lines of preview, then stop. A list is an index, not a reader. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.record-row-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.record-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.record-row-kv b {
+  color: var(--muted);
+  font-weight: 400;
+  margin-right: 6px;
+  opacity: 0.7;
+}
+
+/* ─── Pagination ─── */
+.record-page {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+}
+
+/* ─── The detail ─── */
+.record-detail {
+  max-width: 96ch;
+}
+.record-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  margin-bottom: var(--s-3);
+}
+.record-detail-title {
+  font-family: var(--display);
+  font-size: clamp(28px, 4vw, 46px);
+  font-weight: 400;
+  line-height: 1.02;
+  letter-spacing: -0.01em;
+  margin: 0 0 var(--s-2);
+  color: var(--fg);
+}
+.record-detail-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--s-2);
+}
+.record-detail-meta {
+  border-top: 0.5px solid var(--line);
+  margin-bottom: var(--s-3);
+}
+.record-detail-body {
+  border-top: 0.5px solid var(--line);
+  padding-top: var(--s-3);
+}
+.record-note {
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: var(--s-1) 0 0;
+  max-width: 68ch;
+}
+
+/* ─── The 1-hop block (D6) ─── */
+.record-neighbours {
+  margin-top: var(--s-4);
+  border-top: 0.5px solid var(--line);
+}
+.record-hops {
+  list-style: none;
+  margin: var(--s-1) 0 0;
+  padding: 0;
+}
+.record-hops > li {
+  border-bottom: 0.5px solid var(--line);
+}
+.record-hop {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-height: 44px;
+  padding: 0 4px;
+  color: var(--muted);
+  font-family: var(--ui);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color var(--t-instant) var(--e-std);
+}
+.record-hop:hover {
+  color: var(--fg);
+}
+.record-hop b {
+  flex: 0 0 88px;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--accent);
+}
+.record-hop[data-disabled="true"] {
+  opacity: 0.62;
+}
+
+/* ─── Rendered markdown (markdown/Markdown.tsx) ─────────────────
+   The type ladder is the brand's: `--display` is reserved for page headings, so
+   a document's own headings render in `--ui` at weight 500. A brief body full
+   of Anton would be a page of competing shouts. */
+.record-md {
+  font-family: var(--ui);
+  font-size: 14px;
+  font-weight: 300;
+  line-height: 1.7;
+  color: var(--fg);
+  max-width: 78ch;
+}
+.record-md > *:first-child {
+  margin-top: 0;
+}
+.record-md p {
+  margin: 0 0 1em;
+}
+.record-md-h {
+  font-family: var(--ui);
+  font-weight: 500;
+  line-height: 1.3;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+  margin: 1.8em 0 0.6em;
+}
+h3.record-md-h {
+  font-size: 20px;
+}
+h4.record-md-h {
+  font-size: 16px;
+}
+h5.record-md-h,
+h6.record-md-h {
+  font-size: 13px;
+  font-family: var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.record-md-code {
+  font-family: var(--mono);
+  font-size: 0.86em;
+  padding: 1px 4px;
+  border: 0.5px solid var(--line);
+  color: var(--fg);
+}
+.record-md-pre {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+  border: 0.5px solid var(--line);
+  padding: var(--s-2);
+  margin: 0 0 1em;
+  overflow-x: auto;
+  /* A code block preserves its own whitespace; nothing else here does. */
+  white-space: pre;
+  color: var(--fg);
+}
+.record-md-pre code {
+  font-family: inherit;
+  border: 0;
+  padding: 0;
+}
+/* The fence's language, shown as a corner label. `attr()` reads the ATTRIBUTE —
+   the language never reaches a class name (see Markdown.tsx). */
+.record-md-pre[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: var(--s-1);
+}
+.record-md-link {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 0.5px solid var(--accent);
+}
+.record-md-link:hover {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+}
+.record-md-list {
+  margin: 0 0 1em;
+  padding-left: 1.4em;
+}
+.record-md-list li {
+  margin-bottom: 0.3em;
+}
+.record-md-task {
+  list-style: none;
+  margin-left: -1.4em;
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-1);
+}
+/* A disabled checkbox is a STATE READOUT, not a control (AC #7). It is dimmed
+   rather than hidden so an AC block still reads as an AC block. */
+.record-md-task input {
+  accent-color: var(--accent);
+  opacity: 0.8;
+}
+.record-md-quote {
+  margin: 0 0 1em;
+  padding-left: var(--s-2);
+  border-left: 0.5px solid var(--accent);
+  color: var(--muted);
+}
+.record-md-rule {
+  border: 0;
+  border-top: 0.5px solid var(--line);
+  margin: var(--s-3) 0;
+}
+.record-md-table-wrap {
+  overflow-x: auto;
+  margin: 0 0 1em;
+}
+.record-md-table {
+  border-collapse: collapse;
+  font-size: 12px;
+  min-width: 100%;
+}
+.record-md-table th,
+.record-md-table td {
+  border: 0.5px solid var(--line);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+.record-md-table th {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  .record-filters {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .record-search {
+    min-width: 0;
+  }
+}
