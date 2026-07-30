@@ -76,7 +76,9 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 ### Phase 1: INIT
 
-1. Load brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
+1. Load brief via `igris_brief_get` with `project` (the current project slug) and
+   `brief_id` (`$ARGUMENTS`) — both are REQUIRED — falling back to cache at
+   `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
 2. Read brief content
 2.5. **Detect resume + capture recorded phase (FR-189):**
    Read the brief's `## Workflow State` → `**Phase:**` field into RECORDED_PHASE.
@@ -127,8 +129,9 @@ Execute the complete implementation workflow for a brief, from planning through 
          (reclaimable claim) → display: "BR-XXX's claim by {held_by} looks reclaimable
          ({reason}). Reclaim? [y/N]" — WAIT for
          explicit operator input. On **N / anything but y** → HARD STOP, end the
-         skill. On **y** → call `igris_brief_release` with the STALE `held_by`
-         instance_id, then call `igris_brief_claim` again with THIS instance's
+         skill. On **y** → call `igris_brief_release` with `project`, `brief_id`
+         and the STALE `held_by` instance_id, then call `igris_brief_claim` again
+         with the same `project` / `brief_id` and THIS instance's
          `instance_id`; if that second claim returns `claimed: true`, proceed to
          step 7. (If it returns `claimed: false` again — a race where another
          instance grabbed it in the gap — HARD STOP with the live-claim message.)
@@ -632,7 +635,12 @@ EOF
 
 3. Verify commit succeeded
 4. Update brief: Status = "Done", Completed = today
-5. Call `igris_brief_sync` with status="Done", phase="COMMITTING".
+5. Call `igris_brief_sync` with the SAME `project`, `brief_id`, `brief_type`,
+   `title`, `priority` and `effort` you passed in Phase 1 step 8, plus
+   status="Done", phase="COMMITTING". `project`, `brief_id`, `title` and
+   `status` are REQUIRED — a call omitting any of them is rejected at the
+   gateway (BR-080). Passing the unchanged fields is not redundant: this is an
+   upsert, and a field you omit is written as NULL over the existing value.
    **If brain MCP is NOT available or the call fails:**
    - Display: `WARNING: Brain sync skipped for {BRIEF_ID} (status=Done) — MCP unavailable. Queued locally for next /boot or /sync data.`
    - Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
@@ -650,7 +658,9 @@ EOF
 ### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
-2. Call `igris_brief_sync` with status="Done" (unchanged) and phase="COMPLETE".
+2. Call `igris_brief_sync` with the same full field set as Phase 7 step 5
+   (`project`, `brief_id`, `brief_type`, `title`, `priority`, `effort`), with
+   status="Done" (unchanged) and phase="COMPLETE".
    This is the terminal-phase flip — Phase 7 synced phase="COMMITTING"; this
    step lands the canonical phase=COMPLETE in the brain DB so the
    status↔phase↔git invariant holds (TD-257: the C1 contradiction the
@@ -715,7 +725,10 @@ This ensures other machines can see that the work is still reserved without pret
 
 On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
-**Pattern for every agent:**
+**Pattern for every agent.** Every call below passes `instance_id` (from the
+per-instance session file) and `agent` (the role being invoked) in addition to
+the fields named — all three of `instance_id`, `agent` and `event_type` are
+REQUIRED, and a call omitting any is rejected at the gateway (BR-080):
 
 1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
 2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary
