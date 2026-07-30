@@ -24,7 +24,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeLoopback, type CapturedCall } from "./loopback.js";
+import { makeLoopback, mcpOkEnvelope, type CapturedCall } from "./loopback.js";
 import type { BootSyncDigest } from "../types.js";
 
 let tmpRoot: string;
@@ -131,8 +131,11 @@ function makePullLoopback(
     if (call.httpMethod === "GET" && (call.url ?? "").startsWith("/sync/pull")) {
       return { status: 200, body: JSON.stringify({ tables }) };
     }
-    // Any POST (the JSON-RPC sync_queue_drain) → 200 OK.
-    return { status: 200, body: JSON.stringify({ ok: true, drained: 0 }) };
+    // Any POST (a queue-entry replay or the JSON-RPC sync_queue_drain) → 200
+    // carrying a real success envelope. BR-080: the CLI now READS this body —
+    // a bare `{ok:true}` is classified INDETERMINATE and a replayed entry is
+    // preserved rather than dropped, so the shorthand no longer means success.
+    return { status: 200, body: mcpOkEnvelope() };
   });
 }
 
@@ -426,7 +429,7 @@ describe("boot-sync — independence + skip-on-fail", () => {
       if (call.httpMethod === "GET" && (call.url ?? "").startsWith("/sync/pull")) {
         return { status: 500, body: JSON.stringify({ error: "boom" }) };
       }
-      return { status: 200, body: JSON.stringify({ ok: true }) };
+      return { status: 200, body: mcpOkEnvelope() };
     });
     await listen(lb);
     const remoteUrl = `http://127.0.0.1:${lb.port()}`;

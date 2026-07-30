@@ -328,6 +328,8 @@ describe('BR-066 /sync/push per-table isolation', () => {
 
 import { vi } from 'vitest';
 import { handleSyncQueueDrain } from '../tools/sync.js';
+import { createGateway } from '../engine/gateway.js';
+import { createSyncComponent } from '../engine/components/sync/index.js';
 
 // We need handleSyncQueueDrain to read from a real DB. Mock getDb to point
 // at the test DB. This is a boundary mock (the DB factory), not the SUT.
@@ -405,22 +407,59 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
     vi.restoreAllMocks();
   });
 
-  it('marks all rows as sent when remote returns ok=true', async () => {
-    // Seed three event_log rows in sync_queue.
+  /** Seed N actionable event_log rows into sync_queue. */
+  function seedPendingRows(count: number): void {
     const insert = db.prepare(`
       INSERT INTO sync_queue (table_name, row_data, status, retry_count, max_retries)
       VALUES (?, ?, 'pending', 0, 5)
     `);
-    insert.run('event_log', JSON.stringify({ id: 1, event_name: 'a', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:00Z' }));
-    insert.run('event_log', JSON.stringify({ id: 2, event_name: 'b', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:01Z' }));
-    insert.run('event_log', JSON.stringify({ id: 3, event_name: 'c', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:02Z' }));
+    for (let i = 1; i <= count; i++) {
+      insert.run(
+        'event_log',
+        JSON.stringify({
+          id: i,
+          event_name: `e${i}`,
+          component: 'c',
+          payload: '{}',
+          created_at: `2026-05-05T00:00:0${i}Z`,
+        }),
+      );
+    }
+  }
 
+  /** Count rows in sync_queue by status, read back from the DB. */
+  function statusCounts(): Record<string, number> {
+    const rows = db
+      .prepare('SELECT status, COUNT(*) as c FROM sync_queue GROUP BY status')
+      .all() as Array<{ status: string; c: number }>;
+    return Object.fromEntries(rows.map((r) => [r.status, r.c]));
+  }
+
+  /** Remote that accepts everything. */
+  function stubOkFetch(inserted: number): void {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ ok: true, results: { event_log: { inserted: 3, updated: 0, skipped: 0, failed: 0 } }, errors: {} }),
+      json: async () => ({ ok: true, results: { event_log: { inserted, updated: 0, skipped: 0, failed: 0 } }, errors: {} }),
       text: async () => '',
     })) as unknown as typeof globalThis.fetch;
+  }
+
+  it('marks all rows as sent when remote returns ok=true', async () => {
+    seedPendingRows(3);
+    stubOkFetch(3);
+
+    // BR-080 PRE-STATE ASSERTION — read back from sync_queue, NOT from the
+    // insert statement's return. `handleSyncQueueDrain` short-circuits with
+    // "Sync queue is empty. No items to drain." when the queue holds nothing
+    // actionable, so without this line the post-state assertions below are
+    // satisfiable by a fixture that never seeded anything: `map.sent` would be
+    // undefined... but so would `map.pending`, and the whole test would be
+    // proving that an empty queue stays empty. The pre-check is what makes the
+    // post-check mean "the drain MOVED N rows."
+    const before = statusCounts();
+    expect(before.pending).toBe(3);
+    expect(before.sent ?? 0).toBe(0);
 
     const result = await handleSyncQueueDrain({
       remote_url: 'http://test-remote.local',
@@ -429,11 +468,52 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
 
     const text = (result.content?.[0]?.text as string) ?? '';
     expect(text).toMatch(/drain completed successfully/i);
+    expect(text).not.toMatch(/queue is empty/i);
 
-    const counts = db.prepare('SELECT status, COUNT(*) as c FROM sync_queue GROUP BY status').all() as Array<{status: string; c: number}>;
-    const map = Object.fromEntries(counts.map((r) => [r.status, r.c]));
-    expect(map.sent).toBe(3);
-    expect(map.pending ?? 0).toBe(0);
+    const after = statusCounts();
+    expect(after.sent).toBe(3);
+    expect(after.pending ?? 0).toBe(0);
+  });
+
+  /**
+   * BR-080 A2-gw — the SAME fixture routed through the real `gateway.dispatch`
+   * with valid args, rather than calling the handler directly.
+   *
+   * WHAT THIS PROVES: the new missing-required guard sits IN FRONT OF a drain
+   * that still works. This is the liveness half of the BR-080 guard — it uses
+   * the same wake-up path as the rejection tests in
+   * `src/tools/__tests__/sync-queue-drain-contract.test.ts` (a real gateway,
+   * the real registered `igris_sync_queue_drain` tool, `gateway.dispatch`), so
+   * a guard that had been made unconditional would fail HERE rather than
+   * hiding behind a suite of tests that only ever observe rejections.
+   *
+   * WHAT IT DOES NOT PROVE: anything about the missing-arg case (sibling: the
+   * R1 regression test), nor that the remote actually accepted the rows
+   * (`globalThis.fetch` is stubbed — the remote boundary is out of scope here).
+   */
+  it('A2-gw: the same populated queue drains when routed through gateway.dispatch', async () => {
+    seedPendingRows(3);
+    stubOkFetch(3);
+
+    const gateway = createGateway();
+    gateway.register(createSyncComponent().tools());
+
+    const before = statusCounts();
+    expect(before.pending).toBe(3);
+    expect(before.sent ?? 0).toBe(0);
+
+    const result = await gateway.dispatch('igris_sync_queue_drain', {
+      remote_url: 'http://test-remote.local',
+      api_key: 'test',
+    });
+
+    const text = (result.content?.[0]?.text as string) ?? '';
+    expect(text).toMatch(/drain completed successfully/i);
+    expect(text).not.toMatch(/queue is empty/i);
+
+    const after = statusCounts();
+    expect(after.sent).toBe(3);
+    expect(after.pending ?? 0).toBe(0);
   });
 
   it('on HTTP 207 with per-table errors, marks failed-table rows retrying with table-specific message', async () => {

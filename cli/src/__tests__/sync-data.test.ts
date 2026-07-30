@@ -34,7 +34,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeLoopback } from "./loopback.js";
+import { makeLoopback, mcpOkEnvelope } from "./loopback.js";
 
 let tmpBrain: string;
 const envBackup: Record<string, string | undefined> = {};
@@ -119,7 +119,7 @@ describe("sync data — runSyncData", () => {
     // All calls succeed.
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -173,7 +173,7 @@ describe("sync data — runSyncData", () => {
   it("queue with mixed entries: dispatches each then drains, clears local queue file", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -226,7 +226,7 @@ describe("sync data — runSyncData", () => {
       if (idx === 0) {
         return { status: 500, body: "brain server error" };
       }
-      return { status: 200, body: JSON.stringify({ ok: true }) };
+      return { status: 200, body: mcpOkEnvelope() };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -269,7 +269,7 @@ describe("sync data — runSyncData", () => {
       if (call.toolName === "igris_sync_queue_drain") {
         return { status: 500, body: "drain failed" };
       }
-      return { status: 200, body: JSON.stringify({ ok: true }) };
+      return { status: 200, body: mcpOkEnvelope() };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -347,7 +347,7 @@ describe("sync data — runSyncData", () => {
   it("brief_create with cache_path: reads file and inlines as content; cache_path stripped (TD-119)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -405,7 +405,7 @@ describe("sync data — runSyncData", () => {
   it("dispatchEntry strips queue-entry fields not in the tool's allow-list before mcpCall (TD-128 M3)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -462,7 +462,7 @@ describe("sync data — runSyncData", () => {
   it("dispatchEntry preserves cache_path→content substitution under strict allow-list (TD-128 M3)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -547,7 +547,7 @@ describe("sync data — runSyncData", () => {
         // simulates the sibling-harness append.
         await barrier;
       }
-      return { status: 200, body: JSON.stringify({ ok: true }) };
+      return { status: 200, body: mcpOkEnvelope() };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -625,7 +625,7 @@ describe("sync data — runSyncData", () => {
   it("runSyncData recovers a stale .draining-* from a prior crashed drain (FR-128)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -682,7 +682,7 @@ describe("sync data — runSyncData", () => {
   it("brief_create with missing cache_path file: exit 1, queue preserved, drain NOT called (TD-119)", async () => {
     const lb = makeLoopback(() => ({
       status: 200,
-      body: JSON.stringify({ ok: true }),
+      body: mcpOkEnvelope(),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -834,5 +834,368 @@ describe("sync data — TD-252 transport guard (the 4-case matrix)", () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+// -------------------------------------------------------------------------
+// BR-080 — callRemoteDrain result classification (F5).
+//
+// THE DEFECT: `callRemoteDrain` declared success on `statusCode === 200`
+// ALONE. The brain returns HTTP 200 for a THROWN tool error too — the stdio
+// and HTTP dispatch sites in `brain-mcp-server/src/index.ts` wrap the thrown
+// error as `{content:[...], isError:true}` and `res.json({jsonrpc, result, id})`
+// it back at 200. So every drain failure, including the very TypeError BR-080
+// is about, printed `sync data: remote drain OK (HTTP 200)` and exited 0.
+//
+// WHAT THIS BLOCK PROVES: the CLI's verdict now TRACKS the brain's verdict for
+// all three body shapes it can receive — error envelope, success envelope, and
+// a body that is not a JSON-RPC envelope at all.
+//
+// WHAT IT DOES NOT PROVE: that a real brain error is shaped this way when the
+// response is routed through `StreamableHTTPServerTransport` (the HTTP
+// fallback-A path may emit SSE, not plain JSON). That shape lands in the
+// third — "indeterminate" — tier, which case 3 below pins directly.
+//
+// The loopback is the same fake the rest of this file uses; it validates
+// nothing, so these cases are about the CLI's READING of a response, not about
+// the brain's behaviour. The brain-side half is
+// `brain-mcp-server/src/tools/__tests__/sync-queue-drain-contract.test.ts`.
+// -------------------------------------------------------------------------
+describe("sync data — remote drain result classification (BR-080)", () => {
+  /** Boot a loopback, point config at it, run drain-only, capture stdout+stderr. */
+  async function runDrainAgainst(
+    body: string,
+    status = 200,
+  ): Promise<{ code: number; stdout: string; stderr: string; callCount: number }> {
+    const lb = makeLoopback(() => ({ status, body }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const stdoutBuf: string[] = [];
+    const stderrBuf: string[] = [];
+    const outSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "no-queue" });
+      return {
+        code,
+        stdout: stdoutBuf.join(""),
+        stderr: stderrBuf.join(""),
+        callCount: lb.calls.length,
+      };
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  }
+
+  it("case 1 (R2): HTTP 200 carrying isError:true → exit 1 and NO 'drain OK' claim", async () => {
+    const { code, stdout, stderr, callCount } = await runDrainAgainst(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Error executing igris_sync_queue_drain: Cannot read properties of undefined (reading 'replace')",
+            },
+          ],
+          isError: true,
+        },
+        id: 1,
+      }),
+    );
+
+    // The request DID reach the brain — this is a classification failure, not
+    // a transport failure. Without this the exit-1 could come from anywhere.
+    expect(callCount).toBe(1);
+    expect(code).toBe(1);
+    // The overclaim must be gone from BOTH streams.
+    expect(stdout).not.toContain("remote drain OK");
+    expect(stderr).not.toContain("remote drain OK");
+    // The brain's own first content line is surfaced verbatim to the operator.
+    expect(stderr).toContain("Error executing igris_sync_queue_drain");
+  });
+
+  it("case 2: HTTP 200 success envelope → exit 0, names the brain-side queue and echoes the summary", async () => {
+    const { code, stdout, callCount } = await runDrainAgainst(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        result: {
+          content: [
+            {
+              type: "text",
+              text: "Sync queue drain completed successfully.\nItems sent: 7",
+            },
+          ],
+        },
+        id: 1,
+      }),
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(0);
+    // Names WHICH queue was drained (the brain's own sync_queue table, not the
+    // local jsonl file) — the ambiguity that made "the count did not move"
+    // hard to diagnose.
+    expect(stdout).toContain("brain-side sync_queue drain");
+    // Echoes the brain's own summary rather than asserting a bare "OK".
+    expect(stdout).toContain("Sync queue drain completed successfully.");
+    expect(stdout).toContain("Items sent: 7");
+  });
+
+  it("case 3: HTTP 200 with a non-envelope body → exit 0 but reported as INDETERMINATE, never OK", async () => {
+    // This is the shape ~8 pre-existing loopbacks in this file return, and the
+    // shape the SSE/StreamableHTTP fallback can produce. It must neither fail
+    // (that would break the legacy fixtures) nor claim success (that would
+    // re-create the overclaim). Third tier, per L-1017: a valid-but-unreadable
+    // response and a genuine error are DIFFERENT states.
+    const { code, stdout, stderr, callCount } = await runDrainAgainst(
+      JSON.stringify({ drained: 0 }),
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(0);
+    expect(stdout).not.toContain("remote drain OK");
+    expect(stderr).not.toContain("remote drain OK");
+    expect(stdout).toContain("could not be read");
+  });
+
+  it("case 3b: HTTP 200 with a body that is not JSON at all → indeterminate, exit 0", async () => {
+    // Any 200 whose body `JSON.parse` cannot read: an nginx/gateway error page,
+    // a truncated response, or an SSE frame. `mcpCall` sends NO `Accept` header
+    // (`cli/src/lib/mcp-client.ts` builds the request headers), so the brain's
+    // `StreamableHTTPServerTransport` answers 406 rather than an SSE 200 —
+    // this case is NOT a pin on that transport, it is the generic
+    // unparseable-200 shape. The body below is merely one concrete instance.
+    const { code, stdout, callCount } = await runDrainAgainst(
+      'event: message\ndata: {"jsonrpc":"2.0","result":{}}\n\n',
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(0);
+    expect(stdout).not.toContain("remote drain OK");
+    expect(stdout).toContain("could not be read");
+  });
+
+  it("case 5 (D5): HTTP 200 carrying a JSON-RPC error envelope → exit 1, classified error not indeterminate", async () => {
+    // A JSON-RPC `error` envelope has no `result` key, so without an explicit
+    // branch it falls into the indeterminate tier — "unreadable" is provably
+    // wrong for the one shape that states failure outright.
+    const { code, stdout, stderr, callCount } = await runDrainAgainst(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        error: { code: -32602, message: "Invalid params: remote_url" },
+        id: 1,
+      }),
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(1);
+    expect(stdout).not.toContain("remote drain OK");
+    // The distinguishing assertion: it must NOT be reported as unreadable.
+    expect(stdout).not.toContain("could not be read");
+    expect(stderr).not.toContain("could not be read");
+    expect(stderr).toContain("Invalid params: remote_url");
+  });
+});
+
+// -------------------------------------------------------------------------
+// BR-080 (sentinel round 2) — the SAME HTTP-200-misread in `dispatchEntry`.
+//
+// THE DEFECT: `dispatchEntry` declared a queue entry "replayed" on
+// `statusCode === 200` alone, exactly as `callRemoteDrain` did. The brain
+// returns HTTP 200 for a THROWN tool error, so an entry the brain REJECTED was
+// logged as replayed, the loop continued to phase 2, and
+// `finalizeDrainSnapshot(snapshot, true)` UNLINKED the queue — the entry was
+// silently destroyed with no error anywhere.
+//
+// Why BR-080 enlarged it: `buildToolArgs` already filters unknown keys, so the
+// TD-128 unknown-arg rejection could never reach this path. Missing-REQUIRED
+// rejections are a new class of HTTP-200 tool error that now can, and every one
+// of them deleted a queue line (a `/hunt` `brief_sync` line lacking `title` is
+// the live instance).
+//
+// WHAT THIS BLOCK PROVES: for all three body tiers, an entry is destroyed ONLY
+// on a readable success envelope. Each case asserts the PRE-state (the entry is
+// on disk before the run) and the POST-state, so a case cannot pass because the
+// queue was never written or never read.
+//
+// WHAT IT DOES NOT PROVE: that the brain actually rejects these args — the
+// loopback validates nothing. The brain-side half is
+// `brain-mcp-server/src/engine/__tests__/gateway-strict-input.test.ts`.
+// -------------------------------------------------------------------------
+describe("sync data — per-entry replay result classification (BR-080)", () => {
+  /** A `brief_sync` line missing `title` — the shape `/hunt` can queue. */
+  const REJECTED_ENTRY = JSON.stringify({
+    operation: "brief_sync",
+    project: "demo",
+    brief_id: "BR-080-E",
+    status: "ACTIVE",
+  });
+
+  /** The brain's real shape for a gateway guard throw: HTTP 200 + isError. */
+  const GUARD_THROW_BODY = JSON.stringify({
+    jsonrpc: "2.0",
+    result: {
+      content: [
+        {
+          type: "text",
+          text: "Error executing igris_brief_sync: igris_brief_sync: missing required argument 'title'. Required: project, brief_id, title, status. (strict-input contract; BR-080)",
+        },
+      ],
+      isError: true,
+    },
+    id: 1,
+  });
+
+  /**
+   * Seed a one-entry queue and run the drain against a loopback that returns
+   * `body` for the ENTRY replay and an unambiguous success envelope for the
+   * brain-side drain. Isolating the two responses is load-bearing: if the drain
+   * echoed the same error body, `callRemoteDrain` would fail the run and
+   * `finalizeDrainSnapshot(false)` would restore the queue — the entry would
+   * survive for the wrong reason and the guard below would pass on the broken
+   * build. Sentinel's reproduction used exactly this split and observed
+   * `{exitCode: 0, queueStillExists: false}`.
+   *
+   * Reports both the pre-state and the post-state so a pass cannot come from a
+   * queue that was never written or never read.
+   */
+  async function replayAgainst(body: string): Promise<{
+    code: number;
+    tools: (string | undefined)[];
+    queueExistedBefore: boolean;
+    queueContentBefore: string;
+    queueExistsAfter: boolean;
+    queueContentAfter: string;
+    stdout: string;
+    stderr: string;
+  }> {
+    const lb = makeLoopback((call) => ({
+      status: 200,
+      body:
+        call.toolName === "igris_sync_queue_drain"
+          ? mcpOkEnvelope("Sync queue drain completed successfully.")
+          : body,
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+    const queuePath = writeQueue("demo", [REJECTED_ENTRY]);
+    const queueExistedBefore = existsSync(queuePath);
+    const queueContentBefore = queueExistedBefore
+      ? readFileSync(queuePath, "utf-8")
+      : "";
+
+    const stdoutBuf: string[] = [];
+    const stderrBuf: string[] = [];
+    const outSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation((chunk: unknown) => {
+        stdoutBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      const queueExistsAfter = existsSync(queuePath);
+      return {
+        code,
+        tools: lb.calls.map((c) => c.toolName),
+        queueExistedBefore,
+        queueContentBefore,
+        queueExistsAfter,
+        queueContentAfter: queueExistsAfter
+          ? readFileSync(queuePath, "utf-8")
+          : "",
+        stdout: stdoutBuf.join(""),
+        stderr: stderrBuf.join(""),
+      };
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  }
+
+  it("error tier: an entry the brain REJECTED at HTTP 200 is preserved, not replayed, and does not reach the drain", async () => {
+    const r = await replayAgainst(GUARD_THROW_BODY);
+
+    // PRE-state — without this the post-state assertion could pass because the
+    // queue was never written in the first place.
+    expect(r.queueExistedBefore).toBe(true);
+    expect(r.queueContentBefore).toContain("BR-080-E");
+
+    // POST-state — the entry survives. This is the assertion the defect fails.
+    expect(r.queueExistsAfter).toBe(true);
+    expect(r.queueContentAfter).toContain("BR-080-E");
+
+    expect(r.code).toBe(1);
+    // Phase 2 must NOT run: only the replay call went out.
+    expect(r.tools).toEqual(["igris_brief_sync"]);
+    // The false claim is gone from both streams.
+    expect(r.stdout).not.toContain("replayed via");
+    expect(r.stderr).not.toContain("replayed via");
+    // The brain's own reason reaches the operator.
+    expect(r.stderr).toContain("missing required argument 'title'");
+  });
+
+  it("indeterminate tier: an entry whose 200 body cannot be read is preserved, never dropped", async () => {
+    // `{ok:true}` is not a JSON-RPC envelope — the CLI cannot tell whether the
+    // brain accepted the entry. Dropping it on that evidence is the same class
+    // of bug as dropping it on a rejection.
+    const r = await replayAgainst(JSON.stringify({ ok: true }));
+
+    expect(r.queueExistedBefore).toBe(true);
+    expect(r.queueContentBefore).toContain("BR-080-E");
+
+    expect(r.queueExistsAfter).toBe(true);
+    expect(r.queueContentAfter).toContain("BR-080-E");
+
+    expect(r.code).toBe(1);
+    expect(r.tools).toEqual(["igris_brief_sync"]);
+    expect(r.stdout).not.toContain("replayed via");
+    expect(r.stderr).toContain("replay UNCONFIRMED");
+  });
+
+  it("control: a readable SUCCESS envelope still replays, drains, and clears the queue", async () => {
+    // SELF-NEGATIVE-CONTROL — same wake-up path, same fixture, same helper;
+    // only the response tier differs. Without this, the two guards above would
+    // also pass if `dispatchEntry` had simply been made to always fail.
+    const r = await replayAgainst(mcpOkEnvelope("Brief BR-080-E synced."));
+
+    expect(r.queueExistedBefore).toBe(true);
+    expect(r.queueExistsAfter).toBe(false);
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(["igris_brief_sync", "igris_sync_queue_drain"]);
+    expect(r.stdout).toContain("replayed via igris_brief_sync");
   });
 });

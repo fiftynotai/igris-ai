@@ -31,6 +31,26 @@ export interface CapturedCall {
 }
 
 /**
+ * The JSON-RPC 2.0 success envelope the brain's `/mcp` endpoint actually
+ * returns for a `tools/call` that did not throw.
+ *
+ * BR-080: the CLI now READS this body rather than trusting `statusCode === 200`
+ * (a thrown tool error also arrives at HTTP 200, wrapped as
+ * `{content:[...], isError:true}`). A fixture returning a bare `{ok:true}` is
+ * therefore classified INDETERMINATE — correct, but it means the shorthand
+ * bodies these tests used are no longer "a success". Fixtures that need a
+ * success must speak the real protocol; use this helper rather than hand-rolling
+ * the shape per test.
+ */
+export function mcpOkEnvelope(text = "ok"): string {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    result: { content: [{ type: "text", text }] },
+    id: 1,
+  });
+}
+
+/**
  * Build a loopback HTTP server that captures every request body (parsed as
  * JSON-RPC if possible) and lets the test choose how to respond.
  *
