@@ -223,6 +223,12 @@ async function crawl(): Promise<void> {
     "/api/health",
     "/api/projects",
     "/api/summary?project=demo",
+    // BR-082 — the UNSCOPED read is a second reachable state of the same
+    // endpoint (the predicate is dropped rather than a project supplied), so it
+    // is crawled as its own path. A read-only claim about `/api/summary` that
+    // only ever exercised the scoped branch would not cover the branch the
+    // Overview now sits on by default when the operator clears scope.
+    "/api/summary",
     "/api/graph/stats?project=demo",
     "/api/graph?project=demo",
     ...LAYER_PATHS,

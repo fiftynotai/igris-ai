@@ -305,10 +305,24 @@ export function seedLayerBrain(dbPath: string): void {
   insEdge.run("brief", "TD-312", "goal", "GL-001", "serves_goal", 1.0, "observed", '{"deleted":1}');
   insEdge.run("learning", "1", "goal", "GL-001", "serves_goal", 1.0, "observed", "{}");
 
-  db.prepare(
+  // --- instances ---------------------------------------------------------
+  //  id  | project | status   what it makes observable
+  //  i-1 | demo    | active   the SCOPED count
+  //  i-2 | other   | active   the widening (BR-082: 1 -> 3 when scope clears)
+  //  i-3 | NULL    | active   "everything" is STRICTLY more than "all projects"
+  //  i-4 | demo    | idle     `status = 'active'` is still doing work
+  //
+  // `project_slug` is nullable with no FK (db.ts:328-340), so i-3 is a real
+  // state rather than a contrived one — it is the TD-326 shape (a row that
+  // belongs to no project) on the one table this dashboard page counts.
+  const insInstance = db.prepare(
     `INSERT INTO instances (id, machine_hostname, project_slug, status)
-     VALUES ('i-1', 'host', 'demo', 'active')`,
-  ).run();
+     VALUES (?, 'host', ?, ?)`,
+  );
+  insInstance.run("i-1", "demo", "active");
+  insInstance.run("i-2", "other", "active");
+  insInstance.run("i-3", null, "active");
+  insInstance.run("i-4", "demo", "idle");
 
   // --- suggestions (FR-241) ----------------------------------------------
   //  project | module           | priority | status    | created

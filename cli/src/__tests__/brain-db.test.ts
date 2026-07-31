@@ -802,6 +802,49 @@ describe("brain-db — briefStatusSummary (summary-only counts)", () => {
     expect(s.by_status).toEqual({ Ready: 2, "In Progress": 1, Done: 1 });
     expect(s.by_priority).toEqual({ P0: 2, P1: 1, Unset: 1 });
   });
+
+  it("BR-082 — a null slug DROPS the predicate, counting every row", async () => {
+    seedBrain((db) => {
+      db.exec(BRIEF_STATUS_DDL);
+      const ins = db.prepare(
+        "INSERT INTO brief_status (project, brief_id, title, status, priority) VALUES (?, ?, ?, ?, ?)",
+      );
+      ins.run("demo", "FR-1", "t1", "Ready", "P0");
+      ins.run("demo", "FR-2", "t2", "In Progress", "P1");
+      ins.run("other", "FR-9", "t9", "Done", "P2");
+      // NOTE for a future editor: there is deliberately no project-less row
+      // here, and it is not an oversight. `brief_status.project` is `NOT NULL`
+      // with a declared FK to `projects(slug)`, and better-sqlite3 enables
+      // `foreign_keys` by DEFAULT on every handle — so neither a NULL nor an
+      // orphan is reachable, and for THIS table "everything" and "all
+      // projects" are the same set. (Do NOT restate this as "engine-enforced":
+      // that phrasing implies the brain's connection differs from the CLI's,
+      // it does not, and the wrong version cost a review round.) The
+      // table where they genuinely diverge is `instances` (nullable
+      // `project_slug`, no FK), and that divergence is exercised end-to-end in
+      // `dashboard-server.test.ts`.
+    });
+    const m = await getModule();
+
+    const demo = m.briefStatusSummary("demo");
+    const other = m.briefStatusSummary("other");
+    const all = m.briefStatusSummary(null);
+
+    expect(all.total).toBe(3);
+    expect(all.by_status).toEqual({ Ready: 1, "In Progress": 1, Done: 1 });
+    expect(all.by_priority).toEqual({ P0: 1, P1: 1, P2: 1 });
+
+    // Assert-then-diff. The widened read must equal the SUM of the scoped
+    // reads and exceed either one, or "null widens" is unobservable.
+    expect(all.total).toBe(demo.total + other.total);
+    expect(all.total).toBeGreaterThan(demo.total);
+
+    // Self-negative-control: the predicate still bites for a real slug, so
+    // "null widens" cannot be confused with "the WHERE clause was deleted".
+    expect(demo.total).toBe(2);
+    expect(demo.by_status).toEqual({ Ready: 1, "In Progress": 1 });
+    expect(other.by_status).toEqual({ Done: 1 });
+  });
 });
 
 describe("brain-db — upcomingGoals (active goals within N days)", () => {

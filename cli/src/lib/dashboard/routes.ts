@@ -166,12 +166,47 @@ export function projects(cwd: string = process.cwd()): ProjectsPayload {
 }
 
 /**
- * `GET /api/summary?project=<slug>` — brief counts + the active-instance count.
+ * `GET /api/summary[?project=<slug>]` — brief counts + the active-instance count.
  *
  * `briefStatusSummary` and `listInstances` both carry their own L-133 table
  * preflight, so a brain missing the migration yields empty counts rather than a
  * throw. The try/catch below is the belt for anything below that (a corrupt
  * file, a locked DB).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * OMITTING `project` IS A REQUEST, NOT A MISTAKE (BR-082)
+ * ─────────────────────────────────────────────────────────────────────────
+ * FR-238 answered a project-less request with `degraded: "no project selected"`
+ * and empty counts. That was right while the ONLY caller was an Overview page
+ * that could not clear its scope; BR-082 gives the page a cleared state, and a
+ * page whose deliberate "every project" reads as a DEGRADATION would be a
+ * dashboard reporting its own feature as a fault.
+ *
+ * So `project === null` now drops the predicate on both reads. It is NOT a new
+ * query in this file — both accessors already build their WHERE conditionally
+ * (`briefStatusSummary`'s `summaryWhere` mirror; `listInstances`'s
+ * `if (args.project)`), and the null simply takes the branch that was already
+ * there. `degraded` stays reserved for a brain that could not be read.
+ *
+ * WHICH SET THIS IS — and it is not the same answer for both counts.
+ * Unfiltered means every row of each table: the "everything" set, not the "sum
+ * over the registered projects" set.
+ *
+ * - `briefs` — the two sets COINCIDE. `brief_status.project` is `NOT NULL`
+ *   with a declared FK to `projects(slug)`, and better-sqlite3 enables
+ *   `foreign_keys` by DEFAULT on every handle, so an orphan cannot be created
+ *   in the first place — deleting a project that still has briefs is BLOCKED.
+ *   Measured, not inferred: `brain-db.ts`'s note records the probe.
+ * - `instances` — they do NOT. `project_slug` is nullable with no FK, so an
+ *   ACTIVE session belonging to no project is counted by the unfiltered read
+ *   and by no scoped one. `dashboard-server.test.ts` seeds exactly that row and
+ *   asserts the difference is 1, rather than leaving the claim to prose.
+ *
+ * Measured on the operator brain 2026-07-31 both are 0 (`brief_status` 0 of
+ * 1,803; active `instances` 0 of 17) — but 0 today is a reading, not a
+ * guarantee. The table that diverges loudly is `suggestions`, at 377 rows
+ * (TD-326), and NO field of this payload counts suggestions. `pages/Overview.tsx`
+ * states the same thing at the surface the operator actually reads.
  */
 export function summary(project: string | null): SummaryPayload {
   const empty = { total: 0, by_status: {}, by_priority: {} };
@@ -184,18 +219,11 @@ export function summary(project: string | null): SummaryPayload {
       degraded: { reason: `brain database not found at ${brainDbPath()}` },
     };
   }
-  if (project === null) {
-    return {
-      project: null,
-      briefs: empty,
-      instances: { active: 0 },
-      generated_at: now(),
-      degraded: { reason: "no project selected" },
-    };
-  }
   try {
     const briefs = briefStatusSummary(project);
-    const instances = listInstances({ project, status: "active" });
+    const instances = listInstances(
+      project === null ? { status: "active" } : { project, status: "active" },
+    );
     return {
       project,
       briefs,

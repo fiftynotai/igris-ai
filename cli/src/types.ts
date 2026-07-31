@@ -865,8 +865,14 @@ export interface ProjectsPayload {
   degraded: DashboardDegraded | null;
 }
 
-/** `GET /api/summary?project=<slug>`. */
+/** `GET /api/summary[?project=<slug>]`. */
 export interface SummaryPayload {
+  /**
+   * The scope these counts were taken at. `null` means the project predicate
+   * was DROPPED (BR-082) — every `brief_status` row and every active instance,
+   * including any whose project is NULL or unregistered. It is not "the sum
+   * over the registered projects", and it is not a degradation.
+   */
   project: string | null;
   briefs: AssessBriefs;
   instances: { active: number };

@@ -34,7 +34,15 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -484,6 +492,132 @@ describe("AC #5 · the four views share ONE list and ONE detail", () => {
       const src = code(join(DASH_SRC, "pages", "layers", name));
       expect(src.length, name).toBeGreaterThan(2000);
       expect(src).toContain("LayerViewProps");
+    }
+  });
+});
+
+/**
+ * BR-082 — the project scope has ONE implementation, mechanically.
+ *
+ * FR-241 lifted the three-state scope machine into `lib/useProjectScope.ts` so
+ * `Layers` and `Triage` could not fork it. `Overview.tsx` was never migrated
+ * and kept its own `useState` plus its own copy of the `default_project`
+ * ladder — which is how a page called OVERVIEW shipped with no way to clear its
+ * scope. Nothing in the suite could see that, because "there are two copies" is
+ * a claim about FILES.
+ *
+ * PROVES: no shipped client file outside the two shared modules renders the
+ * scope control or re-derives the default-project ladder.
+ * DOES NOT PROVE: that the shared hook is CORRECT — that the clear survives the
+ * live beat is behavioural and belongs in a browser (G-BR-9 in
+ * `cli/scripts/browser-gate.mjs`), and the endpoint half is
+ * `dashboard-server.test.ts`.
+ */
+describe("BR-082 · the project scope is lifted, not copied", () => {
+  const SCOPE_HOOK = join(DASH_SRC, "lib", "useProjectScope.ts");
+  const SCOPE_CONTROL = join(DASH_SRC, "components", "chrome", "ProjectScope.tsx");
+  /** The markup tell: the control's own aria-label, which the gate also reads. */
+  /** Epoch-ish mtime for the planted control — see the plant site. */
+  const BACKDATE = new Date(2000, 0, 1);
+
+  const CONTROL_MARKUP = /aria-label="Project scope"/;
+  /** The state-machine tell: only the ladder reads the server-resolved default. */
+  const LADDER = /default_project/;
+
+  it("exactly ONE shipped file renders the scope control", () => {
+    const hits = shipped().filter((f) => CONTROL_MARKUP.test(code(f)));
+    expect(hits.map(rel)).toEqual([rel(SCOPE_CONTROL)]);
+  });
+
+  it("exactly ONE shipped file re-derives the default-project ladder", () => {
+    // `lib/api.ts` is the payload MIRROR — it must NAME the field to type it,
+    // and naming a field is not owning the ladder.
+    //
+    // The exemption is COUNTED, not whole-file. Sentinel demonstrated the
+    // difference during BR-082's validation: it appended a complete ladder
+    // re-implementation to `lib/api.ts` and every scan here stayed green,
+    // because a whole-file exemption cannot tell naming from owning. One
+    // occurrence is the type declaration; a second is an implementation.
+    const mirror = join(DASH_SRC, "lib", "api.ts");
+    const mirrorHits = code(mirror).match(new RegExp(LADDER.source, "g")) ?? [];
+    expect(
+      mirrorHits.length,
+      "lib/api.ts names default_project more than once — that is an implementation, not a type",
+    ).toBe(1);
+
+    const hits = shipped().filter((f) => f !== mirror && LADDER.test(code(f)));
+    expect(hits.map(rel)).toEqual([rel(SCOPE_HOOK)]);
+  });
+
+  it("Overview consumes the shared hook and the shared control", () => {
+    const src = code(join(DASH_SRC, "pages", "Overview.tsx"));
+    expect(src).toContain("lib/useProjectScope");
+    expect(src).toContain("components/chrome/ProjectScope");
+    // ...and holds no scope state of its own. Its surviving `useState` calls
+    // are the two payloads; a `string`-typed one would be a slug again.
+    expect(src).not.toMatch(/useState<[^>]*string[^>]*>/);
+  });
+
+  it.each([
+    ["pages/Layers.tsx", join(DASH_SRC, "pages", "Layers.tsx")],
+    ["pages/Triage.tsx", join(DASH_SRC, "pages", "Triage.tsx")],
+    ["pages/Overview.tsx", join(DASH_SRC, "pages", "Overview.tsx")],
+  ])("%s reaches the scope through the hook", (_name, file) => {
+    expect(code(file)).toContain("useProjectScope");
+  });
+
+  it("SELF-NEGATIVE-CONTROL — both detectors fire on a planted copy", () => {
+    // The scans above assert a set of size one. A broken matcher would report
+    // an EMPTY set, and `[]` does not equal `[the shared module]`, so an empty
+    // corpus already fails — but a matcher that cannot see a SECOND copy would
+    // pass forever. Plant one and check both regexes find it.
+    // Planted into the REAL corpus dir, not `tmpdir()`. A control that plants
+    // somewhere `shipped()` never walks proves the REGEX, not the CORPUS — and
+    // the corpus is the half that rots (a new page, a moved directory). This
+    // asserts the scans' own file list would SEE a second copy. Cleaned up in
+    // `finally` so a failure cannot leave a stray file in the source tree.
+    // BACKDATED on write. `dashboard-artifact.test.ts`'s TD-276 stale-dist
+    // guard walks all of `dashboard/src` for the newest mtime and excludes only
+    // `__tests__` segments — this file is in neither exclusion, so a concurrent
+    // run would see a mtime of NOW and fail with "dist/dashboard is STALE",
+    // sending the operator to a rebuild that cannot fix it. Vitest runs files in
+    // parallel and the plant window spans three full corpus walks, so this is a
+    // real race, not a theoretical one. An epoch mtime cannot be the newest.
+    const planted = join(DASH_SRC, "pages", "__SelfNegativeControl.tsx");
+    writeFileSync(
+      planted,
+      [
+        "export function SecondScope() {",
+        '  const [sel, setSel] = useState<string | null>(null);',
+        "  useEffect(() => {",
+        "    if (sel === null) setSel(p.default_project);",
+        "  }, [tick]);",
+        '  return <div role="radiogroup" aria-label="Project scope" />;',
+        "}",
+      ].join("\n"),
+    );
+    utimesSync(planted, BACKDATE, BACKDATE);
+    try {
+      const src = code(planted);
+      expect(CONTROL_MARKUP.test(src)).toBe(true);
+      expect(LADDER.test(src)).toBe(true);
+
+      // The load-bearing half: the scans' OWN corpus must contain it, so a
+      // second copy would actually be counted rather than merely be matchable.
+      const seen = shipped().map(rel);
+      expect(seen).toContain(rel(planted));
+      expect(shipped().filter((f) => CONTROL_MARKUP.test(code(f)))).toHaveLength(2);
+      expect(
+        shipped().filter(
+          (f) => f !== join(DASH_SRC, "lib", "api.ts") && LADDER.test(code(f)),
+        ),
+      ).toHaveLength(2);
+
+      // And the shared modules are really the ones the passing scans matched.
+      expect(CONTROL_MARKUP.test(code(SCOPE_CONTROL))).toBe(true);
+      expect(LADDER.test(code(SCOPE_HOOK))).toBe(true);
+    } finally {
+      rmSync(planted, { force: true });
     }
   });
 });

@@ -46,8 +46,10 @@ export function useProjectScope(tick: number): ProjectScope {
   const [fatal, setFatal] = useState<string | null>(null);
 
   // Refetched on the beat so a `/register` mid-session appears without a
-  // reload. Same ladder as `Overview.tsx`: keep the operator's own choice,
-  // otherwise take the server-resolved default.
+  // reload. This is now the ONLY ladder — BR-082 deleted Overview's copy, and
+  // `dashboard-layers-source.test.ts` asserts mechanically that exactly one
+  // shipped file re-derives it. Keep the operator's own choice, otherwise take
+  // the server-resolved default.
   useEffect(() => {
     const ctrl = new AbortController();
     api

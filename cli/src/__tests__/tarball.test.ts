@@ -527,6 +527,19 @@ interface PackReport {
  *                                   `engine/index.js` the write door boots).
  *   headroom remaining  ~29.4 KB    (30_142 B under the +400 KB ceiling)
  *
+ * BR-082 MEASURED LAST TOO, after its final code-touching step:
+ *   packed              1_684_456    unpacked 6_579_731, 792 entries (UNCHANGED
+ *                                    entry count — it added no file to the pack)
+ *   cumulative delta    +373.6 KB    (382_605 B over PACK_BASELINE_PACKED)
+ *   BR-082's own share  +2_920 B     against FR-241's 1_681_309
+ *   headroom remaining  ~26.4 KB     (26_995 B under the +400 KB ceiling)
+ *
+ * BR-082 DELETED a client implementation and still grew the tarball, which is
+ * the FR-241 phase-7 lesson repeating: Vite MINIFIES the client so comments
+ * there cost zero, while `tsc` preserves the comments added to `cli/src/lib/**`
+ * verbatim into `dist/lib/**`. Deleting client code does not buy packed
+ * headroom; documenting server code spends it.
+ *
  * THE CEILING DID NOT MOVE FOR FR-241, and none of its three pre-declared cut
  * levers was needed. It planned against ~68 KB and spent ~39 KB. The reason the
  * figure is that small is worth recording, because it is the same reason
@@ -558,7 +571,7 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. ~29.4 KB is what is left, and it is
+ * READ THAT BEFORE PLANNING THE NEXT ONE. ~26.4 KB is what is left, and it is
  * smaller again than what FR-241 spent. If the next brief needs more, the answer
  * is to cut or to vendor less — NOT to raise `PACK_HARD_CEILING_DELTA`, for the
  * reason the paragraphs above spend thirty lines on. (FR-241 was told the same

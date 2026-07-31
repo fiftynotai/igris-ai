@@ -80,7 +80,7 @@ changes a row.
 |---|---|---|---|
 | `GET` | `/api/health` | `{ok, cli_version, brain:{present,path}, bridge:{available,reason}, generated_at, degraded}` | `paths.ts#brainDbPath` + `brain-bridge.ts#probe` |
 | `GET` | `/api/projects` | `{projects:[{slug,name,path,status,last_session_at}], default_project, generated_at, degraded}` | `registry.ts#listProjects` + `dashboard/default-project.ts` |
-| `GET` | `/api/summary?project=<slug>` | `{project, briefs:{total,by_status,by_priority}, instances:{active}, generated_at, degraded}` | `brain-db.ts#briefStatusSummary` + `#listInstances` |
+| `GET` | `/api/summary[?project=<slug>]` | `{project, briefs:{total,by_status,by_priority}, instances:{active}, generated_at, degraded}` | `brain-db.ts#briefStatusSummary` + `#listInstances` |
 | `GET` | `/api/graph/stats?project=<slug>` | `{project, stats, edge_resolution, truncated, truncation_reason, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` |
 | `GET` | `/api/graph?project=<slug>` | `{project, nodes, edges, stats, truncated, truncation_reason, query, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` + `dashboard/graph-query.ts` |
 | `GET` | `/api/briefs` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `brain-bridge.ts#loadLayerReaders` → `briefs-read.ts#listBriefs` |
@@ -95,6 +95,28 @@ changes a row.
 | `GET` | `/api/suggestions?project=<slug>&status=&priority=&source_module=` | `{items, count, total, limit, offset, facets, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
 | **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
+
+#### `/api/summary` — omitting `project` is a request, not a mistake (BR-082)
+
+`project` is **optional**. Omitted, the predicate is dropped and the response
+carries `project: null` with counts over every row — and that is a normal
+answer, not a `degraded` one. Until BR-082 it returned empty counts and
+`degraded: "no project selected"`, which was right only while the sole caller
+was an Overview page that could not clear its scope.
+
+**The unscoped read is `everything`, which is not the same set as "all
+projects", and the difference is per-table:**
+
+| Field | Unscoped meaning | Same as the sum over projects? |
+|---|---|---|
+| `briefs.*` | every `brief_status` row | **yes** — `project` is `NOT NULL` with a declared FK to `projects(slug)`, and better-sqlite3 enables `foreign_keys` by default on **every** handle (measured), so deleting a project that still has briefs is BLOCKED rather than orphaning them. Measured against the real schema: `DELETE FROM projects WHERE slug='igris-ai'` (654 briefs) → `FOREIGN KEY constraint failed`. Note this makes `doctor --remove-orphans` throw on such a project — see the CLI-connection note in `brain-db.ts`. |
+| `instances.active` | every active instance | **no** — `project_slug` is nullable with no FK, so a session belonging to no project is in this count and in no project's count |
+
+`dashboard-server.test.ts` seeds exactly such a project-less session and asserts
+the difference is 1, so the distinction is a gate rather than a paragraph. It is
+TD-326's `everything` scope, **not** its `brain-level` one (`project IS NULL`),
+which this endpoint does not offer. Nothing here counts `suggestions`, the table
+where the two sets diverge by 377 rows.
 
 ### Layer views (FR-240) — the browse/detail surface
 
@@ -728,11 +750,35 @@ checkbox arrived as an optional `select` field on `RecordListRow` (rendered as a
 The same reasoning one level up produced a **shared client state layer**: the
 project-scope state machine that used to live inside `pages/Layers.tsx` is now
 `lib/useProjectScope.ts` plus `components/chrome/ProjectScope.tsx`, consumed by
-`Layers` and `Triage` alike. Two copies of a scope selector is the same drift the
-record components exist to prevent, one level above where the FR-240 AC was
-looking. Everything a reviewer could get wrong on the triage page — the selection
-algebra, the destructiveness tiers, the confirm copy, the chunking and the result
-merge — lives in the pure, node-tested `triage/model.ts`, not in a component.
+`Layers`, `Triage` and — since BR-082 — `Overview`. Two copies of a scope
+selector is the same drift the record components exist to prevent, one level
+above where the FR-240 AC was looking. Everything a reviewer could get wrong on
+the triage page — the selection algebra, the destructiveness tiers, the confirm
+copy, the chunking and the result merge — lives in the pure, node-tested
+`triage/model.ts`, not in a component.
+
+**BR-082 is what that layer was for, and it shows why a fourth consumer is
+cheaper than a fourth copy.** `Overview` was the one page FR-241 did not
+migrate; it kept its own `useState` plus its own copy of the `default_project`
+ladder, and its chip strip had **no clear affordance at all** — so a page called
+OVERVIEW could only ever show one project. The fix deleted that copy rather than
+adding a third state to it, because the third state (`null` = explicitly every
+project, distinct from `undefined` = not resolved yet) is precisely the thing
+the FR-240 browser gate caught being got wrong: with only two states the ladder
+re-applies on every `live.tick` and the clear is silently undone within five
+seconds. `dashboard-layers-source.test.ts` now asserts mechanically that exactly
+one shipped file renders the scope control and exactly one re-derives the
+ladder.
+
+**What the unscoped Overview shows: the same four cards, each read with its
+project predicate dropped.** Per-project rows were rejected (that is a list
+view, and the list views are `#/layers/*`); a reduced card set was rejected (the
+card whose brain-wide meaning is least doubtful is GRAPH SCALE, which was
+already whole-brain — `/api/graph/stats` needed no change at all, only the
+page's own `selected === null` branch had been blanking it). The BRIEFS footer
+reads `everything` rather than "all projects" because dropping a predicate
+counts rows that belong to no project — see the `/api/summary` section above for
+which cards that actually changes.
 
 **No network fetch at runtime.** No CDN scripts, no CDN fonts, no remote
 assets — everything is served from the local bundle. This is asserted against
@@ -1006,7 +1052,7 @@ the server is `node:http`.
 | `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server` |
 | `brain-mcp-server/src/tools/__tests__/` + `engine/components/goals/__tests__/read.test.ts` | FR-240 — the three pure readers, `pure-read-purity.test.ts` (**with a fixture the scan MUST flag, so the scan has a self-negative-control**), and `wrapper-wire-parity.test.ts` golden strings proving the MCP wire output did not move |
 | `cli/tests/integration/dashboard.bats` | lifecycle, double invocation, stale locks, `--port` hard-fail, degraded brain, pack-extract smoke, `/api/graph` on a seeded and a missing brain, **the nine layer endpoints on a seeded and a missing brain (T23)**, and an exact-set assertion over the `--smoke` probe list — which since FR-241 carries `/api/suggestions` **and** the entry `POST /api/triage`, whose probe sends a deliberately invalid action and expects a **400**, so `--smoke` proves the write pipeline is routed while mutating nothing |
-| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. **Not** part of `npm test`; see below |
+| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. Extended again by BR-082 with G-BR-9 (the Overview scope clear, held across two measured live beats) and two more in-page counters, `__gate.healthFetch` / `__gate.summaryFetch` — which witness LIVENESS rather than stillness, since a scope that "survived" a paused beat proves nothing. **Not** part of `npm test`; see below |
 
 Browser-side tests live under `cli/dashboard/src/**/__tests__/` and are collected
 by the **`cli` vitest run** (verified empirically with `npx vitest list` before
@@ -1080,14 +1126,17 @@ the gate prints the exact command.
 | **G-BR-5** | ACCESS, not bytes: a brief's body, a learning's content and a context doc's text are READABLE in the live DOM, and two different records render two different bodies | markdown fidelity or XSS safety — `markdown/__tests__/` own both |
 | **G-BR-6** | `prefers-reduced-motion` really collapses animation in the page, with the un-emulated reading as the paired control | that each animation is gated in JS — `motion.test.ts` T17 and `Cursor.tsx` own that |
 | **G-BR-7** | the hoisted scope cache is real in the browser: a drill issues exactly one new `/api/graph`, backing out issues **zero** and restores the whole-brain readout, and a REFRESH on the same surface issues one — so the zero is a measured zero. Plus, in pixels, that the back-out OPENS at its settled layout extent while a cold REFRESH opens as a clump at the origin and expands out of it | that the restored coordinates equal the pre-drill ones. Nothing in the page exposes coordinates, and a settled-frame comparison cannot discriminate: d3-force's cold layout for a fixed node array is deterministic, so a restored layout and a cold one converge to the same picture. The seed is applied but NOT pinned (`instance.ts` sets `x`/`y`, not `fx`/`fy`), so a back-out is a short re-relaxation rather than a freeze-frame — measured at ~85% of settled extent versus ~61% cold. The cache MECHANICS are the sibling: `cli/dashboard/src/lib/__tests__/graphCache.test.ts` |
+| **G-BR-8** (FR-241) | the triage write path end to end in a browser: the scoped queue agrees with the endpoint, the row badges distinguish a permanent reject from a recurring one, CANCEL issues **zero** POSTs (an independent in-page counter), a mixed selection's confirm dialog names the tier-3 subset rather than the selection size, a tier-3 bulk demands the count typed, and a world with the write surface down renders the affordances *disabled* rather than broken | that the brain applied the right mutation — `dashboard-triage-endpoint.test.ts` and `dashboard-triage-parity.test.ts` own that. The gate reads rows leaving a list, not rows changing in a table |
+| **G-BR-9** (BR-082) | the Overview opens scoped to `default_project`, re-clicking the checked chip **clears** the scope, every card widens to the value its UNSCOPED endpoint reports, and that widened state is still on screen after the page has issued ≥2 further `/api/health` polls **and** ≥2 further `/api/summary` reads across ≥10 s — so the clear survived the beat that used to undo it | that the hook's `undefined`-vs-`null` distinction is the MECHANISM. This reads a page, not a state machine, and would pass for any implementation that keeps the clear. The mechanism's siblings are `dashboard-layers-source.test.ts` (exactly one scope implementation, and Overview consumes it) and `useProjectScope.ts`'s docblock. Nor that the NUMBERS are right — it asserts DOM-vs-endpoint agreement, and `dashboard-server.test.ts` owns what the endpoint should say |
 
 **Every gate has a demonstrated failing counterpart, and the script enforces
 it.** `--mutate=<name>` injects a specific defect and INVERTS the verdict: the
 run succeeds only if the named gate actually fails, and a mutation run in which
-everything still passes is reported as `VACUOUS` and exits non-zero. Run
-`--list-mutations` for the eight. All eight were confirmed to fail their gate on
-2026-07-30 — a guard whose only observed output is "pass" is indistinguishable
-from a broken one.
+everything still passes is reported as `VACUOUS` and exits non-zero.
+`--list-mutations` prints the current set and is the only reliable count — a
+guard whose only observed output is "pass" is indistinguishable from a broken
+one. Confirmation dates by family: FR-240's eight on 2026-07-30, FR-241's four
+(`br8-*`) with that brief, BR-082's two (`br9-*`) on 2026-07-31.
 
 **Two things the gate is deliberately careful about**, both of which would
 otherwise fake a pass:
@@ -1097,6 +1146,13 @@ otherwise fake a pass:
    reports `+0` for a page animating flat out. Four tabs are open, so every
    navigation claims focus first, G-BR-4a prints the observed `visibilityState`,
    and G-BR-4b is the live proof that rAF can still fire in the tab measured.
+   G-BR-9 depends on the same property for a different reason: `useLive` stops
+   polling on `document.hidden`, so a "the scope was still cleared after two
+   beats" reading taken on a backgrounded tab would be a reading of a frozen
+   page. It therefore closes its window on OBSERVED `/api/health` and
+   `/api/summary` request counts rather than on a sleep, asserts
+   `visibilityState`, and fails with the counts it did see if the beats never
+   arrive.
 2. **A filter click waits for the list to STOP MOVING before measuring
    coordinates.** The filter vocabularies are derived from the loaded rows, so
    the strip re-flows when a new payload lands and a click dispatched at

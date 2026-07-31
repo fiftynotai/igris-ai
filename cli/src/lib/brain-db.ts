@@ -661,13 +661,62 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
  * NOT the full brief table (briefs.ts:266-281) — D-A / SKILL.md §4 want only the
  * aggregate counts. L-133 preflight: a brain DB without `brief_status` yields
  * an empty summary (total 0), never a throw, never a CREATE.
+ *
+ * `slug === null` DROPS the project predicate — it does not invent a new query.
+ * The handler this mirrors already builds its `summaryWhere` conditionally
+ * (`briefs.ts:203-210`: `if (args.project)` … else the clause is the empty
+ * string), so an omitted project is the handler's own unfiltered branch rather
+ * than a CLI-side deviation from it. BR-082 needed it for the unscoped
+ * dashboard Overview; `verbs/assess.ts` always passes a slug and is unchanged.
+ *
+ * What the unfiltered branch counts is EVERY `brief_status` row. For THIS
+ * table that equals "the sum over the registered projects", and the mechanism
+ * is worth stating precisely because a WRONG statement of it survived a review
+ * and then caused a REJECT of correct code.
+ *
+ * The mechanism: `project` is `NOT NULL` with a declared FK to `projects(slug)`
+ * (db.ts:283-295), AND better-sqlite3 enables `foreign_keys` BY DEFAULT on
+ * every handle it opens. The brain's explicit `pragma('foreign_keys = ON')`
+ * (db.ts:1315) is belt-and-braces; it is not what makes this hold, and calling
+ * the FK "engine-enforced" implies a distinction between connections that does
+ * not exist.
+ *
+ * MEASURED against the real schema on this connection's exact shape
+ * (`busy_timeout` only, no FK pragma), 2026-07-31:
+ *
+ *     foreign_keys on this handle = 1
+ *     DELETE FROM projects WHERE slug='igris-ai'  (654 briefs)
+ *       -> BLOCKED: FOREIGN KEY constraint failed
+ *
+ * So an orphan cannot be created through this path at all — the coincidence is
+ * enforced rather than merely observed. Corroborating census: 1,803 rows,
+ * 0 NULL, 35 distinct projects, 0 absent from `projects`.
+ *
+ * CONSEQUENCE worth knowing: `registry.ts#deleteProjectRow` issues a bare
+ * DELETE with no cascade, and its caller is `igris doctor --remove-orphans`.
+ * On a project that still has briefs that DELETE THROWS rather than orphaning —
+ * the safe direction — but the throw is UNGUARDED at all four call sites, so it
+ * ABORTS THE WHOLE SWEEP, including orphans that would have deleted cleanly.
+ * Tracked as BR-084.
+ *
+ * Do NOT generalise that to the other tables a caller may widen alongside this
+ * one. `instances.project_slug` is nullable with no FK, so an unfiltered
+ * instance count is strictly the larger set; `suggestions` diverges by 377 rows
+ * (TD-326). Which set a NUMBER means is the caller's statement to make — see
+ * `dashboard/routes.ts#summary` and `pages/Overview.tsx`.
  */
-export function briefStatusSummary(slug: string): AssessBriefs {
+export function briefStatusSummary(slug: string | null): AssessBriefs {
   const handle = getDb();
 
   if (!tableExists(handle, "brief_status")) {
     return { total: 0, by_status: {}, by_priority: {} };
   }
+
+  // `WHERE project = ?` when scoped, no WHERE at all when not — the shape of
+  // handleBriefDashboard's `summaryWhere` (briefs.ts:203-210), built once and
+  // used by both counts exactly as the handler does.
+  const where = slug === null ? "" : "WHERE project = ?";
+  const params = slug === null ? [] : [slug];
 
   // SQL verbatim from handleBriefDashboard:205-211 (status counts) — project
   // filter only, ORDER BY count DESC.
@@ -676,12 +725,12 @@ export function briefStatusSummary(slug: string): AssessBriefs {
       `
       SELECT status, COUNT(*) as count
       FROM brief_status
-      WHERE project = ?
+      ${where}
       GROUP BY status
       ORDER BY count DESC
     `,
     )
-    .all(slug) as { status: string; count: number }[];
+    .all(...params) as { status: string; count: number }[];
 
   // SQL verbatim from handleBriefDashboard:226-232 (priority counts).
   const priorityRows = handle
@@ -689,12 +738,12 @@ export function briefStatusSummary(slug: string): AssessBriefs {
       `
       SELECT priority, COUNT(*) as count
       FROM brief_status
-      WHERE project = ?
+      ${where}
       GROUP BY priority
       ORDER BY count DESC
     `,
     )
-    .all(slug) as { priority: string | null; count: number }[];
+    .all(...params) as { priority: string | null; count: number }[];
 
   const byStatus: Record<string, number> = {};
   for (const r of statusRows) {
@@ -1973,11 +2022,19 @@ export function applyImport(
   const seedRows: { store: string; rowPlan: ImportRowPlan }[] = [];
   let projectRegistered = false;
 
-  // Enforce the same referential integrity the brain does (db.ts sets
-  // `foreign_keys = ON`) so the `brief_status`→`projects(slug)` FK is honored and
-  // the in-txn auto-register (C2) is load-bearing. Scoped to this apply — the CLI
-  // connection default is OFF; restore it after. Set BEFORE the transaction:
-  // SQLite ignores a `foreign_keys` PRAGMA issued inside an open transaction.
+  // Enforce the same referential integrity the brain does so the
+  // `brief_status`→`projects(slug)` FK is honored and the in-txn auto-register
+  // (C2) is load-bearing. Set BEFORE the transaction: SQLite ignores a
+  // `foreign_keys` PRAGMA issued inside an open transaction.
+  //
+  // CORRECTION (BR-082): this block previously read "the CLI connection default
+  // is OFF; restore it after". That was FALSE — better-sqlite3 enables
+  // `foreign_keys` by DEFAULT on every handle, measured. The save/restore below
+  // is therefore a no-op in practice and is kept only because it is correct
+  // under any default. The false comment was read by a reviewer as evidence
+  // that the CLI could orphan `brief_status` rows, and it cost a REJECT round
+  // on correct code. A comment asserting a runtime default is a claim; measure
+  // it before writing it.
   const prevForeignKeys = handle.pragma("foreign_keys", { simple: true });
   handle.pragma("foreign_keys = ON");
   try {

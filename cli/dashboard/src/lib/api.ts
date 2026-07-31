@@ -71,6 +71,7 @@ export interface BriefCounts {
 
 /** Mirrors `SummaryPayload`. */
 export interface SummaryPayload {
+  /** `null` = the project predicate was dropped: every row, not a degradation. */
   project: string | null;
   briefs: BriefCounts;
   instances: { active: number };
@@ -565,9 +566,20 @@ export const api = {
   projects: (signal?: AbortSignal): Promise<ProjectsPayload> =>
     getJson<ProjectsPayload>("api/projects", signal),
 
-  summary: (project: string, signal?: AbortSignal): Promise<SummaryPayload> =>
+  /**
+   * BR-082 — `project: null` OMITS the query param, exactly as `graphStats`
+   * below already did. The server reads an absent `project` as "every project"
+   * rather than as a degradation, so the two brain-wide reads on the Overview
+   * are now requested the same way.
+   */
+  summary: (
+    project: string | null,
+    signal?: AbortSignal,
+  ): Promise<SummaryPayload> =>
     getJson<SummaryPayload>(
-      `api/summary?project=${encodeURIComponent(project)}`,
+      project === null
+        ? "api/summary"
+        : `api/summary?project=${encodeURIComponent(project)}`,
       signal,
     ),
 

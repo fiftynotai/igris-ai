@@ -106,13 +106,26 @@ function seedBrain(dbPath: string, opts: { tables: boolean }): void {
       -- the default_project assertions below discriminating.
       INSERT INTO projects (slug, name, path, status, last_session_at)
         VALUES ('aaa-fixture', 'Fixture', '/tmp/aaa-fixture', 'active', '2020-01-01 00:00:00');
+      -- The FK is DECLARED here to mirror the real schema (db.ts:283-295),
+      -- and it is LIVE: this handle is a plain new Database() with no pragma,
+      -- which better-sqlite3 opens with foreign_keys = 1 (asserted directly
+      -- further down this file). So the INSERT ORDER below is load-bearing --
+      -- every projects row precedes the brief_status rows that reference it,
+      -- and reversing them would fail rather than seed an orphan.
       CREATE TABLE brief_status (
         brief_id TEXT PRIMARY KEY, project TEXT NOT NULL,
-        status TEXT NOT NULL, priority TEXT
+        status TEXT NOT NULL, priority TEXT,
+        FOREIGN KEY (project) REFERENCES projects(slug)
       );
       INSERT INTO brief_status VALUES ('FR-238','demo','in_progress','P1-High');
       INSERT INTO brief_status VALUES ('FR-239','demo','pending','P2-Medium');
       INSERT INTO brief_status VALUES ('TD-001','demo','pending',NULL);
+      -- BR-082: a brief on the OTHER project, with a status and a priority no
+      -- demo brief has. Without it the unscoped /api/summary would return the
+      -- same numbers as the scoped one and the aggregate assertion would pass
+      -- against a route that had ignored the widening entirely.
+      -- (No backticks in this block: it is inside a template literal.)
+      INSERT INTO brief_status VALUES ('BR-001','aaa-fixture','archived','P3-Low');
       CREATE TABLE instances (
         id TEXT PRIMARY KEY, machine_hostname TEXT NOT NULL, machine_os TEXT,
         project_slug TEXT, project_path TEXT, current_brief TEXT,
@@ -124,6 +137,20 @@ function seedBrain(dbPath: string, opts: { tables: boolean }): void {
       );
       INSERT INTO instances (id, machine_hostname, project_slug, status)
         VALUES ('i-1', 'host', 'demo', 'active');
+      -- BR-082: same reason as the brief above — the active-instance count has
+      -- to DISAGREE between the two scopes, or the widened read is unfalsifiable.
+      INSERT INTO instances (id, machine_hostname, project_slug, status)
+        VALUES ('i-2', 'host', 'aaa-fixture', 'active');
+      -- ...and one that is NOT active, so "active" is still doing work in both.
+      INSERT INTO instances (id, machine_hostname, project_slug, status)
+        VALUES ('i-3', 'host', 'aaa-fixture', 'idle');
+      -- BR-082, and this row is the interesting one: instances.project_slug is
+      -- NULLABLE with no FK (db.ts:328-340), so an ACTIVE session that belongs
+      -- to no project is a real state. It is why the unscoped read is
+      -- "everything" and NOT "all projects" -- the two counts differ by exactly
+      -- this row, which is the TD-326 shape on this page's own data.
+      INSERT INTO instances (id, machine_hostname, project_slug, status)
+        VALUES ('i-4', 'host', NULL, 'active');
     `);
   }
   db.close();
@@ -428,10 +455,125 @@ describe("T3 — the four endpoints against a populated brain", () => {
     expect(s.degraded).toBeNull();
   });
 
-  it("/api/summary with no project degrades rather than guessing", async () => {
-    const s = await json<{ project: null; degraded: { reason: string } }>("/api/summary");
-    expect(s.project).toBeNull();
-    expect(s.degraded.reason).toContain("no project selected");
+  // BR-082 — this REPLACES "no project degrades rather than guessing". That
+  // contract was correct while the only caller was an Overview page with no
+  // clear affordance; the page now has one, and answering its deliberate
+  // "every project" with `degraded` would report a feature as a fault.
+  interface SummaryShape {
+    project: string | null;
+    briefs: {
+      total: number;
+      by_status: Record<string, number>;
+      by_priority: Record<string, number>;
+    };
+    instances: { active: number };
+    degraded: { reason: string } | null;
+  }
+
+  it("/api/summary with NO project aggregates every project, undegraded", async () => {
+    const scoped = await json<SummaryShape>("/api/summary?project=demo");
+    const all = await json<SummaryShape>("/api/summary");
+
+    expect(all.project).toBeNull();
+    // Not a degradation. The old `no project selected` reason must be GONE —
+    // asserted by absence of the string, not by `degraded === null` alone, so
+    // a route that reintroduced it under a different field still fails.
+    expect(all.degraded).toBeNull();
+    expect(JSON.stringify(all)).not.toContain("no project selected");
+
+    // Assert-then-diff: the aggregate must EXCEED the scoped read, or the
+    // widening is unobservable. Fixture: demo has 3 briefs, aaa-fixture 1.
+    expect(scoped.briefs.total).toBe(3);
+    expect(all.briefs.total).toBe(4);
+    expect(all.briefs.total).toBeGreaterThan(scoped.briefs.total);
+
+    // ...and it must be a real GROUP BY over the widened set, not the scoped
+    // map with a bigger total: `archived` and `P3-Low` exist ONLY on the row
+    // belonging to the other project.
+    expect(scoped.briefs.by_status.archived).toBeUndefined();
+    expect(all.briefs.by_status.archived).toBe(1);
+    expect(all.briefs.by_status.pending).toBe(2);
+    expect(scoped.briefs.by_priority["P3-Low"]).toBeUndefined();
+    expect(all.briefs.by_priority["P3-Low"]).toBe(1);
+    // The null-priority label survives the widening.
+    expect(all.briefs.by_priority.Unset).toBe(1);
+
+    // The instance count widens too, and `status = 'active'` still bites: the
+    // fixture has an idle instance on the other project that neither counts.
+    expect(scoped.instances.active).toBe(1);
+    expect(all.instances.active).toBe(3);
+  });
+
+  it("/api/summary unscoped is EVERYTHING, which is strictly more than all projects", async () => {
+    // The honesty gate. `instances.project_slug` is nullable, so an active
+    // session belonging to NO project is a real state — and the unscoped read
+    // includes it. "All projects" and "everything" are therefore different
+    // numbers here, and the page that renders this must say which it shows.
+    const all = await json<SummaryShape>("/api/summary");
+    const perProject = await Promise.all(
+      ["demo", "aaa-fixture"].map((p) =>
+        json<SummaryShape>(`/api/summary?project=${p}`),
+      ),
+    );
+    const summed = perProject.reduce((n, s) => n + s.instances.active, 0);
+
+    expect(summed).toBe(2);
+    expect(all.instances.active).toBe(3);
+    expect(all.instances.active - summed).toBe(1); // the project-less session
+
+    // ...while the brief counts reconcile, and that is a property of the
+    // SCHEMA rather than of this fixture's data: `brief_status.project` is
+    // NOT NULL with a live FK to projects(slug), so neither a NULL nor an
+    // orphan is reachable. The next test proves the unreachability directly.
+    expect(perProject.reduce((n, s) => n + s.briefs.total, 0)).toBe(
+      all.briefs.total,
+    );
+  });
+
+  it("a project with briefs CANNOT be deleted — the FK is live on a plain handle", () => {
+    // BR-082 shipped a claim that BRIEFS "cannot diverge, by construction —
+    // engine-enforced FK". Warden rejected it, reasoning that only the BRAIN
+    // connection sets `foreign_keys = ON` while the CLI handle leaves it off,
+    // so `doctor --remove-orphans` could orphan rows. That reasoning came from
+    // a comment in `brain-db.ts` which was itself FALSE.
+    //
+    // Measured instead of argued: better-sqlite3 enables `foreign_keys` by
+    // DEFAULT, so the FK is live on a handle that sets no pragma at all — which
+    // is the shape `registry.ts#getDb` and `brain-db.ts#openDb` both open.
+    //
+    // PROVES: an orphan is unreachable through a plain DELETE, so the unscoped
+    //   BRIEFS count cannot exceed the sum over projects by that route.
+    // Does NOT prove: that no other path can orphan a row (a raw sqlite3 CLI
+    //   with the pragma off, or a future handle that disables it, both could).
+    //   Sibling: the census in `brain-db.ts`'s header.
+    const db = new Database(join(sandbox, "memory", "knowledge.db"));
+    try {
+      // No `foreign_keys` pragma — deliberately. This is the CLI's own shape.
+      expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+      expect(() =>
+        db.exec("DELETE FROM projects WHERE slug = 'aaa-fixture'"),
+      ).toThrow(/FOREIGN KEY constraint failed/);
+
+      // SELF-NEGATIVE-CONTROL: with the pragma explicitly OFF the same DELETE
+      // succeeds, so the throw above is attributable to the FK and not to some
+      // unrelated guard.
+      db.pragma("foreign_keys = OFF");
+      expect(() =>
+        db.exec("DELETE FROM projects WHERE slug = 'aaa-fixture'"),
+      ).not.toThrow();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("/api/summary for an UNKNOWN project is empty, not the aggregate", async () => {
+    // The self-negative-control for the test above. If the route had widened by
+    // treating any falsy/unmatched project as "no filter", this would return 4.
+    const s = await json<SummaryShape>("/api/summary?project=no-such-project");
+    expect(s.project).toBe("no-such-project");
+    expect(s.briefs.total).toBe(0);
+    expect(s.instances.active).toBe(0);
+    expect(s.degraded).toBeNull();
   });
 
   it("/api/graph/stats NEVER returns nodes or edges (R8 structural fence)", async () => {

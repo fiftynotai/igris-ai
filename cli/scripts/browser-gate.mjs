@@ -138,6 +138,15 @@ const MUTATIONS = {
     gate: "G-BR-8f",
     how: "assert the write buttons are PRESENT in the world whose write surface is unavailable — the 'disabled, not broken' claim, inverted",
   },
+  // --- BR-082 -------------------------------------------------------------
+  "br9-rescope-during-window": {
+    gate: "G-BR-9c",
+    how: "re-select the project INSIDE the two-beat window — the end state the FR-240 ladder defect produced (the chip re-checks itself and the counts fall back), so the LATE reading is the only thing that can catch it",
+  },
+  "br9-count-from-scoped": {
+    gate: "G-BR-9b",
+    how: "assert the CLEARED Overview's brief count equals the SCOPED endpoint total — a page that ignored the clear entirely would satisfy this",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -662,7 +671,19 @@ const INSTRUMENT = `
   // about a request that did NOT happen, and only an independent counter can
   // make it. Counting server-side would not do — the question is what the PAGE
   // did, and a server log cannot tell a triage POST from any other.
-  w.__gate = { raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0, triagePost: 0 };
+  // \`healthFetch\`/\`summaryFetch\` are BR-082's witnesses, and they witness
+  // LIVENESS rather than stillness. "The cleared scope survived two live beats"
+  // is only a claim if the beats actually happened — a backgrounded tab stops
+  // polling entirely (\`useLive\` pauses on \`document.hidden\`), and a scope that
+  // survived a PAUSED beat proves nothing at all. Counting the page's own
+  // \`/api/health\` requests is what turns the waiting window from a sleep into a
+  // measurement; \`/api/summary\` is the second half, because it is the request
+  // the SCOPE-bearing effect issues, so a non-zero delta proves the effect that
+  // would have re-applied the default ladder really did re-run.
+  w.__gate = {
+    raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0, triagePost: 0,
+    healthFetch: 0, summaryFetch: 0,
+  };
   const raf = w.requestAnimationFrame.bind(w);
   w.requestAnimationFrame = (cb) => raf((t) => { w.__gate.raf++; return cb(t); });
   if (w.CanvasRenderingContext2D) {
@@ -681,6 +702,11 @@ const INSTRUMENT = `
     w.__gate.fetch++;
     // \`/api/graph\` EXACTLY — not \`/api/graph/stats\`, which the overview polls.
     if (/(^|\\/)api\\/graph(\\?|$)/.test(url)) w.__gate.graphFetch++;
+    if (/(^|\\/)api\\/health(\\?|$)/.test(url)) w.__gate.healthFetch++;
+    // Matches BOTH \`api/summary\` and \`api/summary?project=x\` — the scoped and
+    // the unscoped form are the same request to this counter ON PURPOSE: what
+    // it measures is that the effect FIRED, not which scope it asked for.
+    if (/(^|\\/)api\\/summary(\\?|$)/.test(url)) w.__gate.summaryFetch++;
     if (method === 'POST' && /(^|\\/)api\\/triage(\\?|$)/.test(url)) w.__gate.triagePost++;
     return origFetch.apply(w, a);
   };
@@ -1217,6 +1243,58 @@ async function graphDrill(tab, slug) {
   `);
   if (ok === null) throw new Error("graphDrill: no `// DRILL` select on this page");
 }
+
+/**
+ * Poll `fn` until `ok(value)` or the deadline, and return the LAST reading
+ * either way. It never throws.
+ *
+ * `Tab#until` throws on timeout, which `runGate` records as a check called
+ * `threw` — a verdict that names no gate, prints no reading, and does not match
+ * the mutation predictor. For a gate whose whole subject is "what does this
+ * page look like AFTER a while", the timed-out reading IS the evidence, so it
+ * has to reach `check()` rather than an exception handler.
+ */
+async function pollFor(fn, ok, { timeout = 15_000, every = 250 } = {}) {
+  const deadline = Date.now() + timeout;
+  let last = await fn();
+  while (!ok(last) && Date.now() < deadline) {
+    await sleep(every);
+    last = await fn();
+  }
+  return last;
+}
+
+/**
+ * ONE reading of the Overview: its stated scope, its checked chip, the three
+ * card metrics, the BRIEFS footer label, and the tab's visibility.
+ *
+ * `data-scope` and `data-card` are attributes `pages/Overview.tsx` renders for
+ * this gate to read; `.shell-metric` alone is ambiguous (BRIEFS, INSTANCES and
+ * GRAPH SCALE all use it), and picking cards by DOM order is how a gate starts
+ * silently asserting the wrong number after a re-layout.
+ */
+const READ_OVERVIEW = `
+  const el = document.querySelector('[data-scope]');
+  const num = (card) => {
+    const e = document.querySelector('[data-card="' + card + '"] .shell-metric');
+    return e === null ? null : Number(e.textContent.trim());
+  };
+  const g = [...document.querySelectorAll('[role=radiogroup]')]
+    .find(x => x.getAttribute('aria-label') === 'Project scope');
+  const b = g === undefined
+    ? undefined
+    : [...g.querySelectorAll('button')].find(x => x.getAttribute('aria-checked') === 'true');
+  const foot = document.querySelector('[data-card="briefs"] .card-footer span');
+  return {
+    scope: el === null ? null : el.getAttribute('data-scope'),
+    chip: b === undefined ? null : b.textContent.trim(),
+    briefs: num('briefs'),
+    instances: num('instances'),
+    graph: num('graph'),
+    footer: foot === null ? null : foot.textContent.trim(),
+    visibility: document.visibilityState,
+  };
+`;
 
 /**
  * Click a `<button>` by its exact label. `settle:false` for a timed window.
@@ -2624,6 +2702,172 @@ async function gBr8(tabs, worlds) {
 // main
 // ---------------------------------------------------------------------------
 
+/**
+ * G-BR-9 — BR-082. The Overview's scope CLEARS, and the clear SURVIVES the beat.
+ *
+ * PROVES: the Overview opens scoped to `default_project`; re-clicking the
+ * checked chip clears the scope to `everything`; all three card metrics widen
+ * to the values the UNSCOPED endpoints report; and that widened state is still
+ * on screen after the page has issued at least TWO further `/api/health` polls
+ * and TWO further `/api/summary` reads.
+ *
+ * DOES NOT PROVE: that the shared hook's `undefined`-vs-`null` distinction is
+ * the MECHANISM. This gate reads a page, not a state machine — it would pass
+ * for any implementation that keeps the clear. The mechanism's siblings are
+ * `cli/src/__tests__/dashboard-layers-source.test.ts` (there is exactly ONE
+ * scope implementation and Overview consumes it) and the hook's own docblock.
+ * Nor does it prove the numbers are RIGHT: it asserts DOM-vs-endpoint agreement,
+ * and `dashboard-server.test.ts` owns what the endpoint should say.
+ *
+ * WHY TWO BEATS AND NOT A SETTLE. The FR-240 defect this brief is a sequel to
+ * was undone by the 5-second `live.tick`: the clear held for a moment and the
+ * ladder re-applied on the next poll (measured 3 rows -> 4 rows on the click,
+ * then back to 3 at t+2 s). A single post-click assertion is therefore this
+ * brief's named vacuous gate, and a `sleep(11_000)` is barely better — a
+ * sleeping tab that has been BACKGROUNDED stops polling entirely (`useLive`
+ * pauses on `document.hidden`), so "nothing changed" would be a reading of a
+ * frozen page. The window is closed on OBSERVED REQUEST COUNTS from an
+ * independent in-page counter, the tab's `visibilityState` is asserted, and a
+ * window that never sees its two beats FAILS with the counts it did see.
+ */
+async function gBr9(tab, seeded) {
+  gate("G-BR-9", "Overview: the scope clears, and the clear survives the live beat (BR-082)");
+
+  await tab.hash("#/overview");
+  const read = () => tab.eval(READ_OVERVIEW);
+
+  // The endpoints, read out-of-band. Every DOM number below is compared with
+  // the server's own answer for the SAME scope rather than with a literal.
+  const scopedApi = await apiJson(`${seeded.url}/api/summary?project=demo`);
+  const allApi = await apiJson(`${seeded.url}/api/summary`);
+  const scopedGraph = await apiJson(`${seeded.url}/api/graph/stats?project=demo`);
+  const allGraph = await apiJson(`${seeded.url}/api/graph/stats`);
+
+  // --- 9a — it opens SCOPED, exactly as it always did ----------------------
+  const scoped = await pollFor(read, (v) => v.briefs !== null && v.instances !== null);
+  check(
+    "9a",
+    scoped.scope === "demo" &&
+      scoped.chip === "demo" &&
+      scoped.briefs === scopedApi.briefs.total &&
+      scoped.instances === scopedApi.instances.active,
+    `opens scoped: data-scope=${JSON.stringify(scoped.scope)} chip=${JSON.stringify(scoped.chip)} · ` +
+      `briefs DOM=${scoped.briefs} endpoint=${scopedApi.briefs.total} · ` +
+      `instances DOM=${scoped.instances} endpoint=${scopedApi.instances.active}`,
+  );
+
+  // --- 9b — the clear is possible AT ALL, and every card widens ------------
+  // The bug BR-082 fixes is that this click had no effect to observe: the chip
+  // strip was a radiogroup whose only action was `setSelected(slug)`.
+  await clickProjectChip(tab, "demo");
+  const wantBriefs = mut("br9-count-from-scoped")
+    ? scopedApi.briefs.total
+    : allApi.briefs.total;
+  const cleared = await pollFor(
+    read,
+    (v) => v.scope === "everything" && v.briefs === wantBriefs,
+  );
+  check(
+    "9b",
+    cleared.scope === "everything" &&
+      cleared.chip === null &&
+      cleared.footer === "everything" &&
+      cleared.briefs === wantBriefs &&
+      cleared.briefs > scoped.briefs &&
+      cleared.instances === allApi.instances.active &&
+      cleared.instances > scoped.instances,
+    `cleared -> data-scope=${JSON.stringify(cleared.scope)} checked chip=${JSON.stringify(cleared.chip)} footer=${JSON.stringify(cleared.footer)} · ` +
+      `briefs ${scoped.briefs} -> ${cleared.briefs} (endpoint ${allApi.briefs.total}) · ` +
+      `instances ${scoped.instances} -> ${cleared.instances} (endpoint ${allApi.instances.active})` +
+      (mut("br9-count-from-scoped")
+        ? `  [MUTATED: compared against the SCOPED total ${scopedApi.briefs.total}]`
+        : ""),
+  );
+
+  // The graph card needed NO server change — `/api/graph/stats` already
+  // answered unscoped. Its own check, so "the widening reached the card the
+  // page never had to fix" is legible separately from the two that changed.
+  check(
+    "9b-graph",
+    cleared.graph === allGraph.stats.node_count &&
+      cleared.graph >= scopedGraph.stats.node_count,
+    `graph nodes DOM=${cleared.graph} · unscoped endpoint=${allGraph.stats.node_count} · scoped endpoint=${scopedGraph.stats.node_count}`,
+  );
+
+  // --- 9c — THE GATE: the clear survives at least TWO live beats -----------
+  const t0 = Date.now();
+  const before = await tab.instrument();
+  const beats = (g) => g.healthFetch - before.healthFetch;
+  const reads = (g) => g.summaryFetch - before.summaryFetch;
+
+  // First beat, then the injected defect, then the second beat. The halves are
+  // identical in a clean run; the split exists so the mutation lands INSIDE the
+  // window rather than before it, which is the only placement that tests
+  // whether the LATE reading is the load-bearing one.
+  await pollFor(() => tab.instrument(), (g) => beats(g) >= 1 && reads(g) >= 1, {
+    timeout: 15_000,
+  });
+  if (mut("br9-rescope-during-window")) {
+    await clickProjectChip(tab, "demo");
+  }
+  // TWO conditions, both required, because they say different things. Two
+  // OBSERVED beats is the behavioural one — the effect that would re-apply the
+  // ladder has now run twice. The 10 s floor is the literal one: two whole
+  // `DEFAULT_POLL_MS` intervals of wall clock, so the window cannot be
+  // satisfied by two polls that happen to land 1.3 s apart around its opening.
+  const FLOOR_MS = 2 * 5_000;
+  const witnessed = await pollFor(
+    () => tab.instrument(),
+    (g) => beats(g) >= 2 && reads(g) >= 2 && Date.now() - t0 >= FLOOR_MS,
+    { timeout: 30_000 },
+  );
+  const after = await read();
+  const elapsed = Date.now() - t0;
+
+  // The PRECONDITION, asserted rather than assumed. If the tab were hidden or
+  // the beat had stopped, "nothing changed" would be a reading of a frozen
+  // page — so this fails with the counts it actually observed.
+  check(
+    "9c-live",
+    after.visibility === "visible" &&
+      beats(witnessed) >= 2 &&
+      reads(witnessed) >= 2 &&
+      elapsed >= FLOOR_MS,
+    `window was LIVE: visibilityState=${after.visibility} · /api/health +${beats(witnessed)} · ` +
+      `/api/summary +${reads(witnessed)} over ${elapsed} ms (>= ${FLOOR_MS} ms floor; tick is 5 s)`,
+  );
+
+  check(
+    "9c",
+    after.scope === "everything" &&
+      after.chip === null &&
+      after.briefs === allApi.briefs.total &&
+      after.instances === allApi.instances.active,
+    `after ${beats(witnessed)} beats / ${elapsed} ms the scope is STILL cleared: ` +
+      `data-scope=${JSON.stringify(after.scope)} chip=${JSON.stringify(after.chip)} · ` +
+      `briefs=${after.briefs} (endpoint ${allApi.briefs.total}) · instances=${after.instances}` +
+      (mut("br9-rescope-during-window")
+        ? "  [MUTATED: the project was re-selected inside the window]"
+        : ""),
+  );
+
+  note(
+    `9c proves the cleared scope is still cleared after at least two beats of the live tick. ` +
+      `PRECISION on the witness, because an earlier draft of this note named the wrong one: the ` +
+      `ladder lives in useProjectScope's [tick] effect, which fetches /api/projects — NOT the ` +
+      `${reads(witnessed)} summary reads counted here, which belong to Overview's own ` +
+      `[project, tick] effect. They are SIBLINGS on the same tick. What carries the inference is ` +
+      `the separately-asserted healthFetch >= 2: health polling is what advances tick, and both ` +
+      `effects declare tick, so two observed beats means the ladder effect ran twice. The summary ` +
+      `count witnesses that the SCOPE-BEARING read re-ran with the cleared value. It does NOT ` +
+      `prove WHICH state the hook holds — dashboard-layers-source.test.ts pins that there is only ` +
+      `one implementation, and useProjectScope.ts's docblock records why the third state exists.`,
+  );
+
+  // Leave the page scoped again, so this gate ends where it started.
+  await clickProjectChip(tab, "demo");
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -2681,9 +2925,17 @@ async function main() {
     // document below — and it MUTATES, so it must never touch `seeded`, whose
     // row counts three earlier gates assert on.
     await runGate("G-BR-8", () => gBr8(tabs, worlds));
-    // LAST, because it RELOADS the seeded tab: the scope cache it measures is
-    // module-level, so it needs a document nothing has fetched in yet.
+    // LAST of the FR-240 gates, because it RELOADS the seeded tab: the scope
+    // cache it measures is module-level, so it needs a document nothing has
+    // fetched in yet.
     await runGate("G-BR-7", () => gBr7(tabs.seeded));
+    // BR-082, AFTER G-BR-7 for two reasons: it browses the Overview, which
+    // polls `/api/graph/stats` and would put a warm document under G-BR-7's
+    // module-level cache measurement; and it is the only gate that spends >10 s
+    // of wall clock waiting for real beats, so it costs nothing to run at the
+    // end. It needs the FOREGROUND tab (a background tab stops polling), which
+    // it takes via `tab.hash()` and asserts in 9c-live.
+    await runGate("G-BR-9", () => gBr9(tabs.seeded, worlds.seeded));
   } finally {
     teardown();
     if (!KEEP) for (const d of worldDirs) rmSync(d, { recursive: true, force: true });
