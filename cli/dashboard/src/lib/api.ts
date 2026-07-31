@@ -491,10 +491,15 @@ export interface SuggestionRow {
  * from the data because `source_module` has been an OPEN vocabulary since
  * FR-118 M2 — a hand-listed dropdown would hide every row whose module the LLM
  * invented after the last edit (L-967).
+ *
+ * `facets.brain_level` (TD-326) is the count of rows with NO project under the
+ * SAME non-project filters. It is what lets a project-scoped view state the
+ * size of the population its own scope excludes — the number is computed over
+ * the filters minus the project axis, so it is non-zero while scoped.
  */
 export interface SuggestionsPayload extends ListEnvelope {
   items: SuggestionRow[];
-  facets: { source_module: Record<string, number> };
+  facets: { source_module: Record<string, number>; brain_level: number };
 }
 
 /** Mirrors `TriageRequest`. The `action` values come from `health.write.actions`. */

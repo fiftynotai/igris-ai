@@ -26,6 +26,8 @@ import {
   LEARNING_FILTERS,
   MAX_LIMIT,
   MAX_QUERY_LENGTH,
+  PROJECT_SCOPES,
+  SUGGESTION_FILTERS,
   parseFilters,
   parsePageParams,
   parseQuery,
@@ -210,6 +212,66 @@ describe("parseFilters — allowlisting", () => {
       expect(parseFilters(q(`review_status=${v}`), LEARNING_FILTERS).values).toEqual({
         review_status: v,
       });
+    }
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-326 — `project_scope`
+  // -------------------------------------------------------------------------
+
+  it("project_scope is a CLOSED vocabulary — exactly `brain-level`", () => {
+    // Closed on purpose, unlike `project`. The whole reason this is a separate
+    // param is that a value is either a scope the endpoint IMPLEMENTS or a
+    // typo, and `project`'s open spec cannot tell those apart.
+    expect(PROJECT_SCOPES).toEqual(["brain-level"]);
+    expect(parseFilters(q("project_scope=brain-level"), SUGGESTION_FILTERS)).toEqual({
+      values: { project_scope: "brain-level" },
+      rejected: [],
+    });
+  });
+
+  it("a NEAR-MISS value is dropped and named, never bound", () => {
+    // `everything` is the OTHER scope name in this product's vocabulary
+    // (BR-082's Overview) and means a different set — dropping it silently
+    // would answer an `everything` question with a `brain-level` label.
+    const r = parseFilters(q("project_scope=everything"), SUGGESTION_FILTERS);
+    expect(r.values).toEqual({});
+    expect(r.rejected).toEqual([
+      'project_scope: "everything" is not one of brain-level',
+    ]);
+  });
+
+  it("NO OTHER FILTER SET declares it — so a parseFilters endpoint reports it", () => {
+    // The property that makes a separate param safer than a magic `project`
+    // value: an undeclared param is reported. Asserted over the filter sets
+    // rather than described, so adding `project_scope` to one of them without
+    // implementing it fails here.
+    for (const [name, specs] of [
+      ["BRIEF_FILTERS", BRIEF_FILTERS],
+      ["LEARNING_FILTERS", LEARNING_FILTERS],
+      ["GOAL_FILTERS", GOAL_FILTERS],
+    ] as const) {
+      expect(specs.map((s) => s.name), name).not.toContain("project_scope");
+      expect(
+        parseFilters(q("project_scope=brain-level"), specs).rejected,
+        name,
+      ).toEqual(["unknown filter: project_scope"]);
+    }
+    // SELF-NEGATIVE-CONTROL: the one set that DOES declare it does not report it.
+    expect(
+      parseFilters(q("project_scope=brain-level"), SUGGESTION_FILTERS).rejected,
+    ).toEqual([]);
+  });
+
+  it("a magic `project` VALUE would not have worked — the rejected design", () => {
+    // Recorded as an executable statement rather than a comment: `project` is
+    // `allowed: null`, so any string is accepted verbatim by every endpoint. A
+    // sentinel there is indistinguishable from a project that does not exist.
+    for (const specs of [BRIEF_FILTERS, LEARNING_FILTERS, GOAL_FILTERS, SUGGESTION_FILTERS]) {
+      expect(parseFilters(q("project=(brain-level)"), specs).values.project).toBe(
+        "(brain-level)",
+      );
+      expect(parseFilters(q("project=(brain-level)"), specs).rejected).toEqual([]);
     }
   });
 });

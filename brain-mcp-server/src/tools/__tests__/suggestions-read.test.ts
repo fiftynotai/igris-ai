@@ -195,6 +195,119 @@ describe('facets — computed from the DATA, over the filters MINUS its own clau
   });
 });
 
+/**
+ * TD-326 — the project axis's third state.
+ *
+ * THE VACUOUS GATE THIS BRIEF NAMES is a test that passes because there
+ * happened to be zero project-less rows, so every assertion below runs against
+ * a population that is asserted NON-EMPTY first.
+ *
+ * The base `SEEDS` deliberately have NO project-less row (the FR-241 state), so
+ * these tests seed their own — which also makes the "before" reading available
+ * as a control.
+ */
+describe('TD-326 — project_is_null and the brain_level facet', () => {
+  /** Three project-less rows: 2 `gap` pending, 1 `janitor` dismissed. */
+  function seedProjectLess(): void {
+    const stmt = db.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, priority, status, created_at)
+       VALUES (?, NULL, ?, ?, ?, ?)`,
+    );
+    stmt.run('gap', 'brain-level gap 1', 'high', 'pending', '2026-07-10 00:00:00');
+    stmt.run('gap', 'brain-level gap 2', 'low', 'pending', '2026-07-11 00:00:00');
+    stmt.run('janitor', 'brain-level janitor', 'medium', 'dismissed', '2026-07-12 00:00:00');
+  }
+
+  it('the fixture starts with NO project-less rows — the control this brief needs', () => {
+    // Without this reading, every assertion below could be satisfied by a
+    // reader that always returned 0 and a seed that never landed.
+    expect(listSuggestions(db, { limit: 100 }).facets.brain_level).toBe(0);
+    expect(listSuggestions(db, { project_is_null: true, limit: 100 }).total).toBe(0);
+  });
+
+  it('the population is NON-EMPTY once seeded, and project_is_null lists exactly it', () => {
+    seedProjectLess();
+    const r = listSuggestions(db, { project_is_null: true, limit: 100 });
+    expect(r.total).toBe(3);
+    expect(r.suggestions).toHaveLength(3);
+    // EVERY returned row, not a sample: `IS NULL` is the whole claim.
+    expect(r.suggestions.every((s) => s.project_slug === null)).toBe(true);
+    expect(r.suggestions.map((s) => s.title).sort()).toEqual([
+      'brain-level gap 1',
+      'brain-level gap 2',
+      'brain-level janitor',
+    ]);
+  });
+
+  it('project_is_null REPLACES project_slug rather than intersecting with it', () => {
+    seedProjectLess();
+    // The intersection would be empty. The route drops `project` and says so;
+    // the reader's contract is that the flag wins.
+    const r = listSuggestions(db, { project_is_null: true, project_slug: 'a', limit: 100 });
+    expect(r.total).toBe(3);
+  });
+
+  it('a PROJECT scope can neither list nor total them — the defect, measured', () => {
+    seedProjectLess();
+    const scoped = listSuggestions(db, { project_slug: 'a', status: 'pending', limit: 100 });
+    expect(scoped.total).toBe(4);
+    expect(scoped.suggestions.some((s) => s.project_slug === null)).toBe(false);
+    // ...and the SAME payload now carries the count of what it cannot show.
+    expect(scoped.facets.brain_level).toBe(2);
+  });
+
+  it('brain_level drops the PROJECT clause and keeps every other one', () => {
+    seedProjectLess();
+    // Same `status` filter, three different project scopes -> the SAME count.
+    // That is the minus-its-own-axis rule, and it is what makes the number
+    // meaningful from inside a scope.
+    const pending = { status: 'pending', limit: 100 } as const;
+    expect(listSuggestions(db, { ...pending, project_slug: 'a' }).facets.brain_level).toBe(2);
+    expect(listSuggestions(db, { ...pending, project_slug: 'b' }).facets.brain_level).toBe(2);
+    expect(listSuggestions(db, pending).facets.brain_level).toBe(2);
+    // ...while a NON-project filter DOES narrow it: 2 pending project-less rows
+    // are `gap`, 0 are `janitor` (the janitor one is dismissed).
+    expect(
+      listSuggestions(db, { ...pending, source_module: 'janitor' }).facets.brain_level,
+    ).toBe(0);
+    expect(listSuggestions(db, { ...pending, priority: 'high' }).facets.brain_level).toBe(1);
+    // ...and dropping `status` admits the dismissed one.
+    expect(listSuggestions(db, { limit: 100 }).facets.brain_level).toBe(3);
+  });
+
+  it('under project_is_null the facet EQUALS total — the stated identity', () => {
+    seedProjectLess();
+    const r = listSuggestions(db, { project_is_null: true, status: 'pending', limit: 100 });
+    expect(r.facets.brain_level).toBe(r.total);
+    expect(r.total).toBe(2);
+  });
+
+  it('the source_module facet still drops its OWN clause under project_is_null', () => {
+    seedProjectLess();
+    const r = listSuggestions(db, {
+      project_is_null: true,
+      source_module: 'gap',
+      limit: 100,
+    });
+    expect(r.total).toBe(2);
+    // `janitor` is still offered — but ONLY the project-less one, because the
+    // project axis is still applied to the source_module facet.
+    expect(r.facets.source_module).toEqual({ gap: 2, janitor: 1 });
+  });
+
+  it('brain-level is NOT the unscoped read — the two sets differ, here by 6', () => {
+    seedProjectLess();
+    // `everything` (no predicate) vs `brain-level` (`IS NULL`). Blurring these
+    // two is the labelling error TD-326 exists to prevent, so the difference is
+    // asserted as a number rather than described.
+    const everything = listSuggestions(db, { limit: 100 }).total;
+    const brainOnly = listSuggestions(db, { project_is_null: true, limit: 100 }).total;
+    expect(everything).toBe(9);
+    expect(brainOnly).toBe(3);
+    expect(everything - brainOnly).toBe(6);
+  });
+});
+
 describe('L-133 — a missing table DEGRADES, it does not throw', () => {
   it('reports `degraded` with empty data', () => {
     const empty = new Database(':memory:');
@@ -205,6 +318,7 @@ describe('L-133 — a missing table DEGRADES, it does not throw', () => {
       expect(r.count).toBe(0);
       expect(r.total).toBe(0);
       expect(r.facets.source_module).toEqual({});
+      expect(r.facets.brain_level).toBe(0);
       // The page window is echoed back so a caller can still render controls.
       expect(r.limit).toBe(10);
       expect(r.offset).toBe(3);

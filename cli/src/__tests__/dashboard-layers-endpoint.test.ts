@@ -39,7 +39,7 @@ import { closeDb as closeBrainDb } from "../lib/brain-db.js";
 import { closeDb as closeRegistryDb } from "../lib/registry.js";
 import { resetBrainBridge, resetLayerReaders } from "../lib/brain-bridge.js";
 import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
-import { LAYER_PATHS, seedLayerBrain } from "./dashboard-layers-fixture.js";
+import { FIXTURE, LAYER_PATHS, seedLayerBrain } from "./dashboard-layers-fixture.js";
 import {
   armHermeticEmbeddings,
   bundleStaged,
@@ -545,6 +545,163 @@ describe("GET /api/goal", () => {
     );
     expect(r.goal).toBeNull();
     expect(r.degraded?.reason).toContain("goal not found: GL-999");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-EP-4 — TD-326: the project axis has THREE states on /api/suggestions
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-326 — the project-less population, over the REAL vendored reader.
+ *
+ * THE VACUOUS GATE THIS BRIEF NAMES is a test that passes because there
+ * happened to be zero project-less rows. So the first test here asserts the
+ * population is NON-EMPTY through the endpoint itself, and every later
+ * assertion is a number that could not be produced by an empty one.
+ *
+ * The fixture's project-less rows are `dashboard-layers-fixture.ts`'s three:
+ * two `edge_inference` and one `janitor`, all pending, all `project_slug NULL`.
+ *
+ * PROVES: the endpoint can COUNT the hidden population from inside a project
+ * scope, can LIST it as its own population, refuses to intersect the two
+ * scopes, and that no OTHER endpoint silently accepts `project_scope`.
+ * DOES NOT PROVE: that the UI surfaces any of it — that is the browser gate
+ * (G-BR-10) and `Triage.tsx`.
+ */
+describe("G-EP-4 — TD-326: brain-level scope on /api/suggestions", () => {
+  interface SuggestionsEnvelope extends ListEnvelope<{
+    id: number;
+    project_slug: string | null;
+    source_module: string;
+    title: string;
+  }> {
+    facets: { source_module: Record<string, number>; brain_level: number };
+  }
+
+  beforeEach(async () => {
+    seed();
+    await start();
+  });
+
+  it("the population is NON-EMPTY — the reading every assertion below rests on", async () => {
+    const all = await json<SuggestionsEnvelope>("/api/suggestions?status=pending");
+    const projectLess = all.items.filter((s) => s.project_slug === null);
+    expect(
+      projectLess.length,
+      "the fixture seeds no project-less row — every gate below would be vacuous",
+    ).toBe(FIXTURE.suggestions.brainLevelPendingCount);
+    expect(all.total).toBe(FIXTURE.suggestions.pendingCount);
+  });
+
+  it("scoped to a project: the rows are ABSENT and the count is PRESENT", async () => {
+    // The defect, and the fix, in one payload. `demo` cannot list them...
+    const scoped = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project=demo&status=pending",
+    );
+    expect(scoped.total).toBe(FIXTURE.suggestions.demoPendingCount);
+    expect(scoped.items.some((s) => s.project_slug === null)).toBe(false);
+    // ...and now says how many it cannot list.
+    expect(scoped.facets.brain_level).toBe(
+      FIXTURE.suggestions.brainLevelPendingCount,
+    );
+    // The count is NOT the same number as the unscoped total, which is the
+    // reading a "just banner the all-projects total" implementation would give.
+    expect(scoped.facets.brain_level).not.toBe(FIXTURE.suggestions.pendingCount);
+  });
+
+  it("project_scope=brain-level lists EXACTLY the project-less rows", async () => {
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project_scope=brain-level&status=pending",
+    );
+    expect(r.total).toBe(FIXTURE.suggestions.brainLevelPendingCount);
+    expect(r.count).toBe(FIXTURE.suggestions.brainLevelPendingCount);
+    // EVERY row, not a sample.
+    expect(r.items.every((s) => s.project_slug === null)).toBe(true);
+    expect(r.params).toEqual([]);
+    // Under this scope the facet IS the total — the stated identity.
+    expect(r.facets.brain_level).toBe(r.total);
+  });
+
+  it("`brain-level` and the unscoped read are DIFFERENT sets, by exactly 3", async () => {
+    // The vocabulary error TD-326 exists to prevent, asserted as a number.
+    // `everything` drops the predicate; `brain-level` is `project IS NULL`.
+    const everything = await json<SuggestionsEnvelope>("/api/suggestions?status=pending");
+    const brain = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project_scope=brain-level&status=pending",
+    );
+    expect(everything.total - brain.total).toBe(
+      FIXTURE.suggestions.pendingCount - FIXTURE.suggestions.brainLevelPendingCount,
+    );
+    expect(everything.total).toBeGreaterThan(brain.total);
+  });
+
+  it("the other filters still narrow it, and the facet follows them", async () => {
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project_scope=brain-level&status=pending&source_module=edge_inference",
+    );
+    expect(r.total).toBe(FIXTURE.suggestions.brainLevelEdgeInferenceCount);
+    // Discriminating: an ignored `source_module` would return all three.
+    expect(r.total).toBeLessThan(FIXTURE.suggestions.brainLevelPendingCount);
+    // ...and the same narrowing applies to the facet from inside a project.
+    const scoped = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project=demo&status=pending&source_module=edge_inference",
+    );
+    expect(scoped.facets.brain_level).toBe(
+      FIXTURE.suggestions.brainLevelEdgeInferenceCount,
+    );
+  });
+
+  it("both scopes at once: `project` is DROPPED and NAMED, never intersected", async () => {
+    // The intersection is empty by definition. Silently returning zero rows is
+    // the failure mode `params` exists to make impossible.
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project=demo&project_scope=brain-level&status=pending",
+    );
+    expect(r.total).toBe(FIXTURE.suggestions.brainLevelPendingCount);
+    expect(r.params.join(" · ")).toContain("project: dropped");
+    expect(r.params.join(" · ")).toContain("belong to NO project");
+  });
+
+  it("an unknown project_scope VALUE is dropped and named, not bound", async () => {
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project_scope=everything&status=pending",
+    );
+    // Dropped -> the read is unscoped, and the operator is told why.
+    expect(r.total).toBe(FIXTURE.suggestions.pendingCount);
+    expect(r.params.join(" · ")).toContain('project_scope: "everything" is not one of');
+  });
+
+  it("NO OTHER endpoint HONOURS project_scope; the parseFilters ones report it", async () => {
+    // The reason `project_scope` is its own param rather than a magic `project`
+    // value: `project`'s spec accepts any string, so a sentinel there would be
+    // bound verbatim by every other project-bearing endpoint and match nothing,
+    // silently. As an UNDECLARED param it is instead dropped, and REPORTED by the
+    // 4 of the 10 others that route through `parseFilters` (this test drives 3 of
+    // those 4); the other 6 hand-parse or take `project` as an argument and are
+    // silent — an ignore, never a bind. The safety does not depend on the
+    // reporting being total.
+    for (const path of [
+      "/api/briefs?project_scope=brain-level",
+      "/api/learnings?project_scope=brain-level",
+      "/api/goals?project_scope=brain-level",
+    ]) {
+      const r = await json<ListEnvelope<unknown>>(path);
+      expect(r.params, path).toContain("unknown filter: project_scope");
+      // ...and the read is NOT narrowed by it.
+      expect(r.total, path).toBeGreaterThan(0);
+    }
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the endpoint really can report brain_level 0", async () => {
+    // Every assertion above is a non-zero count, which a facet hard-wired to
+    // `total` would also produce. A filter that excludes every project-less row
+    // must drive it to zero.
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?project=demo&status=pending&source_module=gap",
+    );
+    expect(r.total).toBeGreaterThan(0);
+    expect(r.facets.brain_level).toBe(0);
   });
 });
 

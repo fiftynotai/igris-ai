@@ -147,6 +147,19 @@ const MUTATIONS = {
     gate: "G-BR-9b",
     how: "assert the CLEARED Overview's brief count equals the SCOPED endpoint total — a page that ignored the clear entirely would satisfy this",
   },
+  // --- TD-326 -------------------------------------------------------------
+  "br10-count-from-unscoped": {
+    gate: "G-BR-10a",
+    how: "assert the scoped page's BRAIN-LEVEL banner count equals the ALL-PROJECTS total — the number a 'just re-banner the unscoped total' implementation would print, and the one that makes the hidden population look bigger than it is",
+  },
+  "br10-rescope-during-window": {
+    gate: "G-BR-10c",
+    how: "re-select the project INSIDE the two-beat window — the end state the default-project ladder produces for a scope value it does not recognise, which is exactly what `(brain-level)` is",
+  },
+  "br10-bulk-spans-projects": {
+    gate: "G-BR-10d",
+    how: "assert the brain-level bulk ALSO emptied the project's queue — D5 inverted, and the shape a scope that silently widened to every project would produce",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -429,6 +442,18 @@ function seedTriageWorld(db) {
       }
       ins.run(7, "missing_followup", "other", "other suggestion 7", "low", "2026-07-20 09:00:00");
       ins.run(8, "missing_followup", "other", "other suggestion 8", "low", "2026-07-21 09:00:00");
+      // TD-326 — FOUR pending suggestions that belong to NO project. The count
+      // is deliberately different from BOTH 6 (the demo scope) and 10 (every
+      // row), so a page that showed either instead is visibly wrong rather
+      // than coincidentally right. Two modules, so a source_module filter is
+      // observable on this population too.
+      const insNull = db.prepare(
+        "INSERT INTO suggestions (id, source_module, project_slug, title, evidence, priority, status, created_at) VALUES (?,?,NULL,?,'{}',?, 'pending', ?)"
+      );
+      insNull.run(9, "edge_inference", "brain-level edge 9", "medium", "2026-07-25 09:00:00");
+      insNull.run(10, "edge_inference", "brain-level edge 10", "medium", "2026-07-26 09:00:00");
+      insNull.run(11, "edge_inference", "brain-level edge 11", "low", "2026-07-27 09:00:00");
+      insNull.run(12, "janitor", "brain-level orphan 12", "high", "2026-07-28 09:00:00");
       // Candidates: 3 first-time (reject = HARD delete, tier 3) and
       // 2 recurring (reject = SOFT delete, tier 2). The MIXED selection is the
       // only one that can catch a blanket-"irreversible" dialog.
@@ -680,9 +705,13 @@ const INSTRUMENT = `
   // measurement; \`/api/summary\` is the second half, because it is the request
   // the SCOPE-bearing effect issues, so a non-zero delta proves the effect that
   // would have re-applied the default ladder really did re-run.
+  // TD-326 adds two more, and \`projectsFetch\` is the SHARPEST witness in the
+  // set: it is the request the default-project LADDER itself issues, so a
+  // non-zero delta means the effect that could have reset the scope really ran.
+  // BR-082's G-BR-9 had to infer that from \`healthFetch\`; G-BR-10 counts it.
   w.__gate = {
     raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0, triagePost: 0,
-    healthFetch: 0, summaryFetch: 0,
+    healthFetch: 0, summaryFetch: 0, projectsFetch: 0, suggestionsFetch: 0,
   };
   const raf = w.requestAnimationFrame.bind(w);
   w.requestAnimationFrame = (cb) => raf((t) => { w.__gate.raf++; return cb(t); });
@@ -707,6 +736,9 @@ const INSTRUMENT = `
     // the unscoped form are the same request to this counter ON PURPOSE: what
     // it measures is that the effect FIRED, not which scope it asked for.
     if (/(^|\\/)api\\/summary(\\?|$)/.test(url)) w.__gate.summaryFetch++;
+    // TD-326: the ladder's own read, and the triage list's own read.
+    if (/(^|\\/)api\\/projects(\\?|$)/.test(url)) w.__gate.projectsFetch++;
+    if (/(^|\\/)api\\/suggestions(\\?|$)/.test(url)) w.__gate.suggestionsFetch++;
     if (method === 'POST' && /(^|\\/)api\\/triage(\\?|$)/.test(url)) w.__gate.triagePost++;
     return origFetch.apply(w, a);
   };
@@ -2868,6 +2900,250 @@ async function gBr9(tab, seeded) {
   await clickProjectChip(tab, "demo");
 }
 
+/**
+ * G-BR-10 — TD-326. The project-less queue is STATED, REACHABLE and ACTIONABLE.
+ *
+ * PROVES, in a real browser against a real brain:
+ *   10a  while scoped to a PROJECT, the page states the count of pending
+ *        suggestions that belong to NO project — and states the brain-level
+ *        count, not the all-projects total;
+ *   10b  the `(brain-level)` chip is in the SAME scope strip, and selecting it
+ *        lists exactly the project-less rows (a count that is neither the
+ *        scoped one nor the unscoped one);
+ *   10c  that selection SURVIVES the live beat — the default-project ladder
+ *        re-runs on every `/api/projects` poll and must not overwrite a scope
+ *        value it does not recognise;
+ *   10d  a bulk DISMISS under that scope empties the project-less queue and
+ *        leaves the project's queue untouched (FR-241 D5, under the new scope);
+ *   10e  the Candidates tab under `brain-level` states the schema reason it is
+ *        empty instead of issuing a request with a param that endpoint would
+ *        drop.
+ *
+ * THE POPULATION IS ASSERTED NON-EMPTY FIRST (10a-live). This brief's named
+ * vacuous gate is a check that passes because there happened to be zero
+ * project-less rows: every count below would then be 0, the banner would
+ * legitimately be absent, and 10d's "the queue emptied" would be a no-op.
+ *
+ * DOES NOT PROVE: what the endpoint SHOULD answer — that is
+ * `dashboard-layers-endpoint.test.ts` G-EP-4 and the reader's own suite. Nor
+ * that the chip is the only affordance; it asserts the DOM agrees with the
+ * endpoint for the scope it selected.
+ *
+ * WORLD: `triage`, and it MUTATES — so it runs after G-BR-8, which reads
+ * `/api/suggestions?project=demo` and would see a drained queue otherwise.
+ */
+async function gBr10(tab, world) {
+  gate("G-BR-10", "TD-326: the project-less queue — stated, reachable, actionable");
+
+  // A fresh document: G-BR-8 left this tab on the Candidates sub-tab, and the
+  // sub-tab is component state that `location.hash` cannot address.
+  await tab.reload();
+  await tab.until(has(".triage-bulk"), { label: "the triage bulk bar mounts" });
+  await untilListStable(tab);
+
+  const scope = await activeProject(tab);
+  const q = (extra) => `${world.url}/api/suggestions?status=pending&${extra}`;
+  const scopedApi = await apiJson(q(`project=${encodeURIComponent(scope ?? "")}`));
+  const brainApi = await apiJson(q("project_scope=brain-level"));
+  const allApi = await apiJson(q(""));
+
+  const READ_TRIAGE = `
+    const g = [...document.querySelectorAll('[role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'Project scope');
+    const buttons = g === undefined ? [] : [...g.querySelectorAll('button')];
+    const banner = document.querySelector('.shell-banner[data-brain-level]');
+    return {
+      // Radiogroups labelled 'Project scope' SPECIFICALLY. The page has others
+      // (FilterBar renders one per filter control), so an unqualified count
+      // reads 5 on a correct page — measured.
+      groups: [...document.querySelectorAll('[role=radiogroup]')]
+        .filter(x => x.getAttribute('aria-label') === 'Project scope').length,
+      chips: buttons.map(b => b.textContent.trim()),
+      checked: (buttons.find(b => b.getAttribute('aria-checked') === 'true') || {textContent: ''}).textContent.trim() || null,
+      bannerCount: banner === null ? null : Number(banner.getAttribute('data-brain-level')),
+      bannerText: banner === null ? null : banner.textContent.trim().replace(/\\s+/g, ' '),
+      rows: [...document.querySelectorAll('.record-row-title')].map(e => e.textContent.trim()),
+      selected: (document.querySelector('.triage-bulk') || {getAttribute: () => null}).getAttribute('data-selected'),
+      visibility: document.visibilityState,
+    };
+  `;
+  const read = () => tab.eval(READ_TRIAGE);
+
+  // --- 10a-live: the three populations are DISTINCT and none is empty -------
+  // Without this the rest is unfalsifiable: if brain-level were 0 the banner
+  // would correctly be absent and every later count would be trivially equal.
+  check(
+    "10a-live",
+    brainApi.total > 0 &&
+      scopedApi.total > 0 &&
+      brainApi.total !== scopedApi.total &&
+      brainApi.total !== allApi.total &&
+      allApi.total === scopedApi.total + brainApi.total + 2,
+    `endpoint populations: scoped(${scope})=${scopedApi.total} · brain-level=${brainApi.total} · ` +
+      `everything=${allApi.total} (the +2 is the 'other' project, which is in NEITHER of the first two — ` +
+      `'all projects' and 'brain-level' are different sets and this is the arithmetic that says so)`,
+  );
+
+  // --- 10a: the hidden count is stated WHILE SCOPED ------------------------
+  const scoped = await read();
+  const wantBanner = mut("br10-count-from-unscoped") ? allApi.total : brainApi.total;
+  check(
+    "10a",
+    scoped.checked === scope &&
+      scoped.bannerCount === wantBanner &&
+      scoped.bannerCount !== scopedApi.total &&
+      (scoped.bannerText ?? "").includes("belong to NO project"),
+    `scoped to ${JSON.stringify(scoped.checked)} · banner data-brain-level=${scoped.bannerCount} ` +
+      `(expected ${wantBanner}; brain-level endpoint=${brainApi.total}, all-projects endpoint=${allApi.total}) · ` +
+      `rows on screen=${scoped.rows.length}` +
+      (mut("br10-count-from-unscoped")
+        ? `  [MUTATED: expecting the ALL-PROJECTS total ${allApi.total}]`
+        : ""),
+  );
+  check(
+    "10a-chip",
+    scoped.groups === 1 && scoped.chips.includes("(brain-level)"),
+    `ONE radiogroup labelled "Project scope" (${scoped.groups}; the page's other ` +
+      `radiogroups are FilterBar's) whose chips are ${JSON.stringify(scoped.chips)} — the ` +
+      `affordance is in the same strip as the projects, so "which scope is active" has one answer`,
+  );
+
+  // --- 10b: selecting it lists EXACTLY the project-less rows ---------------
+  await clickProjectChip(tab, "(brain-level)");
+  await untilListStable(tab);
+  const brain = await read();
+  check(
+    "10b",
+    brain.checked === "(brain-level)" &&
+      brain.rows.length === brainApi.total &&
+      brain.rows.length !== scopedApi.total &&
+      brain.rows.length !== allApi.total &&
+      brain.rows.every((t) => t.startsWith("brain-level ")),
+    `checked=${JSON.stringify(brain.checked)} · DOM rows=${brain.rows.length} · ` +
+      `brain-level endpoint=${brainApi.total} (scoped ${scopedApi.total}, everything ${allApi.total}) · ` +
+      `titles=${JSON.stringify(brain.rows)}`,
+  );
+  check(
+    "10b-banner",
+    brain.bannerCount === brainApi.total &&
+      (brain.bannerText ?? "").includes("cannot reach a row owned by any project"),
+    `under the scope the banner restates the count and the D5 consequence: ` +
+      `data-brain-level=${brain.bannerCount} · ${JSON.stringify(brain.bannerText)}`,
+  );
+
+  // --- 10c: THE GATE — the choice survives the ladder's own poll -----------
+  // `(brain-level)` is not in `/api/projects`, so the ladder's membership test
+  // rejects it unless the hook exempts it explicitly. That effect fires on
+  // every `live.tick`, which is exactly how the FR-240 clear was undone.
+  const t0 = Date.now();
+  const before = await tab.instrument();
+  const ladder = (g) => g.projectsFetch - before.projectsFetch;
+  const lists = (g) => g.suggestionsFetch - before.suggestionsFetch;
+
+  await pollFor(() => tab.instrument(), (g) => ladder(g) >= 1, { timeout: 15_000 });
+  if (mut("br10-rescope-during-window")) {
+    await clickProjectChip(tab, scope ?? "demo");
+  }
+  const FLOOR_MS = 2 * 5_000;
+  const witnessed = await pollFor(
+    () => tab.instrument(),
+    (g) => ladder(g) >= 2 && lists(g) >= 2 && Date.now() - t0 >= FLOOR_MS,
+    { timeout: 30_000 },
+  );
+  const after = await read();
+  const elapsed = Date.now() - t0;
+
+  check(
+    "10c-live",
+    after.visibility === "visible" &&
+      ladder(witnessed) >= 2 &&
+      lists(witnessed) >= 2 &&
+      elapsed >= FLOOR_MS,
+    `window was LIVE: visibilityState=${after.visibility} · /api/projects +${ladder(witnessed)} ` +
+      `(the LADDER's own request, so this is a direct witness rather than an inference) · ` +
+      `/api/suggestions +${lists(witnessed)} over ${elapsed} ms (>= ${FLOOR_MS} ms floor; tick is 5 s)`,
+  );
+  check(
+    "10c",
+    after.checked === "(brain-level)" && after.rows.length === brainApi.total,
+    `after ${ladder(witnessed)} ladder runs / ${elapsed} ms the scope is STILL brain-level: ` +
+      `checked=${JSON.stringify(after.checked)} · rows=${after.rows.length} (endpoint ${brainApi.total})` +
+      (mut("br10-rescope-during-window")
+        ? "  [MUTATED: the project was re-selected inside the window]"
+        : ""),
+  );
+
+  // --- 10d: it is BULK-TRIAGEABLE, and only it ----------------------------
+  await clickButton(tab, "SELECT PAGE", { scroll: true });
+  await tab.settle(400);
+  const selected = (await read()).selected;
+  check(
+    "10d-sel",
+    selected === String(brainApi.total),
+    `SELECT PAGE under brain-level selected ${selected} rows (the ${brainApi.total} listed, ` +
+      `never the ${allApi.total} matching) — the FR-241 page bound, unchanged by the new scope`,
+  );
+
+  const postsBefore = (await tab.instrument()).triagePost;
+  await clickButton(tab, "DISMISS", { scroll: true });
+  await tab.until(has(".triage-confirm"), { label: "the dismiss dialog opens" });
+  // `dismiss` REQUIRES a reason — the suppression-loop signal. Typing it is
+  // part of the affordance, so the gate exercises it rather than routing round.
+  await tab.type(".triage-confirm .field input", "edge inferences reviewed");
+  await tab.settle(300);
+  await clickButton(tab, `DISMISS ${brainApi.total}`, { scroll: true });
+  await tab.settle(1500);
+  await untilListStable(tab);
+
+  const brainAfter = await apiJson(q("project_scope=brain-level"));
+  const scopedAfter = await apiJson(q(`project=${encodeURIComponent(scope ?? "")}`));
+  const wantScopedAfter = mut("br10-bulk-spans-projects") ? 0 : scopedApi.total;
+  check(
+    "10d",
+    brainAfter.total === 0 &&
+      brainApi.total - brainAfter.total === brainApi.total &&
+      scopedAfter.total === wantScopedAfter &&
+      (await tab.instrument()).triagePost === postsBefore + 1,
+    `brain-level pending ${brainApi.total} -> ${brainAfter.total} (delta ${brainApi.total - brainAfter.total}) · ` +
+      `the ${JSON.stringify(scope)} queue ${scopedApi.total} -> ${scopedAfter.total} (expected ${wantScopedAfter}) · ` +
+      `one POST issued` +
+      (mut("br10-bulk-spans-projects")
+        ? "  [MUTATED: expecting the project's queue to have been emptied too]"
+        : ""),
+  );
+  note(
+    `10d is the D5 claim under the NEW scope: a bulk here reaches STRICTLY FEWER rows than clearing ` +
+      `the scope would (${brainApi.total} of ${allApi.total}), and by construction none of them belongs to a ` +
+      `project. The two-process audit-trail half is dashboard-triage-parity.test.ts; the server-side ` +
+      `mutation half is dashboard-triage-endpoint.test.ts G-TR-7.`,
+  );
+
+  // --- 10e: the Candidates tab states WHY it is empty here ----------------
+  await clickButton(tab, "Candidates", { scroll: true });
+  await tab.settle(600);
+  const cand = await tab.eval(`
+    const s = document.querySelector('.state-page');
+    return {
+      meta: s === null ? null : (s.querySelector('.state-page-meta') || {textContent:''}).textContent.trim(),
+      message: s === null ? null : (s.querySelector('.state-page-message') || {textContent:''}).textContent.trim(),
+      rows: document.querySelectorAll('.record-row-title').length,
+    };
+  `);
+  check(
+    "10e",
+    (cand.meta ?? "").includes("learnings.project is NOT NULL") && cand.rows === 0,
+    `brain-level + Candidates -> a stated empty category rather than a request: ` +
+      `meta=${JSON.stringify(cand.meta)} rows=${cand.rows}`,
+  );
+  note(
+    `10e records a MEASUREMENT the brief asked for and a correction to it. The brief said perception ` +
+      `candidates carry no NULL project as an observation with nothing enforcing it. They cannot: ` +
+      `\`learnings.project\` is NOT NULL in db.ts:156 and PRAGMA table_info on the operator brain ` +
+      `reports notnull:1, with 0 of 13 pending rows NULL or empty. So this is a schema guarantee, the ` +
+      `same class as brief_status.project — not a reading of today's data.`,
+  );
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -2936,6 +3212,11 @@ async function main() {
     // end. It needs the FOREGROUND tab (a background tab stops polling), which
     // it takes via `tab.hash()` and asserts in 9c-live.
     await runGate("G-BR-9", () => gBr9(tabs.seeded, worlds.seeded));
+    // TD-326, LAST. It runs on the `triage` world and MUTATES its suggestion
+    // queue, so it must follow G-BR-8, which reads that queue's scoped count.
+    // It also spends >10 s waiting for real ladder polls, so like G-BR-9 it
+    // costs nothing at the end.
+    await runGate("G-BR-10", () => gBr10(tabs.triage, worlds.triage));
   } finally {
     teardown();
     if (!KEEP) for (const d of worldDirs) rmSync(d, { recursive: true, force: true });

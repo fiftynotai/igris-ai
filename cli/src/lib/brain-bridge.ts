@@ -840,6 +840,8 @@ export interface ListGoalsResult {
 export interface ListSuggestionsOptions {
   status?: string;
   project_slug?: string;
+  /** suggestions-read.ts — TD-326: match ONLY `project_slug IS NULL`. Replaces `project_slug`. */
+  project_is_null?: boolean;
   /** suggestions-read.ts:84 — OPEN vocabulary since FR-118 M2. Never an enum. */
   source_module?: string;
   priority?: string;
@@ -878,6 +880,8 @@ export interface SuggestionRow {
 export interface SuggestionFacets {
   /** suggestions-read.ts:127 — count DESC then name ASC; the filter vocabulary. */
   source_module: Record<string, number>;
+  /** suggestions-read.ts — TD-326: rows with NO project, over the filters minus the project axis. */
+  brain_level: number;
 }
 
 /** suggestions-read.ts:131 — `ListSuggestionsResult`. */

@@ -92,7 +92,7 @@ changes a row.
 | `GET` | `/api/context-doc?project=<slug>&type=<doc type>` | `{project, type, target, content, bytes, truncated, generated_at, degraded}` | `dashboard/context-docs-read.ts` — a guarded disk read |
 | `GET` | `/api/goals` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `goals/read.ts#listGoals` |
 | `GET` | `/api/goal?id=<GL-XXX>` | `{goal, serving_briefs, serving_learnings_count, generated_at, degraded}` | `goals/read.ts#getGoal` |
-| `GET` | `/api/suggestions?project=<slug>&status=&priority=&source_module=` | `{items, count, total, limit, offset, facets, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
+| `GET` | `/api/suggestions?project=<slug>` \| `project_scope=brain-level`, `&status=&priority=&source_module=` | `{items, count, total, limit, offset, facets, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
 | **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
 
@@ -117,6 +117,54 @@ the difference is 1, so the distinction is a gate rather than a paragraph. It is
 TD-326's `everything` scope, **not** its `brain-level` one (`project IS NULL`),
 which this endpoint does not offer. Nothing here counts `suggestions`, the table
 where the two sets diverge by 377 rows.
+
+#### `/api/suggestions` — the project axis has THREE states (TD-326)
+
+`suggestions.project_slug` is **nullable with no FK**, and on the operator brain
+**377 of 1,210 pending rows carry NULL** — synapse's `edge_inference` output
+(FR-211), which belongs to the knowledge graph rather than to any project. A
+project-scoped read can neither list those rows nor count them, which is the
+whole of TD-326: two correct behaviours (a nullable column and a correct filter)
+intersecting to hide a third of the queue.
+
+| Request | Predicate | Set |
+|---|---|---|
+| `?project=<slug>` | `project_slug = ?` | one project |
+| `?project_scope=brain-level` | `project_slug IS NULL` | the rows that belong to **no** project |
+| neither | *(none)* | `everything` — every row, project-bearing or not |
+
+These are **three different sets**, and `brain-level` is not a synonym for the
+unscoped read. `everything` = `<each project>` ∪ `brain-level`; the browser gate
+asserts that arithmetic on the fixture (6 + 2 + 4 = 12) rather than describing it.
+
+**Why a separate param rather than a reserved `project` value.** `project`'s
+spec is `allowed: null` — any non-empty string is accepted verbatim, because the
+value space is the registry rather than a fixed vocabulary. A magic slug there
+would be bound literally by every other project-bearing endpoint that does **not** implement this
+scope and would silently match nothing. An **undeclared** param is reported
+(`unknown filter: project_scope` in `params`) by the 4 endpoints that route
+through `parseFilters`, and merely IGNORED by the 6 that hand-parse or take
+`project` as an argument. Partial reporting, total safety: the posture that
+matters is that no endpoint BINDS it. `project_scope`'s own vocabulary is CLOSED
+(`PROJECT_SCOPES`), so a near miss like `?project_scope=everything` — the other
+scope name in this product — is dropped and **named** rather than guessed at.
+
+Supplying both is a contradiction whose intersection is empty, so `project` is
+dropped and named in `params`; `project_scope` wins.
+
+**`facets.brain_level`** is the count of `project_slug IS NULL` rows over the
+active filters **minus the project axis** — the same minus-its-own-clause rule
+`facets.source_module` follows, one axis over. That is what lets a
+project-scoped payload state the size of the population its own scope excludes;
+a count that also applied the caller's `project_slug` would read 0 for every
+scoped request. Under `project_scope=brain-level` it equals `total`.
+
+The browser client's UI token for this scope is `(brain-level)`, deliberately
+**not** the wire value: parentheses are illegal in `SLUG_RE`, so the chip can
+never collide with a registered project.
+`dashboard-layers-source.test.ts` asserts the client's wire literal is one the
+server's allowlist accepts, because the two ends compile separately and share no
+import.
 
 ### Layer views (FR-240) — the browse/detail surface
 
@@ -427,12 +475,38 @@ connection and several handlers open a `db.transaction()`.
   projects. A surface whose default selection is 1,188 rows is one mis-click from
   a catastrophe with no undo tool, so the view inherits the shell's project
   selector and renders the count *before* the rows when scope is widened.
+- **The project-less population, since TD-326.** While scoped to a project the
+  page banners `facets.brain_level` — the count of pending rows that belong to
+  no project and that this scope structurally cannot list — and names the
+  `(brain-level)` chip that reaches them. The banner is not the fix; the chip
+  is. Selecting it lists exactly those rows, so they are **bulk-triageable as
+  their own population**, and D5 holds *more* strongly there than anywhere else:
+  the set contains no row owned by any project, so a bulk under it reaches
+  strictly fewer rows than clearing the scope would.
 
 The `source_module` filter vocabulary is enumerated **from data** — the
 `/api/suggestions` payload carries a `facets.source_module` count map the reader
 computes — because that vocabulary is open-ended (`gap`, `missing_followup`,
 `janitor`, `edge_inference`, plus whatever the LLM names next) and a hand-list
 would go stale silently.
+
+#### The Candidates tab has no brain-level population, by construction
+
+`learnings.project` is **`NOT NULL`** (`brain-mcp-server/src/db.ts:156`; verified
+with `PRAGMA table_info` against the operator brain — `notnull: 1`, and 0 of 13
+pending candidates carry a NULL or empty project). So the perception queue cannot
+have TD-326's asymmetry — this is a schema guarantee of the same class as
+`brief_status.project`, **not** a reading of today's rows. Selecting
+`(brain-level)` on that tab therefore renders a stated empty category and issues
+**no request**; sending `project_scope` to `/api/learnings`, which does not
+implement it, would have been reported as an unknown filter and rendered the
+UNSCOPED list under a `brain-level` label — the exact `everything`/`brain-level`
+blur this brief exists to prevent.
+
+The scope chip is **opt-in per page** for that reason: `ProjectScope` takes an
+`extra` prop, and only the triage surface passes it. `Layers` and `Overview`
+read layers whose project columns are `NOT NULL`, so a `brain-level` chip there
+would offer a scope that is empty by construction.
 
 #### The audit trail, and what it does and does not now record
 
@@ -770,6 +844,24 @@ seconds. `dashboard-layers-source.test.ts` now asserts mechanically that exactly
 one shipped file renders the scope control and exactly one re-derives the
 ladder.
 
+**TD-326 added a scope VALUE, not a fourth state, and the distinction is the
+whole design.** `brain-level` needed to be selectable on one page, and the
+obvious shape — a `brainLevel` flag beside `project`, or a widened union —
+would have changed the contract of all three consumers to make one page's
+population reachable. Instead `useProjectScope` exports a reserved member of
+the `project` string space, `(brain-level)`: the hook's public type is still
+`string | null`, `undefined` still means "never chosen", and the ladder gained
+exactly one line — the same `if (cur === …) return cur` exemption `null`
+already had. Without that line the ladder's membership test would reject a
+value that is not in `/api/projects` and re-select the default project on the
+next poll: the FR-240 defect, in its third incarnation. `ProjectScope` renders
+it through an opt-in `extra` prop, so `Layers` and `Overview` are unchanged and
+`(brain-level)` cannot leak onto a page that does not implement it — the hook's
+state is per-mount, and `router.tsx` unmounts the page on a route change.
+G-BR-10c is the behavioural half, and it closes its window on `/api/projects`
+counts: the ladder's own request, so the witness is direct rather than the
+inference G-BR-9 had to make from `/api/health`.
+
 **What the unscoped Overview shows: the same four cards, each read with its
 project predicate dropped.** Per-project rows were rejected (that is a list
 view, and the list views are `#/layers/*`); a reduced card set was rejected (the
@@ -1039,15 +1131,15 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
-| `cli/src/__tests__/dashboard-layers-endpoint.test.ts` | FR-240 — the nine layer endpoints: envelope shape, filters over DISAGREEING fixture partitions, pagination, the BR-078 `(project, id)` refusal, four degraded brains |
+| `cli/src/__tests__/dashboard-layers-endpoint.test.ts` | FR-240 — the nine layer endpoints: envelope shape, filters over DISAGREEING fixture partitions, pagination, the BR-078 `(project, id)` refusal, four degraded brains. **G-EP-4 (TD-326)** adds the suggestion scope axis: a NON-EMPTY project-less population asserted first, `facets.brain_level` non-zero from inside a project scope, `project_scope=brain-level` listing exactly the `IS NULL` rows, both scopes at once dropping `project` and NAMING it, a near-miss value dropped and named, and the three other endpoints REPORTING `project_scope` as unknown |
 | `cli/src/__tests__/dashboard-learnings-search.test.ts` | FR-240 AC #2 — recall semantics (hybrid / `bm25_only` / `vector_only` / `none`), the `retrieval` block field by field, and the hermetic-by-construction guard that asserts **itself** armed |
 | `cli/src/__tests__/dashboard-context-docs.test.ts` | FR-240 D8 — the inventory is forwarded not recomputed; traversal slug, traversal `type`, unregistered slug and a planted symlink are all refused; the lens does not CREATE the brain |
 | `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness |
-| `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text |
+| `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text. **G-TR-7 (TD-326)** bulk-dismisses the project-less cohort and asserts BOTH directions of non-interference — the projects are unmoved by a brain-level bulk, and the brain-level rows are unmoved by a project bulk |
 | `cli/src/__tests__/dashboard-triage-parity.test.ts` | FR-241 — the twin-brain differ. Two brains in two **processes** (`setAdapter` is a module global, measured to cross-contaminate two engines in one process), identical fixtures, identical boot config: one dispatches through the engine directly, the other over HTTP. Diffs the `event_log` delta **and** the mutated domain tables, with the excluded-column list itself asserted so it cannot quietly grow to cover a real difference. Its empty case declares that it EXPECTED empty and cites why; its positive control is a recurring reject, then mutated to prove the differ can fail |
 | `cli/dashboard/src/triage/__tests__/model.test.ts` + `components/triage/__tests__/BulkBar.test.tsx` | FR-241 — the tiering logic and the confirm copy, table-driven: a mixed selection of 3 recurring + 2 first-time rejects names **2** as permanently deleted, not 5 and not 0; the empty selection and the all-tier-3 case; the typed-count requirement |
-| `cli/src/__tests__/dashboard-params.test.ts` | FR-240 — the pure clamp/allowlist: hostile `limit`/`offset`, unknown filters named rather than ignored |
-| `cli/src/__tests__/dashboard-layers-source.test.ts` | FR-240 — whole-tree client scans: no string-to-markup path, the composite key not mirrored browser-side, zero colour literals **and zero custom properties** in the `.record-*` block, no absolute URL, no non-GET request. Every scan carries a self-negative-control |
+| `cli/src/__tests__/dashboard-params.test.ts` | FR-240 — the pure clamp/allowlist: hostile `limit`/`offset`, unknown filters named rather than ignored. TD-326 adds `project_scope`: a CLOSED vocabulary, a near-miss dropped and named, no OTHER filter set declaring it, and an executable statement of the REJECTED design (a magic `project` value is accepted verbatim by every set) |
+| `cli/src/__tests__/dashboard-layers-source.test.ts` | FR-240 — whole-tree client scans: no string-to-markup path, the composite key not mirrored browser-side, zero colour literals **and zero custom properties** in the `.record-*` block, no absolute URL, no non-GET request. TD-326 adds the client/server seam scan: the wire literal the client sends is in the server's `PROJECT_SCOPES`, the UI sentinel fails `SLUG_RE` so it cannot collide with a project, and exactly one shipped file emits the param. Every scan carries a self-negative-control |
 | `cli/dashboard/src/graph/__tests__/` | the stillness instrument (**T6, the anti-fake layer**), the pause/resume state machine, tiers + the ladder, label occlusion, D9 shape/edge mappings, palette resolution, motion tokens, the volume bench, and (FR-240) `neighboursOf` extraction-equivalence |
 | `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server` |
 | `brain-mcp-server/src/tools/__tests__/` + `engine/components/goals/__tests__/read.test.ts` | FR-240 — the three pure readers, `pure-read-purity.test.ts` (**with a fixture the scan MUST flag, so the scan has a self-negative-control**), and `wrapper-wire-parity.test.ts` golden strings proving the MCP wire output did not move |
@@ -1128,6 +1220,7 @@ the gate prints the exact command.
 | **G-BR-7** | the hoisted scope cache is real in the browser: a drill issues exactly one new `/api/graph`, backing out issues **zero** and restores the whole-brain readout, and a REFRESH on the same surface issues one — so the zero is a measured zero. Plus, in pixels, that the back-out OPENS at its settled layout extent while a cold REFRESH opens as a clump at the origin and expands out of it | that the restored coordinates equal the pre-drill ones. Nothing in the page exposes coordinates, and a settled-frame comparison cannot discriminate: d3-force's cold layout for a fixed node array is deterministic, so a restored layout and a cold one converge to the same picture. The seed is applied but NOT pinned (`instance.ts` sets `x`/`y`, not `fx`/`fy`), so a back-out is a short re-relaxation rather than a freeze-frame — measured at ~85% of settled extent versus ~61% cold. The cache MECHANICS are the sibling: `cli/dashboard/src/lib/__tests__/graphCache.test.ts` |
 | **G-BR-8** (FR-241) | the triage write path end to end in a browser: the scoped queue agrees with the endpoint, the row badges distinguish a permanent reject from a recurring one, CANCEL issues **zero** POSTs (an independent in-page counter), a mixed selection's confirm dialog names the tier-3 subset rather than the selection size, a tier-3 bulk demands the count typed, and a world with the write surface down renders the affordances *disabled* rather than broken | that the brain applied the right mutation — `dashboard-triage-endpoint.test.ts` and `dashboard-triage-parity.test.ts` own that. The gate reads rows leaving a list, not rows changing in a table |
 | **G-BR-9** (BR-082) | the Overview opens scoped to `default_project`, re-clicking the checked chip **clears** the scope, every card widens to the value its UNSCOPED endpoint reports, and that widened state is still on screen after the page has issued ≥2 further `/api/health` polls **and** ≥2 further `/api/summary` reads across ≥10 s — so the clear survived the beat that used to undo it | that the hook's `undefined`-vs-`null` distinction is the MECHANISM. This reads a page, not a state machine, and would pass for any implementation that keeps the clear. The mechanism's siblings are `dashboard-layers-source.test.ts` (exactly one scope implementation, and Overview consumes it) and `useProjectScope.ts`'s docblock. Nor that the NUMBERS are right — it asserts DOM-vs-endpoint agreement, and `dashboard-server.test.ts` owns what the endpoint should say |
+| **G-BR-10** (TD-326) | the three populations are DISTINCT and none is empty (6 scoped + 4 brain-level + 2 other = 12 everything, asserted as arithmetic); a project-scoped page banners the brain-level count and not the all-projects total; the `(brain-level)` chip sits in the ONE `Project scope` radiogroup and selecting it lists exactly the project-less rows; that selection survives ≥2 further `/api/projects` polls across ≥10 s — the ladder's OWN request, so the witness is direct rather than inferred; SELECT PAGE + DISMISS empties the brain-level queue and leaves the project's queue at 6; and the Candidates tab under that scope states its schema reason instead of fetching | that the endpoint's answers are correct — `dashboard-layers-endpoint.test.ts` G-EP-4 (the reads, the param handling, the drop-and-report) and `dashboard-triage-endpoint.test.ts` G-TR-7 (the mutation, and the symmetric "a project bulk leaves brain-level alone") own that. Nor that no OTHER affordance exists; it asserts the DOM agrees with the endpoint for the scope it selected |
 
 **Every gate has a demonstrated failing counterpart, and the script enforces
 it.** `--mutate=<name>` injects a specific defect and INVERTS the verdict: the
@@ -1136,7 +1229,9 @@ everything still passes is reported as `VACUOUS` and exits non-zero.
 `--list-mutations` prints the current set and is the only reliable count — a
 guard whose only observed output is "pass" is indistinguishable from a broken
 one. Confirmation dates by family: FR-240's eight on 2026-07-30, FR-241's four
-(`br8-*`) with that brief, BR-082's two (`br9-*`) on 2026-07-31.
+(`br8-*`) with that brief, BR-082's two (`br9-*`) on 2026-07-31, TD-326's three
+(`br10-*`) on 2026-07-31 — each confirmed caught by its predicted check
+(`10a`, `10c`, `10d`).
 
 **Two things the gate is deliberately careful about**, both of which would
 otherwise fake a pass:

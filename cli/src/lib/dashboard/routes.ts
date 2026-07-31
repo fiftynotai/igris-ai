@@ -1034,6 +1034,9 @@ export async function goal(search: URLSearchParams): Promise<GoalDetailPayload> 
  * Reaches `suggestions-read.ts#listSuggestions`, the same function
  * `igris_suggestion_list` calls. The `facets` block is the one thing the MCP
  * wrapper does not emit — see that module's header for why.
+ *
+ * TD-326: this is the ONE endpoint that accepts `project_scope=brain-level`.
+ * It is not a synonym for the unscoped read — see `params.ts#PROJECT_SCOPES`.
  */
 export async function suggestions(
   search: URLSearchParams,
@@ -1041,13 +1044,27 @@ export async function suggestions(
   const page = parsePageParams(search);
   const filters = parseFilters(search, SUGGESTION_FILTERS, ["limit", "offset"]);
   const notes = [...page.rejected, ...filters.rejected];
+
+  // TD-326 — the project axis has THREE states and they are mutually exclusive:
+  // one project, `brain-level` (`project_slug IS NULL`), or unscoped
+  // (`everything`, the predicate dropped). Both given is a contradiction whose
+  // answer would be the empty set, so `project` is dropped AND named rather
+  // than intersected — the drop-and-report posture, applied to the one input
+  // pair that can silently produce zero rows.
+  const brainLevel = filters.values.project_scope === "brain-level";
+  if (brainLevel && filters.values.project !== undefined) {
+    notes.push(
+      `project: dropped — project_scope=brain-level matches rows that belong to NO project`,
+    );
+  }
+
   const base = {
     items: [] as SuggestionRowPayload[],
     count: 0,
     total: 0,
     limit: page.limit,
     offset: page.offset,
-    facets: { source_module: {} as Record<string, number> },
+    facets: { source_module: {} as Record<string, number>, brain_level: 0 },
     params: notes,
     generated_at: now(),
   };
@@ -1062,7 +1079,8 @@ export async function suggestions(
     const r = ctx.readers.listSuggestions(ctx.db, {
       // `project` on the wire, `project_slug` in the table. The dashboard's
       // shared project selector emits `project` on every page.
-      project_slug: filters.values.project,
+      project_slug: brainLevel ? undefined : filters.values.project,
+      project_is_null: brainLevel,
       status: filters.values.status,
       priority: filters.values.priority,
       source_module: filters.values.source_module,

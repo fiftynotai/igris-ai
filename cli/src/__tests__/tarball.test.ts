@@ -540,6 +540,56 @@ interface PackReport {
  * verbatim into `dist/lib/**`. Deleting client code does not buy packed
  * headroom; documenting server code spends it.
  *
+ * TD-326 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_687_293    unpacked 6_588_345, 792 entries (UNCHANGED
+ *                                    again — it added no file to the pack)
+ *   cumulative delta    +376.4 KB    (385_442 B over PACK_BASELINE_PACKED)
+ *   TD-326's own share  +2_837 B     against BR-082's 1_684_456
+ *   headroom remaining  ~23.6 KB     (24_158 B under the +400 KB ceiling)
+ *
+ * That figure moved TWICE during TD-326's review — 1_686_781 -> 1_686_903 ->
+ * 1_687_005 -> 1_687_293 — the first three because a warden round edited a
+ * comment in `cli/src/lib/**`, which `tsc` carries into `dist/` verbatim, and
+ * the FOURTH for a different reason worth writing down: adding a CHANGELOG
+ * entry. `cli/package.json`'s `files` is `dist`, `scripts/postinstall.mjs`,
+ * `README.md` and **`CHANGELOG.md`** — so `cli/CHANGELOG.md` SHIPS. The rule
+ * "docs cost zero packed bytes" holds for `docs/` and for repo-root
+ * `MAINTAINING.md`, both of which are outside the package, and does NOT hold
+ * for the CLI's own changelog. A structural argument that a round is byte-free
+ * is only as good as its enumeration of `files`. This is the
+ * measure-LAST rule earning its keep for the third brief running: the number is
+ * stale the moment another review round touches a server-side comment, and the
+ * only safe time to write it down is after the FINAL code-touching edit.
+ *
+ * TD-326 touched NINE shipping files, enumerated with `git diff --name-only`
+ * rather than counted from memory (an earlier revision of this paragraph said
+ * SEVEN and "two client files"; warden caught it, and the recount is why the
+ * argument below got STRONGER):
+ *   SERVER (5) — `suggestions-read.ts` (vendored), `brain-bridge.ts`,
+ *                `types.ts`, `params.ts`, `routes.ts`
+ *   CLIENT (4) — `ProjectScope.tsx`, `api.ts`, `useProjectScope.ts`,
+ *                `Triage.tsx`
+ * and still spent under 2.6 KB, because the FOUR client files carry most of its
+ * prose and Vite minifies those to nothing. The spend is almost entirely the
+ * comment blocks in `cli/src/lib/**` plus the vendored reader — the BR-082
+ * lesson holding for a third brief running: budget for SERVER comments, not for
+ * client ones. Four minified files rather than two makes that case stronger.
+ *
+ * A STALE FIGURE CORRECTED WHILE PASSING (TD-326). `MAINTAINING.md` row 108
+ * carried BR-082 at 1_683_163 packed / +1_854 B own share / 28_288 B headroom,
+ * while this ledger carried 1_684_456 / +2_920 B / 26_995 B — a 1_293 B
+ * disagreement, because BR-082 re-measured after a later edit and updated one
+ * of the two places. THIS file is the authoritative one (it is the only copy an
+ * assertion runs beside), and row 108 is now re-pointed at it. That is the
+ * same failure the +550 KB paragraph above describes: a number nothing executes
+ * has no way to be caught when it goes stale, so keep the two in sync in the
+ * same commit or do not write the second one.
+ *
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~23.6 KB is what is left, and five
+ * GL-006 briefs remain. That is now smaller than what any single brief in this
+ * family has spent except TD-326 and BR-082. The answer is still to cut or to
+ * vendor less, never to raise `PACK_HARD_CEILING_DELTA`.
+ *
  * THE CEILING DID NOT MOVE FOR FR-241, and none of its three pre-declared cut
  * levers was needed. It planned against ~68 KB and spent ~39 KB. The reason the
  * figure is that small is worth recording, because it is the same reason
@@ -571,12 +621,13 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. ~26.4 KB is what is left, and it is
- * smaller again than what FR-241 spent. If the next brief needs more, the answer
- * is to cut or to vendor less — NOT to raise `PACK_HARD_CEILING_DELTA`, for the
- * reason the paragraphs above spend thirty lines on. (FR-241 was told the same
- * thing about its ~68 KB and did not need the exemption either; the pattern so
- * far is that the estimate before measuring is the pessimistic one.)
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~23.6 KB is what is left** (the
+ * TD-326 reading above; ~26.4 KB was BR-082's and is superseded). If the next
+ * brief needs more, the answer is to cut or to vendor less — NOT to raise
+ * `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above spend thirty
+ * lines on. (FR-241 was told the same thing about its ~68 KB and did not need
+ * the exemption either; the pattern so far is that the estimate before
+ * measuring is the pessimistic one.)
  *
  * The budget is CUMULATIVE across the family, not per-brief: a per-brief
  * reading lets three views bust the ceiling with every individual brief

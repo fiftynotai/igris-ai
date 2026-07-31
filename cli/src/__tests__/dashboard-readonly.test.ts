@@ -80,7 +80,7 @@ import { resetWriteEngine, writeEngineState } from "../lib/brain-write-bridge.js
 import { LAYER_PATHS, seedLayerBrain } from "./dashboard-layers-fixture.js";
 import {
   TRIAGE_FIXTURE,
-  countPending,
+  countPendingWithProject,
   seedTriageBrain,
 } from "./dashboard-triage-fixture.js";
 import {
@@ -771,6 +771,8 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
       "/api/goal?id=GL-001",
       "/api/suggestions",
       "/api/suggestions?project=demo&status=pending",
+      // TD-326 — the `project_slug IS NULL` scope is still a READ.
+      "/api/suggestions?project_scope=brain-level&status=pending",
     ]) {
       expect((await req(p)).status, p).toBe(200);
     }
@@ -829,7 +831,7 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
        */
       const before = logicalDump(writeDb);
       const beforeWal = existsSync(`${writeDb}-wal`) ? sha256(`${writeDb}-wal`) : null;
-      const beforePending = countPending(writeDb);
+      const beforePending = countPendingWithProject(writeDb);
       expect(beforePending).toBe(TRIAGE_FIXTURE.pendingSuggestions);
 
       server = await startServer({ port: 0, cliVersion: "test" });
@@ -867,7 +869,7 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
       expect(writeEngineState(), "a real POST did NOT boot the write engine").toBe(
         "booted",
       );
-      expect(countPending(writeDb)).toBe(beforePending - 1);
+      expect(countPendingWithProject(writeDb)).toBe(beforePending - 1);
       expect(
         logicalDump(writeDb),
         "the mutation left the brain logically identical",

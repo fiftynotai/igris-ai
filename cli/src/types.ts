@@ -1303,13 +1303,20 @@ export interface SuggestionRowPayload {
 }
 
 /**
- * `GET /api/suggestions?project=&status=&priority=&source_module=&limit=&offset=`.
+ * `GET /api/suggestions?project=|project_scope=&status=&priority=&source_module=&limit=&offset=`.
  *
  * `facets` is the filter VOCABULARY, counted from the data. `source_module` has
  * been an OPEN vocabulary since FR-118 M2 (the LLM names the kind), so a
  * hand-listed dropdown is a dropdown that hides rows — L-967. The counts are
  * computed over the active filters MINUS `source_module` itself, so selecting
  * one value does not erase the control's own options.
+ *
+ * TD-326 added the PROJECT axis's third state. `project=<slug>` scopes to one
+ * project and `project_scope=brain-level` scopes to `project_slug IS NULL` —
+ * two DIFFERENT sets from the unscoped read, which is `everything` (no
+ * predicate). `facets.brain_level` counts the `IS NULL` population under the
+ * current non-project filters, so a scoped caller can see the population its
+ * scope hides without abandoning the scope.
  */
 export interface SuggestionsPayload {
   items: SuggestionRowPayload[];
@@ -1317,8 +1324,8 @@ export interface SuggestionsPayload {
   total: number;
   limit: number;
   offset: number;
-  /** `source_module -> count`, count DESC then name ASC. */
-  facets: { source_module: Record<string, number> };
+  /** `source_module -> count` (count DESC then name ASC) + the `IS NULL` count. */
+  facets: { source_module: Record<string, number>; brain_level: number };
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;

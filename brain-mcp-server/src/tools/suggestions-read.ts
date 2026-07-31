@@ -51,6 +51,12 @@
  * — adding it would break the wire golden — so it is a dashboard-only addition
  * that costs the MCP callers nothing.
  *
+ * TD-326 added the second facet, `brain_level`, on the same argument one axis
+ * over: `project_slug` is NULLABLE, 377 pending rows carry NULL (synapse's
+ * `edge_inference` output), and a project-scoped read can neither list them nor
+ * mention them. `project_is_null` makes that population addressable and
+ * `facets.brain_level` makes it VISIBLE from inside another project's scope.
+ *
  * CONSUMERS (MAINTAINING — the pure `db`-param READ layer row)
  * ------------------------------------------------------------
  * `engine/components/subconscious/handlers.ts#handleSuggestionList` (the MCP
@@ -79,6 +85,13 @@ import { WhereBuilder } from '../engine/helpers.js';
 export interface ListSuggestionsOptions {
   status?: string;
   project_slug?: string;
+  /**
+   * TD-326 — match ONLY rows whose `project_slug IS NULL` (the `brain-level`
+   * population: synapse's edge inferences belong to the brain, not a project).
+   * When true it REPLACES `project_slug`, which cannot express `IS NULL` because
+   * `WhereBuilder.add` treats `undefined` as "no filter".
+   */
+  project_is_null?: boolean;
   /** OPEN vocabulary since FR-118 M2 — any non-empty string is legitimate. */
   source_module?: string;
   priority?: string;
@@ -125,6 +138,14 @@ export interface SuggestionFacets {
    * ASC, so a UI can render it without re-sorting.
    */
   source_module: Record<string, number>;
+  /**
+   * TD-326 — rows with `project_slug IS NULL`, over the active filters MINUS
+   * the PROJECT clause (same minus-its-own-axis rule as `source_module`). So a
+   * caller scoped to one project still learns how many rows belong to NO
+   * project, which is the count the scoped view structurally cannot list. When
+   * `project_is_null` is set this equals `total`.
+   */
+  brain_level: number;
 }
 
 /** The {@link listSuggestions} payload. */
@@ -181,14 +202,18 @@ export function listSuggestions(
       total: 0,
       limit,
       offset,
-      facets: { source_module: {} },
+      facets: { source_module: {}, brain_level: 0 },
       degraded: 'brain table absent: suggestions',
     };
   }
 
-  const where = new WhereBuilder()
-    .add('status = ?', opts.status)
-    .add('project_slug = ?', opts.project_slug)
+  /** The project axis, in exactly one place. TD-326 gave it three states. */
+  const scope = (b: WhereBuilder): WhereBuilder =>
+    opts.project_is_null === true
+      ? b.addAlways('project_slug IS NULL')
+      : b.add('project_slug = ?', opts.project_slug);
+
+  const where = scope(new WhereBuilder().add('status = ?', opts.status))
     .add('source_module = ?', opts.source_module)
     .add('priority = ?', opts.priority);
 
@@ -212,10 +237,25 @@ export function listSuggestions(
     .get(...where.values()) as { total: number };
 
   // The facet WHERE deliberately OMITS `source_module` — see the module header.
-  const facetWhere = new WhereBuilder()
+  const facetWhere = scope(new WhereBuilder().add('status = ?', opts.status)).add(
+    'priority = ?',
+    opts.priority,
+  );
+
+  // ...and the brain-level facet omits the PROJECT axis instead, replacing it
+  // with `IS NULL`. Same rule, other axis: a count that also applied the
+  // caller's `project_slug` would be 0 for every scoped read and would tell the
+  // operator nothing about the population the scope is hiding.
+  const brainWhere = new WhereBuilder()
     .add('status = ?', opts.status)
-    .add('project_slug = ?', opts.project_slug)
+    .addAlways('project_slug IS NULL')
+    .add('source_module = ?', opts.source_module)
     .add('priority = ?', opts.priority);
+  const brainLevel = (
+    db
+      .prepare(`SELECT COUNT(*) AS n FROM suggestions ${brainWhere.toSQL()}`)
+      .get(...brainWhere.values()) as { n: number }
+  ).n;
 
   const facetRows = db
     .prepare(
@@ -240,7 +280,7 @@ export function listSuggestions(
     total: countRow.total,
     limit,
     offset,
-    facets: { source_module: sourceModule },
+    facets: { source_module: sourceModule, brain_level: brainLevel },
     degraded: null,
   };
 }

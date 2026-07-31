@@ -30,6 +30,39 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type ProjectsPayload } from "./api";
 
+/**
+ * TD-326 — the ONE reserved member of the `project` string space.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY A RESERVED VALUE AND NOT A FOURTH STATE
+ * ─────────────────────────────────────────────────────────────────────────
+ * Three pages consume this hook (`Layers`, `Triage`, `Overview`) and the
+ * three-value machine above is load-bearing and was hard-won. A fourth state —
+ * a `brainLevel: boolean` beside `project`, or a widened union — would change
+ * the contract of all three consumers to make ONE page's population reachable.
+ *
+ * A reserved value changes the contract of none of them: `project` is still
+ * `string | null`, `undefined` is still "never chosen", and the ladder below
+ * gains ONE line. The value can only be reached by clicking a chip that only
+ * `Triage` asks `ProjectScope` to render, and the hook's state is per-mount
+ * (each page calls the hook itself; `router.tsx` unmounts the page on a route
+ * change), so it cannot leak onto a page that does not understand it.
+ *
+ * It is deliberately NOT a slug: `cli/src/lib/slug.ts#SLUG_RE` is
+ * `/^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/`, so no registered project can ever be
+ * named `(brain-level)` and the chip can never be ambiguous.
+ *
+ * ON THE WIRE IT IS `project_scope=brain-level`, NOT this string. The two
+ * layers are separate on purpose — see `cli/src/lib/dashboard/params.ts`
+ * `PROJECT_SCOPES` for why the wire uses its own param rather than a magic
+ * `project` value. `dashboard-layers-source.test.ts` asserts mechanically that
+ * the value this client puts on the wire is one the server's allowlist accepts.
+ */
+export const BRAIN_LEVEL_SCOPE = "(brain-level)";
+
+/** The wire spelling. Mirrors `params.ts#PROJECT_SCOPES`. */
+export const BRAIN_LEVEL_PARAM = "brain-level";
+
 export interface ProjectScope {
   projects: ProjectsPayload | null;
   /** The selected project, or `null` for "every project". Never `undefined`. */
@@ -60,6 +93,11 @@ export function useProjectScope(tick: number): ProjectScope {
         setProject((cur) => {
           // An explicit "every project" is a CHOICE and is preserved.
           if (cur === null) return null;
+          // ...and so is TD-326's `brain-level`. It is not in `p.projects` by
+          // construction, so WITHOUT this line the check below would reject it
+          // and the ladder would re-select the default project on the next
+          // `live.tick` — the FR-240 defect, in its third incarnation.
+          if (cur === BRAIN_LEVEL_SCOPE) return cur;
           if (cur !== undefined && p.projects.some((r) => r.slug === cur)) return cur;
           if (
             p.default_project !== null &&

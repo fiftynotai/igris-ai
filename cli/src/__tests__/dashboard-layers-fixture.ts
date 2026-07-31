@@ -186,12 +186,21 @@ export const FIXTURE = {
   pendingLearningId: 4,
   /** FR-241 — the seeded suggestion queue, by status. */
   suggestions: {
-    pendingCount: 3,
+    /** EVERY pending row, project-bearing and project-less alike. */
+    pendingCount: 6,
     dismissedCount: 1,
     /** `demo` has 2 pending, `other` has 1 — an ASYMMETRIC scope split. */
     demoPendingCount: 2,
+    /**
+     * TD-326 — pending rows with `project_slug IS NULL`. NON-EMPTY on purpose:
+     * a gate for "the hidden population is surfaced" that ran against zero
+     * project-less rows is this brief's named vacuous gate.
+     */
+    brainLevelPendingCount: 3,
+    /** ...of which two are `edge_inference` and one is `janitor`. */
+    brainLevelEdgeInferenceCount: 2,
     /** Counted from the data, never enumerated in code (L-967). */
-    sourceModules: ["gap", "janitor", "missing_followup"],
+    sourceModules: ["gap", "janitor", "missing_followup", "edge_inference"],
   },
 } as const;
 
@@ -346,6 +355,26 @@ export function seedLayerBrain(dbPath: string): void {
   insSuggestion.run("gap", "other", "Brief with no goal edge", '{"kind":"gap"}', "medium", "pending", "2026-07-15 09:00:00");
   insSuggestion.run("missing_followup", "demo", "Already handled", '{"kind":"followup"}', "high", "dismissed", "2026-07-10 09:00:00");
 
+  // --- TD-326: the project-less population -------------------------------
+  //  project | module          | priority | status  | created
+  //  NULL    | edge_inference  | medium   | pending | 07-25
+  //  NULL    | edge_inference  | low      | pending | 07-26
+  //  NULL    | janitor         | high     | pending | 07-27
+  //
+  // `project_slug` is NULLABLE on this table with no FK, and on the operator
+  // brain 377 of 1,210 pending rows carry NULL — synapse's edge inferences,
+  // which belong to the knowledge graph rather than to a project. A
+  // project-scoped read can neither list them nor count them, which is the
+  // whole of TD-326.
+  //
+  // THREE rows, spread over TWO modules on purpose: `facets.brain_level` keeps
+  // the `source_module` clause and only drops the PROJECT one, so a count that
+  // ignored `source_module` would read 3 where the right answer is 2, and a
+  // count that also applied the caller's project would read 0.
+  insSuggestion.run("edge_inference", null, "Edge: FR-240 -> GL-001 (inferred)", '{"kind":"edge"}', "medium", "pending", "2026-07-25 09:00:00");
+  insSuggestion.run("edge_inference", null, "Edge: BR-001 -> learning 2 (inferred)", '{"kind":"edge"}', "low", "pending", "2026-07-26 09:00:00");
+  insSuggestion.run("janitor", null, "Orphan graph node with no owner", '{"kind":"orphan"}', "high", "pending", "2026-07-27 09:00:00");
+
   db.close();
 }
 
@@ -378,4 +407,8 @@ export const LAYER_PATHS: readonly string[] = [
   "/api/suggestions",
   "/api/suggestions?project=demo&status=pending",
   "/api/suggestions?source_module=gap",
+  // TD-326 — the project-less scope. It reaches the SAME read door, so the
+  // read-only crawl covers it too rather than leaving the newest query shape
+  // (`project_slug IS NULL`) as the one path no digest gate ever exercised.
+  "/api/suggestions?project_scope=brain-level&status=pending",
 ];

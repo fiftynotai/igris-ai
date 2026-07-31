@@ -233,7 +233,31 @@ export const SUGGESTION_STATUSES = ["pending", "dismissed", "acted"] as const;
 export const SUGGESTION_PRIORITIES = ["high", "medium", "low"] as const;
 
 /**
- * The four suggestion filters (FR-241).
+ * `project_scope` — the NON-project scopes on the project axis (TD-326).
+ *
+ * A SEPARATE param rather than a reserved `project` value, and the reason is
+ * the drop-and-report posture above: `project`'s spec is `allowed: null`, so a
+ * magic slug would be accepted verbatim by every OTHER endpoint and silently
+ * match no row. An undeclared param IS reported (`unknown filter:
+ * project_scope`), so 4 of the 10 OTHER project-bearing endpoints say so —
+ * `/api/briefs`, `/api/learnings`, `/api/learnings/search`, `/api/goals`, the
+ * ones routing through `parseFilters`. The other 6 are SILENT: `/api/summary`,
+ * `/api/graph`, `/api/graph/stats` take `project` as a function argument, and
+ * `/api/brief`, `/api/context-docs`, `/api/context-doc` hand-parse it — none
+ * carries a `params` field. `/api/learning` and `/api/goal` are `id`-only and
+ * not project-bearing at all. Enumerated against the router, endpoint by
+ * endpoint. A silent IGNORE is still strictly better than the silent BIND a
+ * magic `project` slug would get — that is the argument, and it does not
+ * depend on the reporting being total.
+ *
+ * `brain-level` means `project_slug IS NULL`. It is NOT the unscoped read: that
+ * one drops the predicate and is `everything`. Two different sets; a label that
+ * picks the wrong one lies.
+ */
+export const PROJECT_SCOPES = ["brain-level"] as const;
+
+/**
+ * The five suggestion filters (FR-241, TD-326).
  *
  * `source_module` is `null` — accept ANY non-empty string. That is not laziness:
  * FR-118 M2 made the vocabulary OPEN (the LLM names the kind), so the brain
@@ -254,6 +278,7 @@ export const SUGGESTION_PRIORITIES = ["high", "medium", "low"] as const;
  */
 export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
   { name: "project", allowed: null },
+  { name: "project_scope", allowed: PROJECT_SCOPES },
   { name: "status", allowed: SUGGESTION_STATUSES },
   { name: "priority", allowed: SUGGESTION_PRIORITIES },
   { name: "source_module", allowed: null },

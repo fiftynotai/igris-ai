@@ -72,9 +72,14 @@ import {
 /** Ids and counts the suites assert on, named so an assertion reads as a claim. */
 export const TRIAGE_FIXTURE = {
   /**
-   * 17 pending suggestions. The number is deliberate: G-TR-2 dismisses 12 and
-   * asserts 5 survive, and 17 is prime-ish enough that an off-by-one in either
-   * direction is visible rather than plausible.
+   * 17 pending suggestions THAT BELONG TO A PROJECT. The number is deliberate:
+   * G-TR-2 dismisses 12 and asserts 5 survive, and 17 is prime-ish enough that
+   * an off-by-one in either direction is visible rather than plausible.
+   *
+   * TD-326 note: this is NOT every pending row. Ids 19-21 are pending and
+   * belong to NO project — see `brainLevelPendingIds`. `countPendingWithProject`
+   * is the counter that matches THIS number, and it is named for the subset it
+   * counts precisely so the two populations cannot be confused.
    */
   pendingSuggestions: 17,
   /** Ids 1..17 are pending; 18 is already `acted` (a dismiss on it must FAIL). */
@@ -82,6 +87,18 @@ export const TRIAGE_FIXTURE = {
   /** `demo` owns 1..12; `other` owns 13..17. An ASYMMETRIC scope split. */
   demoPendingIds: Array.from({ length: 12 }, (_, i) => i + 1),
   otherPendingIds: [13, 14, 15, 16, 17],
+
+  /**
+   * TD-326 — pending suggestions with `project_slug IS NULL`.
+   *
+   * NON-EMPTY on purpose: the brief names "a test that passes because there
+   * happened to be zero project-less rows" as its vacuous gate, so the write
+   * gate over this population has a population to act on. Three rows across TWO
+   * modules, so a filter that ignored `source_module` is visible.
+   */
+  brainLevelPendingIds: [19, 20, 21],
+  /** ...of which ids 19 and 20 are `edge_inference` and 21 is `janitor`. */
+  brainLevelEdgeInferenceIds: [19, 20],
 
   /**
    * Candidates. The two branches of `handlePerceptionReject`'s fork, seeded
@@ -96,7 +113,7 @@ export const TRIAGE_FIXTURE = {
   approvedLearningId: 6,
 } as const;
 
-/** Every id the fixture seeds as a pending suggestion. */
+/** Every id the fixture seeds as a pending suggestion WITH a project. */
 export function pendingSuggestionIds(): number[] {
   return Array.from({ length: TRIAGE_FIXTURE.pendingSuggestions }, (_, i) => i + 1);
 }
@@ -180,6 +197,28 @@ function seedRows(db: Database.Database): void {
      VALUES (?, 'gap', 'demo', 'already acted', '{}', 'high', 'acted', datetime('now'), 'FR-000')`,
   ).run(TRIAGE_FIXTURE.actedSuggestionId);
 
+  // TD-326 — the project-less population. `project_slug` is nullable with no
+  // FK, and on the operator brain 377 of 1,210 pending rows carry NULL
+  // (synapse's edge inferences, which belong to the graph rather than to a
+  // project). A project-scoped read can neither list nor count them, which is
+  // the whole of TD-326 — so the write gate needs a non-empty set of them.
+  for (const id of TRIAGE_FIXTURE.brainLevelPendingIds) {
+    insSuggestion.run(
+      id,
+      TRIAGE_FIXTURE.brainLevelEdgeInferenceIds.includes(
+        id as (typeof TRIAGE_FIXTURE.brainLevelEdgeInferenceIds)[number],
+      )
+        ? "edge_inference"
+        : "janitor",
+      null,
+      `brain-level suggestion ${id}`,
+      JSON.stringify({ kind: "edge", n: id }),
+      "medium",
+      "pending",
+      "2026-07-25 09:00:00",
+    );
+  }
+
   const insLearning = db.prepare(
     `INSERT INTO learnings
        (id, project, category, title, content, confidence, provenance, review_status,
@@ -242,13 +281,40 @@ export function suggestionStates(dbPath: string): SuggestionState[] {
   }
 }
 
-export function countPending(dbPath: string): number {
+/**
+ * Pending suggestions that BELONG TO A PROJECT.
+ *
+ * Named for its subset (TD-326). Before TD-326 this counted every pending row
+ * and the two were the same number; the fixture now seeds project-less rows, so
+ * a helper called `countPending` would silently have started counting a
+ * different population than every "17 -> dismiss 12 -> 5" assertion means.
+ * `countPendingBrainLevel` is its complement, and the two partition the table.
+ */
+export function countPendingWithProject(dbPath: string): number {
   const db = readTriageBrain(dbPath);
   try {
     return (
-      db.prepare("SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending'").get() as {
-        n: number;
-      }
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending' AND project_slug IS NOT NULL",
+        )
+        .get() as { n: number }
+    ).n;
+  } finally {
+    db.close();
+  }
+}
+
+/** Pending suggestions with NO project — TD-326's population. */
+export function countPendingBrainLevel(dbPath: string): number {
+  const db = readTriageBrain(dbPath);
+  try {
+    return (
+      db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM suggestions WHERE status = 'pending' AND project_slug IS NULL",
+        )
+        .get() as { n: number }
     ).n;
   } finally {
     db.close();

@@ -46,6 +46,8 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PROJECT_SCOPES } from "../lib/dashboard/params.js";
+import { SLUG_RE } from "../lib/slug.js";
 
 const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DASH_SRC = join(CLI_ROOT, "dashboard", "src");
@@ -619,6 +621,84 @@ describe("BR-082 · the project scope is lifted, not copied", () => {
     } finally {
       rmSync(planted, { force: true });
     }
+  });
+});
+
+/**
+ * TD-326 — the brain-level scope, across the client/server seam.
+ *
+ * `cli/dashboard/` and `cli/src/` compile separately and share NO import, so
+ * the two ends of this contract are two literals in two files. That is the
+ * shape that drifts silently, and the drift is invisible: a client sending
+ * `project_scope=brainlevel` would be answered 200 with the value DROPPED and
+ * named in `params`, so the page would render the UNSCOPED list under a chip
+ * that says `(brain-level)` — the `everything`/`brain-level` blur TD-326 exists
+ * to prevent, arrived at by typo.
+ *
+ * PROVES: the literal the client puts on the wire is one the server's allowlist
+ * accepts; the UI sentinel can never collide with a project slug; and only the
+ * triage page emits the param.
+ * DOES NOT PROVE: that the endpoint answers correctly — that is
+ * `dashboard-layers-endpoint.test.ts` G-EP-4.
+ */
+describe("TD-326 · the brain-level scope agrees across the client/server seam", () => {
+  const HOOK = join(DASH_SRC, "lib", "useProjectScope.ts");
+  const TRIAGE = join(DASH_SRC, "pages", "Triage.tsx");
+
+  /** Pull an exported string literal out of the client source. */
+  function literal(file: string, name: string): string | null {
+    const m = new RegExp(`${name}\\s*=\\s*["'\`]([^"'\`]+)["'\`]`).exec(code(file));
+    return m?.[1] ?? null;
+  }
+
+  it("the WIRE value the client sends is in the server's allowlist", () => {
+    const wire = literal(HOOK, "BRAIN_LEVEL_PARAM");
+    expect(wire, "BRAIN_LEVEL_PARAM was not found in the hook").not.toBeNull();
+    expect(PROJECT_SCOPES as readonly string[]).toContain(wire);
+  });
+
+  it("the UI sentinel is NOT a valid project slug, so the chip cannot be ambiguous", () => {
+    const sentinel = literal(HOOK, "BRAIN_LEVEL_SCOPE");
+    expect(sentinel).not.toBeNull();
+    expect(SLUG_RE.test(sentinel as string), `${sentinel} is a legal slug`).toBe(false);
+    // ...and it is DISTINCT from the wire value: they live in different layers
+    // and a single constant would hide which one a future edit changed.
+    expect(sentinel).not.toBe(literal(HOOK, "BRAIN_LEVEL_PARAM"));
+  });
+
+  it("exactly ONE shipped file emits the project_scope param", () => {
+    const hits = shipped().filter((f) => code(f).includes("project_scope"));
+    expect(hits.map(rel)).toEqual([rel(TRIAGE)]);
+  });
+
+  it("no shipped file hard-codes the sentinel — both ends import it", () => {
+    // A second copy of `(brain-level)` is a second definition, and the ladder
+    // exemption in the hook keys off the constant.
+    const hits = shipped().filter((f) => f !== HOOK && code(f).includes("(brain-level)"));
+    expect(hits.map(rel)).toEqual([]);
+    expect(code(TRIAGE)).toContain("BRAIN_LEVEL_SCOPE");
+    expect(code(TRIAGE)).toContain("BRAIN_LEVEL_PARAM");
+  });
+
+  it("the ladder's sentinel exemption is present in the one file that owns it", () => {
+    // The FR-240 defect's third incarnation: a value the ladder does not
+    // recognise is replaced by the default project on the next `/api/projects`
+    // poll. This asserts the exemption EXISTS in the one file that owns it; the
+    // behavioural half is the browser gate (G-BR-10c), which is where a claim
+    // about the beat belongs.
+    const src = code(join(DASH_SRC, "lib", "useProjectScope.ts"));
+    expect(src).toMatch(/cur === BRAIN_LEVEL_SCOPE/);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the reader really extracts, and really can miss", () => {
+    // Both failure modes of a regex-over-source scan: a matcher that returns
+    // null for everything (so the assertions above never run on a real value)
+    // and one that matches anything.
+    expect(literal(HOOK, "BRAIN_LEVEL_SCOPE")).toMatch(/\S/);
+    expect(literal(HOOK, "A_CONSTANT_THAT_DOES_NOT_EXIST")).toBeNull();
+    expect(PROJECT_SCOPES as readonly string[]).not.toContain(
+      literal(HOOK, "BRAIN_LEVEL_SCOPE"),
+    );
   });
 });
 

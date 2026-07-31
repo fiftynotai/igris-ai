@@ -27,6 +27,36 @@
  * any id that leaves the page. You may only act on what is on screen.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * TD-326 — THE THIRD SCOPE, BECAUSE D5 WAS HIDING A THIRD OF THE QUEUE
+ * ─────────────────────────────────────────────────────────────────────────
+ * `suggestions.project_slug` is NULLABLE and 377 pending rows carry NULL —
+ * synapse's `edge_inference` output (FR-211), which belongs to the brain rather
+ * than to any project, so NULL is correct. The scope filter is correct too. The
+ * defect was the SILENCE: two correct behaviours intersecting so that the
+ * default view could neither list those rows nor mention them.
+ *
+ * The fix makes them ADDRESSABLE, not merely announced. `(brain-level)` is a
+ * chip in the SAME scope strip, and selecting it lists exactly the project-less
+ * rows as their own population — so a bulk action there is as explicit as any
+ * other and reaches STRICTLY FEWER rows than clearing the scope would. D5 is
+ * preserved twice over: the default is still the server-resolved project, and
+ * `brain-level` cannot touch a row belonging to a project the operator did not
+ * choose, because no such row is in the set.
+ *
+ * While scoped to a project the count is stated in a BANNER — the same place
+ * FR-241 already puts the number that is the warning. A count badge on the chip
+ * was rejected: the count lives in the suggestions payload, the chip strip is
+ * rendered above the tabs, and lifting the number out of the child to decorate
+ * a parent's chip would couple two components to make a number appear 40 px
+ * higher up.
+ *
+ * The CANDIDATES tab has no such population and cannot grow one:
+ * `learnings.project` is `NOT NULL` in the brain schema (`db.ts:156`, verified
+ * with `PRAGMA table_info` against the operator brain — `notnull: 1`, 0 rows
+ * with a NULL or empty project, 13 pending). So brain-level on that tab is an
+ * explicitly stated empty category rather than a query, and no request is made.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * THE TTL DIVERGENCE IS BANNERED, NOT DISCOVERED
  * ─────────────────────────────────────────────────────────────────────────
  * `igris_perception_review_pending` applies a `pending_review_ttl_days` window;
@@ -53,7 +83,11 @@ import {
 } from "../lib/api";
 import { emptyStateFor, muteRows, recordHash } from "../layers/model";
 import { useLayerList } from "../layers/useLayerList";
-import { useProjectScope } from "../lib/useProjectScope";
+import {
+  BRAIN_LEVEL_PARAM,
+  BRAIN_LEVEL_SCOPE,
+  useProjectScope,
+} from "../lib/useProjectScope";
 import type { Live } from "../lib/useLive";
 import {
   EMPTY_SELECTION,
@@ -117,7 +151,7 @@ export function Triage({ live, search }: TriageProps) {
         ))}
       </div>
 
-      <ProjectScope scope={scope} />
+      <ProjectScope scope={scope} extra={[BRAIN_LEVEL_SCOPE]} />
 
       {/*
         Keyed on the tab so switching tabs REMOUNTS the view: the selection,
@@ -127,10 +161,40 @@ export function Triage({ live, search }: TriageProps) {
       */}
       {tab === "suggestions" ? (
         <SuggestionsTab key="suggestions" live={live} search={search} project={scope.project} />
+      ) : scope.project === BRAIN_LEVEL_SCOPE ? (
+        <BrainLevelCandidates />
       ) : (
         <CandidatesTab key="candidates" live={live} search={search} project={scope.project} />
       )}
     </>
+  );
+}
+
+/**
+ * The candidates tab under `brain-level`. TD-326.
+ *
+ * NO FETCH. The alternative — sending the scope to `/api/learnings`, which does
+ * not implement `project_scope` — would be reported as `unknown filter` and the
+ * page would render the UNSCOPED list under a chip that says `brain-level`,
+ * which is the blur between `everything` and `brain-level` that TD-326 exists
+ * to prevent.
+ *
+ * The reason is stated rather than left as an empty list, and it is a SCHEMA
+ * reason rather than a reading of today's rows.
+ */
+function BrainLevelCandidates() {
+  return (
+    <StatePage
+      inset
+      variant="empty"
+      headline={
+        <>
+          <em>no brain-level candidates.</em>
+        </>
+      }
+      message="Perception candidates always belong to a project — `learnings.project` is NOT NULL in the brain schema, so this population is empty by construction rather than by today's data. It is the suggestion queue that has project-less rows (synapse's edge inferences). Pick a project above to review candidates."
+      meta="learnings.project is NOT NULL · 0 rows possible"
+    />
   );
 }
 
@@ -159,10 +223,17 @@ function writeState(live: Live): { available: boolean; reason: string | null } {
 function SuggestionsTab({ live, search, project }: TabProps) {
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
 
+  const brainLevel = project === BRAIN_LEVEL_SCOPE;
+
   const list = useLayerList<SuggestionsPayload>({
     fetch: ({ limit, offset, values }, signal) => {
       const q = new URLSearchParams();
-      if (project !== null) q.set("project", project);
+      // THREE states on one axis, and only one of them is ever sent (TD-326).
+      // `brain-level` rides its OWN param: `project` accepts any string
+      // server-side, so a magic slug there would be indistinguishable from a
+      // typo'd project on every other endpoint.
+      if (brainLevel) q.set("project_scope", BRAIN_LEVEL_PARAM);
+      else if (project !== null) q.set("project", project);
       for (const [k, v] of Object.entries(values)) if (v.length > 0) q.set(k, v);
       q.set("limit", String(limit));
       q.set("offset", String(offset));
@@ -241,6 +312,45 @@ function SuggestionsTab({ live, search, project }: TabProps) {
                 ALL PROJECTS — {payload.total} suggestions match across every
                 registered project. Bulk actions here span all of them; scope to
                 one project above before clearing a cohort.
+              </div>
+            )}
+            {/*
+              TD-326. While scoped to a PROJECT, the project-less population is
+              unreachable and was also unmentioned — the whole defect. State the
+              count and name the chip that reaches it. `data-brain-level` is the
+              machine-readable form the browser gate reads.
+            */}
+            {!brainLevel && project !== null && payload !== null &&
+              payload.facets.brain_level > 0 && (
+                <div
+                  className="shell-banner"
+                  role="status"
+                  data-brain-level={payload.facets.brain_level}
+                >
+                  BRAIN-LEVEL — {payload.facets.brain_level} further suggestions
+                  match these filters but belong to NO project, so this scope can
+                  never list them. They are the brain's own (synapse files edge
+                  inferences against the graph, not against a project). Click{" "}
+                  <b>{BRAIN_LEVEL_SCOPE}</b> above to work them as their own
+                  population.
+                </div>
+              )}
+            {/* `> 0` mirrors the scoped banner's guard. Without it the page
+                renders "BRAIN-LEVEL — 0 suggestions that belong to no project",
+                a banner announcing an empty set. Unreachable in the fixtures
+                because the non-empty guards hold, and unreachable on the real
+                brain today (377 rows) — but a banner whose own count is zero is
+                noise, and the asymmetry with the scoped branch was accidental. */}
+            {brainLevel && payload !== null && payload.total > 0 && (
+              <div
+                className="shell-banner"
+                role="status"
+                data-brain-level={payload.total}
+              >
+                BRAIN-LEVEL — {payload.total} suggestions that belong to no
+                project. This is NOT every project: it is the complement of all
+                of them, so a bulk action here cannot reach a row owned by any
+                project.
               </div>
             )}
             {payload != null && payload.params.length > 0 && (

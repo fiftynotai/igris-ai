@@ -63,7 +63,7 @@
 
 import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
-import { request as httpRequest } from "node:http";
+import { get as httpGet, request as httpRequest } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -89,7 +89,8 @@ import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
 import { bundleStaged } from "./hermetic-embeddings.js";
 import {
   TRIAGE_FIXTURE,
-  countPending,
+  countPendingBrainLevel,
+  countPendingWithProject,
   learningState,
   pendingSuggestionIds,
   seedTriageBrain,
@@ -206,6 +207,36 @@ function triage(body: unknown): Promise<Res> {
   return post("/api/triage", JSON.stringify(body));
 }
 
+/** A plain GET. TD-326's gate needs the READ half to build the write's input. */
+function get(path: string): Promise<Res> {
+  const server = srv;
+  if (server === null) throw new Error("server not started");
+  return new Promise((resolve, reject) => {
+    const r = httpGet(
+      {
+        host: "127.0.0.1",
+        port: server.port,
+        path,
+        agent: false,
+        headers: { host: `127.0.0.1:${server.port}` },
+      },
+      (res) => {
+        let text = "";
+        res.setEncoding("utf-8");
+        res.on("data", (c: string) => (text += c));
+        res.on("end", () =>
+          resolve({
+            status: res.statusCode ?? 0,
+            body: text,
+            json: <T,>() => JSON.parse(text) as T,
+          }),
+        );
+      },
+    );
+    r.on("error", reject);
+  });
+}
+
 interface TriagePayload {
   action: string;
   requested: number;
@@ -301,13 +332,13 @@ describe("G-TR-0 — the sandbox fence", () => {
     const poison = join(sandbox, "poison", "POISON-MUST-NOT-EXIST.db");
     process.env.IGRIS_DB_PATH = poison;
 
-    const before = countPending(dbPath());
+    const before = countPendingWithProject(dbPath());
     const r = await triage({ action: "dismiss", ids: [1], reason: "poison probe" });
     expect(r.status).toBe(200);
     expect(r.json<TriagePayload>().applied).toBe(1);
 
     // The write landed in the SANDBOX...
-    expect(countPending(dbPath())).toBe(before - 1);
+    expect(countPendingWithProject(dbPath())).toBe(before - 1);
     // ...and the poison path was never created, at any level.
     expect(existsSync(poison), "the poison DB FILE was created").toBe(false);
     expect(existsSync(join(sandbox, "poison")), "the poison DIRECTORY was created").toBe(
@@ -439,7 +470,7 @@ describe("G-TR-2 — bulk acts on a NON-EMPTY set, and only on the selection", (
     // 1. THE PRE-STATE, asserted. A bulk gate whose starting count is unstated
     //    is the BR-080 drain-test-on-an-empty-queue failure: `applied: 0` over
     //    zero rows is indistinguishable from success.
-    expect(countPending(dbPath())).toBe(TRIAGE_FIXTURE.pendingSuggestions);
+    expect(countPendingWithProject(dbPath())).toBe(TRIAGE_FIXTURE.pendingSuggestions);
     expect(TRIAGE_FIXTURE.pendingSuggestions).toBe(17);
 
     const target = pendingSuggestionIds().slice(0, 12);
@@ -459,10 +490,26 @@ describe("G-TR-2 — bulk acts on a NON-EMPTY set, and only on the selection", (
     expect(p.results.map((x) => x.id)).toEqual(target);
 
     // 3. THE POST-STATE, and 4. THE DELTA — both, not either.
-    expect(countPending(dbPath())).toBe(5);
+    expect(countPendingWithProject(dbPath())).toBe(5);
     const states = suggestionStates(dbPath());
-    const stillPending = states.filter((s) => s.status === "pending").map((s) => s.id);
+    // Restricted to the PROJECT-BEARING ids on purpose (TD-326): the fixture
+    // also seeds ids 19-21, which belong to no project and are outside this
+    // gate's claim. They are separately asserted UNTOUCHED below, which is the
+    // stronger statement — this dismiss reached neither more nor less than the
+    // twelve it named.
+    const stillPending = states
+      .filter((s) => s.status === "pending" && pendingSuggestionIds().includes(s.id))
+      .map((s) => s.id);
     expect(stillPending, "the WRONG five survived").toEqual(survivors);
+    expect(
+      states.filter((s) => TRIAGE_FIXTURE.brainLevelPendingIds.includes(
+        s.id as (typeof TRIAGE_FIXTURE.brainLevelPendingIds)[number],
+      )),
+      "a project bulk reached the project-less rows",
+    ).toHaveLength(TRIAGE_FIXTURE.brainLevelPendingIds.length);
+    expect(countPendingBrainLevel(dbPath())).toBe(
+      TRIAGE_FIXTURE.brainLevelPendingIds.length,
+    );
     const nowDismissed = states.filter((s) => s.status === "dismissed").map((s) => s.id);
     expect(nowDismissed).toEqual(target);
     // Every dismissal carried the reason — the suppression-loop signal.
@@ -478,19 +525,19 @@ describe("G-TR-2 — bulk acts on a NON-EMPTY set, and only on the selection", (
   it("SELF-NEGATIVE-CONTROL — the server REFUSES an empty bulk rather than reporting success", async () => {
     // The vacuous shape this whole gate is named after, driven deliberately: a
     // 200/applied:0 here would make "bulk works" satisfiable by a no-op.
-    const before = countPending(dbPath());
+    const before = countPendingWithProject(dbPath());
     const r = await triage({ action: "dismiss", ids: [], reason: "nothing" });
     expect(r.status).toBe(400);
     expect(r.json<{ error: string }>().error).toContain("must not be empty");
-    expect(countPending(dbPath())).toBe(before);
+    expect(countPendingWithProject(dbPath())).toBe(before);
   });
 
   it("SELF-NEGATIVE-CONTROL — the count really can move, and the reader really reads", async () => {
-    // Without this, "5 survived" is also what you observe from a `countPending`
+    // Without this, "5 survived" is also what you observe from a `countPendingWithProject`
     // that returns a constant.
-    expect(countPending(dbPath())).toBe(17);
+    expect(countPendingWithProject(dbPath())).toBe(17);
     await triage({ action: "dismiss", ids: [1], reason: "one" });
-    expect(countPending(dbPath())).toBe(16);
+    expect(countPendingWithProject(dbPath())).toBe(16);
   });
 });
 
@@ -502,7 +549,7 @@ describe("G-TR-3 — partial failure is REPORTED per id, never rolled back", () 
   it("3 valid + 1 missing + 1 already-acted -> applied 3, failed 2, the 3 LANDED", async () => {
     const missing = 9999;
     const ids = [3, 4, 5, missing, TRIAGE_FIXTURE.actedSuggestionId];
-    expect(countPending(dbPath())).toBe(17);
+    expect(countPendingWithProject(dbPath())).toBe(17);
 
     const r = await triage({ action: "dismiss", ids, reason: "mixed batch" });
     expect(r.status, "a partial failure is NOT an HTTP error").toBe(200);
@@ -526,7 +573,7 @@ describe("G-TR-3 — partial failure is REPORTED per id, never rolled back", () 
     for (const id of [3, 4, 5]) {
       expect(states.find((s) => s.id === id)?.status, `id ${id}`).toBe("dismissed");
     }
-    expect(countPending(dbPath())).toBe(14);
+    expect(countPendingWithProject(dbPath())).toBe(14);
     // ...and the already-acted row is STILL acted — a failed id mutated nothing.
     expect(states.find((s) => s.id === TRIAGE_FIXTURE.actedSuggestionId)?.status).toBe(
       "acted",
@@ -542,8 +589,14 @@ describe("G-TR-3 — partial failure is REPORTED per id, never rolled back", () 
     // The clamp is REPORTED, not silent — that is the whole difference between
     // a bounded endpoint and one that loses 50 rows without saying so.
     expect(p.params.join(" ")).toContain("the rest were NOT applied");
-    // Only the 17 real pending rows could succeed; the rest are `not found`.
-    expect(p.applied).toBe(17);
+    // Only the real PENDING rows could succeed; the rest are `not found` (or,
+    // for id 18, already acted). Since TD-326 that is 17 project-bearing rows
+    // plus the 3 project-less ones — this batch names ids 1..250, so it spans
+    // both populations, which is why the number is derived rather than typed.
+    const pending =
+      TRIAGE_FIXTURE.pendingSuggestions + TRIAGE_FIXTURE.brainLevelPendingIds.length;
+    expect(pending).toBe(20);
+    expect(p.applied).toBe(pending);
   });
 
   it("duplicate ids are dropped ONCE and reported, not dismissed twice", async () => {
@@ -556,11 +609,11 @@ describe("G-TR-3 — partial failure is REPORTED per id, never rolled back", () 
   });
 
   it("`apply` is single-item only (D4) — a bulk is a 400, and nothing mutates", async () => {
-    const before = countPending(dbPath());
+    const before = countPendingWithProject(dbPath());
     const r = await triage({ action: "apply", ids: [1, 2] });
     expect(r.status).toBe(400);
     expect(r.json<{ error: string }>().error).toContain("single-item only");
-    expect(countPending(dbPath())).toBe(before);
+    expect(countPendingWithProject(dbPath())).toBe(before);
   });
 });
 
@@ -702,11 +755,11 @@ describe("G-TR-5(b) — the write REACHES the brain's own handler, and has no by
   });
 
   it("SELF-NEGATIVE-CONTROL — dispatchTriage refuses an action outside the frozen map", async () => {
-    const before = countPending(dbPath());
+    const before = countPendingWithProject(dbPath());
     const r = await dispatchTriage("__not_in_the_map__", [1]);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toContain("unknown triage action");
-    expect(countPending(dbPath())).toBe(before);
+    expect(countPendingWithProject(dbPath())).toBe(before);
   });
 });
 
@@ -764,5 +817,113 @@ describe("G-TR-6 — the dashboard is subject to the SAME input contract as an M
       dismissed_reason: "r",
       acted_brief_id: null,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-7 — TD-326: the project-less population is BULK-TRIAGEABLE, and only it
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-326 AC #2 and AC #3, over the real write door.
+ *
+ * The read half (the count, the listing, the param handling) is
+ * `dashboard-layers-endpoint.test.ts` G-EP-4. THIS gate answers the two
+ * questions that only a mutation can answer:
+ *
+ *   - can the operator ACT on the project-less rows as their own population?
+ *   - does acting on them leave every project's rows untouched, so D5 —
+ *     "a bulk action never silently spans projects the operator did not
+ *     choose" — still holds for the scope TD-326 adds?
+ *
+ * THE VACUOUS SHAPE, NAMED: a bulk over an EMPTY project-less population would
+ * report `applied: 0` and every "the projects were untouched" assertion would
+ * pass. So the pre-state asserts the population is non-empty, the post-state
+ * asserts it emptied, and the delta asserts it was this action that did it.
+ */
+describe("G-TR-7 — TD-326: bulk-triaging the rows that belong to no project", () => {
+  it("the fixture seeds a NON-EMPTY project-less population — the pre-state", () => {
+    // Without this reading, every assertion below is satisfiable by zero rows.
+    expect(countPendingBrainLevel(dbPath())).toBe(
+      TRIAGE_FIXTURE.brainLevelPendingIds.length,
+    );
+    expect(countPendingBrainLevel(dbPath())).toBeGreaterThan(0);
+    // ...and it is DISJOINT from the project-bearing one, which is what makes
+    // "the projects were untouched" a meaningful claim rather than a tautology.
+    expect(countPendingWithProject(dbPath())).toBe(TRIAGE_FIXTURE.pendingSuggestions);
+    const nulls = suggestionStates(dbPath()).filter((s) =>
+      TRIAGE_FIXTURE.brainLevelPendingIds.includes(
+        s.id as (typeof TRIAGE_FIXTURE.brainLevelPendingIds)[number],
+      ),
+    );
+    expect(nulls.every((s) => s.status === "pending")).toBe(true);
+  });
+
+  it("dismissing the brain-level cohort clears it and touches NO project row", async () => {
+    const ids = [...TRIAGE_FIXTURE.brainLevelPendingIds];
+    const beforeScoped = countPendingWithProject(dbPath());
+    const beforeBrain = countPendingBrainLevel(dbPath());
+    expect(beforeBrain).toBe(ids.length);
+
+    const r = await triage({ action: "dismiss", ids, reason: "edge inferences reviewed" });
+    expect(r.status).toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: ids.length, applied: ids.length, failed: 0 });
+
+    // POST-STATE and DELTA, both.
+    expect(countPendingBrainLevel(dbPath())).toBe(0);
+    expect(beforeBrain - countPendingBrainLevel(dbPath())).toBe(ids.length);
+    // D5: the population the operator did NOT choose is bit-for-bit unmoved.
+    expect(
+      countPendingWithProject(dbPath()),
+      "a brain-level bulk reached a project's rows",
+    ).toBe(beforeScoped);
+    const states = suggestionStates(dbPath());
+    for (const id of pendingSuggestionIds()) {
+      expect(states.find((s) => s.id === id)?.status, `id ${id}`).toBe("pending");
+    }
+    for (const id of ids) {
+      expect(states.find((s) => s.id === id)).toMatchObject({
+        status: "dismissed",
+        dismissed_reason: "edge inferences reviewed",
+      });
+    }
+  });
+
+  it("the endpoint hands back exactly the ids the brain-level scope listed", async () => {
+    // The round trip the UI performs: LIST under the scope, then act on what
+    // came back. If these two disagreed, the bulk bar would be acting on a set
+    // the operator never saw.
+    const listed = JSON.parse(
+      (await get("/api/suggestions?project_scope=brain-level&status=pending")).body,
+    ) as { items: { id: number; project_slug: string | null }[]; total: number };
+    expect(listed.total).toBe(TRIAGE_FIXTURE.brainLevelPendingIds.length);
+    expect(listed.items.map((s) => s.id).sort((a, b) => a - b)).toEqual(
+      [...TRIAGE_FIXTURE.brainLevelPendingIds].sort((a, b) => a - b),
+    );
+    expect(listed.items.every((s) => s.project_slug === null)).toBe(true);
+
+    const r = await triage({
+      action: "dismiss",
+      ids: listed.items.map((s) => s.id),
+      reason: "from the listed set",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(listed.total);
+    expect(countPendingBrainLevel(dbPath())).toBe(0);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — a project bulk leaves the brain-level rows alone too", async () => {
+    // The symmetric claim. Without it, "the two populations do not interfere"
+    // rests on one direction, and a `WHERE` that silently matched everything
+    // would still pass the test above.
+    const beforeBrain = countPendingBrainLevel(dbPath());
+    expect(beforeBrain).toBeGreaterThan(0);
+    const r = await triage({
+      action: "dismiss",
+      ids: [...TRIAGE_FIXTURE.demoPendingIds],
+      reason: "demo cohort",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(TRIAGE_FIXTURE.demoPendingIds.length);
+    expect(countPendingBrainLevel(dbPath())).toBe(beforeBrain);
   });
 });
