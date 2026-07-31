@@ -121,6 +121,23 @@ const MUTATIONS = {
     gate: "G-BR-7b",
     how: "REFRESH during the back-out, so the whole-brain payload is paid for twice — the exact defect the graphCache hoist exists to prevent",
   },
+  // --- FR-241 -------------------------------------------------------------
+  "br8-cancel-is-a-confirm": {
+    gate: "G-BR-8c",
+    how: "click CONFIRM where the gate clicks CANCEL — so a dialog that mutated on dismissal is what the 'no request, no row change' check now sees",
+  },
+  "br8-count-from-selection": {
+    gate: "G-BR-8d",
+    how: "assert the confirm dialog's hard-delete count equals the SELECTION SIZE rather than the tier-3 subset — the blanket-'irreversible' lie L-140 would have produced",
+  },
+  "br8-bulk-on-empty": {
+    gate: "G-BR-8e",
+    how: "run the bulk action with NOTHING selected and assert it succeeded — this brief's named vacuous gate (a bulk on zero items), driven on purpose",
+  },
+  "br8-write-affordance-when-down": {
+    gate: "G-BR-8f",
+    how: "assert the write buttons are PRESENT in the world whose write surface is unavailable — the 'disabled, not broken' claim, inverted",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -358,11 +375,94 @@ function hermeticState(world) {
   }
 }
 
+/**
+ * FR-241 — seed the TRIAGE world's brain with the ENGINE's own migrations.
+ *
+ * It cannot use `seedLayerBrain`. That fixture hand-rolls DDL (it must —
+ * `cli/` and `brain-mcp-server/` have zero cross-imports), and booting the
+ * write engine on top of it throws `duplicate column name: archetype` because
+ * the engine's migrations re-apply an `ALTER TABLE` the DDL already inlined.
+ * A triage world built that way would only ever show `TRIAGE DISABLED`, and
+ * G-BR-8 would be green and meaningless.
+ *
+ * TWO PASSES, AND NOTHING OPENS A WRITER WHILE AN ENGINE IS LIVE. A read-write
+ * connection opened and closed alongside a live engine unlinks the WAL, after
+ * which every fresh reader — including the dashboard server — sees the
+ * PRE-dispatch state. So: migrate, shut down, then seed.
+ */
+function seedTriageWorld(db) {
+  return execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import D from "better-sqlite3";
+      const DB = process.env.GATE_DB;
+      new D(DB).close();
+      const { bootEngine } = await import(process.env.GATE_ENGINE);
+      bootEngine({ dbPath: DB, components: { schedules: { enabled: false } } }).shutdown();
+      const db = new D(DB);
+      // Two registered projects, so the shared scope chips render and the page
+      // opens on a DEFAULT project exactly as every other view does (D5).
+      const insP = db.prepare(
+        "INSERT INTO projects (slug, name, path, status, last_session_at) VALUES (?,?,?,'active',?)"
+      );
+      insP.run("demo", "Demo", "/tmp/demo", "2026-07-28 09:00:00");
+      insP.run("other", "Other", "/tmp/other", "2026-07-27 09:00:00");
+      // 6 pending suggestions on \`demo\`, 2 on \`other\` — an ASYMMETRIC scope
+      // split, so a page that ignored the project chip shows a different count.
+      const ins = db.prepare(
+        "INSERT INTO suggestions (id, source_module, project_slug, title, evidence, priority, status, created_at) VALUES (?,?,?,?,'{}',?, 'pending', ?)"
+      );
+      for (let i = 1; i <= 6; i++) {
+        ins.run(i, i % 2 === 0 ? "janitor" : "gap", "demo", "demo suggestion " + i, i % 3 === 0 ? "high" : "medium", "2026-07-0" + i + "09:00:00");
+      }
+      ins.run(7, "missing_followup", "other", "other suggestion 7", "low", "2026-07-20 09:00:00");
+      ins.run(8, "missing_followup", "other", "other suggestion 8", "low", "2026-07-21 09:00:00");
+      // Candidates: 3 first-time (reject = HARD delete, tier 3) and
+      // 2 recurring (reject = SOFT delete, tier 2). The MIXED selection is the
+      // only one that can catch a blanket-"irreversible" dialog.
+      const insL = db.prepare(
+        "INSERT INTO learnings (id, project, category, title, content, confidence, provenance, review_status, source_extractor, seen_again_count, tags, tech_stack, scope) VALUES (?,'demo','pattern',?,'body',0.8,'inferred','pending_review','perception',?,'','','local')"
+      );
+      insL.run(1, "first-time candidate 1", 0);
+      insL.run(2, "first-time candidate 2", 0);
+      insL.run(3, "first-time candidate 3", 0);
+      insL.run(4, "recurring candidate 4", 5);
+      insL.run(5, "recurring candidate 5", 2);
+      db.close();
+      `,
+    ],
+    {
+      cwd: CLI_ROOT,
+      env: {
+        ...process.env,
+        GATE_DB: db,
+        GATE_ENGINE: pathToFileURL(
+          join(CLI_ROOT, "dist", "brain-mcp-server", "dist", "engine", "index.js"),
+        ).href,
+      },
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+}
+
 function makeWorld(kind) {
   const brain = mkdtempSync(join(tmpdir(), `igris-fr240-gate-${kind}-`));
   mkdirSync(join(brain, "memory"), { recursive: true });
   mkdirSync(join(brain, "home"), { recursive: true });
   const db = join(brain, "memory", "knowledge.db");
+
+  if (kind === "triage") {
+    seedTriageWorld(db);
+    seedCatalog(brain);
+    const ctx = join(brain, "projects", "demo", "context");
+    mkdirSync(ctx, { recursive: true });
+    writeFileSync(join(ctx, "coding_guidelines.md"), DOC_BODY);
+    return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+  }
 
   if (kind !== "missing") {
     // The shared fixture, plus TWO gate-local additions:
@@ -558,7 +658,11 @@ function teardown() {
 const INSTRUMENT = `
 (() => {
   const w = window;
-  w.__gate = { raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0 };
+  // \`triagePost\` is FR-241's witness: "CANCEL issued no request" is a claim
+  // about a request that did NOT happen, and only an independent counter can
+  // make it. Counting server-side would not do — the question is what the PAGE
+  // did, and a server log cannot tell a triage POST from any other.
+  w.__gate = { raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0, triagePost: 0 };
   const raf = w.requestAnimationFrame.bind(w);
   w.requestAnimationFrame = (cb) => raf((t) => { w.__gate.raf++; return cb(t); });
   if (w.CanvasRenderingContext2D) {
@@ -572,9 +676,12 @@ const INSTRUMENT = `
   w.fetch = function (...a) {
     const first = a[0];
     const url = String(typeof first === 'string' ? first : (first && first.url) || '');
+    const init = a[1] || {};
+    const method = String(init.method || (first && first.method) || 'GET').toUpperCase();
     w.__gate.fetch++;
     // \`/api/graph\` EXACTLY — not \`/api/graph/stats\`, which the overview polls.
     if (/(^|\\/)api\\/graph(\\?|$)/.test(url)) w.__gate.graphFetch++;
+    if (method === 'POST' && /(^|\\/)api\\/triage(\\?|$)/.test(url)) w.__gate.triagePost++;
     return origFetch.apply(w, a);
   };
   const observe = () => {
@@ -1111,17 +1218,36 @@ async function graphDrill(tab, slug) {
   if (ok === null) throw new Error("graphDrill: no `// DRILL` select on this page");
 }
 
-/** Click a `<button>` by its exact label. `settle:false` for a timed window. */
+/**
+ * Click a `<button>` by its exact label. `settle:false` for a timed window.
+ *
+ * `scroll: true` SCROLLS THE BUTTON INTO VIEW FIRST, and it is not cosmetic.
+ * A `getBoundingClientRect()` on an element above the fold returns a NEGATIVE
+ * `y`, and `Input.dispatchMouseEvent` at a negative coordinate lands nowhere —
+ * the click silently does nothing and the gate times out waiting for the effect.
+ * Observed exactly that on FR-241's G-BR-8: the triage bulk bar sat at
+ * `y = -125.5` after the candidate list had grown, so `REJECT` was "clicked"
+ * four times with no dialog. It is OPT-IN rather than the default so the FR-239
+ * and FR-240 gates, whose timed windows are calibrated with no scroll in them,
+ * are byte-for-byte unaffected.
+ */
 async function clickButton(tab, label, opts = {}) {
+  const { scroll = false, ...clickOpts } = opts;
   const box = await tab.eval(`
     const b = [...document.querySelectorAll('button')]
       .find(x => x.textContent.trim() === ${JSON.stringify(label)});
     if (b === undefined) return null;
+    ${scroll ? "b.scrollIntoView({ block: 'center' });" : ""}
     const r = b.getBoundingClientRect();
     return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
   `);
   if (box === null) throw new Error(`no button labelled "${label}"`);
-  await tab.clickAt(box.x, box.y, opts);
+  if (box.y < 0 || box.x < 0) {
+    throw new Error(
+      `button "${label}" is outside the viewport at (${box.x}, ${box.y}) — pass { scroll: true }`,
+    );
+  }
+  await tab.clickAt(box.x, box.y, clickOpts);
 }
 
 /**
@@ -2214,6 +2340,286 @@ async function gBr7(tab) {
   );
 }
 
+/**
+ * G-BR-8 — FR-241: THE TRIAGE SURFACE, CLICKED.
+ *
+ * PROVES, in a real browser against a real brain:
+ *   8a  the Suggestions tab's rendered row count agrees with `/api/suggestions`
+ *       for the scope the page selected, and selection checkboxes exist;
+ *   8b  the Candidates tab marks the tier-3 rows on the ROW, before any dialog
+ *       opens — an aggregate cannot tell you which row to untick;
+ *   8c  CANCEL issues **no** request and changes **no** row (the independent
+ *       `__gate.triagePost` counter is the witness, not the server log);
+ *   8d  the dialog's hard-delete count is the TIER-3 SUBSET of a mixed
+ *       selection, not the selection size — the blanket-"irreversible" lie;
+ *   8e  a tier-3 bulk needs the count TYPED, and once confirmed the rows leave
+ *       the list AND the endpoint's own count drops by the same number;
+ *   8f  a world whose write surface is unavailable renders the queue but NO
+ *       write control (*disabled, not broken*).
+ *
+ * DOES NOT PROVE: what the mutation does to `event_log` (that is
+ * `dashboard-triage-parity.test.ts`, two processes, a real differ), nor the
+ * gateway's input contract (`dashboard-triage-endpoint.test.ts` G-TR-6).
+ *
+ * NOTE ON THE WORLD: this gate runs on `triage`, whose brain is built by the
+ * ENGINE's own migrations. The `seeded` world CANNOT be used — the write engine
+ * throws `duplicate column name: archetype` on the hand-rolled FR-240 schema,
+ * so every check here would observe `TRIAGE DISABLED` and pass for the wrong
+ * reason. See `seedTriageWorld`.
+ */
+async function gBr8(tabs, worlds) {
+  gate("G-BR-8", "cognition triage — select, confirm, cancel, and mutate");
+
+  const tab = tabs.triage;
+  const world = worlds.triage;
+
+  // --- 8a: the Suggestions tab is wired to the endpoint ---------------------
+  await tab.hash("#/triage");
+  await tab.until(has(".triage-bulk"), { label: "the triage bulk bar mounts" });
+  await untilListStable(tab);
+
+  const scope = await activeProject(tab);
+  const rows = await tab.eval(READ.rowTitles);
+  const api = await apiJson(
+    `${world.url}/api/suggestions?status=pending&project=${encodeURIComponent(scope ?? "")}`,
+  );
+  const boxes = await tab.eval(
+    "return document.querySelectorAll('.record-select').length;",
+  );
+  check(
+    "8a",
+    scope !== null && rows.length === api.count && boxes === rows.length,
+    `scoped to project=${JSON.stringify(scope)} · DOM rows=${rows.length} · endpoint count=${api.count} · checkboxes=${boxes}`,
+  );
+  note(
+    `8a asserts the READ half agrees with the endpoint. The queue is project-scoped ` +
+      `by DEFAULT (D5): the world seeds 6 pending on demo and 2 on other, so a page ` +
+      `that ignored the scope chip would report 8 here.`,
+  );
+
+  // --- 8b: the tier is visible ON THE ROW ----------------------------------
+  await clickButton(tab, "Candidates", { scroll: true });
+  await tab.until(has(".record-select"), { label: "candidate rows" });
+  await untilListStable(tab);
+  const badges = await tab.eval(
+    "return [...document.querySelectorAll('.record-row-badges')].map(e => e.textContent.trim());",
+  );
+  const permanent = badges.filter((b) => b.includes("reject = PERMANENT")).length;
+  const recurring = badges.filter((b) => b.includes("recurring")).length;
+  check(
+    "8b",
+    permanent === 3 && recurring === 2,
+    `row badges: ${permanent} marked "reject = PERMANENT" (seeded 3 with seen_again_count=0), ` +
+      `${recurring} marked recurring (seeded 2) · ${JSON.stringify(badges)}`,
+  );
+
+  /** Tick the checkbox on the row whose title contains `text`. */
+  const selectRow = async (text) => {
+    const box = await tab.eval(`
+      const li = [...document.querySelectorAll('.record-list > li')]
+        .find(x => (x.querySelector('.record-row-title')?.textContent ?? '').includes(${JSON.stringify(text)}));
+      if (li === undefined) return null;
+      const cb = li.querySelector('.record-select');
+      if (cb === null) return null;
+      cb.scrollIntoView({ block: 'center' });
+      const r = cb.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    `);
+    if (box === null) throw new Error(`no selectable row matching "${text}"`);
+    await tab.clickAt(box.x, box.y);
+  };
+
+  // A MIXED selection: 2 first-time (tier 3) + 1 recurring (tier 2). Only a
+  // mixed one can catch a dialog that reports the selection size.
+  await selectRow("first-time candidate 1");
+  await selectRow("first-time candidate 2");
+  await selectRow("recurring candidate 4");
+  const selected = await tab.eval(
+    "const e = document.querySelector('.triage-bulk'); return e === null ? null : e.getAttribute('data-selected');",
+  );
+  check("8b-sel", selected === "3", `bulk bar reports data-selected=${selected} (expected 3)`);
+
+  // --- 8c: CANCEL issues NO request ----------------------------------------
+  const beforePosts = (await tab.instrument()).triagePost;
+  const beforeApi = await apiJson(
+    `${world.url}/api/learnings?review_status=pending_review&project=demo`,
+  );
+  await clickButton(tab, "REJECT", { scroll: true });
+  try {
+    await tab.until(has(".triage-confirm"), {
+      label: "the confirm dialog opens",
+      timeout: 8_000,
+    });
+  } catch (err) {
+    // A "the dialog did not open" timeout has three very different causes — a
+    // disabled button, an empty selection, and a control outside the viewport —
+    // and the bare timeout distinguishes none of them. This DIAG line is what
+    // identified the third (the bulk bar at `y = -125.5`); it is kept so the
+    // next reader gets the reading instead of re-deriving it.
+    note(
+      "DIAG " +
+        JSON.stringify(
+          await tab.eval(`
+      return {
+        buttons: [...document.querySelectorAll('button')].map(b => b.textContent.trim() + (b.disabled ? '[disabled]' : '')),
+        selected: document.querySelector('.triage-bulk')?.getAttribute('data-selected'),
+        bulkRect: (() => { const e = document.querySelector('.triage-bulk'); if (!e) return null; const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; })(),
+      };
+    `),
+        ),
+    );
+    throw err;
+  }
+
+  // The dialog, on screen, in pixels. A screenshot is the artifact a reviewer
+  // can read without re-running anything.
+  const shot = await tab.send("Page.captureScreenshot", { format: "png" });
+  note(`8c captured the confirm dialog (${Math.round(shot.data.length / 1365)} KB png, discarded)`);
+
+  if (mut("br8-cancel-is-a-confirm")) {
+    // The injected defect is "the dialog MUTATED on dismissal". Reaching that
+    // state needs the typed confirmation entered first — a `disabled` CONFIRM
+    // does nothing when clicked, and a first draft of this mutation was
+    // reported VACUOUS for exactly that reason: it "clicked" a dead button, no
+    // POST was issued, and 8c passed. Which is itself a finding worth keeping:
+    // the disabled attribute really is load-bearing.
+    await tab.type(".triage-confirm .field input", "2");
+    await tab.settle(300);
+    await clickButton(tab, "DELETE 2 PERMANENTLY", { scroll: true });
+  } else {
+    await clickButton(tab, "CANCEL", { scroll: true });
+  }
+  await tab.settle(1200);
+  const afterPosts = (await tab.instrument()).triagePost;
+  const afterApi = await apiJson(
+    `${world.url}/api/learnings?review_status=pending_review&project=demo`,
+  );
+  check(
+    "8c",
+    afterPosts === beforePosts && afterApi.total === beforeApi.total,
+    `CANCEL -> triage POSTs ${beforePosts} -> ${afterPosts} (independent in-page counter) · ` +
+      `pending candidates ${beforeApi.total} -> ${afterApi.total}${
+        mut("br8-cancel-is-a-confirm") ? "  [MUTATED: clicked CONFIRM instead of CANCEL]" : ""
+      }`,
+  );
+
+  // --- 8d: the count is the TIER-3 SUBSET, not the selection ---------------
+  await clickButton(tab, "REJECT", { scroll: true });
+  await tab.until(has(".triage-confirm"), { label: "the confirm dialog re-opens" });
+  const dialog = await tab.eval(`
+    const d = document.querySelector('.triage-confirm');
+    if (d === null) return null;
+    return {
+      hardDelete: Number(d.getAttribute('data-hard-delete')),
+      danger: (d.querySelector('.triage-danger')?.textContent ?? '').trim(),
+      lines: [...d.querySelectorAll('.triage-confirm-line')].map(e => e.textContent.trim()),
+      typedLabel: [...d.querySelectorAll('label')].map(e => e.textContent.trim()).join(' | '),
+      confirmDisabled: [...d.querySelectorAll('button')]
+        .filter(b => b.textContent.includes('PERMANENTLY'))
+        .map(b => b.disabled),
+    };
+  `);
+  const expectedHard = mut("br8-count-from-selection") ? 3 : 2;
+  check(
+    "8d",
+    dialog !== null && dialog.hardDelete === expectedHard,
+    `mixed selection of 3 (2 first-time + 1 recurring) -> dialog reports ` +
+      `${dialog?.hardDelete} permanent deletions (expected ${expectedHard})${
+        mut("br8-count-from-selection") ? "  [MUTATED: expecting the SELECTION SIZE]" : ""
+      } · danger line: ${JSON.stringify(dialog?.danger)}`,
+  );
+  check(
+    "8d-sentence",
+    dialog !== null &&
+      dialog.danger.includes("PERMANENTLY DELETED") &&
+      dialog.danger.includes("cannot be undone") &&
+      dialog.lines[dialog.lines.length - 1] === dialog.danger &&
+      dialog.lines.length === 2,
+    `the tier-3 sentence is its OWN line and is LAST: ${JSON.stringify(dialog?.lines)}`,
+  );
+  check(
+    "8d-typed",
+    dialog !== null &&
+      dialog.typedLabel.includes("type 2 to confirm") &&
+      dialog.confirmDisabled.every((d) => d === true),
+    `a tier-3 BULK demands the count typed and leaves CONFIRM disabled: ` +
+      `label=${JSON.stringify(dialog?.typedLabel)} confirmDisabled=${JSON.stringify(dialog?.confirmDisabled)}`,
+  );
+
+  // --- 8e: typing the count enables CONFIRM, and the mutation LANDS --------
+  const bulkIds = mut("br8-bulk-on-empty") ? [] : [1, 2, 4];
+  if (mut("br8-bulk-on-empty")) {
+    // Deselect everything, which closes the dialog — the mutation drives the
+    // vacuous shape (a bulk action on zero items) on purpose.
+    await clickButton(tab, "CLEAR", { scroll: true });
+    await tab.settle(500);
+  }
+  const preTotal = (
+    await apiJson(`${world.url}/api/learnings?review_status=pending_review&project=demo`)
+  ).total;
+
+  if (!mut("br8-bulk-on-empty")) {
+    await tab.type(".triage-confirm input[type=text], .triage-confirm .field input", "2");
+    await tab.settle(300);
+    await clickButton(tab, "DELETE 2 PERMANENTLY", { scroll: true });
+    await tab.settle(1200);
+    await untilListStable(tab);
+  }
+
+  const postTotal = (
+    await apiJson(`${world.url}/api/learnings?review_status=pending_review&project=demo`)
+  ).total;
+  const posts = (await tab.instrument()).triagePost;
+  check(
+    "8e",
+    // PRE-STATE, POST-STATE **and** DELTA — the three assertions that keep a
+    // bulk gate from being the drain-test-on-an-empty-queue this brief names.
+    preTotal === 5 && postTotal === 2 && preTotal - postTotal === bulkIds.length,
+    `pending candidates ${preTotal} -> ${postTotal} (delta ${preTotal - postTotal}, ` +
+      `expected ${bulkIds.length} for ids ${JSON.stringify(bulkIds)}) · triage POSTs so far ${posts}${
+        mut("br8-bulk-on-empty") ? "  [MUTATED: bulk fired on an EMPTY selection]" : ""
+      }`,
+  );
+  const remaining = await tab.eval(READ.rowTitles);
+  check(
+    "8e-rows",
+    remaining.length === postTotal &&
+      !remaining.some((t) => t.includes("first-time candidate 1")) &&
+      !remaining.some((t) => t.includes("recurring candidate 4")),
+    `the acted-on rows left the list · remaining=${JSON.stringify(remaining)}`,
+  );
+
+  // --- 8f: a down write surface renders NO write control -------------------
+  const downTab = tabs.missing;
+  await downTab.hash("#/triage");
+  await downTab.until(has(".shell-banner"), { label: "the triage page mounts (missing world)" });
+  const down = await downTab.eval(`
+    const banners = [...document.querySelectorAll('.shell-banner')].map(e => e.textContent.trim());
+    return {
+      banners,
+      bulkBar: document.querySelector('.triage-bulk') !== null,
+      rejectButton: [...document.querySelectorAll('button')].some(b => b.textContent.trim() === 'REJECT'),
+    };
+  `);
+  const wantAffordance = mut("br8-write-affordance-when-down");
+  check(
+    "8f",
+    down.banners.some((b) => b.includes("TRIAGE DISABLED")) &&
+      down.bulkBar === wantAffordance &&
+      down.rejectButton === wantAffordance,
+    `write surface down -> TRIAGE DISABLED banner present, bulk bar=${down.bulkBar}, ` +
+      `REJECT button=${down.rejectButton} (expected ${wantAffordance})${
+        wantAffordance ? "  [MUTATED: expecting the affordances to be PRESENT]" : ""
+      }`,
+  );
+  check(
+    "8f-control",
+    (await tab.eval("return document.querySelector('.triage-bulk') !== null;")) === true,
+    `NEGATIVE CONTROL — the same page in the TRIAGE world still has its bulk bar, ` +
+      `so 8f's absence is caused by the write surface and not by the page failing to mount`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -2232,7 +2638,10 @@ async function main() {
   const worlds = {};
   const tabs = {};
   try {
-    for (const kind of ["seeded", "vec", "empty", "missing"]) {
+    // FR-241 adds a FIFTH world. `triage` is the only one whose brain is built
+    // by the engine's own migrations, which is the only schema the write door
+    // can boot against — see `seedTriageWorld`.
+    for (const kind of ["seeded", "vec", "empty", "missing", "triage"]) {
       const w = makeWorld(kind);
       worldDirs.push(w.brain);
       worlds[kind] = await startServer(w);
@@ -2268,6 +2677,10 @@ async function main() {
     await runGate("G-BR-4", () => gBr4(tabs));
     await runGate("G-BR-5", () => gBr5(tabs.seeded));
     await runGate("G-BR-6", () => gBr6(tabs.seeded));
+    // FR-241. Its own world and its own tab, so it cannot disturb G-BR-7's
+    // document below — and it MUTATES, so it must never touch `seeded`, whose
+    // row counts three earlier gates assert on.
+    await runGate("G-BR-8", () => gBr8(tabs, worlds));
     // LAST, because it RELOADS the seeded tab: the scope cache it measures is
     // module-level, so it needs a document nothing has fetched in yet.
     await runGate("G-BR-7", () => gBr7(tabs.seeded));

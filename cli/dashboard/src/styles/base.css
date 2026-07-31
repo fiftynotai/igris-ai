@@ -1549,3 +1549,95 @@ h6.record-md-h {
     min-width: 0;
   }
 }
+
+/* ─── FR-241 · the triage surface (selection, bulk bar, confirm dialog) ──────
+   Original to FR-241. Held to the SAME two mechanical properties as the FR-240
+   block above, and asserted by the same scans — which read from the FR-240
+   marker to END OF FILE, so this block is already inside them:
+
+   1. ZERO COLOUR LITERALS. Every colour dereferences a role token
+      (`--fg` / `--muted` / `--accent` / `--line` / `--bg`).
+   2. ZERO CUSTOM PROPERTIES, so the FR-239 `:root` cascade bug stays
+      unreachable by construction.
+   Borders are `0.5px solid var(--line)` or `var(--accent)`; radii are zero.
+
+   `.triage-danger` is the tier-3 sentence and it is the ONE thing on this page
+   that is allowed to shout. It reads `--accent`, which is the palette's alarm
+   role, so it re-colours with every palette rather than pinning a red.
+   ─────────────────────────────────────────────────────────── */
+
+/* ─── Selection ─── */
+.record-li-select {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-1);
+}
+.record-li-select > .record-row {
+  flex: 1 1 auto;
+}
+.record-select {
+  /* A 44px tap target, as the coding guidelines require of every control. */
+  width: 44px;
+  min-height: 44px;
+  margin: 0;
+  flex: 0 0 auto;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* ─── The bulk bar ─── */
+.triage-bulk {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+  padding: var(--s-1) 0;
+  border-top: 0.5px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
+}
+/* Nothing selected: the bar is present but visibly inert, so the operator can
+   see the affordance exists without it looking armed. */
+.triage-bulk[data-selected="0"] {
+  opacity: 0.55;
+}
+
+/* ─── The confirm dialog ─── */
+.triage-confirm {
+  margin: var(--s-2) 0;
+  padding: var(--s-3);
+  border: 0.5px solid var(--accent);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+.triage-confirm-title {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-weight: 400;
+  color: var(--fg);
+}
+.triage-confirm-line {
+  margin: 0;
+  font-family: var(--ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+/* The tier-3 sentence. Its own element, its own weight, its own colour, and a
+   rule above it — the plan's "rendered as its own sentence", made visual. */
+.triage-danger {
+  padding-top: var(--s-1);
+  border-top: 0.5px solid var(--accent);
+  color: var(--accent);
+  font-weight: 600;
+}
+.triage-confirm-actions {
+  display: flex;
+  gap: var(--s-2);
+  align-items: center;
+}

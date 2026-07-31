@@ -228,7 +228,25 @@ const MODULE_RELS = {
   briefsRead: join("tools", "briefs-read.js"),
   memoryRead: join("tools", "memory-read.js"),
   goalsRead: join("engine", "components", "goals", "read.js"),
+  /** FR-241 — the pure suggestion reader behind `/api/suggestions`. */
+  suggestionsRead: join("tools", "suggestions-read.js"),
+  /**
+   * FR-241 — `bootEngine`, the **WRITE** door.
+   *
+   * Every other entry in this map is a READ artifact whose disappearance
+   * degrades a readout. This one is different in kind and the MAINTAINING row
+   * says so: a moved `engine/index.js` degrades the dashboard's ability to
+   * MUTATE the brain, so `/api/health`'s `write.available` — not just
+   * `bridge.available` — is the signal that goes false.
+   *
+   * Resolved here rather than in `brain-write-bridge.ts` so there is exactly
+   * ONE table of bundle-relative paths for the MAINTAINING sweep to re-point.
+   */
+  engine: join("engine", "index.js"),
 } as const;
+
+/** The bundle-relative path of the write engine, for `brain-write-bridge.ts`. */
+export const ENGINE_MODULE_REL: string = MODULE_RELS.engine;
 
 /**
  * Candidate compiled-brain ROOT directories, in priority order.
@@ -611,14 +629,20 @@ export function lastBridgeFailure(): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// FR-240 — the pure `db`-param READ layer
+// FR-240 — the pure `db`-param READ layer (FR-241 adds a fourth module)
 //
 // Structural type facade mirroring `brain-mcp-server/src/tools/briefs-read.ts`,
-// `src/tools/memory-read.ts` and `src/engine/components/goals/read.ts`, each
-// field block annotated with its source line — the same discipline the
-// `BrainGraph*` mirror above uses. MAINTAINING's "pure `db`-param READ layer"
-// row pins these: a change to a reader's signature or returned row shape MUST
-// re-point this facade in the same commit.
+// `src/tools/memory-read.ts`, `src/engine/components/goals/read.ts` and
+// `src/tools/suggestions-read.ts`, each field block annotated with its source
+// line — the same discipline the `BrainGraph*` mirror above uses. MAINTAINING's
+// "pure `db`-param READ layer" row pins these: a change to a reader's signature
+// or returned row shape MUST re-point this facade in the same commit.
+//
+// FR-241 NOTE — `openBrainReadonly` and `openBrainReadonlyWithVec` above are
+// NOT modified by the write brief. The read-write door is a DIFFERENT FUNCTION
+// in a DIFFERENT MODULE (`brain-write-bridge.ts`) returning a DIFFERENT
+// connection, which is what keeps FR-240's G-RO-3 pin (an `UPDATE` throws on
+// this file's handles) true rather than merely still-passing.
 // ---------------------------------------------------------------------------
 
 /** briefs-read.ts:47 — `ListBriefsOptions`. */
@@ -689,6 +713,15 @@ export interface LearningListRow {
   source_extractor: string;
   promoted_to_doc: string | null;
   content_length: number;
+  /**
+   * memory-read.ts:195 — FR-241. The destructiveness discriminator:
+   * `igris_perception_reject` SOFT-deletes when `> 0` and HARD-deletes when
+   * `== 0` (`perception/handlers.ts:661-717`). `COALESCE`d brain-side, so this
+   * is never null even on legacy rows.
+   */
+  seen_again_count: number;
+  /** memory-read.ts:197 — FR-241. Non-null iff already soft-deleted. */
+  deleted_at: string | null;
 }
 
 /** memory-read.ts:183 — `ListLearningsResult`. */
@@ -801,6 +834,64 @@ export interface ListGoalsResult {
   offset: number;
 }
 
+// --- FR-241: suggestions-read.ts ------------------------------------------
+
+/** suggestions-read.ts:79 — `ListSuggestionsOptions`. `limit`/`offset` are pre-clamped. */
+export interface ListSuggestionsOptions {
+  status?: string;
+  project_slug?: string;
+  /** suggestions-read.ts:84 — OPEN vocabulary since FR-118 M2. Never an enum. */
+  source_module?: string;
+  priority?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * suggestions-read.ts:100 — `SuggestionRow`, the `suggestions` table verbatim.
+ *
+ * `evidence` is the RAW JSON STRING, not an object: parsing is
+ * `rowToSuggestion`'s job and it lives in the MCP wrapper. The dashboard route
+ * keeps it a string too — a triage row does not render evidence, and parsing it
+ * server-side would put a second `rowToSuggestion` in the CLI.
+ */
+export interface SuggestionRow {
+  id: number;
+  source_module: string;
+  project_slug: string | null;
+  title: string;
+  evidence: string;
+  priority: string;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+  dismissed_at: string | null;
+  dismissed_reason: string | null;
+  acted_at: string | null;
+  acted_brief_id: string | null;
+  confidence: number | null;
+  suggested_action: string | null;
+  type_inferred: number;
+}
+
+/** suggestions-read.ts:121 — `SuggestionFacets`. Counts from DATA, never an enum (L-967). */
+export interface SuggestionFacets {
+  /** suggestions-read.ts:127 — count DESC then name ASC; the filter vocabulary. */
+  source_module: Record<string, number>;
+}
+
+/** suggestions-read.ts:131 — `ListSuggestionsResult`. */
+export interface ListSuggestionsResult {
+  suggestions: SuggestionRow[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  facets: SuggestionFacets;
+  /** suggestions-read.ts:139 — set when the `suggestions` table is absent (L-133). */
+  degraded: string | null;
+}
+
 /** goals/read.ts:89 — `ServingBrief`. */
 export interface ServingBrief {
   brief_id: string;
@@ -845,6 +936,11 @@ export interface LayerReaders {
   listGoals: (db: Database.Database, opts: ListGoalsOptions) => ListGoalsResult;
   /** goals/read.ts:196 */
   getGoal: (db: Database.Database, goalId: string) => GoalDetail | null;
+  /** suggestions-read.ts:170 — FR-241. */
+  listSuggestions: (
+    db: Database.Database,
+    opts?: ListSuggestionsOptions,
+  ) => ListSuggestionsResult;
 }
 
 /** Memoised reader handles — same rationale as `cached` above. */
@@ -865,9 +961,10 @@ export function lastLayerReadersFailure(): string | null {
  * dependency on a build artifact (R2), so the realistic failure is a moved path
  * on a machine nobody is watching.
  *
- * All three modules must resolve. A partial load would give the dashboard a
- * working briefs view and a mysteriously empty learnings view — a state that is
- * far harder to diagnose than "the read layer is unavailable".
+ * All FOUR modules must resolve (FR-241 adds `suggestions-read.js`). A partial
+ * load would give the dashboard a working briefs view and a mysteriously empty
+ * learnings view — a state that is far harder to diagnose than "the read layer
+ * is unavailable".
  */
 export async function loadLayerReaders(): Promise<LayerReaders | null> {
   if (cachedReaders !== null) return cachedReaders;
@@ -880,6 +977,7 @@ export async function loadLayerReaders(): Promise<LayerReaders | null> {
       exports: ["listLearnings", "getLearning", "hybridSearchLearnings"],
     },
     { rel: MODULE_RELS.goalsRead, exports: ["listGoals", "getGoal"] },
+    { rel: MODULE_RELS.suggestionsRead, exports: ["listSuggestions"] },
   ];
 
   const collected: Partial<Record<keyof LayerReaders, unknown>> = {};

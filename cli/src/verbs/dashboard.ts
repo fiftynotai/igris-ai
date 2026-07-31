@@ -24,10 +24,11 @@
  * digest and exits. `dashboard.bats` drives it from an extracted tarball (T8).
  */
 
-import { get as httpGet } from "node:http";
+import { get as httpGet, request as httpRequest } from "node:http";
 import { brainDbPath } from "../lib/paths.js";
 import { existsSync } from "node:fs";
 import * as bridge from "../lib/brain-bridge.js";
+import { shutdownWriteEngine } from "../lib/brain-write-bridge.js";
 import {
   inspectLock,
   releaseLock,
@@ -100,7 +101,62 @@ const SMOKE_PROBE_PATHS: readonly string[] = [
   "/api/context-doc",
   "/api/goals",
   "/api/goal",
+  // FR-241 — the triage READ half. The WRITE half is probed separately below,
+  // because a 200 is the WRONG expectation for it.
+  "/api/suggestions",
 ];
+
+/**
+ * FR-241 — the write path's smoke probe.
+ *
+ * It POSTs a DELIBERATELY INVALID action and expects **400 with a stated
+ * reason**. That shape is the point:
+ *
+ *  - a 400 proves the POST was ROUTED, passed the Host/Origin/Content-Type
+ *    fences, was read, and reached `parseTriageBody` — i.e. the whole write
+ *    pipeline is wired;
+ *  - and it mutates NOTHING, so `--smoke` stays safe to run against the
+ *    operator's real brain. A probe that dismissed a real suggestion to prove
+ *    the endpoint works would be a probe nobody could run.
+ *
+ * A 200 here would mean `__invalid__` resolved to a tool, which is the one
+ * outcome that must fail the gate — so `ok` is `status === 400`, NOT
+ * `status === 200` like every other check. That asymmetry is why this is a
+ * separate constant rather than a row in the table above.
+ */
+const WRITE_PROBE = {
+  path: "/api/triage",
+  body: JSON.stringify({ action: "__invalid__", ids: [1] }),
+  expect: 400,
+} as const;
+
+/** POST a loopback URL and resolve its status code. Never rejects. */
+function probePostStatus(url: string, body: string): Promise<number> {
+  return new Promise((resolve) => {
+    const req = httpRequest(
+      url,
+      {
+        method: "POST",
+        timeout: 5_000,
+        headers: {
+          "content-type": "application/json",
+          "content-length": Buffer.byteLength(body),
+        },
+      },
+      (res) => {
+        const status = res.statusCode ?? 0;
+        res.resume();
+        resolve(status);
+      },
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(0);
+    });
+    req.on("error", () => resolve(0));
+    req.end(body);
+  });
+}
 
 function openBrowser(url: string): void {
   const result = openUrl(url);
@@ -192,6 +248,16 @@ export async function runDashboard(
       const status = await probeStatus(`${srv.url.replace(/\/$/, "")}${path}`);
       checks.push({ path, status, ok: status === 200 });
     }
+    // The write path, probed with the INVERTED expectation — see WRITE_PROBE.
+    const writeStatus = await probePostStatus(
+      `${srv.url.replace(/\/$/, "")}${WRITE_PROBE.path}`,
+      WRITE_PROBE.body,
+    );
+    checks.push({
+      path: `POST ${WRITE_PROBE.path}`,
+      status: writeStatus,
+      ok: writeStatus === WRITE_PROBE.expect,
+    });
     const probeResult = await bridge.probe();
     const digest: DashboardDigest = {
       ok: checks.every((c) => c.ok),
@@ -205,6 +271,10 @@ export async function runDashboard(
     };
     process.stdout.write(`${JSON.stringify(digest, null, 2)}\n`);
     await srv.close();
+    // The invalid-action probe is rejected before any boot, so there should be
+    // no engine here — but `--smoke` must leave nothing behind whether or not
+    // that stays true, and this call is a no-op when nothing booted.
+    shutdownWriteEngine();
     releaseLock();
     return digest.ok ? 0 : 1;
   }
@@ -221,6 +291,13 @@ export async function runDashboard(
       shuttingDown = true;
       info(`\nstopping dashboard (${signal})`);
       void srv.close().then(() => {
+        // FR-241 — close the write engine's read-WRITE connection if a triage
+        // POST ever booted one. A no-op on a pure-read session, which is the
+        // overwhelmingly common case (lazy boot). Phase-0 step 8b established
+        // this is hygiene rather than a hang-fix: the only timer a
+        // minus-schedules boot arms is `sync`'s, and that one is unref'd. What
+        // it DOES do is close the connection so a WAL brain can checkpoint.
+        shutdownWriteEngine();
         releaseLock();
         resolve(0);
       });

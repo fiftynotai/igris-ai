@@ -1,0 +1,674 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > a filter that matches nothing 1`] = `
+"{
+  "suggestions": [],
+  "count": 0,
+  "total": 0,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > all four filters at once 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 1,
+  "total": 1,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > an offset past the end returns an empty page with a real total 1`] = `
+"{
+  "suggestions": [],
+  "count": 0,
+  "total": 5,
+  "limit": 5,
+  "offset": 99
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > no filters — the CASE priority ordering and the evidence mapping 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 4,
+      "source_module": "janitor",
+      "project_slug": "other-project",
+      "title": "another project",
+      "evidence": {
+        "kind": "janitor"
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-20 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 3,
+      "source_module": "missing_followup",
+      "project_slug": "igris-ai",
+      "title": "medium middle",
+      "evidence": {},
+      "priority": "medium",
+      "status": "pending",
+      "created_at": "2026-07-15 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 1,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "low but newest",
+      "evidence": {
+        "kind": "gap",
+        "n": 1
+      },
+      "priority": "low",
+      "status": "pending",
+      "created_at": "2026-07-30 12:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 5,
+  "total": 5,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > pagination — count differs from total 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 2,
+  "total": 5,
+  "limit": 2,
+  "offset": 1
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > priority filter 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 4,
+      "source_module": "janitor",
+      "project_slug": "other-project",
+      "title": "another project",
+      "evidence": {
+        "kind": "janitor"
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-20 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 3,
+  "total": 3,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > project_slug filter 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 3,
+      "source_module": "missing_followup",
+      "project_slug": "igris-ai",
+      "title": "medium middle",
+      "evidence": {},
+      "priority": "medium",
+      "status": "pending",
+      "created_at": "2026-07-15 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 1,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "low but newest",
+      "evidence": {
+        "kind": "gap",
+        "n": 1
+      },
+      "priority": "low",
+      "status": "pending",
+      "created_at": "2026-07-30 12:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 4,
+  "total": 4,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > source_module filter (OPEN vocabulary since FR-118 M2) 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 1,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "low but newest",
+      "evidence": {
+        "kind": "gap",
+        "n": 1
+      },
+      "priority": "low",
+      "status": "pending",
+      "created_at": "2026-07-30 12:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 3,
+  "total": 3,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > status filter 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 4,
+      "source_module": "janitor",
+      "project_slug": "other-project",
+      "title": "another project",
+      "evidence": {
+        "kind": "janitor"
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-20 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 3,
+      "source_module": "missing_followup",
+      "project_slug": "igris-ai",
+      "title": "medium middle",
+      "evidence": {},
+      "priority": "medium",
+      "status": "pending",
+      "created_at": "2026-07-15 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 1,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "low but newest",
+      "evidence": {
+        "kind": "gap",
+        "n": 1
+      },
+      "priority": "low",
+      "status": "pending",
+      "created_at": "2026-07-30 12:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 4,
+  "total": 4,
+  "limit": 25,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift > the limit is capped at 1000 1`] = `
+"{
+  "suggestions": [
+    {
+      "id": 4,
+      "source_module": "janitor",
+      "project_slug": "other-project",
+      "title": "another project",
+      "evidence": {
+        "kind": "janitor"
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-20 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 5,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "already dismissed",
+      "evidence": {
+        "kind": "gap",
+        "n": 3
+      },
+      "priority": "high",
+      "status": "dismissed",
+      "created_at": "2026-07-10 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 2,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "high but oldest",
+      "evidence": {
+        "kind": "gap",
+        "n": 2
+      },
+      "priority": "high",
+      "status": "pending",
+      "created_at": "2026-07-01 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 3,
+      "source_module": "missing_followup",
+      "project_slug": "igris-ai",
+      "title": "medium middle",
+      "evidence": {},
+      "priority": "medium",
+      "status": "pending",
+      "created_at": "2026-07-15 09:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    },
+    {
+      "id": 1,
+      "source_module": "gap",
+      "project_slug": "igris-ai",
+      "title": "low but newest",
+      "evidence": {
+        "kind": "gap",
+        "n": 1
+      },
+      "priority": "low",
+      "status": "pending",
+      "created_at": "2026-07-30 12:00:00",
+      "expires_at": null,
+      "dismissed_at": null,
+      "dismissed_reason": null,
+      "acted_at": null,
+      "acted_brief_id": null,
+      "confidence": null,
+      "suggested_action": null,
+      "type_inferred": 0
+    }
+  ],
+  "count": 5,
+  "total": 5,
+  "limit": 1000,
+  "offset": 0
+}"
+`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > empty source_module 1`] = `"Error: source_module must be a non-empty string"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > invalid priority 1`] = `"Error: Invalid priority: urgent. Must be one of: high, medium, low"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > invalid status 1`] = `"Error: Invalid status: bogus. Must be one of: pending, dismissed, acted"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > negative offset 1`] = `"Error: offset must be a non-negative integer"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > non-numeric limit 1`] = `"Error: limit must be a positive integer"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > non-string source_module 1`] = `"Error: source_module must be a non-empty string"`;
+
+exports[`FR-241 — the VALIDATION messages are wire contracts too > zero limit 1`] = `"Error: limit must be a positive integer"`;

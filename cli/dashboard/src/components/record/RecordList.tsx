@@ -62,6 +62,25 @@ export interface RecordListRow {
   active?: boolean;
   /** A row that cannot be opened at all (an inventory row for a missing doc). */
   disabled?: boolean;
+  /**
+   * FR-241 — the multi-select affordance, for the triage surface.
+   *
+   * THE DESCRIPTOR GREW; THE FILE WAS NOT COPIED. That is this component's own
+   * stated rule (see the header), and it matters more here than anywhere: a
+   * forked list for the one page that can DELETE rows would be the one list
+   * whose empty states, pagination and row semantics drift from the other four.
+   *
+   * Rendered as a SIBLING of the row anchor, never inside it: an
+   * `<input type=checkbox>` nested in an `<a>` is a control whose click both
+   * toggles and navigates, and which keyboard users cannot reach without
+   * triggering the link.
+   */
+  select?: {
+    checked: boolean;
+    onToggle: () => void;
+    /** Announced to a screen reader — the row title is not in the control. */
+    label: string;
+  };
 }
 
 export interface RecordListProps {
@@ -109,31 +128,36 @@ function Row({ row }: { row: RecordListRow }) {
     "data-active": row.active === true ? "true" : undefined,
   } as const;
 
-  if (row.disabled === true) {
-    return (
-      <li>
-        <div {...shared} data-disabled="true">
-          {body}
-        </div>
-      </li>
-    );
-  }
-
-  if (row.href !== undefined && row.href !== null) {
-    return (
-      <li>
-        <a {...shared} href={row.href} data-cursor="hover">
-          {body}
-        </a>
-      </li>
-    );
-  }
-
-  return (
-    <li>
+  const inner =
+    row.disabled === true ? (
+      <div {...shared} data-disabled="true">
+        {body}
+      </div>
+    ) : row.href !== undefined && row.href !== null ? (
+      <a {...shared} href={row.href} data-cursor="hover">
+        {body}
+      </a>
+    ) : (
       <button {...shared} type="button" onClick={row.onOpen}>
         {body}
       </button>
+    );
+
+  if (row.select === undefined) return <li>{inner}</li>;
+
+  return (
+    <li className="record-li-select">
+      <input
+        type="checkbox"
+        className="record-select"
+        checked={row.select.checked}
+        onChange={row.select.onToggle}
+        aria-label={row.select.label}
+        // Selection identity is the row key, exposed so the browser gate can
+        // assert WHICH rows are selected rather than merely how many.
+        data-select-key={row.key}
+      />
+      {inner}
     </li>
   );
 }

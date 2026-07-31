@@ -44,13 +44,16 @@ import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
 import { composeQueryTwin } from "./graph-query.js";
 import { readDoc, readInventory } from "./context-docs-read.js";
+import * as write from "../brain-write-bridge.js";
 import {
   BRIEF_FILTERS,
   GOAL_FILTERS,
   LEARNING_FILTERS,
+  SUGGESTION_FILTERS,
   parseFilters,
   parsePageParams,
   parseQuery,
+  parseTriageBody,
 } from "./params.js";
 import type {
   BrainGraphPayload,
@@ -72,7 +75,10 @@ import type {
   LearningsPayload,
   LearningsSearchPayload,
   ProjectsPayload,
+  SuggestionRowPayload,
+  SuggestionsPayload,
   SummaryPayload,
+  TriageResultPayload,
 } from "../../types.js";
 
 function now(): string {
@@ -91,11 +97,23 @@ function messageOf(err: unknown): string {
 export async function health(cliVersion: string): Promise<HealthPayload> {
   const present = brainPresent();
   const probe = await bridge.probe();
+  // FR-241 — SYNCHRONOUS and NON-BOOTING by construction (see `writeProbe`'s
+  // header). `/api/health` is the shell's 5-second beat and is part of the
+  // FR-240 read-only request sequence; a health check that opened the write
+  // door would make G-RO-6 unassertable and would put the operator's brain in
+  // WAL just for browsing.
+  const writeState = write.writeProbe();
   return {
     ok: true,
     cli_version: cliVersion,
     brain: { present, path: brainDbPath() },
     bridge: { available: probe.available, reason: probe.reason },
+    write: {
+      available: writeState.available,
+      reason: writeState.reason,
+      state: writeState.state,
+      actions: writeState.actions,
+    },
     generated_at: now(),
     degraded: present
       ? null
@@ -971,4 +989,165 @@ export async function goal(search: URLSearchParams): Promise<GoalDetailPayload> 
   } finally {
     closeQuietly(ctx.db);
   }
+}
+
+// --- FR-241: suggestions (read) --------------------------------------------
+
+/**
+ * `GET /api/suggestions` — the pending-suggestion queue.
+ *
+ * The TENTH handler on the FR-240 shape, and it uses the SAME `openReadContext()`
+ * helper as the other nine: same `query_only = ON` handle, same six steps, same
+ * per-request open/close. That is not a stylistic choice — it is what lets this
+ * path be ADDED to `dashboard-readonly.test.ts`'s `LAYER_PATHS` crawl, so the
+ * G-RO-1 digest gate gets STRICTER rather than being routed around by the brief
+ * that introduces writes.
+ *
+ * Reaches `suggestions-read.ts#listSuggestions`, the same function
+ * `igris_suggestion_list` calls. The `facets` block is the one thing the MCP
+ * wrapper does not emit — see that module's header for why.
+ */
+export async function suggestions(
+  search: URLSearchParams,
+): Promise<SuggestionsPayload> {
+  const page = parsePageParams(search);
+  const filters = parseFilters(search, SUGGESTION_FILTERS, ["limit", "offset"]);
+  const notes = [...page.rejected, ...filters.rejected];
+  const base = {
+    items: [] as SuggestionRowPayload[],
+    count: 0,
+    total: 0,
+    limit: page.limit,
+    offset: page.offset,
+    facets: { source_module: {} as Record<string, number> },
+    params: notes,
+    generated_at: now(),
+  };
+
+  if (!brainPresent()) {
+    return { ...base, degraded: { reason: brainMissingReason() } };
+  }
+  const ctx = await openReadContext();
+  if (!ctx.ok) return { ...base, degraded: { reason: ctx.reason } };
+
+  try {
+    const r = ctx.readers.listSuggestions(ctx.db, {
+      // `project` on the wire, `project_slug` in the table. The dashboard's
+      // shared project selector emits `project` on every page.
+      project_slug: filters.values.project,
+      status: filters.values.status,
+      priority: filters.values.priority,
+      source_module: filters.values.source_module,
+      limit: page.limit,
+      offset: page.offset,
+    });
+    return {
+      ...base,
+      items: r.suggestions as unknown as SuggestionRowPayload[],
+      count: r.count,
+      total: r.total,
+      limit: r.limit,
+      offset: r.offset,
+      facets: r.facets,
+      // The reader's own L-133 preflight result is a real degradation and is
+      // surfaced verbatim rather than rendered as an empty queue — "you have no
+      // suggestions" and "this brain never ran the migration" must not look the
+      // same on a backlog-clearing surface.
+      degraded: r.degraded !== null ? { reason: r.degraded } : null,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      degraded: { reason: `suggestion list failed: ${messageOf(err)}` },
+    };
+  } finally {
+    closeQuietly(ctx.db);
+  }
+}
+
+// --- FR-241: triage (the ONE write) ----------------------------------------
+
+/**
+ * `POST /api/triage` — the only mutating handler in this file, and the only one
+ * in the tier.
+ *
+ * IT CONTAINS NO QUERY LOGIC AT ALL. Validate -> look the action up in the
+ * frozen map -> dispatch -> shape. It does not know what a suggestion is, it
+ * cannot name a table, and there is no branch here that could write without
+ * going through `gateway.dispatch`. That is what makes the AC "no raw SQL
+ * anywhere in the server layer" true by CONSTRUCTION rather than by scan — the
+ * scan is the backstop, not the argument.
+ *
+ * THREE OUTCOMES, DELIBERATELY DISTINGUISHABLE:
+ *   - **400** — a malformed body. A client bug is not a degraded brain, and
+ *     collapsing them makes both undiagnosable. This is the ONE place the
+ *     dashboard refuses rather than degrades, because the degrade-shaped
+ *     alternative would apply a mutation to a set the caller did not ask for.
+ *   - **200 + `degraded`, `applied: 0`** — the write surface is down (no
+ *     bundle, no brain, boot failed). *Disabled, not broken*: never a 500,
+ *     never a stack trace, never a partial mutation.
+ *   - **200 + per-id results** — dispatched. `failed > 0` is a NORMAL outcome
+ *     (D6): each id is its own transaction and each failure carries the brain's
+ *     verbatim message.
+ *
+ * The caller (`server.ts`) turns `ok:false` into the 400; everything else is a
+ * 200 payload.
+ */
+export async function triage(
+  body: unknown,
+): Promise<{ status: number; payload: TriageResultPayload | { error: string } }> {
+  const parsed = parseTriageBody(body, (a) => write.triageAction(a) !== null, {
+    bulkAllowed: (a) => write.triageAction(a)?.bulk === true,
+  });
+  if (!parsed.ok) {
+    return { status: 400, payload: { error: parsed.reason } };
+  }
+
+  const base = {
+    action: parsed.action,
+    requested: parsed.ids.length,
+    applied: 0,
+    failed: 0,
+    results: [] as TriageResultPayload["results"],
+    params: parsed.params,
+    generated_at: now(),
+  };
+
+  // Belt-and-braces over `bootWriteEngine`'s own brain check: this keeps the
+  // reason string identical to every other endpoint's on a machine with no
+  // brain, so a missing brain reads the same everywhere.
+  if (!brainPresent()) {
+    return {
+      status: 200,
+      payload: { ...base, degraded: { reason: brainMissingReason() } },
+    };
+  }
+
+  const dispatched = await write.dispatchTriage(
+    parsed.action,
+    parsed.ids,
+    {
+      ...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
+      ...(parsed.brief_id !== undefined ? { brief_id: parsed.brief_id } : {}),
+    },
+  );
+
+  if (!dispatched.ok) {
+    // The DISCRIMINATED cause, verbatim — `engine_unavailable` (packaging) and
+    // `boot_failed` (a real brain that would not open) send an operator to
+    // completely different places, and zero mutations happened either way.
+    return { status: 200, payload: { ...base, degraded: { reason: dispatched.reason } } };
+  }
+
+  const applied = dispatched.results.filter((r) => r.ok).length;
+  return {
+    status: 200,
+    payload: {
+      ...base,
+      applied,
+      failed: dispatched.results.length - applied,
+      results: dispatched.results,
+      degraded: null,
+    },
+  };
 }

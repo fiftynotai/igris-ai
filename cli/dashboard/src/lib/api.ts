@@ -23,6 +23,23 @@ export interface HealthPayload {
   cli_version: string;
   brain: { present: boolean; path: string };
   bridge: { available: boolean; reason: string | null };
+  /**
+   * FR-241 — the WRITE surface. Distinct from `bridge`: that one reports the
+   * pure READ modules, this one reports the engine artifact plus a brain on
+   * disk, and they can disagree.
+   *
+   * The AC is *disabled, not broken*: when `available` is false the shell hides
+   * the triage affordances rather than offering buttons that will fail.
+   * `state` is the LAZY-BOOT fact — `available: true` with
+   * `state: "not-booted"` is the normal state of a browsing session, and it is
+   * what proves the read tier never opened the write door.
+   */
+  write: {
+    available: boolean;
+    reason: string | null;
+    state: string;
+    actions: string[];
+  };
   generated_at: string;
   degraded: DashboardDegraded | null;
 }
@@ -251,6 +268,15 @@ export interface LearningListRow {
   source_extractor: string;
   promoted_to_doc: string | null;
   content_length: number;
+  /**
+   * FR-241 — the DESTRUCTIVENESS DISCRIMINATOR. `igris_perception_reject`
+   * SOFT-deletes a candidate whose `seen_again_count > 0` and HARD-deletes one
+   * at `0`, so a confirmation dialog partitions the selection on this field.
+   * Never null — the brain `COALESCE`s it.
+   */
+  seen_again_count: number;
+  /** FR-241 — non-null iff already soft-deleted. */
+  deleted_at: string | null;
 }
 
 /** Mirrors `LearningsPayload`. `review_status` is echoed for the D9 banner. */
@@ -428,6 +454,81 @@ export interface GoalDetailPayload {
   degraded: DashboardDegraded | null;
 }
 
+// ---- FR-241 · the triage surface ------------------------------------------
+
+/**
+ * Mirrors `SuggestionRowPayload`.
+ *
+ * `evidence` is the RAW JSON string, exactly as the brain stores it and exactly
+ * as the server forwards it. A triage row does not render evidence; parsing it
+ * would put a third copy of `rowToSuggestion`'s malformed-JSON behaviour in the
+ * browser.
+ */
+export interface SuggestionRow {
+  id: number;
+  source_module: string;
+  project_slug: string | null;
+  title: string;
+  evidence: string;
+  priority: string;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+  dismissed_at: string | null;
+  dismissed_reason: string | null;
+  acted_at: string | null;
+  acted_brief_id: string | null;
+  confidence: number | null;
+  suggested_action: string | null;
+  type_inferred: number;
+}
+
+/**
+ * Mirrors `SuggestionsPayload`.
+ *
+ * `facets.source_module` IS the filter dropdown's vocabulary. It is counted
+ * from the data because `source_module` has been an OPEN vocabulary since
+ * FR-118 M2 — a hand-listed dropdown would hide every row whose module the LLM
+ * invented after the last edit (L-967).
+ */
+export interface SuggestionsPayload extends ListEnvelope {
+  items: SuggestionRow[];
+  facets: { source_module: Record<string, number> };
+}
+
+/** Mirrors `TriageRequest`. The `action` values come from `health.write.actions`. */
+export interface TriageRequest {
+  action: string;
+  ids: number[];
+  reason?: string;
+  brief_id?: string;
+}
+
+/** Mirrors `TriageItemResultPayload`. `error` is the BRAIN's own message. */
+export interface TriageItemResult {
+  id: number;
+  ok: boolean;
+  error: string | null;
+}
+
+/**
+ * Mirrors `TriageResultPayload`.
+ *
+ * `failed > 0` is a NORMAL outcome, not an exception: each id is its own
+ * transaction (D6), so a batch can partially apply and the UI must render both
+ * columns rather than treating the response as a boolean.
+ */
+export interface TriageResultPayload {
+  action: string;
+  requested: number;
+  applied: number;
+  failed: number;
+  results: TriageItemResult[];
+  params: string[];
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
 /** A network/parse failure, distinct from a server-reported `degraded`. */
 export class ApiError extends Error {
   constructor(
@@ -572,4 +673,68 @@ export const api = {
       `api/goal?id=${encodeURIComponent(id)}`,
       signal,
     ),
+
+  // ---- FR-241 · the triage surface --------------------------------------
+  //
+  // `triage` below is THE ONLY non-GET call in the entire client, and it is the
+  // named exception in `dashboard-layers-source.test.ts`'s AC #7 scan. That
+  // scan was not deleted when the write path landed — it was NARROWED, so it
+  // still asserts that every OTHER file (and every other function here) issues
+  // reads only. A second write path would fail it.
+
+  suggestions: (
+    query: URLSearchParams,
+    signal?: AbortSignal,
+  ): Promise<SuggestionsPayload> =>
+    getJson<SuggestionsPayload>(`api/suggestions?${query.toString()}`, signal),
+
+  /**
+   * `POST api/triage` — the ONE mutating call in the client (FR-241 D3).
+   *
+   * RELATIVE URL, like every other call: AC #4 stays mechanically greppable in
+   * the built bundle, and it also means the request's `Origin` is by
+   * construction the served origin, which is the fence `server.ts` checks.
+   *
+   * `Content-Type: application/json` is REQUIRED by the server (415 otherwise),
+   * and setting it here is what makes the request non-simple, so the browser
+   * preflights it. That is the whole CSRF story: an HTML `<form>` cannot set
+   * this header, so it cannot reach this endpoint at all.
+   *
+   * NO ABORT SIGNAL, deliberately. Aborting a read shows stale rows; aborting a
+   * MUTATION mid-batch abandons a request the server will finish anyway, and
+   * the caller would have no account of what landed. `useTriage` re-reads the
+   * list instead.
+   */
+  triage: async (request: TriageRequest): Promise<TriageResultPayload> => {
+    const path = "api/triage";
+    let res: Response;
+    try {
+      res = await fetch(path, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request),
+        cache: "no-store",
+      });
+    } catch (err) {
+      throw new ApiError(path, err instanceof Error ? err.message : String(err));
+    }
+    // A 400 carries `{error}` — a CLIENT bug (a malformed body), which is a
+    // different thing from a degraded brain and must not be collapsed into it.
+    // Surface the server's own sentence rather than "HTTP 400".
+    if (!res.ok) {
+      let detail = `HTTP ${res.status}`;
+      try {
+        const body = (await res.json()) as { error?: unknown };
+        if (typeof body.error === "string") detail = `${detail} — ${body.error}`;
+      } catch {
+        /* no JSON body; the status is all there is */
+      }
+      throw new ApiError(path, detail);
+    }
+    try {
+      return (await res.json()) as TriageResultPayload;
+    } catch {
+      throw new ApiError(path, "malformed JSON response");
+    }
+  },
 };

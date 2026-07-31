@@ -27,6 +27,7 @@ import {
   brainBundleCandidates,
   brainEngineCandidates,
   buildGraph,
+  ENGINE_MODULE_REL,
   lastBridgeFailure,
   lastLayerReadersFailure,
   loadBuildBrainGraph,
@@ -324,11 +325,18 @@ describe("bridge — degradation contract (never throws, and NAMES the cause)", 
 // about, because it passes in a tree where nothing was ever staged.
 // ---------------------------------------------------------------------------
 
-/** The three compiled reader artifacts, relative to the bundle ROOT. */
+/**
+ * The compiled reader artifacts, relative to the bundle ROOT.
+ *
+ * FR-241 added the fourth (`suggestions-read.js`). It belongs in this list and
+ * not in a new one: `loadLayerReaders()` requires ALL of them to resolve, so a
+ * partial staging is a single failure with a single reason string.
+ */
 const READER_RELS = [
   join("tools", "briefs-read.js"),
   join("tools", "memory-read.js"),
   join("engine", "components", "goals", "read.js"),
+  join("tools", "suggestions-read.js"),
 ];
 
 const readersStaged = READER_RELS.every((r) => resolveBundleModule(r) !== null);
@@ -369,6 +377,23 @@ describe("FR-240 bridge — the bundle-ROOT resolver (row 107)", () => {
       expect(resolved as string).toContain(rel);
       expect(existsSync(resolved as string)).toBe(true);
     }
+  });
+
+  it("resolves the WRITE door's engine module in a built tree (FR-241)", () => {
+    // Row 107's rot guard applied to the one entry that is NOT a reader.
+    // `ENGINE_MODULE_REL` is exported by `brain-bridge.ts` rather than
+    // re-declared in `brain-write-bridge.ts`, so this assertion covers the only
+    // literal there is — a second literal is how a path starts rotting.
+    const resolved = resolveBundleModule(ENGINE_MODULE_REL);
+    if (!readersStaged) {
+      // Same honest fallback as above: in an unbuilt tree assert the degraded
+      // answer rather than skipping, so this never passes vacuously.
+      expect(resolved).toBeNull();
+      return;
+    }
+    expect(resolved, `${ENGINE_MODULE_REL} did not resolve`).not.toBeNull();
+    expect(resolved as string).toContain(ENGINE_MODULE_REL);
+    expect(existsSync(resolved as string)).toBe(true);
   });
 
   it("returns null for a module that is not there, without throwing", () => {

@@ -189,6 +189,20 @@ export interface LearningListRow {
   source_extractor: string;
   promoted_to_doc: string | null;
   content_length: number;
+  /**
+   * FR-241 — how many times the perception dedup layer re-discovered this
+   * pattern. It is the DESTRUCTIVENESS DISCRIMINATOR for the triage surface:
+   * `igris_perception_reject` forks on it (`perception/handlers.ts:661-717`,
+   * FR-116 M3) — `> 0` SOFT-deletes (review_status='rejected' + deleted_at,
+   * recoverable), `== 0` HARD-deletes the row and its `learnings_vec` entry.
+   * A confirmation dialog cannot state which of those it is about to do without
+   * this column, and a blanket "irreversible" banner would be a LIE for the
+   * recurring rows — which is how an operator learns to click through it.
+   * `COALESCE`d because legacy rows predate the column.
+   */
+  seen_again_count: number;
+  /** FR-241 — non-null iff the row is already soft-deleted. Audit-only. */
+  deleted_at: string | null;
 }
 
 /** The {@link listLearnings} payload. */
@@ -315,6 +329,7 @@ export function listLearnings(
     SELECT id, project, category, title, tags, tech_stack, scope,
            source_brief, confidence, created_at, access_count, provenance,
            review_status, source_extractor, promoted_to_doc,
+           COALESCE(seen_again_count, 0) AS seen_again_count, deleted_at,
            LENGTH(content) AS content_length
     FROM learnings
     ${whereClause}

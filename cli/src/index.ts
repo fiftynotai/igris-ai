@@ -1169,11 +1169,14 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("dashboard")
     .description(
-      "FR-238: start the local IGRIS dashboard — a loopback-only read-only " +
-        "server (127.0.0.1, zero write endpoints) serving a live lens over the " +
-        "brain, and open it in the browser. Runs in the foreground; Ctrl-C " +
-        "stops it. A second invocation re-opens the running instance instead " +
-        "of binding a second port.",
+      "FR-238/FR-241: start the local IGRIS dashboard — a loopback-only server " +
+        "(127.0.0.1) " +
+        "serving a live lens over the brain, and open it in the browser. " +
+        "Every GET changes no row; since FR-241 one endpoint (POST /api/triage) " +
+        "writes — it triages cognition suggestions and perception candidates, " +
+        "and rejecting a first-time candidate DELETES it. Runs in the " +
+        "foreground; Ctrl-C stops it. A second invocation re-opens the running " +
+        "instance instead of binding a second port.",
     )
     .option(
       "--port <n>",

@@ -226,6 +226,198 @@ export const GOAL_FILTERS: readonly FilterSpec[] = [
   { name: "status", allowed: GOAL_STATUSES },
 ];
 
+/** `suggestions.status` — a real CHECK constraint (`suggestions` DDL). */
+export const SUGGESTION_STATUSES = ["pending", "dismissed", "acted"] as const;
+
+/** `suggestions.priority` — a real CHECK constraint. */
+export const SUGGESTION_PRIORITIES = ["high", "medium", "low"] as const;
+
+/**
+ * The four suggestion filters (FR-241).
+ *
+ * `source_module` is `null` — accept ANY non-empty string. That is not laziness:
+ * FR-118 M2 made the vocabulary OPEN (the LLM names the kind), so the brain
+ * itself validates only "a non-empty string"
+ * (`subconscious/handlers.ts` — "We do NOT reject against a closed enum"). An
+ * allowlist here would silently hide every row whose module was invented after
+ * this file was last edited. The UI gets its vocabulary from the payload's
+ * `facets.source_module`, which is counted from the data (L-967).
+ *
+ * `status` and `priority` ARE enumerated, because those two are genuine CHECK
+ * constraints — a value outside them cannot exist in the table, so dropping it
+ * loses nothing and reports a typo.
+ *
+ * Note the param is named `project` here and mapped to the reader's
+ * `project_slug`: every other dashboard endpoint spells it `project`, and a
+ * surface where one page's scope param has a different name is a surface where
+ * the shared project selector silently stops working on one tab.
+ */
+export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
+  { name: "project", allowed: null },
+  { name: "status", allowed: SUGGESTION_STATUSES },
+  { name: "priority", allowed: SUGGESTION_PRIORITIES },
+  { name: "source_module", allowed: null },
+];
+
+// ---------------------------------------------------------------------------
+// FR-241 — the triage request body (the ONE mutating endpoint's input)
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard ceiling on ids per POST.
+ *
+ * The real backlog is 1,188 pending suggestions across 19 projects. A surface
+ * where one request can dismiss all of them, with no undo tool in the brain, is
+ * one mis-click from an unrecoverable state — so the ids are clamped and the
+ * clamp is REPORTED rather than silently applied.
+ */
+export const MAX_BULK = 200;
+
+/** The parsed, validated body — or a stated reason it is a 400. */
+export type TriageBodyResult =
+  | {
+      ok: true;
+      action: string;
+      ids: number[];
+      reason?: string;
+      brief_id?: string;
+      /** Clamp/dedupe notes. Empty when the body was clean. */
+      params: string[];
+    }
+  | { ok: false; reason: string };
+
+/** Max accepted length for the free-text fields. */
+const MAX_TEXT = 2000;
+
+/**
+ * Validate a `POST /api/triage` body. PURE — no I/O, no brain, no clock.
+ *
+ * THIS ONE REFUSES RATHER THAN DEGRADES, unlike every query-param parser above,
+ * and the asymmetry is deliberate. A garbage `?limit=abc` is a browsing typo and
+ * the right answer is to show the page. A garbage MUTATION body is a client bug,
+ * and the right answer is to refuse — because the degrade-shaped alternative
+ * ("drop the bad ids and apply the rest") would silently mutate a set the caller
+ * did not ask for. A 400 here and a `degraded` 200 for a down brain keep those
+ * two failures distinguishable, which is the whole point of having both.
+ *
+ * The ONE degrade-shaped behaviour is the `MAX_BULK` clamp, and it is NAMED in
+ * `params` so the client can tell the operator that 250 became 200.
+ *
+ * @param body the parsed JSON body, or `undefined` when it did not parse
+ * @param isKnownAction membership test over the frozen delegation map. Injected
+ *   rather than imported so this module keeps its zero-dependency, zero-I/O
+ *   property — and so the allowlist has exactly ONE definition, in the map.
+ */
+export function parseTriageBody(
+  body: unknown,
+  isKnownAction: (action: string) => boolean,
+  opts: { bulkAllowed?: (action: string) => boolean } = {},
+): TriageBodyResult {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, reason: "body must be a JSON object" };
+  }
+  const b = body as Record<string, unknown>;
+
+  const action = b.action;
+  if (typeof action !== "string" || action.length === 0) {
+    return { ok: false, reason: "'action' is required and must be a string" };
+  }
+  if (!isKnownAction(action)) {
+    return {
+      ok: false,
+      // The valid set is NOT interpolated here: it lives in the frozen map and
+      // `/api/health` serves it. Two lists of the actions is one list too many.
+      reason: `unknown action: ${action} — see /api/health write.actions for the accepted set`,
+    };
+  }
+
+  const rawIds = b.ids;
+  if (!Array.isArray(rawIds)) {
+    return { ok: false, reason: "'ids' is required and must be an array" };
+  }
+  if (rawIds.length === 0) {
+    // An empty batch is REFUSED rather than treated as a no-op success. A UI
+    // that can fire an empty bulk action is a UI whose selection state is
+    // wrong, and a 200/applied:0 would hide that — this is also the shape of
+    // the vacuous "bulk-act on zero items" gate, so the server refuses to
+    // participate in it.
+    return { ok: false, reason: "'ids' must not be empty" };
+  }
+
+  const params: string[] = [];
+  const seen = new Set<number>();
+  const ids: number[] = [];
+  for (const raw of rawIds) {
+    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+      return {
+        ok: false,
+        reason: `'ids' must contain only positive integers (got ${JSON.stringify(raw)})`,
+      };
+    }
+    // Dedupe: dismissing the same id twice in one batch would report one
+    // success and one "already dismissed" failure, and a `failed: 1` on a
+    // request that fully succeeded is a lie the operator has to decode.
+    if (seen.has(raw)) {
+      params.push(`ids: dropped a duplicate id (${raw})`);
+      continue;
+    }
+    seen.add(raw);
+    ids.push(raw);
+  }
+
+  if (opts.bulkAllowed !== undefined && !opts.bulkAllowed(action) && ids.length > 1) {
+    return {
+      ok: false,
+      reason: `action '${action}' is single-item only; got ${ids.length} ids`,
+    };
+  }
+
+  if (ids.length > MAX_BULK) {
+    params.push(
+      `ids: clamped to ${MAX_BULK} (asked ${ids.length}); the rest were NOT applied`,
+    );
+    ids.length = MAX_BULK;
+  }
+
+  const text = (key: "reason" | "brief_id"): TriageBodyResult | string | undefined => {
+    const v = b[key];
+    if (v === undefined) return undefined;
+    if (typeof v !== "string") return { ok: false, reason: `'${key}' must be a string` };
+    if (v.length > MAX_TEXT) {
+      return { ok: false, reason: `'${key}' must be at most ${MAX_TEXT} characters` };
+    }
+    return v;
+  };
+
+  const reason = text("reason");
+  if (typeof reason === "object") return reason;
+  const briefId = text("brief_id");
+  if (typeof briefId === "object") return briefId;
+
+  // Unknown top-level keys are REFUSED, mirroring the gateway's TD-128 posture
+  // one layer out: a client that sends `{action, ids, resaon}` has a typo whose
+  // symptom would otherwise be a silently reason-less dismissal, and the
+  // dismiss reason is the signal that stops the backlog re-growing.
+  const KNOWN = new Set(["action", "ids", "reason", "brief_id"]);
+  for (const key of Object.keys(b)) {
+    if (!KNOWN.has(key)) {
+      return {
+        ok: false,
+        reason: `unknown field: ${key}. Accepted: ${[...KNOWN].join(", ")}`,
+      };
+    }
+  }
+
+  return {
+    ok: true,
+    action,
+    ids,
+    ...(reason !== undefined ? { reason } : {}),
+    ...(briefId !== undefined ? { brief_id: briefId } : {}),
+    params,
+  };
+}
+
 /**
  * Max accepted search-query length. Mirrors `MAX_QUERY_LENGTH`
  * (`brain-mcp-server/src/tools/memory.ts:39`) so the endpoint refuses exactly

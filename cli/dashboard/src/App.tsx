@@ -14,6 +14,7 @@ import { StatePage } from "./components/ui/StatePage";
 import { Overview } from "./pages/Overview";
 import { Graph } from "./pages/Graph";
 import { Layers } from "./pages/Layers";
+import { Triage } from "./pages/Triage";
 import { useLive } from "./lib/useLive";
 import { usePalette } from "./lib/usePalette";
 import { PENDING_ROUTES, ROUTE_LABELS, useRoute } from "./router";
@@ -70,6 +71,16 @@ export function App() {
           <Graph search={search} focus={focus} />
         ) : route === "layers" ? (
           <Layers live={live} search={search} layer={layer} address={address} />
+        ) : route === "triage" ? (
+          /*
+           * FR-241. The write affordances inside gate themselves on
+           * `live.health.write.available` (see `pages/Triage.tsx#writeState`)
+           * rather than being gated here: the READ half of this page is useful
+           * on a machine whose write door is unavailable, and hiding the whole
+           * tab would turn "the write surface is down" into "the queue does not
+           * exist". *Disabled, not broken.*
+           */
+          <Triage live={live} search={search} />
         ) : (
           <Overview live={live} />
         )}

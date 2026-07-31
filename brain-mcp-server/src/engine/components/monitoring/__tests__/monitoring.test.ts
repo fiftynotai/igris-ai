@@ -400,7 +400,7 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 24 listened events', () => {
+    it('events() declares 26 listened events', () => {
       // 34 base + 4 perception lifecycle events added in TD-074
       // (perception.run_started/succeeded/failed/skipped). FR-118 M2 removed 6
       // dead subconscious bus listeners (run_start/run_complete/
@@ -410,9 +410,22 @@ describe('Monitoring Component', () => {
       // `subconscious.bootstrap_failed` still rides the bus. 38 - 6 = 32.
       // TD-265 removed 8 task/coordination listeners (7 task.* + 1
       // coordination.self_heal) with the worker-subsystem teardown. 32 - 8 = 24.
+      // FR-241 Phase 6b (D2) added 2: `perception.candidate_approved` and
+      // `perception.candidate_rejected`, which `perception/handlers.ts` has
+      // emitted since FR-109 with nobody listening. 24 + 2 = 26. Updated
+      // DELIBERATELY, not to make a red test green: the counter this unblocks
+      // (`perception_dashboard.rejected_last_n`) had been structurally zero.
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(24);
+      expect(listens).toHaveLength(26);
+      // The COUNT alone would be satisfied by any two events. Name them.
+      const names = listens.map((l) => l.name);
+      expect(names).toContain('perception.candidate_approved');
+      expect(names).toContain('perception.candidate_rejected');
+      // ...and NOT this one: the recurring-reject branch already writes it
+      // directly via `writePerceptionEvent` AND re-emits it on the bus, so a
+      // listener here would double-write it. See EVENT_COMPONENT_MAP.
+      expect(names).not.toContain('perception.rejected_pattern_recurring');
     });
 
     it('events() declares 0 emitted events', () => {
@@ -454,6 +467,63 @@ describe('Monitoring Component', () => {
       expect(rows[0].event_name).toBe('schedule.created');
 
       comp.destroy();
+    });
+
+    /**
+     * FR-241 Phase 6b (D2) — the BEHAVIOURAL half.
+     *
+     * `event-bus-integrity.test.ts` is a STATIC SOURCE REGEX: it proves the two
+     * events are declared, that a literal `bus.on` exists and that a matching
+     * `bus.off` exists. It cannot prove a row lands, because it never runs the
+     * component. That is exactly the "don't trust a component's self-report"
+     * failure (L-711), so this drives the real bus and reads the real table.
+     *
+     * WHAT THIS PROVES: emitting either event through a live bus writes ONE
+     * `event_log` row whose `component` is the literal `'perception'`.
+     * WHAT IT DOES NOT PROVE: that `handlePerceptionApprove` /
+     * `handlePerceptionReject` actually emit them (this test emits directly),
+     * nor that the dashboard's write path reaches the same code. Siblings:
+     * `perception/__tests__/*` for the handlers, and FR-241's
+     * `cli/src/__tests__/dashboard-triage-parity.test.ts` G-EP-2/3, which boots
+     * a real engine and dispatches the real tool in two separate processes.
+     */
+    it('FR-241 6b: candidate_approved/rejected land in event_log as component=perception', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      // NEGATIVE CONTROL FIRST, and it exercises the SAME wake-up path: an
+      // event that monitoring deliberately does NOT listen to. Without it,
+      // "two rows appeared" is equally consistent with a listener that logs
+      // everything it is handed.
+      bus.emit('perception.rejected_pattern_recurring', { learning_id: 9 });
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM event_log').get(),
+        'rejected_pattern_recurring must NOT be logged here — the recurring branch writes it directly',
+      ).toEqual({ n: 0 });
+
+      bus.emit('perception.candidate_approved', { learning_id: 7 });
+      bus.emit('perception.candidate_rejected', { learning_id: 8, reason: 'noise' });
+
+      const rows = db
+        .prepare('SELECT event_name, component, payload FROM event_log ORDER BY id')
+        .all() as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[0].event_name).toBe('perception.candidate_approved');
+      // The L-857 trap, asserted as a LITERAL: `writePerceptionEvent` pins the
+      // legacy `'perception'`; `writeExtractorEvent` would produce
+      // `cognition.perception`. A parity differ compares this column.
+      expect(rows[0].component).toBe('perception');
+      expect(rows[1].event_name).toBe('perception.candidate_rejected');
+      expect(rows[1].component).toBe('perception');
+      expect(JSON.parse(String(rows[1].payload))).toEqual({
+        learning_id: 8,
+        reason: 'noise',
+      });
+
+      // `destroy()` really unsubscribes — the `off` half is not decorative.
+      comp.destroy();
+      bus.emit('perception.candidate_approved', { learning_id: 10 });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM event_log').get()).toEqual({ n: 2 });
     });
 
     it('correct component name derived from event', () => {

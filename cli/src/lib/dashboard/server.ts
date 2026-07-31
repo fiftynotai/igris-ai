@@ -13,9 +13,40 @@
  *     page cannot read a response even if it can cause the request.
  *   - `Cache-Control: no-store` on every `/api/*` response, so "reload shows
  *     current state" (an AC) cannot be defeated by a cached payload.
- *   - ZERO write endpoints. Only GET and HEAD are routed at all; FR-241 owns
- *     the write path and will have to add it deliberately.
  *   - path-traversal guard on every static read (`static.ts#resolveStatic`).
+ *
+ * THE ONE WRITE ENDPOINT (FR-241) — AND WHY IT IS SAFE
+ * ----------------------------------------------------
+ * FR-238 through FR-240 shipped ZERO write endpoints and this header said so.
+ * FR-241 adds exactly one: **`POST /api/triage`**. Nothing else accepts a POST,
+ * and `/api/triage` accepts nothing else. Five fences stand in front of it, and
+ * each one is here because it blocks a DIFFERENT attack:
+ *
+ *   1. **Method.** GET/HEAD everywhere; POST only on `/api/triage`. Every other
+ *      path still 405s on a POST, so the write surface is one path, not a
+ *      posture.
+ *   2. **`Host` allowlist** (pre-existing). Defeats DNS rebinding — a page
+ *      resolving `evil.test` to 127.0.0.1 reaches the socket and fails here.
+ *   3. **`Origin` allowlist.** Absent (a `curl`, the `--smoke` probe) or exactly
+ *      the served origin -> allowed; anything else -> 403. This is what stops a
+ *      page on another origin firing a mutation whose RESPONSE it cannot read
+ *      (the no-CORS posture only protects the response, not the side effect).
+ *   4. **`Content-Type: application/json` required -> 415.** This is the fence
+ *      that actually blocks the classic no-JS CSRF: an HTML `<form>` can POST
+ *      cross-origin without a preflight, but it can only send
+ *      `application/x-www-form-urlencoded`, `multipart/form-data` or
+ *      `text/plain`. Requiring JSON forces a preflight, which fence 3 then
+ *      answers.
+ *   5. **64 KB body cap -> 413**, enforced while READING rather than after, so
+ *      an unbounded upload cannot be buffered first and rejected second.
+ *
+ * What this does NOT defend against, stated rather than implied: a malicious
+ * extension or another process running as the operator on this same machine.
+ * A loopback personal tool cannot, and this brief does not pretend to.
+ *
+ * The mutation itself performs no SQL here — `routes.ts#triage` delegates every
+ * write to the brain's own gateway through `brain-write-bridge.ts`'s frozen
+ * five-row map.
  */
 
 import {
@@ -51,6 +82,118 @@ export interface StartServerOptions {
 
 /** Hostnames that may appear in a `Host` header for a loopback server. */
 const ALLOWED_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]", "::1"]);
+
+/** FR-241 — the ONE path that accepts a POST. */
+export const WRITE_PATH = "/api/triage";
+
+/**
+ * FR-241 — max accepted request-body size, in bytes.
+ *
+ * `MAX_BULK` (200) ids plus a 2 KB reason is well under 8 KB; 64 KB is generous
+ * headroom that still refuses an upload long before it costs memory.
+ */
+export const MAX_BODY_BYTES = 64 * 1024;
+
+/**
+ * Is this `Origin` allowed to POST?
+ *
+ * THREE CASES, and the middle one is the load-bearing choice:
+ *  - ABSENT -> allowed. `curl`, the `--smoke` probe and any non-browser client
+ *    send no `Origin`. Refusing it would break the smoke gate while stopping no
+ *    browser attack, because a browser ALWAYS sets `Origin` on a cross-origin
+ *    POST.
+ *  - EXACTLY the served origin -> allowed. Compared as a whole string against
+ *    both loopback spellings, never by `startsWith`: `http://127.0.0.1:7317` is
+ *    a prefix of `http://127.0.0.1:7317.evil.test`.
+ *  - anything else -> 403.
+ *
+ * `null` (the literal string a sandboxed iframe or a redirected request sends)
+ * falls into the third case and is refused — it is not the absent header.
+ */
+export function isOriginAllowed(
+  origin: string | undefined,
+  port: number,
+): boolean {
+  if (origin === undefined) return true;
+  const allowed = new Set([
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+    `http://[::1]:${port}`,
+  ]);
+  return allowed.has(origin);
+}
+
+/** Is the declared `Content-Type` JSON? Parameters (`; charset=utf-8`) are fine. */
+export function isJsonContentType(value: string | undefined): boolean {
+  if (value === undefined) return false;
+  return value.split(";")[0]!.trim().toLowerCase() === "application/json";
+}
+
+/**
+ * Read a request body with a HARD cap.
+ *
+ * The cap is enforced as chunks ARRIVE, not after: buffering an unbounded
+ * upload and then measuring it is the failure mode a cap exists to prevent.
+ * `Content-Length` is checked first as a courtesy — it is a claim, not a fact,
+ * so the streaming check is the one that actually holds.
+ *
+ * IT PAUSES, IT DOES NOT DESTROY. The first draft called `req.destroy()` on
+ * overflow, which resets the connection before a response can be written — a
+ * `curl` saw HTTP status **000** (ECONNRESET) instead of the 413 the fence is
+ * supposed to state, so an operator hitting the cap got "connection reset by
+ * peer" and no idea why. Found by driving a 1 MB body at a real server rather
+ * than by reading this function. `pause()` stops consuming, the caller writes
+ * the 413, and the caller destroys the socket AFTER the response is out.
+ * FR-241 Phase 5 re-drove that same 1 MB body at `curl` against an
+ * OUT-OF-PROCESS server and re-confirmed `CODE=413` with a readable body — see
+ * the call site for the transcript and for why Node's `http.request` client
+ * cannot observe it.
+ */
+function readBody(
+  req: IncomingMessage,
+): Promise<{ ok: true; text: string } | { ok: false; status: number; reason: string }> {
+  return new Promise((resolvePromise) => {
+    let settled = false;
+    const settle = (
+      r: { ok: true; text: string } | { ok: false; status: number; reason: string },
+    ): void => {
+      if (settled) return;
+      settled = true;
+      resolvePromise(r);
+    };
+
+    const declared = Number(req.headers["content-length"] ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      req.pause();
+      settle({
+        ok: false,
+        status: 413,
+        reason: `body too large (${declared} bytes; max ${MAX_BODY_BYTES})`,
+      });
+      return;
+    }
+
+    const chunks: Buffer[] = [];
+    let size = 0;
+    req.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.pause();
+        settle({
+          ok: false,
+          status: 413,
+          reason: `body too large (max ${MAX_BODY_BYTES} bytes)`,
+        });
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on("end", () => settle({ ok: true, text: Buffer.concat(chunks).toString("utf-8") }));
+    req.on("error", (err) =>
+      settle({ ok: false, status: 400, reason: `request read failed: ${err.message}` }),
+    );
+  });
+}
 
 
 /**
@@ -117,10 +260,14 @@ async function handle(
   port: number,
   cliVersion: string,
 ): Promise<void> {
-  // Zero write endpoints — anything that is not a read is refused before any
-  // routing happens.
-  if (req.method !== "GET" && req.method !== "HEAD") {
-    sendJson(res, 405, { error: "method not allowed", allow: ["GET", "HEAD"] });
+  // ONE write endpoint. Anything that is not a read, and is not a POST to
+  // exactly `WRITE_PATH`, is refused before any routing happens.
+  const isPost = req.method === "POST";
+  if (req.method !== "GET" && req.method !== "HEAD" && !isPost) {
+    sendJson(res, 405, {
+      error: "method not allowed",
+      allow: ["GET", "HEAD", "POST"],
+    });
     return;
   }
 
@@ -139,6 +286,83 @@ async function handle(
 
   const pathname = url.pathname;
   const project = url.searchParams.get("project");
+
+  // FR-241 — the write path. Handled BEFORE the read routes so no GET handler
+  // can ever see a POST, and so a POST at any other path 405s here rather than
+  // falling through to the static server.
+  if (isPost) {
+    if (pathname !== WRITE_PATH) {
+      sendJson(res, 405, {
+        error: `POST is accepted only at ${WRITE_PATH}`,
+        allow: ["GET", "HEAD"],
+      });
+      return;
+    }
+    if (!isOriginAllowed(req.headers.origin, port)) {
+      sendJson(res, 403, {
+        error: "forbidden: cross-origin write",
+        detail: `Origin '${String(req.headers.origin)}' is not the served origin`,
+      });
+      return;
+    }
+    if (!isJsonContentType(req.headers["content-type"])) {
+      // 415, not 400: the body may be perfectly valid: it is the DECLARED type
+      // that is refused, and that refusal is the CSRF fence (an HTML form
+      // cannot set this header).
+      sendJson(res, 415, {
+        error: "unsupported media type: Content-Type must be application/json",
+      });
+      return;
+    }
+    const body = await readBody(req);
+    if (!body.ok) {
+      sendJson(res, body.status, { error: body.reason });
+      // The response is written; NOW stop the sender. Without this the socket
+      // stays open with an unread stream and the connection hangs until the
+      // client gives up — and with `req.destroy()` BEFORE the write, the client
+      // sees a reset instead of the 413 (see `readBody`'s header).
+      //
+      // FR-241 PHASE 5 RE-VERIFIED THIS AT A REAL CLIENT rather than trusting
+      // the paragraph above. Server started in its OWN process (an in-process
+      // `execFileSync` probe blocks the event loop and makes EVERY request
+      // appear to hang — a measurement artifact that briefly read as a defect):
+      //
+      //   curl -X POST -H 'content-type: application/json' \
+      //        --data-binary @1MB.json  ->  {"error":"body too large
+      //        (1000048 bytes; max 65536)"}|CODE=413   (curl exit 0)
+      //   the same request with a 47-byte body      ->  CODE=200
+      //
+      // So this shape is CORRECT as written and was NOT changed. Node's own
+      // `http.request` client is the one that cannot observe it: it raises
+      // EPIPE while still uploading and discards the parsed response, which is
+      // why `dashboard-server.test.ts`'s G-SEC-1 drives this case with `fetch`.
+      res.on("finish", () => req.destroy());
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(body.text);
+    } catch (err) {
+      sendJson(res, 400, {
+        error: `malformed JSON body: ${err instanceof Error ? err.message : String(err)}`,
+      });
+      return;
+    }
+    const result = await routes.triage(parsed);
+    sendJson(res, result.status, result.payload);
+    return;
+  }
+
+  // A GET at the write path is a 405, not a 404: the path EXISTS, the method is
+  // wrong, and saying "no such endpoint" would send a reader hunting for a
+  // routing bug that is not there.
+  if (pathname === WRITE_PATH) {
+    sendJson(res, 405, {
+      error: `${WRITE_PATH} accepts POST only`,
+      allow: ["POST"],
+    });
+    return;
+  }
 
   if (pathname === "/api/health") {
     sendJson(res, 200, await routes.health(cliVersion));
@@ -206,6 +430,13 @@ async function handle(
   }
   if (pathname === "/api/goal") {
     sendJson(res, 200, await routes.goal(query));
+    return;
+  }
+
+  // FR-241 — the triage READ half. Same `openReadContext()` door as the nine
+  // above, which is why it joins `LAYER_PATHS` in the read-only crawl.
+  if (pathname === "/api/suggestions") {
+    sendJson(res, 200, await routes.suggestions(query));
     return;
   }
 

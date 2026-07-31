@@ -529,18 +529,33 @@ export interface EmptyCopy {
   meta: string;
 }
 
-/** Per-layer copy for the genuinely-empty case, naming the command that fills it. */
-const NOTHING_YET: Record<LayerId, string> = {
+/**
+ * Per-layer copy for the genuinely-empty case, naming the command that fills it.
+ *
+ * FR-241 adds the two TRIAGE surfaces here rather than giving them their own
+ * selector. AC #6's whole point is that "nothing to show" is four DIFFERENT
+ * states with four different next actions, and a second implementation of that
+ * precedence would be a second chance to collapse them. The triage keys are not
+ * `LayerId`s — they are the two sub-tabs — hence the widened key type below.
+ */
+const NOTHING_YET: Record<EmptyScope, string> = {
   briefs: "No briefs filed for this project yet. `/hunt` files the first one.",
   learnings:
     "No learnings recorded for this project yet. `/harvest` extracts them from a session.",
   "context-docs":
     "No context docs exist for this project yet. `/ground <type>` writes the first one.",
   goals: "No goals filed yet. Goals are created through the brain's goal tools.",
+  suggestions:
+    "The suggestion queue is empty for this scope. The subconscious files these on its own schedule.",
+  candidates:
+    "No candidates are awaiting review in this scope. Perception files these after a session.",
 };
 
+/** A layer, or one of FR-241's two triage sub-tabs. */
+export type EmptyScope = LayerId | "suggestions" | "candidates";
+
 export function emptyStateFor(input: {
-  layer: LayerId;
+  layer: EmptyScope;
   /** Rows the server reported for the CURRENT request. */
   total: number;
   /** The server's `degraded.reason`, verbatim, or `null`. */

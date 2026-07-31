@@ -87,7 +87,14 @@ const DDL_LEARNINGS = `
       CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
     review_status TEXT NOT NULL DEFAULT 'approved',
     source_extractor TEXT NOT NULL DEFAULT 'manual',
-    promoted_to_doc TEXT
+    -- FR-241: perception/schema.ts:106 (TD-086 dedup tracking) and
+    -- janitor/schema.ts:109 (FR-116 M3 soft-delete). Mirrored here because
+    -- listLearnings now projects both, and they are what let the triage
+    -- surface tell a SOFT reject from a HARD one before it fires.
+    seen_again_count INTEGER NOT NULL DEFAULT 0,
+    last_seen_at TEXT,
+    promoted_to_doc TEXT,
+    deleted_at TEXT
   );
   CREATE VIRTUAL TABLE learnings_fts USING fts5(
     title, content, tags, tech_stack, content=learnings, content_rowid=id
@@ -141,6 +148,31 @@ const DDL_INSTANCES = `
   );
 `;
 
+/**
+ * `suggestions` — engine/components/subconscious/schema.ts (FR-106) plus the
+ * FR-118 M2 columns. Added by FR-241 so the read-only crawl covers
+ * `/api/suggestions` with REAL ROWS: a hash-stability gate over an endpoint
+ * that degraded to empty would pass for the wrong reason.
+ */
+const DDL_SUGGESTIONS = `
+  CREATE TABLE suggestions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_module TEXT NOT NULL,
+    project_slug TEXT,
+    title TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT '{}',
+    priority TEXT NOT NULL DEFAULT 'medium'
+      CHECK (priority IN ('high','medium','low')),
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK (status IN ('pending','dismissed','acted')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at TEXT, dismissed_at TEXT, dismissed_reason TEXT,
+    acted_at TEXT, acted_brief_id TEXT,
+    confidence REAL, suggested_action TEXT,
+    type_inferred INTEGER NOT NULL DEFAULT 0
+  );
+`;
+
 /** Ids the suites assert on, named so an assertion reads as a claim. */
 export const FIXTURE = {
   projects: ["demo", "other"],
@@ -152,6 +184,15 @@ export const FIXTURE = {
    */
   zeroOverlapLearningId: 3,
   pendingLearningId: 4,
+  /** FR-241 — the seeded suggestion queue, by status. */
+  suggestions: {
+    pendingCount: 3,
+    dismissedCount: 1,
+    /** `demo` has 2 pending, `other` has 1 — an ASYMMETRIC scope split. */
+    demoPendingCount: 2,
+    /** Counted from the data, never enumerated in code (L-967). */
+    sourceModules: ["gap", "janitor", "missing_followup"],
+  },
 } as const;
 
 /**
@@ -184,7 +225,8 @@ export function seedLayerBrain(dbPath: string): void {
       DDL_LEARNINGS +
       DDL_GOALS +
       DDL_EDGES +
-      DDL_INSTANCES,
+      DDL_INSTANCES +
+      DDL_SUGGESTIONS,
   );
 
   // --- projects ----------------------------------------------------------
@@ -268,6 +310,28 @@ export function seedLayerBrain(dbPath: string): void {
      VALUES ('i-1', 'host', 'demo', 'active')`,
   ).run();
 
+  // --- suggestions (FR-241) ----------------------------------------------
+  //  project | module           | priority | status    | created
+  //  demo    | gap              | high     | pending   | 07-01   <- oldest high
+  //  demo    | janitor          | low      | pending   | 07-30   <- newest low
+  //  other   | gap              | medium   | pending   | 07-15
+  //  demo    | missing_followup | high     | dismissed | 07-10
+  //
+  // Deliberately ASYMMETRIC on every dimension: two projects with different
+  // counts, three modules with different counts, and a priority band whose
+  // ordering DISAGREES with created_at ordering — so the `CASE priority`
+  // collation is observable rather than coincidental, and a facet map computed
+  // over the wrong WHERE clause produces visibly wrong numbers.
+  const insSuggestion = db.prepare(
+    `INSERT INTO suggestions
+       (source_module, project_slug, title, evidence, priority, status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  );
+  insSuggestion.run("gap", "demo", "Untracked AC in FR-240", '{"kind":"gap"}', "high", "pending", "2026-07-01 09:00:00");
+  insSuggestion.run("janitor", "demo", "Two near-duplicate learnings", '{"kind":"dupe"}', "low", "pending", "2026-07-30 09:00:00");
+  insSuggestion.run("gap", "other", "Brief with no goal edge", '{"kind":"gap"}', "medium", "pending", "2026-07-15 09:00:00");
+  insSuggestion.run("missing_followup", "demo", "Already handled", '{"kind":"followup"}', "high", "dismissed", "2026-07-10 09:00:00");
+
   db.close();
 }
 
@@ -293,4 +357,11 @@ export const LAYER_PATHS: readonly string[] = [
   "/api/goals",
   "/api/goals?project=demo&status=active",
   "/api/goal?id=GL-001",
+  // FR-241 — the triage READ half. It goes through the SAME `openReadContext()`
+  // door as the nine above, so adding it makes the read-only crawl STRICTER
+  // rather than routing around it: the brief that introduces a write path is
+  // the brief that most owes the digest gate a wider surface.
+  "/api/suggestions",
+  "/api/suggestions?project=demo&status=pending",
+  "/api/suggestions?source_module=gap",
 ];

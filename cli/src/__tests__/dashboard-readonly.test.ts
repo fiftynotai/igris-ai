@@ -62,7 +62,7 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
-import { get as httpGet } from "node:http";
+import { get as httpGet, request as httpRequest } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -76,7 +76,13 @@ import {
 } from "../lib/brain-bridge.js";
 import { brainDbPath } from "../lib/paths.js";
 import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
+import { resetWriteEngine, writeEngineState } from "../lib/brain-write-bridge.js";
 import { LAYER_PATHS, seedLayerBrain } from "./dashboard-layers-fixture.js";
+import {
+  TRIAGE_FIXTURE,
+  countPending,
+  seedTriageBrain,
+} from "./dashboard-triage-fixture.js";
 import {
   armHermeticEmbeddings,
   bundleStaged,
@@ -701,6 +707,179 @@ describe("G-RO-5 — the FR-238-era accessors open read-WRITE (residual, deferre
     expect(journalMode(dbPath())).toBe("wal");
     toDeleteMode();
     expect(journalMode(dbPath())).toBe("delete");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-RO-6 — FR-241: the WRITE door stays shut on a read-only session
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-241 adds a read-WRITE door into the same brain bundle. G-RO-5 above shows
+ * the read tier leaves a `delete`-mode brain byte-identical; that stays true
+ * ONLY because the write engine is LAZY — nothing boots it but a
+ * `POST /api/triage`.
+ *
+ * "Lazy" is a claim about a thing NOT happening, which is precisely the shape
+ * learning 1092 warns about: stillness is not liveness, and a `writeEngineState()`
+ * that returned `"not-booted"` unconditionally would satisfy the first half of
+ * this gate forever. So the SELF-NEGATIVE-CONTROL is in the same test: one real
+ * POST must flip the state AND change the digest.
+ *
+ * A REAL FINDING THAT SHAPED THIS GATE. The write engine CANNOT boot against
+ * this file's fixture:
+ *
+ *     bootEngine(seedLayerBrain(...)) -> "duplicate column name: archetype"
+ *
+ * `dashboard-layers-fixture.ts` hand-rolls DDL (it must — `cli/` and
+ * `brain-mcp-server/` have zero cross-imports), and the engine's own migrations
+ * then re-apply an `ALTER TABLE` that DDL already inlined. So the negative
+ * control below builds its own brain through the ENGINE's migrations
+ * (`dashboard-triage-fixture.ts`), which is the same reason the whole FR-241
+ * write suite does. Asserting the flip against this fixture would have observed
+ * `unavailable:boot_failed` — a state change, but the wrong one, and a gate
+ * that passed for a reason it never stated.
+ *
+ * WHAT THIS PROVES: a pure-read session never opens the write connection, so
+ * the read tier's read-only property is unaffected by the existence of a write
+ * path.
+ * WHAT IT DOES NOT PROVE: that the READ handles are still read-only — that is
+ * G-RO-3, unmodified and still running above.
+ */
+describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", () => {
+  it("after the full G-RO-5 read sequence the write engine is NOT booted", async () => {
+    resetWriteEngine();
+    expect(writeEngineState()).toBe("not-booted");
+
+    const before = snapshot(dbPath());
+    await start();
+    // The exact sequence G-RO-5 drives, plus FR-241's own READ half. Neither
+    // may open the write door.
+    for (const p of [
+      "/api/health",
+      "/api/briefs",
+      "/api/brief?project=demo&id=FR-240",
+      "/api/learnings",
+      "/api/learning?id=1",
+      "/api/goals",
+      "/api/goal?id=GL-001",
+      "/api/suggestions",
+      "/api/suggestions?project=demo&status=pending",
+    ]) {
+      expect((await req(p)).status, p).toBe(200);
+    }
+
+    // `/api/health` REPORTS the write surface on every 5-second beat. It must
+    // report it without opening it — a probe that booted the thing it probed
+    // would make this whole gate unassertable.
+    const health = JSON.parse((await req("/api/health")).body) as {
+      write: { available: boolean; state: string; actions: string[] };
+    };
+    expect(health.write.state).toBe("not-booted");
+    expect(health.write.actions.sort()).toEqual([
+      "acted",
+      "apply",
+      "approve",
+      "dismiss",
+      "reject",
+    ]);
+
+    expect(writeEngineState(), "a READ opened the write door").toBe("not-booted");
+    expect(snapshot(dbPath()).dump).toBe(before.dump);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — one POST flips the state and DOES change the brain", async () => {
+    // A second sandbox, migrated by the engine itself (see the describe header
+    // for why this fixture cannot be the one above).
+    const writeSandbox = mkdtempSync(join(tmpdir(), "igris-fr241-ro6-"));
+    const writeDb = join(writeSandbox, "memory", "knowledge.db");
+    const prevDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = writeSandbox;
+    closeBrainDb();
+    closeRegistryDb();
+    resetBrainBridge();
+    resetLayerReaders();
+    resetWriteEngine();
+
+    let server: DashboardServer | null = null;
+    try {
+      const seeded = await seedTriageBrain(writeDb);
+      expect(seeded.ok, seeded.ok ? "" : `fixture failed: ${seeded.reason}`).toBe(true);
+      // The fixture's own migrate pass tears its engine down, so the state is
+      // back to "not-booted" and the flip below is attributable to the POST.
+      resetWriteEngine();
+      expect(writeEngineState()).toBe("not-booted");
+
+      /*
+       * The LOGICAL dump, not the `.db` digest — and this was measured, not
+       * assumed. A first draft asserted `sha256(writeDb)` changed and FAILED:
+       * the dispatch landed entirely in the `-wal` sidecar and the main file
+       * was byte-identical afterwards. That is the exact blind spot this
+       * file's own `logicalDump` header describes ("SQLite can stage a change
+       * in the `-wal` sidecar without touching the `.db` file at all"), so the
+       * negative control uses the instrument that sees through it. The `-wal`
+       * transition is asserted separately, because "the write went somewhere"
+       * and "the write is visible" are two different claims.
+       */
+      const before = logicalDump(writeDb);
+      const beforeWal = existsSync(`${writeDb}-wal`) ? sha256(`${writeDb}-wal`) : null;
+      const beforePending = countPending(writeDb);
+      expect(beforePending).toBe(TRIAGE_FIXTURE.pendingSuggestions);
+
+      server = await startServer({ port: 0, cliVersion: "test" });
+      const body = JSON.stringify({ action: "dismiss", ids: [1], reason: "G-RO-6" });
+      const res = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+        const r = httpRequest(
+          {
+            host: "127.0.0.1",
+            port: server!.port,
+            path: "/api/triage",
+            method: "POST",
+            agent: false,
+            headers: {
+              host: `127.0.0.1:${server!.port}`,
+              "content-type": "application/json",
+              "content-length": String(Buffer.byteLength(body)),
+            },
+          },
+          (r2) => {
+            let text = "";
+            r2.setEncoding("utf-8");
+            r2.on("data", (c: string) => (text += c));
+            r2.on("end", () => resolve({ status: r2.statusCode ?? 0, text }));
+          },
+        );
+        r.on("error", reject);
+        r.write(body);
+        r.end();
+      });
+
+      // ASSERT-THEN-DIFF. The applied count first, because a digest change on
+      // its own is also what a failed boot writing a WAL header looks like.
+      expect(res.status).toBe(200);
+      expect(JSON.parse(res.text)).toMatchObject({ applied: 1, failed: 0, degraded: null });
+      expect(writeEngineState(), "a real POST did NOT boot the write engine").toBe(
+        "booted",
+      );
+      expect(countPending(writeDb)).toBe(beforePending - 1);
+      expect(
+        logicalDump(writeDb),
+        "the mutation left the brain logically identical",
+      ).not.toBe(before);
+      const afterWal = existsSync(`${writeDb}-wal`) ? sha256(`${writeDb}-wal`) : null;
+      expect(afterWal, "no -wal after a write: the engine wrote somewhere else").not.toBeNull();
+      expect(afterWal).not.toBe(beforeWal);
+    } finally {
+      if (server !== null) await server.close();
+      resetWriteEngine();
+      closeBrainDb();
+      closeRegistryDb();
+      resetBrainBridge();
+      resetLayerReaders();
+      rmSync(writeSandbox, { recursive: true, force: true });
+      if (prevDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
+      else process.env.IGRIS_BRAIN_DIR = prevDir;
+    }
   });
 });
 

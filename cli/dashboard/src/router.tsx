@@ -46,13 +46,15 @@ export type Route = (typeof ROUTES)[number];
 /**
  * Routes whose owning brief has not shipped yet. Rendered, but not enterable.
  *
- * `graph` left this map when FR-239 shipped and `layers` left it when FR-240
- * did — one line deleted and a page mounted, which is the whole pattern FR-241
- * inherits.
+ * `graph` left this map when FR-239 shipped, `layers` when FR-240 did, and
+ * `triage` when FR-241 did — one line deleted and a page mounted each time.
+ *
+ * The map is now EMPTY, and that is the correct end state rather than a reason
+ * to delete it: the mechanism is how the shell ships a nav slot before the view
+ * behind it exists, and the next brief that reserves a route needs it back.
+ * `App.tsx` still consults it, so a re-added entry works with no other edit.
  */
-export const PENDING_ROUTES: Partial<Record<Route, string>> = {
-  triage: "FR-241",
-};
+export const PENDING_ROUTES: Partial<Record<Route, string>> = {};
 
 export const ROUTE_LABELS: Record<Route, string> = {
   overview: "Overview",

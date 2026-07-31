@@ -82,7 +82,12 @@ wait_for_url() {
   run $CLI_BIN dashboard --smoke --no-open --port "$port"
   [ "$status" -eq 0 ]
 
-  local expected="/ /api/brief /api/briefs /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/summary"
+  # FR-241 adds TWO entries: the triage READ half (`/api/suggestions`) and the
+  # WRITE half, which is listed as `POST /api/triage` because the digest records
+  # the METHOD for it. That prefix is load-bearing here — it is what makes the
+  # set-equality check able to tell "the write path is probed" from "some other
+  # GET was added", and it is why the block below can single the POST out.
+  local expected="/ /api/brief /api/briefs /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/suggestions /api/summary POST /api/triage"
   local actual
   actual="$(echo "$output" | node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
@@ -97,17 +102,33 @@ wait_for_url() {
     return 1
   fi
 
-  # And every one of them 200s on a brain that does not exist yet.
+  # Every READ path 200s on a brain that does not exist yet (the FR-238 degraded
+  # contract), and the ONE WRITE path 400s.
+  #
+  # FR-241 — THE INVERTED EXPECTATION IS ASSERTED, NOT SMUGGLED. `POST
+  # /api/triage` is probed with `{"action":"__invalid__"}`, so a **400** is the
+  # PASS: it proves the POST was routed, cleared the Host/Origin/Content-Type
+  # fences, was read and reached the body parser — while mutating nothing, which
+  # is what keeps `--smoke` safe to run against the operator's real brain. A 200
+  # would mean `__invalid__` resolved to a brain tool, and that is precisely the
+  # outcome this gate must fail on. Folding it into a blanket "all 200" (or
+  # excluding it from the check) would make the write probe unfalsifiable.
   run node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
       const d = JSON.parse(s);
-      const bad = d.checks.filter(c => c.status !== 200);
-      if (bad.length > 0) { console.error('non-200:', JSON.stringify(bad)); process.exit(1); }
-      console.log(d.checks.length + ' paths, all 200');
+      const reads = d.checks.filter(c => !c.path.startsWith('POST '));
+      const writes = d.checks.filter(c => c.path.startsWith('POST '));
+      const badReads = reads.filter(c => c.status !== 200);
+      if (badReads.length > 0) { console.error('non-200 read:', JSON.stringify(badReads)); process.exit(1); }
+      if (writes.length !== 1) { console.error('expected exactly 1 write probe, got ' + writes.length); process.exit(1); }
+      if (writes[0].path !== 'POST /api/triage') { console.error('unexpected write probe: ' + writes[0].path); process.exit(1); }
+      if (writes[0].status !== 400) { console.error('write probe must 400 on an invalid action, got ' + writes[0].status); process.exit(1); }
+      if (writes[0].ok !== true) { console.error('write probe ok flag must be true on a 400'); process.exit(1); }
+      console.log(reads.length + ' read paths all 200, ' + writes.length + ' write path 400');
     });
   " <<< "$output"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '15 paths, all 200'
+  echo "$output" | grep -q '16 read paths all 200, 1 write path 400'
 }
 
 @test "dashboard --smoke releases the lock on exit" {
@@ -416,6 +437,14 @@ seed_layer_brain() {
         CHECK(provenance IN ('observed','inferred','synthesized','ambiguous','human_asserted')),
       review_status TEXT NOT NULL DEFAULT 'approved',
       source_extractor TEXT NOT NULL DEFAULT 'manual',
+      -- FR-241: perception/schema.ts:106 + janitor/schema.ts:109. The THIRD
+      -- hand-rolled mirror of this table (the others are
+      -- src/__tests__/dashboard-layers-fixture.ts and the brain's own
+      -- memory-read.test.ts). listLearnings projects both columns, so a fixture
+      -- missing them makes the endpoint degrade instead of returning rows.
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT,
+      deleted_at TEXT,
       promoted_to_doc TEXT
     );
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
@@ -590,10 +619,11 @@ get_json() {
     [ "$status" -eq 0 ]
   done
 
-  # The READ-ONLY lens must not CREATE the brain it could not find. `registry.ts`
+  # A GET must not CREATE the brain it could not find. `registry.ts`
   # creates the database when absent, so an unguarded `listProjects()` anywhere
   # in this tier would materialise one — which is a write, on the operator's
-  # machine, from a surface whose whole contract is that it never writes.
+  # machine, from a GET whose contract is that every GET changes no row.
+  # (Not "this surface never writes" — since FR-241 POST /api/triage does.)
   [ ! -f "$IGRIS_BRAIN_DIR/memory/knowledge.db" ]
 
   kill -TERM "$DASH_PID"

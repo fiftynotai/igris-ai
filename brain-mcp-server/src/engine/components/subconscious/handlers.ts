@@ -19,7 +19,9 @@
 
 import { getDb } from '../../../db.js';
 import type { EventBus, ToolResult } from '../../types.js';
-import { errMsg, errorResult, successResult, WhereBuilder } from '../../helpers.js';
+import { errMsg, errorResult, successResult } from '../../helpers.js';
+// FR-241 — the pure `db`-param reader this handler is now the wrapper for.
+import { listSuggestions } from '../../../tools/suggestions-read.js';
 import {
   computeEvidenceSignature,
   recordDismissPattern,
@@ -135,6 +137,18 @@ function rowToSuggestion(row: Suggestion): Omit<Suggestion, 'evidence'> & {
  * Supports: status, project_slug, source_module, priority, limit, offset.
  * Default sort: priority (high>medium>low) then created_at DESC so the
  * /awaken surface picks up the most actionable items first.
+ *
+ * FR-241 — this is now the MCP **WRAPPER** over `tools/suggestions-read.ts`
+ * `#listSuggestions`, the FR-237/FR-240 pure-layer seam. Everything that stayed
+ * here stayed for a stated reason: the validation MESSAGES are wire contracts,
+ * `getDb()` is wrapper-only by definition, the `min(limit, 1000)` cap is this
+ * tool's policy rather than the query's, and `rowToSuggestion`'s
+ * evidence-parsing is presentation. The reader's `facets` block is deliberately
+ * NOT emitted — it is a dashboard-only addition, and adding a key here would
+ * change a wire format skills parse.
+ *
+ * Pinned across the lift by `__tests__/suggestion-list-wire-parity.test.ts`,
+ * whose snapshots were recorded BEFORE it.
  */
 export function handleSuggestionList(args: Record<string, unknown>): ToolResult {
   if (
@@ -163,12 +177,6 @@ export function handleSuggestionList(args: Record<string, unknown>): ToolResult 
     );
   }
 
-  const where = new WhereBuilder()
-    .add('status = ?', args.status)
-    .add('project_slug = ?', args.project_slug)
-    .add('source_module = ?', args.source_module)
-    .add('priority = ?', args.priority);
-
   const rawLimit = args.limit !== undefined ? Number(args.limit) : 25;
   if (!Number.isFinite(rawLimit) || rawLimit < 1) {
     return errorResult('limit must be a positive integer');
@@ -180,35 +188,40 @@ export function handleSuggestionList(args: Record<string, unknown>): ToolResult 
   }
   const offset = rawOffset;
 
-  const db = getDb();
+  // `undefined` means "no filter" — `WhereBuilder.add` skips it (helpers.ts:54).
+  // Forwarding `args.*` unchanged is what keeps the filter semantics identical
+  // across the lift; a `?? undefined` normalisation here would turn an explicit
+  // `null` into a dropped clause on one side and a `= NULL` on the other.
+  const result = listSuggestions(getDb(), {
+    status: args.status as string | undefined,
+    project_slug: args.project_slug as string | undefined,
+    source_module: args.source_module as string | undefined,
+    priority: args.priority as string | undefined,
+    limit,
+    offset,
+  });
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM suggestions
-       ${where.toSQL()}
-       ORDER BY
-         CASE priority
-           WHEN 'high' THEN 0
-           WHEN 'medium' THEN 1
-           ELSE 2
-         END ASC,
-         created_at DESC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...where.values(), limit, offset) as Suggestion[];
-
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS total FROM suggestions ${where.toSQL()}`)
-    .get(...where.values()) as { total: number };
+  // L-133 degradation. The reader preflights `suggestions` and returns an empty
+  // result rather than throwing; this tool's pre-lift behaviour on a brain
+  // without the table was an error ENVELOPE (the raw `no such table:
+  // suggestions` propagating out of the handler to the gateway). The envelope
+  // is preserved — with a message that names the cause instead of leaking the
+  // SQLite text — so an MCP caller still sees a failure rather than a
+  // convincing empty list. The DASHBOARD reads the reader directly and renders
+  // `degraded` as a banner, which is the behaviour that actually wanted the
+  // preflight.
+  if (result.degraded !== null) {
+    return errorResult(result.degraded);
+  }
 
   return successResult(
     JSON.stringify(
       {
-        suggestions: rows.map(rowToSuggestion),
-        count: rows.length,
-        total: countRow.total,
-        limit,
-        offset,
+        suggestions: (result.suggestions as unknown as Suggestion[]).map(rowToSuggestion),
+        count: result.count,
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
       },
       null,
       2,

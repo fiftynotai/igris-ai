@@ -816,6 +816,26 @@ export interface HealthPayload {
     available: boolean;
     reason: string | null;
   };
+  /**
+   * FR-241 — the WRITE surface's availability.
+   *
+   * Separate from `bridge` on purpose: they can disagree. `bridge` reports the
+   * pure READ modules; `write` reports the engine module plus a brain on disk.
+   * The AC is *disabled, not broken* — when this is false the shell hides the
+   * triage affordances rather than offering buttons that will fail.
+   *
+   * `state` is the lazy-boot fact (`"not-booted"` / `"booted"` /
+   * `"unavailable:<kind>"`). `available:true` with `state:"not-booted"` is the
+   * NORMAL state of a browsing session and is exactly what FR-241's G-RO-6
+   * asserts after the FR-240 read-only request sequence.
+   */
+  write: {
+    available: boolean;
+    reason: string | null;
+    state: string;
+    /** The complete set of mutations this build can perform. */
+    actions: string[];
+  };
   generated_at: string;
   degraded: DashboardDegraded | null;
 }
@@ -1043,6 +1063,17 @@ export interface LearningListRowPayload {
   source_extractor: string;
   promoted_to_doc: string | null;
   content_length: number;
+  /**
+   * FR-241 — how many times perception re-discovered this pattern, and THE
+   * DESTRUCTIVENESS DISCRIMINATOR for the triage surface. `> 0` means a reject
+   * SOFT-deletes (recoverable); `== 0` means it HARD-deletes the row and its
+   * vector entry. A confirmation dialog that cannot tell those apart must
+   * either lie ("irreversible" for rows that are not) or under-warn, and the
+   * first trains the operator to click through the second.
+   */
+  seen_again_count: number;
+  /** FR-241 — non-null iff the row is already soft-deleted. */
+  deleted_at: string | null;
 }
 
 /**
@@ -1229,6 +1260,114 @@ export interface GoalDetailPayload {
     priority: string;
   }>;
   serving_learnings_count: number;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+// ---------------------------------------------------------------------------
+// FR-241 — the triage surface (the first MUTATING endpoint) and its read half
+// ---------------------------------------------------------------------------
+
+/**
+ * One `suggestions` row on the wire. Field-for-field
+ * `suggestions-read.ts:100#SuggestionRow`.
+ *
+ * `evidence` stays a RAW JSON STRING, exactly as stored. The MCP wrapper parses
+ * it (`rowToSuggestion`) because a transcript reader wants an object; a triage
+ * row does not render evidence, and parsing it here would put a second copy of
+ * that mapping — with its own malformed-JSON behaviour — in the CLI.
+ */
+export interface SuggestionRowPayload {
+  id: number;
+  source_module: string;
+  project_slug: string | null;
+  title: string;
+  evidence: string;
+  priority: string;
+  status: string;
+  created_at: string;
+  expires_at: string | null;
+  dismissed_at: string | null;
+  dismissed_reason: string | null;
+  acted_at: string | null;
+  acted_brief_id: string | null;
+  confidence: number | null;
+  suggested_action: string | null;
+  type_inferred: number;
+}
+
+/**
+ * `GET /api/suggestions?project=&status=&priority=&source_module=&limit=&offset=`.
+ *
+ * `facets` is the filter VOCABULARY, counted from the data. `source_module` has
+ * been an OPEN vocabulary since FR-118 M2 (the LLM names the kind), so a
+ * hand-listed dropdown is a dropdown that hides rows — L-967. The counts are
+ * computed over the active filters MINUS `source_module` itself, so selecting
+ * one value does not erase the control's own options.
+ */
+export interface SuggestionsPayload {
+  items: SuggestionRowPayload[];
+  count: number;
+  total: number;
+  limit: number;
+  offset: number;
+  /** `source_module -> count`, count DESC then name ASC. */
+  facets: { source_module: Record<string, number> };
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
+/**
+ * `POST /api/triage` — the request body.
+ *
+ * ONE endpoint with an `action` discriminator rather than five verb endpoints
+ * (D3). The whole delegation rule is then a single frozen five-row map a
+ * reviewer reads in one glance, and "the server layer performs no mutation of
+ * its own" is true by construction: there is no other route that can write.
+ */
+export interface TriageRequest {
+  /** One of `brain-write-bridge.ts#TRIAGE_ACTIONS`' keys. */
+  action: string;
+  /** Positive integers. `apply` accepts exactly one (D4). */
+  ids: number[];
+  /**
+   * Free-text dismissal/rejection reason. NOT decoration: it feeds
+   * `dismissed_patterns` and therefore the suppression loop that stops the
+   * backlog re-growing. A blind clear throws that signal away.
+   */
+  reason?: string;
+  /** `acted` only — which brief the operator opened in response. */
+  brief_id?: string;
+}
+
+/** One id's outcome. `error` is the BRAIN's verbatim message, never a rewrite. */
+export interface TriageItemResultPayload {
+  id: number;
+  ok: boolean;
+  error: string | null;
+}
+
+/**
+ * `POST /api/triage` — the response.
+ *
+ * D6: NO cross-id transaction. Each id is its own handler call and its own
+ * transaction, so a partial failure is REPORTED per id rather than rolled back
+ * — wrapping N dispatches would mean this tier running `BEGIN` on the brain,
+ * which is the raw-SQL mutation it exists to forbid.
+ *
+ * ALWAYS 200 when the request itself was well-formed, including when the write
+ * surface is down (`degraded` set, `applied: 0`). A malformed body is a genuine
+ * 400: a client bug is not a degraded brain, and collapsing the two makes both
+ * undiagnosable.
+ */
+export interface TriageResultPayload {
+  action: string;
+  requested: number;
+  applied: number;
+  failed: number;
+  results: TriageItemResultPayload[];
+  params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;
 }

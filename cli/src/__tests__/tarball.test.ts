@@ -513,7 +513,40 @@ interface PackReport {
  *                                   read modules, for about a sixth of what
  *                                   FR-239 spent. D4 (no markdown dependency)
  *                                   is most of the reason.
- *   headroom remaining  ~68.2 KB    for FR-241
+ *   FR-241 shipped      +370.6 KB   measured 2026-07-31 at the END of phase 7,
+ *                                   after its LAST code-touching step:
+ *                                   1_681_309 packed / 6_572_495 unpacked /
+ *                                   792 entries. FR-241's OWN contribution is
+ *                                   therefore +38.8 KB (39_710 B over FR-240's
+ *                                   1_641_599) for the whole write path: the
+ *                                   write bridge, the triage endpoint, the
+ *                                   triage view with its pure model and tiered
+ *                                   confirm dialog, the lifted project-scope
+ *                                   layer, and two more vendored brain modules
+ *                                   (`tools/suggestions-read.js` plus the
+ *                                   `engine/index.js` the write door boots).
+ *   headroom remaining  ~29.4 KB    (30_142 B under the +400 KB ceiling)
+ *
+ * THE CEILING DID NOT MOVE FOR FR-241, and none of its three pre-declared cut
+ * levers was needed. It planned against ~68 KB and spent ~39 KB. The reason the
+ * figure is that small is worth recording, because it is the same reason
+ * FR-240's was: the expensive things this brief added are NOT packed. `docs/`
+ * and `MAINTAINING.md` sit outside `package.json` `files` (which is `dist` plus
+ * three named files), and the test glob under `src` is excluded by
+ * `tsconfig.json`, so no compiled `__tests__` directory exists under `dist` —
+ * two new endpoint suites, a two-process parity differ, a fixture and this
+ * provenance note cost exactly zero packed bytes. What DOES cost is `dist` and
+ * the Vite chunk.
+ *
+ * (That glob is spelled out in prose rather than written literally on purpose:
+ * the exclude pattern contains a star-slash pair, which terminates a block
+ * comment. A provenance note that breaks the build is not a provenance note —
+ * the same trap the FR-241 Phase-0 probe record dodged with its cron fields.)
+ *
+ * Phase 7's own delta is +1_004 B over the phase-6b reading of 1_680_305 —
+ * entirely the expanded `handlePerceptionDashboard` comment block, which `tsc`
+ * preserves into the vendored bundle. Small, but not zero, which is exactly why
+ * the rule is measure LAST rather than reuse the last figure you saw.
  *
  * (TWO earlier readings are recorded so the git history is not read as a drift.
  * +329.6 KB was taken BEFORE the `--smoke` probe list landed in
@@ -525,11 +558,12 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT LAST LINE BEFORE PLANNING FR-241. It is the whole remaining budget
- * for the first WRITE path plus cognition triage, and it is SMALLER than what
- * FR-240 spent. If FR-241 needs more, the answer is to cut or to vendor less —
- * NOT to raise `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above
- * spend thirty lines on.
+ * READ THAT BEFORE PLANNING THE NEXT ONE. ~29.4 KB is what is left, and it is
+ * smaller again than what FR-241 spent. If the next brief needs more, the answer
+ * is to cut or to vendor less — NOT to raise `PACK_HARD_CEILING_DELTA`, for the
+ * reason the paragraphs above spend thirty lines on. (FR-241 was told the same
+ * thing about its ~68 KB and did not need the exemption either; the pattern so
+ * far is that the estimate before measuring is the pessimistic one.)
  *
  * The budget is CUMULATIVE across the family, not per-brief: a per-brief
  * reading lets three views bust the ceiling with every individual brief
@@ -612,6 +646,34 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         "dist/brain-mcp-server/dist/engine/components/edges/whole-graph.js",
       ),
     ).toBe(true);
+  });
+
+  it("ships FR-241's suggestion reader AND the engine module the WRITE door boots", () => {
+    // MAINTAINING row 107, extended again by FR-241. The two entries are
+    // different in kind and the failure modes are not the same:
+    //
+    //   - `suggestions-read.js` is a READ artifact. Losing it degrades
+    //     `/api/suggestions` to an empty queue that looks like a cleared
+    //     backlog — the same silent shape as the three readers below.
+    //   - `engine/index.js` exports `bootEngine` and is the WRITE door. Losing
+    //     it takes the MUTATION surface down, not a readout, and the signal
+    //     that goes false is `/api/health`'s `write.available`. A dashboard
+    //     that cannot triage is a different bug report from one that shows an
+    //     empty list, so it gets its own named assertion rather than joining
+    //     the reader loop.
+    //
+    // Both are reached by path literal from `brain-bridge.ts#MODULE_RELS`, so
+    // they resolve in this repo whether or not they are in the pack. Only a
+    // packaging assertion can catch the consumer-machine case.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/suggestions-read.js",
+      "dist/brain-mcp-server/dist/engine/index.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
   });
 
   it("ships the three FR-240 pure READ modules the layer endpoints import", () => {

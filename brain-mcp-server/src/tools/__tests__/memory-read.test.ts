@@ -128,7 +128,13 @@ function makeDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed',
       review_status TEXT NOT NULL DEFAULT 'approved',
       source_extractor TEXT NOT NULL DEFAULT 'manual',
-      promoted_to_doc TEXT
+      -- FR-241: perception/schema.ts:106 (TD-086) and janitor/schema.ts:109
+      -- (FR-116 M3). listLearnings projects both so a triage caller can tell
+      -- a SOFT reject (seen_again_count > 0) from a HARD one before it fires.
+      seen_again_count INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT,
+      promoted_to_doc TEXT,
+      deleted_at TEXT
     );
     CREATE VIRTUAL TABLE learnings_fts USING fts5(
       title, content, tags, tech_stack, content=learnings, content_rowid=id
@@ -215,6 +221,63 @@ describe('listLearnings — the query FR-240 added (G1)', () => {
     expect(listLearnings(db, { provenance: 'inferred' }).learnings.map((l) => l.id)).toEqual([4, 2]);
     expect(listLearnings(db, { review_status: 'approved' }).learnings.map((l) => l.id)).toEqual([3, 2, 1]);
     expect(listLearnings(db, { review_status: 'pending_review' }).learnings.map((l) => l.id)).toEqual([4]);
+  });
+
+  /**
+   * FR-241 — the two columns the triage surface's confirmation dialog needs.
+   *
+   * WHAT THIS PROVES: `seen_again_count` and `deleted_at` reach a list row with
+   * their real per-row values, so a caller can partition a selection into
+   * "SOFT delete on reject" and "HARD delete on reject" before firing.
+   * WHAT IT DOES NOT PROVE: that `igris_perception_reject` actually forks on
+   * the column — that is `perception/handlers.ts:661-717` and its own tests.
+   * The FR-241 CLI suites re-assert the fork end to end.
+   */
+  it('FR-241 — projects seen_again_count and deleted_at, per row', () => {
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, created_at, updated_at,
+                              review_status, seen_again_count, deleted_at)
+       VALUES ('igris-ai','pattern','Recurring','r','2026-07-05 10:00:00','2026-07-05 10:00:00',
+               'pending_review', 3, '2026-07-06 10:00:00')`,
+    ).run();
+    const rows = listLearnings(db, { review_status: 'pending_review' }).learnings;
+    const recurring = rows.find((l) => l.title === 'Recurring');
+    const firstTime = rows.find((l) => l.title === 'Pending wrapper note');
+
+    // The DISCRIMINATING pair: same query, different values. A projection bug
+    // that returned a constant would satisfy either assertion alone.
+    expect(recurring?.seen_again_count).toBe(3);
+    expect(firstTime?.seen_again_count).toBe(0);
+    expect(recurring?.deleted_at).toBe('2026-07-06 10:00:00');
+    expect(firstTime?.deleted_at).toBeNull();
+  });
+
+  it('FR-241 — a legacy NULL seen_again_count reads as 0, not null', () => {
+    // The column arrived by ALTER (perception/schema.ts:106) with a NOT NULL
+    // DEFAULT 0, but the reader COALESCEs anyway: a null here would make the
+    // client's `count > 0` test evaluate false-y and silently classify a
+    // RECURRING candidate as a hard delete — the destructive direction.
+    db.exec(`
+      CREATE TABLE legacy AS SELECT * FROM learnings WHERE 0;
+      DROP TABLE learnings;
+      CREATE TABLE learnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL,
+        content TEXT NOT NULL, tags TEXT DEFAULT '', tech_stack TEXT DEFAULT '',
+        scope TEXT DEFAULT 'local', source_brief TEXT DEFAULT '',
+        confidence REAL DEFAULT 0.8,
+        created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+        access_count INTEGER DEFAULT 0, last_accessed_at TEXT,
+        provenance TEXT NOT NULL DEFAULT 'observed',
+        review_status TEXT NOT NULL DEFAULT 'approved',
+        source_extractor TEXT NOT NULL DEFAULT 'manual',
+        seen_again_count INTEGER,
+        promoted_to_doc TEXT, deleted_at TEXT
+      );
+      INSERT INTO learnings (project, category, title, content, created_at, updated_at, seen_again_count)
+      VALUES ('igris-ai','pattern','Legacy','x','2026-01-01 00:00:00','2026-01-01 00:00:00', NULL);
+    `);
+    expect(listLearnings(db).learnings[0]!.seen_again_count).toBe(0);
   });
 
   it('filters compose with AND and `total` respects them', () => {

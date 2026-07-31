@@ -57,19 +57,24 @@ The dashboard is the first network listener this CLI has ever opened, so:
 | Bind address | `127.0.0.1` only. Never `0.0.0.0`, and not configurable. |
 | `Host` header | Allowlist — `127.0.0.1:<port>`, `localhost:<port>`, `[::1]:<port>`. Anything else → **403**. This is what defeats DNS rebinding: a page resolving `evil.test` to 127.0.0.1 reaches the socket but fails the header check. |
 | CORS | **No CORS headers at all.** Without `Access-Control-Allow-Origin`, a cross-origin page cannot read a response even if it can cause the request. |
-| Methods | `GET` and `HEAD` only. Everything else → **405**. |
-| Write endpoints | **Zero.** FR-241 owns the write path and will have to add one deliberately. |
+| Methods | `GET` and `HEAD` everywhere. **`POST` on exactly one path, `/api/triage`** (FR-241). Every other method on every path, and a `POST` on any other path, → **405**. |
+| `Origin` header (POST only) | Absent (a `curl`, the `--smoke` probe) or **exactly** the served origin → allowed; anything else, including the literal string `null`, → **403**. Compared as a whole string against both loopback spellings, never by `startsWith`: `http://127.0.0.1:7317` is a prefix of `http://127.0.0.1:7317.evil.test`. |
+| `Content-Type` (POST only) | `application/json` required → otherwise **415**. This is the fence that actually blocks the classic no-JS CSRF: an HTML `<form>` can POST cross-origin without a preflight, but only as `application/x-www-form-urlencoded`, `multipart/form-data` or `text/plain`. Requiring JSON forces a preflight, which the `Origin` fence then answers. |
+| Request body cap (POST only) | 64 KB, enforced **while reading** rather than after → otherwise **413**, so an unbounded upload is never buffered first and rejected second. |
+| Write endpoints | **Exactly one, since FR-241: `POST /api/triage`.** Every mutation it performs is a `gateway.dispatch` of a tool named by a frozen five-row map — there is no code path in this tier that writes any other way. See *The write path* below. |
 | Static serving | Path-traversal guarded (normalise, then resolved-prefix check — a LEXICAL check; see `static.ts` for why `realpath` is not needed while the bundle is a build artifact). Unknown extensions serve as `application/octet-stream`. |
-| Response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` — on **every** response, from `dashboard/headers.ts`. The framing pair is defence in depth today (nothing to actuate on a read-only surface with no cookies) and lands now because **FR-241 adds the first write endpoint**, at which point a framed dashboard becomes a real clickjacking target. |
+| Response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` — on **every** response, from `dashboard/headers.ts`. The framing pair landed in FR-238 as defence in depth on a then-read-only surface with nothing to actuate and no cookies, in anticipation of a write endpoint. **FR-241 added that endpoint**, so the pair is now load-bearing rather than anticipatory: a framed dashboard with a working bulk-reject button is a real clickjacking target. |
 | Caching | `Cache-Control: no-store` on all of `/api/*`; `no-cache` on `index.html`; long immutable max-age only on content-hashed `assets/`. |
-| Auth | None — and none is planned. It is loopback-only and read-only. |
+| Auth | None — and none is planned. It is loopback-only, and the write endpoint is fenced by the four rows above rather than by a credential. What that does **not** defend against, stated rather than implied: a malicious browser extension, or another process running as the operator on this same machine. A loopback personal tool cannot, and this document does not pretend otherwise. |
 
 ---
 
 ## API surface
 
-All read-only. All same-origin. Every response carries a `degraded` field with
-the same shape.
+**Fifteen GET paths and one POST path.** All same-origin. Every response carries
+a `degraded` field with the same shape. Every GET is a read; the single POST is
+the write path FR-241 added, and it is the only endpoint on this surface that
+changes a row.
 
 | Method | Path | Response | Backed by |
 |---|---|---|---|
@@ -87,13 +92,16 @@ the same shape.
 | `GET` | `/api/context-doc?project=<slug>&type=<doc type>` | `{project, type, target, content, bytes, truncated, generated_at, degraded}` | `dashboard/context-docs-read.ts` — a guarded disk read |
 | `GET` | `/api/goals` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `goals/read.ts#listGoals` |
 | `GET` | `/api/goal?id=<GL-XXX>` | `{goal, serving_briefs, serving_learnings_count, generated_at, degraded}` | `goals/read.ts#getGoal` |
+| `GET` | `/api/suggestions?project=<slug>&status=&priority=&source_module=` | `{items, count, total, limit, offset, facets, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
+| **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
 
 ### Layer views (FR-240) — the browse/detail surface
 
 Nine endpoints across four layers: briefs, learnings, context docs, goals. They
 are **read-only throughout**, and that is a structural property rather than a
-promise — see "Read-only is a property of the connection" below.
+promise — see "Two doors" below, which states which endpoint uses which handle.
+FR-241 added a write endpoint to this surface but changed none of these nine.
 
 **Shared list envelope.** Every list endpoint returns
 `{items, count, total, limit, offset, params}`. `total` is the row count under
@@ -124,8 +132,9 @@ sequence — the asymmetry is the point, not an oversight.
 
 **`review_status` (D9).** `/api/learnings` defaults to `approved` and echoes the
 resolved value in the payload. `pending_review` rows are reachable only when
-explicitly asked for, and the UI banners them. This surface ships **no**
-approve/reject control — FR-241 owns cognition triage.
+explicitly asked for, and the UI banners them. The learnings list itself still ships **no**
+approve/reject control; FR-241 put those on their own surface (`#/triage`), for
+the reason the write-path section below gives.
 
 **Context docs need no brain data.** `/api/context-docs` forwards the
 `igris context-docs inventory` digest; `applies_when` is evaluated by that verb
@@ -196,12 +205,24 @@ These were probed before the endpoint was written; the documented fallback (a
 normal open plus `query_only = ON`) turned out not to be needed, and remains only
 as the R4 branch that exists for a different reason.
 
-### Read-only is a property of the connection, not of discipline
+### Two doors, and read-only is a property of the connection
 
-**No endpoint changes a row.** The *layer readers* enforce that structurally; two
-inherited accessors do not, and the difference is spelled out below rather than
-rounded off — an undisclosed exception to a structural claim is how the claim
-stops meaning anything.
+**Since FR-241 this tier is not read-only as a whole, and it is not read-write as
+a whole either.** It has two doors plus one inherited residual, and which one an
+endpoint uses is the only honest way to state the posture — an undisclosed
+exception to a structural claim is how the claim stops meaning anything.
+
+| Door | Endpoints | Connection |
+|---|---|---|
+| **Read** | the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, and both graph endpoints | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
+| *Residual (FR-238-era)* | `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | a plain `new Database(path)` with **no** `readonly` flag that sets `journal_mode = WAL` — disclosed below, deferred, not FR-241's to fix |
+| *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
+
+**Every GET on this surface changes no row.** The layer readers enforce that
+structurally; the two inherited accessors do not; and the write door is a
+different module returning a different connection, which is exactly why FR-240's
+read-only pins stay green rather than being re-argued.
 
 **The layer readers (FR-240) — structurally read-only:**
 
@@ -222,8 +243,9 @@ stops meaning anything.
 
 **The FR-238-era accessors — read-write handles, a residual:**
 
-- `/api/projects` (and, since FR-240, `/api/context-docs` via
-  `context-docs-read.ts#isKnownProject`) reaches `registry.ts#listProjects`, and
+- `/api/projects` (and, since FR-240, **both** `/api/context-docs` and
+  `/api/context-doc`, each via `context-docs-read.ts#readInventory`, which calls
+  `isKnownProject`) reaches `registry.ts#listProjects`, and
   `/api/summary` reaches `brain-db.ts#briefStatusSummary` / `#listInstances`.
   Both modules open with `new Database(path)` — **no `readonly`** — and both run
   `pragma('journal_mode = WAL')` (`registry.ts:41-47`, `brain-db.ts:86-88`).
@@ -249,6 +271,170 @@ converts the fixture to `delete` mode, asserts the layer endpoints leave it
 alone, and pins the three accessor paths that flip it plus the `CREATE TABLE`.
 Those pins fail if the residual is ever fixed, which is what will bring an editor
 back to this section.
+
+**What the write door adds to that residual, stated rather than folded in:**
+booting the write engine ALSO puts the brain in WAL, because
+`createSqliteAdapter` sets `journal_mode = WAL` on the connection it opens. That
+is the same file-level flip the three FR-238-era accessors already cause and the
+same territory TD-319 already owns — it is additional coverage of a disclosed
+residual, not a new one. It is also why the write engine must stay **lazy**:
+G-RO-5's fixture is a `journal_mode = delete` brain, and a write engine booted on
+a browsing session would flip it.
+
+### The write path (FR-241)
+
+`POST /api/triage` is the only endpoint on this surface that changes a row, and
+it is deliberately **one** endpoint with an `action` discriminator rather than
+five verb endpoints. That shape is what makes the whole delegation rule a single
+table a reviewer reads in one glance.
+
+**The delegation rule:** *a dashboard mutation may only ever be added by adding a
+row to the frozen `TRIAGE_ACTIONS` map in `cli/src/lib/brain-write-bridge.ts`,
+and a mutation that does not resolve to a registered brain tool is forbidden.*
+
+| `action` | brain tool | bulk | id key | allowed extras |
+|---|---|---|---|---|
+| `dismiss` | `igris_suggestion_dismiss` | yes | `id` | `reason` |
+| `acted` | `igris_suggestion_acted` | yes | `id` | `brief_id` |
+| `apply` | `igris_suggestion_apply_action` | **no** | `id` | — |
+| `approve` | `igris_perception_approve` | yes | `learning_id` | — |
+| `reject` | `igris_perception_reject` | yes | `learning_id` | `reason` |
+
+The `id` / `learning_id` asymmetry is not an inconsistency to tidy: the three
+suggestion tools declare `required: ['id']` and the two perception tools declare
+`required: ['learning_id']`, so a wrong key is a **gateway refusal**
+(`missing required argument 'learning_id'`, BR-080) rather than a silent
+mis-write. `extra` is an allow-list rather than documentation — `buildTriageArgs`
+copies only the keys its row names, so a body posting `winner_id` at `dismiss`
+cannot reach the handler with it.
+
+`apply` is single-item by design (D4): it dispatches arbitrary action *kinds*
+(`tick_ac`, a `create_brief` draft, `add_edge`, `flag_for_review`), and
+bulk-firing heterogeneous side effects behind one confirm is not a triage flow.
+Bulk requests clamp at **`MAX_BULK = 200`** ids, and the clamp is reported
+through `params` rather than silently applied.
+
+#### The write path IS the MCP path, minus the JSON-RPC framing
+
+`brain-write-bridge.ts` boots the **vendored brain engine** in-process
+(`bootEngine({dbPath: brainDbPath(), components: {schedules: {enabled: false}}})`)
+and dispatches through that engine's own gateway. The brain's stdio
+`CallToolRequestSchema` handler is a one-line wrapper around the same
+`gateway.dispatch(name, args)` call. So three properties are **consequences of
+the shape** rather than features re-implemented here:
+
+- **input validation** — the BR-080 `required` walk and the TD-128
+  `additionalProperties: false` extras walk both live in `gateway.dispatch`, not
+  in the handlers. Importing a handler directly would have dropped both, which is
+  the difference between "the dashboard is a client of the brain" and "the
+  dashboard has a private, unvalidated back door";
+- **the event bus** — `handlePerceptionApprove` and `handlePerceptionReject`
+  emit on it, and `monitoring` is subscribed on this engine exactly as on the MCP
+  server's;
+- **audit** — the resulting `event_log` rows are written by the same
+  `monitoring` writer, so a dashboard mutation and an MCP mutation are compared
+  column-for-column by `dashboard-triage-parity.test.ts`, in two **processes**.
+
+**`schedules` is the one disabled component, and the reason is load-bearing.**
+`bootEngine` otherwise starts the schedules cron daemon, which would turn
+`igris dashboard` into a second brain daemon firing `igris_subconscious_run`, the
+perception / synapse / janitor extractors and their LLM calls on cron. That is a
+categorically different program from the one the operator started.
+
+**`sync` deliberately stays enabled.** `suggestions` and `learnings` are both
+`SYNC_TABLES`, so disabling it would make dashboard writes fail to propagate to
+the VPS while MCP writes succeeded — a parity break in the other direction. The
+consequence to expect: **a dismissal or approval made in the dashboard
+auto-pushes to `brain.fifty.dev` exactly as the same action through MCP does.**
+
+**The boot is lazy, and it happens at most once per process.** Nothing boots the
+engine until a `POST /api/triage` — `/api/health` deliberately does not, because
+a health probe that touched the write door would make the "a browsing session
+never opens it" assertion unwritable. `writeEngineState()` reports
+`"not-booted"` / `"booted"` / `"unavailable:<kind>"` and `/api/health` carries it
+under `write`. One engine per process is a **correctness** property, not an
+optimisation: `db.ts#setAdapter` is a module global, and a second `bootEngine`
+in the same process silently re-points every `getDb()` — including the first
+engine's — at the second database. That was measured, not assumed, which is why
+the parity gate runs in two processes.
+
+**A boot creates zero rows.** Measured against a `VACUUM INTO` snapshot of the
+real brain by diffing all 66 plain tables: no schema objects added or removed and
+no row created. Its single side effect is the `journal_mode` flip described
+above.
+
+#### Reject is a three-tier outcome, and the confirmation says which
+
+`igris_perception_reject` forks on `seen_again_count` (FR-116 M3), so a blanket
+"irreversible" banner would be a **lie** for the recurring rows — and training an
+operator to click through a warning is how the one that mattered gets clicked
+through too.
+
+| Tier | Applies to | Row afterwards | What the dialog says |
+|---|---|---|---|
+| 1 — status flip | `dismiss`, `acted`, `approve` | survives, status changed | *N items will change status … there is no un-dismiss tool — reversing this means hand-editing the brain.* |
+| 2 — soft delete | `reject` where `seen_again_count > 0` | survives with `deleted_at` | *N items will be SOFT-deleted (recurring patterns) … recoverable.* |
+| 3 — **hard delete** | `reject` where `seen_again_count == 0` | **gone**, with its `learnings_vec` row | *N items will be PERMANENTLY DELETED. This cannot be undone.* |
+
+A mixed selection reports **each** count, and the tier-3 count is always its own
+sentence and always last. A row whose `seen_again_count` could not be determined
+is counted as tier 3 and the dialog says so. A tier-3 bulk requires **typing the
+count** to confirm. This is why `listLearnings` projects `seen_again_count` at
+all: a dialog cannot state which of the two it is about to do without it.
+
+#### Partial failure is reported, never rolled back
+
+Each id is its own handler call and its own transaction (D6). A batch of five
+where two fail returns **200** with `applied: 3`, `failed: 2`, and each failure
+carrying the **brain's verbatim message** — the three that worked landed and stay
+landed. There is no cross-id transaction, because wrapping N dispatches would
+mean this tier running `BEGIN` on the brain, which is the raw SQL it exists to
+forbid, and because one bad id must not discard 199 good ones. Dispatch is
+sequential rather than parallel: every dispatch shares one `better-sqlite3`
+connection and several handlers open a `db.transaction()`.
+
+#### Two divergences the UI banners rather than hides
+
+- **No TTL window.** `igris_perception_review_pending` applies a
+  `pending_review_ttl_days` filter; the dashboard's candidate list does not, so
+  it shows **more** than the MCP tool, including TTL-expired candidates
+  `igris_perception_expire_stale` has not reaped. For a backlog-clearing surface
+  that is correct — hiding rows you must triage is the bug — so it is stated in
+  the view, not discovered.
+- **Project-scoped by default.** There are ~1,188 pending suggestions across 19
+  projects. A surface whose default selection is 1,188 rows is one mis-click from
+  a catastrophe with no undo tool, so the view inherits the shell's project
+  selector and renders the count *before* the rows when scope is widened.
+
+The `source_module` filter vocabulary is enumerated **from data** — the
+`/api/suggestions` payload carries a `facets.source_module` count map the reader
+computes — because that vocabulary is open-ended (`gap`, `missing_followup`,
+`janitor`, `edge_inference`, plus whatever the LLM names next) and a hand-list
+would go stale silently.
+
+#### The audit trail, and what it does and does not now record
+
+Before FR-241, four of the five actions wrote **nothing** to `event_log`:
+`monitoring`'s listen list carried `perception.run_*` only, so
+`perception.candidate_approved` and `perception.candidate_rejected` were emitted
+into a void. FR-241 phase 6b subscribed both (mapped to the literal legacy
+component `'perception'`), which means a dashboard **or MCP** approve/reject now
+leaves an audit row for the first time. Two residuals, stated in the same breath:
+
+- neither emit carries a `project`, so the logged `project_slug` is **NULL** and
+  the *project-scoped* `perception_dashboard.rejected_last_n` still reads 0 —
+  only the unscoped total moved;
+- `approved_last_n` is sourced from `learnings WHERE review_status = 'approved'`,
+  so the approve event is a pure audit row and changes no counter at all.
+
+`perception.rejected_pattern_recurring` is deliberately **not** subscribed: the
+recurring-reject branch writes that row directly *and* re-emits it, so a listener
+would log it twice.
+
+`igris_suggestion_dismiss` and `igris_suggestion_acted` still write no
+`event_log` row on either path. The parity gate asserts that emptiness
+**explicitly**, citing the traced reason, rather than passing on a silent
+`[] === []`.
 
 ### `/api/graph` — the node/edge payload (FR-239)
 
@@ -351,9 +537,17 @@ also keeps the payload a few KB regardless of brain size.
 **No endpoint ever returns 4xx or 5xx for a degraded brain.** A missing,
 empty, unmigrated or corrupt brain database yields **HTTP 200** with empty data
 and `degraded: {reason}`. A degraded brain is an ordinary state of a personal
-lens, not an error. The only non-200 responses are `400` (malformed request),
-`403` (rejected `Host` / traversal), `404` (unknown endpoint or missing asset)
-and `405` (a write method).
+lens, not an error. The only non-200 responses are `400` (a malformed request — including a
+malformed triage body, which is a client bug rather than a degraded brain and
+must stay distinguishable from one), `403` (a rejected `Host`, a rejected POST
+`Origin`, or a traversal), `404` (unknown endpoint or missing asset), `405` (a
+method a path does not accept), `413` (a POST body over 64 KB) and `415` (a POST
+that is not `application/json`).
+
+**`degraded` is also how an unavailable WRITE surface reports itself.** A
+`POST /api/triage` that cannot reach the brain answers 200 with
+`degraded: {reason}` and `applied: 0` — *disabled, not broken*. It never returns
+a 500, never a stack trace, and never a partial mutation.
 
 ---
 
@@ -365,26 +559,36 @@ igris dashboard (verb)
   ├─ open-url.ts    cross-platform browser ladder
   └─ server.ts      node:http, 127.0.0.1, Host guard, traversal guard
        ├─ static.ts   dist/dashboard/** + SPA fallback
-       └─ routes.ts   the fourteen endpoints — CONTAINS ZERO SQL
-            ├─ params.ts             pure clamp + filter allowlist
+       └─ routes.ts   the sixteen endpoints (15 GET + 1 POST) — CONTAINS ZERO SQL
+            ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
             ├─ registry.ts#listProjects
             ├─ brain-db.ts#briefStatusSummary / #listInstances
             ├─ context-docs-read.ts  digest + guarded disk read (no brain)
-            └─ brain-bridge.ts ──runtime import()──▶ vendored pure modules
-                                                     ├─ FR-237 buildBrainGraph
-                                                     ├─ briefs-read.ts
-                                                     ├─ memory-read.ts
-                                                     └─ goals/read.ts
+            ├─ brain-bridge.ts ──runtime import()──▶ vendored pure READ modules
+            │                                        ├─ FR-237 buildBrainGraph
+            │                                        ├─ briefs-read.ts
+            │                                        ├─ memory-read.ts
+            │                                        ├─ goals/read.ts
+            │                                        └─ suggestions-read.ts
+            └─ brain-write-bridge.ts ─import()─▶ engine/index.js#bootEngine
+                                        (LAZY · schedules disabled · one per
+                                         process) ──▶ gateway.dispatch(tool,args)
 ```
 
-**The server layer holds no SQL of its own.** Reads go through exactly three
-doors: the FR-237 pure builder, the FR-240 pure `db`-param read layer, or the
-existing MAINTAINING-pinned CLI accessors. This is asserted mechanically by
-`dashboard-server.test.ts`, whose scan covers `routes.ts`, `graph-query.ts`,
-`server.ts`, `static.ts`, `params.ts` and `context-docs-read.ts` — and which
+**The server layer holds no SQL of its own — reads or writes.** Reads go through
+exactly three doors: the FR-237 pure builder, the pure `db`-param read layer
+(FR-240, extended by FR-241), or the existing MAINTAINING-pinned CLI accessors.
+**Writes go through exactly one**: `gateway.dispatch(<a tool named by the frozen
+map>, args)`. This is asserted mechanically by `dashboard-server.test.ts`, whose
+scan covers `routes.ts`, `graph-query.ts`, `server.ts`, `static.ts`, `params.ts`,
+`context-docs-read.ts` and — since FR-241 — `brain-write-bridge.ts`; and which
 carries its own self-negative-control, because a scan whose only observed
 outcome is "did not match" is indistinguishable from a scan whose patterns are
-broken.
+broken. A grep-only guard on a new module is what got FR-240 rejected, so the
+write half is pinned **behaviourally** too: `dashboard-triage-endpoint.test.ts`
+asserts the HTTP request invokes the real `handleSuggestionDismiss` in the loaded
+bundle, and that with the gateway refusing the tool name the row is unchanged —
+i.e. there is no fallback path that writes without the handler.
 
 ### The pure `db`-param read layer (FR-240)
 
@@ -400,8 +604,21 @@ FR-240 exercised it: the SQL behind `igris_brief_list`, `igris_brief_get`,
 | `brain-mcp-server/src/tools/briefs-read.ts` | `tools/briefs.ts` | `listBriefs`, `getBrief` |
 | `brain-mcp-server/src/tools/memory-read.ts` | `tools/memory.ts` | `listLearnings`, `getLearning`, `hybridSearchLearnings` |
 | `brain-mcp-server/src/engine/components/goals/read.ts` | `goals/handlers.ts` | `listGoals`, `getGoal` |
+| `brain-mcp-server/src/tools/suggestions-read.ts` (FR-241) | `subconscious/handlers.ts` | `listSuggestions` |
 
-This is the third instance of the FR-237 pure-layer/wrapper convention
+FR-241 added the fourth pair the same way: `handleSuggestionList`'s query body
+moved down verbatim into `listSuggestions(db, opts)` and the handler became its
+wrapper, keeping the validation and the `rowToSuggestion` evidence-parsing. Its
+one addition is `facets.source_module`, a `GROUP BY` count map computed over the
+same `WHERE` minus its own clause, which is what lets the triage filter dropdown
+be enumerated from data rather than hand-listed. It also carries a `tableExists`
+preflight that reports `degraded: "brain table absent: suggestions"` instead of
+throwing. FR-241 additionally widened `listLearnings`'s projection with
+`COALESCE(seen_again_count, 0)` and `deleted_at` — additive, and load-bearing:
+`seen_again_count` is what lets a reject confirmation say whether it is about to
+soft-delete or permanently delete.
+
+This was the third instance of the FR-237 pure-layer/wrapper convention
 (`whole-graph.ts` / `whole-graph-tool.ts`, itself following
 `visualization.ts` / `visualization-tool.ts`), which is what makes it a
 convention rather than a one-off. Three properties make it work:
@@ -457,10 +674,21 @@ returns `…/dist/engine`, and two of the three new readers live under
 `dist/tools/` — **outside** it. An `engine/`-anchored resolver would have needed
 `../tools/…` escape paths, which is how a path literal starts rotting.
 `bundledBrainEngineDir()` is retained as a named sub-path of the root, never a
-second walk-up. `brain-bridge.ts#loadLayerReaders()` requires **all three**
-modules to resolve: a partial load would give a working briefs view and a
-mysteriously empty learnings view, which is far harder to diagnose than "the
-read layer is unavailable".
+second walk-up. `brain-bridge.ts#loadLayerReaders()` requires **all four**
+read modules to resolve (FR-241 added `tools/suggestions-read.js`): a partial
+load would give a working briefs view and a mysteriously empty learnings view,
+which is far harder to diagnose than "the read layer is unavailable".
+
+**FR-241 added a sixth entry to the same `MODULE_RELS` table, and it is different
+in kind: `engine/index.js`.** Every other entry is a READ artifact whose loss
+degrades a readout; this one exports `bootEngine` and is imported for the WRITE
+door, so a moved or unpacked `engine/index.js` takes the *mutation* surface down
+and the signal that goes false is `/api/health`'s `write.available`, not
+`bridge.available`. `brain-write-bridge.ts` does not carry its own path literal —
+it reads `ENGINE_MODULE_REL` from `brain-bridge.ts`, so there stays exactly one
+table of bundle-relative paths to re-point. `tarball.test.ts` asserts both new
+artifacts are actually in the published package, because a module that resolves
+in the repo but is excluded from the pack fails only on a consumer machine.
 
 `sqlite-vec` and the embeddings backend are reached separately, at
 `paths.ts#bundledBrainNodeModulesDir()`. That is the ONE directory
@@ -487,6 +715,24 @@ the SVG-turbulence grain overlay, the ring+dot cursor, glitch-on-heading, and a
 `cli/dashboard/PORTING.md` maps every ported file to its fifty.dev origin and
 records each deliberate divergence. Read it before reconciling the two
 codebases.
+
+**The client tiers, and what each new page is allowed to cost.** FR-240 built
+the record tier — one `RecordList`, one `RecordDetail`, one `FilterBar` — under
+the rule that *a view needing a variation grows the row descriptor rather than
+forking the file*. FR-241 is the first test of that rule from outside the four
+layer views, and it held: `#/triage` reuses all three, and the multi-select
+checkbox arrived as an optional `select` field on `RecordListRow` (rendered as a
+**sibling** of the row anchor, never nested inside it — a checkbox inside an
+`<a>` is a control whose click both toggles and navigates).
+
+The same reasoning one level up produced a **shared client state layer**: the
+project-scope state machine that used to live inside `pages/Layers.tsx` is now
+`lib/useProjectScope.ts` plus `components/chrome/ProjectScope.tsx`, consumed by
+`Layers` and `Triage` alike. Two copies of a scope selector is the same drift the
+record components exist to prevent, one level above where the FR-240 AC was
+looking. Everything a reviewer could get wrong on the triage page — the selection
+algebra, the destructiveness tiers, the confirm copy, the chunking and the result
+merge — lives in the pure, node-tested `triage/model.ts`, not in a component.
 
 **No network fetch at runtime.** No CDN scripts, no CDN fonts, no remote
 assets — everything is served from the local bundle. This is asserted against
@@ -738,26 +984,29 @@ the server is `node:http`.
 
 | Suite | Covers |
 |---|---|
-| `cli/src/__tests__/dashboard-server.test.ts` | bind, static, traversal, Host allowlist, CORS absence, security headers on every response class, method guard, the four endpoints, four degraded brains, the zero-SQL scope assertion |
+| `cli/src/__tests__/dashboard-server.test.ts` | bind, static, traversal, Host allowlist, CORS absence, security headers on every response class, the method guard, the four endpoints, four degraded brains, the zero-SQL scope assertion (extended to `brain-write-bridge.ts` by FR-241), and FR-241's write fences — `GET /api/triage` → 405, a POST to any other path → 405, a foreign `Origin` → 403 with the absent and exact-match cases as its controls, `text/plain` → 415, a 1 MB body → 413 |
 | `cli/src/__tests__/dashboard-lock.test.ts` | lock write/read/atomicity, **0600 mode (including the stale-tmp rewrite path)**, liveness classification, pid reuse, stale reclaim, ownership-checked release |
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+400 KB** over baseline, the single asserted number. Measured at the end of FR-240's warden pass: **+331.8 KB** cumulative (FR-240's own share **+48.4 KB**), leaving **~68.2 KB for FR-241**. The budget is cumulative across the family, not per-brief. Also asserts the three vendored FR-240 read modules and their wrappers are actually in the tarball. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+400 KB** over baseline, the single asserted number, and it did **not** move for FR-241. Measured last in each brief: **+331.8 KB** cumulative at the end of FR-240's warden pass (FR-240's own share +48.4 KB), and **+370.6 KB** cumulative at the end of FR-241's phase 7 (1_681_309 packed / 6_572_495 unpacked / 792 entries; FR-241's own share **+38.8 KB**, leaving ~29.4 KB of headroom). The budget is cumulative across the family, not per-brief. Also asserts the vendored read modules and their wrappers — and, since FR-241, `tools/suggestions-read.js` and `engine/index.js` — are actually in the tarball. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
 | `cli/src/__tests__/dashboard-layers-endpoint.test.ts` | FR-240 — the nine layer endpoints: envelope shape, filters over DISAGREEING fixture partitions, pagination, the BR-078 `(project, id)` refusal, four degraded brains |
 | `cli/src/__tests__/dashboard-learnings-search.test.ts` | FR-240 AC #2 — recall semantics (hybrid / `bm25_only` / `vector_only` / `none`), the `retrieval` block field by field, and the hermetic-by-construction guard that asserts **itself** armed |
 | `cli/src/__tests__/dashboard-context-docs.test.ts` | FR-240 D8 — the inventory is forwarded not recomputed; traversal slug, traversal `type`, unregistered slug and a planted symlink are all refused; the lens does not CREATE the brain |
-| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation |
+| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness |
+| `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text |
+| `cli/src/__tests__/dashboard-triage-parity.test.ts` | FR-241 — the twin-brain differ. Two brains in two **processes** (`setAdapter` is a module global, measured to cross-contaminate two engines in one process), identical fixtures, identical boot config: one dispatches through the engine directly, the other over HTTP. Diffs the `event_log` delta **and** the mutated domain tables, with the excluded-column list itself asserted so it cannot quietly grow to cover a real difference. Its empty case declares that it EXPECTED empty and cites why; its positive control is a recurring reject, then mutated to prove the differ can fail |
+| `cli/dashboard/src/triage/__tests__/model.test.ts` + `components/triage/__tests__/BulkBar.test.tsx` | FR-241 — the tiering logic and the confirm copy, table-driven: a mixed selection of 3 recurring + 2 first-time rejects names **2** as permanently deleted, not 5 and not 0; the empty selection and the all-tier-3 case; the typed-count requirement |
 | `cli/src/__tests__/dashboard-params.test.ts` | FR-240 — the pure clamp/allowlist: hostile `limit`/`offset`, unknown filters named rather than ignored |
 | `cli/src/__tests__/dashboard-layers-source.test.ts` | FR-240 — whole-tree client scans: no string-to-markup path, the composite key not mirrored browser-side, zero colour literals **and zero custom properties** in the `.record-*` block, no absolute URL, no non-GET request. Every scan carries a self-negative-control |
 | `cli/dashboard/src/graph/__tests__/` | the stillness instrument (**T6, the anti-fake layer**), the pause/resume state machine, tiers + the ladder, label occlusion, D9 shape/edge mappings, palette resolution, motion tokens, the volume bench, and (FR-240) `neighboursOf` extraction-equivalence |
 | `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server` |
 | `brain-mcp-server/src/tools/__tests__/` + `engine/components/goals/__tests__/read.test.ts` | FR-240 — the three pure readers, `pure-read-purity.test.ts` (**with a fixture the scan MUST flag, so the scan has a self-negative-control**), and `wrapper-wire-parity.test.ts` golden strings proving the MCP wire output did not move |
-| `cli/tests/integration/dashboard.bats` | lifecycle, double invocation, stale locks, `--port` hard-fail, degraded brain, pack-extract smoke, `/api/graph` on a seeded and a missing brain, **the nine layer endpoints on a seeded and a missing brain (T23)**, and an exact-set assertion over the `--smoke` probe list |
-| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates. **Not** part of `npm test`; see below |
+| `cli/tests/integration/dashboard.bats` | lifecycle, double invocation, stale locks, `--port` hard-fail, degraded brain, pack-extract smoke, `/api/graph` on a seeded and a missing brain, **the nine layer endpoints on a seeded and a missing brain (T23)**, and an exact-set assertion over the `--smoke` probe list — which since FR-241 carries `/api/suggestions` **and** the entry `POST /api/triage`, whose probe sends a deliberately invalid action and expects a **400**, so `--smoke` proves the write pipeline is routed while mutating nothing |
+| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. **Not** part of `npm test`; see below |
 
 Browser-side tests live under `cli/dashboard/src/**/__tests__/` and are collected
 by the **`cli` vitest run** (verified empirically with `npx vitest list` before
@@ -918,12 +1167,15 @@ And on `#/layers`, the two things the automated gate cannot judge:
 
 ## Out of scope
 
-Cognition triage (FR-241) · **all write actions** (FR-241 owns the write path) ·
-auth, remote hosting, per-user identity · a `/dashboard` skill (the verb is the
-product).
+Auth, remote hosting, per-user identity · a `/dashboard` skill (the verb is the
+product) · any mutation that is not one of the five actions in the delegation
+map — including editing a brief, storing a learning, or running an extractor.
 
-*Layer views left this list when FR-240 shipped* — the same one-line edit
-`PENDING_ROUTES` took in `router.tsx`, and the pattern FR-241 inherits.
+*Layer views left this list when FR-240 shipped, and cognition triage plus the
+write path left it when FR-241 did* — each time the same one-line edit to
+`PENDING_ROUTES` in `router.tsx`. What did **not** leave with FR-241: writes
+still reach the brain only through `gateway.dispatch`, so "all write actions" was
+replaced by a bounded five-row map rather than by an open door.
 
 `NodeInspector` renders payload fields only and still issues **no second fetch**.
 FR-240 arrived and the resolution was a LINK, not an endpoint: `OPEN RECORD`

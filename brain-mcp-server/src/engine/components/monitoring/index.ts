@@ -72,6 +72,29 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'perception.run_succeeded': 'perception',
   'perception.run_failed': 'perception',
   'perception.run_skipped': 'perception',
+  // FR-241 Phase 6b (D2). Both were emitted on the bus by
+  // `perception/handlers.ts` (`:627` approve, `:697`/`:733` reject) and NOBODY
+  // listened, so the emits went nowhere. Two consequences, both real:
+  //
+  //   1. `handlePerceptionDashboard`'s `rejected_last_n` counter
+  //      (`perception/handlers.ts:962-971`) reads `event_log WHERE
+  //      event_name = 'perception.candidate_rejected'` — rows that were never
+  //      written — so it was STRUCTURALLY ZERO from the day it shipped.
+  //   2. FR-241's headline AC ("a dashboard mutation is indistinguishable from
+  //      the MCP one in `event_log`") was unfalsifiable for approve/reject,
+  //      because both paths wrote nothing and `[] === []` proves nothing.
+  //
+  // `'perception'` — the LEGACY literal, matching the four `run_*` rows above
+  // and `writePerceptionEvent`'s own `component` (`perception/events.ts:110`).
+  // NOT `cognition.perception`, which is what `writeExtractorEvent` produces.
+  // The L-857 naming trap: verified against a real dispatch, not assumed.
+  //
+  // DELIBERATELY ABSENT: `perception.rejected_pattern_recurring`. The recurring
+  // branch already writes that row DIRECTLY via `writePerceptionEvent`
+  // (`handlers.ts:690`) *and* re-emits it on the bus for the integrity test's
+  // literal-call-site rule. Listening for it here would write it TWICE.
+  'perception.candidate_approved': 'perception',
+  'perception.candidate_rejected': 'perception',
 };
 
 // ---------------------------------------------------------------------------
@@ -222,6 +245,10 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'perception.run_succeeded', description: 'Log perception extraction run success events (TD-074)' },
           { name: 'perception.run_failed', description: 'Log perception extraction run failure events (TD-074)' },
           { name: 'perception.run_skipped', description: 'Log perception extraction run skipped events (TD-074)' },
+          // FR-241 Phase 6b (D2) — see EVENT_COMPONENT_MAP above for why these
+          // two, and why `perception.rejected_pattern_recurring` is NOT here.
+          { name: 'perception.candidate_approved', description: 'Log perception candidate approvals (FR-241 D2)' },
+          { name: 'perception.candidate_rejected', description: 'Log perception candidate rejections (FR-241 D2); makes perception_dashboard.rejected_last_n non-zero for the first time' },
         ],
       };
     },
@@ -257,6 +284,12 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('perception.run_succeeded', onEventReceived);
       ctx.bus.on('perception.run_failed', onEventReceived);
       ctx.bus.on('perception.run_skipped', onEventReceived);
+      // FR-241 Phase 6b (D2). EXPLICIT per-event calls, never a loop over the
+      // listens array: the event-bus integrity scanner is a STATIC SOURCE
+      // REGEX, so a loop would leave it with nothing to match and the on/off
+      // pairing would silently stop being checked.
+      ctx.bus.on('perception.candidate_approved', onEventReceived);
+      ctx.bus.on('perception.candidate_rejected', onEventReceived);
 
       // Run retention cleanup on init (purge events older than 30 days)
       try {
@@ -300,6 +333,10 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('perception.run_succeeded', onEventReceived);
         _ctx.bus.off('perception.run_failed', onEventReceived);
         _ctx.bus.off('perception.run_skipped', onEventReceived);
+        // FR-241 Phase 6b (D2) — the matching half of the two `on` calls in
+        // `init`. Explicit, for the same static-regex reason.
+        _ctx.bus.off('perception.candidate_approved', onEventReceived);
+        _ctx.bus.off('perception.candidate_rejected', onEventReceived);
       }
       _ctx = null;
     },

@@ -13,16 +13,20 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { get as httpGet } from "node:http";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { get as httpGet, request as httpRequest } from "node:http";
 import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { closeDb as closeBrainDb } from "../lib/brain-db.js";
 import { closeDb as closeRegistryDb } from "../lib/registry.js";
 import { resetBrainBridge } from "../lib/brain-bridge.js";
@@ -32,6 +36,9 @@ import {
   type DashboardServer,
 } from "../lib/dashboard/server.js";
 import { contentTypeFor, resolveStatic } from "../lib/dashboard/static.js";
+
+/** ASYNC child spawn — see `postFromChild`; a SYNC one deadlocks the server. */
+const execFileAsync = promisify(execFile);
 
 let sandbox: string;
 let srv: DashboardServer | null = null;
@@ -323,7 +330,13 @@ describe("T2 — Host allowlist and CORS absence", () => {
     }
   });
 
-  it("refuses every write method — there are ZERO write endpoints", async () => {
+  // NOT "there are zero write endpoints" — that was true until FR-241 and is
+  // now false. This probes ONE path (`/api/health`), so it can only ever claim
+  // what that path does. The write endpoint's own method/Origin/Content-Type/
+  // size fences are G-SEC-1, below in this file, which covers all four.
+  // (NOT G-TR-0 — that is the sandbox fence and says so: it proves the suite
+  // never addressed ~/.igris and explicitly "nor anything about correctness".)
+  it("POST/PUT/PATCH/DELETE at /api/health are refused — a GET-only path", async () => {
     await start();
     const server = srv;
     if (server === null) throw new Error("no server");
@@ -628,6 +641,91 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
   });
 
   /**
+   * FR-241 — **the write module is in the corpus.**
+   *
+   * This is the one the brief that introduces MUTATION owes: a scan whose
+   * coverage is enumerated silently shrinks in relative terms every time the
+   * directory grows, and the file it would be most costly to leave outside is
+   * the only one that can write. `brain-write-bridge.ts` holds the whole write
+   * door and must contain no SQL at all — every mutation is
+   * `gateway.dispatch(<a name from the frozen map>, args)`.
+   *
+   * WHAT THIS PROVES: no server-layer file names a SQL statement or opens a
+   * database.
+   * WHAT IT DOES NOT PROVE: that the write actually reaches the brain's own
+   * handler rather than some other path — a grep cannot see a call graph, and a
+   * grep-only guard on a NEW module is exactly what got FR-240 rejected. The
+   * behavioural half (spy the resolved handler; assert a bogus tool name
+   * changes no row) is FR-241's G-TR-5(b) in
+   * `dashboard-triage-endpoint.test.ts`. **Both are required.**
+   */
+  it("brain-write-bridge.ts and routes.ts's write path hold no SQL (FR-241)", () => {
+    for (const rel of [
+      "../lib/brain-write-bridge.ts",
+      "../lib/dashboard/routes.ts",
+      "../lib/dashboard/server.ts",
+    ]) {
+      const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
+      const code = src
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .replace(/^\s*\/\/.*$/gm, "");
+      for (const kw of [
+        /\bSELECT\s/i,
+        /\bINSERT\s+INTO\b/i,
+        /\bUPDATE\s+\w+\s+SET\b/i,
+        /\bDELETE\s+FROM\b/i,
+        /\bCREATE\s+TABLE\b/i,
+        /\.prepare\s*\(/,
+        /\bnew Database\b/,
+      ]) {
+        expect(kw.test(code), `${rel} must not match ${kw}`).toBe(false);
+      }
+    }
+  });
+
+  /**
+   * The corpus is ENUMERATED, so it must be asserted.
+   *
+   * Every scan above is a hand-written path list. A path that no longer exists
+   * (a rename, a move) makes `readFileSync` throw — loud. But a path list that
+   * simply never grew is SILENT, and this whole block's coverage claim is
+   * "every server-layer file", not "these seven". So: read the directory and
+   * require every `.ts` in it to be named by one of the scans.
+   */
+  it("the scan covers EVERY file in the server layer — nothing is unguarded", () => {
+    const dir = fileURLToPath(new URL("../lib/dashboard/", import.meta.url));
+    const scanned = new Set([
+      "routes.ts",
+      "server.ts",
+      "static.ts",
+      "params.ts",
+      "context-docs-read.ts",
+      "graph-query.ts",
+      // Not SQL-scanned above but deliberately so, and named here so the set is
+      // a complete accounting rather than a partial one:
+      "headers.ts", // constants only
+      "lock.ts", // filesystem lockfile; no brain access
+      "default-project.ts", // pure function over rows the caller supplies
+    ]);
+    const present = readdirSync(dir).filter((f) => f.endsWith(".ts"));
+    expect(present.length).toBeGreaterThanOrEqual(9);
+    for (const f of present) {
+      expect(scanned.has(f), `${f} is in the server layer but not in the scan list`).toBe(
+        true,
+      );
+    }
+    // ...and the write module, which lives one directory up beside the read
+    // bridge rather than under `dashboard/`, is really being read.
+    const writeSrc = readFileSync(
+      new URL("../lib/brain-write-bridge.ts", import.meta.url),
+      "utf-8",
+    );
+    expect(writeSrc.length).toBeGreaterThan(2000);
+    expect(writeSrc).toContain("TRIAGE_ACTIONS");
+    expect(writeSrc).toContain("gateway.dispatch");
+  });
+
+  /**
    * Self-negative-control for the scan above (FR-239 learning 1094).
    *
    * Every assertion in this describe block observes only "did not match". That
@@ -657,5 +755,318 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
         true,
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-SEC-1 — FR-241: the fences in front of the ONE write endpoint
+// ---------------------------------------------------------------------------
+
+/**
+ * FR-238 through FR-240 shipped ZERO write endpoints and this file asserted the
+ * blanket "no method but GET/HEAD". FR-241 adds exactly one, so the blanket
+ * claim is replaced by five specific ones — each fence tested for what it
+ * blocks, and each with the paired case that must still be ALLOWED.
+ *
+ * WHAT THIS PROVES: the listener is reachable, for a mutation, only from the
+ * page it serves, only at one path, only with a JSON content type, and only
+ * with a bounded body.
+ * WHAT IT DOES NOT PROVE: anything about a malicious browser extension or
+ * another process running as the operator on this same machine. A loopback
+ * personal tool cannot defend against those and this brief does not pretend to.
+ * It also proves nothing about what the endpoint DOES — that is
+ * `dashboard-triage-endpoint.test.ts`, which runs against a real brain engine.
+ *
+ * NOTE ON THE BRAIN: this suite's sandbox has NO brain, so a POST that clears
+ * every fence returns 200 with `degraded`. That is the correct outcome to
+ * assert here — it means the request REACHED the handler, which is exactly what
+ * distinguishes "the fence let it through" from "the fence blocked it".
+ */
+describe("G-SEC-1 — the write surface's fences", () => {
+  /**
+   * A POST with full control over method, path, headers and body.
+   *
+   * A TRANSPORT ERROR IS NOT ALLOWED TO PRE-EMPT A RESPONSE, and that is not a
+   * convenience — it is what the 413 case is measuring.
+   *
+   * When the body exceeds the cap, the server writes the 413 and destroys the
+   * request stream on `finish`. The client is still uploading, so its `write()`
+   * raises **EPIPE**. A naive `r.on("error", reject)` therefore fails the test
+   * with `write EPIPE` and never looks at the status — which is exactly the
+   * shape that let an earlier draft of the server (`req.destroy()` BEFORE the
+   * write) pass a "the big body is refused" test while a real `curl` observed
+   * HTTP **000**. So: the response wins if it arrives, and a transport error is
+   * only fatal when no response ever did. A reset with no response still fails,
+   * which is the property the fence is supposed to have.
+   */
+  function send(
+    method: string,
+    path: string,
+    body: string | null,
+    headers: Record<string, string> = {},
+  ): Promise<Fetched> {
+    const server = srv;
+    if (server === null) throw new Error("server not started");
+    return new Promise((resolve, reject) => {
+      let responded = false;
+      let transportError: Error | null = null;
+      const payload = body === null ? null : Buffer.from(body, "utf-8");
+      const r = httpRequest(
+        {
+          host: "127.0.0.1",
+          port: server.port,
+          path,
+          method,
+          agent: false,
+          headers: {
+            host: `127.0.0.1:${server.port}`,
+            ...(payload !== null
+              ? { "content-type": "application/json", "content-length": String(payload.length) }
+              : {}),
+            ...headers,
+          },
+        },
+        (res) => {
+          responded = true;
+          let text = "";
+          res.setEncoding("utf-8");
+          res.on("data", (c: string) => (text += c));
+          res.on("end", () =>
+            resolve({ status: res.statusCode ?? 0, body: text, headers: res.headers }),
+          );
+        },
+      );
+      r.on("error", (err: Error) => {
+        transportError = err;
+        // Give the response a beat to arrive; only then is the error fatal.
+        setTimeout(() => {
+          if (!responded) reject(transportError ?? err);
+        }, 250);
+      });
+      if (payload !== null) {
+        // The write itself can throw synchronously on a destroyed socket.
+        try {
+          r.write(payload);
+        } catch (err) {
+          transportError = err as Error;
+        }
+      }
+      try {
+        r.end();
+      } catch {
+        /* the socket is already gone; the response handler decides the verdict */
+      }
+    });
+  }
+
+  const VALID = JSON.stringify({ action: "dismiss", ids: [1], reason: "fence probe" });
+
+  /**
+   * POST from a SEPARATE PROCESS, with a `reason` of `bytes` characters.
+   *
+   * NOT a convenience. The oversize case answers the request while the client
+   * is still uploading and then destroys the socket, and an IN-PROCESS client
+   * — `http.request` and `fetch`/undici alike — shares this event loop, races
+   * the destroy, raises EPIPE mid-write and DISCARDS the already-parsed
+   * response. Measured both ways: in-process reports `write EPIPE` and no
+   * status; a real out-of-process `curl` reports `CODE=413` with the message
+   * body, exit 0. The server is correct; the same-process client is the
+   * instrument that cannot see it. So the gate uses an instrument that can.
+   *
+   * `execFile` (ASYNC), never `execFileSync`. The server runs on THIS event
+   * loop, so a synchronous spawn blocks the very loop that has to answer the
+   * child and both sides deadlock until the timeout — measured as
+   * `spawnSync … ETIMEDOUT` on both the oversize AND the small case, which is
+   * the tell that the harness, not the server, was at fault. The same artifact
+   * produced an earlier false reading of "the 413 path hangs".
+   */
+  async function postFromChild(
+    port: number,
+    bytes: number,
+  ): Promise<{ status: number; body: string }> {
+    const program = `
+      const body = JSON.stringify({ action: "dismiss", ids: [1], reason: "x".repeat(${bytes}) });
+      const res = await fetch("http://127.0.0.1:${port}/api/triage", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body,
+      });
+      process.stdout.write(JSON.stringify({ status: res.status, body: await res.text() }));
+    `;
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      ["--input-type=module", "-e", program],
+      { encoding: "utf-8", timeout: 20_000 },
+    );
+    return JSON.parse(stdout) as { status: number; body: string };
+  }
+
+  it("BASELINE — a well-formed POST from no Origin CLEARS every fence", async () => {
+    // The positive control, FIRST. Every 4xx below is only meaningful against a
+    // request shape that is known to get through — otherwise "403" and "the
+    // endpoint is broken" are the same observation.
+    await start();
+    const r = await send("POST", "/api/triage", VALID);
+    expect(r.status, `body: ${r.body}`).toBe(200);
+    // No brain in this sandbox, so it degrades — which is the proof it reached
+    // the handler rather than being refused at a fence.
+    expect(JSON.parse(r.body)).toMatchObject({ applied: 0, degraded: { reason: expect.any(String) } });
+  });
+
+  it("GET /api/triage -> 405 (the path EXISTS; the method is wrong)", async () => {
+    await start();
+    const r = await req("/api/triage");
+    expect(r.status).toBe(405);
+    // Not a 404: saying "no such endpoint" would send a reader hunting for a
+    // routing bug that is not there.
+    expect(JSON.parse(r.body)).toMatchObject({ allow: ["POST"] });
+    expect(r.body).not.toContain("no such endpoint");
+  });
+
+  it("POST to ANY other path -> 405, including the read endpoints", async () => {
+    await start();
+    for (const path of ["/api/health", "/api/learnings", "/api/suggestions", "/", "/api/nope"]) {
+      const r = await send("POST", path, VALID);
+      expect(r.status, `POST ${path}`).toBe(405);
+      expect(JSON.parse(r.body).error, path).toContain("/api/triage");
+    }
+  });
+
+  it("PUT / PATCH / DELETE are refused everywhere, including at /api/triage", async () => {
+    await start();
+    for (const method of ["PUT", "PATCH", "DELETE"]) {
+      const r = await send(method, "/api/triage", VALID);
+      expect(r.status, `${method} /api/triage`).toBe(405);
+    }
+  });
+
+  it("Origin: a foreign origin -> 403; the served origin -> allowed; absent -> allowed", async () => {
+    await start();
+    const port = srv!.port;
+
+    const evil = await send("POST", "/api/triage", VALID, {
+      origin: "https://evil.test",
+    });
+    expect(evil.status).toBe(403);
+    expect(JSON.parse(evil.body).error).toContain("cross-origin");
+
+    // A PREFIX of the served origin must NOT be accepted —
+    // `http://127.0.0.1:7317` is a prefix of `http://127.0.0.1:7317.evil.test`.
+    const prefix = await send("POST", "/api/triage", VALID, {
+      origin: `http://127.0.0.1:${port}.evil.test`,
+    });
+    expect(prefix.status, "an Origin PREFIX was accepted").toBe(403);
+
+    // The literal string `null` — what a sandboxed iframe or a redirected
+    // request sends — is NOT the absent header and is refused.
+    const nul = await send("POST", "/api/triage", VALID, { origin: "null" });
+    expect(nul.status).toBe(403);
+
+    for (const origin of [
+      `http://127.0.0.1:${port}`,
+      `http://localhost:${port}`,
+    ]) {
+      const ok = await send("POST", "/api/triage", VALID, { origin });
+      expect(ok.status, `Origin ${origin}`).toBe(200);
+    }
+  });
+
+  it("Content-Type: text/plain -> 415 (this is the HTML-form CSRF shape)", async () => {
+    // An HTML `<form>` can POST cross-origin with no preflight, but it can only
+    // send `application/x-www-form-urlencoded`, `multipart/form-data` or
+    // `text/plain`. Requiring JSON forces a preflight, which the Origin fence
+    // then answers. All three form encodings are checked, not just one.
+    await start();
+    for (const ct of [
+      "text/plain",
+      "application/x-www-form-urlencoded",
+      "multipart/form-data; boundary=x",
+    ]) {
+      const r = await send("POST", "/api/triage", VALID, { "content-type": ct });
+      expect(r.status, ct).toBe(415);
+      expect(JSON.parse(r.body).error).toContain("application/json");
+    }
+    // A charset PARAMETER is fine — refusing it would break real clients.
+    const ok = await send("POST", "/api/triage", VALID, {
+      "content-type": "application/json; charset=utf-8",
+    });
+    expect(ok.status).toBe(200);
+  });
+
+  it("a 1 MB body -> 413, AND the client SEES the status (not a reset socket)", async () => {
+    /*
+     * THE CLIENT IS `fetch`, NOT `http.request`, AND THAT IS THE POINT.
+     *
+     * The failure this pins: an early draft of `readBody` called
+     * `req.destroy()` on overflow, which resets the connection before the
+     * response is flushed, so `curl` reported HTTP **000** (ECONNRESET) rather
+     * than the 413 the fence exists to state. A test that merely expected "an
+     * error" would have passed against that version — which is why this
+     * asserts the STATUS and the MESSAGE.
+     *
+     * Node's own `http.request` cannot make that assertion. The server answers
+     * while the client is still uploading; the client's `write()` raises EPIPE
+     * and node discards the already-parsed response, so the test observes
+     * `write EPIPE` and never sees the 413 — for a server that a real client
+     * reads perfectly. Verified against `curl` with the server in a SEPARATE
+     * process (an in-process `execFileSync` probe blocks the event loop and
+     * makes every request appear to hang):
+     *
+     *   curl --data-binary @1MB.json  ->  {"error":"body too large (1000048
+     *   bytes; max 65536)"}|CODE=413      (curl exit 0)
+     *
+     * `fetch` (undici) behaves like curl here: it surfaces the early response.
+     */
+    await start();
+    const r = await postFromChild(srv!.port, 1_000_000);
+    expect(r.status, `child reported: ${r.body}`).toBe(413);
+    expect((JSON.parse(r.body) as { error: string }).error).toContain("too large");
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the SAME out-of-process client reads a 200 on a small body", async () => {
+    // Without this, "the child saw a 413" is also what you would observe from a
+    // harness that reports 413 unconditionally, and the change of client would
+    // be an unexamined variable.
+    await start();
+    const r = await postFromChild(srv!.port, 16);
+    expect(r.status, `child reported: ${r.body}`).toBe(200);
+    expect(JSON.parse(r.body)).toMatchObject({ action: "dismiss" });
+  });
+
+  it("a body just UNDER the cap is accepted — the cap is a boundary, not a wall", async () => {
+    // The paired case. Without it, "413 on 1 MB" is satisfiable by an endpoint
+    // that 413s everything.
+    await start();
+    const nearly = JSON.stringify({ action: "dismiss", ids: [1], reason: "y".repeat(60_000) });
+    expect(Buffer.byteLength(nearly)).toBeLessThan(64 * 1024);
+    const r = await send("POST", "/api/triage", nearly);
+    // 400 (the reason exceeds the 2000-char field cap) — a CLIENT error from
+    // the body VALIDATOR, which proves the body was fully read rather than
+    // refused by the size fence.
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.body).error).toContain("at most 2000 characters");
+  });
+
+  it("malformed JSON -> 400 with the parser's own message", async () => {
+    await start();
+    const r = await send("POST", "/api/triage", "{not json");
+    expect(r.status).toBe(400);
+    expect(JSON.parse(r.body).error).toContain("malformed JSON body");
+  });
+
+  it("a bad Host is still refused on the write path (DNS rebinding)", async () => {
+    await start();
+    const r = await send("POST", "/api/triage", VALID, { host: "evil.test" });
+    expect(r.status).toBe(403);
+  });
+
+  it("no CORS header is emitted on the write path either", async () => {
+    // The no-CORS posture protects the RESPONSE. The Origin fence is what
+    // protects the SIDE EFFECT — both are asserted, because either alone is a
+    // half-answer a reader could mistake for the whole one.
+    await start();
+    const r = await send("POST", "/api/triage", VALID);
+    expect(r.headers["access-control-allow-origin"]).toBeUndefined();
+    expect(r.headers["cache-control"]).toContain("no-store");
   });
 });

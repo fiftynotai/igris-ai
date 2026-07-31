@@ -364,30 +364,86 @@ describe("AC #4 · nothing in the client reaches off-origin", () => {
   });
 });
 
-describe("AC #7 · the client has no write path", () => {
-  it("no request specifies a method other than GET", () => {
+/**
+ * AC #7 — **NARROWED BY FR-241, NOT DELETED.**
+ *
+ * FR-240's claim was "the client has no write path". FR-241 is the brief that
+ * legitimately gives it one, so the pin is narrowed to the claim that is still
+ * true and is now the one that matters:
+ *
+ *   THE CLIENT HAS EXACTLY ONE WRITE PATH, IT IS `api.triage` IN
+ *   `lib/api.ts`, AND NO OTHER FILE — INCLUDING EVERY FR-240 READ VIEW —
+ *   ISSUES A NON-GET REQUEST.
+ *
+ * Written as an exception LIST rather than by dropping the scan: a second write
+ * path added anywhere (including a second one inside `lib/api.ts`) fails this,
+ * which is the property the original pin existed to protect. The exception is
+ * also asserted to EXIST, so the narrowing cannot silently become "the scan
+ * excludes a file that no longer writes at all".
+ */
+describe("AC #7 · the client has exactly ONE write path, and it is named", () => {
+  /** The one file allowed to issue a non-GET request. */
+  const WRITE_FILE = join(DASH_SRC, "lib", "api.ts");
+
+  it("no file OTHER than lib/api.ts specifies a method other than GET", () => {
     const found: string[] = [];
     for (const file of shipped()) {
+      if (file === WRITE_FILE) continue;
       const src = code(file);
       for (const m of src.matchAll(/method\s*:\s*["'`](\w+)["'`]/g)) {
         if ((m[1] ?? "").toUpperCase() !== "GET") found.push(`${rel(file)}: ${m[0]}`);
       }
     }
-    expect(found, `non-GET request: ${found.join(", ")}`).toEqual([]);
+    expect(found, `non-GET request outside lib/api.ts: ${found.join(", ")}`).toEqual([]);
   });
 
-  it("no form has an action, and no view names an approve/reject control", () => {
-    // D9 is operator-signed: `review_status` is a READ filter. FR-241 owns
-    // triage and must add the first write endpoint deliberately.
+  it("every FR-240 READ view still has no write path at all", () => {
+    // The half of the original claim that is unchanged, asserted over FR-240's
+    // own corpus so the narrowing above cannot be read as loosening the layer
+    // views. D9 is still operator-signed: `review_status` is a READ filter, and
+    // the approve/reject controls live on FR-241's page, not on the lens.
+    for (const file of fr240Sources()) {
+      const src = code(file);
+      expect(src, `${rel(file)} names a method`).not.toMatch(/method\s*:\s*["'`]/);
+      const lower = src.toLowerCase();
+      for (const verb of ["onapprove", "onreject", "api.approve", "api.update", "api.triage"]) {
+        expect(lower, `${rel(file)} names ${verb}`).not.toContain(verb);
+      }
+    }
+  });
+
+  it("lib/api.ts's ONLY non-GET method is the single triage POST", () => {
+    const src = code(WRITE_FILE);
+    const methods = [...src.matchAll(/method\s*:\s*["'`](\w+)["'`]/g)].map((m) =>
+      (m[1] ?? "").toUpperCase(),
+    );
+    // Exactly one, and it is POST. Two POSTs here would be two write paths.
+    expect(methods).toEqual(["POST"]);
+    // It targets the one endpoint `server.ts` routes a POST to, and it sets the
+    // Content-Type the 415 fence demands (which is also what forces a preflight
+    // and therefore makes the Origin fence reachable).
+    expect(src).toContain('"api/triage"');
+    expect(src).toContain('"Content-Type": "application/json"');
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the exception is real and the matcher works", () => {
+    // Both failure modes of an exception list: excluding a file that does not
+    // actually contain the thing (so the scan proves nothing), and a matcher
+    // that matches nothing anywhere (so the scan would pass over a tree full of
+    // POSTs). The excluded file's own content answers both.
+    expect(shipped().map(rel)).toContain("dashboard/src/lib/api.ts");
+    expect(code(WRITE_FILE)).toMatch(/method\s*:\s*["'`]POST["'`]/);
+    // And the write path really is reachable from the UI, not dead code.
+    expect(code(join(DASH_SRC, "triage", "useTriage.ts"))).toContain("api.triage(");
+  });
+
+  it("no form anywhere has an action — the CSRF shape stays unreachable", () => {
+    // Unchanged and unnarrowed. A `<form action>` can POST cross-origin with
+    // `Content-Type: application/x-www-form-urlencoded` and no preflight; the
+    // server's 415 fence is what refuses it, and this is the client-side half.
     for (const file of shipped()) {
       const src = code(file);
       expect(src, `${rel(file)} has a form action`).not.toMatch(/\saction=\{?["']/);
-    }
-    for (const file of fr240Sources()) {
-      const src = code(file).toLowerCase();
-      for (const verb of ["onapprove", "onreject", "api.approve", "api.update"]) {
-        expect(src, `${rel(file)} names ${verb}`).not.toContain(verb);
-      }
     }
   });
 });
@@ -447,12 +503,31 @@ describe("the router uses the unit-tested codec", () => {
     expect(src).not.toContain("decodeURIComponent");
   });
 
-  it("no longer lists `layers` as pending, and still lists `triage`", () => {
+  it("lists NO route as pending — every reserved route now has a view", () => {
+    /*
+     * FR-240 asserted "`layers` is gone and `triage` is still pending". FR-241
+     * SHIPPED the triage view, so the second half of that claim is now false
+     * and the assertion is updated deliberately rather than deleted: the map is
+     * empty, which is a stronger statement than "triage left it".
+     *
+     * The MECHANISM survives — `App.tsx` still reads the map — so the next
+     * brief that reserves a nav slot before its view exists re-adds one line
+     * and nothing else. That is asserted below, because an empty map plus a
+     * consumer that stopped consulting it would be indistinguishable from here.
+     */
     const pending = /PENDING_ROUTES[^}]*}/s.exec(src)?.[0] ?? "";
+    // The self-negative-control: the block was really found and really read.
+    expect(pending, "the PENDING_ROUTES declaration was not located").toContain(
+      "PENDING_ROUTES",
+    );
     expect(pending).not.toContain("layers:");
-    expect(pending).toContain("triage:");
-    // The self-negative-control for the line above: the block was really found.
-    expect(pending).toContain("FR-241");
+    expect(pending).not.toContain("triage:");
+    expect(pending).not.toContain("graph:");
+
+    // ...and the shell still branches on it, so the mechanism is live.
+    const app = code(join(DASH_SRC, "App.tsx"));
+    expect(app).toContain("PENDING_ROUTES[route]");
+    expect(app).toContain("<Triage");
   });
 });
 

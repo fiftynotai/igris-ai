@@ -43,13 +43,24 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-/** The three modules the FR-240 contract covers, by name. */
+/**
+ * The modules the pure-read-layer contract covers, by name.
+ *
+ * Three at FR-240; `suggestions-read.ts` joins them at FR-241, which is what
+ * makes the FR-241 write door safe to sit beside: the triage surface BROWSES
+ * through this layer on a `query_only` handle and only MUTATES through the
+ * gateway, so a bug in the browse path cannot become a write.
+ */
 const PURE_READERS: { label: string; url: URL }[] = [
   { label: 'tools/briefs-read.ts', url: new URL('../briefs-read.ts', import.meta.url) },
   { label: 'tools/memory-read.ts', url: new URL('../memory-read.ts', import.meta.url) },
   {
     label: 'engine/components/goals/read.ts',
     url: new URL('../../engine/components/goals/read.ts', import.meta.url),
+  },
+  {
+    label: 'tools/suggestions-read.ts',
+    url: new URL('../suggestions-read.ts', import.meta.url),
   },
 ];
 
@@ -108,8 +119,13 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
    *  - `better-sqlite3` — TYPE-only (`import type`), erased at compile time.
    *  - `../utils/{fts5,embeddings,vector-search,hybrid-search}.js` — the recall
    *    machinery. None imports `db.js`; all take a `db` param or are pure.
-   *  - `../../helpers.js` — `WhereBuilder` + result formatters over `./types.js`
-   *    only. No `db.js` edge, no import-time side effect.
+   *  - `../../helpers.js` / `../engine/helpers.js` — the SAME file, reached from
+   *    the two directory depths this set spans (`engine/components/goals/` and
+   *    `tools/`). It exports `WhereBuilder` + the result formatters and imports
+   *    `type { ToolResult } from './types.js'` and nothing else — a type-only
+   *    edge, erased at compile time. No `db.js` edge, no import-time side
+   *    effect. Verified by reading `engine/helpers.ts`, not assumed from the
+   *    name (L-711).
    */
   const ALLOWED_IMPORTS = new Set([
     'better-sqlite3',
@@ -118,6 +134,7 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
     '../utils/vector-search.js',
     '../utils/hybrid-search.js',
     '../../helpers.js',
+    '../engine/helpers.js',
   ]);
 
   for (const reader of PURE_READERS) {
@@ -130,6 +147,34 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
       }
     });
   }
+
+  /**
+   * The corpus floor (the `gateway-strict-input.test.ts` discipline). Every
+   * assertion above is a per-file loop; a loop over an empty or shrunken array
+   * passes vacuously, and this file's whole job is to grow with the layer.
+   *
+   * Asserting the NAMES rather than only the count is what makes a silently
+   * dropped entry visible: a count-only floor is satisfiable by swapping a
+   * reader out for any other file.
+   */
+  it('the scan has a corpus — every reader in the layer is in it', () => {
+    const labels = PURE_READERS.map((r) => r.label);
+    for (const expected of [
+      'tools/briefs-read.ts',
+      'tools/memory-read.ts',
+      'engine/components/goals/read.ts',
+      'tools/suggestions-read.ts',
+    ]) {
+      expect(labels, `${expected} is not scanned`).toContain(expected);
+    }
+    // And the files really exist, so a typo'd URL cannot pass as "clean".
+    for (const reader of PURE_READERS) {
+      expect(
+        readFileSync(fileURLToPath(reader.url), 'utf-8').length,
+        reader.label,
+      ).toBeGreaterThan(500);
+    }
+  });
 });
 
 describe('the purity scanner can actually fail (self-negative-control)', () => {
