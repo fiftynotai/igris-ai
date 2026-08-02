@@ -216,6 +216,104 @@ type. A `realpath` check backs both, because `~/.igris/projects/**` is a
 directory the operator writes (unlike the static bundle, where a lexical check
 suffices).
 
+#### The briefs board (FR-245) — a second arrangement, and NO new endpoint
+
+`#/layers/briefs` ships two arrangements of the same rows: the **list** (the
+default) and a **board** partitioned by `brief_status.status`. The toggle sits
+beside the heading and persists in `sessionStorage` under
+`igris.dashboard.layers.view` — not in the URL, because a filter is not an
+address (the same call `Layers.tsx` records for project scope), and not in
+component state, because `router.tsx` unmounts the page on a route change. A
+reload keeps it; a **new tab** opens on the list, which is what makes the choice
+session-scoped rather than permanent.
+
+**The endpoint count stays SIXTEEN.** The board composes two endpoints that
+already exist:
+
+| What | Where it comes from | Why not somewhere else |
+|---|---|---|
+| the column **SET** | `/api/summary`'s `briefs.by_status` — a complete `GROUP BY status` over the same project scope | its key set is a SUPERSET of any filtered subset in that scope, so no status can be missed |
+| each column's **cards and count** | `/api/briefs?status=<raw>&…`, one request per column, `limit=12` | `total` is the count under the same filters BEFORE pagination — exactly the number the header prints |
+
+**One number, one source.** A column's count is the `total` from *that column's
+own* response. `/api/summary` supplies the SET and never a number: a summary
+count is blind to the priority/effort/type filters and would disagree with the
+cards under it. The strip's own readout sums the columns and compares that sum
+with `briefs.total` — `G-BR-12b` asserts the equality, which is what makes "no
+brief is hidden" mechanical rather than asserted.
+
+A `/api/briefs/board` endpoint was costed and rejected: it would have been
+endpoint #17, sweeping two MAINTAINING rows, `SMOKE_PROBE_PATHS`, the
+`dashboard.bats` exact-set assertion, `cli/src/types.ts`, `lib/api.ts` and this
+file, and vendoring a new reader into the packed brain bundle — all for an
+arrangement of rows the client can already ask for.
+
+**Columns are DATA ∪ VOCABULARY, never a hand-list.** The union is the statuses
+present in scope plus the documented lifecycle
+(`docs/architecture/brief-state-source-of-truth.md`: `Draft` / `Ready` /
+`In Progress` / `Blocked` / `Done` / `Archived`). Neither alone works: the data
+alone loses `In Progress` on a project with nothing in flight, and the
+vocabulary alone hides `Superseded`, `Deferred` and `Cancelled`, which exist in
+the brain and are **not** in the documented set. `brief_status.status` has no
+CHECK constraint — the same reason `params.ts` leaves the brief filters
+`allowed: null`.
+
+> **THE DUPLICATE COLUMNS ARE THE DATA BEING HONEST, NOT AN FR-245 DEFECT.**
+> This brain holds `Done` (1195), `Completed` (24) **and** `Complete` (1), plus
+> `In Progress` (26) and `InProgress` (4), one status with a commit hash welded
+> into it, and two that are whole sentences. The board renders **every one of
+> them as its own column with its own count** and merges nothing: merging is
+> arithmetic over values the system does not know are the same, and it would
+> hide a data defect behind a tidy column. **TD-333 owns the status
+> vocabulary.** `board.test.ts` B6 pins three separate columns, so a future
+> "helpful" merge fails a test.
+>
+> The one concession is ORDER: spellings that normalise equal (lowercase, strip
+> non-alphanumerics) sort into the same lifecycle slot, so `InProgress` sits
+> beside `In Progress`. **Synonyms do not**: `Completed`, `Complete` and
+> `Done(Resolvedbydec8d1f)` normalise to nothing the vocabulary knows, so they
+> land in the tail ordered by count — `Completed` (24) near the head of it and
+> `Complete` (1) further along. Making those adjacent would need a synonym
+> table, and a synonym table is one keystroke from the fold. The board renders a
+> note naming TD-333 instead.
+
+**`Done` is 75% of the corpus, and the answer is a uniform cap, not a collapse.**
+Every column shows at most **12** cards with `12 OF 493` in its header and an
+`OPEN IN LIST →` control that switches to the list pre-filtered to that status.
+Collapsing `Done` by default would special-case one *value* of an open
+vocabulary — the same class of error as a hand-listed column set, one layer
+down: the day `Archived` reaches 500 nothing would tell you. A uniform cap is a
+rule about columns. Every status in scope has a column and every column links to
+the list filtered to it, so **every brief is reachable in at most two clicks** —
+measured by `G-BR-12g`, which clicks the control and checks the list comes up
+filtered to that column with its row count, not argued from the attribute being
+present. The board does not claim to render every brief as a card.
+
+**The status filter narrows the COLUMN SET.** The board's axis *is* status, so
+`status=Done` renders exactly one column rather than being passed into each
+column's query (which `URLSearchParams.set` would resolve silently, last write
+wins). The other four filters — `project`, `priority`, `effort`, `brief_type` —
+pass through into every column's request unchanged.
+
+**The board does NOT follow the 5-second `live.tick`.** It reads once per
+`(project, filters)` tuple, stamps `AS OF <generated_at>` and offers an explicit
+`REFRESH`; a board on the beat would be 1 + N requests every five seconds
+forever, each opening a brain handle. Same call, same reasons, as `RecordDetail`
+and `#/graph`. The honest trade is stated in the UI: the board is less live than
+the list.
+
+**The board is READ-ONLY, and there is no drag-to-change-status — ever.**
+`brief_status.status` is the canonical build-state source (MAINTAINING row 94)
+and TD-311 forbids resolving a state contradiction by editing brief data, so a
+drag affordance would be a write path into the column the whole build state is
+read from, arriving as a convenience. Because "this page issues no writes" is
+trivially true of a page with no write code, the claim is guarded twice with a
+positive control on each side: a drag-vocabulary scan over the board files with
+a planted affordance it must find
+(`dashboard-layers-source.test.ts`), and `G-BR-12f`, which drags a card with
+real CDP mouse events and reads an in-page non-GET counter that also reports
+`GET > 0` — with one mutation per half.
+
 ### `/api/learnings/search` — the `retrieval` contract
 
 Learning search is **hybrid BM25 + vector recall fused by RRF**, not substring
@@ -827,6 +925,19 @@ checkbox arrived as an optional `select` field on `RecordListRow` (rendered as a
 **sibling** of the row anchor, never nested inside it — a checkbox inside an
 `<a>` is a control whose click both toggles and navigates).
 
+**FR-245 is the second test of that rule, and the first from INSIDE a layer
+view.** The briefs board needed a card, and a card is a row: so `RecordList`'s
+private `Row` was EXPORTED as `RecordRow` and `RecordBoard.tsx` composes it,
+rather than a `layout="board"` prop on a component whose header says it renders
+one list. The board renders no row markup of its own, and
+`record.test.tsx` asserts that the same descriptor emits byte-identical row
+markup through both. The props grew by one optional `actions` slot (the view
+toggle, beside the heading) — the same move `RecordListRow` made for `select`,
+for the same reason. Everything a reviewer could get wrong about the partition —
+which columns exist, in what order, what each asks the endpoint for, how a
+66-character status becomes a header — is in the pure, node-tested
+`layers/board.ts`, not in a component.
+
 The same reasoning one level up produced a **shared client state layer**: the
 project-scope state machine that used to live inside `pages/Layers.tsx` is now
 `lib/useProjectScope.ts` plus `components/chrome/ProjectScope.tsx`, consumed by
@@ -1213,7 +1324,7 @@ the server is `node:http`.
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244), leaving **147.2 KB** under the new ceiling. FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245), leaving **143.6 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit: the single app chunk is now **549.83 kB** (549,831 B) against a 560 kB `chunkSizeWarningLimit` — **10,169 B of slack**, against this gate's 143.6 KB, so the next dashboard brief meets that warning first. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
@@ -1225,12 +1336,12 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-triage-parity.test.ts` | FR-241 — the twin-brain differ. Two brains in two **processes** (`setAdapter` is a module global, measured to cross-contaminate two engines in one process), identical fixtures, identical boot config: one dispatches through the engine directly, the other over HTTP. Diffs the `event_log` delta **and** the mutated domain tables, with the excluded-column list itself asserted so it cannot quietly grow to cover a real difference. Its empty case declares that it EXPECTED empty and cites why; its positive control is a recurring reject, then mutated to prove the differ can fail |
 | `cli/dashboard/src/triage/__tests__/model.test.ts` + `components/triage/__tests__/BulkBar.test.tsx` | FR-241 — the tiering logic and the confirm copy, table-driven: a mixed selection of 3 recurring + 2 first-time rejects names **2** as permanently deleted, not 5 and not 0; the empty selection and the all-tier-3 case; the typed-count requirement |
 | `cli/src/__tests__/dashboard-params.test.ts` | FR-240 — the pure clamp/allowlist: hostile `limit`/`offset`, unknown filters named rather than ignored. TD-326 adds `project_scope`: a CLOSED vocabulary, a near-miss dropped and named, no OTHER filter set declaring it, and an executable statement of the REJECTED design (a magic `project` value is accepted verbatim by every set) |
-| `cli/src/__tests__/dashboard-layers-source.test.ts` | FR-240 — whole-tree client scans: no string-to-markup path, the composite key not mirrored browser-side, zero colour literals **and zero custom properties** in the `.record-*` block, no absolute URL, no non-GET request. TD-326 adds the client/server seam scan: the wire literal the client sends is in the server's `PROJECT_SCOPES`, the UI sentinel fails `SLUG_RE` so it cannot collide with a project, and exactly one shipped file emits the param. Every scan carries a self-negative-control |
+| `cli/src/__tests__/dashboard-layers-source.test.ts` | FR-240 — whole-tree client scans: no string-to-markup path, the composite key not mirrored browser-side, zero colour literals **and zero custom properties** in the `.record-*` block, no absolute URL, no non-GET request. TD-326 adds the client/server seam scan: the wire literal the client sends is in the server's `PROJECT_SCOPES`, the UI sentinel fails `SLUG_RE` so it cannot collide with a project, and exactly one shipped file emits the param. **FR-245 adds the AC-6 read-only scan** over the five board files: the drag CONCEPT in every spelling (attribute, handler props, event names, `dataTransfer`), the write path by name, no `method:` and no `fetch(` — with a planted affordance the same matcher MUST find, and a comment-only mention it must not. Plus: exactly one shipped file persists the view, in `sessionStorage` and never `localStorage`. Every scan carries a self-negative-control |
 | `cli/dashboard/src/graph/__tests__/` | the stillness instrument (**T6, the anti-fake layer**), the pause/resume state machine, tiers + the ladder, label occlusion, D9 shape/edge mappings, palette resolution, motion tokens, the volume bench, and (FR-240) `neighboursOf` extraction-equivalence |
-| `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server` |
+| `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server`. **FR-245 adds `layers/__tests__/board.test.ts`** — the column derivation against the operator's real 15-value status distribution (read READ-ONLY, reproduced as a literal): every value gets exactly one column, `In Progress`/`InProgress` are TWO adjacent columns with unsummed counts, `Done`/`Completed`/`Complete` are THREE, an invented status still gets one, the per-column query carries the column's own status once and never the user's, and the order is deterministic — including a test that STATES the residual (the three finished synonyms are not adjacent, and why making them so would be the fold). The board's render half is in `record.test.tsx`: the same descriptor emits identical row markup through the list and the board |
 | `brain-mcp-server/src/tools/__tests__/` + `engine/components/goals/__tests__/read.test.ts` | FR-240 — the three pure readers, `pure-read-purity.test.ts` (**with a fixture the scan MUST flag, so the scan has a self-negative-control**), and `wrapper-wire-parity.test.ts` golden strings proving the MCP wire output did not move |
 | `cli/tests/integration/dashboard.bats` | lifecycle, double invocation, stale locks, `--port` hard-fail, degraded brain, pack-extract smoke, `/api/graph` on a seeded and a missing brain, **the nine layer endpoints on a seeded and a missing brain (T23)**, and an exact-set assertion over the `--smoke` probe list — which since FR-241 carries `/api/suggestions` **and** the entry `POST /api/triage`, whose probe sends a deliberately invalid action and expects a **400**, so `--smoke` proves the write pipeline is routed while mutating nothing |
-| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. Extended again by BR-082 with G-BR-9 (the Overview scope clear, held across two measured live beats) and two more in-page counters, `__gate.healthFetch` / `__gate.summaryFetch` — which witness LIVENESS rather than stillness, since a scope that "survived" a paused beat proves nothing. FR-244 adds the `dense` (Tier C) world, G-BR-11, and an in-page separability instrument — a 4-connected component count over a thresholded ink map of the canvas, calibrated ONCE at fit and held absolute so a sweep across zooms is a paired reading rather than a re-normalised one. **Not** part of `npm test`; see below |
+| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. Extended again by BR-082 with G-BR-9 (the Overview scope clear, held across two measured live beats) and two more in-page counters, `__gate.healthFetch` / `__gate.summaryFetch` — which witness LIVENESS rather than stillness, since a scope that "survived" a paused beat proves nothing. FR-244 adds the `dense` (Tier C) world, G-BR-11, and an in-page separability instrument — a 4-connected component count over a thresholded ink map of the canvas, calibrated ONCE at fit and held absolute so a sweep across zooms is a paired reading rather than a re-normalised one. FR-245 adds **G-BR-12** (the briefs board) on its own tabs over the `seeded` world plus one gate-local brief carrying a 66-character status — seeded HERE rather than in the shared fixture, which the vitest endpoint suites assert exact counts on — and two more in-page witnesses, `__gate.nonGet` (broader than `triagePost` on purpose: the claim is that the board issues no write of ANY kind) and `__gate.briefsFetch`. **Not** part of `npm test`; see below |
 
 Browser-side tests live under `cli/dashboard/src/**/__tests__/` and are collected
 by the **`cli` vitest run** (verified empirically with `npx vitest list` before
@@ -1301,7 +1412,7 @@ a single-world run cannot tell "the empty state renders" from "the empty state
 always renders".
 
 `--gates=11` runs a named subset. It is a development aid for iterating on one
-gate without paying for the other ten, and it is fenced: a filtered run stamps
+gate without paying for the other eleven, and it is fenced: a filtered run stamps
 `FILTERED` and the list of gates that did not run into its own verdict line, so
 a filtered transcript cannot be quoted as evidence of a green ladder. **Evidence
 reported for a brief is always an unfiltered run.**
@@ -1339,6 +1450,8 @@ the gate prints the exact command.
 
 | **G-BR-11** (FR-244) | in the `dense` (Tier C) world: the canvas is driven with REAL wheel events down a zoom sweep, and at a MEASURED low zoom the picture still resolves ~98% of the connected components it resolves at `zoomToFit`, with no component owning more than a fraction of the ink (`11a`); the same metric REPORTS the merge that is genuinely present at fit — 710 nodes render as 358 components, a deficit equal to the 352 seeded edges (`11b`); and at 1440×900 the canvas owns the vertical column with no page scroll and the query twin inside the layout row (`11c`), while a 1600px-tall viewport puts 1210px of canvas on screen, above the retired 900px clamp (`11c-tall`) | that the picture is BEAUTIFUL, or that a node is nameable at that zoom. Component count is a legibility FLOOR, not a ceiling. It makes no claim about the shape vocabulary — FR-244's sign-off left `tracePath` untouched. The size law's ARITHMETIC at every `k` (the two regimes, the continuity at `K_FLOOR`, and the agreement of all four geometry consumers) is `graph/__tests__/shapes.test.ts`; the ban on a fifth open-coded site is `dashboard-graph-source.test.ts`. Do not weaken any of the three on the assumption another has it covered |
 
+| **G-BR-12** (FR-245) | the briefs BOARD on the `seeded` world, on its own tab: the rendered column set equals the union of `/api/summary`'s `briefs.by_status` keys with the six documented lifecycle statuses — computed in the gate from the DOC, not from the client's constant (`12a`); `Σ column.total` equals `/api/summary`'s `briefs.total`, each side fetched independently, so a column set can only pass by being COMPLETE (`12b`); a 66-character status is truncated in the header while `title` and `data-status` carry it whole and the label does not overflow its column, MEASURED as `scrollWidth ≤ clientWidth` (`12c`); the toggle survives a route change and a reload but a NEW browsing context opens on the list (`12d`); `priority=P1-High` reaches every column's query, checked column by column against the endpoint's own total for that `(status, priority)` pair at the same project scope (`12e`); `OPEN IN LIST` on a non-empty column flips to the list with THAT status filtered and the row count equal to the column's own total, against a fixture whose filtered and unfiltered counts disagree (`12g`); and across a full session — toggle, filter, hover, a REAL mouse drag across columns, refresh — the page issues **zero** non-GET requests with `GET > 0` in the same reading, no element carries a drag affordance, and no card moved (`12f`) | that the endpoint's answers are right (`dashboard-layers-endpoint.test.ts`), nor WHICH columns a given brain should have — it asserts the union, not the vocabulary. The FOLD case (`Done`/`Completed`/`Complete` as three columns) is **not** observable on this fixture, which holds no synonym pair; `dashboard/src/layers/__tests__/board.test.ts` B6 pins it offline against the real 15-value distribution |
+
 **Every gate has a demonstrated failing counterpart, and the script enforces
 it.** `--mutate=<name>` injects a specific defect and INVERTS the verdict: the
 run succeeds only if the named gate actually fails, and a mutation run in which
@@ -1348,7 +1461,36 @@ guard whose only observed output is "pass" is indistinguishable from a broken
 one. Confirmation dates by family: FR-240's eight on 2026-07-30, FR-241's four
 (`br8-*`) with that brief, BR-082's two (`br9-*`) on 2026-07-31, TD-326's three
 (`br10-*`) on 2026-07-31 — each confirmed caught by its predicted check
-(`10a`, `10c`, `10d`), and FR-244's three (`br11-*`) on 2026-08-02.
+(`10a`, `10c`, `10d`), FR-244's three (`br11-*`) on 2026-08-02, and FR-245's
+**eight** (`br12-*`) on 2026-08-02 — each confirmed caught by its predicted
+check (`12a`, `12c`, `12d-nav`, `12d-session`, `12e`, `12g`, and `12f` twice).
+
+**Two of those eight exist because a check had no failing counterpart of its
+own, which is a distinct gap from a check that is wrong.** `12d-session`
+(a new browsing context opens on the list) stayed GREEN under
+`br12-view-in-component-state`, which only reddens `12d-nav` — so the thing it
+exists to detect, a regression to `localStorage`, was guarded only by a
+string scan for `localStorage` in the hook, which an alias or a helper would
+walk past. `br12-view-in-localstorage` closes it by persisting the toggle in
+`localStorage` through a document-start bridge (the defect is in how the page
+PERSISTS, so it cannot be injected after load), and the fresh tab then opens on
+BOARD. `12g` closes the other one: `OPEN IN LIST` had a pure function with a
+table test and an attribute in a render test, and nothing ever CLICKED it —
+so D2's two-clicks reachability claim, which is the load-bearing half of how a
+12-card cap handles 493 rows, was argued rather than measured.
+
+**`G-BR-12f` needed two mutations AND a corrected reading window, and the second
+half is the part worth copying.** Both 12f mutations were VACUOUS on their first
+run — reported as such by the harness, which is the whole reason it inverts its
+verdict. Neither defect was in the assertion: the injected `POST` fired *before*
+the counter's baseline snapshot, so its count was already in the `before`
+reading; and the injected `draggable` attribute was wiped by the `REFRESH` that
+came after it, because a re-render unmounts and remounts the rows. The order is
+now snapshot → refresh (the positive control's traffic) → inject → drag → read,
+so every injected defect lands strictly INSIDE the measured interval. **An
+instrument that is not watching when the defect happens reports the same zero as
+a correct page** — which is the vacuity this file exists to catch, arriving from
+a direction no amount of care about the assertion would have covered.
 
 FR-244 also gave **`7d` its own mutation**, `br7-backout-re-entrances`, closing
 a real gap: `br7-refetch-backout` breaks `7b` (the FETCH COUNT) and said nothing

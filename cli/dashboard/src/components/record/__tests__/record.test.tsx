@@ -34,6 +34,8 @@
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RecordList, type RecordListRow } from "../RecordList";
+import { RecordBoard, type RecordBoardColumn } from "../RecordBoard";
+import { CARD_CAP, columnLabel } from "../../../layers/board";
 import { RecordDetail, RecordNeighbours } from "../RecordDetail";
 import { FilterBar } from "../FilterBar";
 import { NodeInspector } from "../../graph/NodeInspector";
@@ -232,6 +234,226 @@ describe("AC #5 · the ONE list renders every layer's rows", () => {
     );
     expect(out).not.toContain("NEXT");
     expect(out).not.toContain("PREV");
+  });
+});
+
+// ===========================================================================
+// FR-245 — the BOARD is an arrangement of the same rows
+// ===========================================================================
+
+describe("FR-245 · the briefs board", () => {
+  const noop = (): void => undefined;
+
+  function rows(n: number, prefix = "BR"): RecordListRow[] {
+    return Array.from({ length: n }, (_, i) => ({
+      ...ROW,
+      key: `igris-ai|${prefix}-${i}`,
+      eye: `// ${prefix}-${i}`,
+      title: `${prefix} number ${i}`,
+    }));
+  }
+
+  function column(
+    status: string,
+    over: Partial<RecordBoardColumn> = {},
+  ): RecordBoardColumn {
+    return {
+      status,
+      label: columnLabel(status),
+      rows: [],
+      total: 0,
+      loading: false,
+      ...over,
+    };
+  }
+
+  function board(columns: RecordBoardColumn[], over = {}) {
+    return html(
+      <RecordBoard
+        eye="// BRIEFS"
+        heading="BRIEFS"
+        columns={columns}
+        cardCap={CARD_CAP}
+        asOf="2026-08-02T10:00:00.000Z"
+        onRefresh={noop}
+        onOpenInList={noop}
+        scopeTotal={null}
+        filtered={false}
+        {...over}
+      />,
+    );
+  }
+
+  it("R1 — one section per column, each stamped with the RAW status", () => {
+    const out = board([
+      column("In Progress", { total: 2, rows: rows(2) }),
+      column("Done", { total: 5, rows: rows(5, "FR") }),
+      column("Done(Resolvedbydec8d1f)", { total: 1, rows: rows(1, "TD") }),
+    ]);
+    expect(out.match(/class="record-board-col"/g) ?? []).toHaveLength(3);
+    expect(out).toContain('data-status="In Progress"');
+    expect(out).toContain('data-status="Done"');
+    // The commit-hash status reaches the DOM byte for byte — the browser gate
+    // and the source suite both read this attribute, so an abbreviation here
+    // would make every downstream assertion about the wrong string.
+    expect(out).toContain('data-status="Done(Resolvedbydec8d1f)"');
+    // THREE columns for three spellings of finished. Nothing is folded; see
+    // `layers/__tests__/board.test.ts` B6 for the derivation half.
+    const donish = board([
+      column("Done", { total: 1195 }),
+      column("Completed", { total: 24 }),
+      column("Complete", { total: 1 }),
+    ]);
+    expect(donish.match(/class="record-board-col"/g) ?? []).toHaveLength(3);
+    expect(donish).toContain('data-total="1195"');
+    expect(donish).toContain('data-total="24"');
+    expect(donish).toContain('data-total="1"');
+    // ...and NO column reports the merged total. The strip's own readout does
+    // sum them — that is AC-2's arithmetic, over three columns that stayed
+    // three — but no column claims to be all three.
+    expect(donish).not.toContain('data-total="1220"');
+    expect(donish).toContain('data-column-sum="1220"');
+  });
+
+  it("R2 — a sentence status is truncated in the header and FULL in the data", () => {
+    const SENTENCE =
+      "Split (see FR-161, FR-162, FR-163, FR-164, FR-165, FR-166, FR-167)";
+    const out = board([column(SENTENCE, { total: 1, rows: rows(1) })]);
+    // The header carries the truncation — 22 characters plus an ellipsis...
+    expect(out).toContain(">Split (see FR-161, FR-…<");
+    expect(out).not.toContain(`>${SENTENCE}<`);
+    // ...and both the tooltip and the stamped attribute carry the whole thing,
+    // so nothing about which status this is has been lost.
+    expect(out).toContain(`title="${SENTENCE}"`);
+    expect(out).toContain(`data-status="${SENTENCE}"`);
+  });
+
+  it("R3 — the SAME rows emit the SAME markup through the list and the board", () => {
+    /*
+     * D8's mechanical form. Both views call `RecordRow`, so this cannot drift
+     * without someone deleting the shared function — which is the point of
+     * exporting it rather than writing card markup in `RecordBoard`.
+     */
+    const same = rows(3);
+    const listOut = html(
+      <RecordList eye="// BRIEFS" heading="BRIEFS" rows={same} empty={EMPTY} />,
+    );
+    const boardOut = board([column("Ready", { total: 3, rows: same })]);
+
+    const items = (s: string): string[] => s.match(/<li[\s\S]*?<\/li>/g) ?? [];
+    expect(items(listOut)).toHaveLength(3);
+    expect(items(boardOut)).toEqual(items(listOut));
+  });
+
+  it("R4 — a column past the cap shows CARD_CAP cards and hands over to the list", () => {
+    const out = board([column("Done", { total: 493, rows: rows(CARD_CAP + 6) })]);
+    expect(out.match(/class="record-row"/g) ?? []).toHaveLength(CARD_CAP);
+    // D2: the volume is a NUMBER IN THE HEADER, not a wall of cards...
+    expect(out).toContain(`${CARD_CAP} OF 493`);
+    // ...and the column carries its own total for the AC-2 sum.
+    expect(out).toContain('data-total="493"');
+    // ...and the operator is handed to the surface that IS for 493 rows,
+    // carrying this column's raw status.
+    expect(out).toContain('data-open-in-list="Done"');
+    expect(out).toContain("OPEN IN LIST");
+    expect(out).toContain(`+${493 - CARD_CAP} MORE`);
+  });
+
+  it("R5 — a column filtered to zero still renders, showing 0", () => {
+    const out = board([
+      column("Blocked", { total: 0 }),
+      column("Done", { total: 4, rows: rows(4) }),
+    ]);
+    expect(out.match(/class="record-board-col"/g) ?? []).toHaveLength(2);
+    expect(out).toContain('data-status="Blocked"');
+    expect(out).toContain('data-total="0"');
+    // D9: an empty COLUMN is not an empty STATE. Rendering one inside the
+    // column would say "there is nothing to show" about the whole board, and
+    // would make the column set flicker as an operator clicks filter chips.
+    expect(out).not.toContain("data-empty-kind");
+    expect(out).not.toContain("nothing here yet");
+    // Nothing to open, so no handoff control on this column — exactly one,
+    // belonging to `Done`.
+    expect(out.match(/data-open-in-list/g) ?? []).toHaveLength(1);
+  });
+
+  it("renders the board-level empty state INSTEAD of columns when there is one", () => {
+    const out = board([column("Ready", { total: 3, rows: rows(3) })], {
+      empty: emptyStateFor({
+        layer: "briefs",
+        total: 0,
+        degraded: "brain database not found at /x/brain.db",
+        filtersActive: false,
+        searchActive: false,
+        project: "igris-ai",
+      }),
+    });
+    expect(out).toContain('data-empty-kind="degraded"');
+    expect(out).toContain("brain database not found");
+    // D9 — and NOT the six vocabulary columns. A degraded read that fell back
+    // to a hand-listed column set is this brief's named failure wearing a
+    // disguise, so the fallback must not exist to be reached.
+    expect(out).not.toContain("record-board-col");
+  });
+
+  it("states its staleness, because it does NOT follow the live beat (D5)", () => {
+    const out = board([column("Ready", { total: 1, rows: rows(1) })], {
+      scopeTotal: 1,
+    });
+    expect(out).toContain("AS OF 2026-08-02T10:00:00.000Z");
+    expect(out).toContain("REFRESH");
+    // The AC-2 readout: the column sum against the scope's own total, both
+    // stamped so the browser gate reads numbers rather than parsing prose.
+    expect(out).toContain('data-column-sum="1"');
+    expect(out).toContain('data-scope-total="1"');
+    expect(out).toContain("1 OF 1 BRIEFS");
+  });
+
+  it("is READ-ONLY: no drag affordance, no form, no method", () => {
+    const out = board([
+      column("Ready", { total: 3, rows: rows(3) }),
+      column("Done", { total: 40, rows: rows(CARD_CAP) }),
+    ]);
+    // The rendered half of AC-6. The FILE half — which is the one that can see
+    // a handler added next month — is the vocabulary scan in
+    // `cli/src/__tests__/dashboard-layers-source.test.ts`, and the BEHAVIOURAL
+    // half is G-BR-12f, which drags a card with real mouse events.
+    expect(out).not.toContain("draggable");
+    expect(out.toLowerCase()).not.toContain("ondrag");
+    expect(out).not.toMatch(/\saction=/);
+    expect(out).not.toMatch(/\smethod=/);
+    expect(out.toLowerCase()).not.toContain("approve");
+  });
+
+  it("the board and the list carry the SAME control slot beside the heading", () => {
+    const marker = "<b>VIEW TOGGLE</b>";
+    const listOut = html(
+      <RecordList
+        eye="// BRIEFS"
+        heading="BRIEFS"
+        rows={rows(1)}
+        empty={EMPTY}
+        actions={<b>VIEW TOGGLE</b>}
+      />,
+    );
+    const boardOut = board([column("Ready", { total: 1, rows: rows(1) })], {
+      actions: <b>VIEW TOGGLE</b>,
+    });
+    expect(listOut).toContain(marker);
+    expect(boardOut).toContain(marker);
+    expect(listOut).toContain("record-head-actions");
+    expect(boardOut).toContain("record-head-actions");
+  });
+
+  it("emits the bare heading when there are no actions — the extraction changed nothing", () => {
+    // `RecordHeading` wraps only when it has something to put beside the h1, so
+    // the four layer views that pass no actions emit exactly what they always
+    // did. This is the guard on "the diff must be reviewable as an extraction".
+    const out = html(
+      <RecordList eye="// X" heading="X" rows={rows(1)} empty={EMPTY} />,
+    );
+    expect(out).toContain('<span class="shell-eye">// X</span><h1 class="shell-h1 glitch">X</h1>');
+    expect(out).not.toContain("record-head");
   });
 });
 

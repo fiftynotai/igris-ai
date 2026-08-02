@@ -613,6 +613,53 @@ interface PackReport {
  *   round is byte-free is only as good as its enumeration of `files` — landing
  *   for the second time on the same file.)
  *
+ * FR-245 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_717_994    unpacked 6_684_920, 793 entries (UNCHANGED
+ *                                    — it added no file to the package)
+ *   cumulative delta    +406.4 KB    (416_143 B over PACK_BASELINE_PACKED)
+ *   FR-245's own share  +3_698 B     against FR-244's 1_714_296  (3.61 KB)
+ *   headroom remaining  ~143.6 KB    (147_057 B under TD-329's +550)
+ *
+ *   (Estimated at +6-12 KB and spent 3.61 KB, and the reason is the one this
+ *   ledger keeps re-teaching from the other direction: FR-245 wrote ~1,900
+ *   lines, and almost all of them landed where nothing packed can see them.
+ *   The whole feature — a pure column model, two hooks, a board component, a
+ *   180-line CSS block and a comment-dense rewrite of the briefs page — is
+ *   `cli/dashboard/src/**`, which Vite MINIFIES, so its comment density costs
+ *   ~0. The browser gate grew a twelfth gate and eight mutations in
+ *   `cli/scripts/`, which `files` does not carry; three suites grew in
+ *   the test globs under `src` and under `dashboard/src`, both excluded from
+ *   `dist` (spelled in prose, not literally: the pattern contains a star-slash
+ *   pair that would terminate this comment — the trap this file's own glob note
+ *   below records, walked into once while writing this row and caught by `tsc`); `docs/` and `MAINTAINING.md` are outside the package. It added NO
+ *   endpoint by design (D1), so `cli/src/lib/**` — the expensive surface, where
+ *   `tsc` preserves every comment into `dist/` — is untouched, and so is the
+ *   vendored `dist/brain-mcp-server/**` that TD-328 discovered the hard way.
+ *   What it DID spend: the app chunk and its `cli/CHANGELOG.md` entry, which
+ *   SHIPS. Roughly the FR-244 shape at twice the size, for the same reasons.
+ *
+ *   RE-MEASURED after the review round — two further browser-gate mutations, a
+ *   new behavioural check, and three comment/figure corrections — and the
+ *   packed total is UNCHANGED at 1_717_994, with the built chunk byte-identical
+ *   at 549_831 B. That is not luck and it is not an excuse to skip the
+ *   re-measure: every edit in that round landed in `cli/scripts/` (not packed),
+ *   in a test (excluded from `dist`), in `docs/`, or in a source COMMENT that
+ *   Vite minifies away. Contrast FR-244, whose review round moved its own share
+ *   twelvefold on one changelog entry. The rule is the same either way — run
+ *   the measurement, then write the number.
+ *
+ *   ONE READING FOR THE NEXT PLANNER, because it is closer to its own limit
+ *   than this one is: the single minified app chunk now measures **549.83 kB**
+ *   (549_831 B on disk) against `dashboard/vite.config.ts`'s
+ *   `chunkSizeWarningLimit` of 560 kB — **10_169 B of slack**. Note the UNITS
+ *   differ from this gate's: Vite reports kB as 1000 bytes, the ceiling here is
+ *   KiB. That is a build-time WARNING about one chunk, NOT this gate — the two
+ *   must not be confused — but 10 KB of slack against the packed ceiling's
+ *   143.6 KB means the next dashboard brief will hit the warning first. The
+ *   comparison figure recorded when the limit was raised to 560 (524.69 KB)
+ *   predates FR-244 and was not re-measured then, so do NOT read the gap as
+ *   FR-245's own contribution; it is not separable from that reading.)
+ *
  * FR-244 IS THE CHEAPEST ROW IN THIS LEDGER, and it is the CONVERSE of TD-328's
  * lesson rather than a contradiction of it. TD-328 spent 24.3 KB writing only
  * `brain-mcp-server/`; FR-244 spent 176 B while adding a whole browser gate, a
@@ -703,12 +750,21 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~147.2 KB is what is left (the
- * FR-244 reading above; ~149.3 KB was TD-328's and ~173.6 KB TD-326's, both
- * superseded), and five GL-006 briefs remain, estimated at ~83-115 KB against
- * their shipped analogues. So the margin is real but it is roughly ONE FR-240 (48.4 KB) of
- * slack, not room for a surprise the size of FR-239 (95.5 KB) or FR-238
- * (187.9 KB). The answer when it binds is still to cut or to vendor less,
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~143.6 KB is what is left (the
+ * FR-245 reading above; ~147.2 KB was FR-244's, ~149.3 KB TD-328's and
+ * ~173.6 KB TD-326's, all superseded). The "five GL-006 briefs remain" this
+ * sentence used to carry was not re-derivable, so it is now read off the goal's
+ * own edges instead: TWO are unshipped (FR-246 and FR-247, both `Ready`), and
+ * FR-245 was the third. Their ~83-115 KB estimate against shipped analogues
+ * stands on the same basis as before. So the margin is roughly THREE FR-240s
+ * (48.4 KB each) of slack: FR-239 (95.5 KB) WOULD now fit, FR-238 (187.9 KB)
+ * would not. [Corrected at FR-245 review. The prior revision read "roughly ONE
+ * FR-240 of slack, not room for a surprise the size of FR-239" — true at 48.4
+ * KB of headroom, false at 143.6. It is the SECOND time this exact sentence
+ * went stale while every copy of the NUMBER six lines up was updated
+ * correctly, which is the whole reason the parenthetical below exists: a
+ * claim ABOUT a value carries no copy of it, so grep the comparison, not just
+ * the figure.] The answer when it binds is still to cut or to vendor less,
  * never to raise `PACK_HARD_CEILING_DELTA` — TD-329 raised it ONCE, before the
  * work, as a recorded operator decision, and that is not a precedent.
  *
@@ -750,9 +806,9 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~147.2 KB is what is left** (the
- * FR-244 reading above; ~149.3 KB was TD-328's and ~173.6 KB TD-326's, both
- * superseded). And note TD-328's correction to the SCOPE of this budget: a
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~143.6 KB is what is left** (the
+ * FR-245 reading above; ~147.2 KB was FR-244's, ~149.3 KB TD-328's and
+ * ~173.6 KB TD-326's, all superseded). And note TD-328's correction to the SCOPE of this budget: a
  * brief that touches only
  * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise

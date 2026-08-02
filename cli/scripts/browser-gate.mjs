@@ -183,6 +183,39 @@ const MUTATIONS = {
     gate: "G-BR-11d",
     how: "restore `pointer-events: auto` on the DENSITY banner overlay — the exact defect FR-244 shipped in review, where an opaque out-of-flow strip over the canvas ate every hover, click and wheel that landed on it",
   },
+  // --- FR-245 -------------------------------------------------------------
+  "br12-hand-listed-columns": {
+    gate: "G-BR-12a",
+    how: "render only the three lifecycle statuses Ready/In Progress/Done — a HAND-LISTED column set, this brief's named failure, driven on purpose. `Pending` (a real seeded status that is NOT in the documented vocabulary) and the sentence-status column vanish, so the union check goes red AND the column sum falls short of `/api/summary`'s total",
+  },
+  "br12-untruncated-header": {
+    gate: "G-BR-12c",
+    how: "put the RAW status in the column header instead of `columnLabel`'s truncation — the sentence status overflows its fixed-width column, which is why the truncation is a pure function rather than a CSS ellipsis nobody can measure",
+  },
+  "br12-view-in-component-state": {
+    gate: "G-BR-12d",
+    how: "drop the persisted view the instant it is chosen — i.e. hold it in `useState` only. The round trip through `#/graph` unmounts the page and the board is gone, which is D4's rejection of component state made observable rather than argued",
+  },
+  "br12-view-in-localstorage": {
+    gate: "G-BR-12d-session",
+    how: "persist the toggle in `localStorage` instead of `sessionStorage` — the OTHER way D4 can be got wrong, and the one `br12-view-in-component-state` cannot reach: that mutation reddens only 12d-nav, so without this one 12d-session's whole subject (a preference that outlives the session) had no demonstrated failing counterpart and was guarded only by a file-level string scan an alias would walk past. Injected as a document-start bridge that seeds `sessionStorage` from `localStorage`, which is what a localStorage-backed implementation looks like from outside: the NEW browsing context opens on BOARD",
+  },
+  "br12-handoff-is-a-plain-toggle": {
+    gate: "G-BR-12g",
+    how: "reach the list with the VIEW CHIP instead of the column's OPEN IN LIST control — i.e. a handoff that switches the arrangement and drops the status. The list then shows every brief in scope rather than that column's rows, which is D2's reachability claim (every brief is at most two clicks away) failing in the one place it is load-bearing: the columns that are capped",
+  },
+  "br12-board-drops-filters": {
+    gate: "G-BR-12e",
+    how: "build every per-column query from `{project, status}` alone, stripping the other filters on the way to the wire — so the column totals stay at their UNFILTERED values while the endpoint's own answer for the same (status, priority) pair moves",
+  },
+  "br12-drag-affordance": {
+    gate: "G-BR-12f",
+    how: "mark every board card `draggable` — the DOM half of the read-only claim, inverted. `status` is the canonical build-state source (TD-311), so a drag-to-change-status board is a write path into it wearing a convenience",
+  },
+  "br12-post-from-board": {
+    gate: "G-BR-12f",
+    how: "fire ONE POST from the board page — the counter half of the read-only claim, inverted. Without this mutation 'zero non-GET requests' is satisfied by a page with no write code, which is the vacuous gate this whole file exists to prevent",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -808,9 +841,16 @@ const INSTRUMENT = `
   // set: it is the request the default-project LADDER itself issues, so a
   // non-zero delta means the effect that could have reset the scope really ran.
   // BR-082's G-BR-9 had to infer that from \`healthFetch\`; G-BR-10 counts it.
+  // \`nonGet\` is FR-245's witness, and it is deliberately broader than
+  // \`triagePost\`: G-BR-12f's claim is that the BOARD issues no write of ANY
+  // kind, and a counter that only knew about \`/api/triage\` would be blind to
+  // the next write endpoint someone reaches for. \`fetch\` is its POSITIVE
+  // CONTROL — "zero non-GET" read beside "GET greater than zero" is a
+  // measurement; read alone it is indistinguishable from a dead counter.
   w.__gate = {
     raf: 0, clearRect: 0, mut: 0, fetch: 0, graphFetch: 0, triagePost: 0,
     healthFetch: 0, summaryFetch: 0, projectsFetch: 0, suggestionsFetch: 0,
+    briefsFetch: 0, nonGet: 0,
   };
   const raf = w.requestAnimationFrame.bind(w);
   w.requestAnimationFrame = (cb) => raf((t) => { w.__gate.raf++; return cb(t); });
@@ -839,6 +879,9 @@ const INSTRUMENT = `
     if (/(^|\\/)api\\/projects(\\?|$)/.test(url)) w.__gate.projectsFetch++;
     if (/(^|\\/)api\\/suggestions(\\?|$)/.test(url)) w.__gate.suggestionsFetch++;
     if (method === 'POST' && /(^|\\/)api\\/triage(\\?|$)/.test(url)) w.__gate.triagePost++;
+    // FR-245: one per column, so a board render is 1 + N.
+    if (/(^|\\/)api\\/briefs(\\?|$)/.test(url)) w.__gate.briefsFetch++;
+    if (method !== 'GET') w.__gate.nonGet++;
     return origFetch.apply(w, a);
   };
   const observe = () => {
@@ -1202,7 +1245,15 @@ class Tab {
   }
 }
 
-async function openTab(cdpPort, url) {
+/**
+ * Open a tab with the instrument installed at document start.
+ *
+ * `extraScript` is a SECOND document-start script, and it exists for exactly one
+ * class of mutation: a defect in how the page PERSISTS something, which cannot
+ * be injected after load because the page has already read storage by then.
+ * `br12-view-in-localstorage` is the case — see `gBr12`.
+ */
+async function openTab(cdpPort, url, extraScript = null) {
   const res = await fetch(
     `http://127.0.0.1:${cdpPort}/json/new?${encodeURIComponent("about:blank")}`,
     { method: "PUT" },
@@ -1217,6 +1268,9 @@ async function openTab(cdpPort, url) {
   await tab.send("Page.enable");
   await tab.send("Runtime.enable");
   await tab.send("Page.addScriptToEvaluateOnNewDocument", { source: INSTRUMENT });
+  if (extraScript !== null) {
+    await tab.send("Page.addScriptToEvaluateOnNewDocument", { source: extraScript });
+  }
   await tab.goto(url);
   return tab;
 }
@@ -1249,6 +1303,107 @@ const READ = {
   graphScope: `const s = document.querySelector('.graph-drill select'); return s === null ? null : s.value;`,
   hash: `return location.hash;`,
 };
+
+/**
+ * FR-245 — the board's readers.
+ *
+ * `data-status` carries the FULL raw status and `data-total` the column's own
+ * `/api/briefs` total, so this gate reads NUMBERS and IDENTITIES out of
+ * attributes rather than parsing header prose — the same reason
+ * `READ_OVERVIEW` reads `data-card` instead of picking `.shell-metric` by DOM
+ * order.
+ */
+const READ_BOARD = {
+  /** Every column's raw status, in rendered order. */
+  statuses: `return [...document.querySelectorAll('.record-board-col')].map(e => e.getAttribute('data-status'));`,
+  /** `[{status, total}]` — each column's OWN count, from its own response. */
+  totals: `return [...document.querySelectorAll('.record-board-col')].map(e => ({
+    status: e.getAttribute('data-status'),
+    total: Number(e.getAttribute('data-total')),
+    cards: e.querySelectorAll('.record-row').length,
+  }));`,
+  /** The strip's own arithmetic, for cross-checking the host-side sum. */
+  readout: `const e = document.querySelector('[data-column-sum]');
+    return e === null ? null : {
+      sum: Number(e.getAttribute('data-column-sum')),
+      scope: e.getAttribute('data-scope-total'),
+      text: e.textContent.trim(),
+    };`,
+  /** Which arrangement is on screen. Exactly one of them, always. */
+  which: `return {
+    board: document.querySelector('.record-board') !== null,
+    list: document.querySelector('.record-list') !== null &&
+          document.querySelector('.record-board') === null,
+    checked: (() => {
+      const g = [...document.querySelectorAll('[role=radiogroup]')]
+        .find(x => x.getAttribute('aria-label') === 'Layer view');
+      if (g === undefined) return null;
+      const b = [...g.querySelectorAll('button')].find(x => x.getAttribute('aria-checked') === 'true');
+      return b === undefined ? null : b.textContent.trim();
+    })(),
+  };`,
+  /** Any board card still reading. */
+  reading: `return [...document.querySelectorAll('.record-board-count')].filter(e => e.textContent.includes('READING')).length;`,
+};
+
+/** One column header's geometry and text, by raw status. */
+const readHeader = (status) => `
+  const col = [...document.querySelectorAll('.record-board-col')]
+    .find(e => e.getAttribute('data-status') === ${JSON.stringify(status)});
+  if (col === undefined) return null;
+  const label = col.querySelector('.record-board-label');
+  return {
+    text: label.textContent,
+    title: label.getAttribute('title'),
+    status: col.getAttribute('data-status'),
+    // The layout claim, MEASURED: \`text-overflow: ellipsis\` does not shrink
+    // content, so a header that overflows its box reports scrollWidth greater
+    // than clientWidth. A header the pure truncation handled does not.
+    scrollWidth: label.scrollWidth,
+    clientWidth: label.clientWidth,
+    colWidth: col.getBoundingClientRect().width,
+  };
+`;
+
+/** Click a chip in a named radiogroup outside the filter strip (the view toggle). */
+async function setLayerView(tab, label) {
+  const box = await tab.eval(`
+    const g = [...document.querySelectorAll('[role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'Layer view');
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.textContent.trim() === ${JSON.stringify(label)});
+    if (b === undefined) return null;
+    b.scrollIntoView({ block: 'center' });
+    const r = b.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error(`no view chip "${label}"`);
+  await tab.clickAt(box.x, box.y);
+  await tab.settle(400);
+}
+
+/**
+ * Wait until every column has answered.
+ *
+ * The board is 1 + N requests and each column paints as it lands, so a reading
+ * taken too early sees `READING` where a total belongs — the same class of race
+ * `untilListStable` exists for, with the columns as the moving part.
+ */
+async function untilBoardStable(tab, { timeout = 20_000 } = {}) {
+  const deadline = Date.now() + timeout;
+  let prev = null;
+  for (;;) {
+    const now = await tab.eval(`
+      return document.querySelectorAll('.record-board-col').length + ':' +
+             [...document.querySelectorAll('.record-board-col')].map(e => e.getAttribute('data-total')).join(',') + ':' +
+             [...document.querySelectorAll('.record-board-count')].filter(e => e.textContent.includes('READING')).length;
+    `);
+    if (prev === now && now.endsWith(":0")) return now;
+    prev = now;
+    if (Date.now() > deadline) return now;
+    await sleep(250);
+  }
+}
 
 /** Selector for the nth `.record-row` anchor. */
 const rowN = (n) => `.record-list > li:nth-child(${n}) .record-row`;
@@ -4066,6 +4221,532 @@ async function gBr11(tab) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// G-BR-12 — FR-245: the briefs board
+// ---------------------------------------------------------------------------
+
+/** A status no fixed-width header can hold, and one the vocabulary never had. */
+const SENTENCE_STATUS =
+  "Split (see FR-161, FR-162, FR-163, FR-164, FR-165, FR-166, FR-167)";
+
+/**
+ * Add ONE brief carrying a 66-character status to the seeded world.
+ *
+ * Not in `dashboard-layers-fixture.ts`, deliberately: that fixture is shared
+ * with the vitest endpoint suites, which assert exact counts on it, and a
+ * browser gate that widened it would move numbers three suites away from here.
+ * It is seeded HERE and NOW — G-BR-12 runs after every other gate that reads
+ * the `seeded` world — so no earlier count moves under it.
+ *
+ * A separate short-lived writer against a WAL brain the dashboard reads
+ * per-request is safe; what is not safe is a second read-write connection
+ * beside a LIVE brain engine, which is why `seedTriageWorld` has its own two
+ * pass shape. Nothing here boots an engine.
+ */
+function seedSentenceStatusBrief(db) {
+  return execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import D from "better-sqlite3";
+      const db = new D(process.env.GATE_DB);
+      db.prepare(
+        "INSERT INTO brief_status (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at)" +
+        " VALUES (?,?,?,?,?,?,?,?,?)"
+      ).run(
+        "demo", "FR-245", "feature", "Board view for the briefs layer",
+        process.env.GATE_STATUS, "P2-Medium", "L", null, "2026-08-02 09:00:00"
+      );
+      db.close();
+      `,
+    ],
+    {
+      cwd: CLI_ROOT,
+      env: { ...process.env, GATE_DB: db, GATE_STATUS: SENTENCE_STATUS },
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+}
+
+/**
+ * G-BR-12 — FR-245. THE BOARD: the column set, the sum, the filters, read-only.
+ *
+ * PROVES, in a real browser against a real brain: the column set is the union
+ * of the statuses PRESENT in scope and the documented lifecycle vocabulary
+ * (never a hand-listed set); the columns ACCOUNT FOR EVERY BRIEF (`Σ
+ * column.total === /api/summary`'s `briefs.total`); a sentence-length status is
+ * truncated in the header while the full value stays on the element and the
+ * column does not overflow; the view toggle survives a route change and a
+ * reload but NOT a new browsing context; every non-status filter reaches every
+ * column's query; and a full board session — toggle, filter, hover, a real
+ * mouse DRAG on a card — issues ZERO non-GET requests while the same reading
+ * reports GET greater than zero.
+ *
+ * DOES NOT PROVE that the endpoint's answers are right (that is
+ * `dashboard-layers-endpoint.test.ts`), nor which columns SHOULD exist for a
+ * given brain — the union is computed here from `/api/summary` plus the
+ * vocabulary literal below, independently of the client's own constant, so the
+ * two would have to be wrong in the same way to agree.
+ *
+ * WORLD: `seeded`, on its OWN tab, and it runs after every other gate that
+ * reads that world — it seeds one extra brief.
+ */
+async function gBr12(cdpPort, seeded) {
+  gate("G-BR-12", "FR-245: the briefs board — union columns, the sum, the filters, read-only");
+
+  seedSentenceStatusBrief(seeded.db);
+
+  /*
+   * The documented lifecycle, from
+   * `docs/architecture/brief-state-source-of-truth.md:13` — NOT imported from
+   * the client. The client mirrors that doc in `layers/board.ts`; if this gate
+   * read the client's copy, a wrong vocabulary would agree with itself.
+   */
+  const VOCABULARY = ["Draft", "Ready", "In Progress", "Blocked", "Done", "Archived"];
+
+  /*
+   * `br12-view-in-localstorage`'s injection, and it has to be a DOCUMENT-START
+   * script because the defect is in how the page persists: by the time a normal
+   * `tab.eval` could run, the bundle has already read storage and chosen a
+   * view. Seeding `sessionStorage` from `localStorage` before anything runs is
+   * what a `localStorage`-backed implementation looks like from OUTSIDE — the
+   * value crosses into a new browsing context, which is precisely the property
+   * D4 rejected and 12d-session exists to detect.
+   */
+  const VIEW_KEY = "igris.dashboard.layers.view";
+  const localStorageBridge = mut("br12-view-in-localstorage")
+    ? `try {
+         const v = localStorage.getItem(${JSON.stringify(VIEW_KEY)});
+         if (v) sessionStorage.setItem(${JSON.stringify(VIEW_KEY)}, v);
+       } catch (e) { /* storage disabled */ }`
+    : null;
+
+  const tab = await openTab(cdpPort, `${seeded.url}/#/layers/briefs`, localStorageBridge);
+  await tab.until(has(".record-list"), { label: "briefs list" });
+  await untilListStable(tab);
+
+  const scope = await activeProject(tab);
+  const q = scope === null ? "" : `?project=${encodeURIComponent(scope)}`;
+  const summary = await apiJson(`${seeded.url}/api/summary${q}`);
+  const present = Object.keys(summary.briefs.by_status);
+
+  // --- 12a · the column set is data UNION vocabulary ------------------------
+  await setLayerView(tab, "BOARD");
+  await untilBoardStable(tab);
+
+  if (mut("br12-view-in-localstorage")) {
+    // The write half of the same mutation: a localStorage-backed hook would
+    // have put the chosen view there. The bridge above then carries it into the
+    // fresh tab exactly as that implementation would.
+    await tab.eval(
+      `localStorage.setItem(${JSON.stringify(VIEW_KEY)}, sessionStorage.getItem(${JSON.stringify(VIEW_KEY)}) || 'board'); return 1;`,
+    );
+  }
+
+  if (mut("br12-hand-listed-columns")) {
+    // The named failure, driven on purpose: a board that renders a hand-listed
+    // lifecycle instead of the derived union. `Pending` is a REAL seeded status
+    // that is not in the documented vocabulary, so this is not a contrived
+    // deletion — it is what an allowlist would have done to real rows.
+    await tab.eval(`
+      const keep = ['Ready', 'In Progress', 'Done'];
+      for (const col of document.querySelectorAll('.record-board-col')) {
+        if (!keep.includes(col.getAttribute('data-status'))) col.remove();
+      }
+      return 1;
+    `);
+  }
+
+  const domStatuses = await tab.eval(READ_BOARD.statuses);
+  const expected = [...new Set([...present, ...VOCABULARY])].sort();
+  const got = [...domStatuses].sort();
+  const missing = expected.filter((s) => !got.includes(s));
+  const extra = got.filter((s) => !expected.includes(s));
+  check(
+    "12a",
+    missing.length === 0 && extra.length === 0,
+    `columns=${got.length} · in scope=${JSON.stringify(present)} · vocabulary adds=${JSON.stringify(
+      VOCABULARY.filter((v) => !present.includes(v)),
+    )} · missing=${JSON.stringify(missing)} · unexpected=${JSON.stringify(extra)}${
+      mut("br12-hand-listed-columns") ? "  [MUTATED: hand-listed lifecycle]" : ""
+    }`,
+  );
+
+  // The three-spellings claim, on real data rather than in a table test: the
+  // seeded world has no synonym pair, so this reports what IS distinct rather
+  // than asserting a merge that could not happen here.
+  note(
+    `no column is a merge of two values: ${got.length} columns for ${got.length} distinct ` +
+      `status strings. The FOLD case (Done/Completed/Complete as three columns) is pinned ` +
+      `offline by B6 in dashboard/src/layers/__tests__/board.test.ts, because this fixture ` +
+      `holds no synonym pair to observe.`,
+  );
+
+  // --- 12b · the columns account for EVERY brief ----------------------------
+  const totals = await tab.eval(READ_BOARD.totals);
+  const readout = await tab.eval(READ_BOARD.readout);
+  const sum = totals.reduce((n, c) => n + c.total, 0);
+  check(
+    "12b",
+    sum === summary.briefs.total,
+    `Σ column.total=${sum} · /api/summary briefs.total=${summary.briefs.total} · page's own readout=${
+      readout === null ? "absent" : `${readout.sum} (${JSON.stringify(readout.text)})`
+    } · per column ${JSON.stringify(totals.map((c) => `${c.status}=${c.total}`))}`,
+  );
+  note(
+    "12b is AC-2 made mechanical, and it is the check the whole gate is built around: a column " +
+      "set can only pass it by being COMPLETE. The sum is taken host-side from each column's own " +
+      "`data-total` (which is that column's own `/api/briefs` response), and compared with a " +
+      "reading of `/api/summary` this script fetched itself — two independent numbers, not one " +
+      "number read twice.",
+  );
+
+  // --- 12c · the sentence status ------------------------------------------
+  if (mut("br12-untruncated-header")) {
+    await tab.eval(`
+      for (const col of document.querySelectorAll('.record-board-col')) {
+        const label = col.querySelector('.record-board-label');
+        label.textContent = col.getAttribute('data-status');
+      }
+      return 1;
+    `);
+  }
+  const header = await tab.eval(readHeader(SENTENCE_STATUS));
+  const fits = header !== null && header.scrollWidth <= header.clientWidth + 1;
+  check(
+    "12c",
+    header !== null &&
+      header.status === SENTENCE_STATUS &&
+      header.title === SENTENCE_STATUS &&
+      header.text.length < SENTENCE_STATUS.length &&
+      header.text.endsWith("…") &&
+      fits,
+    header === null
+      ? `no column for the ${SENTENCE_STATUS.length}-character status`
+      : `header=${JSON.stringify(header.text)} (${header.text.length} chars of ${SENTENCE_STATUS.length}) · ` +
+        `title and data-status carry the full value=${header.title === SENTENCE_STATUS && header.status === SENTENCE_STATUS} · ` +
+        `label scrollWidth=${header.scrollWidth} clientWidth=${header.clientWidth} column=${Math.round(header.colWidth)}px${
+          mut("br12-untruncated-header") ? "  [MUTATED: raw status in the header]" : ""
+        }`,
+  );
+
+  // --- 12d · the toggle persists across navigation, not across sessions -----
+  if (mut("br12-view-in-component-state")) {
+    // "Held in `useState` only" IS "nothing was persisted". Clearing the key is
+    // the same end state, injected without rebuilding the bundle.
+    await tab.eval(`sessionStorage.removeItem('igris.dashboard.layers.view'); return 1;`);
+  }
+
+  await tab.reload();
+  const afterReload = await tab.eval(READ_BOARD.which);
+  await tab.hash("#/graph");
+  await tab.settle(600);
+  await tab.hash("#/layers/briefs");
+  await tab.settle(600);
+  const afterRoute = await tab.eval(READ_BOARD.which);
+  check(
+    "12d-nav",
+    afterRoute.board === true && afterRoute.checked === "BOARD",
+    `after #/graph and back: board=${afterRoute.board} checked=${JSON.stringify(afterRoute.checked)} ` +
+      `(after a reload: board=${afterReload.board})${
+        mut("br12-view-in-component-state") ? "  [MUTATED: view not persisted]" : ""
+      }`,
+  );
+  note(
+    "A RELOAD PRESERVES THE BOARD BY DESIGN, and the plan's prediction that it would not was " +
+      "wrong: `sessionStorage` is scoped to the BROWSING CONTEXT, not to the document, so F5 keeps " +
+      "it. The property that actually separates it from `localStorage` is the one 12d-session " +
+      "reads — a NEW TAB is a new session and opens on the list.",
+  );
+
+  const fresh = await openTab(
+    cdpPort,
+    `${seeded.url}/#/layers/briefs`,
+    localStorageBridge,
+  );
+  await fresh.until(has("#main"), { label: "fresh-tab shell" });
+  await fresh.settle(800);
+  const freshView = await fresh.eval(READ_BOARD.which);
+  const freshStorage = await fresh.eval(`
+    try {
+      return {
+        session: sessionStorage.getItem(${JSON.stringify(VIEW_KEY)}),
+        local: localStorage.getItem(${JSON.stringify(VIEW_KEY)}),
+      };
+    } catch (e) { return { session: null, local: null }; }
+  `);
+  check(
+    "12d-session",
+    freshView.list === true && freshView.board === false && freshView.checked === "LIST",
+    `a NEW browsing context opens on list=${freshView.list} board=${freshView.board} checked=${JSON.stringify(freshView.checked)} ` +
+      `— the list is the default and the choice did not outlive the session · that context's storage: ` +
+      `sessionStorage=${JSON.stringify(freshStorage.session)} localStorage=${JSON.stringify(freshStorage.local)}${
+        mut("br12-view-in-localstorage") ? "  [MUTATED: the view was persisted in localStorage]" : ""
+      }`,
+  );
+  note(
+    "12d-session is the BEHAVIOURAL half of D4's `localStorage` rejection, and it needs its own " +
+      "mutation to mean anything: `br12-view-in-component-state` reddens 12d-nav and leaves this " +
+      "check green, so without `br12-view-in-localstorage` the only guard on 'the choice does not " +
+      "outlive the session' would be a string scan for `localStorage` in the hook — which an alias " +
+      "or a helper would walk straight past. The storage readout above is printed pass or fail, so " +
+      "the reading behind the verdict is visible rather than inferred.",
+  );
+
+  // --- 12e · every non-status filter reaches every column -------------------
+  await tab.focus();
+  if (mut("br12-board-drops-filters")) {
+    await tab.eval(`
+      const orig = window.fetch;
+      window.fetch = function (u, i) {
+        const url = String(u);
+        if (url.includes('api/briefs?')) {
+          const [path, query] = url.split('?');
+          const from = new URLSearchParams(query);
+          const to = new URLSearchParams();
+          if (from.get('project') !== null) to.set('project', from.get('project'));
+          if (from.get('status') !== null) to.set('status', from.get('status'));
+          to.set('limit', from.get('limit') || '12');
+          to.set('offset', '0');
+          return orig.call(window, path + '?' + to.toString(), i);
+        }
+        return orig.call(window, u, i);
+      };
+      return 1;
+    `);
+  }
+  await setFilterChip(tab, "priority", "P1-High");
+  await untilBoardStable(tab);
+  const filtered = await tab.eval(READ_BOARD.totals);
+  const disagreements = [];
+  for (const col of filtered) {
+    const url =
+      `${seeded.url}/api/briefs?${scope === null ? "" : `project=${encodeURIComponent(scope)}&`}` +
+      `status=${encodeURIComponent(col.status)}&priority=P1-High&limit=1`;
+    const own = await apiJson(url);
+    if (own.total !== col.total) {
+      disagreements.push(`${col.status}: board=${col.total} endpoint=${own.total}`);
+    }
+  }
+  check(
+    "12e",
+    disagreements.length === 0 && filtered.length > 0,
+    `priority=P1-High in BOARD mode · ${filtered.length} columns · ` +
+      `board totals ${JSON.stringify(filtered.map((c) => `${c.status}=${c.total}`))} · ` +
+      `disagreements=${JSON.stringify(disagreements)}${
+        mut("br12-board-drops-filters") ? "  [MUTATED: per-column query is {project,status} only]" : ""
+      }`,
+  );
+  note(
+    "12e also covers the AC-3 project-scope regression: the same builder carries `project` into " +
+      "every column, and the endpoint readings above are taken at the SAME scope the page is on " +
+      `(project=${JSON.stringify(scope)}).`,
+  );
+  await setFilterChip(tab, "priority", "P1-High", null);
+  await untilBoardStable(tab);
+
+  // --- 12g · OPEN IN LIST, driven end to end -------------------------------
+  //
+  // D2's reachability claim — "every status has a column, every column links to
+  // the list filtered to it, so every brief is at most two clicks away" — is the
+  // load-bearing half of how a uniform 12-card cap handles `Done`'s 493 rows.
+  // Everything under it was previously asserted in pieces (a one-line pure
+  // function with a table test, a `data-open-in-list` attribute in a render
+  // test) and NOTHING clicked the control, so the chain that actually delivers
+  // the promise — handoff -> view flip -> the list's INITIAL filter values ->
+  // a filtered read — had no test at any level.
+  const target = await tab.eval(`
+    const cols = [...document.querySelectorAll('.record-board-col')]
+      .filter(c => Number(c.getAttribute('data-total')) > 0);
+    if (cols.length === 0) return null;
+    const col = cols.sort((a, b) => Number(b.getAttribute('data-total')) - Number(a.getAttribute('data-total')))[0];
+    return { status: col.getAttribute('data-status'), total: Number(col.getAttribute('data-total')) };
+  `);
+  if (target === null) throw new Error("12g: no non-empty column to hand off from");
+
+  if (mut("br12-handoff-is-a-plain-toggle")) {
+    // "The handoff is just a view switch": reach the list the other way, which
+    // is what a board that dropped the status on the way there would produce.
+    await setLayerView(tab, "LIST");
+  } else {
+    await tab.click(`.record-board-col[data-status="${target.status}"] .record-board-more`);
+  }
+  await tab.until(has(".record-list"), { timeout: 10_000, label: "list after the handoff" });
+  await untilListStable(tab);
+
+  const handedOff = await tab.eval(READ_BOARD.which);
+  const listRows = (await tab.eval(READ.rowTitles)).length;
+  const chip = await tab.eval(`
+    const g = [...document.querySelectorAll('.record-filters [role=radiogroup]')]
+      .find(x => x.getAttribute('aria-label') === 'status');
+    if (g === undefined) return null;
+    const b = [...g.querySelectorAll('button')].find(x => x.getAttribute('aria-checked') === 'true');
+    return b === undefined ? null : b.textContent.trim();
+  `);
+  const listApi = await apiJson(
+    `${seeded.url}/api/briefs?${scope === null ? "" : `project=${encodeURIComponent(scope)}&`}status=${encodeURIComponent(target.status)}`,
+  );
+  const unfiltered = await apiJson(
+    `${seeded.url}/api/briefs?${scope === null ? "" : `project=${encodeURIComponent(scope)}`}`,
+  );
+  check(
+    "12g",
+    handedOff.list === true &&
+      handedOff.checked === "LIST" &&
+      chip === target.status &&
+      listRows === target.total &&
+      listRows === listApi.count,
+    `OPEN IN LIST on the ${JSON.stringify(target.status)} column (total ${target.total}) -> ` +
+      `view=${JSON.stringify(handedOff.checked)} list=${handedOff.list} · status chip=${JSON.stringify(chip)} · ` +
+      `DOM rows=${listRows} · endpoint count for that status=${listApi.count} · ` +
+      `UNFILTERED scope count=${unfiltered.count} (the number an unfiltered handoff would show)${
+        mut("br12-handoff-is-a-plain-toggle") ? "  [MUTATED: reached the list by the view chip]" : ""
+      }`,
+  );
+  note(
+    "12g is the whole two-clicks claim in one reading, and it discriminates because the fixture's " +
+      `filtered and unfiltered counts DISAGREE (${listApi.count} vs ${unfiltered.count}): a handoff that ` +
+      "flipped the view and dropped the status would show the larger number. It also covers the one " +
+      "chain no unit test can reach — the list is REMOUNTED by the flip, so the handoff arrives as " +
+      "`useLayerList`'s `initial` values, which is state a `renderToStaticMarkup` render never runs.",
+  );
+
+  // Back to the board for 12f. The flip remounts the board, so its filter
+  // values start empty again — which is why 12f's session begins clean.
+  await setLayerView(tab, "BOARD");
+  await untilBoardStable(tab);
+
+  // --- 12f · READ-ONLY, with a positive control in the same reading ---------
+  //
+  // THE ORDER OF THIS BLOCK IS LOAD-BEARING, and it was got wrong first time:
+  // both mutations came back VACUOUS because the injection sat OUTSIDE the
+  // window the check reads. The POST fired before the `before` snapshot, so its
+  // count was already in the baseline; and the injected `draggable` attribute
+  // was wiped by the REFRESH that came after it, because a re-render unmounts
+  // and remounts the rows. So: snapshot, THEN refresh (the positive control's
+  // traffic), THEN inject, THEN drag, THEN read. Every mutation now lands
+  // strictly inside the measured interval.
+  const before = await tab.instrument();
+  const orderBefore = await tab.eval(`
+    const col = document.querySelector('.record-board-col');
+    return col === null ? [] : [...col.querySelectorAll('.record-row-eye')].map(e => e.textContent.trim());
+  `);
+
+  // REFRESH, so the window this reads contains real requests. Without it "zero
+  // non-GET" would be true of a window with no traffic at all, which is the
+  // dead-counter reading learning 1094 is about.
+  await tab.click(".record-board-meta .record-filter-run");
+  await untilBoardStable(tab);
+
+  if (mut("br12-drag-affordance")) {
+    await tab.eval(`
+      for (const card of document.querySelectorAll('.record-board .record-row')) {
+        card.setAttribute('draggable', 'true');
+      }
+      return 1;
+    `);
+  }
+  if (mut("br12-post-from-board")) {
+    // A deliberately invalid action, so even the mutation run mutates nothing:
+    // the server answers 400 with a stated reason. What matters to 12f is that
+    // the REQUEST left the page while the counter was watching.
+    await tab.eval(`
+      fetch('api/triage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'not-a-real-action', ids: [1] }),
+      }).catch(() => undefined);
+      return 1;
+    `);
+    await tab.settle(600);
+  }
+
+  // Hover every card, then attempt a REAL drag of the first card of the first
+  // column onto the last column: press, several moves, release.
+  const drag = await tab.eval(`
+    const cols = [...document.querySelectorAll('.record-board-col')];
+    const from = cols.map(c => c.querySelector('.record-row')).find(Boolean);
+    const to = cols[cols.length - 1];
+    if (!from || !to) return null;
+    const a = from.getBoundingClientRect(), b = to.getBoundingClientRect();
+    return { x1: a.left + a.width / 2, y1: a.top + a.height / 2, x2: b.left + b.width / 2, y2: b.top + 40 };
+  `);
+  if (drag !== null) {
+    await tab.moveTo(drag.x1, drag.y1);
+    await tab.send("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      x: drag.x1,
+      y: drag.y1,
+      button: "left",
+      clickCount: 1,
+    });
+    for (let i = 1; i <= 6; i++) {
+      await tab.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: drag.x1 + ((drag.x2 - drag.x1) * i) / 6,
+        y: drag.y1 + ((drag.y2 - drag.y1) * i) / 6,
+        button: "left",
+      });
+    }
+    await tab.send("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      x: drag.x2,
+      y: drag.y2,
+      button: "left",
+      clickCount: 1,
+    });
+    await tab.settle(600);
+  }
+
+  const after = await tab.instrument();
+  const affordances = await tab.eval(`
+    return {
+      draggable: document.querySelectorAll('.record-board [draggable]').length,
+      handlers: [...document.querySelectorAll('.record-board *')].filter(e => e.ondragstart !== null || e.ondrop !== null).length,
+      forms: document.querySelectorAll('.record-board form').length,
+    };
+  `);
+  const orderAfter = await tab.eval(`
+    const col = document.querySelector('.record-board-col');
+    return col === null ? [] : [...col.querySelectorAll('.record-row-eye')].map(e => e.textContent.trim());
+  `);
+  const gets = after.fetch - before.fetch;
+  const writes = after.nonGet - before.nonGet;
+  check(
+    "12f",
+    writes === 0 &&
+      gets > 0 &&
+      affordances.draggable === 0 &&
+      affordances.handlers === 0 &&
+      affordances.forms === 0 &&
+      JSON.stringify(orderAfter) === JSON.stringify(orderBefore),
+    `across a full board session (toggle · filter · hover · a real mouse drag across columns · REFRESH): ` +
+      `non-GET=${writes} · GET=${gets} [POSITIVE CONTROL — the witness was watching] · ` +
+      `[draggable]=${affordances.draggable} · drag handlers=${affordances.handlers} · forms=${affordances.forms} · ` +
+      `first column unchanged=${JSON.stringify(orderAfter) === JSON.stringify(orderBefore)}${
+        mut("br12-drag-affordance") ? "  [MUTATED: cards marked draggable]" : ""
+      }${mut("br12-post-from-board") ? "  [MUTATED: one POST fired from the board]" : ""}`,
+  );
+  note(
+    "12f makes TWO independent claims and therefore has TWO mutations: `br12-drag-affordance` " +
+      "breaks the DOM half and `br12-post-from-board` breaks the counter half. Without both, a " +
+      "'no writes' assertion on a page with no write code passes by construction — which is the " +
+      "vacuity this file exists to prevent, not a hypothetical. There is no drag-to-change-status " +
+      "affordance and there is not going to be: `brief_status.status` is the canonical " +
+      "build-state source (MAINTAINING row 94) and TD-311 forbids resolving a state contradiction " +
+      "by editing brief data.",
+  );
+  note(
+    `the board is 1 + N requests and does NOT follow the 5-second live beat (D5): ` +
+      `briefsFetch=${after.briefsFetch} summaryFetch=${after.summaryFetch} over this whole gate, ` +
+      `against a list view that would have issued one per beat. The staleness is carried by the ` +
+      `AS OF stamp the strip renders.`,
+  );
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -4141,6 +4822,11 @@ async function main() {
     // It also spends >10 s waiting for real ladder polls, so like G-BR-9 it
     // costs nothing at the end.
     await runGate("G-BR-10", () => gBr10(tabs.triage, worlds.triage));
+    // FR-245. It opens its OWN tabs on the `seeded` world and it SEEDS one
+    // extra brief there, so it must follow every gate that reads that world's
+    // counts (1, 2, 3, 4, 5, 6, 7, 9) — and it must precede G-BR-11, whose
+    // viewport override would change the column geometry 12c measures.
+    await runGate("G-BR-12", () => gBr12(chrome.port, worlds.seeded));
     // FR-244, LAST. Its own world and its own tab, so its zoom sweep and its
     // viewport overrides cannot disturb any earlier gate — G-BR-7 in particular
     // measures `/api/graph` request counts on the `seeded` document, and G-BR-4

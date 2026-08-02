@@ -111,6 +111,12 @@ describe("the scan has a corpus — it cannot pass by finding nothing", () => {
       "dashboard/src/layers/model.ts",
       "dashboard/src/layers/useLayerList.ts",
       "dashboard/src/layers/useNeighbours.ts",
+      // FR-245 — the board. Named here so a moved or renamed file disarms the
+      // AC-6 read-only scan below LOUDLY rather than by scanning nothing.
+      "dashboard/src/layers/board.ts",
+      "dashboard/src/layers/useBoardColumns.ts",
+      "dashboard/src/layers/useLayersView.ts",
+      "dashboard/src/components/record/RecordBoard.tsx",
       "dashboard/src/markdown/parse.ts",
       "dashboard/src/markdown/Markdown.tsx",
       "dashboard/src/components/record/RecordList.tsx",
@@ -329,6 +335,40 @@ describe("the FR-240 CSS block is token-only and declares no custom property", (
   });
 });
 
+describe("the FR-245 CSS block exists inside that same scan", () => {
+  const css = readFileSync(join(DASH_SRC, "styles", "base.css"), "utf-8");
+
+  it("declares the board classes, and is downstream of the FR-240 marker", () => {
+    // The scan above runs from the FR-240 marker to EOF, so this block inherits
+    // its four constraints (no colour literal, no custom property, no radius,
+    // hairline borders) BY POSITION. That inheritance is only load-bearing if
+    // the block is actually there and actually after the marker.
+    const marker = css.indexOf("FR-240 · the record layer");
+    const board = css.indexOf("FR-245 · the briefs board");
+    expect(board, "the FR-245 CSS block is missing").toBeGreaterThan(0);
+    expect(board).toBeGreaterThan(marker);
+    for (const cls of [
+      ".record-board",
+      ".record-board-col",
+      ".record-board-head",
+      ".record-board-more",
+      ".record-head-actions",
+    ]) {
+      expect(css.slice(board), `${cls} is not styled`).toContain(cls);
+    }
+  });
+
+  it("states the layout grammar in words, for the design_system grounding pass", () => {
+    // FR-245's stated obligation: `design_system.md` does not exist yet and is
+    // filed as its own brief, so the grammar this board introduces has to be
+    // WRITTEN somewhere a grounding pass can lift it from rather than
+    // reverse-engineer it out of declarations.
+    const block = css.slice(css.indexOf("FR-245 · the briefs board"));
+    expect(block).toContain("LAYOUT GRAMMAR");
+    expect(block).toContain("TD-333");
+  });
+});
+
 // ---------------------------------------------------------------------------
 // AC #4 and AC #7
 // ---------------------------------------------------------------------------
@@ -455,6 +495,166 @@ describe("AC #7 · the client has exactly ONE write path, and it is named", () =
       const src = code(file);
       expect(src, `${rel(file)} has a form action`).not.toMatch(/\saction=\{?["']/);
     }
+  });
+});
+
+/**
+ * FR-245 AC-6 — **the board is read-only, and this scan can report a positive.**
+ *
+ * The claim is not "the board happens to issue no writes today". It is that the
+ * board has no affordance that could ever change a brief's state — and the
+ * reason it is absolute rather than risk-weighted is what `status` IS:
+ * `brief_status.status` is the CANONICAL build-state source (MAINTAINING row
+ * 94), the single authoritative answer to "is this brief built?". TD-311
+ * forbids resolving a state contradiction by editing brief data. So a
+ * drag-to-change-status affordance would be a write path into the column the
+ * whole build state is read from, arriving as a convenience.
+ *
+ * WHY THE SCAN IS SHAPED LIKE THIS. "This page issues no writes" is TRIVIALLY
+ * TRUE of a page with no write code, which is the vacuity learnings 1092-1096
+ * record: the assertion and a scan pointed at an empty file list produce
+ * identical output. So the drag VOCABULARY is grepped (the concept, not one
+ * spelling — learning 1131), the corpus is asserted by name above, and S4 below
+ * plants a real affordance and requires the SAME matcher to find it.
+ *
+ * DOES NOT PROVE that no write happens at runtime. That is `G-BR-12f`, which
+ * drags a card with real CDP mouse events and reads an in-page non-GET counter
+ * that ALSO reports `GET > 0`, so its zero is a measurement rather than a dead
+ * counter — with one mutation per half.
+ */
+describe("FR-245 AC-6 · the board has no state-mutating affordance", () => {
+  const BOARD_FILES = [
+    join(DASH_SRC, "layers", "board.ts"),
+    join(DASH_SRC, "layers", "useBoardColumns.ts"),
+    join(DASH_SRC, "layers", "useLayersView.ts"),
+    join(DASH_SRC, "components", "record", "RecordBoard.tsx"),
+    join(DASH_SRC, "pages", "layers", "Briefs.tsx"),
+  ];
+
+  /**
+   * The drag concept in every spelling it can arrive in: the attribute, the
+   * React handler props, the DOM event names, the payload object and the
+   * lowercase HTML forms. Matched over LOWERCASED code, so `onDragStart`,
+   * `ondragstart` and `"dragstart"` are one pattern rather than three.
+   */
+  const DRAG = [/\bdrag[a-z]*\b/, /\bondrop\b/, /\bdatatransfer\b/];
+
+  function dragHits(files: readonly string[]): string[] {
+    const out: string[] = [];
+    for (const file of files) {
+      const lower = code(file).toLowerCase();
+      for (const re of DRAG) {
+        const m = re.exec(lower);
+        if (m !== null) out.push(`${rel(file)}: ${m[0]}`);
+      }
+    }
+    return out;
+  }
+
+  it("S1 — no drag affordance in any board file", () => {
+    expect(dragHits(BOARD_FILES), `drag affordance: ${dragHits(BOARD_FILES).join(", ")}`).toEqual([]);
+  });
+
+  it("S2 — no board file names the write path", () => {
+    for (const file of BOARD_FILES) {
+      const lower = code(file).toLowerCase();
+      for (const verb of [
+        "api.triage",
+        "triageaction",
+        "triage_actions",
+        "usetriage",
+        "onapprove",
+        "onreject",
+      ]) {
+        expect(lower, `${rel(file)} names ${verb}`).not.toContain(verb);
+      }
+    }
+  });
+
+  it("S3 — no board file specifies a request method or calls fetch", () => {
+    // Structurally covered by the whole-tree scans above (this file's AC #7 and
+    // AC #4 blocks), which these files joined automatically by being in
+    // `shipped()`. Asserted again over the NAMED set, because the whole-tree
+    // scan's corpus is a directory walk and this one is a list: if the walk ever
+    // misses the board directory, this still fails.
+    for (const file of BOARD_FILES) {
+      const src = code(file);
+      expect(src, `${rel(file)} names a method`).not.toMatch(/method\s*:\s*["'`]/);
+      expect(src, `${rel(file)} calls fetch`).not.toContain("fetch(");
+    }
+  });
+
+  it("S4 — SELF-NEGATIVE-CONTROL: the matcher finds a planted affordance", () => {
+    /*
+     * Learning 1094, and it is mandatory here rather than nice to have: every
+     * assertion above is "the scan found nothing", which is also what a scan
+     * over an empty corpus, a broken reader, or a `code()` returning "" would
+     * report. So run the SAME function over a file that DOES carry the
+     * affordance and require a hit — then over a file that only MENTIONS it in
+     * a comment and require none, because that exemption is the one this file's
+     * own header prose depends on.
+     */
+    const dir = mkdtempSync(join(tmpdir(), "igris-fr245-scan-"));
+    const hostile = join(dir, "Hostile.tsx");
+    writeFileSync(
+      hostile,
+      [
+        "export function DraggableCard({ row, onMove }) {",
+        "  return (",
+        '    <div draggable="true"',
+        "      onDragStart={(e) => e.dataTransfer.setData('id', row.key)}",
+        "      onDragOver={(e) => e.preventDefault()}",
+        "      onDrop={() => onMove(row.key)}",
+        "    />",
+        "  );",
+        "}",
+      ].join("\n"),
+      "utf-8",
+    );
+    const hits = dragHits([hostile]);
+    expect(hits.length, "the drag matcher found NOTHING in a file full of drag code").toBeGreaterThan(0);
+    expect(hits.join(" ")).toContain("draggable");
+    expect(hits.join(" ")).toContain("datatransfer");
+
+    const prose = join(dir, "Prose.tsx");
+    writeFileSync(
+      prose,
+      "// never make these draggable — status is the canonical build state\nexport const x = 1;\n",
+      "utf-8",
+    );
+    expect(dragHits([prose])).toEqual([]);
+
+    // ...and the real corpus was really read, not silently empty.
+    rmSync(dir, { recursive: true, force: true });
+    for (const file of BOARD_FILES) {
+      expect(code(file).length, `${rel(file)} read as empty`).toBeGreaterThan(400);
+    }
+  });
+
+  it("S5 — the corpus is the SHIPPED corpus, so a new board file joins it", () => {
+    const shippedRel = shipped().map(rel);
+    for (const file of BOARD_FILES) {
+      expect(shippedRel, `${rel(file)} is not in the shipped corpus`).toContain(rel(file));
+    }
+    // The board is reachable from the page, so none of this is dead code being
+    // scanned for show.
+    const briefs = code(join(DASH_SRC, "pages", "layers", "Briefs.tsx"));
+    expect(briefs).toContain("RecordBoard");
+    expect(briefs).toContain("useBoardColumns");
+    expect(briefs).toContain("useLayersView");
+  });
+
+  it("the toggle is persisted in sessionStorage, in exactly ONE file (D4)", () => {
+    // D4 rejected `localStorage` (it would outlive the session) and the URL (it
+    // would force `layerHash`/`recordHash` to carry a filter). Both rejections
+    // are mechanical: a second file persisting a view, or this one reaching for
+    // `localStorage`, fails here.
+    const hook = join(DASH_SRC, "layers", "useLayersView.ts");
+    const hits = shipped().filter((f) => code(f).includes("igris.dashboard.layers.view"));
+    expect(hits.map(rel)).toEqual([rel(hook)]);
+    const src = code(hook);
+    expect(src).toContain("sessionStorage");
+    expect(src, "the view toggle must not outlive the session").not.toContain("localStorage");
   });
 });
 

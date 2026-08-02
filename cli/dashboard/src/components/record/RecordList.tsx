@@ -99,9 +99,30 @@ export interface RecordListProps {
   empty: EmptyCopy;
   /** Extra content below the rows (the missing-docs block). */
   children?: React.ReactNode;
+  /**
+   * FR-245 — controls rendered BESIDE the heading (the view toggle's slot).
+   *
+   * The descriptor grew again, for the same reason `select` did: the briefs
+   * layer needed a LIST/BOARD switch on the page header, and a second list
+   * component that differed only by having one control next to its `<h1>` is
+   * the fork this file exists to prevent. Absent by default, and when absent
+   * the emitted markup is byte-identical to what it was before FR-245.
+   */
+  actions?: React.ReactNode;
 }
 
-function Row({ row }: { row: RecordListRow }) {
+/**
+ * ONE row, rendered.
+ *
+ * EXPORTED BY FR-245, otherwise unchanged. The briefs board is a different
+ * ARRANGEMENT of the same rows, so it composes this function rather than
+ * writing card markup of its own — which is this tier's governing rule ("a row
+ * is DATA, not markup a view writes for itself") applied to the first consumer
+ * that is not a list. Because both views call the same function, the claim
+ * "the board renders the same rows as the list" is true by construction, and
+ * `__tests__/record.test.tsx` asserts the two emit identical row markup.
+ */
+export function RecordRow({ row }: { row: RecordListRow }) {
   const body = (
     <>
       <span className="record-row-eye">{row.eye}</span>
@@ -162,6 +183,31 @@ function Row({ row }: { row: RecordListRow }) {
   );
 }
 
+/**
+ * The page heading, with an optional control slot beside it.
+ *
+ * Shared by `RecordList` and `RecordBoard` so the two arrangements cannot drift
+ * apart in the one place an operator switches between them. With no `actions`
+ * it emits the bare `<h1>` the four layer views have always emitted — the wrap
+ * is conditional precisely so this extraction changes no existing output.
+ */
+export function RecordHeading({
+  heading,
+  actions,
+}: {
+  heading: string;
+  actions?: React.ReactNode;
+}) {
+  const h1 = <h1 className="shell-h1 glitch">{heading}</h1>;
+  if (actions === undefined) return h1;
+  return (
+    <div className="record-head">
+      {h1}
+      <span className="record-head-actions">{actions}</span>
+    </div>
+  );
+}
+
 export function RecordList({
   eye,
   heading,
@@ -173,11 +219,12 @@ export function RecordList({
   loading,
   empty,
   children,
+  actions,
 }: RecordListProps) {
   return (
     <>
       <span className="shell-eye">{eye}</span>
-      <h1 className="shell-h1 glitch">{heading}</h1>
+      <RecordHeading heading={heading} actions={actions} />
       {lede !== undefined && <p className="shell-lede">{lede}</p>}
 
       {banners}
@@ -213,7 +260,7 @@ export function RecordList({
       ) : (
         <ul className="record-list">
           {rows.map((row) => (
-            <Row key={row.key} row={row} />
+            <RecordRow key={row.key} row={row} />
           ))}
         </ul>
       )}

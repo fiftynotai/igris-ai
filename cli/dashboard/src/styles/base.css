@@ -1768,3 +1768,184 @@ h6.record-md-h {
   gap: var(--s-2);
   align-items: center;
 }
+
+/* ─── FR-245 · the briefs board (status columns; the list is retained) ───────
+   Original to FR-245. Held to the SAME two mechanical properties as the FR-240
+   and FR-241 blocks above, and asserted by the same scans — which read from the
+   FR-240 marker to END OF FILE, so this block is already inside them:
+
+   1. ZERO COLOUR LITERALS. Every colour dereferences a role token
+      (`--fg` / `--muted` / `--accent` / `--line` / `--bg`).
+   2. ZERO CUSTOM PROPERTIES, so the FR-239 `:root` cascade bug stays
+      unreachable by construction.
+   Borders are `0.5px solid var(--line)` or `var(--accent)`; radii are zero.
+
+   ─── THE LAYOUT GRAMMAR, WRITTEN DOWN ───
+   `design_system.md` does not exist yet (`/ground design_system` is filed as
+   TD-335). Until it does, this is the written home for the board's
+   grammar, so the grounding pass has something to LIFT rather than something to
+   reverse-engineer:
+
+     · a COLUMN is a FIXED width (`--board-col`-free: the literal is `280px`,
+       declared inline on `.record-board-col` because a custom property here
+       would reintroduce the FR-239 cascade bug). Columns SCROLL horizontally;
+       they never compress. A board that squeezed sixteen columns into the
+       viewport would be a board nobody can read, and the honest answer to "too
+       many columns" is a scrollbar, not a smaller column.
+     · SEPARATION is hairline (`0.5px solid var(--line)`), never a card
+       elevation, never a fill. The strip reads as a table turned on its side.
+     · a COLUMN HEADER is mono, uppercase, letter-spaced — the same voice as
+       `.record-readout` and `.record-filter-label` — and carries `n OF total`.
+       The number is the point: `Done` is 75% of this brain's briefs, and the
+       board's answer to that volume is a COUNT plus a link, never a collapse.
+     · TRUNCATION is a pure function at 22 characters plus an ellipsis
+       (`layers/board.ts#columnLabel`), with `text-overflow` only as a backstop.
+       The full raw status is always on the element as `data-status` and as the
+       native `title`, because two of this brain's statuses are 34-66-character
+       SENTENCES and one carries a commit hash.
+     · CARDS reuse `.record-row` unchanged — the board renders no row markup of
+       its own (`RecordBoard.tsx`, D8).
+
+   ─── WHY THERE ARE THREE COLUMNS THAT ALL MEAN "DONE" ───
+   Not an FR-245 defect. `brief_status.status` has no CHECK constraint and this
+   brain holds `Done`, `Completed` AND `Complete` (plus `In Progress` and
+   `InProgress`, and one status with a commit hash welded into it). The board
+   displays every value faithfully and merges nothing: merging is arithmetic
+   over values the system does not know are the same, and it would hide a data
+   defect behind a tidy column. **TD-333 owns the status vocabulary.** The board
+   sorts equal-normalising SPELLINGS adjacent so the duplication reads as a
+   finding, and says so in a note under the strip.
+   ─────────────────────────────────────────────────────────── */
+
+/* ─── The heading's control slot (the LIST | BOARD toggle) ─── */
+.record-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2);
+}
+.record-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+
+/* ─── The AS OF / column-count / REFRESH strip ─── */
+.record-board-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-2);
+}
+
+/* ─── The strip ───
+   `overflow-x: auto` is the whole layout decision: sixteen columns at 280px is
+   4480px, and the alternative to scrolling is either hiding columns or making
+   them unreadable. `scroll-snap` is deliberately absent — snapping fights a
+   horizontal drag-scroll on a trackpad, which is how this surface is read. */
+.record-board {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s-2);
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding-bottom: var(--s-2);
+  border-top: 0.5px solid var(--line);
+}
+.record-board-col {
+  flex: 0 0 280px;
+  width: 280px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 0.5px solid var(--line);
+  padding: var(--s-2) var(--s-2) var(--s-2) 0;
+}
+.record-board-col:last-child {
+  border-right: 0;
+}
+.record-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-1);
+  padding-bottom: var(--s-1);
+  border-bottom: 0.5px solid var(--accent);
+  margin-bottom: var(--s-1);
+}
+.record-board-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--fg);
+  /* The BACKSTOP. `columnLabel` has already truncated at 22 characters; this
+     catches a wide glyph run, and never the sentence statuses. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.record-board-count {
+  flex: 0 0 auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.record-board-err {
+  margin: 0 0 var(--s-1);
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+}
+/* Cards. `.record-list` already supplies the row rules; this only removes the
+   list's top rule inside a column, whose header already draws one. */
+.record-board-cards {
+  border-top: 0;
+  flex: 1 1 auto;
+}
+.record-board-more {
+  align-self: flex-start;
+  margin-top: var(--s-1);
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 10px 0 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--t-quick) var(--e-std);
+}
+.record-board-more:hover {
+  color: var(--accent);
+}
+.record-board-note {
+  margin: var(--s-2) 0 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.6;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+@media (max-width: 720px) {
+  /* One column at a time, still scrolling. NOT a stacked layout: a board whose
+     columns stack vertically is a list with extra headings, and the list is
+     already one toggle away. */
+  .record-board-col {
+    flex: 0 0 240px;
+    width: 240px;
+  }
+}
