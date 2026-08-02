@@ -475,9 +475,41 @@ interface PackReport {
 }
 
 /**
- * The dashboard packed-size gate is **one number: a hard ceiling of +400 KB**
+ * The dashboard packed-size gate is **one number: a hard ceiling of +550 KB**
  * over `PACK_BASELINE_PACKED`, asserted below. An ordinary CLI change does not
  * fail the suite; a bundle that doubles does.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CEILING WAS RAISED ONCE, DELIBERATELY (TD-329, 2026-08-02)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * +400 KB -> +550 KB. This is an OPERATOR decision with a named date, not a
+ * precedent that the number moves whenever it binds. It was raised BEFORE the
+ * work that needed it, with the estimate on the record, rather than after a
+ * failing assertion — which is the distinction that matters.
+ *
+ *   the ask:   "the dashboard is an essential tool, so it justifies going as
+ *              much as it needs to deliver the full functionality we are
+ *              trying to cover" — operator, 2026-08-02
+ *   the state: +376.4 KB spent, 23.6 KB left
+ *   the need:  ~83-115 KB for the five remaining GL-006 briefs, estimated
+ *              against each one's nearest SHIPPED analogue (FR-246 ~ FR-240's
+ *              48 KB shape; FR-247 ~ FR-241's 39 KB shape)
+ *   the grant: +550 KB, leaving 173.6 KB — covers the estimate with real
+ *              margin and still FAILS on a surprise
+ *
+ * Why 550 and not a bigger round number: FR-239 proposed exactly +550 KB
+ * BEFORE measuring, then landed at +283.4 KB and did not need it (the story is
+ * three paragraphs below). It is a figure this repo already considered and
+ * rejected on evidence, which makes it the honest ask rather than an invented
+ * one.
+ *
+ * THE INSTRUCTION INVERTS, IT DOES NOT DISAPPEAR. The next brief that runs out
+ * still cuts scope or vendors less. What this raise buys is room for work that
+ * was already planned and estimated — it does not make the number negotiable.
+ * A brief that blows through 173.6 KB has done something wrong and the suite
+ * must say so. This gate has caught all three of: a stray runtime dependency,
+ * a vendored asset creeping into `files`, and a ~90 MB HuggingFace model cache
+ * downloading itself during a test run.
  *
  * WHY THERE IS ONLY ONE NUMBER NOW — read this before adding a second.
  * FR-238 shipped a PAIR: a +250 KB "budget" and a +400 KB asserted ceiling.
@@ -525,14 +557,14 @@ interface PackReport {
  *                                   layer, and two more vendored brain modules
  *                                   (`tools/suggestions-read.js` plus the
  *                                   `engine/index.js` the write door boots).
- *   headroom remaining  ~29.4 KB    (30_142 B under the +400 KB ceiling)
+ *   headroom remaining  ~29.4 KB    (30_142 B under the THEN-CURRENT +400 KB)
  *
  * BR-082 MEASURED LAST TOO, after its final code-touching step:
  *   packed              1_684_456    unpacked 6_579_731, 792 entries (UNCHANGED
  *                                    entry count — it added no file to the pack)
  *   cumulative delta    +373.6 KB    (382_605 B over PACK_BASELINE_PACKED)
- *   BR-082's own share  +2_920 B     against FR-241's 1_681_309
- *   headroom remaining  ~26.4 KB     (26_995 B under the +400 KB ceiling)
+ *   BR-082's own share  +3_147 B     against FR-241's 1_681_309
+ *   headroom remaining  ~26.4 KB     (26_995 B under the THEN-CURRENT +400 KB)
  *
  * BR-082 DELETED a client implementation and still grew the tarball, which is
  * the FR-241 phase-7 lesson repeating: Vite MINIFIES the client so comments
@@ -545,7 +577,8 @@ interface PackReport {
  *                                    again — it added no file to the pack)
  *   cumulative delta    +376.4 KB    (385_442 B over PACK_BASELINE_PACKED)
  *   TD-326's own share  +2_837 B     against BR-082's 1_684_456
- *   headroom remaining  ~23.6 KB     (24_158 B under the +400 KB ceiling)
+ *   headroom remaining  ~23.6 KB     (24_158 B under the THEN-CURRENT +400 KB)
+ *                                    -> 173.6 KB (177_758 B) under TD-329's +550
  *
  * That figure moved TWICE during TD-326's review — 1_686_781 -> 1_686_903 ->
  * 1_687_005 -> 1_687_293 — the first three because a warden round edited a
@@ -577,7 +610,7 @@ interface PackReport {
  *
  * A STALE FIGURE CORRECTED WHILE PASSING (TD-326). `MAINTAINING.md` row 108
  * carried BR-082 at 1_683_163 packed / +1_854 B own share / 28_288 B headroom,
- * while this ledger carried 1_684_456 / +2_920 B / 26_995 B — a 1_293 B
+ * while this ledger carried 1_684_456 / +3_147 B / 26_995 B — a 1_293 B
  * disagreement, because BR-082 re-measured after a later edit and updated one
  * of the two places. THIS file is the authoritative one (it is the only copy an
  * assertion runs beside), and row 108 is now re-pointed at it. That is the
@@ -585,10 +618,20 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~23.6 KB is what is left, and five
- * GL-006 briefs remain. That is now smaller than what any single brief in this
- * family has spent except TD-326 and BR-082. The answer is still to cut or to
- * vendor less, never to raise `PACK_HARD_CEILING_DELTA`.
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~173.6 KB is what is left, and five
+ * GL-006 briefs remain, estimated at ~83-115 KB against their shipped
+ * analogues. So the margin is real but it is roughly ONE FR-240 (48.4 KB) of
+ * slack, not room for a surprise the size of FR-239 (95.5 KB) or FR-238
+ * (187.9 KB). The answer when it binds is still to cut or to vendor less,
+ * never to raise `PACK_HARD_CEILING_DELTA` — TD-329 raised it ONCE, before the
+ * work, as a recorded operator decision, and that is not a precedent.
+ *
+ * (An earlier revision of this sentence said the headroom was "smaller than
+ * what any single brief has spent except TD-326 and BR-082". That was true at
+ * ~23.6 KB and became FALSE at 173.6 KB — the number was swapped and the claim
+ * built on it was left standing. Caught in review. It is the learning-1131
+ * failure in its subtlest form: a class-grep finds the VALUE, but a claim
+ * ABOUT the value carries no copy of it.)
  *
  * THE CEILING DID NOT MOVE FOR FR-241, and none of its three pre-declared cut
  * levers was needed. It planned against ~68 KB and spent ~39 KB. The reason the
@@ -621,7 +664,7 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~23.6 KB is what is left** (the
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~173.6 KB is what is left** (the
  * TD-326 reading above; ~26.4 KB was BR-082's and is superseded). If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise
  * `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above spend thirty
@@ -651,7 +694,7 @@ interface PackReport {
  * clean worktree and update this constant together with this provenance note.
  */
 const PACK_BASELINE_PACKED = 1_301_851;
-const PACK_HARD_CEILING_DELTA = 400 * 1024;
+const PACK_HARD_CEILING_DELTA = 550 * 1024; // TD-329, operator, 2026-08-02
 
 /**
  * Memoised. `npm pack --dry-run` walks the whole package and takes a couple of
@@ -778,7 +821,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
     }
   });
 
-  it("stays under the hard packed-size ceiling (+400 KB over baseline)", () => {
+  it("stays under the hard packed-size ceiling (+550 KB over baseline)", () => {
     const report = packReport();
     const delta = report.size - PACK_BASELINE_PACKED;
     expect(

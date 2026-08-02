@@ -1110,7 +1110,7 @@ stale bundle ships. It prints measured byte sizes on every run, and
 
 `cli/package.json` `files` already lists `"dist"`, so `dist/dashboard/**` ships
 with no manifest change. `tarball.test.ts` asserts that it actually does, and
-that the packed size stays under the FR-238 ceiling.
+that the packed size stays under the packed-size ceiling (introduced by FR-238, raised to +550 KB by TD-329).
 
 All build dependencies (vite, react, react-dom, tailwind, gsap) are
 **devDependencies**. `npm i -g igris-ai` installs **zero** new runtime deps —
@@ -1127,7 +1127,7 @@ the server is `node:http`.
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+400 KB** over baseline, the single asserted number, and it did **not** move for FR-241. Measured last in each brief: **+331.8 KB** cumulative at the end of FR-240's warden pass (FR-240's own share +48.4 KB), and **+370.6 KB** cumulative at the end of FR-241's phase 7 (1_681_309 packed / 6_572_495 unpacked / 792 entries; FR-241's own share **+38.8 KB**, leaving ~29.4 KB of headroom). The budget is cumulative across the family, not per-brief. Also asserts the vendored read modules and their wrappers — and, since FR-241, `tools/suggestions-read.js` and `engine/index.js` — are actually in the tarball. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326), leaving **173.6 KB** under the new ceiling. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |

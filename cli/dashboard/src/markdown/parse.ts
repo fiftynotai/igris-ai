@@ -6,11 +6,13 @@
  * ─────────────────────────────────────────────────────────────────────────
  * Two forcing constraints, both from the plan's D4:
  *
- *  1. **The packed-size ceiling is ONE cumulative number** (+400 KB over
- *     `PACK_BASELINE_PACKED`, across FR-238/239/240/241). FR-239 spent
+ *  1. **The packed-size ceiling is ONE cumulative number** (+400 KB at the
+ *     time this was written, across FR-238/239/240/241; raised to +550 KB by
+ *     TD-329 on 2026-08-02 as a recorded operator decision). FR-239 spent
  *     +283.4 KB, so at authoring time FR-240 and FR-241 had ~116.6 KB between
  *     them. A markdown dependency is the single easiest way to spend all of it
- *     on one feature.
+ *     on one feature — and the raise does not change that reasoning, which is
+ *     why this renderer stays in-repo.
  *
  *     *Measured outcome, recorded so this reads as a decision rather than a
  *     forecast:* FR-240 shipped **+47.2 KB** all in, this parser included —

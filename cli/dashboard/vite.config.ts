@@ -41,7 +41,9 @@ export default defineConfig({
     //
     // FR-240 deliberately did NOT touch `PACK_HARD_CEILING_DELTA`: the packed
     // delta measured +48.4 KB for this brief, +331.8 KB cumulative against the
-    // +400 KB ceiling, leaving ~68.2 KB for FR-241 (re-measured at the end of
+    // +400 KB ceiling AS IT STOOD THEN (TD-329 raised it to +550 KB on
+    // 2026-08-02; `tarball.test.ts` is authoritative), leaving ~68.2 KB for
+    // FR-241 (re-measured at the end of
     // the warden pass — `tarball.test.ts` carries the full provenance and the
     // two earlier, now-superseded readings). Note the two numbers move very
     // differently — this one is one minified chunk, that one is the whole

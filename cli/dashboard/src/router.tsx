@@ -17,8 +17,11 @@
  * it just means a hand-typed deep path lands on the shell instead of a 404.
  *
  * WHY NOT react-router: four routes and one sub-path grammar. A router
- * dependency would be ~10 KB packed against a cumulative ceiling FR-239 has
- * already spent 71% of.
+ * dependency would be ~10 KB packed against a cumulative ceiling FR-239 had
+ * already spent 71% of AT THE TIME (+400 KB; TD-329 raised it to +550 KB on
+ * 2026-08-02, making the same spend 51.5%). The argument holds either way —
+ * and this line is why a sweep needs a CONCEPT grep as well as a value grep:
+ * a derived percentage carries no copy of the number it derives from.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * THE SUB-PATH GRAMMAR LIVES IN `layers/model.ts`, NOT HERE
