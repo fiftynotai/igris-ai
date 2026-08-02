@@ -15,6 +15,16 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as os from 'os';
 import type { StorageAdapter } from './engine/types.js';
+// TD-328 (v22): the brief_type fold tables. Imported — never hand-copied — so
+// the migration and the write boundary can never drift (the two-copies class
+// that already bit CANONICAL_PHASES). `tools/brief-normalize.ts` imports
+// nothing, so this edge is acyclic.
+import {
+  CANONICAL_BRIEF_TYPES,
+  BRIEF_TYPE_ALIASES,
+  BRIEF_TYPE_COMPOUND_FOLDS,
+  BRIEF_ID_PREFIX_TYPES,
+} from './tools/brief-normalize.js';
 
 /**
  * CommonJS require shim. The package is ESM (`"type": "module"`),
@@ -1281,6 +1291,229 @@ function migrateSchema(db: Database.Database): void {
       db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (21)').run();
     })();
     console.error('[brain] Schema migrated to version 21 (TD-277 instance activity timestamp rename)');
+  }
+
+  // v22: brief_type vocabulary fold (TD-328).
+  //
+  // A one-time, idempotent DATA migration that folds the historical
+  // brief_status rows to the canonical vocabulary the TD-328 write boundary now
+  // enforces. `brief_type` was free text: 50 distinct non-NULL spellings plus
+  // NULL for ~10 concepts. TD-238's v18 fold only ever knew TWO aliases
+  // ('Tech Debt', 'Bug Fix'), and normalizeBriefType ran on WRITE only — so
+  // every pre-existing row kept its spelling. Widening the map without
+  // backfilling (or backfilling without widening) fixes nothing; v22 is the
+  // second half.
+  //
+  // WHAT IT TOUCHES: `brief_status.brief_type`. NOTHING ELSE. Not content, not
+  // title, not status, not phase, not claimed_by, not embedding — and
+  // explicitly NOT `updated_at` (see LWW below). Same column discipline v18
+  // relied on (#230).
+  //
+  // TD-311 CARVE-OUT (stated so a reviewer does not have to derive it): TD-311
+  // forbids resolving brief-STATE contradictions by editing brief data — you do
+  // not fix a status/phase/git disagreement by rewriting the brief. This
+  // migration reads and writes only the TYPE vocabulary. It resolves no state
+  // contradiction and creates none. It is a type-vocabulary NORMALISATION,
+  // categorically outside TD-311's rule — the same carve-out v18 already used
+  // when it folded priority/brief_type while leaving status alone.
+  //
+  // LWW: `brief_type` is in the CLI's sync column sets
+  // (`cli/src/lib/brain-db.ts:896,1256`), so a folded local row must NOT bump
+  // `updated_at` — that would make folded rows fight an un-migrated remote
+  // brain and rewrite a column v18 explicitly protects. The fold is
+  // DETERMINISTIC, so once v22 has applied on both ends they converge to the
+  // same value regardless of which side wins LWW. Apply v22 on the VPS brain
+  // too; the D6 validator catches anything that leaks back.
+  //
+  // Three fold classes, all WHERE-guarded and all bound-param (§14 — no
+  // interpolation; strictly better than v18's inline literals because the
+  // values come from the single-source map rather than a hand-copied list):
+  //   (A) UNCONDITIONAL alias folds — BRIEF_TYPE_ALIASES, plus a canonical
+  //       case-fold so 'feature' becomes 'Feature'.
+  //   (B) GATED compound folds — BRIEF_TYPE_COMPOUND_FOLDS. A compound
+  //       ('Bug Fix / Compliance') encodes a second fact in a single-value
+  //       field. It folds to its head type ONLY where the qualifier token
+  //       already survives in the row's own title or brief_files.content, so
+  //       nothing recoverable is lost. Rows failing the check stay unfolded and
+  //       are reported. `Bug/Feature` has no head type and is absent from the
+  //       table entirely.
+  //   (C) NULL prefix inference — BRIEF_ID_PREFIX_TYPES. Decoding the mint
+  //       prefix back to a type is a lossless decode of a field `/register`
+  //       assigned from the very type question being asked, and it fills an
+  //       ABSENCE (there is no stated value to destroy). `BR-` is deliberately
+  //       absent from the table because /register maps both `bug` and `feature`
+  //       to it — those rows stay NULL and are reported instead.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 22 is recorded.
+  //
+  // BACKUP — AND THE DELIBERATE DIVERGENCE FROM v19: the snapshot is taken
+  // OUTSIDE the transaction (VACUUM cannot run inside one), exactly like v19.
+  // But v19 treats a failed snapshot as NON-FATAL because its operation (a
+  // table rename) was non-destructive. **v22 IS DESTRUCTIVE** — the old
+  // spelling is unrecoverable from the row itself once folded — so a failed OR
+  // UNVERIFIABLE snapshot MUST ABORT the migration. We do not merely write the
+  // file; we PROVE it: `PRAGMA integrity_check` must return 'ok' AND its
+  // `brief_status` row count must equal the source's. On any failure v22 logs
+  // and skips, leaving the DB at v21; the next boot retries. As in v19, the
+  // snapshot is skipped entirely for `:memory:` / `file::memory:` DBs — there is
+  // no sibling file to snapshot to, and a test DB has nothing to lose.
+  //
+  // Gate behind v21's actual completion (re-read schema_version, L-209) so this
+  // DATA-only migration — which has NO vec dependency — applies even on a
+  // vec-less machine where the v13 vec backfill stopped the chain. The
+  // db-migration-v22.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV21Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV21Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  // Precondition: `brief_status` must exist. A DB without it is a partial /
+  // fixture schema, not a brain — there is nothing to fold, and recording v22
+  // would falsely mark it migrated. SKIP WITHOUT RECORDING so the next boot
+  // retries once the table is there (the v13 skip-then-heal precedent).
+  const haveBriefStatus =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV21Version >= 21 && postV21Version < 22 && haveBriefStatus) {
+    const dbFile = db.name;
+    const isFileDb =
+      dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+
+    // --- Backup + PROOF (abort on failure — see the divergence note above) ---
+    let backupVerified = true;
+    let abortReason = '';
+    if (isFileDb) {
+      const backupPath = `${dbFile}.pre-v22.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v22 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            backupVerified = false;
+            abortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            backupVerified = false;
+            abortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        backupVerified = false;
+        abortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!backupVerified) {
+      // ABORT at v21. v22 is destructive; without a proven-restorable snapshot
+      // we do not fold. The next boot retries (the stale/partial .bak is left
+      // in place on purpose so an operator can inspect it).
+      console.error(
+        `[brain] v22 ABORTED — backup snapshot unusable (${abortReason}). ` +
+          'DB left at schema version 21; the fold is destructive and will not ' +
+          'run without a verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      const tableExists = (name: string): boolean =>
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`)
+          .get(name) !== undefined;
+      const haveBriefFiles = tableExists('brief_files');
+
+      db.transaction(() => {
+        // (A) Unconditional alias folds — the single-source map, bound params.
+        const foldAlias = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NOT NULL AND LOWER(TRIM(brief_type)) = ?`,
+        );
+        for (const [alias, canonical] of Object.entries(BRIEF_TYPE_ALIASES)) {
+          foldAlias.run(canonical, alias);
+        }
+        // (A2) Canonical case-fold — 'feature'/'  Feature ' → 'Feature'. The
+        // `brief_type <> ?` guard keeps already-canonical rows untouched so the
+        // statement is a genuine no-op on a second run.
+        const foldCase = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NOT NULL
+               AND LOWER(TRIM(brief_type)) = ?
+               AND brief_type <> ?`,
+        );
+        for (const canonical of CANONICAL_BRIEF_TYPES) {
+          foldCase.run(canonical, canonical.toLowerCase(), canonical);
+        }
+
+        // (B) Gated compound folds (D4). The qualifier must already survive in
+        // the row's own title or content, else the row is left alone.
+        const foldCompound = db.prepare(
+          haveBriefFiles
+            ? `UPDATE brief_status SET brief_type = ?
+                 WHERE LOWER(TRIM(brief_type)) = ?
+                   AND (
+                     ' ' || LOWER(title) || ' ' LIKE ?
+                     OR EXISTS (
+                       SELECT 1 FROM brief_files bf
+                        WHERE bf.project = brief_status.project
+                          AND bf.brief_id = brief_status.brief_id
+                          AND ' ' || LOWER(bf.content) || ' ' LIKE ?
+                     )
+                   )`
+            : // brief_files absent (a partial/fixture schema) — title-only check.
+              // Strictly more conservative: fewer rows fold, none fold wrongly.
+              `UPDATE brief_status SET brief_type = ?
+                 WHERE LOWER(TRIM(brief_type)) = ?
+                   AND ' ' || LOWER(title) || ' ' LIKE ?`,
+        );
+        for (const [compound, fold] of Object.entries(BRIEF_TYPE_COMPOUND_FOLDS)) {
+          for (const token of fold.tokens) {
+            const pattern = `%${token}%`;
+            if (haveBriefFiles) {
+              foldCompound.run(fold.head, compound, pattern, pattern);
+            } else {
+              foldCompound.run(fold.head, compound, pattern);
+            }
+          }
+        }
+
+        // (C) NULL prefix inference (D5). Fills an absence; never overwrites.
+        const inferFromPrefix = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NULL AND brief_id LIKE ?`,
+        );
+        for (const [prefix, type] of Object.entries(BRIEF_ID_PREFIX_TYPES)) {
+          inferFromPrefix.run(type, `${prefix}-%`);
+        }
+
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (22)').run();
+      })();
+      console.error(
+        '[brain] Schema migrated to version 22 (TD-328 brief_type vocabulary fold)',
+      );
+    }
   }
 }
 

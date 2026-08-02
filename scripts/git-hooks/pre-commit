@@ -46,6 +46,15 @@ set -e
 #       Done-but-no-commit, committed-but-open) against the canonical
 #       brief_status.status source. WARN only — surfaces the report, does
 #       NOT block the commit (matches check_contract_consumers' posture).
+#   - validate_brief_type_vocabulary.sh  (TD-328)
+#       Triggers if: brain-mcp-server/src/tools/brief-normalize.ts OR
+#                    brain-mcp-server/src/db.ts OR MAINTAINING.md is staged.
+#       Reports the brief_status.brief_type distribution and names every
+#       non-canonical value. This is the ACCUMULATION observer that keeps
+#       read-widen (#228) from becoming permanent silence — the write-
+#       boundary echo in briefs.ts catches MINTING, this catches values that
+#       arrive via remote sync or an older client. WARN only — surfaces the
+#       report, does NOT block the commit.
 #   - validate_error_fingerprint_loop.sh  (TD-240)
 #       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
 #                    staged.
@@ -194,6 +203,7 @@ needs_skill_yaml_check=0
 needs_skill_os_leak_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
+needs_brief_type_check=0
 needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -250,6 +260,17 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh" ]; then
   if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
     needs_reconciliation_check=1
+  fi
+fi
+
+# TD-328: trigger the brief_type vocabulary validator when a vocabulary surface
+# is staged — the normalizer (the fold map + canonical set), db.ts (the v22 data
+# fold), or MAINTAINING.md (the contract home). Keeps it off the hot path; the
+# validator scans the whole DB regardless of which file changed, so the trigger
+# only decides whether to run at all.
+if [ -f "$REPO_ROOT/scripts/validate_brief_type_vocabulary.sh" ]; then
+  if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/db\.ts|MAINTAINING\.md)$'; then
+    needs_brief_type_check=1
   fi
 fi
 
@@ -353,6 +374,22 @@ if [ "$needs_reconciliation_check" = "1" ]; then
   # body to `failed=1` (one-line change — the run block is otherwise unchanged).
   if ! bash "$REPO_ROOT/scripts/validate_brief_state_reconciliation.sh"; then
     echo "[pre-commit] Brief-state contradictions surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_brief_type_check" = "1" ]; then
+  echo "[pre-commit] Checking brief_type vocabulary (TD-328)..."
+  # WARN-ONLY (matches the TD-257 reconciliation block and
+  # check_contract_consumers). The validator exits non-zero when it finds a
+  # non-canonical value, but the hook DOWNGRADES that to a WARN: a value that
+  # arrived via remote sync from an un-migrated brain, or a legitimately new
+  # kind of work that has not been added to the canonical set yet, must not veto
+  # a commit. The whole point of D1 option (b) is that unknown values are kept
+  # and REPORTED, never rejected — a blocking gate here would re-introduce the
+  # hard-reject posture the brief rejected. To flip to hard-fail once the data
+  # is proven clean, change the next line's body to `failed=1`.
+  if ! bash "$REPO_ROOT/scripts/validate_brief_type_vocabulary.sh"; then
+    echo "[pre-commit] brief_type vocabulary drift surfaced above (WARN only — not blocking)."
   fi
 fi
 

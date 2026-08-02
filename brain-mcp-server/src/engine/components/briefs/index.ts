@@ -73,7 +73,8 @@ export function createBriefsComponent(): BrainComponent {
               },
               brief_type: {
                 type: 'string',
-                description: 'Brief type (e.g., "Bug", "Migration", "Feature")',
+                description:
+                  'Brief type. Canonical types (TD-328): Feature, Bug, Migration, Technical Debt, Testing, Process Improvement, Documentation, Acceptance, Performance, Architecture, Dependency Update, Refactor. Known spellings are folded automatically (e.g. "TD"/"TechDebt" -> "Technical Debt", "FR"/"Feature Request" -> "Feature"). An unknown value is NOT rejected — it is stored as-is and reported back in the response.',
               },
               title: {
                 type: 'string',
@@ -210,7 +211,8 @@ export function createBriefsComponent(): BrainComponent {
               },
               brief_type: {
                 type: 'string',
-                description: 'Filter by brief type, e.g., "Bug", "Feature", "Migration" (optional)',
+                description:
+                  'Filter by brief type. Canonical types (TD-328): Feature, Bug, Migration, Technical Debt, Testing, Process Improvement, Documentation, Acceptance, Performance, Architecture, Dependency Update, Refactor. The filter matches the STORED value; non-canonical values may still exist in older rows.',
               },
               priority: {
                 type: 'string',
@@ -261,7 +263,8 @@ export function createBriefsComponent(): BrainComponent {
               },
               brief_type: {
                 type: 'string',
-                description: 'Brief type (e.g., "Bug", "Feature", "Migration")',
+                description:
+                  'Brief type. Canonical types (TD-328): Feature, Bug, Migration, Technical Debt, Testing, Process Improvement, Documentation, Acceptance, Performance, Architecture, Dependency Update, Refactor. Known spellings are folded automatically (e.g. "TD"/"TechDebt" -> "Technical Debt", "FR"/"Feature Request" -> "Feature"). An unknown value is NOT rejected — it is stored as-is and reported back in the response.',
               },
               status: {
                 type: 'string',
@@ -363,7 +366,8 @@ export function createBriefsComponent(): BrainComponent {
               },
               brief_type: {
                 type: 'string',
-                description: 'Updated brief type',
+                description:
+                  'Updated brief type. Canonical types (TD-328): Feature, Bug, Migration, Technical Debt, Testing, Process Improvement, Documentation, Acceptance, Performance, Architecture, Dependency Update, Refactor. Known spellings fold automatically; an unknown value is stored as-is and reported back.',
               },
               filename: {
                 type: 'string',

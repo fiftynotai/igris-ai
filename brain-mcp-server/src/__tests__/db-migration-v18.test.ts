@@ -191,7 +191,7 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(status.phase).toBe('COMPLETE');
   });
 
-  it('records v18 and advances the chain past it (now to 21 — TD-265)', () => {
+  it('records v18 and advances the chain past it (now to 22 — TD-328)', () => {
     expect(getSchemaVersion(db)).toBe(17);
     migrateSchema(db);
     // v18 is recorded in the ladder...
@@ -199,9 +199,9 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
       .prepare('SELECT 1 FROM schema_version WHERE version = 18')
       .get();
     expect(has18).toBeDefined();
-    // ...and migrateSchema runs to completion (v19 registry→catalog + v20
-    // worker-subsystem teardown follow v18).
-    expect(getSchemaVersion(db)).toBe(21);
+    // ...and migrateSchema runs to completion (v19 registry→catalog, v20
+    // worker-subsystem teardown, v21 rename, v22 brief_type fold follow v18).
+    expect(getSchemaVersion(db)).toBe(22);
   });
 
   it('is idempotent — a second migration changes zero rows', () => {
@@ -212,15 +212,15 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     const after1 = db
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
-    // migrateSchema runs to completion (v18 then v19 then v20); terminal is 21.
-    expect(getSchemaVersion(db)).toBe(21);
+    // migrateSchema runs to completion (v18 -> v22); terminal is 22 (TD-328).
+    expect(getSchemaVersion(db)).toBe(22);
 
     // Second run: no version bump, no row change.
     expect(() => migrateSchema(db)).not.toThrow();
     const after2 = db
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
-    expect(getSchemaVersion(db)).toBe(21);
+    expect(getSchemaVersion(db)).toBe(22);
     expect(after2).toEqual(after1);
   });
 
@@ -247,8 +247,8 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(row.priority).toBe('P1-High');
     expect(row.brief_type).toBe('Technical Debt');
     expect(row.phase).toBe('COMPLETE');
-    // v18 applied via the re-read gate; chain runs through v19 + v20 + v21 to completion.
-    expect(getSchemaVersion(fresh)).toBe(21);
+    // v18 applied via the re-read gate; chain runs through v19..v22 to completion.
+    expect(getSchemaVersion(fresh)).toBe(22);
     fresh.close();
   });
 });

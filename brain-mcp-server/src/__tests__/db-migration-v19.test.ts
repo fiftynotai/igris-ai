@@ -293,9 +293,9 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
     migrateSchema(db);
     // v19 is recorded in the ladder...
     expect(db.prepare('SELECT 1 FROM schema_version WHERE version = 19').get()).toBeDefined();
-    // ...and migrateSchema runs to completion (v20 worker-subsystem teardown
-    // follows v19 in the same call).
-    expect(getSchemaVersion(db)).toBe(21);
+    // ...and migrateSchema runs to completion (v20 worker-subsystem teardown,
+    // v21 rename and v22 brief_type fold follow v19 in the same call).
+    expect(getSchemaVersion(db)).toBe(22);
   });
 
   it('is idempotent — a second migration changes nothing and does not throw', () => {
@@ -309,12 +309,12 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
 
     migrateSchema(db);
     const after1 = db.prepare('SELECT * FROM catalog ORDER BY id').all();
-    expect(getSchemaVersion(db)).toBe(21);
+    expect(getSchemaVersion(db)).toBe(22);
 
     // Second run: no version bump, no row change, no throw.
     expect(() => migrateSchema(db)).not.toThrow();
     const after2 = db.prepare('SELECT * FROM catalog ORDER BY id').all();
-    expect(getSchemaVersion(db)).toBe(21);
+    expect(getSchemaVersion(db)).toBe(22);
     expect(after2).toEqual(after1);
     // catalog still present, registry still gone.
     expect(tableExists(db, 'catalog')).toBe(true);
@@ -346,7 +346,7 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
 
     migrateSchema(fresh);
 
-    expect(getSchemaVersion(fresh)).toBe(21);
+    expect(getSchemaVersion(fresh)).toBe(22);
     expect(tableExists(fresh, 'catalog')).toBe(true);
     expect(tableExists(fresh, 'registry')).toBe(false);
     const row = fresh

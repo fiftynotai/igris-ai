@@ -506,8 +506,10 @@ interface PackReport {
  * THE INSTRUCTION INVERTS, IT DOES NOT DISAPPEAR. The next brief that runs out
  * still cuts scope or vendors less. What this raise buys is room for work that
  * was already planned and estimated — it does not make the number negotiable.
- * A brief that blows through 173.6 KB has done something wrong and the suite
- * must say so. This gate has caught all three of: a stray runtime dependency,
+ * A brief that blows through the remaining headroom (see the per-brief ledger
+ * below for the current figure — deliberately NOT restated here, because a
+ * claim that carries its own copy of the number is the learning-1131 trap)
+ * has done something wrong and the suite must say so. This gate has caught all three of: a stray runtime dependency,
  * a vendored asset creeping into `files`, and a ~90 MB HuggingFace model cache
  * downloading itself during a test run.
  *
@@ -580,6 +582,43 @@ interface PackReport {
  *   headroom remaining  ~23.6 KB     (24_158 B under the THEN-CURRENT +400 KB)
  *                                    -> 173.6 KB (177_758 B) under TD-329's +550
  *
+ * TD-328 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_712_208    unpacked 6_665_472, 793 entries (+1 — the
+ *                                    FIRST entry-count change since FR-241)
+ *   cumulative delta    +400.7 KB    (410_357 B over PACK_BASELINE_PACKED)
+ *   TD-328's own share  +24_915 B    against TD-326's 1_687_293  (24.3 KB)
+ *   headroom remaining  ~149.3 KB    (152_843 B under TD-329's +550)
+ *
+ *   (Moved +2_505 B during warden's round: the B1 fix — the script had been
+ *   calling getDb(), which MIGRATES the DB it was supposed to be reading — plus
+ *   the comment edits that came with it. `tsc` carries all of it into `dist/`.
+ *   Measure-LAST earning its keep for a fourth brief running.)
+ *
+ * TD-328 IS THE ROW THAT BREAKS THE "IT'S ONLY THE DASHBOARD" READING OF THIS
+ * LEDGER, and it is here because a WRONG STRUCTURAL CLAIM was inherited from a
+ * plan and passed to the builder as a technical anchor: "`brain-mcp-server/` is
+ * not in the npm package and has no ceiling pressure". That is FALSE. The `cli`
+ * package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`
+ * — `db.js` alone is ~72 KB packed, `index.js` ~71 KB, `tools/sync.js` ~68 KB.
+ * A brief that touches ONLY `brain-mcp-server/` still spends packed bytes here.
+ * Every prior entry in this ledger is a `cli/`-side brief, which is precisely
+ * how the misreading survived: the evidence was consistent with it by accident.
+ * (Banked as learning 1132.)
+ *
+ * Where TD-328's 24.3 KB went, since it wrote no view and no endpoint:
+ *   - a NEW packed entry, `dist/brain-mcp-server/scripts/normalize_brief_types.ts`
+ *     (~15.9 KB) — the +1 on the entry count. `dist/brain-mcp-server/scripts/`
+ *     ALREADY ships eight comparable maintenance scripts (`backfill_brief_edges.ts`,
+ *     `td286_renormalize_backfill.ts`, …), so this follows an existing precedent
+ *     rather than opening a new class. DO NOT delete it on sight as stray weight.
+ *   - growth in the bundled `db.js`, `tools/brief-normalize.js`, `tools/briefs.js`
+ *     and `engine/components/briefs/index.js` plus their `.map`s — `tsc`
+ *     preserves comments into `dist/`, and this brief is comment-dense by design
+ *     (a migration whose rationale is not written down gets "corrected" later).
+ *   - `cli/CHANGELOG.md`, which SHIPS (see the TD-326 note below).
+ * The BR-082/FR-241 lesson therefore generalises: budget for comments in ANY
+ * `tsc`-compiled package that ends up under `dist/`, not just `cli/src/lib/**`.
+ *
  * That figure moved TWICE during TD-326's review — 1_686_781 -> 1_686_903 ->
  * 1_687_005 -> 1_687_293 — the first three because a warden round edited a
  * comment in `cli/src/lib/**`, which `tsc` carries into `dist/` verbatim, and
@@ -602,7 +641,7 @@ interface PackReport {
  *                `types.ts`, `params.ts`, `routes.ts`
  *   CLIENT (4) — `ProjectScope.tsx`, `api.ts`, `useProjectScope.ts`,
  *                `Triage.tsx`
- * and still spent under 2.6 KB, because the FOUR client files carry most of its
+ * and still spent +2_837 B (2.77 KB), because the FOUR client files carry most of its
  * prose and Vite minifies those to nothing. The spend is almost entirely the
  * comment blocks in `cli/src/lib/**` plus the vendored reader — the BR-082
  * lesson holding for a third brief running: budget for SERVER comments, not for
@@ -618,7 +657,8 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~173.6 KB is what is left, and five
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~149.3 KB is what is left (the
+ * TD-328 reading above; ~173.6 KB was TD-326's and is superseded), and five
  * GL-006 briefs remain, estimated at ~83-115 KB against their shipped
  * analogues. So the margin is real but it is roughly ONE FR-240 (48.4 KB) of
  * slack, not room for a surprise the size of FR-239 (95.5 KB) or FR-238
@@ -664,8 +704,10 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~173.6 KB is what is left** (the
- * TD-326 reading above; ~26.4 KB was BR-082's and is superseded). If the next
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~149.3 KB is what is left** (the
+ * TD-328 reading above; ~173.6 KB was TD-326's and is superseded). And note
+ * TD-328's correction to the SCOPE of this budget: a brief that touches only
+ * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise
  * `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above spend thirty
  * lines on. (FR-241 was told the same thing about its ~68 KB and did not need

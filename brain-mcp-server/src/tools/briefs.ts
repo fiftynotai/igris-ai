@@ -20,7 +20,12 @@ import { getDb } from '../db.js';
 // lets the FR-238 dashboard reach the same queries with its own read-only
 // handle. Do not move query logic back up here.
 import { listBriefs, getBrief } from './briefs-read.js';
-import { normalizePhase, normalizePriority, normalizeBriefType } from './brief-normalize.js';
+import {
+  normalizePhase,
+  normalizePriority,
+  normalizeBriefType,
+  nonCanonicalBriefTypeNote,
+} from './brief-normalize.js';
 import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
@@ -155,6 +160,10 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
     normalizePhase(args.phase)
   );
 
+  // TD-328 D6(c): report a non-canonical type back to the caller. Informs;
+  // never rejects, never alters what was stored.
+  const typeNote = nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type));
+
   return {
     content: [{
       type: 'text',
@@ -168,6 +177,7 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
         args.priority ? `Priority: ${args.priority}` : null,
         args.effort ? `Effort: ${args.effort}` : null,
         args.phase ? `Phase: ${args.phase}` : null,
+        typeNote ? `\n${typeNote}` : null,
       ].filter(Boolean).join('\n'),
     }],
   };
@@ -505,6 +515,10 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
     embeddingNote = '\nEmbedding: skipped (will be generated on backfill)';
   }
 
+  // TD-328 D6(c): the mint surface is where a 51st spelling is born, so this is
+  // the highest-value place to report one. Informs; never rejects.
+  const typeNote = nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type));
+
   return {
     content: [{
       type: 'text',
@@ -517,7 +531,8 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
         `Status: ${status}`,
         `Content hash: ${contentHash.substring(0, 12)}...`,
         `Size: ${args.content.length} chars`,
-      ].join('\n') + embeddingNote + similarityWarning,
+      ].join('\n') + embeddingNote + similarityWarning +
+        (typeNote ? `\n\n${typeNote}` : ''),
     }],
   };
 }
@@ -671,6 +686,13 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
     };
   }
 
+  // TD-328 D6(c): only when brief_type was actually part of this update —
+  // re-typing a brief is the other way a non-canonical value enters the store.
+  const typeNote =
+    args.brief_type !== undefined
+      ? nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type))
+      : null;
+
   return {
     content: [{
       type: 'text',
@@ -680,7 +702,8 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
         `Project: ${args.project}`,
         `Brief: ${args.brief_id}`,
         `Updated fields: ${updated.join(', ')}`,
-      ].join('\n'),
+        typeNote ? `\n${typeNote}` : null,
+      ].filter(Boolean).join('\n'),
     }],
   };
 }

@@ -69,6 +69,10 @@ describe('migration v21 — instance activity timestamp rename (TD-277)', () => 
 
     expect(columns('instances')).toContain('last_activity_at');
     expect(columns('instances')).not.toContain('last_heartbeat_at');
+    // Terminal is 21, NOT 22: this fixture has no `brief_status` table, so the
+    // v22 brief_type fold (TD-328) hits its precondition guard and SKIPS
+    // WITHOUT RECORDING — a partial schema must not be marked as migrated. The
+    // next boot retries once the table exists (v13 skip-then-heal precedent).
     expect(getSchemaVersion()).toBe(21);
 
     const row = db

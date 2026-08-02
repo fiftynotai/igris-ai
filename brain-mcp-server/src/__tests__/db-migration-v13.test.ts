@@ -174,7 +174,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
       // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(21);
+      expect(getSchemaVersion(db)).toBe(22);
     },
   );
 
@@ -201,7 +201,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
       // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(21);
+      expect(getSchemaVersion(db)).toBe(22);
 
       const learningsCount = db
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
@@ -258,7 +258,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
       // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(21);
+      expect(getSchemaVersion(db)).toBe(22);
       expect(tableExists(db, 'learnings_vec')).toBe(true);
       expect(tableExists(db, 'errors_vec')).toBe(true);
       expect(tableExists(db, 'briefs_vec')).toBe(true);
@@ -298,7 +298,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
       // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(21);
+      expect(getSchemaVersion(db)).toBe(22);
     },
   );
 
@@ -318,7 +318,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
       // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(21);
+      expect(getSchemaVersion(db)).toBe(22);
 
       // 3 rows seeded, row 0 had a malformed (100-byte) embedding → skipped.
       // Other 2 must still be backfilled.

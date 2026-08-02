@@ -65,18 +65,31 @@ If type not specified, ask user which type.
 
 ### 2. Determine Prefix
 
-Map type to brief prefix:
-| Type | Prefix |
-|------|--------|
-| bug, feature | BR |
-| migration | MG |
-| debt | TD |
-| testing | TS |
-| process | PI |
-| request | FR |
-| dependency | DU |
-| performance | PF |
-| architecture | AC |
+Map type to brief prefix — and to the canonical `brief_type` value you will
+write in step 5. **The two sets move together**: a prefix with no matching
+canonical type is how `brief_type` drifted to 50 spellings (TD-328), because a
+`DU-`/`AC-` brief had no legal type to write and one got invented. If you ever
+add a prefix here, add its canonical type in
+`brain-mcp-server/src/tools/brief-normalize.ts` in the same change.
+
+| Type | Prefix | Canonical `brief_type` |
+|------|--------|------------------------|
+| bug, feature | BR | `Bug` **or** `Feature` — pick from the title; `BR` covers both |
+| migration | MG | `Migration` |
+| debt | TD | `Technical Debt` |
+| testing | TS | `Testing` |
+| process | PI | `Process Improvement` |
+| request | FR | `Feature` |
+| dependency | DU | `Dependency Update` |
+| performance | PF | `Performance` |
+| architecture | AC | `Architecture` |
+| (no prefix — docs work) | — | `Documentation` |
+| (no prefix — see note) | — | `Refactor` |
+
+`Refactor` is canonical but has **no mint prefix**: it was promoted on measured
+evidence (only 41% of refactor briefs carried a `TD-` prefix) and the operator
+declined an `RF-` prefix. Use it for refactor work minted under `BR-` or `TD-`.
+See `core/enforcement/brief-type-vocabulary.md`.
 
 ### 3. Find Next Available Number
 
@@ -114,7 +127,7 @@ Construct brief markdown content using this structure:
 # {PREFIX}-{XXX}: {title}
 
 ## Metadata
-- **Type:** {Bug Fix | Feature | Migration | Tech Debt | Testing | ...}
+- **Type:** {Feature | Bug | Migration | Technical Debt | Testing | Process Improvement | Documentation | Acceptance | Performance | Architecture | Dependency Update | Refactor}
 - **Priority:** {priority, default P2}
 - **Status:** Ready
 - **Effort:** {effort if known, otherwise omit}
@@ -152,7 +165,15 @@ Call `igris_brief_create` with:
 - **brief_id:** the new brief ID (e.g., "FR-031")
 - **title:** the brief title
 - **content:** the constructed markdown from step 4
-- **brief_type:** type (Bug, Feature, Migration, etc.)
+- **brief_type:** ONE of the canonical types from the §2 table — `Feature`,
+  `Bug`, `Migration`, `Technical Debt`, `Testing`, `Process Improvement`,
+  `Documentation`, `Acceptance`, `Performance`, `Architecture`,
+  `Dependency Update`, `Refactor`. If none fit, pick the CLOSEST canonical type
+  and explain the nuance in the brief body — do not invent a new spelling or a
+  compound like `Feature / Infrastructure`. The brain accepts anything (it never
+  rejects a brief over a type) but it will REPORT a non-canonical value back to
+  you in the tool response, and it will keep showing up in the vocabulary
+  validator until someone resolves it (TD-328).
 - **status:** "Ready" (or "Draft" if info incomplete)
 - **priority:** the assigned priority (default "P2")
 - **effort:** the assigned effort if known

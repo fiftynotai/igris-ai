@@ -16,6 +16,7 @@
     "test": "vitest run",
     "eval:memory": "tsx eval/memory/src/run.ts",
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts",
+    "normalize-brief-types": "tsx scripts/normalize_brief_types.ts",
     "gen:egress-manifest": "tsx scripts/gen-egress-manifest.ts",
     "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check"
   },
