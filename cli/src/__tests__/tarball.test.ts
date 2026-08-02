@@ -594,6 +594,52 @@ interface PackReport {
  *   the comment edits that came with it. `tsc` carries all of it into `dist/`.
  *   Measure-LAST earning its keep for a fourth brief running.)
  *
+ * FR-244 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_714_296    unpacked 6_671_517, 793 entries (UNCHANGED
+ *                                    — it added no file to the package)
+ *   cumulative delta    +402.8 KB    (412_445 B over PACK_BASELINE_PACKED)
+ *   FR-244's own share  +2_088 B     against TD-328's 1_712_208  (2.04 KB)
+ *   headroom remaining  ~147.2 KB    (150_755 B under TD-329's +550)
+ *
+ *   (Moved +1_912 B during the review round, from 176 B to 2_088 B — a
+ *   TWELVEFOLD increase, and worth the line because of WHERE it came from.
+ *   The code fix in that round was one CSS declaration (`pointer-events: none`
+ *   on the density banner) which Vite minifies to nothing. Essentially all of
+ *   it is the FR-244 entry added to `cli/CHANGELOG.md`, which `files` carries
+ *   and which therefore SHIPS. The operator called that trade explicitly:
+ *   consistency with the five sibling briefs' changelog entries is worth more
+ *   than the bytes, and "defer it to /release" is how it gets forgotten. This
+ *   is the same lesson TD-326 recorded — a structural argument that a review
+ *   round is byte-free is only as good as its enumeration of `files` — landing
+ *   for the second time on the same file.)
+ *
+ * FR-244 IS THE CHEAPEST ROW IN THIS LEDGER, and it is the CONVERSE of TD-328's
+ * lesson rather than a contradiction of it. TD-328 spent 24.3 KB writing only
+ * `brain-mcp-server/`; FR-244 spent 176 B while adding a whole browser gate, a
+ * canvas separability instrument, a sixth sandbox world, four suites' worth of
+ * new assertions and ~200 lines of `docs/`. The rule both obey is the same one:
+ * **what costs is what `package.json` `files` carries into `dist/`.**
+ *   - `cli/scripts/browser-gate.mjs` is NOT packed — `files` names
+ *     `scripts/postinstall.mjs` INDIVIDUALLY, not `scripts/`. Check that before
+ *     assuming a sibling script is free; it is free because of one entry in a
+ *     FIVE-element list — `dist`, `!dist/brain-mcp-server/node_modules`,
+ *     `scripts/postinstall.mjs`, `README.md`, `CHANGELOG.md`. (Counted from
+ *     `package.json` rather than from memory: an earlier revision of this
+ *     sentence said four, having skipped the negation entry. The load-bearing
+ *     premise — that `browser-gate.mjs` is not packed — was right either way,
+ *     but a miscounted enumeration is how the NEXT reader concludes something
+ *     is free when it is not.)
+ *   - `src/__tests__/**` is excluded from `dist` by `tsconfig`, so suites and
+ *     fixtures cost zero however long they get.
+ *   - `docs/` and repo-root `MAINTAINING.md` are outside the package.
+ *   - What FR-244 DID change inside the package is `cli/dashboard/src/**`,
+ *     which Vite MINIFIES — so its comment-dense size law, its several hundred
+ *     lines of rationale in `shapes.ts`/`useGraph.ts`/`Graph.tsx` and the new
+ *     CSS block together came to under 200 bytes of chunk.
+ * The generalisation for the next planner: estimate against WHICH PACKAGE and
+ * WHICH PIPELINE a change lands in, not against how much was written. A
+ * comment in `cli/src/lib/**` costs more than a page of client code.
+ *
  * TD-328 IS THE ROW THAT BREAKS THE "IT'S ONLY THE DASHBOARD" READING OF THIS
  * LEDGER, and it is here because a WRONG STRUCTURAL CLAIM was inherited from a
  * plan and passed to the builder as a technical anchor: "`brain-mcp-server/` is
@@ -657,10 +703,10 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~149.3 KB is what is left (the
- * TD-328 reading above; ~173.6 KB was TD-326's and is superseded), and five
- * GL-006 briefs remain, estimated at ~83-115 KB against their shipped
- * analogues. So the margin is real but it is roughly ONE FR-240 (48.4 KB) of
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~147.2 KB is what is left (the
+ * FR-244 reading above; ~149.3 KB was TD-328's and ~173.6 KB TD-326's, both
+ * superseded), and five GL-006 briefs remain, estimated at ~83-115 KB against
+ * their shipped analogues. So the margin is real but it is roughly ONE FR-240 (48.4 KB) of
  * slack, not room for a surprise the size of FR-239 (95.5 KB) or FR-238
  * (187.9 KB). The answer when it binds is still to cut or to vendor less,
  * never to raise `PACK_HARD_CEILING_DELTA` — TD-329 raised it ONCE, before the
@@ -704,9 +750,10 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~149.3 KB is what is left** (the
- * TD-328 reading above; ~173.6 KB was TD-326's and is superseded). And note
- * TD-328's correction to the SCOPE of this budget: a brief that touches only
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~147.2 KB is what is left** (the
+ * FR-244 reading above; ~149.3 KB was TD-328's and ~173.6 KB TD-326's, both
+ * superseded). And note TD-328's correction to the SCOPE of this budget: a
+ * brief that touches only
  * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise
  * `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above spend thirty

@@ -589,6 +589,12 @@ twin the browser assembles describes the bytes that arrived, not the question
 that produced them. It ships even when the read fails, because "why is it empty"
 is exactly the question a reader has in that state.
 
+FR-244 moved where it is RENDERED — from a full-width block under the canvas
+into the side column beneath the inspector — and rendered it in BOTH branches of
+the page, so the no-nodes scope still carries one. The exemption asks for
+adjacency, not for a particular edge; as a second full-width row it was the
+thing capping the canvas's height, which is why it moved.
+
 Each clause names a **real** predicate — the learnings gate is
 `review_status = 'approved'`, sessions are adjacency-only, concept/decision come
 from `graph_nodes`, and edges soft-delete through `metadata.$.deleted` rather
@@ -1071,6 +1077,70 @@ None of them prove the library is still. That is what the checkpoint is for.
   correct, but it was an invalidation wearing a tween's clothes, and the comment
   claimed otherwise.
 
+### The node size law, and what FR-244 measured (2026-08-02)
+
+**What FR-244 was originally asked for, and why it did not ship that.** The
+brief's first acceptance criterion was *"nodes render as circles, in every
+state"* — round nodes were the operator's proposed remedy for a canvas that read
+as ugly and dense. It was withdrawn at sign-off once the cost was measured: at
+Tier C the chrome is `silhouette`, which draws no border, no dash and no glyph,
+and colour is spent on interaction STATE (rest / active / filtered) rather than
+on role — so **shape is 100% of the role signal in exactly the view the
+complaint came from**, and rounding everything would have erased role there with
+no fallback carrier. The stated GOAL was legibility; circles were a means; the
+means was dropped and the goal was pursued through density instead. `tracePath`
+is untouched. If the canvas still reads wrong after this, that is a new brief
+with the role-encoding cost already priced — see the rung-6 section below for
+the half a size law provably cannot reach.
+
+Node size is drawn at a **constant SCREEN size**: the context `force-graph`
+hands a paint accessor is already in graph coordinates, so `shapes.ts` divides
+by the zoom factor `k`. That is what kept a Tier C silhouette 8 CSS px across
+at every zoom — and it is also why the whole-brain canvas turned into an
+unreadable blob when zoomed out. The arithmetic is unforgiving: with a constant
+screen size `p` and a world nearest-neighbour distance `d`, the on-screen gap is
+`d·k − p`, so **for any fixed pixel size there is a zoom below which nodes must
+merge.**
+
+Measured by `G-BR-11` in a real browser, Tier C, 710 nodes / 352 edges:
+
+| `k / k_fit` | components BEFORE | components AFTER |
+|---|---|---|
+| 1 (`zoomToFit`) | 358 | 358 |
+| 1/1.5 | 349 | 354 |
+| **1/2** | **57** | **353** |
+| 1/3 | 1 | 350 |
+| 1/4 | 1 | 333 |
+| 1/8 | 1 | 258 |
+
+It is a **percolation** transition, not a fade: the field went from 97.5% of its
+structure to 0.3% across a factor of two in `k`.
+
+The fix is a **clamped divisor** — `shapes.ts#nodeWorldSize`, one law that every
+node geometry on this canvas goes through. Above `K_FLOOR` nothing changes and
+the 8 px floor is honoured exactly as before; below it the node is frozen in
+WORLD units, so the field and the nodes in it scale down together as one
+photograph and every gap survives. `K_FLOOR = 0.11` is the measured value — the
+last zoom at which the picture still held its structure (0.10533), rounded up.
+
+**What it does NOT fix, and why that is not a size-law problem.** Separability
+*at FIT*: 358 components for 710 nodes, and the deficit is exactly the 352
+seeded edges. Every LINKED pair sits closer than its own size and fuses. That is
+genuine at-rest adjacency, and the absence of a collision force is a real
+contributing cause — but no uniform force change can reach it, because at FIT
+the picture depends only on the layout's SHAPE: anything that spreads the layout
+is undone by `zoomToFit()` zooming out to match. The lever that would work is
+the RATIO of link distance to layout extent, which is a layout-tuning change
+that moves `G-BR-7`'s `7d` ink-spread reading. FR-244 measured it and left it;
+it belongs with rung 6 below.
+
+**Labels deliberately do not follow the law.** `LABEL_LINE_PX` and
+`LABEL_GAP_PX` stay constant on screen: they are type metrics with their own
+legibility floor, and a label that shrank with the nodes would be unreadable at
+exactly the zoom the operator needs it. Measured as a non-cause of the density
+defect anyway — at Tier C `labels` is `active-only`, so a resting canvas with no
+selection draws none at all.
+
 ### Known gap — ladder rung 6 is not implemented
 
 `dataviz.md`'s sixth and last degradation rung says that below the `--s-1` floor
@@ -1089,6 +1159,22 @@ today's brain: ~2,430 nodes at the 8 px floor need ~155,000 px² against a
 An earlier revision of the banner asserted the clusters. That was a false
 statement to the operator at exactly the moment they most needed an accurate
 one.
+
+**FR-244 narrowed what rung 6 is still for, without implementing it.** The
+zoom-out half of "past the legible floor" is now handled by the size law above:
+zooming out no longer collapses the field, so the operator can pull back and
+still see structure. What remains for rung 6 is the half a size law provably
+cannot reach — nodes that overlap *at fit*, because they are genuinely that
+close in the layout. That is the 352-pair fusion measured above. Rung 6, or a
+collision force, or a link-distance change: all three are layout work, all three
+move `G-BR-7`'s `7d` reading, and all three want their own brief.
+
+The banner also **moved out of the page flow** in FR-244 and is now an overlay
+inside `.graph-surface`. It is the only banner on the page whose visibility is
+computed from the canvas's own measured box (`graph.aggregating` is set by the
+ResizeObserver), so with a full-column canvas it was the only one that could
+form a feedback loop with the canvas's height — mount, shrink the canvas, refire
+the observer, unmount, grow. Out of flow, the loop cannot start.
 
 ---
 
@@ -1127,7 +1213,7 @@ the server is `node:http`.
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328), leaving **149.3 KB** under the new ceiling. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244), leaving **147.2 KB** under the new ceiling. FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
@@ -1144,7 +1230,7 @@ the server is `node:http`.
 | `cli/dashboard/src/{markdown,layers,components/record}/__tests__/` | FR-240 — the markdown parser incl. HTML-injection cases, the layer model (filters, the deep-link codec with the BR-078 duplicate-id case, the four empty states), and the record components rendered through `react-dom/server` |
 | `brain-mcp-server/src/tools/__tests__/` + `engine/components/goals/__tests__/read.test.ts` | FR-240 — the three pure readers, `pure-read-purity.test.ts` (**with a fixture the scan MUST flag, so the scan has a self-negative-control**), and `wrapper-wire-parity.test.ts` golden strings proving the MCP wire output did not move |
 | `cli/tests/integration/dashboard.bats` | lifecycle, double invocation, stale locks, `--port` hard-fail, degraded brain, pack-extract smoke, `/api/graph` on a seeded and a missing brain, **the nine layer endpoints on a seeded and a missing brain (T23)**, and an exact-set assertion over the `--smoke` probe list — which since FR-241 carries `/api/suggestions` **and** the entry `POST /api/triage`, whose probe sends a deliberately invalid action and expects a **400**, so `--smoke` proves the write pipeline is routed while mutating nothing |
-| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. Extended again by BR-082 with G-BR-9 (the Overview scope clear, held across two measured live beats) and two more in-page counters, `__gate.healthFetch` / `__gate.summaryFetch` — which witness LIVENESS rather than stillness, since a scope that "survived" a paused beat proves nothing. **Not** part of `npm test`; see below |
+| `cli/scripts/browser-gate.mjs` | FR-240 — the real-browser gates, extended by FR-241 with a triage world and a triage scenario (select rows, open the confirm, **cancel** and assert no request was issued, then confirm and assert the rows leave the list). The witness for "cancel issued no request" is an in-page `__gate.triagePost` counter, because a server log cannot tell a triage POST from any other request. Extended again by BR-082 with G-BR-9 (the Overview scope clear, held across two measured live beats) and two more in-page counters, `__gate.healthFetch` / `__gate.summaryFetch` — which witness LIVENESS rather than stillness, since a scope that "survived" a paused beat proves nothing. FR-244 adds the `dense` (Tier C) world, G-BR-11, and an in-page separability instrument — a 4-connected component count over a thresholded ink map of the canvas, calibrated ONCE at fit and held absolute so a sweep across zooms is a paired reading rather than a re-normalised one. **Not** part of `npm test`; see below |
 
 Browser-side tests live under `cli/dashboard/src/**/__tests__/` and are collected
 by the **`cli` vitest run** (verified empirically with `npx vitest list` before
@@ -1177,19 +1263,48 @@ survived it. FR-240's is a script:
 
 ```bash
 cd cli && npm run build            # the gate drives the BUILT bundle
-node cli/scripts/browser-gate.mjs  # 46 checks; exits non-zero on any FAIL
+node cli/scripts/browser-gate.mjs  # exits non-zero on any FAIL
 ```
+
+> **This gate currently exits NON-ZERO on a clean tree, and that is expected.**
+> Exactly one check — **`G-BR-7/7d`** — ships RED as of FR-244 (2026-08-02) by
+> operator decision, and **TD-332 owns it**. `7d` is a pixel proxy whose metric
+> measured distance in grid-CELL units (square only when the canvas is), so
+> FR-244's full-height reflow moved the reading without any behaviour changing.
+> The metric was repaired to be aspect-invariant and still misses its
+> thresholds, which were deliberately NOT widened. **The behaviour `7d` proxies
+> for is independently green:** `7b` (a back-out issues zero new `/api/graph`)
+> and `7c` (its measured control) both pass, and `--mutate=br7-refetch-backout`
+> still fails `7b` on purpose. Read the `note(...)` blocks beside the `7d` check
+> in `browser-gate.mjs` before diagnosing — and note that `7d` turning GREEN
+> without someone fixing it is the SURPRISING result, not the reassuring one.
+> The gate is manual-only: no pre-commit hook and no CI workflow invokes it.
+
+The check COUNT is deliberately not written down here. It was "46" for three
+briefs after it had become 72, because a number in prose has nothing executing
+beside it to catch it going stale (the same trap the packed-size ledger records
+as learning 1131). The run prints its own `n/m checks passed`; read that.
 
 No new dependency: Node 24 has global `fetch` and `WebSocket`, so CDP is driven
 directly. Chrome is located at the macOS default and overridable with
-`CHROME_BIN`. It starts **four** dashboard servers over four `mkdtemp` sandboxes
-(`IGRIS_BRAIN_DIR`, never the operator's brain) seeded from the same fixture the
-vitest suites use — `seeded`, `vec` (a `learnings_vec` index, so the VECTOR arm
-is available; whether recall actually runs hybrid additionally needs the
-embedding model — see below), `empty` (schema, no rows) and `missing` (no
-database). Three of the gates are about the **disagreement** between those
-worlds; a single-world run cannot tell "the empty state renders" from "the empty
-state always renders".
+`CHROME_BIN`. It starts a dashboard server over a `mkdtemp` sandbox
+(`IGRIS_BRAIN_DIR`, never the operator's brain) for each of **six** worlds,
+seeded from the same fixture the vitest suites use — `seeded`, `vec` (a
+`learnings_vec` index, so the VECTOR arm is available; whether recall actually
+runs hybrid additionally needs the embedding model — see below), `empty`
+(schema, no rows), `missing` (no database), `triage` (FR-241, built by the
+engine's own migrations because that is the only schema the write door boots
+against) and `dense` (FR-244 — the fixture plus 700 `learning` rows, which is
+what puts a payload in **Tier C**, the only tier where the density defect
+exists). Three of the gates are about the **disagreement** between those worlds;
+a single-world run cannot tell "the empty state renders" from "the empty state
+always renders".
+
+`--gates=11` runs a named subset. It is a development aid for iterating on one
+gate without paying for the other ten, and it is fenced: a filtered run stamps
+`FILTERED` and the list of gates that did not run into its own verdict line, so
+a filtered transcript cannot be quoted as evidence of a green ladder. **Evidence
+reported for a brief is always an unfiltered run.**
 
 **Neither the gate nor `npm test` reaches the network.** Every server the gate
 starts runs with a `--import` preload that sets `env.allowRemoteModels = false`
@@ -1222,6 +1337,8 @@ the gate prints the exact command.
 | **G-BR-9** (BR-082) | the Overview opens scoped to `default_project`, re-clicking the checked chip **clears** the scope, every card widens to the value its UNSCOPED endpoint reports, and that widened state is still on screen after the page has issued ≥2 further `/api/health` polls **and** ≥2 further `/api/summary` reads across ≥10 s — so the clear survived the beat that used to undo it | that the hook's `undefined`-vs-`null` distinction is the MECHANISM. This reads a page, not a state machine, and would pass for any implementation that keeps the clear. The mechanism's siblings are `dashboard-layers-source.test.ts` (exactly one scope implementation, and Overview consumes it) and `useProjectScope.ts`'s docblock. Nor that the NUMBERS are right — it asserts DOM-vs-endpoint agreement, and `dashboard-server.test.ts` owns what the endpoint should say |
 | **G-BR-10** (TD-326) | the three populations are DISTINCT and none is empty (6 scoped + 4 brain-level + 2 other = 12 everything, asserted as arithmetic); a project-scoped page banners the brain-level count and not the all-projects total; the `(brain-level)` chip sits in the ONE `Project scope` radiogroup and selecting it lists exactly the project-less rows; that selection survives ≥2 further `/api/projects` polls across ≥10 s — the ladder's OWN request, so the witness is direct rather than inferred; SELECT PAGE + DISMISS empties the brain-level queue and leaves the project's queue at 6; and the Candidates tab under that scope states its schema reason instead of fetching | that the endpoint's answers are correct — `dashboard-layers-endpoint.test.ts` G-EP-4 (the reads, the param handling, the drop-and-report) and `dashboard-triage-endpoint.test.ts` G-TR-7 (the mutation, and the symmetric "a project bulk leaves brain-level alone") own that. Nor that no OTHER affordance exists; it asserts the DOM agrees with the endpoint for the scope it selected |
 
+| **G-BR-11** (FR-244) | in the `dense` (Tier C) world: the canvas is driven with REAL wheel events down a zoom sweep, and at a MEASURED low zoom the picture still resolves ~98% of the connected components it resolves at `zoomToFit`, with no component owning more than a fraction of the ink (`11a`); the same metric REPORTS the merge that is genuinely present at fit — 710 nodes render as 358 components, a deficit equal to the 352 seeded edges (`11b`); and at 1440×900 the canvas owns the vertical column with no page scroll and the query twin inside the layout row (`11c`), while a 1600px-tall viewport puts 1210px of canvas on screen, above the retired 900px clamp (`11c-tall`) | that the picture is BEAUTIFUL, or that a node is nameable at that zoom. Component count is a legibility FLOOR, not a ceiling. It makes no claim about the shape vocabulary — FR-244's sign-off left `tracePath` untouched. The size law's ARITHMETIC at every `k` (the two regimes, the continuity at `K_FLOOR`, and the agreement of all four geometry consumers) is `graph/__tests__/shapes.test.ts`; the ban on a fifth open-coded site is `dashboard-graph-source.test.ts`. Do not weaken any of the three on the assumption another has it covered |
+
 **Every gate has a demonstrated failing counterpart, and the script enforces
 it.** `--mutate=<name>` injects a specific defect and INVERTS the verdict: the
 run succeeds only if the named gate actually fails, and a mutation run in which
@@ -1231,7 +1348,45 @@ guard whose only observed output is "pass" is indistinguishable from a broken
 one. Confirmation dates by family: FR-240's eight on 2026-07-30, FR-241's four
 (`br8-*`) with that brief, BR-082's two (`br9-*`) on 2026-07-31, TD-326's three
 (`br10-*`) on 2026-07-31 — each confirmed caught by its predicted check
-(`10a`, `10c`, `10d`).
+(`10a`, `10c`, `10d`), and FR-244's three (`br11-*`) on 2026-08-02.
+
+FR-244 also gave **`7d` its own mutation**, `br7-backout-re-entrances`, closing
+a real gap: `br7-refetch-backout` breaks `7b` (the FETCH COUNT) and said nothing
+about the pixel reading, so `7d` was the one check on this surface with no
+demonstrated failing counterpart. The injected defect takes the back-out arm's
+ink from the cold REFRESH transition — a real, measured re-entrance on the same
+canvas in the same run, which is exactly the shape a back-out that lost its
+position seed would have. It proves `7d`'s ABSOLUTE bound bites (the arm reads
+its true cold value against the 0.75 floor); it does **not** prove the
+separation bound non-trivially, since with both arms from one sample set the
+separation is identically zero.
+
+That mutation exists because of the ORDER FR-244 had to work in, which is worth
+copying. `inkSpread` turned out to be silently coupled to the canvas aspect (it
+accumulated moments in grid-cell *index* units, so cells were square only when
+the canvas was), and FR-244 changed the canvas box. Repairing a metric in the
+same breath as discovering it went red is indistinguishable from tuning it — so
+the mutation was built and proven RED against the **old, uncorrected** metric at
+the **old** layout first, and only then was the metric weighted by cell pixel
+size. The mutation still bites afterwards. **A metric repair justified only by
+the failure it removes is not a repair.**
+
+FR-244's non-vacuity evidence is doubled, and the stronger half is the first:
+**`G-BR-11` was written and run against the UNFIXED tree, and recorded RED**
+(`11a` at 15.9% of the FIT component count, against its 60% floor). A gate with
+a recorded pre-fix failure has demonstrated it can catch the defect, which no
+mutation can do as directly. The mutations then cover the parts a pre-fix run
+does not: measuring at the wrong zoom, controlling at the wrong zoom, and
+asserting the full-column claim below the breakpoint where it does not hold.
+
+One of those runs also **refuted a control**, which is worth recording because
+the failure mode is the dangerous direction. `11b` was first written to assert
+that an extreme zoom-out reads as ONE blob — reasoning that the layout's own
+on-screen extent shrinks to a few pixels there whatever the size law does. The
+first post-fix run measured 162 components in a 32px field: the control was
+wrong, and it would have gone red for the RIGHT behaviour. It was replaced with
+a control whose expected value comes from OUTSIDE the instrument — the seeded
+edge count.
 
 **Two things the gate is deliberately careful about**, both of which would
 otherwise fake a pass:
@@ -1300,7 +1455,16 @@ Then, on `#/graph`:
   reachable from vitest, and saying so beats a green test that proves less than
   a reader assumes;
 - **reduced motion** — enable it at the OS level, reload, and confirm the graph
-  arrives already settled with no entrance journey.
+  arrives already settled with no entrance journey;
+- **the zoom-out, judged by eye** (FR-244). Press FIT, then scroll out two or
+  three notches. The field should shrink as one photograph — nodes and gaps
+  together — rather than fusing into a slab. `G-BR-11` measures the component
+  count for this, which is a legibility FLOOR and not a judgement: it can say
+  "these are still separate things" and cannot say "this is readable". The
+  judgement is yours. If it still reads as ugly or dense at fit, that is the
+  at-rest fusion the size law provably cannot reach (see the size-law section
+  above) and it wants its own brief — with the role-encoding cost of any shape
+  change already priced.
 
 And on `#/layers`, the two things the automated gate cannot judge:
 

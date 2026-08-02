@@ -235,7 +235,16 @@ export function Graph({ search, focus = null }: GraphProps) {
   }
 
   return (
-    <>
+    /*
+     * FR-244 — `.graph-page` is a FLEX COLUMN whose min-height is the viewport
+     * minus the shell's own chrome, so `.graph-layout` can take everything the
+     * headline, the banners and the controls leave. Before this the canvas was
+     * pinned at `clamp(420px, 62vh, 900px)` and the page scrolled at 1440x900.
+     * The wrapper is what makes the column exist; without it these children are
+     * block-flow items in a `.shell-main` shared with every other page, and the
+     * canvas has nothing to stretch against.
+     */
+    <div className="graph-page">
       <span className="shell-eye">// GRAPH</span>
       <h1 className="shell-h1 glitch">WHOLE BRAIN</h1>
 
@@ -259,27 +268,6 @@ export function Graph({ search, focus = null }: GraphProps) {
           TRUNCATED — {payload.truncation_reason ?? "builder cap reached"}
         </div>
       )}
-      {graph.aggregating && (
-        <div className="shell-banner" role="status">
-          {/*
-            M2 — THIS BANNER MUST DESCRIBE WHAT ACTUALLY HAPPENS.
-
-            It used to read "nodes below the size floor are drawn as counted
-            clusters", which asserted ladder rung 6. Rung 6 is NOT implemented:
-            `tier.ts` ships and tests the `fitsAtFloor` predicate, but nothing
-            aggregates and no cluster node is ever drawn. When the banner fired
-            it told the operator something false.
-
-            What actually happens at this density is that silhouettes overlap.
-            Nothing vanishes — so the spec's "a node never silently disappears"
-            still holds — but the set is past the legible floor and the honest
-            remedy is to narrow it. The gap is recorded in `docs/dashboard.md`.
-          */}
-          DENSITY — this set is past the legible size floor and silhouettes
-          overlap. Filter by type or drill into a project to narrow it.
-        </div>
-      )}
-
       <GraphControls
         scope={scope}
         projects={(projects?.projects ?? []).map((p) => p.slug)}
@@ -297,22 +285,65 @@ export function Graph({ search, focus = null }: GraphProps) {
       />
 
       {nodes.length === 0 ? (
-        <EmptyState
-          meta={payload.query.scale}
-          headline={
-            <>
-              <em>no nodes in this scope.</em>
-            </>
-          }
-          message={
-            scope === null
-              ? "The brain has no entities yet. Register a project and file a brief."
-              : `Nothing is filed under ${scope}. Back out to the whole brain.`
-          }
-        />
+        <>
+          <EmptyState
+            meta={payload.query.scale}
+            headline={
+              <>
+                <em>no nodes in this scope.</em>
+              </>
+            }
+            message={
+              scope === null
+                ? "The brain has no entities yet. Register a project and file a brief."
+                : `Nothing is filed under ${scope}. Back out to the whole brain.`
+            }
+          />
+          {/*
+            Exemption 04's obligation, in the branch that has no side column to
+            put it in. The twin is "adjacent to the canvas, in mono, ALWAYS" —
+            and "always" includes the scope that produced no canvas at all,
+            which is exactly the case whose provenance a reader most needs.
+          */}
+          <QueryTwin twin={payload.query} />
+        </>
       ) : (
         <div className="graph-layout">
-          <GraphSurface ref={graph.containerRef} label="Whole-brain graph" />
+          <GraphSurface ref={graph.containerRef} label="Whole-brain graph">
+            {graph.aggregating && (
+              <div className="shell-banner graph-density" role="status">
+                {/*
+                  M2 — THIS BANNER MUST DESCRIBE WHAT ACTUALLY HAPPENS.
+
+                  It used to read "nodes below the size floor are drawn as
+                  counted clusters", which asserted ladder rung 6. Rung 6 is NOT
+                  implemented: `tier.ts` ships and tests the `fitsAtFloor`
+                  predicate, but nothing aggregates and no cluster node is ever
+                  drawn. When the banner fired it told the operator something
+                  false.
+
+                  What actually happens at this density is that silhouettes
+                  overlap. Nothing vanishes — so the spec's "a node never
+                  silently disappears" still holds — but the set is past the
+                  legible floor and the honest remedy is to narrow it. The gap
+                  is recorded in `docs/dashboard.md`.
+
+                  FR-244 MOVED IT INSIDE THE SURFACE, AS AN OVERLAY. It is the
+                  ONLY banner on this page whose visibility is computed from the
+                  canvas's own measured box (`graph.aggregating` comes from the
+                  ResizeObserver), so it is the only one that can form a
+                  feedback loop with the canvas's height — and a full-column
+                  canvas is what closes that loop. Out of flow, the loop cannot
+                  start: the observed box does not depend on the banner. The
+                  other three banners are payload-driven and stable for the
+                  lifetime of a payload, so they stay page rows.
+                */}
+                DENSITY — this set is past the legible size floor and
+                silhouettes overlap. Filter by type or drill into a project to
+                narrow it.
+              </div>
+            )}
+          </GraphSurface>
           {/*
             THE INSPECTOR COLUMN IS ALWAYS RENDERED, EVEN WITH NOTHING SELECTED.
 
@@ -332,28 +363,40 @@ export function Graph({ search, focus = null }: GraphProps) {
             FR-238 reserved the nav's search slot for precisely this reason and
             wrote down why. Same rule, one layer in.
           */}
-          {graph.selection !== null ? (
-            <NodeInspector
-              node={graph.selection.node}
-              neighbours={graph.selection.neighbours}
-              onSelect={graph.select}
-              onTrace={graph.trace}
-              onClose={graph.clearSelection}
-            />
-          ) : (
-            <aside className="graph-inspector" aria-label="Selected entity">
-              <span className="graph-inspector-eye">// NOTHING SELECTED</span>
-              <p className="graph-inspector-hint">
-                Click a node to reveal its attributes and its 1-hop
-                neighbourhood.
-              </p>
-            </aside>
-          )}
+          {/*
+            FR-244 — the side column. It holds the reserved inspector AND the
+            query twin, which used to be a full-width block BELOW this row.
+
+            The move is what frees the vertical column: as a sibling of
+            `.graph-layout` the twin was a second vertical consumer, so the
+            canvas had to be clamped to leave room for it and the page scrolled
+            anyway (measured: scrollHeight 1164 at innerHeight 900). Exemption
+            04 asks for the twin to be *"adjacent to the canvas, in mono,
+            always"* — adjacency is a relationship, not a particular edge, and
+            beside the canvas is at least as adjacent as beneath it.
+          */}
+          <div className="graph-side">
+            {graph.selection !== null ? (
+              <NodeInspector
+                node={graph.selection.node}
+                neighbours={graph.selection.neighbours}
+                onSelect={graph.select}
+                onTrace={graph.trace}
+                onClose={graph.clearSelection}
+              />
+            ) : (
+              <aside className="graph-inspector" aria-label="Selected entity">
+                <span className="graph-inspector-eye">// NOTHING SELECTED</span>
+                <p className="graph-inspector-hint">
+                  Click a node to reveal its attributes and its 1-hop
+                  neighbourhood.
+                </p>
+              </aside>
+            )}
+            <QueryTwin twin={payload.query} />
+          </div>
         </div>
       )}
-
-      {/* Exemption 04's obligation. Adjacent to the canvas, in mono, always. */}
-      <QueryTwin twin={payload.query} />
-    </>
+    </div>
   );
 }

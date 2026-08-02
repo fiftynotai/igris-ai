@@ -212,13 +212,151 @@ export function isDashed(shape: ShapeKind): boolean {
   return shape === "TOOL";
 }
 
+// ---------------------------------------------------------------------------
+// FR-244 — THE SIZE LAW. One function, and every node geometry goes through it.
+// ---------------------------------------------------------------------------
+
+/**
+ * The zoom below which node size stops being constant on SCREEN and becomes
+ * constant in the WORLD.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * MEASURED, NOT PICKED. G-BR-11, `dense` world, 710 nodes / 352 edges at
+ * Tier C, canvas 1058x502, 2026-08-02:
+ *
+ *   k        k/k_fit   connected components   share of the FIT reading
+ *   0.15877  1.00      358                    100%     <- zoomToFit()
+ *   0.10533  0.66      349                     97.5%
+ *   0.07851  0.49       57                     15.9%   <- collapse
+ *   0.05237  0.33        1                      0.3%
+ *   0.03969  0.25        1                      0.3%
+ *   0.01000  0.06        1                      0.3%   <- library scale extent
+ *
+ * The transition is a PERCOLATION transition, not a gentle fade: the field
+ * goes from 97.5% of its structure to 0.3% across a factor of two in `k`. That
+ * is the shape the arithmetic predicts. With a constant screen size `p` and a
+ * world nearest-neighbour distance `d`, the on-screen gap is `d·k − p`, so
+ * every gap in the field crosses zero within a narrow band of `k` and the
+ * whole picture fuses at once.
+ *
+ * `K_FLOOR` is therefore the LAST MEASURED ZOOM AT WHICH THE PICTURE STILL
+ * HELD ITS STRUCTURE, rounded up for margin: 0.10533 measured, 0.11 taken.
+ * Rounded UP rather than down on purpose — the frozen picture is then at least
+ * as separable as the 97.5% reading, and separability is the property under
+ * repair.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * THE ABSOLUTE `k` COLUMN IS NOT PORTABLE. THE RATIO IS. READ THIS BEFORE
+ * CONCLUDING THE CONSTANT IS WRONG.
+ * ─────────────────────────────────────────────────────────────────────────
+ * `k_fit` is whatever `zoomToFit()` needs for THIS payload in THIS canvas box,
+ * so the `k` column above is a function of both. Re-run the sweep on a
+ * different box and every absolute number moves: FR-244's own layout reflow
+ * changed the canvas from 1058x502 to 1058x423 and `k_fit` fell 0.15877 ->
+ * 0.13275 within the same brief. A reader who re-measures today, gets a last
+ * intact reading near 0.088, and compares it to 0.10533 will think the constant
+ * is 25% wrong when nothing has changed.
+ *
+ * **The portable figure is the RATIO: `0.10533 / 0.15877 = 0.663`** — the
+ * picture holds its structure down to about two-thirds of fit and collapses by
+ * half of it. To re-derive `K_FLOOR` on any box: measure `k_fit`, find the last
+ * `k` holding ~97% of the FIT component count, and confirm it lands near
+ * `0.66 · k_fit`.
+ *
+ * SECOND-ORDER CONSEQUENCE, recorded because it is invisible otherwise: this
+ * constant is ABSOLUTE while `k_fit` is not, so as the canvas shrinks the clamp
+ * engages EARLIER relative to fit. Derived at `0.10533 / 0.15877 = 0.66·k_fit`,
+ * it now binds at `0.11 / 0.13275 = 0.83·k_fit` on the post-reflow box. That is
+ * SAFE — the clamped regime is the photograph regime, and engaging it sooner
+ * only means giving up the 8 px floor slightly earlier — but it is not what the
+ * derivation intended, and a much smaller canvas would push it past `k_fit`
+ * entirely, at which point nodes are below 8 px even at fit. That would still be
+ * an improvement (the sweep says an 8 px node at that density is a fused mass),
+ * but if it is ever measured to look wrong, THIS is the mechanism.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHAT IS BEING TRADED, STATED PLAINLY. Above `K_FLOOR` nothing changes: the
+ * `--s-1` legibility floor is honoured over the whole working range, exactly
+ * as before. Below it the node is frozen at `sizePx / K_FLOOR` WORLD units, so
+ * the entire picture — field and nodes together — scales down as one
+ * photograph and every gap in it is preserved.
+ *
+ * The 8 CSS px floor is given up below `K_FLOOR` because the table above says
+ * it buys nothing there: at `k = 0.0785` the 8 px nodes are a single fused
+ * mass. This trades an UNREADABLE 8 px node for a READABLE 5.7 px one. The
+ * floor's purpose is legibility, and at that zoom the floor was defeating it.
+ *
+ * A node's screen size is `sizePx · min(1, k / K_FLOOR)` — never LARGER than
+ * `sizePx`, at any zoom. There is no path here that grows a node.
+ *
+ * **TWO FLOORS ARE TRADED HERE, NOT ONE.** The second is the Rule 2.4 TAP
+ * TARGET. `paintPointerArea` routes `captureSizePx(...)` through this same law,
+ * so below `K_FLOOR` the coarse-pointer capture area is `44 · k / K_FLOOR` CSS
+ * px — 36 px at `k = 0.09`, 22 px at `k = 0.055`. Shrinking it is CORRECT and
+ * the reason is at `paintPointerArea`: a capture area that stayed 44 px while
+ * the nodes shrank around it would overlap its neighbours and select the wrong
+ * node, which is a worse accessibility outcome than a smaller target. But it IS
+ * a trade, it IS made below `K_FLOOR`, and it should not have to be inferred
+ * from a call site. The 44 px minimum still holds over the whole working range
+ * `k >= K_FLOOR`, which is where a touch user zoomed to a legible view actually
+ * is.
+ *
+ * `T20`'s tap-target assertions keep passing through this change, and that is
+ * not an oversight to fix: they exercise the PURE `captureSizePx`, one layer
+ * above the transform that now scales it, so they pin the 44 px rule itself
+ * while `nodeWorldSize`'s own tests pin what the zoom does to it.
+ *
+ * WHAT THIS DOES NOT FIX, so the next reader does not have to rediscover it:
+ * separability AT FIT. The FIT reading is 358 components for 710 nodes, and
+ * the shortfall is exactly the 352 seeded edges — every LINKED pair sits
+ * closer than its own size and fuses. That is genuine at-rest adjacency and no
+ * size law can reach it, because at FIT the picture depends only on the
+ * layout's SHAPE: any uniform force change that spreads the layout is undone
+ * by `zoomToFit()` zooming out to match. See `docs/dashboard.md`'s rung-6
+ * section for where that goes next.
+ */
+export const NODE_SIZE_ZOOM_FLOOR = 0.11;
+
+/**
+ * The ONE size law. Every node geometry on this canvas derives from it.
+ *
+ * `globalScale` is force-graph's zoom factor `k`: the context handed to a
+ * paint accessor is already in GRAPH coordinates, so a constant SCREEN size
+ * means dividing by `k`.
+ *
+ * WHY THE CLAMP IS ON THE DIVISOR, stated precisely — the loose version of this
+ * comment claimed clamping the divisor is what buys continuity, and that is not
+ * quite the mechanism: `min(p/k, p/K_FLOOR)` is algebraically identical to
+ * `p / max(k, K_FLOOR)`, so a result-clamp AT THE SAME VALUE would be continuous
+ * too. The real property is that the clamp meets at `p / K_FLOOR` **for every
+ * numerator `p`**, so the law is continuous at `K_FLOOR` for all six things
+ * that go through it — the 8 px node, the 1 px border, the 1.5 px ring stroke,
+ * the 2.6x ring radius, the 44 px capture area and the 0.42x glyph. A result
+ * clamped to one FIXED world size would hold for whichever numerator it was
+ * tuned against and step for the other five, and the node would visibly come
+ * apart at that zoom: border thicker than the silhouette, glyph outside it,
+ * capture area detached from the shape. Expressing the clamp on the divisor is
+ * what makes "one law, six numerators" true rather than approximately true.
+ *
+ * **There must be exactly one of these.** `dashboard-graph-source.test.ts`
+ * scans for a node-size expression divided by the zoom factor anywhere else in
+ * the graph source, because the paint, the pointer-capture buffer, the
+ * selection ring and the label obstacle boxes must all agree: a call site that
+ * kept its own division would make hit-testing disagree with the rendered
+ * picture at low zoom, which is a silent selection bug that looks exactly like
+ * FR-239's dead-canvas defect.
+ */
+export function nodeWorldSize(sizePx: number, globalScale: number): number {
+  return sizePx / Math.max(globalScale, NODE_SIZE_ZOOM_FLOOR);
+}
+
 /**
  * Paint one node.
  *
- * `globalScale` is force-graph's zoom factor: the context is already in GRAPH
- * coordinates, so a constant screen size means dividing by it. That is what
- * keeps a silhouette at the `--s-1` floor 8 CSS px across at every zoom level,
- * which is what the floor means.
+ * Every metric here — the silhouette, its border, its dash and its glyph —
+ * goes through `nodeWorldSize`, so the whole node scales as one object at
+ * every zoom. A border that stayed 1 screen px while the silhouette shrank
+ * below the floor would end up drawing the node as a ring.
  */
 export function drawNode(
   ctx: CanvasRenderingContext2D,
@@ -227,7 +365,7 @@ export function drawNode(
   y: number,
   globalScale: number,
 ): void {
-  const s = visual.sizePx / globalScale;
+  const s = nodeWorldSize(visual.sizePx, globalScale);
   ctx.save();
   ctx.globalAlpha = visual.alpha;
 
@@ -243,10 +381,10 @@ export function drawNode(
     ctx.fillStyle = visual.fill;
     ctx.fill();
     // The border tells the story — motion.md interaction 03, no drop-shadows.
-    ctx.lineWidth = Math.max(0.5, 1 / globalScale);
+    ctx.lineWidth = Math.max(0.5, nodeWorldSize(1, globalScale));
     ctx.strokeStyle = visual.stroke;
     if (isDashed(visual.shape)) {
-      ctx.setLineDash(TOOL_DASH.map((d) => d / globalScale));
+      ctx.setLineDash(TOOL_DASH.map((d) => nodeWorldSize(d, globalScale)));
     }
     ctx.stroke();
     ctx.setLineDash([]);
@@ -254,7 +392,10 @@ export function drawNode(
 
   if (visual.chrome === "full") {
     const glyph = GLYPH[visual.shape];
-    const fontPx = (visual.sizePx * 0.42) / globalScale;
+    // Through the size law too: the glyph is drawn INSIDE the silhouette, so a
+    // glyph that kept a constant screen size would burst out of a node that
+    // had stopped growing.
+    const fontPx = nodeWorldSize(visual.sizePx * 0.42, globalScale);
     // `ctx.font` is parsed by the CSS font shorthand grammar, which does NOT
     // substitute `var()`. `monoFont` resolves the `--mono` token first.
     ctx.font = monoFont(fontPx);
@@ -326,7 +467,10 @@ export function paintPointerArea(
   globalScale: number,
   coarsePointer: boolean,
 ): void {
-  const s = captureSizePx(nodeSizePx, coarsePointer) / globalScale;
+  // THE SAME LAW AS THE PAINT. If these two ever diverge, the colour a pointer
+  // resolves to stops matching the silhouette under it, and at low zoom a
+  // click selects a node the operator is not pointing at.
+  const s = nodeWorldSize(captureSizePx(nodeSizePx, coarsePointer), globalScale);
   ctx.fillStyle = color;
   ctx.beginPath();
   tracePath(ctx, shape, x, y, s);

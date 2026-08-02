@@ -293,6 +293,121 @@ describe("T8 — the library API is confined", () => {
 });
 
 // ---------------------------------------------------------------------------
+// FR-244 — ONE size law. No node geometry divides by the zoom factor itself.
+// ---------------------------------------------------------------------------
+
+/**
+ * A node-size expression divided directly by force-graph's zoom factor.
+ *
+ * `*sizePx` (`sizePx`, `nodeSizePx`, and `captureSizePx(...)`'s result) is the
+ * screen-space size of a NODE. `globalScale` / `scale` is `k`. A line holding
+ * both, with the second as an immediate divisor, is an open-coded size law.
+ *
+ * Deliberately NARROW. It does not flag `LABEL_LINE_PX / scale` or
+ * `LABEL_GAP_PX / scale`, and it must not: those are TYPE metrics with their
+ * own legibility floor, and `useGraph.ts` records why they stay constant on
+ * screen while node geometry does not.
+ */
+const OPEN_CODED_SIZE_LAW = /\w*[sS]izePx[^\n]*\/\s*(?:globalScale|scale)\b/;
+
+describe("FR-244 — every node geometry goes through nodeWorldSize", () => {
+  /**
+   * WHY THIS SCAN EXISTS. FR-244 found FIVE places dividing a node size by the
+   * zoom factor: the paint, the pointer-area buffer, the selection ring, the
+   * pointer-capture size and the label obstacle boxes. They must move together
+   * — a call site that kept its own division would make hit-testing disagree
+   * with the rendered picture at low zoom, which presents as a click selecting
+   * a node the operator is not pointing at. That is indistinguishable, from the
+   * outside, from FR-239's dead-canvas defect.
+   *
+   * WHAT IT PROVES: no sixth site written in the OBVIOUS form — a `*sizePx`
+   * expression and the divisor on ONE line — can be added without this going
+   * red. That is the form all five original sites were written in, and the form
+   * a copy-paste of any of them would take.
+   *
+   * WHAT IT DOES NOT PROVE, precisely:
+   *  - **Aliasing defeats it.** `const n = s.nodeSizePx;` on one line and
+   *    `const world = n / globalScale;` on the next puts the size and the
+   *    divisor on different lines with no `sizePx` token on the second, and
+   *    this regex cannot see it. A line-oriented scan over a comment-stripped
+   *    source is the wrong instrument for that; catching it needs the AST, and
+   *    the honest position is that this guard covers the likely mistake rather
+   *    than the adversarial one.
+   *  - That the law is CORRECT, or that the existing consumers agree
+   *    numerically.
+   *
+   * **Sibling for BOTH gaps:** `dashboard/src/graph/__tests__/shapes.test.ts`
+   * drives `nodeWorldSize` at every `k` and asserts the four distinct geometry
+   * laws derive from one function — an aliased division that produced a
+   * DIFFERENT number would have to disagree there. Do not weaken it on the
+   * assumption this scan has it covered; it does not.
+   */
+  it("no node-size expression is divided by the zoom factor outside the law", () => {
+    const found: string[] = [];
+    for (const file of shippedSources()) {
+      const lines = code(file).split("\n");
+      lines.forEach((line, i) => {
+        if (OPEN_CODED_SIZE_LAW.test(line)) {
+          found.push(`${rel(file)}:${i + 1}: ${line.trim()}`);
+        }
+      });
+    }
+    expect(
+      found,
+      `open-coded node size law (route it through shapes.ts#nodeWorldSize):\n${found.join("\n")}`,
+    ).toEqual([]);
+  });
+
+  /**
+   * SELF-NEGATIVE-CONTROL (learning 1094). A guard whose only observed output
+   * is an empty array is indistinguishable from a guard that cannot match
+   * anything — and the four accidental ways to break this one (a typo in the
+   * identifier, a stray `^`, an `m` flag left off, `code()` stripping the wrong
+   * thing) all produce exactly that empty array.
+   *
+   * WHAT THIS CONTROL DOES NOT COVER: the CORPUS. If `shippedSources()` ever
+   * stopped returning the graph files, the scan above would pass while
+   * examining nothing, and this control — which never touches the corpus —
+   * would still be green. The sibling that covers that gap is T8's
+   * "only instance-factory.ts imports force-graph", which asserts a NON-empty
+   * expected value over the same corpus and therefore fails loudly if it
+   * empties. Do not weaken T8 on the assumption this one has it covered.
+   */
+  it("the scan REPORTS a planted violation, so its empty result means something", () => {
+    const planted = [
+      "const s = visual.sizePx / globalScale;",
+      "const size = captureSizePx(s.nodeSizePx, s.coarsePointer) / scale;",
+      "const r = (visual.sizePx * (1.2 + 1.4 * s.ring)) / scale * 0.5;",
+    ];
+    for (const line of planted) {
+      expect(OPEN_CODED_SIZE_LAW.test(line), `not flagged: ${line}`).toBe(true);
+    }
+    // And the type metrics it must NOT flag, so the scan cannot be "tightened"
+    // into one that forbids every division and forces labels through the node
+    // law too.
+    for (const line of [
+      "const fontPx = LABEL_LINE_PX / scale;",
+      "const pad = 240 / scale;",
+    ]) {
+      expect(OPEN_CODED_SIZE_LAW.test(line), `wrongly flagged: ${line}`).toBe(false);
+    }
+  });
+
+  it("the law itself is exported from shapes.ts and used by both files", () => {
+    // The scan above is satisfied by DELETING every consumer, so this is the
+    // half that says the consumers exist and reach the one law.
+    const shapes = code(join(GRAPH_DIR, "shapes.ts"));
+    expect(shapes).toMatch(/export function nodeWorldSize\(/);
+    expect(shapes).toMatch(/Math\.max\(globalScale, NODE_SIZE_ZOOM_FLOOR\)/);
+    const useGraph = code(join(GRAPH_DIR, "useGraph.ts"));
+    // Ring radius, pointer-capture size, label obstacle size.
+    expect([...useGraph.matchAll(/nodeWorldSize\(/g)].length).toBeGreaterThanOrEqual(3);
+    // Paint and the pointer-area buffer.
+    expect([...shapes.matchAll(/nodeWorldSize\(/g)].length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // C1 — the interaction boundary must stay OUTSIDE the render loop
 // ---------------------------------------------------------------------------
 

@@ -43,6 +43,7 @@ import { edgeAccessors, type EdgeActivity } from "./edges";
 import {
   captureSizePx,
   drawNode,
+  nodeWorldSize,
   shapeFor,
   tracePath,
   type Chrome,
@@ -321,14 +322,18 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
         // The selection ring — the ONE SPRING on this canvas (D7). A spawn, per
         // motion.md, and the only reason SPRING appears at all.
         if (s.selected === node.key && s.ring > 0) {
-          const r = ((visual.sizePx * (1.2 + 1.4 * s.ring)) / scale) * 0.5;
+          // Through the ONE size law (FR-244). The ring is drawn around the
+          // silhouette, so it has to shrink with it — a ring that kept a
+          // constant screen radius below `K_FLOOR` would detach from the node
+          // it is marking and, on a dense field, enclose its neighbours.
+          const r = nodeWorldSize(visual.sizePx * (1.2 + 1.4 * s.ring), scale) * 0.5;
           ctx.save();
           // Spawning, the ring expands and settles to full opacity. Clearing,
           // the SAME scalar runs backwards and the alpha follows it to zero —
           // otherwise the ring would still be fully opaque at `ring = 0` and
           // would pop out of existence on the guard above.
           ctx.globalAlpha = s.clearing ? s.ring : 1 - 0.35 * s.ring;
-          ctx.lineWidth = Math.max(0.5, 1.5 / scale);
+          ctx.lineWidth = Math.max(0.5, nodeWorldSize(1.5, scale));
           ctx.strokeStyle = s.palette.accent;
           ctx.beginPath();
           ctx.arc(node.x ?? 0, node.y ?? 0, r, 0, Math.PI * 2);
@@ -345,8 +350,12 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       ) => {
         const s = state.current;
         // Rule 2.4: the capture radius — not the node — is what must meet the
-        // 44 px minimum on a coarse pointer.
-        const size = captureSizePx(s.nodeSizePx, s.coarsePointer) / scale;
+        // 44 px minimum on a coarse pointer. Through the ONE size law, so the
+        // capture area and the painted silhouette cannot drift apart (FR-244).
+        const size = nodeWorldSize(
+          captureSizePx(s.nodeSizePx, s.coarsePointer),
+          scale,
+        );
         ctx.fillStyle = colour;
         ctx.beginPath();
         tracePath(ctx, shapeFor(node), node.x ?? 0, node.y ?? 0, size);
@@ -418,7 +427,16 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
         ctx.textBaseline = "middle";
 
         const positions = ctrl.positions();
-        const size = s.nodeSizePx / scale;
+        // The label placer's picture of how big a node is — the anchor offset
+        // and every obstacle box below derive from it. Through the ONE size
+        // law (FR-244) so labels keep clearing the silhouettes they are
+        // avoiding rather than the silhouettes' pre-clamp sizes.
+        //
+        // Note what deliberately does NOT go through it: `LABEL_LINE_PX` and
+        // `LABEL_GAP_PX` below. Those are TYPE metrics, not node geometry, and
+        // text has its own legibility floor — a label that shrank with the
+        // nodes would be unreadable at exactly the zoom the operator needs it.
+        const size = nodeWorldSize(s.nodeSizePx, scale);
 
         const candidates: LabelCandidate[] = [];
         for (const key of wanted) {
@@ -820,8 +838,9 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     ro.observe(el);
 
     // The AC-#5 diagnostic. `window.__igrisGraphStillness` is DELIBERATELY NOT
-    // A CONTRACT (MAINTAINING §9) — it exists for the operator checkpoint and
-    // must never acquire an external consumer.
+    // A CONTRACT (`docs/dashboard.md`, "diagnostic, not a contract") — it
+    // exists for the operator checkpoint and must never acquire an external
+    // consumer.
     const diagnostic = {
       probe: async (ms = 3000): Promise<StillnessResult> => {
         const canvas = ctrl.canvas();
@@ -830,6 +849,29 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       },
       state: () => ctrl.state(),
       paints: () => paints.current,
+      /*
+       * FR-244 — the camera's current zoom factor `k`, READ-ONLY.
+       *
+       * STILL NOT A CONTRACT, and it joins the object for the
+       * same class of consumer the other three already have: the operator
+       * checkpoint and `browser-gate.mjs`. G-BR-11 needs it because the brief's
+       * AC is *"separable at a MEASURED low zoom"* — a gate that zooms out by
+       * counting wheel ticks can only report "N ticks from fit", which is not
+       * the zoom. Reporting `k` is what makes `K_FLOOR`'s derivation auditable
+       * rather than asserted.
+       *
+       * It sets nothing. A setter would make the diagnostic a control surface,
+       * and a control surface is exactly the thing the rule forbids acquiring.
+       *
+       * THE RULE'S HOME is `docs/dashboard.md`, the "diagnostic, not a
+       * contract" paragraph. Earlier revisions cited "MAINTAINING §9";
+       * `MAINTAINING.md` has no numbered sections and never did, so that
+       * citation sent readers looking for something that does not exist.
+       * FR-244 propagated it once more before it was caught — the two
+       * citations in THIS file are corrected; others elsewhere in the tree
+       * belong to whoever owns those files.
+       */
+      zoom: (): number => ctrl.camera.scale(),
     };
     (window as unknown as Record<string, unknown>).__igrisGraphStillness =
       diagnostic;

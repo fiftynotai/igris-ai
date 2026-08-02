@@ -52,7 +52,9 @@
  * dashboard tier is read-only, but a harness that pointed at the live brain
  * would still be one typo away from a `VACUUM INTO` over it.
  *
- * FOUR WORLDS, because three of the gates are about DISAGREEMENT between them:
+ * SIX WORLDS, because three of the gates are about DISAGREEMENT between them
+ * (the count was stale at FOUR from FR-241 until FR-244 recounted it against
+ * `main()`'s own list, which is the only place that cannot drift):
  *   seeded  — the shared fixture. Rows in every layer.
  *   vec     — the fixture PLUS a `learnings_vec` index, so hybrid recall runs.
  *   empty   — the fixture's schema with every row deleted. `empty` empty-state.
@@ -160,6 +162,27 @@ const MUTATIONS = {
     gate: "G-BR-10d",
     how: "assert the brain-level bulk ALSO emptied the project's queue — D5 inverted, and the shape a scope that silently widened to every project would produce",
   },
+  "br7-backout-re-entrances": {
+    gate: "G-BR-7d",
+    how: "take the BACK-OUT arm's ink reading from the cold REFRESH transition — a real, measured re-entrance on the same canvas in the same run, which is exactly what a back-out that lost its position seed would look like",
+  },
+  // --- FR-244 -------------------------------------------------------------
+  "br11-measure-at-blob-zoom": {
+    gate: "G-BR-11a",
+    how: "take the separability reading at the EXTREME zoom-out instead of at the measured operator zoom — a `k` at which the layout spans ~32px and the component count falls to ~45% of its FIT value, well under 11a's 60% floor. The mirror of br4-measure-motion. (It bites on the RATIO, not on total fusion: 11b's note records that the fixed size law still resolves 162 components down there, which is why this `how` no longer claims nothing can be separable.)",
+  },
+  "br11-control-at-extreme-zoom": {
+    gate: "G-BR-11b",
+    how: "take the negative control's reading at the extreme zoom-out instead of at FIT — the size law has PRESERVED the separation there, so the known linked-pair fusion the control exists to detect is no longer present to be detected",
+  },
+  "br11-fullheight-at-stacked-breakpoint": {
+    gate: "G-BR-11c",
+    how: "emulate a viewport below the 1100px stacked breakpoint — where the canvas legitimately does NOT own the column — and assert the full-column claim anyway",
+  },
+  "br11-banner-swallows-pointer": {
+    gate: "G-BR-11d",
+    how: "restore `pointer-events: auto` on the DENSITY banner overlay — the exact defect FR-244 shipped in review, where an opaque out-of-flow strip over the canvas ate every hover, click and wheel that landed on it",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -182,6 +205,30 @@ if (MUTATE !== null && !(MUTATE in MUTATIONS)) {
 const KEEP = args.includes("--keep");
 /** True when the named mutation is active. Gates branch on this, nothing else. */
 const mut = (name) => MUTATE === name;
+
+/**
+ * `--gates=11,4` — run ONLY the named gates. A DEVELOPMENT AID, and it is
+ * fenced so it can never be mistaken for a full run.
+ *
+ * The gate ladder takes minutes and G-BR-11 runs last, so iterating on a new
+ * gate meant paying for ten unrelated ones every time. What makes this safe
+ * rather than a hole in the harness: a filtered run STAMPS ITS OWN VERDICT
+ * LINE with `FILTERED` and the list of gates that did not run, so a filtered
+ * transcript cannot be quoted as evidence of a green ladder. The evidence a
+ * brief reports is always an unfiltered run.
+ */
+const gatesArg = args.find((a) => a.startsWith("--gates="));
+const ONLY_GATES =
+  gatesArg === undefined
+    ? null
+    : new Set(
+        gatesArg
+          .slice("--gates=".length)
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== ""),
+      );
+const gateEnabled = (id) => ONLY_GATES === null || ONLY_GATES.has(id.replace(/^G-BR-/, ""));
 
 // ---------------------------------------------------------------------------
 // Verdict ledger
@@ -225,6 +272,8 @@ function note(text) {
  * rather than either skipping loudly or refusing to reach it).
  */
 const skipped = [];
+/** Gates excluded by `--gates=`. Named in the verdict line, never silent. */
+const notRun = [];
 function skip(id, reason) {
   skipped.push({ gate: currentGate, id, reason });
   process.stdout.write(`  SKIP  ${id.padEnd(9)} NOT RUN — ${reason}\n`);
@@ -232,6 +281,10 @@ function skip(id, reason) {
 
 /** Run one gate; a throw becomes a recorded failure rather than a lost ledger. */
 async function runGate(id, fn) {
+  if (!gateEnabled(id)) {
+    notRun.push(id);
+    return;
+  }
   try {
     await fn();
   } catch (err) {
@@ -483,11 +536,57 @@ function seedTriageWorld(db) {
   );
 }
 
+/**
+ * FR-244 — how many extra `learning` rows the DENSE world carries.
+ *
+ * Chosen to land the whole-brain payload firmly in **Tier C** (`tier.ts`:
+ * `n >= 500`), because Tier C is the only tier where `chrome` is `silhouette`
+ * and the size floor is `--s-1` — and Tier C is the view the density complaint
+ * came from. The `seeded` world is 11-13 nodes, i.e. Tier A with 24 px nodes:
+ * the size law is the same there, but a separability claim measured at Tier A
+ * would not be a claim about the surface anyone complained about.
+ *
+ * Not a round 500: a value just over the boundary would make the tier itself a
+ * flake if the fixture ever gains or loses a row.
+ */
+const DENSE_EXTRA_LEARNINGS = 700;
+
 function makeWorld(kind) {
   const brain = mkdtempSync(join(tmpdir(), `igris-fr240-gate-${kind}-`));
   mkdirSync(join(brain, "memory"), { recursive: true });
   mkdirSync(join(brain, "home"), { recursive: true });
   const db = join(brain, "memory", "knowledge.db");
+
+  if (kind === "dense") {
+    // The shared fixture plus N learnings, so the SAME builder, the SAME
+    // endpoint and the SAME client render a Tier C payload. Half of them carry
+    // an edge, so the picture G-BR-11 measures has real edge ink in it rather
+    // than being an unnaturally clean field of isolated dots — the threshold
+    // that separates node ink from edge ink is then measured against a real
+    // mixture (see `READ_SEPARABILITY`).
+    runSeedScript(
+      `seedLayerBrain(process.env.GATE_DB);
+       const db2 = new (await import('better-sqlite3')).default(process.env.GATE_DB);
+       const N = Number(process.env.GATE_DENSE_N);
+       const ins = db2.prepare(
+         "INSERT INTO learnings (project, category, title, content, scope, confidence, review_status)" +
+         " VALUES ('demo','pattern',?,?,'local',0.8,'approved')");
+       const edge = db2.prepare(
+         "INSERT INTO entity_edges (from_type,from_id,to_type,to_id,edge_type,confidence,provenance,metadata)" +
+         " VALUES ('learning',?,'learning',?,'relates_to',1.0,'observed','{}')");
+       db2.transaction(() => {
+         const ids = [];
+         for (let i = 0; i < N; i++) {
+           ids.push(String(ins.run('dense learning ' + i, 'body ' + i).lastInsertRowid));
+         }
+         for (let i = 1; i < ids.length; i += 2) edge.run(ids[i - 1], ids[i]);
+       })();
+       db2.close();`,
+      { GATE_DB: db, GATE_DENSE_N: String(DENSE_EXTRA_LEARNINGS) },
+    );
+    seedCatalog(brain);
+    return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+  }
 
   if (kind === "triage") {
     seedTriageWorld(db);
@@ -956,6 +1055,11 @@ class Tab {
         const px = ctx2.getImageData(0, 0, w, h).data;
         const cells = new Array(G * G).fill(0);
         const cw = w / G, ch = h / G;
+        // The CELL PIXEL SIZE, recorded for \`inkSpread\` (FR-244). A cell is
+        // square only when the canvas is, and the spread is a physical
+        // distance — so the geometry of the dicing has to travel with the
+        // samples rather than being assumed.
+        window.__gateInkMeta = { w: w, h: h, G: G, cw: cw, ch: ch };
         for (let y = 0; y < h; y += 3) {
           const gy = Math.min(G - 1, (y / ch) | 0);
           for (let x = 0; x < w; x += 3) {
@@ -982,6 +1086,17 @@ class Tab {
       window.__gateInk = [];
       return out;
     `);
+  }
+
+  /**
+   * The geometry the last sampler ran with — `{ w, h, G, cw, ch }`.
+   *
+   * `inkSpread` needs `cw`/`ch` to express its moments in PIXELS. Read from the
+   * page rather than recomputed host-side so it can never disagree with the
+   * dicing the samples were actually taken under.
+   */
+  async inkMeta() {
+    return this.eval("return window.__gateInkMeta || null;");
   }
 
   /** One ink frame, right now. Used for the SETTLED reference reading. */
@@ -1035,6 +1150,55 @@ class Tab {
     await this.send("Emulation.setEmulatedMedia", {
       features: on ? [{ name: "prefers-reduced-motion", value: "reduce" }] : [],
     });
+  }
+
+  /**
+   * FR-244 — a REAL wheel event over the canvas.
+   *
+   * `Input.dispatchMouseEvent` with `type:"mouseWheel"`, not a synthetic
+   * `WheelEvent` from page script, and not a call into the camera. Three
+   * reasons, all load-bearing:
+   *
+   *  1. Zoom is d3-zoom's, and d3-zoom listens for a trusted `wheel`. A
+   *     `dispatchEvent` from page script is `isTrusted:false` and d3-zoom's
+   *     handler still runs, but nothing else on the real path does.
+   *  2. It exercises the C1 wake path (learning 1097). `onZoom` fires from a
+   *     d3 DOM handler, OUTSIDE `animate()`, and is routed through
+   *     `pointerActivity()`. A canvas that is halted-and-dead does not repaint
+   *     on a wheel — so a dead canvas fails G-BR-11 as well as G-BR-4c.
+   *  3. Driving the camera directly (`fg.zoom(k)`) would measure a picture the
+   *     operator can never produce, and would skip the wake path entirely.
+   */
+  async wheel(x, y, deltaY) {
+    await this.send("Input.dispatchMouseEvent", {
+      type: "mouseWheel",
+      x,
+      y,
+      deltaX: 0,
+      deltaY,
+      pointerType: "mouse",
+    });
+  }
+
+  /**
+   * Override the viewport, so a gate can assert a claim that is only made ABOVE
+   * a breakpoint by testing it BELOW one (G-BR-11c's mutation).
+   *
+   * `deviceScaleFactor: 1` explicitly: the separability instrument reads the
+   * canvas backing store, whose pixel dimensions are DPR-scaled, and a metrics
+   * override that silently changed DPR would change every reading's units.
+   */
+  async setViewport(width, height) {
+    await this.send("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+  }
+
+  async clearViewport() {
+    await this.send("Emulation.clearDeviceMetricsOverride");
   }
 }
 
@@ -1361,7 +1525,7 @@ async function clickButton(tab, label, opts = {}) {
 }
 
 /**
- * The RMS radius of one ink frame about its own centroid, in grid cells.
+ * The RMS radius of one ink frame about its own centroid, **in canvas pixels**.
  *
  * This is the measurement that separates a RESTORED layout from a SECOND
  * ENTRANCE, and the choice is forced by how d3-force works. A node with no
@@ -1371,13 +1535,79 @@ async function clickButton(tab, label, opts = {}) {
  * over time collapses toward zero in one case and never does in the other.
  *
  * Deliberately NOT a frame-to-frame image difference: the ink is a dozen small
- * blobs on a 1440x900 canvas, so any motion at all moves a blob across a cell
+ * blobs on a canvas of ~1058x423 (see below — NOT 1440x900; that is the
+ * `--window-size` passed to Chrome, and headless chrome is counted inside it),
+ * so any motion at all moves a blob across a cell
  * boundary and an L1 image distance saturates near 100% for both cases. Measured
  * during FR-240's warden pass — back-out 105.8% vs cold 146.0%, a 1.4x
  * separation with no headroom. The spread trajectory separates by ~an order of
  * magnitude because it measures the SHAPE of the layout rather than its pixels.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * FR-244 — WHY THE MOMENTS ARE WEIGHTED BY CELL PIXEL SIZE
+ * ─────────────────────────────────────────────────────────────────────────
+ * This used to accumulate `dx = (i % G) - cx` and `dy = ((i/G)|0) - cy` in
+ * grid-cell INDEX units, i.e. treating every cell as a unit square. Cells are
+ * `canvasW/G x canvasH/G` pixels, so they are square only when the canvas is —
+ * which made the metric **silently coupled to the canvas ASPECT RATIO**. The
+ * same physical layout on a differently-shaped canvas produced a different RMS
+ * radius, because vertical displacement was being counted in different units
+ * from horizontal.
+ *
+ * That went unnoticed for three briefs because nothing had changed the canvas
+ * box. FR-244 gave the canvas the vertical column, moving it from **1058x502
+ * to 1058x423** — cells from 44.1x20.9px to 44.1x17.6px, so the vertical
+ * weighting went from 2.11x horizontal to 2.50x. (502, not 504: 504 was an
+ * arithmetic estimate of `62vh` at this window's usable height, and the gate
+ * MEASURES 502. Both gates read the same box — G-BR-7 and G-BR-11 print
+ * `1058x502` on the pre-FR-244 tree — so there was never a real disagreement,
+ * only an estimate written down beside a measurement.) `7d` normalises each arm by its
+ * OWN settled spread, which cancels a UNIFORM rescale (that is why it survived
+ * every earlier size change) but CANNOT cancel an anisotropic one, because the
+ * two arms differ in SHAPE at the moments compared: the cold arm opens as an
+ * isotropic clump and settles into a wide field, while the seeded arm opens
+ * wide already. `7d` went red for a canvas-shape change rather than for any
+ * change in the behaviour it exists to police.
+ *
+ * Multiplying by `cw`/`ch` makes the result a PHYSICAL DISTANCE, so it is
+ * invariant to how the canvas is diced and to the canvas's aspect. `G` may
+ * change, the canvas may be reshaped, and the reading means the same thing.
+ *
+ * **If you change the canvas box again, this is the line that used to punish
+ * you for it, and it no longer will.** Do not revert it to index units, and do
+ * not "simplify" `cw`/`ch` away — only their RATIO actually matters (a uniform
+ * scale cancels in `collapse`), but writing them as true pixels is what makes
+ * the invariance obvious rather than accidental.
+ *
+ * Validated by `--mutate=br7-backout-re-entrances`, which was built and proven
+ * to bite against the OLD, aspect-coupled metric BEFORE this change, and still
+ * bites after it. A metric repair justified only by the failure it removes is
+ * not a repair.
  */
-function inkSpread(cells, G = 24) {
+function inkSpread(cells, cell = { cw: 1, ch: 1 }, G = 24) {
+  const usable =
+    typeof cell?.cw === "number" && cell.cw > 0 &&
+    typeof cell?.ch === "number" && cell.ch > 0;
+  /*
+   * THE FALLBACK IS THE PRE-REPAIR BUG, so it announces itself.
+   *
+   * Without cell dimensions this reverts to INDEX units — exactly the
+   * aspect-coupled behaviour the header describes, and the reading would still
+   * look plausible while meaning something else. `__gateInkMeta` is written by
+   * the sampler, so the only way to get here is a caller that read the samples
+   * without running the sampler, or a page that was replaced between the two.
+   * That must never be silent: a `7d` computed in the wrong units is precisely
+   * the failure this brief spent a day diagnosing.
+   */
+  if (!usable) {
+    process.stdout.write(
+      `  ....            WARNING inkSpread: no cell geometry (__gateInkMeta missing or malformed) — ` +
+        `falling back to grid-INDEX units, which are ASPECT-COUPLED. Any 7d reading from this run is ` +
+        `not comparable to a recorded one. See inkSpread's header.\n`,
+    );
+  }
+  const cw = usable ? cell.cw : 1;
+  const ch = usable ? cell.ch : 1;
   let total = 0;
   let cx = 0;
   let cy = 0;
@@ -1395,8 +1625,11 @@ function inkSpread(cells, G = 24) {
   for (let i = 0; i < cells.length; i++) {
     const v = cells[i];
     if (v <= 0) continue;
-    const dx = (i % G) - cx;
-    const dy = ((i / G) | 0) - cy;
+    // IN PIXELS, not in cell indices — see the header. `cw`/`ch` are the cell's
+    // real dimensions, so a tall-thin canvas and a short-wide one measure the
+    // same layout the same way.
+    const dx = ((i % G) - cx) * cw;
+    const dy = (((i / G) | 0) - cy) * ch;
     m2 += v * (dx * dx + dy * dy);
   }
   return Math.sqrt(m2 / total);
@@ -1431,7 +1664,7 @@ function l1(a, b) {
   return d;
 }
 
-function inkCollapse(samples, settledSpread) {
+function inkCollapse(samples, settledSpread, cell) {
   if (!Array.isArray(samples) || samples.length < 3) return null;
   if (typeof settledSpread !== "number" || settledSpread <= 0) return null;
 
@@ -1440,7 +1673,7 @@ function inkCollapse(samples, settledSpread) {
   while (start < samples.length && l1(samples[start], first) === 0) start++;
 
   const moved = samples.slice(start);
-  const spreads = moved.map((s) => inkSpread(s)).filter((v) => v !== null && v > 0);
+  const spreads = moved.map((s) => inkSpread(s, cell)).filter((v) => v !== null && v > 0);
   if (spreads.length < 2) return null;
   // The MEAN of the first frames of the transition, not the single minimum. The
   // minimum is one sample and therefore a sampling-phase lottery; the mean of the
@@ -2331,6 +2564,23 @@ async function gBr7(tab) {
     await tab.until(isStill, { timeout: 60_000, label: `${label}: settles` });
   };
   const graphFetches = async () => (await tab.instrument()).graphFetch;
+  /*
+   * FR-244 — the canvas BOX, read at every stage of the transition.
+   *
+   * A MEASUREMENT, not a check, and it earns its place: `7d` compares ink
+   * spread on a 24x24 grid laid over the canvas, so the grid's cells are only
+   * square when the canvas is. If the canvas were to RESIZE part-way through a
+   * transition, the opening frames and the settled reference would be measured
+   * in different units and `7d` would be reading its own instrument rather than
+   * the layout. FR-244 gave the canvas the vertical column, which changes its
+   * box — so the box is now printed at each stage and a reader can see whether
+   * it held still. It must be IDENTICAL across a drill and a back-out.
+   */
+  const canvasBox = async () =>
+    tab.eval(`
+      const c = document.querySelector('.graph-canvas-host canvas');
+      return c === null ? null : c.width + 'x' + c.height;
+    `);
 
   // A FRESH DOCUMENT. The cache is module-level and outlives components on
   // purpose, so earlier gates have already warmed both scopes; measuring "was
@@ -2344,6 +2594,7 @@ async function gBr7(tab) {
   // picture. 7d reads opening-vs-settled ink SPREAD within each arm instead; see
   // the STATED LIMIT note below.
   const wholeReadout = await tab.eval(READ.graphReadout);
+  const boxWhole = await canvasBox();
   const gWhole = await graphFetches();
   check(
     "7-pre",
@@ -2359,6 +2610,7 @@ async function gBr7(tab) {
   });
   await settleGraph("demo scope");
   const demoReadout = await tab.eval(READ.graphReadout);
+  const boxDemo = await canvasBox();
   const gDemo = await graphFetches();
   check(
     "7a",
@@ -2383,8 +2635,13 @@ async function gBr7(tab) {
   });
   await settleGraph("back out");
   const backSettledInk = await tab.sampleInk();
-  const backSettledSpread = inkSpread(backSettledInk);
+  // The dicing geometry the samples were taken under. Read once, AFTER the
+  // first sampler run, and reused for every reading in this gate so both arms
+  // are expressed in the same units (FR-244).
+  const inkCell = await tab.inkMeta();
+  const backSettledSpread = inkSpread(backSettledInk, inkCell);
   const backReadout = await tab.eval(READ.graphReadout);
+  const boxBack = await canvasBox();
   const gBack = await graphFetches();
   check(
     "7b",
@@ -2401,7 +2658,7 @@ async function gBr7(tab) {
   await sleep(1600);
   const refreshSamples = await tab.stopInk();
   await settleGraph("after refresh");
-  const coldSettledSpread = inkSpread(await tab.sampleInk());
+  const coldSettledSpread = inkSpread(await tab.sampleInk(), inkCell);
   const gRefresh = await graphFetches();
   check(
     "7c",
@@ -2409,9 +2666,48 @@ async function gBr7(tab) {
     `NEGATIVE CONTROL — REFRESH on the SAME surface -> +${gRefresh - gBack} /api/graph, so 7b's zero is a measured zero`,
   );
 
+  note(
+    `canvas backing store across the transition: whole-brain ${boxWhole} · drilled ${boxDemo} · ` +
+      `backed-out ${boxBack} · after refresh ${await canvasBox()}. 7d's grid is 24x24 over THIS box ` +
+      `(cells ${inkCell === null ? "n/a" : `${inkCell.cw.toFixed(1)}x${inkCell.ch.toFixed(1)}px`}), and since FR-244 the spread is weighted by those cell ` +
+      `dimensions, so the reading is a PIXEL distance and does not move with the canvas's aspect. A ` +
+      `box that moved mid-transition would still change what the two arms are compared across. ` +
+      `${boxWhole === boxDemo && boxDemo === boxBack ? "It held." : "IT MOVED — treat 7d's reading as suspect."}`,
+  );
+
+  /*
+   * 7d's OWN MUTATION (FR-244). Until this existed, `7d` was the one check on
+   * this surface with no demonstrated failing counterpart — `br7-refetch-backout`
+   * breaks `7b`, the FETCH COUNT, and says nothing about the pixel reading.
+   * That gap is why the FR-244 metric repair could not be validated at first:
+   * there was no independent control to prove a rewritten metric kept its
+   * sensitivity.
+   *
+   * THE INJECTED DEFECT: the back-out arm's ink is taken from the COLD REFRESH
+   * transition. That is not a fabricated number — it is a real re-entrance,
+   * measured on the same canvas, in the same run, through the same sampler, and
+   * it is precisely the shape a back-out would have if it lost its position
+   * seed and re-ran the entrance. Same idiom as `br4-measure-motion` (measure a
+   * surface known to move) and `br11-measure-at-blob-zoom` (measure a zoom
+   * known to merge).
+   *
+   * It costs no extra `/api/graph`, so `7a`/`7b`/`7c` stay green and `7d` is the
+   * only thing that moves — which is what makes it a clean control.
+   *
+   * WHAT IT PROVES, precisely: that `7d`'s ABSOLUTE bound bites. The back arm
+   * reads its real cold value (~62%) against the 0.75 floor. WHAT IT DOES NOT
+   * PROVE: the separation bound in a non-trivial way — with both arms drawn
+   * from one sample set the separation is identically 0, so that half fails
+   * arithmetically rather than by measurement. The absolute half is the
+   * load-bearing one here, and it is a genuine reading.
+   */
+  const reEntranced = mut("br7-backout-re-entrances");
+  const backInk = reEntranced ? refreshSamples : backSamples;
+  const backRef = reEntranced ? coldSettledSpread : backSettledSpread;
+
   // 7d — restored versus re-entranced, in pixels.
-  const back = inkCollapse(backSamples, backSettledSpread);
-  const cold = inkCollapse(refreshSamples, coldSettledSpread);
+  const back = inkCollapse(backInk, backRef, inkCell);
+  const cold = inkCollapse(refreshSamples, coldSettledSpread, inkCell);
   if (back === null || cold === null) {
     check(
       "7d",
@@ -2422,18 +2718,90 @@ async function gBr7(tab) {
     check(
       "7d",
       back.collapse > 0.75 && back.collapse - cold.collapse > 0.15,
-      `opening layout extent vs settled — BACK-OUT ${pct(back.collapse)} (opening mean ${back.early} over ${back.opening} frames, min ${back.min}, settled ${back.settled}), COLD REFRESH ${pct(cold.collapse)} (opening mean ${cold.early} over ${cold.opening}, min ${cold.min}, settled ${cold.settled}). The back-out opens NEAR its settled extent; the cold refresh opens as a clump at the origin and expands out of it.`,
+      `${reEntranced ? "[MUTATED: the back-out arm's ink was taken from the COLD REFRESH — a real re-entrance] " : ""}opening layout extent vs settled — BACK-OUT ${pct(back.collapse)} (opening mean ${back.early} over ${back.opening} frames, min ${back.min}, settled ${back.settled}), COLD REFRESH ${pct(cold.collapse)} (opening mean ${cold.early} over ${cold.opening}, min ${cold.min}, settled ${cold.settled}). The back-out opens NEAR its settled extent; the cold refresh opens as a clump at the origin and expands out of it.`,
     );
   }
   note(
     "7d is a PAIRED reading, not a tolerance: the same measurement over the same " +
       "surface with only the position seed differing. Both absolute numbers are " +
       "printed so a future regression shows up as a drift rather than only as a flip. " +
-      "Measured repeatability on darwin/Chrome, five runs: back-out 84.3-85.3% " +
-      "(spread 1.0pp), cold 61.2-61.9% (spread 0.7pp, mode 61.9%). Worst-case " +
-      "separation 22.4pp against the 15pp threshold; worst-case absolute 84.3% " +
-      "against 75%. The settled extents repeat to three decimals because d3-force " +
-      "is deterministic — that is the mechanical reason this metric is stable.",
+      "The settled extents repeat to three decimals because d3-force is deterministic " +
+      "— that is the mechanical reason this metric is stable.",
+  );
+  note(
+    "FR-244 RE-BASELINE, 2026-08-02, WITH THE ASPECT-CORRECTED METRIC — AND IT STILL DOES NOT " +
+      "HOLD. READ THIS BEFORE TOUCHING THE THRESHOLDS. Five full runs after the FR-244 layout " +
+      "reflow AND the `inkSpread` pixel-weighting repair: back-out 72.0-75.0% (72.0, 74.5 x2, " +
+      "75.0 x2), cold 59.2-62.5%, separation 9.5-15.8pp. Worst case still violates both bounds — " +
+      "72.0% against the 0.75 floor and 9.5pp against the 15pp separation. For comparison, the " +
+      "FR-240 figures this replaces were back-out 84.3-85.3%, cold 61.2-61.9%, worst-case " +
+      "separation 22.4pp, taken with the aspect-COUPLED metric on the pre-reflow canvas.",
+  );
+  note(
+    "WHAT WAS FIXED AND WHAT IT BOUGHT. `inkSpread` accumulated its moments in grid-cell INDEX " +
+      "units, treating every cell as a unit square, so it was silently coupled to the canvas " +
+      "ASPECT — see the function header for the mechanism. That is repaired (moments weighted by " +
+      "cell pixel size), and the repair was validated the only way a metric change can honestly " +
+      "be validated: `--mutate=br7-backout-re-entrances` was built FIRST, proven RED against the " +
+      "OLD metric at the OLD layout where 7d was green (83.7% -> 57.5%), and proven still RED " +
+      "after the repair (58.2%). The repair moved the worst-case separation from 6.5pp to 9.5pp " +
+      "and, at a matched canvas box, restored the reading to its historical band — but it did not " +
+      "clear the thresholds.",
+  );
+  note(
+    "THE RESIDUAL, MEASURED, because the next reader will want to know whether the metric or the " +
+      "surface is at fault. (1) The SIZE LAW is innocent: with the layout reverted and " +
+      "`nodeWorldSize` kept, 7d reads 84.1%/56.4% and 81.5%/57.9% on the old metric and 80.8%/57.8% " +
+      "on the corrected one — green either way. The brief predicted the radius change would move " +
+      "7d; the experiment says it does not. (2) THIS GATE DOES NOT RUN AT 1440x900, despite the " +
+      "window size the harness passes Chrome: headless chrome is included in that figure, so the " +
+      "CONTENT box is ~1058x813 and the canvas here is 1058x423. Under an explicit " +
+      "`setViewport(1440, 900)` the canvas is 1058x510 — within 8px of the pre-FR-244 1058x502 — " +
+      "and 7d read 81.3%/59.2% (22.1pp, PASS) and 77.6%/62.7% (14.9pp, FAIL) on two runs. So at " +
+      "the viewport this file's header claims, the reflow barely moves the canvas at all. (3) What " +
+      "those numbers also show is that 7d's separation now has a ~7pp run-to-run spread on this " +
+      "world against a 15pp threshold, where FR-240 recorded 0.7-1.0pp. The metric has become " +
+      "marginal here, and a threshold is not the thing to change about that.",
+  );
+  note(
+    "WHAT WAS DELIBERATELY NOT DONE, TWICE OVER. The thresholds are UNTOUCHED at 0.75/0.15 — " +
+      "widening them would destroy the only pixel-level gate on the FR-240 scope-cache behaviour. " +
+      "And G-BR-7 was NOT moved to an emulated 1440x900 viewport, even though the reading above " +
+      "says that would very likely clear it: changing the CONDITIONS a gate measures under, in the " +
+      "same breath as discovering it is red, is the same move as widening the threshold wearing a " +
+      "different hat. It is reported for an operator to decide, not taken. NOTE WHAT IS STILL " +
+      "GREEN AND CARRIES THE ACTUAL BEHAVIOUR: 7b (the back-out issues ZERO new /api/graph) and 7c " +
+      "(its measured control) both pass, and `--mutate=br7-refetch-backout` still fails 7b on " +
+      "purpose. The scope cache works. What is in question is whether this pixel proxy still " +
+      "discriminates on a canvas of this size.",
+  );
+  note(
+    "OPERATOR DISPOSITION, 2026-08-02: 7d SHIPS RED, KNOWINGLY, AND TD-332 OWNS IT. This is not " +
+      "an unnoticed regression and it is not an oversight — it was put to the operator with four " +
+      "options (fix the viewport, ship red, downgrade 7d to advisory, revert the layout) and they " +
+      "chose to ship red rather than let anything about the measurement move while it was failing. " +
+      "One instrument repair had already been made in this same brief, and a second — on the " +
+      "conditions rather than the metric — was judged one repair too many to trust in a single " +
+      "pass. IF YOU ARE READING THIS BECAUSE 7d IS RED: that is the expected state; see TD-332 " +
+      "before diagnosing. IF 7d IS GREEN AND YOU DID NOT FIX IT: that is the surprising state — " +
+      "something changed the canvas box or the world, and TD-332's measurements are the baseline " +
+      "to compare against. This gate is MANUAL-ONLY (verified 2026-08-02: no pre-commit hook and " +
+      "no CI workflow invokes browser-gate.mjs), so a red 7d blocks no commit and no pipeline — " +
+      "which is precisely why it needs a brief attached rather than a red line everyone learns to " +
+      "scroll past.",
+  );
+  note(
+    "A CONSEQUENCE OF SHIPPING 7d RED, found by sentinel 2026-08-02 and owned by TD-332: " +
+      "`--mutate=br7-backout-re-entrances`'s HARNESS VERDICT is now structurally uninformative. " +
+      "The harness inverts a mutation run by checking whether the predicted gate id appears in " +
+      "`failed`; it does not diff against an unmutated baseline. Because 7d fails WITHOUT the " +
+      "mutation, the run prints 'PASS (mutation caught)' for a reason that has nothing to do with " +
+      "the injected defect — it would print that even if the mutation did nothing at all. This is " +
+      "the vacuity class of learning 1094 raised one level: not a check that cannot fail, but a " +
+      "CONTROL that cannot distinguish. The mutation itself is sound and was verified by its " +
+      "NUMBERS, not its verdict — back-out 74.1% -> 59.2%, both arms collapsing to identical " +
+      "readings (105.017 / 177.368). Judge it that way until TD-332 makes 7d green again, and if " +
+      "you add a baseline-diff to the mutation harness, do it there rather than here.",
   );
   note(
     "STATED LIMIT (learning 1095). The back-out reads ~85%, NOT ~100%, and that is " +
@@ -3144,6 +3512,560 @@ async function gBr10(tab, world) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// FR-244 — the separability instrument
+// ---------------------------------------------------------------------------
+
+/**
+ * G-BR-11's thresholds. Every one is set from the MEASURED sweep recorded in
+ * the gate's closing `note()`, never picked to make a run pass.
+ */
+
+/**
+ * 11a — the component count at the measured low zoom, as a fraction of the
+ * count at FIT.
+ *
+ * Not 100%: nothing claims a zoom-out is free. Two nodes whose world distance
+ * is genuinely below the size floor's reach merge at ANY constant size, and the
+ * clamped divisor freezes the picture rather than improving it. What the floor
+ * asserts is that the great majority of distinct things stay distinct — which
+ * is exactly the property that failed before the fix.
+ */
+const SEPARABLE_BLOB_RATIO = 0.6;
+
+/**
+ * The zoom levels the sweep visits, as divisors of the MEASURED `k_fit`.
+ *
+ * Relative to `k_fit` rather than absolute because `k_fit` is a property of the
+ * payload and the canvas box, and both move (the FR-244 layout reflow moves the
+ * box on purpose). What is being measured is how the picture degrades as the
+ * operator zooms OUT FROM THE VIEW THEY WERE GIVEN, which is a ratio.
+ *
+ * The dense end is fine-grained because the merge onset lives there: the first
+ * exploratory run put the whole picture at ONE component by k_fit/3.8, so a
+ * coarse sweep would have stepped straight over the transition it exists to
+ * find.
+ */
+const SWEEP_DIVISORS = [1.5, 2, 3, 4, 8, 16];
+
+/** Which sweep step 11a asserts at. `k_fit/2` is one comfortable zoom-out. */
+const LOW_ZOOM_DIVISOR = 2;
+
+/** 11a — no single component may own this much of the field's ink. */
+const SEPARABLE_LARGEST_SHARE = 0.25;
+
+/**
+ * 11b — how far the MEASURED component deficit at FIT may sit from the seeded
+ * edge count. The two agreed exactly (710 - 352 = 358 components) on every run
+ * recorded, so the tolerance is headroom for a layout that nudges one pair
+ * apart, not slack the assertion needs.
+ */
+const MERGE_DEFICIT_TOLERANCE = 0.1;
+
+/** 11c — how much of the space below its own top edge the canvas must own. */
+const COLUMN_FILL_FRACTION = 0.9;
+
+/**
+ * The `height: clamp(420px, 62vh, 900px)` ceiling `.graph-surface` carried
+ * before FR-244. Named here so `11c-tall` reads as "the cap is GONE" rather
+ * than as an arbitrary pixel comparison.
+ */
+const RETIRED_SURFACE_CLAMP_MAX_PX = 900;
+
+/**
+ * ONE separability reading of the graph canvas, at whatever zoom it is at.
+ *
+ * WHAT IT MEASURES, and why this metric rather than a prettier one.
+ * The complaint FR-244 answers is *"zoomed out it is an unreadable blob"*, and
+ * "blob" has an exact meaning in pixels: distinct nodes have stopped being
+ * distinct CONNECTED REGIONS of ink. So the reading is a 4-connected component
+ * count over a thresholded alpha-weighted luminance map of the canvas backing
+ * store, plus the share of masked ink sitting in the single largest component.
+ * Separated field -> many components, largest share ~1/N. Blob -> one
+ * component, largest share ~1.
+ *
+ * THE THRESHOLD IS PASSED IN, NOT SELF-CALIBRATED PER READING, and that is
+ * load-bearing. The sweep below is a PAIRED reading in the 7d spirit: the same
+ * node set, the same colours, only the zoom differing. A per-frame
+ * self-calibration (`0.5 * max` of THAT frame) would move the instrument
+ * between the two readings being compared, so a picture that got dimmer would
+ * be re-normalised back to looking the same. Calibrating ONCE at FIT and
+ * reusing the absolute value keeps every reading in the sweep on one scale.
+ * Pass `null` to calibrate, and the caller then reuses the returned `max`.
+ *
+ * WHY A THRESHOLD AT ALL — it is what separates NODE ink from EDGE ink. At
+ * Tier C a resting node is an opaque fill at the `--dataviz-bone` role, while
+ * a resting edge is `--dataviz-edge-dim`, which `tokens.css` defines as
+ * `color-mix(... --dataviz-muted 38%, transparent)` — muted is already darker
+ * than the foreground, and 38% alpha puts edge ink far below half of a node's.
+ * Without the threshold every linked pair would count as ONE component and the
+ * metric would measure the edge list rather than the picture.
+ *
+ * `masked` is returned and printed at every level ON PURPOSE. Nodes that
+ * vanish entirely would also read as "few components", so the raw ink count is
+ * what lets a reader tell "separable" from "gone".
+ */
+const readSeparability = (absoluteThreshold) => `
+  const canvas = document.querySelector('.graph-canvas-host canvas');
+  if (canvas === null) return null;
+  const w = canvas.width | 0, h = canvas.height | 0;
+  if (w === 0 || h === 0) return null;
+  const data = canvas.getContext('2d').getImageData(0, 0, w, h).data;
+  const n = w * h;
+  const ink = new Float32Array(n);
+  let max = 0;
+  for (let p = 0, i = 0; p < n; p++, i += 4) {
+    const v = ((data[i] + data[i + 1] + data[i + 2]) / 3) * (data[i + 3] / 255);
+    ink[p] = v;
+    if (v > max) max = v;
+  }
+  const T = ${absoluteThreshold === null ? "max * 0.5" : String(absoluteThreshold)};
+  const mask = new Uint8Array(n);
+  let masked = 0;
+  if (T > 0) {
+    for (let p = 0; p < n; p++) if (ink[p] >= T) { mask[p] = 1; masked++; }
+  }
+  // Iterative flood fill over an explicit stack. A recursive one overflows the
+  // JS stack the moment the picture really IS one canvas-sized blob, which is
+  // precisely the case the negative control exists to produce.
+  const stack = new Int32Array(n);
+  const seen = new Uint8Array(n);
+  let blobs = 0, largest = 0;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let p0 = 0; p0 < n; p0++) {
+    if (mask[p0] === 0 || seen[p0] === 1) continue;
+    blobs++;
+    let size = 0, top = 0;
+    stack[top++] = p0;
+    seen[p0] = 1;
+    while (top > 0) {
+      const q = stack[--top];
+      size++;
+      const x = q % w, y = (q / w) | 0;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
+      if (x > 0 && mask[q - 1] === 1 && seen[q - 1] === 0) { seen[q - 1] = 1; stack[top++] = q - 1; }
+      if (x < w - 1 && mask[q + 1] === 1 && seen[q + 1] === 0) { seen[q + 1] = 1; stack[top++] = q + 1; }
+      if (y > 0 && mask[q - w] === 1 && seen[q - w] === 0) { seen[q - w] = 1; stack[top++] = q - w; }
+      if (y < h - 1 && mask[q + w] === 1 && seen[q + w] === 0) { seen[q + w] = 1; stack[top++] = q + w; }
+    }
+    if (size > largest) largest = size;
+  }
+  return {
+    w, h,
+    max: Number(max.toFixed(2)),
+    threshold: Number(T.toFixed(2)),
+    masked,
+    blobs,
+    largest,
+    largestShare: masked === 0 ? 0 : Number((largest / masked).toFixed(4)),
+    /** The on-screen span of the inked field, in canvas pixels. */
+    extentPx: maxX < 0 ? 0 : Math.max(maxX - minX, maxY - minY) + 1,
+    zoom: Number(window.__igrisGraphStillness.zoom().toFixed(5)),
+  };
+`;
+
+/**
+ * Zoom OUT with real wheel events until `k` falls to `targetK`, and report what
+ * was actually reached.
+ *
+ * It reports the ACHIEVED zoom rather than the requested one because the
+ * library owns a scale extent we never set, so a request can be refused. Every
+ * assertion downstream quotes the achieved figure — the brief's AC is "at a
+ * MEASURED low zoom", and a gate that printed the target instead of the reading
+ * would be asserting its own intention.
+ */
+async function wheelZoomTo(tab, host, targetK, { maxTicks = 400 } = {}) {
+  const readK = "return window.__igrisGraphStillness.zoom();";
+  let k = await tab.eval(readK);
+  let ticks = 0;
+  let stalled = 0;
+  while (k > targetK && ticks < maxTicks) {
+    // ADAPTIVE STEP, and it is not a nicety. d3-zoom scales by
+    // `2 ** (-deltaY * 0.002)`, so a 120-unit tick multiplies `k` by ~0.85 —
+    // coarse enough that a fixed step overshot the requested zoom by 2x on the
+    // first exploratory run, and a gate that asserts "at k_fit/4" while
+    // standing at k_fit/7 is reporting a level it did not measure. The step
+    // shrinks as the target nears so the ACHIEVED `k` lands close to the
+    // requested one; the achieved figure is still what every assertion quotes.
+    const remaining = k / targetK;
+    const delta = remaining > 2 ? 120 : remaining > 1.2 ? 40 : 12;
+    await tab.wheel(host.x, host.y, delta);
+    ticks += 1;
+    const next = await tab.eval(readK);
+    // The library's own scale extent is never set by us, so it is whatever the
+    // default is (measured: a 0.01 minimum). If several more ticks cannot move
+    // `k`, we have hit it, and grinding through the remaining budget would only
+    // make the gate slow.
+    if (next >= k * 0.9999) stalled += 1;
+    else stalled = 0;
+    k = next;
+    if (stalled >= 4) break;
+  }
+  // The wheel wakes the render loop (C1). Let it re-pause so the frame the
+  // instrument reads is the FINAL one for this zoom rather than a frame taken
+  // mid-gesture.
+  await tab.until("return window.__igrisGraphStillness.state() === 'still' ? 1 : 0;", {
+    timeout: 30_000,
+    label: `settles after zooming to k<=${targetK}`,
+  });
+  return { k: await tab.eval(readK), ticks, hitExtent: stalled >= 3 };
+}
+
+/**
+ * G-BR-11 — FR-244. THE DENSITY DEFECT, MEASURED, AND THE COLUMN.
+ *
+ * WHY THIS GATE EXISTS
+ * --------------------
+ * FR-244's brief asks for the density fix to be JUSTIFIED BY A MEASUREMENT and
+ * for the separability claim to be asserted at a MEASURED low zoom. The FR-240
+ * header's complaint about FR-239 was that its ad-hoc run left nothing
+ * re-runnable, so the measurement is checked in as a gate rather than taken in
+ * a scratch script.
+ *
+ * WORLD: `dense`, its own world and its own tab. 700 extra `learning` rows put
+ * the payload in Tier C, which is the only tier where `chrome` is `silhouette`
+ * and the floor is `--s-1` — the surface the complaint came from. It runs after
+ * G-BR-7 so it cannot disturb that gate's `/api/graph` counters, and it never
+ * touches the `seeded` world whose row counts three earlier gates assert on.
+ *
+ * PROVES
+ *   11a  At a MEASURED low zoom the picture is still made of distinct connected
+ *        regions: the component count holds a stated fraction of its count at
+ *        FIT, and no single component owns the field.
+ *   11b  NEGATIVE CONTROL FOR THE INSTRUMENT. At an extreme zoom-out — outside
+ *        any range this brief claims — the same metric reports MERGED. So 11a's
+ *        pass is a measured pass rather than a counter that cannot move, which
+ *        is what 4b is to 4a.
+ *   11c  The canvas owns the vertical column at 1440x900: the page does not
+ *        scroll, the host fills the space below it, and the query twin sits
+ *        INSIDE the layout row rather than under it.
+ *
+ * DOES NOT PROVE
+ *   That the picture is BEAUTIFUL, or that a reader can name a node at that
+ *   zoom. Component count is a legibility FLOOR — "these are still separate
+ *   things" — not a legibility ceiling. Nor does it prove anything about the
+ *   node SHAPE vocabulary: FR-244's operator sign-off left `tracePath`
+ *   untouched, so no shape claim is made here or anywhere in this file.
+ *   **Sibling:** `shapes.test.ts` pins the vocabulary; `nodeWorldSize`'s unit
+ *   tests in the same file pin the size law's arithmetic at every `k`, which is
+ *   the half this gate cannot see.
+ */
+async function gBr11(tab) {
+  gate("G-BR-11", "FR-244: density measured at a real zoom, and the vertical column");
+
+  const stillnessReady = "return window.__igrisGraphStillness !== undefined ? 1 : 0;";
+  const isStill = "return window.__igrisGraphStillness.state() === 'still' ? 1 : 0;";
+
+  await tab.hash("#/graph");
+  await tab.until(stillnessReady, { timeout: 45_000, label: "dense graph mounts" });
+  await tab.until(isStill, { timeout: 90_000, label: "dense graph settles" });
+
+  const readout = await tab.eval(READ.graphReadout);
+
+  // CLEAR THE ENTRY-POINT SELECTION FIRST. `useGraph` auto-selects the
+  // highest-degree node on settle (exemption 02), which paints an accent fill,
+  // a selection ring and the 1-hop labels. All three are ink the size law does
+  // not govern, and the ring in particular is a large thin circle that would
+  // fuse otherwise-separate components. Measuring the RESTING field is the
+  // whole point.
+  await tab.click(".graph-inspector-close");
+  await tab.until(isStill, { timeout: 30_000, label: "settles after the deselect" });
+  await tab.settle(400);
+
+  const host = await tab.eval(`
+    const el = document.querySelector('.graph-canvas-host');
+    if (el === null) return null;
+    const r = el.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+  `);
+
+  // FIT — every node on screen, which is the reference the sweep is paired
+  // against. `graph.refit` -> `zoomToFit()`, driven through the real button.
+  await clickButton(tab, "FIT");
+  await tab.until(isStill, { timeout: 30_000, label: "settles after FIT" });
+  await tab.settle(300);
+
+  // Calibrate the instrument ONCE, at FIT, then hold it absolute for the sweep.
+  const calib = await tab.eval(readSeparability(null));
+  if (calib === null) {
+    check("11-instrument", false, "no canvas to read — the dense graph never painted");
+    return;
+  }
+  const T = calib.threshold;
+  const atFit = await tab.eval(readSeparability(T));
+  check(
+    "11-instrument",
+    atFit.blobs > 1 && atFit.masked > 0 && atFit.largestShare < 0.5,
+    `CALIBRATION at FIT (${readout}) k=${atFit.zoom} canvas ${atFit.w}x${atFit.h}: ` +
+      `peak ink ${calib.max}, threshold ${T} (half the peak — node ink is an opaque bone fill, ` +
+      `resting edge ink is muted at 38% alpha and lands below it) · ` +
+      `masked ${atFit.masked}px · blobs ${atFit.blobs} · largest blob ${atFit.largest}px ` +
+      `(${pct(atFit.largestShare)} of the ink) · field spans ${atFit.extentPx}px`,
+  );
+
+  // THE SWEEP. Real wheel events, so this also drives the C1 wake path
+  // (learning 1097) — a canvas that is halted-and-dead does not repaint on a
+  // wheel and would read as a frozen picture at every level below.
+  const sweep = [];
+  for (const divisor of SWEEP_DIVISORS) {
+    const target = atFit.zoom / divisor;
+    const moved = await wheelZoomTo(tab, host, target);
+    const s = await tab.eval(readSeparability(T));
+    sweep.push({ divisor, target: Number(target.toFixed(5)), ...moved, sep: s });
+    note(
+      `sweep k_fit/${String(divisor).padEnd(2)} -> requested k=${target.toFixed(5)} reached k=${moved.k.toFixed(5)} ` +
+        `in ${moved.ticks} wheel ticks${moved.hitExtent ? " [library scale extent reached]" : ""} · ` +
+        `blobs ${s.blobs} (${((s.blobs / atFit.blobs) * 100).toFixed(1)}% of FIT's ${atFit.blobs}) · ` +
+        `masked ${s.masked}px · largest ${pct(s.largestShare)} · field ${s.extentPx}px`,
+    );
+  }
+
+  const low = sweep.find((s) => s.divisor === LOW_ZOOM_DIVISOR);
+  const extreme = sweep[sweep.length - 1];
+
+  // 11a — the assertion, at the MEASURED zoom. The mutation points it at the
+  // extreme instead, which is a zoom known to merge: the mirror of
+  // br4-measure-motion pointing 4a at a surface known to move.
+  const measured = mut("br11-measure-at-blob-zoom") ? extreme : low;
+  const ratio = measured.sep.blobs / atFit.blobs;
+  check(
+    "11a",
+    ratio >= SEPARABLE_BLOB_RATIO && measured.sep.largestShare <= SEPARABLE_LARGEST_SHARE,
+    `SEPARABLE AT A MEASURED LOW ZOOM: k=${measured.k.toFixed(5)} (FIT was k=${atFit.zoom}, ` +
+      `so ${(atFit.zoom / measured.k).toFixed(1)}x further out, reached in ${measured.ticks} real wheel ticks) · ` +
+      `blobs ${measured.sep.blobs} vs ${atFit.blobs} at FIT = ${pct(ratio)} (floor ${pct(SEPARABLE_BLOB_RATIO)}) · ` +
+      `largest blob ${pct(measured.sep.largestShare)} of the ink (ceiling ${pct(SEPARABLE_LARGEST_SHARE)}) · ` +
+      `masked ${measured.sep.masked}px, so the ink is still THERE rather than gone` +
+      (mut("br11-measure-at-blob-zoom")
+        ? "  [MUTATED: measured at the EXTREME zoom-out, a k at which the whole layout spans a few pixels]"
+        : ""),
+  );
+
+  /*
+   * 11b — THE INSTRUMENT'S NEGATIVE CONTROL, and it is not the one this gate
+   * was first written with. That draft asserted the field reads as ONE blob at
+   * an extreme zoom-out, on the reasoning that the layout's own on-screen
+   * extent shrinks to a few pixels there whatever the size law does. The FIRST
+   * POST-FIX RUN REFUTED IT: at k_fit/16 the fixed law still resolved 162
+   * components in a 32px field. The control was wrong, and it was wrong in the
+   * most dangerous direction — it would have gone red for the RIGHT behaviour.
+   *
+   * So the control is taken from a merge that is real, measured, and caused by
+   * something the size law cannot reach: AT FIT, EVERY LINKED PAIR IS ALREADY
+   * FUSED. The dense world seeds a known number of edges, each joining two
+   * learnings, and d3-force's link force pulls those pairs closer than their
+   * own size. The component deficit is therefore PREDICTED INDEPENDENTLY of
+   * this instrument — it should equal the seeded edge count — and measured:
+   * 710 nodes, 352 edges, 358 components. 710 - 352 = 358, exactly.
+   *
+   * That makes it a real negative control in the learning-1092 sense: it
+   * travels the SAME path (the same canvas, the same render, the same reader),
+   * and it proves the counter reports fusion WHEN FUSION OCCURS — against a
+   * number this gate did not choose. A counter stuck at "everything is
+   * separate" fails here.
+   *
+   * It also records FR-244's second measured finding: the absence of a collide
+   * force IS a contributing cause of at-rest fusion. What it does NOT license
+   * is adding one — see `shapes.ts`'s note on why separation at FIT is
+   * scale-free and therefore out of a size law's reach.
+   */
+  const control = mut("br11-control-at-extreme-zoom")
+    ? { k: extreme.k, sep: extreme.sep }
+    : { k: atFit.zoom, sep: atFit };
+  const counts = /(\d+)\s+NODES\s*·\s*(\d+)\s+EDGES/.exec(readout ?? "");
+  const nodeCount = counts === null ? 0 : Number(counts[1]);
+  const edgeCount = counts === null ? 0 : Number(counts[2]);
+  const deficit = nodeCount - control.sep.blobs;
+  check(
+    "11b",
+    counts !== null &&
+      control.sep.blobs < nodeCount &&
+      deficit >= edgeCount * (1 - MERGE_DEFICIT_TOLERANCE) &&
+      deficit <= edgeCount * (1 + MERGE_DEFICIT_TOLERANCE),
+    `NEGATIVE CONTROL — the metric REPORTS a merge when one is there. At k=${control.k.toFixed(5)}: ` +
+      `${nodeCount} nodes render as ${control.sep.blobs} components, a deficit of ${deficit} ` +
+      `against ${edgeCount} seeded edges (${pct(edgeCount === 0 ? 0 : deficit / edgeCount)} of them, ` +
+      `tolerance +/-${pct(MERGE_DEFICIT_TOLERANCE)}) — every LINKED pair sits closer than its own size ` +
+      `and fuses, which is a number this gate did not choose. So 11a's separability is a MEASURED pass` +
+      (mut("br11-control-at-extreme-zoom")
+        ? "  [MUTATED: the control's reading was taken at the extreme zoom-out, where the size law has PRESERVED the separation, so the known fusion is no longer there to detect]"
+        : ""),
+  );
+
+  // 11c — the vertical column. Its own concern; measured after the zoom sweep
+  // so the sweep never sees a mid-flight layout.
+  await tab.hash("#/graph");
+  await tab.until(stillnessReady, { timeout: 45_000, label: "graph remounts for the layout reading" });
+  if (mut("br11-fullheight-at-stacked-breakpoint")) {
+    // Below `base.css`'s 1100px breakpoint `.graph-layout` STACKS and the
+    // canvas legitimately does not own the column. Asserting the full-column
+    // claim there must fail.
+    await tab.setViewport(1000, 900);
+  } else {
+    await tab.setViewport(1440, 900);
+  }
+  await tab.settle(900);
+  const layout = await tab.eval(`
+    // SCROLL TO THE TOP FIRST. \`getBoundingClientRect().top\` is relative to
+    // the VIEWPORT, so on a page that scrolls — which is exactly the pre-fix
+    // state this check exists to reject — the reading depends on where the
+    // previous gate left the scroll position. Two exploratory runs disagreed by
+    // 264px for that reason before this line existed.
+    window.scrollTo(0, 0);
+    const host = document.querySelector('.graph-canvas-host');
+    const main = document.querySelector('#main') || document.body;
+    if (host === null) return null;
+    const r = host.getBoundingClientRect();
+    const padBottom = Number.parseFloat(getComputedStyle(main).paddingBottom) || 0;
+    return {
+      innerHeight: window.innerHeight,
+      innerWidth: window.innerWidth,
+      hostTop: Math.round(r.top),
+      hostHeight: Math.round(r.height),
+      /* Everything from the canvas's top edge to the bottom of the page box. */
+      available: Math.round(window.innerHeight - r.top - padBottom),
+      scrollHeight: document.documentElement.scrollHeight,
+      /* DECISION 3a — the twin lives INSIDE the layout row, not under it. */
+      twinInsideLayout: document.querySelector('.graph-layout .graph-twin') !== null,
+      twinPresent: document.querySelector('.graph-twin') !== null,
+    };
+  `);
+  const fillsColumn = layout.hostHeight / Math.max(1, layout.available);
+  const scrolls = layout.scrollHeight > layout.innerHeight + 1;
+  check(
+    "11c",
+    fillsColumn >= COLUMN_FILL_FRACTION &&
+      !scrolls &&
+      layout.twinInsideLayout === true &&
+      layout.twinPresent === true,
+    `FULL COLUMN at ${layout.innerWidth}x${layout.innerHeight}: canvas host ${layout.hostHeight}px of ` +
+      `${layout.available}px available below its own top edge (${pct(fillsColumn)}, floor ${pct(COLUMN_FILL_FRACTION)}) · ` +
+      `document scrollHeight ${layout.scrollHeight} vs innerHeight ${layout.innerHeight} -> ` +
+      `${scrolls ? "THE PAGE SCROLLS" : "no page scroll"} · query twin present=${layout.twinPresent} ` +
+      `inside the layout row=${layout.twinInsideLayout}` +
+      (mut("br11-fullheight-at-stacked-breakpoint")
+        ? "  [MUTATED: asserted at a 1000px viewport, below the 1100px stacked breakpoint]"
+        : ""),
+  );
+
+  // 11c-tall — the retired clamp, proved retired. `.graph-surface` used to be
+  // `height: clamp(420px, 62vh, 900px)`, so no viewport however tall could put
+  // more than 900px of canvas on screen. This is the reading that says the cap
+  // is gone rather than merely raised.
+  if (!mut("br11-fullheight-at-stacked-breakpoint")) {
+    await tab.setViewport(1440, 1600);
+    await tab.settle(900);
+    const tall = await tab.eval(`
+      const host = document.querySelector('.graph-canvas-host');
+      if (host === null) return null;
+      const r = host.getBoundingClientRect();
+      return { hostHeight: Math.round(r.height), innerHeight: window.innerHeight };
+    `);
+    check(
+      "11c-tall",
+      tall.hostHeight > RETIRED_SURFACE_CLAMP_MAX_PX,
+      `at ${tall.innerHeight}px tall the canvas host is ${tall.hostHeight}px — above the RETIRED ` +
+        `\`clamp(420px, 62vh, 900px)\` ceiling of ${RETIRED_SURFACE_CLAMP_MAX_PX}px, so the cap is gone rather than raised`,
+    );
+  } else {
+    skip("11c-tall", "the stacked-breakpoint mutation owns the viewport for this run");
+  }
+
+  /*
+   * 11d — THE DENSITY BANNER MUST NOT EAT THE CANVAS'S POINTER EVENTS.
+   *
+   * FR-244 moved the banner out of the page flow to kill a ResizeObserver
+   * oscillation (see `pages/Graph.tsx`). That was right, and it shipped with a
+   * regression review caught: an opaque, full-width, out-of-flow strip sitting
+   * on `.graph-canvas-host` with no `pointer-events` rule INTERCEPTS every
+   * hover, click and wheel that lands on it. Nodes under the strip become
+   * unselectable while the banner is up — which is Tier C dense sets, exactly
+   * the surface this brief exists to improve, and behaviourally
+   * indistinguishable from FR-239's dead canvas.
+   *
+   * The absence of THIS assertion is what let it through, so it is the
+   * assertion, not a comment.
+   *
+   * A SMALL VIEWPORT IS THE CHEAP WAY TO RAISE THE BANNER. `shouldAggregate`
+   * trips when `count · floor² > area · 0.25`; the dense world's 710 nodes at
+   * the 8px floor need under ~181,000 px² of canvas, which a ~400x700 viewport
+   * gives. Raising the world's node count instead would have moved every figure
+   * in the sweep above, which is a re-baseline the rest of this gate does not
+   * need.
+   *
+   * NON-VACUITY IS ASSERTED IN THE CHECK ITSELF: the banner must be PRESENT
+   * with a non-zero box and the probe point must fall INSIDE it. Without those,
+   * a run where the banner simply never rendered would report a clean pass —
+   * the failure mode that makes a guard indistinguishable from a broken one.
+   */
+  await tab.setViewport(400, 700);
+  await tab.settle(1200);
+  const banner = await tab.eval(`
+    const el = document.querySelector('.graph-density');
+    if (el === null) return { present: false };
+    const r = el.getBoundingClientRect();
+    if (r.width <= 0 || r.height <= 0) return { present: true, boxed: false, w: r.width, h: r.height };
+    ${mut("br11-banner-swallows-pointer") ? "el.style.pointerEvents = 'auto';" : ""}
+    // A point INSIDE the strip, inset from its edges so the reading is not a
+    // border-rounding lottery.
+    const x = r.left + Math.min(40, r.width / 2);
+    const y = r.top + r.height / 2;
+    const hit = document.elementFromPoint(x, y);
+    const host = document.querySelector('.graph-canvas-host');
+    return {
+      present: true,
+      boxed: true,
+      w: Math.round(r.width), h: Math.round(r.height),
+      insideBanner: x >= r.left && x <= r.right && y >= r.top && y <= r.bottom,
+      hit: hit === null ? null : (hit.className && hit.className.baseVal !== undefined
+        ? hit.className.baseVal : String(hit.className || hit.tagName)),
+      hitIsBanner: hit !== null && hit.closest('.graph-density') !== null,
+      hitReachesCanvas: hit !== null && host !== null && (hit === host || host.contains(hit)),
+      computedPointerEvents: getComputedStyle(el).pointerEvents,
+    };
+  `);
+  check(
+    "11d",
+    banner.present === true &&
+      banner.boxed === true &&
+      banner.insideBanner === true &&
+      banner.hitIsBanner === false &&
+      banner.hitReachesCanvas === true,
+    banner.present !== true
+      ? "the DENSITY banner never rendered at this viewport, so the pointer-transparency claim was NOT exercised — raise the density or lower the viewport"
+      : `DENSITY banner is up (${banner.w}x${banner.h}px, pointer-events=${banner.computedPointerEvents}) and a point INSIDE it ` +
+        `(inside=${banner.insideBanner}) resolves to ${JSON.stringify(banner.hit)} — banner=${banner.hitIsBanner}, ` +
+        `reaches the canvas host=${banner.hitReachesCanvas}. A node under the strip is still hoverable and clickable` +
+        (mut("br11-banner-swallows-pointer")
+          ? "  [MUTATED: pointer-events restored to auto on the overlay — the defect as shipped]"
+          : ""),
+  );
+
+  await tab.clearViewport();
+
+  note(
+    "11a/11b are a PAIRED reading in the 7d spirit, not a tolerance: the SAME node set, the SAME " +
+      "colours and ONE calibrated ink threshold, with only the zoom differing. The threshold is " +
+      "calibrated once at FIT and held absolute, because a per-frame self-calibration would " +
+      "re-normalise a picture that got dimmer back into looking unchanged. `masked` is printed at " +
+      "every level so 'separable' can be told apart from 'the nodes disappeared'.",
+  );
+  note(
+    "STATED LIMIT (learning 1095). This gate measures COMPONENT COUNT — 'are these still distinct " +
+      "things' — which is a legibility FLOOR, not a legibility ceiling: it cannot say whether a " +
+      "reader could name a node at that zoom, and it makes no claim about the shape vocabulary " +
+      "(FR-244's sign-off left `tracePath` untouched). The arithmetic of the size law at every `k`, " +
+      "including the continuity at K_FLOOR and the agreement of the FOUR distinct geometry laws " +
+      "(paint size, pointer-capture size, ring radius, label obstacle box) across the FIVE call " +
+      "sites that use them, is the " +
+      "sibling: `cli/dashboard/src/graph/__tests__/shapes.test.ts`. Do not weaken either on the " +
+      "assumption the other has it covered.",
+  );
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -3161,7 +4083,9 @@ async function main() {
     // FR-241 adds a FIFTH world. `triage` is the only one whose brain is built
     // by the engine's own migrations, which is the only schema the write door
     // can boot against — see `seedTriageWorld`.
-    for (const kind of ["seeded", "vec", "empty", "missing", "triage"]) {
+    // FR-244 adds a SIXTH. `dense` is the only world whose payload reaches
+    // Tier C, which is the only tier where the density defect exists.
+    for (const kind of ["seeded", "vec", "empty", "missing", "triage", "dense"]) {
       const w = makeWorld(kind);
       worldDirs.push(w.brain);
       worlds[kind] = await startServer(w);
@@ -3217,6 +4141,11 @@ async function main() {
     // It also spends >10 s waiting for real ladder polls, so like G-BR-9 it
     // costs nothing at the end.
     await runGate("G-BR-10", () => gBr10(tabs.triage, worlds.triage));
+    // FR-244, LAST. Its own world and its own tab, so its zoom sweep and its
+    // viewport overrides cannot disturb any earlier gate — G-BR-7 in particular
+    // measures `/api/graph` request counts on the `seeded` document, and G-BR-4
+    // measures that document at rest.
+    await runGate("G-BR-11", () => gBr11(tabs.dense));
   } finally {
     teardown();
     if (!KEEP) for (const d of worldDirs) rmSync(d, { recursive: true, force: true });
@@ -3235,17 +4164,26 @@ async function main() {
     process.stdout.write(`SKIPPED ${s.gate} ${s.id} — ${s.reason}\n`);
   }
 
+  // A `--gates=` run is stamped so its transcript can never be quoted as a full
+  // ladder. This is printed BEFORE the verdict and repeated inside it.
+  const filtered =
+    notRun.length === 0
+      ? ""
+      : ` [FILTERED — ${notRun.length} gate(s) did NOT run: ${notRun.join(", ")}; this is NOT a full-gate run]`;
+  if (filtered !== "") process.stdout.write(`${filtered.trim()}\n`);
+
   if (MUTATE === null) {
     if (failed.length > 0) {
       for (const f of failed) process.stdout.write(`FAILED  ${f.gate} ${f.id}\n`);
-      process.stdout.write("VERDICT: FAIL\n");
+      process.stdout.write(`VERDICT: FAIL${filtered}\n`);
       process.exitCode = 1;
       return;
     }
     process.stdout.write(
-      skipped.length === 0
-        ? "VERDICT: PASS — every gate green, every negative control green, nothing skipped\n"
-        : `VERDICT: PASS WITH ${skipped.length} SKIPPED — every gate that RAN is green, every negative control green. The skipped checks above were NOT exercised.\n`,
+      (skipped.length === 0
+        ? "VERDICT: PASS — every gate green, every negative control green, nothing skipped"
+        : `VERDICT: PASS WITH ${skipped.length} SKIPPED — every gate that RAN is green, every negative control green. The skipped checks above were NOT exercised.`) +
+        `${filtered}\n`,
     );
     return;
   }
@@ -3264,13 +4202,13 @@ async function main() {
   );
   if (failed.length === 0) {
     process.stdout.write(
-      "VERDICT: VACUOUS — the injected defect did NOT fail any check. The gate proves nothing.\n",
+      `VERDICT: VACUOUS — the injected defect did NOT fail any check. The gate proves nothing.${filtered}\n`,
     );
     process.exitCode = 1;
     return;
   }
   process.stdout.write(
-    `VERDICT: PASS (mutation caught${hit ? "" : " — note: by a different check than predicted, listed above"})\n`,
+    `VERDICT: PASS (mutation caught${hit ? "" : " — note: by a different check than predicted, listed above"})${filtered}\n`,
   );
 }
 

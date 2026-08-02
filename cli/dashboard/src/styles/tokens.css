@@ -95,6 +95,16 @@
   --nav-h: 56px;
   --shell-pad-x: 28px;
   --shell-pad-y: 32px;
+  /* FR-244 — `.shell-main`'s bottom pad, promoted from a literal to a token
+     the moment a second rule needed to subtract it. The graph page computes
+     the column it may fill from `--nav-h`, `--shell-pad-y` and this; a literal
+     would have made that calc silently wrong on the next padding change. */
+  --shell-pad-b: 64px;
+  /* The graph row's floor on a SHORT viewport. It is the 420px lower bound of
+     the `clamp(420px, 62vh, 900px)` that FR-244 retired from `.graph-surface`:
+     the ceiling is what was wrong, not the floor, so the floor is kept and
+     named rather than deleted along with it. */
+  --graph-row-min-h: 420px;
 
   /* ─── FR-239 · motion tokens ──────────────────────────────────
      Source: fifty_dev/docs/brand/motion.md "Six durations" + "Four easings".

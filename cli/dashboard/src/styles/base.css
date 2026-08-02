@@ -714,7 +714,11 @@ body[data-motion="low"] *::after {
 
 .shell-main {
   flex: 1 1 auto;
-  padding: var(--shell-pad-y) var(--shell-pad-x) 64px;
+  /* The bottom pad is a TOKEN rather than the literal `64px` it used to be,
+     because FR-244's graph column has to subtract it to compute the height it
+     is allowed to fill. Two copies of a layout constant is how the column ends
+     up one padding-change away from growing a scrollbar. */
+  padding: var(--shell-pad-y) var(--shell-pad-x) var(--shell-pad-b);
 }
 
 .shell-h1 {
@@ -844,20 +848,106 @@ body[data-motion="low"] *::after {
    which is what `dashboard-graph-source.test.ts` asserts mechanically (T13).
    ─────────────────────────────────────────────────────────── */
 
+/* FR-244 — THE PAGE OWNS THE VERTICAL COLUMN.
+   Before this, `.graph-surface` carried `height: clamp(420px, 62vh, 900px)`
+   and the query twin sat in a full-width block BELOW `.graph-layout`. Together
+   those meant the canvas could never exceed 900px however tall the display
+   was, AND the page scrolled at 1440x900 (measured: scrollHeight 1164 against
+   innerHeight 900). Both are gone: the twin moved into the side column
+   (exemption 04 is satisfied by ADJACENCY, which the side column is), leaving
+   `.graph-layout` as the only vertical consumer, so the canvas can take the
+   rest of the column.
+
+   NO LITERAL HEIGHTS. The column is derived from `--nav-h`, `--shell-pad-y`
+   and `--shell-pad-b`, and `dvh` rather than `vh` so a mobile URL bar cannot
+   put the bottom of the canvas under browser chrome. */
+.graph-page {
+  display: flex;
+  flex-direction: column;
+  /* `height`, NOT `min-height`, and that distinction was measured rather than
+     reasoned. With `min-height` the column has no DEFINITE size, so the row
+     below sizes to its CONTENT — and the inspector's content is the
+     auto-selected entry node's attribute list, which is tall. The page then
+     grew past the viewport and the scrollbar came back: 922px against a 900px
+     viewport, 21px of it the inspector's overflow. A definite height is what
+     lets `.graph-layout` shrink and its inner column scroll instead. */
+  height: calc(
+    100dvh - var(--nav-h) - var(--shell-pad-y) - var(--shell-pad-b)
+  );
+}
+
 .graph-layout {
   display: flex;
   gap: var(--s-3);
   align-items: stretch;
+  /* Takes whatever the eyebrow, the headline, the banners and the controls
+     leave. The explicit `min-height` is load-bearing twice over: it overrides
+     the flex item's AUTOMATIC minimum (its content size, which would refuse to
+     shrink), and it keeps a usable canvas on a short viewport — a display too
+     short to hold the column should scroll, not serve a 90px graph. */
+  flex: 1 1 auto;
+  min-height: var(--graph-row-min-h);
 }
 
 .graph-surface {
   position: relative;
   flex: 1 1 auto;
   min-width: 0;
-  /* Tall enough that a 2,400-node field is legible, bounded so the twin below
-     it stays on screen without scrolling. */
-  height: clamp(420px, 62vh, 900px);
+  /* Height comes from the column now — `align-items: stretch` on the row. */
   border: 0.5px solid var(--line);
+}
+
+/* The side column: the inspector, with the query twin beneath it. */
+.graph-side {
+  flex: 0 0 300px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+  min-height: 0;
+}
+
+/* FR-244 — THE DENSITY BANNER IS AN OVERLAY, AND THAT IS A BUG FIX.
+   `graph.aggregating` is set from the ResizeObserver on the canvas host
+   (`useGraph.ts`). While the canvas had a fixed height that was harmless. With
+   the canvas filling the column it is not: a banner mounted as a PAGE ROW
+   shrinks the canvas, which fires the observer, which can flip `aggregating`
+   back off, which unmounts the banner, which grows the canvas — an oscillation
+   AND a repaint after the canvas was declared still, which is the exact class
+   of bug the reserved inspector column in `pages/Graph.tsx` exists to prevent.
+
+   Reserving a fixed row height would only half-close it (the banner wraps to
+   two lines at narrow widths). Taking the banner OUT OF FLOW closes it
+   outright: the host's box cannot depend on a box that occupies no layout
+   space at all. */
+.graph-density {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 2;
+  margin: 0;
+  /* Opaque, so the message stays readable over the field it describes. */
+  background: var(--bg);
+  /*
+   * NON-NEGOTIABLE, and it shipped broken once. Taking the banner out of flow
+   * put an opaque full-width strip ON TOP of `.graph-canvas-host`, and without
+   * this rule it ATE every pointer event that landed on it — hover, click and
+   * wheel never reached the canvas, so nodes under the strip were unselectable
+   * for as long as the banner was up. That is Tier C dense sets, i.e. exactly
+   * the surface FR-244 exists to improve, and it is behaviourally
+   * indistinguishable from the FR-239 dead-canvas defect this file's own
+   * comments cite as the thing never to reproduce.
+   *
+   * Safe because the banner is `role="status"` with no interactive content:
+   * there is nothing in it to click, so nothing is lost by making it
+   * transparent to the pointer. If it ever gains a control — a DISMISS, a
+   * filter shortcut — this rule cannot simply be deleted; the control needs
+   * `pointer-events: auto` on itself while the strip stays `none`.
+   *
+   * Asserted by G-BR-11 `11d`, with `--mutate=br11-banner-swallows-pointer`
+   * restoring the defect on purpose to prove the check bites.
+   */
+  pointer-events: none;
 }
 
 /* EXEMPTION 01's obligation: the grid stays. It stops being a positioning
@@ -960,7 +1050,12 @@ body[data-motion="low"] *::after {
   text-transform: uppercase;
 }
 
-/* ─── The exemption-04 twin. Mono, adjacent to the canvas, always. ─── */
+/* ─── The exemption-04 twin. Mono, adjacent to the canvas, always. ───
+   FR-244 moved it INSIDE the side column (it was a full-width block under the
+   layout). Exemption 04 asks for adjacency, not for a particular edge, and the
+   side column is adjacent — while a full-width block below the row was the
+   thing capping the canvas's height. `margin-top` is dropped inside the column
+   because the column supplies its own `gap`. */
 .graph-twin {
   margin-top: var(--s-2);
   border: 0.5px solid var(--line);
@@ -989,14 +1084,24 @@ body[data-motion="low"] *::after {
 .graph-twin-line {
   display: block;
 }
+.graph-side > .graph-twin {
+  margin-top: 0;
+  /* Never squeezes the inspector out: it takes its content height, capped, and
+     scrolls past that. */
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow-y: auto;
+}
 
 /* ─── The inspector. FR-240's hand-off seam. ─── */
 .graph-inspector {
-  flex: 0 0 300px;
+  /* FR-244: the WIDTH moved to `.graph-side`, and the height moved to the
+     column. This is now a row in that column that takes what the twin leaves. */
+  flex: 1 1 auto;
+  min-height: 0;
   border: 0.5px solid var(--line);
   padding: var(--s-2);
   overflow-y: auto;
-  height: clamp(420px, 62vh, 900px);
 }
 .graph-inspector-head {
   display: flex;
@@ -1063,14 +1168,36 @@ body[data-motion="low"] *::after {
   margin-top: var(--s-1);
 }
 
+/* Below this width the layout STACKS, and the canvas legitimately does not own
+   the column — a 1000px-wide viewport that gave the canvas the full height
+   would leave the inspector and the twin below the fold. So the FR-244
+   full-column rules are unwound here rather than merely overridden: the page
+   goes back to intrinsic height and the surface back to its own clamp.
+   G-BR-11's `br11-fullheight-at-stacked-breakpoint` mutation asserts the
+   full-column claim at 1000px on purpose, and must fail. */
 @media (max-width: 1100px) {
+  .graph-page {
+    height: auto;
+  }
   .graph-layout {
     flex-direction: column;
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+  .graph-surface {
+    flex: 0 0 auto;
+    height: clamp(420px, 62vh, 900px);
+  }
+  .graph-side {
+    flex: 1 1 auto;
   }
   .graph-inspector {
     flex: 1 1 auto;
     height: auto;
     max-height: 320px;
+  }
+  .graph-side > .graph-twin {
+    max-height: none;
   }
 }
 
