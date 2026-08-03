@@ -150,6 +150,56 @@ describe('listGoals — filters bind', () => {
   });
 });
 
+describe('listGoals q — the FR-246 substring filter', () => {
+  const opts = { limit: 25, offset: 0 };
+
+  /**
+   * These two rows are seeded HERE, not in `makeDb()`.
+   *
+   * Widening the shared fixture was tried first and silently re-scoped twenty
+   * existing assertions in this file — every ordering, pagination and filter
+   * expectation is written against `makeDb()`'s exact four goals. A new case
+   * that needs new data owns that data; the outer `beforeEach` rebuilds `db`
+   * per test, so these inserts cannot leak into any sibling describe.
+   */
+  beforeEach(() => {
+    const ins = db.prepare(
+      `INSERT INTO goals
+         (goal_id, project_slug, title, description, outcome, deadline, status,
+          priority, created_at, updated_at, achieved_at, metadata)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    // One matches by DESCRIPTION only (the column a title-only predicate would
+    // miss); one carries a literal per-cent sign.
+    ins.run('GL-005', 'igris-ai', 'Kiln programme', 'Bisque firing at cone 04', 'Fired', null, 'active', 'P3-Low', '2026-06-05 10:00:00', '2026-06-05 10:00:00', null, '{}');
+    ins.run('GL-006', 'igris-ai', '100% coverage', null, 'Covered', null, 'active', 'P3-Low', '2026-06-06 10:00:00', '2026-06-06 10:00:00', null, '{}');
+  });
+
+  it('matches title OR description', () => {
+    expect(gids(listGoals(db, { ...opts, q: 'kiln' }))).toEqual(['GL-005']);
+    // 'bisque' is in the DESCRIPTION only — a title-only predicate misses it.
+    expect(gids(listGoals(db, { ...opts, q: 'bisque' }))).toEqual(['GL-005']);
+    const titles = db.prepare('SELECT title FROM goals').all() as { title: string }[];
+    expect(titles.every((t) => !t.title.toLowerCase().includes('bisque'))).toBe(true);
+  });
+
+  it('a NULL description does not exclude a title match (COALESCE, not a silent AND)', () => {
+    expect(gids(listGoals(db, { ...opts, q: 'undated' }))).toEqual(['GL-002']);
+  });
+
+  it('q="%" matches only the goal with a literal per-cent sign', () => {
+    expect(gids(listGoals(db, { ...opts, q: '%' }))).toEqual(['GL-006']);
+    expect(listGoals(db, opts).total).toBe(6);
+  });
+
+  it('narrows total and reports mode "substring" in the payload', () => {
+    const r = listGoals(db, { ...opts, q: 'kiln' });
+    expect(r.total).toBe(1);
+    expect(r.search).toEqual({ mode: 'substring', fields: ['title', 'description'] });
+    expect(listGoals(db, opts).search).toBeNull();
+  });
+});
+
 describe('listGoals — serving_briefs_count', () => {
   it('counts live serves_goal brief edges only', () => {
     const rows = listGoals(db, { limit: 25, offset: 0 }).goals;

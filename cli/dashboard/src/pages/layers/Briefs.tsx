@@ -32,6 +32,7 @@ import {
   type BriefDetailPayload,
   type BriefListRow,
   type BriefsPayload,
+  type BriefsSearchPayload,
 } from "../../lib/api";
 import { Badge } from "../../components/ui/Badge";
 import { Chip } from "../../components/ui/Chip";
@@ -44,6 +45,7 @@ import {
 import { Markdown } from "../../markdown/Markdown";
 import {
   FILTERS,
+  briefsSearchQuery,
   emptyStateFor,
   graphHrefForRecord,
   hasActiveFilters,
@@ -65,9 +67,13 @@ import { useBoardColumns } from "../../layers/useBoardColumns";
 import { LAYER_VIEWS, useLayersView, type LayerView } from "../../layers/useLayersView";
 import { useLayerList } from "../../layers/useLayerList";
 import { useNeighbours } from "../../layers/useNeighbours";
+import { SearchReadout } from "../../components/record/SearchReadout";
 import type { LayerViewProps } from "../Layers";
 
 const LAYER = "briefs" as const;
+
+/** One ranked page. RRF over two arms has no stable offset semantics. */
+const SEARCH_LIMIT = 20;
 
 export function Briefs(props: LayerViewProps) {
   const [view, setView] = useLayersView();
@@ -221,6 +227,51 @@ function BriefListView({
     initial,
   });
 
+  /**
+   * FR-246 — the SUBMITTED recall query. `null` = browse mode.
+   *
+   * Deliberately NOT a `q` filter like the four substring surfaces: this is
+   * genuine hybrid retrieval (BM25 + vector, RRF-fused), it returns ONE ranked
+   * page with no offset semantics, and it therefore replaces the browse list
+   * rather than narrowing it. The `SearchReadout` says which of the two the
+   * operator is looking at.
+   *
+   * Keyed on the SUBMITTED query, not the draft: an embedding cold-start is
+   * seconds long, so search-as-you-type would queue a model load per keystroke.
+   */
+  const [query, setQuery] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [hits, setHits] = useState<BriefsSearchPayload | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (query === null) {
+      setHits(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    setSearching(true);
+    setSearchError(null);
+    api
+      .briefsSearch(
+        briefsSearchQuery({ query, project, limit: SEARCH_LIMIT }),
+        ctrl.signal,
+      )
+      .then((p) => {
+        if (!ctrl.signal.aborted) setHits(p);
+      })
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return;
+        setSearchError(err instanceof ApiError ? err.message : String(err));
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setSearching(false);
+      });
+    return () => ctrl.abort();
+  }, [query, project]);
+
+  const browsing = query === null;
   const descriptor = layerById(LAYER);
   const payload = list.payload;
   const items = payload?.items ?? [];
@@ -230,6 +281,12 @@ function BriefListView({
     r.status,
     r.brief_type,
     r.phase,
+  ]);
+  const hitRows = muteRows(hits?.items ?? [], search, (r) => [
+    r.brief_id,
+    r.title,
+    r.status,
+    r.brief_type,
   ]);
 
   /*
@@ -249,23 +306,22 @@ function BriefListView({
    */
   const controls = briefControls(list.values, (name) => optionsFromRows(items, name));
 
+  const degradedReason = browsing
+    ? (payload?.degraded?.reason ?? list.error)
+    : (hits?.degraded?.reason ?? searchError);
+
   return (
     <RecordList
       eye={descriptor?.eye ?? "// BRIEFS"}
       heading="BRIEFS"
       actions={actions}
       lede={descriptor?.lede}
-      loading={list.loading}
+      loading={browsing ? list.loading : searching && hits === null}
       banners={
         <>
-          {list.error !== null && (
+          {degradedReason != null && (
             <div className="shell-banner" role="status">
-              TRANSPORT ERROR — {list.error}
-            </div>
-          )}
-          {payload?.degraded != null && (
-            <div className="shell-banner" role="status">
-              BRIEFS DEGRADED — {payload.degraded.reason}
+              {browsing ? "BRIEFS DEGRADED" : "SEARCH DEGRADED"} — {degradedReason}
             </div>
           )}
           {payload !== undefined && payload !== null && payload.params.length > 0 && (
@@ -275,39 +331,109 @@ function BriefListView({
               REQUEST ADJUSTED — {payload.params.join(" · ")}
             </div>
           )}
+          {!browsing && hits !== null && (
+            <SearchReadout retrieval={hits.retrieval} />
+          )}
         </>
       }
       filters={{
         controls,
         onChange: list.setFilter,
-        onClearAll: list.clearFilters,
+        onClearAll: () => {
+          list.clearFilters();
+          setQuery(null);
+          setDraft("");
+        },
+        search: {
+          label: "hybrid recall",
+          value: draft,
+          placeholder: "ASK THE BRAIN",
+          help: browsing
+            ? "BM25 over brief TITLES AND BODIES, fused with vector recall. A first search may load the embedding model."
+            : `Recall for "${query ?? ""}" — ${hits?.count ?? 0} hit(s). CLEAR to browse again.`,
+          busy: searching,
+          onChange: setDraft,
+          onSubmit: () => setQuery(draft.trim().length > 0 ? draft.trim() : null),
+          onClear: () => {
+            setDraft("");
+            setQuery(null);
+          },
+        },
         readout:
           search.trim().length > 0
-            ? `MUTED ${muted.length}/${items.length} THIS PAGE`
+            ? `MUTED ${(browsing ? muted : hitRows).length}/${(browsing ? items.length : (hits?.items.length ?? 0))} THIS PAGE`
             : undefined,
       }}
-      rows={muted.map(briefRow)}
+      rows={browsing ? muted.map(briefRow) : hitRows.map(briefHitRow)}
+      // Search results are ONE ranked page — RRF over two arms has no stable
+      // offset semantics, so a second page would not be the continuation of the
+      // first. Browse mode paginates; recall does not.
       page={
-        payload === null
-          ? undefined
-          : {
+        browsing && payload !== null
+          ? {
               limit: payload.limit,
               offset: payload.offset,
               total: payload.total,
               count: payload.count,
               onOffset: list.setOffset,
             }
+          : undefined
       }
       empty={emptyStateFor({
         layer: LAYER,
-        total: payload?.total ?? 0,
-        degraded: payload?.degraded?.reason ?? list.error,
-        filtersActive: hasActiveFilters(LAYER, list.values),
+        total: browsing ? (payload?.total ?? 0) : (hits?.count ?? 0),
+        degraded: degradedReason ?? null,
+        // A submitted recall query is itself a narrowing — "no hits" must not
+        // read as "this project has no briefs".
+        filtersActive: hasActiveFilters(LAYER, list.values) || !browsing,
         searchActive: search.trim().length > 0 && items.length > 0,
         project,
       })}
     />
   );
+}
+
+/**
+ * A ranked search hit.
+ *
+ * Separate from {@link briefRow} because the two carry DIFFERENT facts: a
+ * browse row shows the brief's place in the workflow, a hit shows why it is
+ * here and which arm found it. Merging them would mean a row that renders
+ * `rrf — · bm25 — · vector —` on every browse page.
+ */
+function briefHitRow(row: BriefsSearchPayload["items"][number]): RecordListRow {
+  return {
+    key: `${row.project}:${row.brief_id}`,
+    eye: `// ${row.brief_id} · ${row.brief_type ?? "untyped"}`,
+    title: row.title,
+    href: recordHash({ layer: LAYER, project: row.project, id: row.brief_id }),
+    badges: (
+      <>
+        <Badge>{row.status}</Badge>
+        {/*
+          WHICH ARM FOUND THIS ROW. A hit with a vector rank and NO bm25 rank is
+          one the lexical arm could not have produced — the evidence AC-1 asks
+          for, shown to the operator rather than only asserted in a test.
+        */}
+        {row.vector_rank !== null && row.bm25_rank === null && (
+          <Badge>vector only</Badge>
+        )}
+        {row.bm25_rank !== null && row.vector_rank === null && (
+          <Badge variant="muted">bm25 only</Badge>
+        )}
+        {row.bm25_rank !== null && row.vector_rank !== null && (
+          <Badge variant="muted">both arms</Badge>
+        )}
+      </>
+    ),
+    meta: [
+      { k: "project", v: row.project },
+      { k: "rrf", v: row.rrf_score === null ? "—" : row.rrf_score.toFixed(4) },
+      { k: "bm25", v: row.bm25_rank === null ? "—" : String(row.bm25_rank) },
+      { k: "vector", v: row.vector_rank === null ? "—" : String(row.vector_rank) },
+      { k: "chars", v: String(row.content_length) },
+    ],
+  };
 }
 
 // ---------------------------------------------------------------------------

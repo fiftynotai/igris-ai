@@ -70,6 +70,15 @@
 
 import type Database from 'better-sqlite3';
 import { WhereBuilder } from '../engine/helpers.js';
+import {
+  likePattern,
+  substringReport,
+  LIKE_ESCAPE_CLAUSE,
+} from '../utils/substring-search.js';
+import type { SubstringSearchReport } from '../utils/substring-search.js';
+
+/** The columns FR-246's `q` filter searches. Named once; reported verbatim. */
+const SUGGESTION_SEARCH_FIELDS = ['title', 'evidence'];
 
 // ---------------------------------------------------------------------------
 // Row and option shapes
@@ -95,6 +104,18 @@ export interface ListSuggestionsOptions {
   /** OPEN vocabulary since FR-118 M2 — any non-empty string is legitimate. */
   source_module?: string;
   priority?: string;
+  /**
+   * FR-246 — an honest SUBSTRING filter over `title` + `evidence`. Not
+   * retrieval; the payload's `search` block says so.
+   *
+   * Proportionate because the queue is DRAINED, not recalled over: a suggestion
+   * is triaged once and then dismissed or acted on. Population measured
+   * read-only on the operator brain at **1,246 rows** — note that supersedes
+   * the "377 rows brain-wide" figure carried in `routes.ts`'s comment and in
+   * the FR-246 plan; the count more than tripled since it was written, which is
+   * itself the argument for re-measuring rather than quoting.
+   */
+  q?: string;
   /** Pre-clamped by the caller. Defaults to 25 (the `igris_suggestion_list` default). */
   limit?: number;
   /** Pre-clamped by the caller. Defaults to 0. */
@@ -158,6 +179,12 @@ export interface ListSuggestionsResult {
   facets: SuggestionFacets;
   /** Set when the `suggestions` table is absent (L-133); the arrays are empty. */
   degraded: string | null;
+  /**
+   * FR-246 D3-f — what the `q` filter actually did, or `null` when no `q` was
+   * supplied. A PAYLOAD field, not a UI sentence, so a gate can assert it.
+   * Appended LAST, leaving the pre-FR-246 key order untouched.
+   */
+  search: SubstringSearchReport | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -204,6 +231,7 @@ export function listSuggestions(
       offset,
       facets: { source_module: {}, brain_level: 0 },
       degraded: 'brain table absent: suggestions',
+      search: substringReport(opts.q, SUGGESTION_SEARCH_FIELDS),
     };
   }
 
@@ -213,9 +241,28 @@ export function listSuggestions(
       ? b.addAlways('project_slug IS NULL')
       : b.add('project_slug = ?', opts.project_slug);
 
-  const where = scope(new WhereBuilder().add('status = ?', opts.status))
-    .add('source_module = ?', opts.source_module)
-    .add('priority = ?', opts.priority);
+  /**
+   * FR-246 — the substring predicate, in exactly one place because THREE
+   * queries need it (the page, the `source_module` facet and the `brain_level`
+   * facet). Bound params + an explicit ESCAPE so `?q=%` matches a literal
+   * per-cent sign instead of matching everything while looking like a filter.
+   */
+  const withQ = (b: WhereBuilder): WhereBuilder => {
+    if (!opts.q || opts.q.trim() === '') return b;
+    const pattern = likePattern(opts.q);
+    return b.addAlways(
+      `(LOWER(title) LIKE ? ${LIKE_ESCAPE_CLAUSE}` +
+        ` OR LOWER(COALESCE(evidence, '')) LIKE ? ${LIKE_ESCAPE_CLAUSE})`,
+      pattern,
+      pattern,
+    );
+  };
+
+  const where = withQ(
+    scope(new WhereBuilder().add('status = ?', opts.status))
+      .add('source_module = ?', opts.source_module)
+      .add('priority = ?', opts.priority),
+  );
 
   const rows = db
     .prepare(
@@ -237,20 +284,37 @@ export function listSuggestions(
     .get(...where.values()) as { total: number };
 
   // The facet WHERE deliberately OMITS `source_module` — see the module header.
-  const facetWhere = scope(new WhereBuilder().add('status = ?', opts.status)).add(
-    'priority = ?',
-    opts.priority,
+  //
+  // `q` IS applied to both facets below, and that is a DELIBERATE DIVERGENCE
+  // from the FR-246 plan, which asked for `q` to be excluded from
+  // `brain_level` "for the same reason the project axis is". That reason does
+  // not transfer, and the divergence is recorded rather than made quietly. The
+  // existing rule is *each facet omits ITS OWN axis and keeps every other
+  // filter*: `source_module` omits `source_module`, `brain_level` omits the
+  // project axis because it REPLACES it with `IS NULL`. `q` is neither of those
+  // axes. Excluding it would make `brain_level` read "40 brain-level rows
+  // hidden by this scope" while the operator is looking at a list filtered to
+  // three — a number about a population they are not looking at. Applying it
+  // answers the question the badge actually poses: how many rows MATCHING WHAT
+  // I TYPED is the project scope hiding.
+  const facetWhere = withQ(
+    scope(new WhereBuilder().add('status = ?', opts.status)).add(
+      'priority = ?',
+      opts.priority,
+    ),
   );
 
   // ...and the brain-level facet omits the PROJECT axis instead, replacing it
   // with `IS NULL`. Same rule, other axis: a count that also applied the
   // caller's `project_slug` would be 0 for every scoped read and would tell the
   // operator nothing about the population the scope is hiding.
-  const brainWhere = new WhereBuilder()
-    .add('status = ?', opts.status)
-    .addAlways('project_slug IS NULL')
-    .add('source_module = ?', opts.source_module)
-    .add('priority = ?', opts.priority);
+  const brainWhere = withQ(
+    new WhereBuilder()
+      .add('status = ?', opts.status)
+      .addAlways('project_slug IS NULL')
+      .add('source_module = ?', opts.source_module)
+      .add('priority = ?', opts.priority),
+  );
   const brainLevel = (
     db
       .prepare(`SELECT COUNT(*) AS n FROM suggestions ${brainWhere.toSQL()}`)
@@ -282,5 +346,6 @@ export function listSuggestions(
     offset,
     facets: { source_module: sourceModule, brain_level: brainLevel },
     degraded: null,
+    search: substringReport(opts.q, SUGGESTION_SEARCH_FIELDS),
   };
 }

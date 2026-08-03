@@ -216,6 +216,23 @@ const MUTATIONS = {
     gate: "G-BR-12f",
     how: "fire ONE POST from the board page — the counter half of the read-only claim, inverted. Without this mutation 'zero non-GET requests' is satisfied by a page with no write code, which is the vacuous gate this whole file exists to prevent",
   },
+  // --- FR-246 -------------------------------------------------------------
+  "br13-bm25-could-return-it": {
+    gate: "G-BR-13a-vector-only",
+    how: "rewrite the FIRST brief hit's ranks on the wire to `{bm25_rank: null, vector_rank: 1}` — i.e. badge `vector only` a brief the LEXICAL arm demonstrably returned. The gate's independent `briefs_fts MATCH` probe against the world's own DB then contradicts the badge. This is the direct browser twin of G-BS-2: without it, `vector only` is a label nothing checks. ALSO reddens 13a (the badge no longer matches the ranks the endpoint really returned), which is the same defect seen from the other side",
+  },
+  "br13-substring-claims-recall": {
+    gate: "G-BR-13b",
+    how: "render the HYBRID readout on a SUBSTRING surface (goals) — the brief's NAMED TRAP, driven on purpose. Four `filter(includes)` boxes shipping beside one real hybrid search and looking identical is the failure FR-246 exists to avoid, and `search.mode` is a payload field precisely so a gate can catch it",
+  },
+  "br13-q-dropped-on-the-wire": {
+    gate: "G-BR-13c",
+    how: "strip `q` on the way to the wire for `/api/goals`, so the rendered count stays at its UNFILTERED value while the endpoint's own answer for the same `q` moves. The `br12-board-drops-filters` shape, one layer over. ALSO reddens 13b: with `q` stripped the payload carries no `search` block at all, so the substring readout stops rendering — a second, honest consequence of the same drop",
+  },
+  "br13-silent-empty-search": {
+    gate: "G-BR-13d",
+    how: "rewrite the briefs-search response the BROWSER sees to claim `mode: \"hybrid\"` with zero items, while the gate reads the endpoint directly from node and sees the true mode. 'a degrade is loud' inverted, and the exact shape a missing-migration ship would produce: a search that answers nothing while looking perfectly healthy. ALSO reddens 13a, because the rewritten body renders zero rows while the endpoint returns one",
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -4222,6 +4239,376 @@ async function gBr11(tab) {
 }
 
 // ---------------------------------------------------------------------------
+// G-BR-13 — FR-246: brief recall, and four filters that admit they are filters
+// ---------------------------------------------------------------------------
+
+/**
+ * Ask the world's OWN SQLite what `briefs_fts` matches for a query.
+ *
+ * The independent source of truth for 13a. Reading the ranks back out of the
+ * same payload that produced the badge would be circular — the badge and the
+ * check would agree by construction — so the lexical arm's answer is taken
+ * from the INDEX, in a separate process, with a read-only handle.
+ *
+ * Read-only is not decoration here: this gate must not be capable of migrating
+ * or WAL-flipping the world it is measuring (L-1133), and the whole point of
+ * the probe is that the index is a fact the page cannot influence.
+ */
+function ftsMatches(db, query) {
+  const out = execFileSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `
+      import D from "better-sqlite3";
+      const db = new D(process.env.GATE_DB, { readonly: true });
+      let ids = [];
+      try {
+        ids = db.prepare(
+          "SELECT bs.brief_id AS b FROM briefs_fts f JOIN brief_status bs ON bs.id = f.rowid" +
+          " WHERE briefs_fts MATCH ?"
+        ).all(process.env.GATE_Q).map(r => r.b);
+      } catch (err) {
+        ids = null;
+      }
+      db.close();
+      process.stdout.write(JSON.stringify(ids));
+      `,
+    ],
+    {
+      cwd: CLI_ROOT,
+      env: { ...process.env, GATE_DB: db, GATE_Q: query },
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  return JSON.parse(out);
+}
+
+/** Submit text into a RecordList filter bar's search box and wait for the read. */
+async function submitFilterSearch(tab, text) {
+  await tab.eval(`
+    const el = document.querySelector('.record-search input');
+    if (el === null) return null;
+    el.focus();
+    el.setSelectionRange(0, el.value.length);
+    return 1;
+  `);
+  await tab.send("Input.insertText", { text });
+  await tab.settle(200);
+  await clickButton(tab, "RUN");
+  await tab.settle(900);
+}
+
+/** Every rendered search-hit row as `{ briefId, badges }`. */
+const READ_HITS = `
+  return [...document.querySelectorAll('.record-row')].map(row => ({
+    briefId: (row.querySelector('.record-row-eye')?.textContent ?? '')
+      .replace('//', '').trim().split(' ')[0],
+    badges: [...row.querySelectorAll('.record-row-badges *')]
+      .map(b => b.textContent.trim()),
+  }));
+`;
+
+/** Every `data-search-mode` on the page, in DOM order. */
+const READ_MODES = `
+  return [...document.querySelectorAll('[data-search-mode]')].map(e => ({
+    mode: e.getAttribute('data-search-mode'),
+    loud: e.classList.contains('shell-banner'),
+    text: e.textContent.trim().slice(0, 120),
+  }));
+`;
+
+/**
+ * G-BR-13 — FR-246. Recall that reports its arms, and filters that admit they
+ * are filters.
+ *
+ * PROVES, in a real browser against a real brain:
+ *  - **13a** every rendered brief hit's ARM BADGE agrees with the payload's
+ *    ranks, and every row badged as lexical really IS a `briefs_fts` match,
+ *    checked against the world's own index in a separate read-only process.
+ *  - **13a-vector-only** a row badged `vector only` is NOT a lexical match —
+ *    the browser twin of `G-BS-2`, and the only form of AC-1 that is not
+ *    vacuous.
+ *  - **13b** a surface whose PAYLOAD says `search.mode === "substring"` never
+ *    renders a recall readout, and the surface that DOES have retrieval never
+ *    renders a substring one.
+ *  - **13c** `q` reaches the wire: the rendered count equals the endpoint's own
+ *    answer for the same `q`, and both are strictly below the unfiltered count.
+ *  - **13d** the DOM's declared mode EQUALS the payload's, and a non-hybrid
+ *    mode is LOUD (a `shell-banner`), not a quiet readout.
+ *
+ * DOES NOT PROVE recall QUALITY, and cannot: the `seeded` world has no
+ * `briefs_vec` and this gate world has **no HF model at all** — the hermetic
+ * preload forbids the ~90 MB Hub fetch and `copy-templates.sh` wipes the
+ * package-local cache on every build. So every reading here is `bm25_only`, and
+ * that is precisely why FR-246 built the BM25 arm: under a vector-only
+ * implementation this gate would have asserted "the feature correctly returns
+ * nothing", forever. Where a branch is not on this run's path it SKIPS with a
+ * stated reason rather than being asserted unconditionally — the 3e/3f pattern.
+ *
+ * WORLD: `seeded`, on the shared tab. It READS ONLY: no seeding, no writes.
+ */
+async function gBr13(tab, seeded) {
+  gate("G-BR-13", "FR-246: brief recall reports its arms; the substring filters say so");
+
+  // "bug" is in three seeded brief TITLES; "lens" is in exactly one goal title.
+  const Q = "bug";
+  const GOAL_Q = "lens";
+
+  // --- 13a · the arm badges agree with the arms -----------------------------
+  await tab.focus();
+  await tab.hash("#/layers/briefs");
+  await tab.settle(700);
+
+  if (mut("br13-bm25-could-return-it")) {
+    // Claim `vector only` for the FIRST hit — a brief the lexical arm returned.
+    await tab.eval(`
+      const orig = window.fetch;
+      window.fetch = async function (u, i) {
+        const res = await orig.call(window, u, i);
+        if (!String(u).includes('api/briefs/search')) return res;
+        const body = await res.clone().json();
+        if (body.items && body.items.length > 0) {
+          body.items[0].bm25_rank = null;
+          body.items[0].vector_rank = 1;
+          body.items[0].rrf_score = 0.5;
+        }
+        return new Response(JSON.stringify(body), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      return 1;
+    `);
+  }
+  if (mut("br13-silent-empty-search")) {
+    await tab.eval(`
+      const orig = window.fetch;
+      window.fetch = async function (u, i) {
+        const res = await orig.call(window, u, i);
+        if (!String(u).includes('api/briefs/search')) return res;
+        const body = await res.clone().json();
+        body.items = [];
+        body.count = 0;
+        body.retrieval = { ...body.retrieval, mode: 'hybrid', bm25_reason: null, reason: null };
+        return new Response(JSON.stringify(body), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      return 1;
+    `);
+  }
+
+  await submitFilterSearch(tab, Q);
+
+  // The endpoint's OWN answer, read from node — so a browser-side fetch rewrite
+  // cannot reach it. This is what makes 13d a comparison rather than a mirror.
+  const scope = await activeProject(tab);
+  const searchUrl =
+    `${seeded.url}/api/briefs/search?q=${encodeURIComponent(Q)}` +
+    (scope === null ? "" : `&project=${encodeURIComponent(scope)}`);
+  const api = await apiJson(searchUrl);
+  const lexical = ftsMatches(seeded.db, Q);
+
+  const hits = await tab.eval(READ_HITS);
+  const byId = new Map(api.items.map((i) => [i.brief_id, i]));
+
+  const ARMS = ["vector only", "bm25 only", "both arms"];
+
+  /**
+   * The badge a row's RANKS justify — `null` when they justify none.
+   *
+   * BOTH ranks null is the `bm25_only` fallback's shape (`briefs-read.ts`
+   * returns `rrf_score/bm25_rank/vector_rank` all null there, exactly as the
+   * learnings twin does), and it must render NO arm badge: a row whose ranks
+   * are unknown cannot honestly be labelled "bm25 only". That is the case this
+   * hermetic world actually exercises, so it is asserted rather than assumed.
+   */
+  const badgeOf = (row) =>
+    row.bm25_rank === null && row.vector_rank !== null
+      ? "vector only"
+      : row.bm25_rank !== null && row.vector_rank === null
+        ? "bm25 only"
+        : row.bm25_rank !== null && row.vector_rank !== null
+          ? "both arms"
+          : null;
+
+  const rendered = hits.map((h) => ({
+    ...h,
+    arm: h.badges.find((b) => ARMS.includes(b)) ?? null,
+  }));
+
+  const badgeDisagreements = [];
+  for (const h of rendered) {
+    // `byId` comes from NODE, so under a browser-side rewrite it is the TRUTH
+    // and a disagreement is exactly what should be reported.
+    const row = byId.get(h.briefId);
+    if (row === undefined) continue;
+    if (badgeOf(row) !== h.arm) {
+      badgeDisagreements.push(
+        `${h.briefId}: DOM=${JSON.stringify(h.arm)} ranks-justify=${JSON.stringify(badgeOf(row))}`,
+      );
+    }
+  }
+
+  // In `bm25_only` mode EVERY returned brief must really be in the lexical
+  // index. That is the assertion this hermetic world can make with teeth: it
+  // says the rows came from the arm the payload credits, checked against the
+  // index itself rather than against the payload that produced them.
+  const notInIndex =
+    api.retrieval.mode === "bm25_only" && lexical !== null
+      ? api.items.map((i) => i.brief_id).filter((id) => !lexical.includes(id))
+      : [];
+
+  check(
+    "13a",
+    hits.length > 0 &&
+      api.items.length > 0 &&
+      badgeDisagreements.length === 0 &&
+      notInIndex.length === 0,
+    `q=${JSON.stringify(Q)} -> ${hits.length} rendered row(s), ${api.items.length} in the payload · ` +
+      `mode=${api.retrieval.mode} bm25_hits=${api.retrieval.bm25_hits} vector_hits=${api.retrieval.vector_hits} · ` +
+      `briefs_fts MATCH=${JSON.stringify(lexical)} · ` +
+      `arm badges vs ranks=${JSON.stringify(badgeDisagreements)} · ` +
+      `bm25_only rows absent from the index=${JSON.stringify(notInIndex)}${
+        mut("br13-bm25-could-return-it") ? "  [MUTATED: first hit's ranks flipped to vector-only]" : ""
+      }`,
+  );
+
+  const vectorOnly = rendered.filter((h) => h.arm === "vector only");
+  if (vectorOnly.length === 0) {
+    skip(
+      "13a-vector-only",
+      `no row was badged \`vector only\` on this run — the gate world has NO HF model (browser-gate.mjs's hermetic preload forbids the ~90 MB Hub fetch and copy-templates.sh wipes the package-local cache on every build), so the vector arm did not contribute and mode is ${api.retrieval.mode}. The claim itself is proven at reader level by G-BS-1/G-BS-2 in brain-mcp-server/src/tools/__tests__/briefs-read-search.test.ts, and this check is demonstrated to BITE by --mutate=br13-bm25-could-return-it`,
+    );
+  } else {
+    const contradicted = vectorOnly
+      .map((h) => h.briefId)
+      .filter((id) => lexical !== null && lexical.includes(id));
+    check(
+      "13a-vector-only",
+      contradicted.length === 0,
+      `rows badged \`vector only\`=${JSON.stringify(vectorOnly.map((h) => h.briefId))} · ` +
+        `of those, ALSO a briefs_fts match (a contradiction)=${JSON.stringify(contradicted)}${
+          mut("br13-bm25-could-return-it") ? "  [MUTATED: first hit's ranks flipped to vector-only]" : ""
+        }`,
+    );
+  }
+
+  // --- 13d · the DOM's mode is the payload's, and a degrade is LOUD ---------
+  const modes = await tab.eval(READ_MODES);
+  const retrievalModes = modes.filter((m) => m.mode !== "substring");
+  const domMode = retrievalModes.length === 1 ? retrievalModes[0].mode : null;
+  const loudWhenDegraded =
+    api.retrieval.mode === "hybrid" ? true : retrievalModes.every((m) => m.loud);
+
+  check(
+    "13d",
+    domMode === api.retrieval.mode && loudWhenDegraded,
+    `payload mode=${api.retrieval.mode} (bm25_reason=${JSON.stringify(api.retrieval.bm25_reason)}) · ` +
+      `DOM data-search-mode=${JSON.stringify(retrievalModes.map((m) => `${m.mode}${m.loud ? " (loud)" : " (quiet)"}`))}${
+        mut("br13-silent-empty-search") ? "  [MUTATED: the browser's copy of the response claims hybrid with zero items]" : ""
+      }`,
+  );
+
+  // The retrieval surface must NOT also claim to be a substring filter. This is
+  // 13b's self-negative-control: without it, "no recall readout on goals" is
+  // satisfiable by a build that renders no readouts anywhere.
+  check(
+    "13b-control",
+    retrievalModes.length === 1 && modes.every((m) => m.mode !== "substring"),
+    `the briefs SEARCH surface declares ${JSON.stringify(modes.map((m) => m.mode))} — exactly one retrieval mode and no substring claim`,
+  );
+
+  // --- 13b/13c · the substring surface ------------------------------------
+  await tab.hash("#/layers/goals");
+  await tab.settle(700);
+
+  if (mut("br13-substring-claims-recall")) {
+    // The trap, driven: a hybrid readout rendered on a substring surface.
+    await tab.eval(`
+      const host = document.querySelector('.record-list') ?? document.body;
+      const p = document.createElement('p');
+      p.className = 'record-readout';
+      p.setAttribute('role', 'status');
+      p.setAttribute('data-search-mode', 'hybrid');
+      p.textContent = 'HYBRID RECALL — bm25 3 · vector 2 · rrf_k 60 · weights 0.5/0.5';
+      host.prepend(p);
+      return 1;
+    `);
+  }
+  if (mut("br13-q-dropped-on-the-wire")) {
+    await tab.eval(`
+      const orig = window.fetch;
+      window.fetch = function (u, i) {
+        const url = String(u);
+        if (url.includes('api/goals?')) {
+          const [path, query] = url.split('?');
+          const from = new URLSearchParams(query);
+          from.delete('q');
+          return orig.call(window, path + '?' + from.toString(), i);
+        }
+        return orig.call(window, u, i);
+      };
+      return 1;
+    `);
+  }
+
+  const goalsBefore = await tab.eval(`return document.querySelectorAll('.record-row').length;`);
+  await submitFilterSearch(tab, GOAL_Q);
+  const goalsAfter = await tab.eval(`return document.querySelectorAll('.record-row').length;`);
+
+  const goalScope = await activeProject(tab);
+  const goalsApi = await apiJson(
+    `${seeded.url}/api/goals?q=${encodeURIComponent(GOAL_Q)}` +
+      (goalScope === null ? "" : `&project=${encodeURIComponent(goalScope)}`),
+  );
+  const goalModes = await tab.eval(READ_MODES);
+  const goalReadouts = await tab.eval(READ.readouts);
+
+  check(
+    "13b",
+    goalsApi.search !== null &&
+      goalsApi.search.mode === "substring" &&
+      goalModes.some((m) => m.mode === "substring") &&
+      goalModes.every((m) => m.mode === "substring") &&
+      !goalReadouts.some((r) => /HYBRID RECALL/.test(r)),
+    `payload search=${JSON.stringify(goalsApi.search)} · ` +
+      `DOM data-search-mode=${JSON.stringify(goalModes.map((m) => m.mode))} · ` +
+      `HYBRID RECALL in a readout=${goalReadouts.some((r) => /HYBRID RECALL/.test(r))}${
+        mut("br13-substring-claims-recall") ? "  [MUTATED: a hybrid readout injected onto the goals page]" : ""
+      }`,
+  );
+
+  check(
+    "13c",
+    goalsAfter === goalsApi.count && goalsApi.count < goalsBefore && goalsBefore > 0,
+    `goals rendered before=${goalsBefore} after q=${JSON.stringify(GOAL_Q)}: ${goalsAfter} · ` +
+      `endpoint count for the same q=${goalsApi.count} (must match, and must be < ${goalsBefore})${
+        mut("br13-q-dropped-on-the-wire") ? "  [MUTATED: q stripped on the way to /api/goals]" : ""
+      }`,
+  );
+
+  note(
+    "13a/13a-vector-only take the LEXICAL arm's answer from the world's own `briefs_fts` " +
+      "index in a SEPARATE read-only process, not from the payload that produced the badge — " +
+      "otherwise the badge and the check would agree by construction. " +
+      "13d compares the DOM against an endpoint reading taken from NODE, so a browser-side " +
+      "fetch rewrite (which is what `br13-silent-empty-search` injects) cannot move both sides.",
+  );
+  note(
+    "This gate world has NO embeddings, by design and not by accident: the hermetic preload " +
+      "forbids the HF Hub fetch and `copy-templates.sh` wipes the package-local model cache on " +
+      "every build. Every reading above is therefore `bm25_only`. That is the argument FR-246's " +
+      "sign-off turned on — a VECTOR-ONLY briefs search would return nothing here on every run, " +
+      "and this gate would have asserted 'the feature correctly returns nothing' forever.",
+  );
+}
+
+// ---------------------------------------------------------------------------
 // G-BR-12 — FR-245: the briefs board
 // ---------------------------------------------------------------------------
 
@@ -4826,6 +5213,11 @@ async function main() {
     // extra brief there, so it must follow every gate that reads that world's
     // counts (1, 2, 3, 4, 5, 6, 7, 9) — and it must precede G-BR-11, whose
     // viewport override would change the column geometry 12c measures.
+    // FR-246. It reads the `seeded` world on the shared tab and SEEDS NOTHING,
+    // but it leaves that tab on a SUBMITTED search — so it runs after every
+    // gate that asserts row counts there (1, 2, 3, 4, 5, 6, 7, 9) and BEFORE
+    // G-BR-12, which opens its own tabs and seeds an extra brief.
+    await runGate("G-BR-13", () => gBr13(tabs.seeded, worlds.seeded));
     await runGate("G-BR-12", () => gBr12(chrome.port, worlds.seeded));
     // FR-244, LAST. Its own world and its own tab, so its zoom sweep and its
     // viewport overrides cannot disturb any earlier gate — G-BR-7 in particular

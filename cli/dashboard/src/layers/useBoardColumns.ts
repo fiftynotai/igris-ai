@@ -3,7 +3,12 @@
  * then one list read per column.**
  *
  * ─────────────────────────────────────────────────────────────────────────
- * D1 — TWO EXISTING ENDPOINTS, NO SEVENTEENTH
+ * D1 — TWO EXISTING ENDPOINTS, AND FR-245 ADDED NONE
+ *
+ * (The heading used to read "no seventeenth", which was true of the endpoint
+ * count as FR-245 left it — sixteen. FR-246 has since added a seventeenth,
+ * `/api/briefs/search`, so the ORDINAL is no longer the claim. The claim was
+ * always that the BOARD composes existing endpoints, and that is unchanged.)
  * ─────────────────────────────────────────────────────────────────────────
  * `/api/summary` already returns `briefs.by_status`: a complete
  * `GROUP BY status` over the same project scope the board uses. That IS the

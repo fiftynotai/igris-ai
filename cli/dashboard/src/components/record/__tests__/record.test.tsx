@@ -39,7 +39,11 @@ import { CARD_CAP, columnLabel } from "../../../layers/board";
 import { RecordDetail, RecordNeighbours } from "../RecordDetail";
 import { FilterBar } from "../FilterBar";
 import { NodeInspector } from "../../graph/NodeInspector";
-import { RetrievalBanner } from "../../../pages/layers/Learnings";
+import {
+  RetrievalBanner,
+  SearchReadout,
+  SubstringBanner,
+} from "../SearchReadout";
 import {
   LAYER_IDS,
   emptyStateFor,
@@ -628,6 +632,106 @@ describe("the 1-hop block tells its four states apart", () => {
 // ===========================================================================
 // AC #2 — the retrieval banner
 // ===========================================================================
+
+/**
+ * FR-246 — the brief's NAMED TRAP: four `filter(includes)` boxes shipping
+ * beside one real hybrid search and looking identical.
+ *
+ * The defence is structural rather than editorial. `SearchReadout` takes
+ * `retrieval` OR `substring`, never both, and stamps `data-search-mode` on
+ * whichever it renders — so the claim a surface makes is a machine-readable
+ * attribute rather than a sentence somebody has to keep true.
+ *
+ * PROVES: the two readouts are distinguishable, and the substring one never
+ * uses recall vocabulary. Does NOT prove that any given PAGE passes the right
+ * one — a page could hand `retrieval` to a substring surface and this file
+ * would not know. **Sibling:** `G-BR-13b` in `cli/scripts/browser-gate.mjs`
+ * drives the real pages and asserts the payload and the DOM agree.
+ */
+describe("FR-246 · a substring filter never dresses as recall", () => {
+  it("the substring readout says FILTER, names its fields, and says what it is not", () => {
+    const out = html(
+      <SubstringBanner substring={{ mode: "substring", fields: ["title", "evidence"] }} />,
+    );
+    expect(out).toContain("SUBSTRING FILTER");
+    expect(out).toContain("title, evidence");
+    expect(out).toContain('data-search-mode="substring"');
+    // The words that would make it read like retrieval. Their ABSENCE is the
+    // assertion — "RECALL" is what an operator scans for.
+    expect(out).not.toContain("HYBRID RECALL");
+    expect(out).not.toContain("rrf_k");
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the hybrid readout DOES carry those, so the absence above is attributable", () => {
+    const out = html(
+      <SearchReadout
+        retrieval={{
+          mode: "hybrid",
+          vector_available: true,
+          embedding_available: true,
+          bm25_hits: 3,
+          vector_hits: 2,
+          rrf_k: 60,
+          weights: { bm25: 0.5, vector: 0.5 },
+          reason: null,
+        }}
+      />,
+    );
+    expect(out).toContain("HYBRID RECALL");
+    expect(out).toContain("rrf_k");
+    expect(out).toContain('data-search-mode="hybrid"');
+  });
+
+  it("SearchReadout renders NOTHING when the surface has no search at all", () => {
+    // `null` (no `q` supplied) must not render an empty readout — a blank line
+    // that says nothing still tells the operator a search happened.
+    expect(html(<SearchReadout />)).toBe("");
+    expect(html(<SearchReadout substring={null} retrieval={null} />)).toBe("");
+  });
+
+  it("a caller that passes BOTH gets the retrieval one — a real search never claims to be a filter", () => {
+    const out = html(
+      <SearchReadout
+        retrieval={{
+          mode: "bm25_only",
+          vector_available: false,
+          embedding_available: false,
+          bm25_hits: 1,
+          vector_hits: 0,
+          rrf_k: 60,
+          weights: { bm25: 0.5, vector: 0.5 },
+          reason: "sqlite-vec not loaded on this connection",
+        }}
+        substring={{ mode: "substring", fields: ["title"] }}
+      />,
+    );
+    expect(out).toContain("BM25 ONLY");
+    expect(out).not.toContain("SUBSTRING FILTER");
+  });
+
+  it("FR-246 — the banner names a MISSING BM25 arm, which learnings never had to", () => {
+    // `briefs_fts` arrives at schema v23, so a brain that has not run the
+    // migration has a live vector arm and no lexical one. Without this line the
+    // result set looks healthy while being much smaller.
+    const out = html(
+      <SearchReadout
+        retrieval={{
+          mode: "vector_only",
+          vector_available: true,
+          embedding_available: true,
+          bm25_hits: 0,
+          vector_hits: 4,
+          rrf_k: 60,
+          weights: { bm25: 0.5, vector: 0.5 },
+          reason: null,
+          bm25_reason: "brain table absent: briefs_fts (schema v23 not applied)",
+        }}
+      />,
+    );
+    expect(out).toContain("briefs_fts");
+    expect(out).toContain("schema v23 not applied");
+  });
+});
 
 describe("AC #2 · a degraded retrieval mode is a BANNER, not a shrug", () => {
   const base: RetrievalReport = {

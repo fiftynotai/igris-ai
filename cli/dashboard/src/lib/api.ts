@@ -192,6 +192,24 @@ export interface GraphPayload {
 /** Notes about inputs the endpoint clamped or dropped. Empty when clean. */
 export type DashboardParamNotes = string[];
 
+/**
+ * FR-246 D3-f — mirrors `SubstringSearchPayload`.
+ *
+ * The four honest-substring surfaces (goals, context docs, suggestions,
+ * candidates) carry this instead of a {@link RetrievalReport}. It exists as a
+ * PAYLOAD field rather than a sentence in the UI so a gate can assert it:
+ * `G-BR-13b` fails any surface whose payload says `substring` while its DOM
+ * shows a recall readout.
+ *
+ * `null` means "no `q` was supplied" — different from an absent key, which
+ * would mean the surface has no filter at all.
+ */
+export interface SubstringSearch {
+  mode: "substring";
+  /** The columns (or `body`, for a file grep) the literal match ran over. */
+  fields: string[];
+}
+
 /** The envelope every FR-240 list payload shares. */
 export interface ListEnvelope {
   count: number;
@@ -284,6 +302,8 @@ export interface LearningListRow {
 export interface LearningsPayload extends ListEnvelope {
   items: LearningListRow[];
   review_status: string;
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearch | null;
 }
 
 /**
@@ -305,6 +325,42 @@ export interface RetrievalReport {
   weights: { bm25: number; vector: number };
   /** Why the vector arm degraded, verbatim; null when it ran. */
   reason: string | null;
+  /**
+   * FR-246 — why the BM25 arm could not run. Present only on
+   * `/api/briefs/search`: `learnings_fts` has existed since schema v1, but
+   * `briefs_fts` arrives at v23, so briefs have a degraded state learnings do
+   * not — a live vector arm and no lexical one.
+   */
+  bm25_reason?: string | null;
+}
+
+/** Mirrors `BriefSearchRowPayload`. NO body — `content_length` instead (D7). */
+export interface BriefSearchRow {
+  id: number;
+  project: string;
+  brief_id: string;
+  brief_type: string | null;
+  title: string;
+  status: string;
+  priority: string | null;
+  effort: string | null;
+  phase: string | null;
+  updated_at: string;
+  content_length: number;
+  rrf_score: number | null;
+  bm25_rank: number | null;
+  vector_rank: number | null;
+}
+
+/** Mirrors `BriefsSearchPayload` — FR-246's one new endpoint. */
+export interface BriefsSearchPayload {
+  query: string;
+  items: BriefSearchRow[];
+  count: number;
+  retrieval: RetrievalReport;
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
 }
 
 /** Mirrors `LearningSearchRowPayload`. Ranks are null on the arm that missed. */
@@ -374,6 +430,9 @@ export interface ContextDocRow {
   summary: string;
   exists: boolean;
   missing_applicable: boolean;
+  /** FR-246 — grep hits in this doc's BODY. Absent when no `q` was supplied. */
+  matches?: { line: number; snippet: string }[];
+  more_matches?: boolean;
 }
 
 /**
@@ -392,6 +451,8 @@ export interface ContextDocsPayload {
   docs: ContextDocRow[];
   missing_applicable: string[];
   remediation: string[];
+  /** FR-246 — what `q` did, or null. A body GREP, and it says so. */
+  search: SubstringSearch | null;
   generated_at: string;
   degraded: DashboardDegraded | null;
 }
@@ -439,6 +500,8 @@ export interface GoalListRowPayload extends GoalRow {
 /** Mirrors `GoalsPayload`. */
 export interface GoalsPayload extends ListEnvelope {
   items: GoalListRowPayload[];
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearch | null;
 }
 
 /** Mirrors `GoalDetailPayload`. The detail returns the briefs themselves. */
@@ -500,6 +563,8 @@ export interface SuggestionRow {
 export interface SuggestionsPayload extends ListEnvelope {
   items: SuggestionRow[];
   facets: { source_module: Record<string, number>; brain_level: number };
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearch | null;
 }
 
 /** Mirrors `TriageRequest`. The `action` values come from `health.write.actions`. */
@@ -630,6 +695,13 @@ export const api = {
   briefs: (query: URLSearchParams, signal?: AbortSignal): Promise<BriefsPayload> =>
     getJson<BriefsPayload>(`api/briefs?${query.toString()}`, signal),
 
+  /** FR-246 — the ONE new endpoint. Hybrid BM25 + vector recall over briefs. */
+  briefsSearch: (
+    query: URLSearchParams,
+    signal?: AbortSignal,
+  ): Promise<BriefsSearchPayload> =>
+    getJson<BriefsSearchPayload>(`api/briefs/search?${query.toString()}`, signal),
+
   brief: (
     project: string,
     id: string,
@@ -662,14 +734,25 @@ export const api = {
       signal,
     ),
 
+  /**
+   * FR-246 adds the optional `q`, a server-side GREP over the doc BODIES.
+   *
+   * Built with `URLSearchParams` rather than string concatenation because `q`
+   * is operator prose: `&`, `#` and `+` all occur in context docs and all would
+   * corrupt a hand-built query string.
+   */
   contextDocs: (
     project: string,
+    q?: string,
     signal?: AbortSignal,
-  ): Promise<ContextDocsPayload> =>
-    getJson<ContextDocsPayload>(
-      `api/context-docs?project=${encodeURIComponent(project)}`,
+  ): Promise<ContextDocsPayload> => {
+    const params = new URLSearchParams({ project });
+    if (q !== undefined && q.length > 0) params.set("q", q);
+    return getJson<ContextDocsPayload>(
+      `api/context-docs?${params.toString()}`,
       signal,
-    ),
+    );
+  },
 
   contextDoc: (
     project: string,

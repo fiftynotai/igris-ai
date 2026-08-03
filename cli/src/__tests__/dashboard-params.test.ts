@@ -171,13 +171,31 @@ describe("parseFilters — allowlisting", () => {
   });
 
   it("does not report params the caller declared it handles", () => {
+    // `q` is NO LONGER a valid example here: FR-246 made it a real member of
+    // `LEARNING_FILTERS`, so it now lands in `values` rather than being merely
+    // tolerated. `upcoming_days` is the surviving case of a param a ROUTE parses
+    // itself (`routes.ts#goals`) and hands to `parseFilters` only so it is not
+    // reported as unknown.
     const r = parseFilters(
-      q("limit=10&offset=5&q=hello&project=igris-ai"),
+      q("limit=10&offset=5&upcoming_days=7&project=igris-ai"),
       LEARNING_FILTERS,
-      ["limit", "offset", "q"],
+      ["limit", "offset", "upcoming_days"],
     );
     expect(r.values).toEqual({ project: "igris-ai" });
     expect(r.rejected).toEqual([]);
+  });
+
+  it("FR-246 — `q` is a FILTER on the list specs, so it is parsed into values", () => {
+    const r = parseFilters(q("q=hello&project=igris-ai"), LEARNING_FILTERS);
+    expect(r.values).toEqual({ project: "igris-ai", q: "hello" });
+    expect(r.rejected).toEqual([]);
+    // ...and an EMPTY `q` means "no filter", not "match the empty string" —
+    // which is exactly how a cleared text input behaves, and the reason a list
+    // uses `parseFilters` while `/api/briefs/search` uses `parseQuery` (where
+    // an empty value is a refusal).
+    expect(parseFilters(q("q=&project=igris-ai"), LEARNING_FILTERS).values).toEqual({
+      project: "igris-ai",
+    });
   });
 
   it("composes multiple accepted filters", () => {

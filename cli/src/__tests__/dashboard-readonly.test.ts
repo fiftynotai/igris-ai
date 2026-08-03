@@ -293,15 +293,23 @@ describe("G-RO-1 — a full crawl of every endpoint changes nothing", () => {
     expect(after.db_mtime_ms).toBe(before.db_mtime_ms);
   });
 
-  it("a hybrid search and three detail views specifically change nothing", { timeout: 180_000 }, async () => {
+  it("BOTH hybrid searches and three detail views specifically change nothing", { timeout: 180_000 }, async () => {
     // Called out separately because these are the paths that WOULD write if the
     // dashboard reached the MCP handlers: `handleMemoryGet` and
     // `handleMemoryRecall` both bump `access_count` (TD-092), and `getDb()`
     // migrates on open.
+    //
+    // FR-246 adds `/api/briefs/search` HERE as well as to `LAYER_PATHS`. The
+    // broad `crawl()` already covers it, so this is not new coverage — it is
+    // the NAMED case matching its own name again. It also has a reason of its
+    // own beyond symmetry: `/api/briefs/search` is the second path to open
+    // `openBrainReadonlyWithVec()`, and loading an extension onto a handle is
+    // the most plausible way a "read" acquires a write.
     const before = snapshot(dbPath());
     await start();
     for (const p of [
       "/api/learnings/search?q=wrapper",
+      "/api/briefs/search?q=wrapper",
       "/api/brief?project=demo&id=FR-240",
       "/api/learning?id=1",
       "/api/goal?id=GL-001",
@@ -612,13 +620,16 @@ describe("G-RO-5 — the FR-238-era accessors open read-WRITE (residual, deferre
       "/api/learning?id=1",
       "/api/goals",
       "/api/goal?id=GL-001",
-      // The 7th layer endpoint. It reaches the brain through
-      // openBrainReadonlyWithVec rather than openBrainReadonly, so it is the one
-      // path in this tier whose handle is armed by a DIFFERENT opener — which is
-      // exactly why it belongs in a crawl that claims to cover "the LAYER
-      // endpoints". Offline here (hermetic-embeddings), so it degrades to
-      // bm25_only; the mode is 3f's business, not this gate's.
+      // The two search endpoints. They reach the brain through
+      // openBrainReadonlyWithVec rather than openBrainReadonly, so they are the
+      // TWO paths in this tier whose handles are armed by a DIFFERENT opener —
+      // which is exactly why they belong in a crawl that claims to cover "the
+      // LAYER endpoints". FR-246 added the second; this list carried only the
+      // first for one review round, so the title over-claimed its own coverage.
+      // Offline here (hermetic-embeddings), so both degrade to bm25_only; the
+      // mode is 3f's business, not this gate's.
       "/api/learnings/search?q=read-only",
+      "/api/briefs/search?q=read-only",
     ]) {
       expect((await req(p)).status, p).toBe(200);
     }

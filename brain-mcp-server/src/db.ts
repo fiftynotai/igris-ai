@@ -1515,6 +1515,299 @@ function migrateSchema(db: Database.Database): void {
       );
     }
   }
+
+  // -------------------------------------------------------------------------
+  // v23 (FR-246): `briefs_fts` — the BM25 arm for brief search.
+  // -------------------------------------------------------------------------
+  //
+  // WHY THIS EXISTS AT ALL. Before v23 the ONLY retrieval over briefs was
+  // `briefs_vec`, and that index is much thinner than it looks:
+  // `extractBriefProblem` (`tools/briefs.ts:838-851`) embeds ONLY the title plus
+  // the `## Problem` section (falling back to the first 500 characters), it is
+  // called at CREATE (`briefs.ts:472`) and by the backfill tool (`:1050`) and
+  // NOWHERE ELSE, and the only trigger on `briefs_vec` is `briefs_vec_ad`
+  // (DELETE — see `:544`). Two consequences, both measured on the operator brain
+  // rather than reasoned about:
+  //
+  //   1. A brief's BODY is not searchable today at all. `briefs_fts` is the ONLY
+  //      arm that reaches `brief_files.content`, so it is not merely the offline
+  //      fallback for the vector arm — it is the only arm that can see most of a
+  //      brief.
+  //   2. An EDITED brief carries a STALE vector, because no update path
+  //      re-embeds. The FTS index does not share that defect: its six triggers
+  //      below fire on every write to either source table.
+  //
+  // Whether to re-embed on update is a SEPARATE brief and is deliberately NOT
+  // fixed here (FR-246 operator sign-off, 2026-08-03).
+  //
+  // STORAGE — MEASURED, NOT ESTIMATED. On a `VACUUM INTO` snapshot of the
+  // operator's brain (1,814 `brief_status` rows; 1,597 `brief_files` rows
+  // totalling 6,211,271 bytes of `content`), building this index both ways and
+  // re-VACUUMing gave:
+  //
+  //     contentful fts5(brief_id, title, content)          +11,452,416 B
+  //     contentless_delete=1 (this one)                     +3,846,144 B
+  //
+  // A contentful fts5 keeps a second copy of every indexed byte. The reader
+  // (`tools/briefs-read.ts#hybridSearchBriefs`) needs only `rowid` and `rank`
+  // and hydrates every displayed column from `brief_status`, so that second copy
+  // would buy nothing for 7.6 MB. Hence `content=''` + `contentless_delete=1`.
+  //
+  // The floor for `contentless_delete=1` is SQLite 3.43 (2023-08). Both packages
+  // pin `better-sqlite3: ^11.0.0`, whose oldest member bundles 3.45.3, so the
+  // declared dependency range already guarantees it; this tree measured 3.49.2.
+  // If a host ever violates that floor the CREATE throws, the transaction rolls
+  // back, `schema_version` is NOT advanced, and the reader reports
+  // `bm25 unavailable: briefs_fts absent` — a stated degrade, not a crash.
+  //
+  // WHEN THIS RUNS, stated because it is easy to read the reader's `schema v23
+  // not applied` message as "someone will apply it later": **this block
+  // self-applies on the FIRST brain-server boot after the code lands.**
+  // `getDb()` calls `migrateSchema()` on open (`db.ts` — it is the WRITE door,
+  // learning 1133), so any MCP boot, any CLI path that reaches `getDb()`, and
+  // the bundled-server smoke test in `copy-templates.sh` will each run it. It
+  // is not gated on a verb, a flag or an operator action, and it does not wait
+  // for a release. Verified in the wild during FR-246's own build: v23 applied
+  // to the operator's brain at 13:38 on 2026-08-03 through exactly that path —
+  // `briefs_fts` 1,815 rows against `brief_status` 1,815, `integrity_check` ok,
+  // `updated_at` untouched, and a verified `.pre-v23.bak` beside it. The
+  // `bm25_reason` path therefore describes a brain running OLDER CODE (or one
+  // where the snapshot check aborted), not a brain waiting to be migrated.
+  //
+  // ONE SHARP EDGE OF CONTENTLESS FTS5, since it is invisible in the DDL:
+  // inserting a rowid that is ALREADY indexed is NOT rejected (verified: no
+  // UNIQUE constraint fires), it appends a second index entry for the same
+  // rowid and a later MATCH can then return that rowid twice. Every trigger
+  // below is therefore DELETE-then-INSERT, never a bare INSERT, and the backfill
+  // runs exactly once into a table created in the same transaction.
+  // `__tests__/db-migration-v23.test.ts` drives all four real writer shapes and
+  // pins the resulting row count.
+  //
+  // WHY THE TRIGGERS USE `INSERT ... SELECT` RATHER THAN `VALUES`: the rowid is
+  // `brief_status.id`, but half the content lives in `brief_files`, a different
+  // table. `handleBriefCreate` writes `brief_files` FIRST and `brief_status`
+  // SECOND (`briefs.ts:423-457`, one transaction), so at `brief_files`-insert
+  // time the `brief_status` row may not exist yet. An `INSERT ... SELECT` whose
+  // subquery matches nothing is a silent no-op — which is exactly the wanted
+  // behaviour — and the `brief_status` insert that follows indexes both fields.
+  // A `VALUES` form would have needed a `WHEN EXISTS` guard to do the same thing
+  // less legibly.
+  //
+  // NO WRITER IS BYPASSED — verified by reading every one rather than assuming:
+  // `briefs.ts:423`/`:437` (`ON CONFLICT DO UPDATE`), `:600`/`:615` (UPDATE),
+  // `sync.ts:1595` (`ON CONFLICT DO UPDATE`) and `sync.ts#mergeRows:631-668`
+  // (plain INSERT / UPDATE). None uses `INSERT OR REPLACE`, so the
+  // REPLACE-skips-the-AFTER-UPDATE-trigger footgun is not on any live path.
+  //
+  // `updated_at` IS NEVER BUMPED by this migration. It is in the LWW sync column
+  // set, and v23 issues no UPDATE against any synced table at all — it only
+  // CREATEs new objects and populates them. That holds by construction, not by
+  // care.
+  //
+  // BACKUP. v23 is ADDITIVE — it creates new objects and touches no existing
+  // row, so unlike v22 nothing here is unrecoverable. The verified-snapshot +
+  // ABORT shape is applied anyway, by FR-246 operator sign-off ("v23 follows
+  // v22's shape exactly"), on the ground that this is still a multi-megabyte
+  // structural write into the operator's live brain. Verified the same way v22
+  // verifies: `PRAGMA integrity_check` must return 'ok' AND the backup's
+  // `brief_status` count must equal the source's. Unverifiable ⇒ skip without
+  // recording, and the next boot retries.
+  //
+  // Gate behind v22's actual completion (re-read `schema_version`, L-209).
+  let postV22Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV22Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: both source tables must exist. A DB with neither is a
+  // partial / fixture schema, not a brain — recording v23 against it would
+  // falsely mark it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal
+  // precedent) so the next boot retries once the tables are there.
+  const haveBriefSources =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined &&
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_files'`)
+      .get() !== undefined;
+
+  if (postV22Version >= 22 && postV22Version < 23 && haveBriefSources) {
+    const dbFile = db.name;
+    const isFileDb =
+      dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+
+    let backupVerified = true;
+    let abortReason = '';
+    if (isFileDb) {
+      const backupPath = `${dbFile}.pre-v23.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v23 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            backupVerified = false;
+            abortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            backupVerified = false;
+            abortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        backupVerified = false;
+        abortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!backupVerified) {
+      console.error(
+        `[brain] v23 ABORTED — backup snapshot unusable (${abortReason}). ` +
+          'DB left at schema version 22; briefs_fts will not be built without a ' +
+          'verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS briefs_fts USING fts5(
+                brief_id, title, content,
+                content='',
+                contentless_delete=1
+            );
+
+            -- brief_status: the title half, and the rowid authority.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_ai AFTER INSERT ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = new.id;
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                VALUES (
+                    new.id, new.brief_id, new.title,
+                    COALESCE((SELECT bf.content FROM brief_files bf
+                               WHERE bf.project = new.project
+                                 AND bf.brief_id = new.brief_id), '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_au AFTER UPDATE ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = old.id;
+                DELETE FROM briefs_fts WHERE rowid = new.id;
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                VALUES (
+                    new.id, new.brief_id, new.title,
+                    COALESCE((SELECT bf.content FROM brief_files bf
+                               WHERE bf.project = new.project
+                                 AND bf.brief_id = new.brief_id), '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_ad AFTER DELETE ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = old.id;
+            END;
+
+            -- brief_files: the content half. The rowid is resolved by subquery
+            -- against brief_status; when that yields nothing the statement is a
+            -- no-op (see the header note on write ORDER).
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_ai AFTER INSERT ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = new.project AND brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, new.content
+                  FROM brief_status bs
+                 WHERE bs.project = new.project AND bs.brief_id = new.brief_id;
+            END;
+
+            -- The UPDATE trigger re-indexes BOTH keys because a re-key
+            -- (project/brief_id changing) would otherwise strand the old brief's
+            -- title. No live writer re-keys, but the cost is two extra
+            -- statements and the alternative is a silent stale row.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_au AFTER UPDATE ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = old.project AND brief_id = old.brief_id);
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = new.project AND brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, ''
+                  FROM brief_status bs
+                 WHERE bs.project = old.project AND bs.brief_id = old.brief_id
+                   AND NOT (bs.project = new.project AND bs.brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, new.content
+                  FROM brief_status bs
+                 WHERE bs.project = new.project AND bs.brief_id = new.brief_id;
+            END;
+
+            -- A deleted file leaves the brief itself alive, so the brief stays
+            -- indexed by TITLE with empty content rather than disappearing from
+            -- search entirely.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_ad AFTER DELETE ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = old.project AND brief_id = old.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, ''
+                  FROM brief_status bs
+                 WHERE bs.project = old.project AND bs.brief_id = old.brief_id;
+            END;
+          `);
+
+          // Backfill. One statement is enough: the JOIN is on `brief_files`'s
+          // own UNIQUE(project, brief_id) index (verified: zero duplicate keys
+          // on the operator brain), so it emits exactly one row per
+          // `brief_status` row — 1,814 rows / ~6.2 MB of text measured at ~2 s.
+          // The `NOT EXISTS` guard makes it re-runnable even though the table it
+          // fills was created three statements ago.
+          db.exec(`
+            INSERT INTO briefs_fts(rowid, brief_id, title, content)
+            SELECT bs.id, bs.brief_id, bs.title, COALESCE(bf.content, '')
+              FROM brief_status bs
+              LEFT JOIN brief_files bf
+                     ON bf.project = bs.project AND bf.brief_id = bs.brief_id
+             WHERE NOT EXISTS (
+                    SELECT 1 FROM briefs_fts WHERE briefs_fts.rowid = bs.id);
+          `);
+
+          db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (23)').run();
+        })();
+        console.error(
+          '[brain] Schema migrated to version 23 (FR-246 briefs_fts BM25 arm)',
+        );
+      } catch (err) {
+        // Degrade, never throw: the whole brain must still boot without brief
+        // search. `schema_version` stays at 22 and the next boot retries.
+        console.error(
+          '[brain] v23 SKIPPED — briefs_fts could not be created ' +
+            `(${err instanceof Error ? err.message : String(err)}). ` +
+            'schema_version NOT advanced; brief search will report bm25 ' +
+            'unavailable until this succeeds.',
+        );
+      }
+    }
+  }
 }
 
 /**

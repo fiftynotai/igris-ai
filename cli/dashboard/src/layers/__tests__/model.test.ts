@@ -28,6 +28,7 @@ import type { ContextDocsPayload, GoalListRowPayload, GraphNode } from "../../li
 import {
   DEFAULT_REVIEW_STATUS,
   FILTERS,
+  briefsSearchQuery,
   LAYERS,
   LAYER_IDS,
   daysUntil,
@@ -306,9 +307,16 @@ describe("filters narrow only when they narrow", () => {
     expect(hasActiveFilters("briefs", { nonsense: "x" })).toBe(false);
   });
 
-  it("context docs declare no filters, so nothing can be active", () => {
-    expect(FILTERS["context-docs"]).toEqual([]);
+  it("context docs declare ONLY the FR-246 text filter — no chips", () => {
+    // Was `toEqual([])` before FR-246. The chip half of that claim is still
+    // true and is the part worth keeping: the inventory is a complete
+    // per-project list from one digest call, so a client-side chip over 12 rows
+    // would look like the other layers' filters and mean something else. What
+    // changed is that the doc BODIES are prose on disk, and `?q=` greps them
+    // SERVER-side — which no chip and no client-side filter could do.
+    expect(FILTERS["context-docs"].map((d) => d.name)).toEqual(["q"]);
     expect(hasActiveFilters("context-docs", { status: "x" })).toBe(false);
+    expect(hasActiveFilters("context-docs", { q: "kiln" })).toBe(true);
   });
 
   it("emits only known filter names, encoded", () => {
@@ -634,5 +642,109 @@ describe("the layer table is complete and self-consistent", () => {
 
   it("declares exactly one globally-addressed layer", () => {
     expect(LAYERS.filter((l) => !l.projectScoped).map((l) => l.id)).toEqual(["goals"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-246 — `q` as a FILTER, and the briefs search query
+// ---------------------------------------------------------------------------
+
+describe("FR-246 — the `q` substring filter is a filter, not a second mode", () => {
+  it("`q` is registered on every surface that has one, and NOT on briefs", () => {
+    // Briefs is deliberately absent: it got REAL retrieval
+    // (`/api/briefs/search`), which replaces the browse list rather than
+    // narrowing it. A `q` chip there would be a second, weaker search box on
+    // the one page that does not need one.
+    for (const layer of ["learnings", "goals", "context-docs"] as const) {
+      const q = FILTERS[layer].find((d) => d.name === "q");
+      expect(q, `${layer} must offer a q filter`).toBeDefined();
+      expect(q?.kind).toBe("text");
+    }
+    expect(FILTERS.briefs.find((d) => d.name === "q")).toBeUndefined();
+  });
+
+  it("a text filter is INVISIBLE to the chip strip by construction", () => {
+    // `FilterBar` renders only controls whose options are non-empty, and a `q`
+    // def has `options: null`. That is what lets one filter model drive two
+    // controls without `FilterBar` learning about `kind` at all.
+    for (const layer of ["learnings", "goals", "context-docs"] as const) {
+      const q = FILTERS[layer].find((d) => d.name === "q");
+      expect(q?.options).toBeNull();
+    }
+  });
+
+  it("listQuery emits `q` on the wire like any other filter", () => {
+    const params = listQuery({
+      layer: "goals",
+      project: "igris-ai",
+      values: { q: "kiln schedule", status: "active" },
+      limit: 25,
+      offset: 0,
+    });
+    expect(params.get("q")).toBe("kiln schedule");
+    expect(params.get("status")).toBe("active");
+    // ...and it is ENCODED, which is why the builder exists: a hand-built query
+    // string would break on the `&` and `#` that occur in operator prose.
+    expect(params.toString()).toContain("q=kiln+schedule");
+  });
+
+  it("an empty `q` is omitted — a cleared box is not a filter on the empty string", () => {
+    const params = listQuery({
+      layer: "goals",
+      project: null,
+      values: { q: "" },
+      limit: 25,
+      offset: 0,
+    });
+    expect(params.has("q")).toBe(false);
+  });
+
+  it("a non-empty `q` COUNTS as a narrowing, so an empty result reads correctly", () => {
+    // This is what stops "no rows match your filter" being rendered as "this
+    // project has no goals" — AC-4's distinction, riding on `hasActiveFilters`.
+    expect(hasActiveFilters("goals", {})).toBe(false);
+    expect(hasActiveFilters("goals", { q: "" })).toBe(false);
+    expect(hasActiveFilters("goals", { q: "kiln" })).toBe(true);
+  });
+
+  it("`q` is NOT sent to /api/learnings/search — that endpoint takes a QUERY", () => {
+    // `searchQuery` forwards only what the recall endpoint binds. Sending `q`
+    // as a filter there would collide with the query it already sets.
+    const params = searchQuery({
+      query: "wrapper",
+      project: null,
+      values: { q: "something else", review_status: "approved" },
+      limit: 20,
+    });
+    expect(params.get("q")).toBe("wrapper");
+    expect(params.get("review_status")).toBe("approved");
+  });
+});
+
+describe("FR-246 — briefsSearchQuery", () => {
+  it("sets q, project and limit, and nothing else", () => {
+    const params = briefsSearchQuery({ query: "kiln", project: "igris-ai", limit: 20 });
+    expect([...params.keys()].sort()).toEqual(["limit", "project", "q"]);
+    expect(params.get("q")).toBe("kiln");
+    expect(params.get("project")).toBe("igris-ai");
+    expect(params.get("limit")).toBe("20");
+  });
+
+  it("omits an absent project rather than sending an empty one", () => {
+    // An empty `project=` would be dropped server-side as "no filter" anyway,
+    // but sending it makes the URL claim a scope the operator did not choose.
+    const params = briefsSearchQuery({ query: "kiln", project: null, limit: 20 });
+    expect(params.has("project")).toBe(false);
+    expect(briefsSearchQuery({ query: "k", project: "", limit: 5 }).has("project")).toBe(
+      false,
+    );
+  });
+
+  it("does NOT forward review_status — briefs have no such column", () => {
+    // The reason `briefsSearchQuery` exists rather than a layer parameter on
+    // `searchQuery`: the two endpoints accept different filters, and a shared
+    // builder would send one the server reports back as unknown.
+    const params = briefsSearchQuery({ query: "kiln", project: null, limit: 20 });
+    expect(params.has("review_status")).toBe(false);
   });
 });

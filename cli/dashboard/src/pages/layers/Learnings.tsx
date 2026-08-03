@@ -47,7 +47,6 @@ import {
   type LearningDetailPayload,
   type LearningsPayload,
   type LearningsSearchPayload,
-  type RetrievalReport,
 } from "../../lib/api";
 import { Badge } from "../../components/ui/Badge";
 import { Chip } from "../../components/ui/Chip";
@@ -73,6 +72,11 @@ import {
   splitTags,
 } from "../../layers/model";
 import { useLayerList } from "../../layers/useLayerList";
+// FR-246 — the readout moved to `components/record/SearchReadout` so the four
+// SUBSTRING surfaces render through the SAME component. No re-export: the only
+// other consumer was `record.test.tsx`, and it now imports from the owner. A
+// re-export would have left this file looking like the definition site.
+import { SearchReadout } from "../../components/record/SearchReadout";
 import { useNeighbours } from "../../layers/useNeighbours";
 import type { LayerViewProps } from "../Layers";
 
@@ -83,39 +87,6 @@ export function Learnings(props: LayerViewProps) {
     <LearningDetailView {...props} address={props.address} />
   ) : (
     <LearningListView {...props} />
-  );
-}
-
-// ---------------------------------------------------------------------------
-// The retrieval readout — the whole point of D3
-// ---------------------------------------------------------------------------
-
-export function RetrievalBanner({ retrieval }: { retrieval: RetrievalReport }) {
-  const degraded = retrieval.mode !== "hybrid";
-  const arms = `bm25 ${retrieval.bm25_hits} · vector ${retrieval.vector_hits} · rrf_k ${retrieval.rrf_k} · weights ${retrieval.weights.bm25}/${retrieval.weights.vector}`;
-
-  if (!degraded) {
-    return (
-      <p className="record-readout" role="status">
-        HYBRID RECALL — {arms}
-      </p>
-    );
-  }
-
-  return (
-    <div className="shell-banner" role="status">
-      {retrieval.mode.toUpperCase().replace("_", " ")} — this search did not run
-      both arms.{" "}
-      {retrieval.vector_available
-        ? "sqlite-vec loaded"
-        : "sqlite-vec NOT loaded on the read handle"}
-      ;{" "}
-      {retrieval.embedding_available
-        ? "embeddings available"
-        : "the embedding model is unavailable (a cold or absent HF cache is normal before postinstall)"}
-      . {retrieval.reason ?? ""} Results are still real — they are just less
-      complete than hybrid recall. · {arms}
-    </div>
   );
 }
 
@@ -301,7 +272,7 @@ function LearningListView({ project, search, live }: LayerViewProps) {
             </div>
           )}
           {!browsing && hits !== null && (
-            <RetrievalBanner retrieval={hits.retrieval} />
+            <SearchReadout retrieval={hits.retrieval} />
           )}
           {payload != null && payload.params.length > 0 && (
             <div className="shell-banner" role="status">

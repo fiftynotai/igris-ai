@@ -37,6 +37,8 @@ import {
 } from "../../lib/api";
 import { Badge } from "../../components/ui/Badge";
 import { RecordList, type RecordListRow } from "../../components/record/RecordList";
+import { SearchReadout } from "../../components/record/SearchReadout";
+import { useQFilter } from "../../layers/useQFilter";
 import { RecordDetail } from "../../components/record/RecordDetail";
 import { Markdown } from "../../markdown/Markdown";
 import {
@@ -66,6 +68,15 @@ export function ContextDocs(props: LayerViewProps) {
 function InventoryView({ project, search, live }: LayerViewProps) {
   const [payload, setPayload] = useState<ContextDocsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * FR-246 — the APPLIED `q`, i.e. the one the last request actually sent.
+   *
+   * Local state rather than `useLayerList`'s filter values, because this view
+   * does not use that hook at all: the inventory is one digest call with no
+   * page window (D8). The `q` still travels to the SERVER — it is a grep over
+   * doc bodies on disk, which no client-side filter could do.
+   */
+  const [q, setQ] = useState("");
 
   // Follows the beat, like every other list in the shell: `/ground` writing a
   // doc mid-session should appear without a reload. The digest is cheap — a
@@ -78,7 +89,7 @@ function InventoryView({ project, search, live }: LayerViewProps) {
     }
     const ctrl = new AbortController();
     api
-      .contextDocs(project, ctrl.signal)
+      .contextDocs(project, q, ctrl.signal)
       .then((p) => {
         if (ctrl.signal.aborted) return;
         setPayload(p);
@@ -89,11 +100,17 @@ function InventoryView({ project, search, live }: LayerViewProps) {
         setError(err instanceof ApiError ? err.message : String(err));
       });
     return () => ctrl.abort();
-  }, [project, live.tick]);
+  }, [project, live.tick, q]);
 
   const descriptor = layerById(LAYER);
   const ordered = payload === null ? [] : orderInventory(payload);
   const muted = muteRows(ordered, search, (r) => [r.type, r.target, r.summary]);
+
+  const qFilter = useQFilter({
+    applied: q,
+    onApply: setQ,
+    help: "Literal substring GREP over the doc BODIES on disk. Not recall.",
+  });
 
   return (
     <RecordList
@@ -119,17 +136,18 @@ function InventoryView({ project, search, live }: LayerViewProps) {
               {payload.tech_stack ?? "no stack"}
             </p>
           )}
+          <SearchReadout substring={payload?.search} />
         </>
       }
-      filters={
-        search.trim().length > 0
-          ? {
-              controls: [],
-              onChange: () => undefined,
-              readout: `MUTED ${muted.length}/${ordered.length}`,
-            }
-          : undefined
-      }
+      filters={{
+        controls: [],
+        search: qFilter,
+        onChange: () => undefined,
+        readout:
+          search.trim().length > 0
+            ? `MUTED ${muted.length}/${ordered.length}`
+            : undefined,
+      }}
       rows={muted.map(
         (row): RecordListRow => ({
           key: row.type,
@@ -156,14 +174,28 @@ function InventoryView({ project, search, live }: LayerViewProps) {
               {row.optional && <Badge variant="muted">optional</Badge>}
             </>
           ),
-          meta: [{ k: "applies when", v: row.applies_when }],
+          meta: [
+            { k: "applies when", v: row.applies_when },
+            // FR-246 — WHICH line matched. A row that survived a grep but shows
+            // no reason why is a row the operator must open to evaluate, which
+            // defeats filtering a five-item list in the first place.
+            ...(row.matches ?? []).map((m) => ({
+              k: `L${m.line}`,
+              v: m.snippet,
+            })),
+            ...(row.more_matches === true
+              ? [{ k: "…", v: "more matches in this doc" }]
+              : []),
+          ],
         }),
       )}
       empty={emptyStateFor({
         layer: LAYER,
         total: ordered.length,
         degraded: payload?.degraded?.reason ?? error,
-        filtersActive: false,
+        // A submitted `q` IS a narrowing, so "no docs" must read as "no doc
+        // body contains that" rather than "this project has no context docs".
+        filtersActive: q.length > 0,
         searchActive: search.trim().length > 0 && ordered.length > 0,
         project,
         projectRequired: true,

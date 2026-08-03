@@ -69,6 +69,22 @@ const DDL_BRIEF_FILES = `
   );
 `;
 
+/**
+ * `briefs_fts` — db.ts v23 (FR-246). CONTENTLESS, mirroring production.
+ *
+ * **This fixture creates the index ITSELF, on purpose.** `dashboard-readonly`'s
+ * G-RO-1 asserts the fixture DB is byte-for-byte unchanged after the whole
+ * endpoint crawl; if `briefs_fts` only appeared because a migration ran during
+ * a read, that check would go red — which is the gate working, not a fixture
+ * bug. The triggers are NOT mirrored: nothing writes to these tables during a
+ * read-only crawl, and a trigger here would be maintenance with no test.
+ */
+const DDL_BRIEFS_FTS = `
+  CREATE VIRTUAL TABLE briefs_fts USING fts5(
+    brief_id, title, content, content='', contentless_delete=1
+  );
+`;
+
 /** `learnings` + FTS5 — db.ts:v1 through v16. */
 const DDL_LEARNINGS = `
   CREATE TABLE learnings (
@@ -231,6 +247,7 @@ export function seedLayerBrain(dbPath: string): void {
     DDL_PROJECTS +
       DDL_BRIEF_STATUS +
       DDL_BRIEF_FILES +
+      DDL_BRIEFS_FTS +
       DDL_LEARNINGS +
       DDL_GOALS +
       DDL_EDGES +
@@ -274,6 +291,17 @@ export function seedLayerBrain(dbPath: string): void {
     "hash-fr240",
     "2026-07-30 08:00:00",
   );
+
+  // FR-246 — the BM25 arm's index, backfilled exactly the way v23 backfills it.
+  // Note what this makes searchable that nothing else does: `bf-1`'s BODY. The
+  // word "shell" appears in no brief TITLE.
+  db.exec(`
+    INSERT INTO briefs_fts(rowid, brief_id, title, content)
+    SELECT bs.id, bs.brief_id, bs.title, COALESCE(bf.content, '')
+      FROM brief_status bs
+      LEFT JOIN brief_files bf
+             ON bf.project = bs.project AND bf.brief_id = bs.brief_id;
+  `);
 
   // --- learnings ---------------------------------------------------------
   //  id | project | category  | scope  | provenance | review_status
@@ -395,6 +423,16 @@ export const LAYER_PATHS: readonly string[] = [
   "/api/learnings?project=demo&category=mistake",
   "/api/learnings?review_status=pending_review",
   "/api/learnings/search?q=wrapper",
+  // FR-246 — the ONE path this brief adds, plus the `q` variant of each
+  // surface that gained the parameter. The `q` variants matter to the crawl
+  // specifically BECAUSE they take a new code path: a substring predicate is
+  // still a query, and G-RO-1 must prove it cannot write.
+  "/api/briefs/search?q=dashboard",
+  "/api/briefs/search?q=shell&project=demo",
+  "/api/learnings?q=wrapper",
+  "/api/context-docs?project=demo&q=guideline",
+  "/api/goals?q=lens",
+  "/api/suggestions?q=gap",
   "/api/learning?id=1",
   "/api/context-docs?project=demo",
   "/api/goals",

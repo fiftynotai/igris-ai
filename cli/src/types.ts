@@ -423,6 +423,26 @@ export interface ContextDocInventoryRow {
   missing_applicable: boolean;
 }
 
+/** FR-246 — one grep hit inside a context doc body. */
+export interface ContextDocMatchPayload {
+  /** 1-based line number in the doc as read. */
+  line: number;
+  /** Bounded excerpt CENTRED on the hit, elided at either end with `…`. */
+  snippet: string;
+}
+
+/**
+ * FR-246 — an inventory row, plus what a `q` grep found in its body.
+ *
+ * `matches` is absent (not empty) when no `q` was supplied: an empty array
+ * would mean "searched, found nothing", which is a different statement.
+ */
+export interface ContextDocRowPayload extends ContextDocInventoryRow {
+  matches?: ContextDocMatchPayload[];
+  /** True when the doc had more hits than the per-doc cap. */
+  more_matches?: boolean;
+}
+
 /** FR-209 — digest emitted by `igris context-docs inventory`. */
 export interface ContextDocsInventoryDigest {
   project: string;
@@ -998,6 +1018,29 @@ export interface GraphQueryTwin {
  */
 export type DashboardParamNotes = string[];
 
+/**
+ * FR-246 D3-f — how a `q`-bearing LIST payload reports what it actually did.
+ *
+ * The four `q` surfaces (goals, context docs, suggestions, candidates) do
+ * `LIKE '%q%'` over a named field list. No ranking, no recall. This block says
+ * so IN THE PAYLOAD rather than in a sentence hard-coded in the client,
+ * because a hard-coded sentence is the claim that goes stale the day someone
+ * swaps the implementation and no gate can catch it. `G-BR-13b` asserts that
+ * no surface reporting `mode: "substring"` renders a hybrid/recall readout.
+ *
+ * `null` when no `q` was supplied — distinguishable from an ABSENT key, which
+ * would mean "this surface has no search at all".
+ *
+ * `mode` is a one-member union deliberately: a surface that gains real
+ * retrieval returns {@link RetrievalPayload} instead, so there is no way to
+ * widen this into a label that lies.
+ */
+export interface SubstringSearchPayload {
+  mode: "substring";
+  /** The columns the LIKE was applied to, in SQL order. */
+  fields: string[];
+}
+
 /** `GET /api/briefs` — one row. Field-for-field `briefs-read.ts` list columns. */
 export interface BriefListRowPayload {
   project: string;
@@ -1097,6 +1140,8 @@ export interface LearningsPayload {
   offset: number;
   /** Echoed so the UI can banner a non-default value without re-parsing the URL. */
   review_status: string;
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearchPayload | null;
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;
@@ -1153,6 +1198,56 @@ export interface LearningsSearchPayload {
   degraded: DashboardDegraded | null;
 }
 
+/**
+ * FR-246 — `RetrievalPayload` plus the fact briefs have and learnings do not.
+ *
+ * `learnings_fts` has existed since schema v1, so a learnings search may assume
+ * its lexical arm. `briefs_fts` arrives at **v23**, so a brain that has not run
+ * the migration has a live vector arm and NO lexical arm — and that has to be
+ * REPORTED, for the same reason `vector_available` exists: the alternative is a
+ * silently thinner result set that reads like "nothing matched".
+ */
+export interface BriefRetrievalPayload extends RetrievalPayload {
+  /** Why the BM25 arm could not run; null when `briefs_fts` was queryable. */
+  bm25_reason: string | null;
+}
+
+/**
+ * One ranked brief hit.
+ *
+ * NO `content` (FR-240 D7) — `content_length` instead. Brief bodies average
+ * ~3.9 KB, so a ranked list carrying them is the payload term the read layer
+ * exists to remove. The body is `/api/brief`'s job.
+ */
+export interface BriefSearchRowPayload {
+  id: number;
+  project: string;
+  brief_id: string;
+  brief_type: string | null;
+  title: string;
+  status: string;
+  priority: string | null;
+  effort: string | null;
+  phase: string | null;
+  updated_at: string;
+  content_length: number;
+  /** Null on the BM25-only arm, as on the learnings twin. */
+  rrf_score: number | null;
+  bm25_rank: number | null;
+  vector_rank: number | null;
+}
+
+/** `GET /api/briefs/search?q=<query>&project=<slug>&limit=` — FR-246. */
+export interface BriefsSearchPayload {
+  query: string;
+  items: BriefSearchRowPayload[];
+  count: number;
+  retrieval: BriefRetrievalPayload;
+  params: DashboardParamNotes;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
 /** `GET /api/learning?id=<n>` — the full row, body included. */
 export interface LearningDetailPayload {
   learning: {
@@ -1187,11 +1282,19 @@ export interface ContextDocsPayload {
   tech_stack: string | null;
   /** The digest's own degraded flag — profile or catalog data was incomplete. */
   inventory_degraded: boolean;
-  docs: ContextDocInventoryRow[];
+  /**
+   * FR-246: when `q` is supplied this list is FILTERED to the docs whose body
+   * matched, each carrying its snippets. `missing_applicable` and
+   * `remediation` are deliberately NOT filtered — they are statements about
+   * ABSENT docs, and a text filter cannot narrow an absence.
+   */
+  docs: ContextDocRowPayload[];
   /** Types that apply but are absent. */
   missing_applicable: string[];
   /** `/ground <type>` per missing doc — the DIGEST's array, never hand-written. */
   remediation: string[];
+  /** FR-246 — what `q` did, or null. A body GREP, and it says grep. */
+  search: SubstringSearchPayload | null;
   generated_at: string;
   degraded: DashboardDegraded | null;
 }
@@ -1251,6 +1354,8 @@ export interface GoalsPayload {
   total: number;
   limit: number;
   offset: number;
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearchPayload | null;
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;
@@ -1326,6 +1431,8 @@ export interface SuggestionsPayload {
   offset: number;
   /** `source_module -> count` (count DESC then name ASC) + the `IS NULL` count. */
   facets: { source_module: Record<string, number>; brain_level: number };
+  /** FR-246 — what `q` did, or null. */
+  search: SubstringSearchPayload | null;
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;

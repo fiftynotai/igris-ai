@@ -173,8 +173,11 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(22);
+      // migrate call, so MAX(version) is the CHAIN TERMINAL once v13 has been
+      // applied — 23 since FR-246 added `briefs_fts`. (The number in this
+      // comment previously said 21 while the assertion said 22; corrected here
+      // rather than made one version staler.)
+      expect(getSchemaVersion(db)).toBe(23);
     },
   );
 
@@ -200,8 +203,11 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(22);
+      // migrate call, so MAX(version) is the CHAIN TERMINAL once v13 has been
+      // applied — 23 since FR-246 added `briefs_fts`. (The number in this
+      // comment previously said 21 while the assertion said 22; corrected here
+      // rather than made one version staler.)
+      expect(getSchemaVersion(db)).toBe(23);
 
       const learningsCount = db
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
@@ -257,8 +263,11 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(22);
+      // migrate call, so MAX(version) is the CHAIN TERMINAL once v13 has been
+      // applied — 23 since FR-246 added `briefs_fts`. (The number in this
+      // comment previously said 21 while the assertion said 22; corrected here
+      // rather than made one version staler.)
+      expect(getSchemaVersion(db)).toBe(23);
       expect(tableExists(db, 'learnings_vec')).toBe(true);
       expect(tableExists(db, 'errors_vec')).toBe(true);
       expect(tableExists(db, 'briefs_vec')).toBe(true);
@@ -297,8 +306,11 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(22);
+      // migrate call, so MAX(version) is the CHAIN TERMINAL once v13 has been
+      // applied — 23 since FR-246 added `briefs_fts`. (The number in this
+      // comment previously said 21 while the assertion said 22; corrected here
+      // rather than made one version staler.)
+      expect(getSchemaVersion(db)).toBe(23);
     },
   );
 
@@ -317,8 +329,11 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // (FR-198 registry asset-reference columns), v18 (TD-238 brief field
       // normalization), v19 (TD-259 registry→catalog rename), and v20 (TD-265
       // worker-subsystem table teardown) run immediately after v13 in the same
-      // migrate call, so MAX(version) is 21 once v13 has been applied.
-      expect(getSchemaVersion(db)).toBe(22);
+      // migrate call, so MAX(version) is the CHAIN TERMINAL once v13 has been
+      // applied — 23 since FR-246 added `briefs_fts`. (The number in this
+      // comment previously said 21 while the assertion said 22; corrected here
+      // rather than made one version staler.)
+      expect(getSchemaVersion(db)).toBe(23);
 
       // 3 rows seeded, row 0 had a malformed (100-byte) embedding → skipped.
       // Other 2 must still be backfilled.

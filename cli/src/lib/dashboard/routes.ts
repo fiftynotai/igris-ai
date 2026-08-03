@@ -43,7 +43,7 @@ import { brainDbPath } from "../paths.js";
 import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
 import { composeQueryTwin } from "./graph-query.js";
-import { readDoc, readInventory } from "./context-docs-read.js";
+import { grepDocs, readDoc, readInventory } from "./context-docs-read.js";
 import * as write from "../brain-write-bridge.js";
 import {
   BRIEF_FILTERS,
@@ -60,8 +60,11 @@ import type {
   BrainGraphStatsPayload,
   BriefDetailPayload,
   BriefListRowPayload,
+  BriefSearchRowPayload,
   BriefsPayload,
+  BriefsSearchPayload,
   ContextDocPayload,
+  ContextDocRowPayload,
   ContextDocsPayload,
   DashboardProject,
   GoalDetailPayload,
@@ -77,6 +80,7 @@ import type {
   ProjectsPayload,
   SuggestionRowPayload,
   SuggestionsPayload,
+  SubstringSearchPayload,
   SummaryPayload,
   TriageResultPayload,
 } from "../../types.js";
@@ -508,6 +512,172 @@ export async function briefs(search: URLSearchParams): Promise<BriefsPayload> {
 }
 
 /**
+ * `GET /api/briefs/search?q=<query>` — hybrid BM25 + vector recall over briefs.
+ *
+ * **THE ONLY NEW PATH IN FR-246.** Goals, context docs, suggestions and
+ * candidates take a `q` PARAMETER on paths that already exist, which is what
+ * keeps MAINTAINING row 109's sweep to one addition instead of five.
+ *
+ * Like `/api/learnings/search`, this is one of only TWO endpoints that need
+ * `openBrainReadonlyWithVec`: `isVectorSearchAvailable(db)` probes
+ * `SELECT vec_version()` on THAT connection, so a plain read-only handle would
+ * make the reader take its BM25-only arm SILENTLY.
+ *
+ * TWO THINGS THIS PATH REPORTS THAT THE LEARNINGS TWIN DOES NOT NEED TO:
+ *
+ *  - `bm25_reason`. `learnings_fts` has existed since schema v1; `briefs_fts`
+ *    arrives at **v23**. A brain that has not booted the migration — or where
+ *    v23 aborted on an unverifiable backup snapshot — has a live vector arm and
+ *    no lexical one, and that must be stated rather than rendered as a thinner
+ *    list.
+ *  - `content_length` instead of a preview. There is no `preview` field here
+ *    because the row carries no body at all (FR-240 D7): brief bodies average
+ *    ~3.9 KB and a ranked list of them is the payload term the read layer
+ *    exists to remove.
+ *
+ * ZERO SQL, as everywhere in this file: the query lives in
+ * `briefs-read.ts#hybridSearchBriefs`, which `igris_brief_similar` does NOT
+ * call — that tool keeps its own pure-vector reader (D1-b), because it
+ * thresholds on cosine similarity and a BM25 hit has none.
+ */
+export async function briefsSearch(
+  search: URLSearchParams,
+): Promise<BriefsSearchPayload> {
+  const page = parsePageParams(search, { limit: 20 });
+  const filters = parseFilters(search, BRIEF_FILTERS, ["limit", "offset", "q"]);
+  const parsed = parseQuery(search);
+  const notes = [...page.rejected, ...filters.rejected];
+
+  // `BRIEF_FILTERS` is REUSED here so `?status=Ready` is recognised rather than
+  // reported as an unknown param — it IS a real brief filter, just not one this
+  // path can bind. But reuse alone would then SWALLOW it: `parseFilters` would
+  // accept it into `filters.values`, nothing below would forward it, and the
+  // operator would be told nothing. That is strictly worse than not sharing the
+  // spec list at all, because passing the list is what CONVERTS a visible
+  // `unknown filter: status` note into a silent drop.
+  //
+  // So every filter this endpoint cannot bind is dropped AND NAMED — the same
+  // drop-and-report posture `learningsSearch` uses for `review_status`, and the
+  // shape the FR-246 sign-off requires: *a parameter this brief parses must be
+  // forwarded, or must not be parsed.* `hybridSearchBriefs` binds `q`, `project`
+  // and `limit` and nothing else; widening it to rank a filtered subcorpus is a
+  // retrieval decision, not a plumbing one.
+  //
+  // Enumerated from `BRIEF_FILTERS` at RUNTIME rather than hand-listed, so a
+  // fifth brief filter added to `params.ts` cannot land here unreported.
+  for (const spec of BRIEF_FILTERS) {
+    if (spec.name === "project") continue;
+    if (filters.values[spec.name] !== undefined) {
+      notes.push(
+        `${spec.name}: dropped — ranked recall binds only q + project; filter by ${spec.name} on /api/briefs`,
+      );
+    }
+  }
+
+  const emptyRetrieval = {
+    mode: "none" as const,
+    vector_available: false,
+    embedding_available: false,
+    bm25_hits: 0,
+    vector_hits: 0,
+    rrf_k: 60,
+    weights: { bm25: 0.5, vector: 0.5 },
+    reason: null,
+    bm25_reason: null,
+  };
+  const base = {
+    query: parsed.ok ? parsed.query : "",
+    items: [] as BriefSearchRowPayload[],
+    count: 0,
+    retrieval: emptyRetrieval,
+    params: notes,
+    generated_at: now(),
+  };
+
+  if (!parsed.ok) return { ...base, degraded: { reason: parsed.reason } };
+  if (!brainPresent()) {
+    return { ...base, degraded: { reason: brainMissingReason() } };
+  }
+
+  const readers = await bridge.loadLayerReaders();
+  if (readers === null) {
+    return {
+      ...base,
+      degraded: {
+        reason:
+          bridge.lastLayerReadersFailure() ??
+          "brain read layer could not be loaded from the vendored bundle",
+      },
+    };
+  }
+
+  const handle = await bridge.openBrainReadonlyWithVec();
+  if (handle === null) {
+    return {
+      ...base,
+      degraded: {
+        reason: `brain database at ${brainDbPath()} could not be opened read-only`,
+      },
+    };
+  }
+
+  try {
+    const r = await readers.hybridSearchBriefs(handle.db, {
+      query: parsed.query,
+      project: filters.values.project,
+      limit: page.limit,
+    });
+
+    // A hydration miss is dropped rather than shipped as a placeholder row —
+    // the learnings twin's reasoning, unchanged.
+    const items: BriefSearchRowPayload[] = r.rows
+      .filter((e) => e.row !== null)
+      .map((e) => {
+        const row = e.row as NonNullable<typeof e.row>;
+        return {
+          id: row.id,
+          project: row.project,
+          brief_id: row.brief_id,
+          brief_type: row.brief_type ?? null,
+          title: row.title,
+          status: row.status,
+          priority: row.priority ?? null,
+          effort: row.effort ?? null,
+          phase: row.phase ?? null,
+          updated_at: row.updated_at,
+          content_length: row.content_length,
+          rrf_score: e.rrf_score,
+          bm25_rank: e.bm25_rank,
+          vector_rank: e.vector_rank,
+        };
+      });
+
+    return {
+      ...base,
+      items,
+      count: items.length,
+      retrieval: {
+        ...r.retrieval,
+        // `vector_available` forwarded VERBATIM — the probe is the
+        // authoritative answer to "can this connection run vector search", a
+        // strictly different fact from "the vector arm contributed" (which
+        // `mode` and `vector_hits` carry). Only the REASON is enriched, and
+        // only when the bridge knows a better one than the reader can.
+        reason: handle.vector_reason ?? r.retrieval.reason,
+      },
+      degraded: null,
+    };
+  } catch (err) {
+    return {
+      ...base,
+      degraded: { reason: `brief search failed: ${messageOf(err)}` },
+    };
+  } finally {
+    closeQuietly(handle.db);
+  }
+}
+
+/**
  * `GET /api/brief?project=<slug>&id=<brief_id>` — one brief, body included.
  *
  * BOTH params REQUIRED. BR-078: `BR-001` names a different brief in 25
@@ -575,6 +745,9 @@ const DEFAULT_REVIEW_STATUS = "approved";
  */
 export async function learnings(search: URLSearchParams): Promise<LearningsPayload> {
   const page = parsePageParams(search);
+  // `q` is IN `LEARNING_FILTERS` now, so it is parsed, allow-listed and
+  // FORWARDED below. It is not in the ignore list: a param this route parses
+  // must be forwarded or must not be parsed (BR-085's shape, not repeated).
   const filters = parseFilters(search, LEARNING_FILTERS, ["limit", "offset"]);
   const reviewStatus = filters.values.review_status ?? DEFAULT_REVIEW_STATUS;
   const notes = [...page.rejected, ...filters.rejected];
@@ -585,6 +758,7 @@ export async function learnings(search: URLSearchParams): Promise<LearningsPaylo
     limit: page.limit,
     offset: page.offset,
     review_status: reviewStatus,
+    search: null as SubstringSearchPayload | null,
     params: notes,
     generated_at: now(),
   };
@@ -602,6 +776,7 @@ export async function learnings(search: URLSearchParams): Promise<LearningsPaylo
       scope: filters.values.scope,
       provenance: filters.values.provenance,
       review_status: reviewStatus,
+      q: filters.values.q,
       limit: page.limit,
       offset: page.offset,
     });
@@ -612,6 +787,7 @@ export async function learnings(search: URLSearchParams): Promise<LearningsPaylo
       total: r.total,
       limit: r.limit,
       offset: r.offset,
+      search: r.search,
       // The reader's own L-133 preflight result is a real degradation and is
       // surfaced verbatim rather than rendered as an empty list.
       degraded: r.degraded !== null ? { reason: r.degraded } : null,
@@ -629,7 +805,10 @@ const SEARCH_PREVIEW_CHARS = 300;
 /**
  * `GET /api/learnings/search?q=<query>` — hybrid BM25 + vector recall (AC #2).
  *
- * THIS IS THE ONE ENDPOINT THAT NEEDS `openBrainReadonlyWithVec`.
+ * THIS IS ONE OF TWO ENDPOINTS THAT NEED `openBrainReadonlyWithVec` — the
+ * other is `briefsSearch` (see its docstring above, which says so too).
+ * FR-246 made it two; this line said ONE for one review round while the
+ * docstring 290 lines up already said TWO, so the file argued both ways.
  * `isVectorSearchAvailable(db)` is a `SELECT vec_version()` probe on THAT
  * connection, so a plain read-only handle would make the reader take its
  * BM25-only arm SILENTLY — returning plausible results while AC #2 was false.
@@ -645,9 +824,30 @@ export async function learningsSearch(
   search: URLSearchParams,
 ): Promise<LearningsSearchPayload> {
   const page = parsePageParams(search, { limit: 20 });
+  // `q` is BOTH a `LEARNING_FILTERS` member (FR-246, for the browse path) and
+  // this route's QUERY. Here the query wins: `parseQuery` refuses an empty one,
+  // where the filter form would silently mean "no filter". `filters.values.q`
+  // is deliberately unused below — `parsed.query` is the forwarded value.
   const filters = parseFilters(search, LEARNING_FILTERS, ["limit", "offset", "q"]);
   const parsed = parseQuery(search);
   const notes = [...page.rejected, ...filters.rejected];
+
+  // D3-e — the SILENT drop, made visible. `review_status` is parsed by
+  // `LEARNING_FILTERS` but `hybridSearchLearnings` has no such option: it
+  // hard-gates `review_status = 'approved'` on BOTH arms (FR-109) and again on
+  // hydration (TD-059), so a `pending_review` row is STRUCTURALLY unreachable
+  // here. Before FR-246 the value was parsed and then dropped without a word,
+  // while `Learnings.tsx` banners "SHOWING PENDING REVIEW ROWS" — so an
+  // operator who filtered to pending and searched was shown approved rows under
+  // a banner claiming otherwise. FR-246 does NOT widen FR-109's gate (that is a
+  // cognition decision, filed as BR-085); it converts the silent lie into a
+  // stated one, using the existing drop-and-report posture.
+  const rs = filters.values.review_status;
+  if (rs !== undefined && rs !== DEFAULT_REVIEW_STATUS) {
+    notes.push(
+      `review_status: dropped — hybrid recall is gated to approved rows (FR-109)`,
+    );
+  }
 
   const emptyRetrieval = {
     mode: "none" as const,
@@ -830,9 +1030,10 @@ export function contextDocs(search: URLSearchParams): ContextDocsPayload {
     archetype: null,
     tech_stack: null,
     inventory_degraded: false,
-    docs: [],
+    docs: [] as ContextDocRowPayload[],
     missing_applicable: [],
     remediation: [],
+    search: null as SubstringSearchPayload | null,
     generated_at: now(),
   };
 
@@ -844,12 +1045,34 @@ export function contextDocs(search: URLSearchParams): ContextDocsPayload {
   if (!result.ok) return { ...base, degraded: { reason: result.reason } };
 
   const d = result.digest;
+
+  // FR-246 — the body grep. `q` FILTERS the doc list to what matched and
+  // annotates each survivor with its snippets. It is not applied to
+  // `missing_applicable` / `remediation`: those are statements about docs that
+  // do not exist, and there is no body to match.
+  const q = search.get("q");
+  let docs: ContextDocRowPayload[] = d.docs;
+  let searchBlock: SubstringSearchPayload | null = null;
+  if (q !== null && q.trim().length > 0) {
+    const hits = new Map(grepDocs(project, q, d.docs).map((h) => [h.type, h]));
+    docs = d.docs
+      .filter((row) => hits.has(row.type))
+      .map((row) => {
+        const hit = hits.get(row.type) as NonNullable<ReturnType<typeof hits.get>>;
+        return { ...row, matches: hit.matches, more_matches: hit.more };
+      });
+    // `body` rather than a column name: this really is a file grep, and naming
+    // a column here would be the first step towards implying an index.
+    searchBlock = { mode: "substring", fields: ["body"] };
+  }
+
   return {
     project: d.project,
     archetype: d.archetype,
     tech_stack: d.tech_stack,
     inventory_degraded: d.degraded,
-    docs: d.docs,
+    docs,
+    search: searchBlock,
     missing_applicable: d.missing_applicable,
     // The digest's OWN remediation array. Never a hand-written `/ground` list —
     // that would be a second source of truth for the verb names.
@@ -941,6 +1164,7 @@ export async function goals(search: URLSearchParams): Promise<GoalsPayload> {
     total: 0,
     limit: page.limit,
     offset: page.offset,
+    search: null as SubstringSearchPayload | null,
     params: notes,
     generated_at: now(),
   };
@@ -956,6 +1180,7 @@ export async function goals(search: URLSearchParams): Promise<GoalsPayload> {
       project: filters.values.project,
       status: filters.values.status,
       upcoming_days: upcomingDays,
+      q: filters.values.q,
       limit: page.limit,
       offset: page.offset,
     });
@@ -966,6 +1191,7 @@ export async function goals(search: URLSearchParams): Promise<GoalsPayload> {
       total: r.total,
       limit: r.limit,
       offset: r.offset,
+      search: r.search,
       degraded: null,
     };
   } catch (err) {
@@ -1065,6 +1291,7 @@ export async function suggestions(
     limit: page.limit,
     offset: page.offset,
     facets: { source_module: {} as Record<string, number>, brain_level: 0 },
+    search: null as SubstringSearchPayload | null,
     params: notes,
     generated_at: now(),
   };
@@ -1084,6 +1311,7 @@ export async function suggestions(
       status: filters.values.status,
       priority: filters.values.priority,
       source_module: filters.values.source_module,
+      q: filters.values.q,
       limit: page.limit,
       offset: page.offset,
     });
@@ -1095,6 +1323,7 @@ export async function suggestions(
       limit: r.limit,
       offset: r.offset,
       facets: r.facets,
+      search: r.search,
       // The reader's own L-133 preflight result is a real degradation and is
       // surfaced verbatim rather than rendered as an empty queue — "you have no
       // suggestions" and "this brain never ran the migration" must not look the

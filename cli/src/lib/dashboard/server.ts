@@ -387,7 +387,8 @@ async function handle(
     return;
   }
 
-  // FR-240 — the four layer views, nine paths. All exact-match, so
+  // FR-240 — the four layer views, nine paths (ten since FR-246 added
+  // `/api/briefs/search`). All exact-match, so
   // `/api/learnings/search` cannot be shadowed by `/api/learnings` regardless of
   // order; it is listed adjacent to its sibling for readability.
   //
@@ -398,6 +399,13 @@ async function handle(
   const query = url.searchParams;
   if (pathname === "/api/briefs") {
     sendJson(res, 200, await routes.briefs(query));
+    return;
+  }
+  // FR-246 — the ONE path this brief adds. Exact-match like its siblings, so
+  // it cannot be shadowed by `/api/briefs`; listed adjacent for readability,
+  // mirroring the `/api/learnings/search` pair below.
+  if (pathname === "/api/briefs/search") {
+    sendJson(res, 200, await routes.briefsSearch(query));
     return;
   }
   if (pathname === "/api/brief") {

@@ -645,6 +645,18 @@ export function lastBridgeFailure(): string | null {
 // this file's handles) true rather than merely still-passing.
 // ---------------------------------------------------------------------------
 
+/**
+ * utils/substring-search.ts — `SubstringSearchReport` (FR-246).
+ *
+ * Mirrored ONCE and reused by all four `q`-bearing results below. It is a
+ * PAYLOAD field, not a UI string, precisely so a gate can assert that a
+ * substring surface never claims recall.
+ */
+export interface SubstringSearchReport {
+  mode: "substring";
+  fields: string[];
+}
+
 /** briefs-read.ts:47 — `ListBriefsOptions`. */
 export interface ListBriefsOptions {
   project?: string;
@@ -684,6 +696,67 @@ export interface BriefRecord {
   updated_at: unknown;
 }
 
+// --- FR-246: briefs-read.ts retrieval -------------------------------------
+
+/** briefs-read.ts — `BriefHybridSearchOptions`. */
+export interface BriefHybridSearchOptions {
+  query: string;
+  project?: string;
+  limit?: number;
+  bm25_weight?: number;
+  vector_weight?: number;
+  rrf_k?: number;
+}
+
+/**
+ * briefs-read.ts — `BriefSearchRow`.
+ *
+ * FR-240 D7 applies: NO `content`. Brief bodies average ~3.9 KB (measured:
+ * 6,211,271 B over 1,597 rows), so a ranked list carrying them is the
+ * superlinear payload term the read layer exists to remove.
+ */
+export interface BriefSearchRow {
+  id: number;
+  project: string;
+  brief_id: string;
+  brief_type: string | null;
+  title: string;
+  status: string;
+  priority: string | null;
+  effort: string | null;
+  phase: string | null;
+  updated_at: string;
+  content_length: number;
+  rank?: number;
+}
+
+/**
+ * briefs-read.ts — `BriefRetrievalReport`.
+ *
+ * `RetrievalReport` plus `bm25_reason`, the one fact briefs have that learnings
+ * do not: `learnings_fts` has existed since schema v1, but `briefs_fts` arrives
+ * at v23, so a brain that has not run the migration has a live vector arm and
+ * NO lexical arm. That state is reported, never rendered as a thin result set.
+ */
+export interface BriefRetrievalReport extends RetrievalReport {
+  bm25_reason: string | null;
+}
+
+/** briefs-read.ts — `BriefSearchEntry`. `row` is null on a hydration miss. */
+export interface BriefSearchEntry {
+  id: number;
+  row: BriefSearchRow | null;
+  rrf_score: number | null;
+  bm25_rank: number | null;
+  vector_rank: number | null;
+}
+
+/** briefs-read.ts — `BriefHybridSearchResult`. */
+export interface BriefHybridSearchResult {
+  rows: BriefSearchEntry[];
+  retrieval: BriefRetrievalReport;
+}
+
 /** memory-read.ts:144 — `ListLearningsOptions`. */
 export interface ListLearningsOptions {
   project?: string;
@@ -691,6 +764,8 @@ export interface ListLearningsOptions {
   scope?: string;
   provenance?: string;
   review_status?: string;
+  /** memory-read.ts — FR-246: substring over `title` + `content`. NOT retrieval. */
+  q?: string;
   limit?: number;
   offset?: number;
 }
@@ -733,6 +808,8 @@ export interface ListLearningsResult {
   offset: number;
   /** memory-read.ts:190 — set when the `learnings` table is absent (L-133). */
   degraded: string | null;
+  /** memory-read.ts — FR-246 D3-f. `null` when no `q` was supplied. */
+  search: SubstringSearchReport | null;
 }
 
 /** memory-read.ts:58 — `LearningRow`, the hydrated search/detail shape. */
@@ -821,6 +898,8 @@ export interface ListGoalsOptions {
   project?: unknown;
   status?: unknown;
   upcoming_days?: number;
+  /** goals/read.ts — FR-246: substring over `title` + `description`. */
+  q?: string;
   limit: number;
   offset: number;
 }
@@ -832,6 +911,8 @@ export interface ListGoalsResult {
   total: number;
   limit: number;
   offset: number;
+  /** goals/read.ts — FR-246 D3-f. `null` when no `q` was supplied. */
+  search: SubstringSearchReport | null;
 }
 
 // --- FR-241: suggestions-read.ts ------------------------------------------
@@ -845,6 +926,8 @@ export interface ListSuggestionsOptions {
   /** suggestions-read.ts:84 — OPEN vocabulary since FR-118 M2. Never an enum. */
   source_module?: string;
   priority?: string;
+  /** suggestions-read.ts — FR-246: substring over `title` + `evidence`. */
+  q?: string;
   limit?: number;
   offset?: number;
 }
@@ -894,6 +977,8 @@ export interface ListSuggestionsResult {
   facets: SuggestionFacets;
   /** suggestions-read.ts:139 — set when the `suggestions` table is absent (L-133). */
   degraded: string | null;
+  /** suggestions-read.ts — FR-246 D3-f. `null` when no `q` was supplied. */
+  search: SubstringSearchReport | null;
 }
 
 /** goals/read.ts:89 — `ServingBrief`. */
@@ -915,6 +1000,11 @@ export interface GoalDetail {
 export interface LayerReaders {
   /** briefs-read.ts:114 */
   listBriefs: (db: Database.Database, opts?: ListBriefsOptions) => ListBriefsResult;
+  /** briefs-read.ts — FR-246. The dashboard's hybrid brief recall. */
+  hybridSearchBriefs: (
+    db: Database.Database,
+    opts: BriefHybridSearchOptions,
+  ) => Promise<BriefHybridSearchResult>;
   /** briefs-read.ts:203 */
   getBrief: (
     db: Database.Database,
@@ -975,7 +1065,16 @@ export async function loadLayerReaders(): Promise<LayerReaders | null> {
   if (cachedReadersFailure !== null) return null;
 
   const wanted: { rel: string; exports: (keyof LayerReaders)[] }[] = [
-    { rel: MODULE_RELS.briefsRead, exports: ["listBriefs", "getBrief"] },
+    {
+      rel: MODULE_RELS.briefsRead,
+      // FR-246 adds `hybridSearchBriefs`. `searchBriefsByVector` is
+      // deliberately ABSENT: it backs `igris_brief_similar`'s duplicate check
+      // and has no dashboard consumer, and the all-or-nothing contract below
+      // means every name here is a hard dependency — listing an export nobody
+      // calls would make the whole read layer fail on a bundle that is
+      // otherwise fine for this surface.
+      exports: ["listBriefs", "getBrief", "hybridSearchBriefs"],
+    },
     {
       rel: MODULE_RELS.memoryRead,
       exports: ["listLearnings", "getLearning", "hybridSearchLearnings"],

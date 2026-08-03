@@ -93,6 +93,8 @@ const SMOKE_PROBE_PATHS: readonly string[] = [
   "/api/graph",
   // FR-240 — the four layers, nine paths
   "/api/briefs",
+  // FR-246 — the tenth, and the only path this brief adds.
+  "/api/briefs/search",
   "/api/brief",
   "/api/learnings",
   "/api/learnings/search",

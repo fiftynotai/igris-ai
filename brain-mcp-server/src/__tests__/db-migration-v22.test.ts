@@ -262,10 +262,18 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it('advances schema_version to exactly 22', () => {
+  it('records v22 in the ladder and carries the chain to its terminal', () => {
     expect(getSchemaVersion(db)).toBe(21);
     migrateSchema(db);
-    expect(getSchemaVersion(db)).toBe(22);
+    // THE CLAIM THIS TEST OWNS is that **v22 applied**, so it asserts v22's own
+    // ladder row directly. It used to assert `MAX(version) === 22`, which meant
+    // the same thing only while v22 was the last migration — FR-246 added v23
+    // and the test went red for a reason that has nothing to do with v22.
+    expect(db.prepare('SELECT 1 FROM schema_version WHERE version = 22').get()).toBeDefined();
+    // ...and the chain runs to completion in the same call. This number moves
+    // with every migration, by design: it is the assertion that notices when a
+    // new migration silently fails to run.
+    expect(getSchemaVersion(db)).toBe(23);
   });
 
   it('folds every unconditional alias to its canonical type', () => {
@@ -408,7 +416,7 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
       .all();
 
     expect(afterSecond).toEqual(afterFirst);
-    expect(getSchemaVersion(db)).toBe(22);
+    expect(getSchemaVersion(db)).toBe(23);
   });
 
   it('is idempotent even with the version gate removed (the UPDATEs self-guard)', () => {
@@ -485,7 +493,7 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
     fs.rmSync(`${dbPath}.pre-v22.bak`);
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(22);
+    expect(getSchemaVersion(db)).toBe(23);
     expect(typeOf(db, 'TD-003')).toBe('Technical Debt');
   });
 
@@ -552,7 +560,9 @@ describe('migration v22 — :memory: DBs skip the snapshot (v19 precedent)', () 
       migrateSchema(mem);
 
       expect(typeOf(mem, 'TD-001')).toBe('Technical Debt');
-      expect(getSchemaVersion(mem)).toBe(22);
+      // v23 skips its snapshot on `:memory:` for the same reason and by the
+      // same branch, so the chain still reaches its terminal here.
+      expect(getSchemaVersion(mem)).toBe(23);
     } finally {
       mem.close();
     }

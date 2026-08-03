@@ -339,6 +339,51 @@ describe('getLearning', () => {
 });
 
 // ---------------------------------------------------------------------------
+// listLearnings `q` — FR-246's honest substring filter
+// ---------------------------------------------------------------------------
+
+describe('listLearnings q — a FILTER that says it is a filter', () => {
+  it('matches title OR content, and composes with the other filters', () => {
+    // "bisque" is in row 3's CONTENT only; "drift" is in row 2's title.
+    expect(listLearnings(db, { q: 'bisque' }).learnings.map((l) => l.id)).toEqual([3]);
+    expect(listLearnings(db, { q: 'drift' }).learnings.map((l) => l.id)).toEqual([2]);
+    expect(
+      listLearnings(db, { q: 'wrapper', review_status: 'pending_review' }).learnings.map((l) => l.id),
+    ).toEqual([4]);
+  });
+
+  it('narrows `total`, not just the page — a filtered count that lies is a broken pager', () => {
+    expect(listLearnings(db).total).toBe(4);
+    expect(listLearnings(db, { q: 'wrapper' }).total).toBe(3);
+  });
+
+  it('q="%" matches NOTHING here rather than everything — the wildcard is escaped', () => {
+    // No fixture row contains a literal per-cent sign. An unescaped LIKE would
+    // return all four and look like a working search.
+    expect(listLearnings(db, { q: '%' }).learnings).toEqual([]);
+    expect(listLearnings(db, { q: '%' }).total).toBe(0);
+  });
+
+  it('reports mode "substring" in the PAYLOAD, and null when no q was given', () => {
+    expect(listLearnings(db, { q: 'wrapper' }).search).toEqual({
+      mode: 'substring',
+      fields: ['title', 'content'],
+    });
+    expect(listLearnings(db).search).toBeNull();
+  });
+
+  it('a pending_review row is reachable by q and NOT by hybrid search — why this is a filter', async () => {
+    // The whole D3 argument for candidates, asserted rather than asserted-in-prose:
+    // `hybridSearchLearnings` hard-gates review_status='approved' on both arms
+    // (FR-109), so the triage queue is structurally invisible to it.
+    expect(listLearnings(db, { q: 'pending' }).learnings.map((l) => l.id)).toEqual([4]);
+    vec.available = false;
+    const hybrid = await hybridSearchLearnings(db, { query: 'pending' });
+    expect(hybrid.rows.map((e) => e.id)).not.toContain(4);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // hybridSearchLearnings — the AC #2 gates
 // ---------------------------------------------------------------------------
 

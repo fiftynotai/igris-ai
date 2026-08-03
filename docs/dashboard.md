@@ -71,7 +71,7 @@ The dashboard is the first network listener this CLI has ever opened, so:
 
 ## API surface
 
-**Fifteen GET paths and one POST path.** All same-origin. Every response carries
+**Sixteen GET paths and one POST path.** All same-origin. Every response carries
 a `degraded` field with the same shape. Every GET is a read; the single POST is
 the write path FR-241 added, and it is the only endpoint on this surface that
 changes a row.
@@ -84,15 +84,16 @@ changes a row.
 | `GET` | `/api/graph/stats?project=<slug>` | `{project, stats, edge_resolution, truncated, truncation_reason, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` |
 | `GET` | `/api/graph?project=<slug>` | `{project, nodes, edges, stats, truncated, truncation_reason, query, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` + `dashboard/graph-query.ts` |
 | `GET` | `/api/briefs` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `brain-bridge.ts#loadLayerReaders` → `briefs-read.ts#listBriefs` |
+| `GET` | `/api/briefs/search?q=<query>[&project=<slug>]` | `{query, items, count, retrieval, params, generated_at, degraded}` | `briefs-read.ts#hybridSearchBriefs` — **FR-246, the one path it adds** |
 | `GET` | `/api/brief?project=<slug>&id=<brief_id>` | `{brief, generated_at, degraded}` | `briefs-read.ts#getBrief` |
-| `GET` | `/api/learnings` | `{items, count, total, limit, offset, review_status, params, generated_at, degraded}` | `memory-read.ts#listLearnings` |
+| `GET` | `/api/learnings[&q=<text>]` | `{items, count, total, limit, offset, review_status, search, params, generated_at, degraded}` | `memory-read.ts#listLearnings` |
 | `GET` | `/api/learnings/search?q=<query>` | `{query, items, count, retrieval, params, generated_at, degraded}` | `memory-read.ts#hybridSearchLearnings` |
 | `GET` | `/api/learning?id=<n>` | `{learning, generated_at, degraded}` | `memory-read.ts#getLearning` |
-| `GET` | `/api/context-docs?project=<slug>` | `{project, archetype, tech_stack, inventory_degraded, docs, missing_applicable, remediation, generated_at, degraded}` | `verbs/context-docs.ts#buildContextDocsInventoryDigest` — **no brain read** |
+| `GET` | `/api/context-docs?project=<slug>[&q=<text>]` | `{project, archetype, tech_stack, inventory_degraded, docs, missing_applicable, remediation, search, generated_at, degraded}` | `verbs/context-docs.ts#buildContextDocsInventoryDigest` — **no brain read**; `q` is a bounded body GREP through `context-docs-read.ts#grepDocs` |
 | `GET` | `/api/context-doc?project=<slug>&type=<doc type>` | `{project, type, target, content, bytes, truncated, generated_at, degraded}` | `dashboard/context-docs-read.ts` — a guarded disk read |
-| `GET` | `/api/goals` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `goals/read.ts#listGoals` |
+| `GET` | `/api/goals[&q=<text>]` | `{items, count, total, limit, offset, search, params, generated_at, degraded}` | `goals/read.ts#listGoals` |
 | `GET` | `/api/goal?id=<GL-XXX>` | `{goal, serving_briefs, serving_learnings_count, generated_at, degraded}` | `goals/read.ts#getGoal` |
-| `GET` | `/api/suggestions?project=<slug>` \| `project_scope=brain-level`, `&status=&priority=&source_module=` | `{items, count, total, limit, offset, facets, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
+| `GET` | `/api/suggestions?project=<slug>` \| `project_scope=brain-level`, `&status=&priority=&source_module=&q=` | `{items, count, total, limit, offset, facets, search, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
 | **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
 
@@ -227,7 +228,7 @@ component state, because `router.tsx` unmounts the page on a route change. A
 reload keeps it; a **new tab** opens on the list, which is what makes the choice
 session-scoped rather than permanent.
 
-**The endpoint count stays SIXTEEN.** The board composes two endpoints that
+**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, and moved to seventeen only at FR-246 (`/api/briefs/search`). The board composes two endpoints that
 already exist:
 
 | What | Where it comes from | Why not somewhere else |
@@ -373,6 +374,103 @@ These were probed before the endpoint was written; the documented fallback (a
 normal open plus `query_only = ON`) turned out not to be needed, and remains only
 as the R4 branch that exists for a different reason.
 
+### `/api/briefs/search` — the same contract, plus a missing-arm case (FR-246)
+
+Brief search is **hybrid BM25 + vector recall fused by RRF**, exactly like
+`/api/learnings/search`, mirroring `hybridSearchLearnings` field for field. It
+carries the same `retrieval` block with the same four `mode` values, and it is
+the SECOND endpoint that needs `openBrainReadonlyWithVec()` — for the same
+reason.
+
+Two things differ, and both are forced by the domain.
+
+**1. The BM25 arm can be ABSENT, so the block carries `bm25_reason`.**
+`learnings_fts` has existed since schema v1, so learning search may assume its
+lexical arm. `briefs_fts` arrives at **schema v23**, so a brain that has not
+booted the migration — or one where v23 aborted on an unverifiable backup
+snapshot — has a live vector arm and no lexical one:
+
+```json
+{
+  "mode": "vector_only",
+  "vector_available": true,
+  "embedding_available": true,
+  "bm25_hits": 0,
+  "vector_hits": 4,
+  "rrf_k": 60,
+  "weights": { "bm25": 0.5, "vector": 0.5 },
+  "reason": null,
+  "bm25_reason": "brain table absent: briefs_fts (schema v23 not applied)"
+}
+```
+
+That state is REPORTED rather than rendered as a thinner result set, for the
+same reason `vector_available` exists: a search that silently answers with half
+its recall looks exactly like a search that legitimately found little.
+
+**2. Rows carry `content_length`, not a `preview`.** Brief bodies average
+~3.9 KB (measured: 6,211,271 bytes over 1,597 rows on the operator brain), so a
+ranked list carrying them is the payload term the read layer exists to remove.
+The body is `/api/brief`'s job.
+
+**Why briefs got a BM25 arm built for them at all.** Before FR-246 the only
+retrieval over briefs was `briefs_vec`, and that index is much thinner than it
+looks: `extractBriefProblem` embeds the title plus the `## Problem` section only
+(falling back to the first 500 characters), it is called at CREATE and by the
+backfill tool and **nowhere else**, and the only trigger on it is a DELETE. So a
+brief's BODY was not searchable at all, and an edited brief carries a stale
+vector. `briefs_fts` is therefore not merely the offline fallback for the vector
+arm — **it is the only arm that reaches `brief_files.content`**, and the only one
+that is current after an edit. (Whether to re-embed on update is a separate
+brief and is deliberately not fixed here.)
+
+`igris_brief_similar` did **not** become hybrid. It is `/register`'s duplicate
+check and it filters on *cosine similarity ≥ threshold*; a BM25 hit has no
+cosine similarity to threshold against, so making it hybrid would silently
+change what counts as a duplicate. It keeps its own pure-vector reader
+(`briefs-read.ts#searchBriefsByVector`), and the two share one `briefs_vec` call
+site.
+
+### `q` — the four surfaces that filter, and say so (FR-246)
+
+`/api/goals`, `/api/suggestions`, `/api/learnings` and `/api/context-docs` take
+an optional `q`. **It is a substring filter, not retrieval**, and every one of
+them says so in the payload rather than in a sentence in the UI:
+
+```json
+{ "search": { "mode": "substring", "fields": ["title", "evidence"] } }
+```
+
+`null` when no `q` was supplied — which is different from an absent key, and
+different again from an empty result.
+
+| Path | `q` matches | Why substring is proportionate |
+|---|---|---|
+| `/api/goals` | `title`, `description` | goals are hand-created, one per objective; `SELECT COUNT(*) FROM goals` measured **6** on the operator brain, and there is no `goals_fts` and no `goals_vec` |
+| `/api/suggestions` | `title`, `evidence` | the queue is DRAINED, not recalled over — a suggestion is triaged once |
+| `/api/learnings` | `title`, `content` | this is what the CANDIDATES tab filters on, and it is a DECISION: `hybridSearchLearnings` hard-gates `review_status='approved'` on both arms (FR-109) and again on hydration (TD-059), so it structurally CANNOT return a `pending_review` row. Widening that gate is a cognition decision, not a search one |
+| `/api/context-docs` | the doc BODIES on disk | five registered types of prose is not a retrieval problem, it is `grep` — and the payload says `body` rather than a column name, because there is no table |
+
+**Why a payload field and not a line of UI copy.** A hard-coded sentence is the
+claim that goes stale the day someone swaps the implementation underneath it,
+and no gate can catch a stale sentence. A payload field can be asserted:
+`G-BR-13b` fails any surface whose payload says `substring` while its DOM shows
+a recall readout, and the client renders both through the same
+`SearchReadout` component so the two cannot drift apart.
+
+**Wildcards are neutralised.** Every `q` predicate is a bound parameter with an
+explicit `ESCAPE`, so `?q=%` matches rows containing a literal per-cent sign
+rather than matching everything — a filter that silently matches every row is
+worse than one that errors, because the operator reads the full list as a
+result.
+
+**The context-doc grep is bounded on three axes**: existing docs only, a
+per-doc cap (`MAX_DOC_BYTES`) and a total-bytes cap for the request
+(`MAX_GREP_TOTAL_BYTES`), with capped snippets. Every byte is read through
+`readDoc`, so its three existing fences — the registry-validated slug, the
+target taken from the digest row rather than from user input, and the
+realpath+commonpath guard — apply unchanged.
+
 ### Two doors, and read-only is a property of the connection
 
 **Since FR-241 this tier is not read-only as a whole, and it is not read-write as
@@ -382,7 +480,7 @@ exception to a structural claim is how the claim stops meaning anything.
 
 | Door | Endpoints | Connection |
 |---|---|---|
-| **Read** | the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, and both graph endpoints | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Read** | the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, and both graph endpoints | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
 | **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
 | *Residual (FR-238-era)* | `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | a plain `new Database(path)` with **no** `readonly` flag that sets `journal_mode = WAL` — disclosed below, deferred, not FR-241's to fix |
 | *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
@@ -394,8 +492,9 @@ read-only pins stay green rather than being re-argued.
 
 **The layer readers (FR-240) — structurally read-only:**
 
-- Every handle behind `/api/briefs`, `/api/brief`, `/api/learnings`,
-  `/api/learnings/search`, `/api/learning`, `/api/goals` and `/api/goal` comes
+- Every handle behind `/api/briefs`, `/api/brief`, `/api/briefs/search`,
+  `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals` and
+  `/api/goal` comes
   from `brain-bridge.ts#openBrainReadonly()` or `#openBrainReadonlyWithVec()`,
   and **both** set `db.pragma('query_only = ON')` on **both** of
   `openBrainReadonly`'s branches — including the R4 fallback that re-opens
@@ -759,7 +858,7 @@ igris dashboard (verb)
   ├─ open-url.ts    cross-platform browser ladder
   └─ server.ts      node:http, 127.0.0.1, Host guard, traversal guard
        ├─ static.ts   dist/dashboard/** + SPA fallback
-       └─ routes.ts   the sixteen endpoints (15 GET + 1 POST) — CONTAINS ZERO SQL
+       └─ routes.ts   the seventeen endpoints (16 GET + 1 POST) — CONTAINS ZERO SQL
             ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
             ├─ registry.ts#listProjects
             ├─ brain-db.ts#briefStatusSummary / #listInstances
@@ -1324,7 +1423,7 @@ the server is `node:http`.
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245), leaving **143.6 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit: the single app chunk is now **549.83 kB** (549,831 B) against a 560 kB `chunkSizeWarningLimit` — **10,169 B of slack**, against this gate's 143.6 KB, so the next dashboard brief meets that warning first. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246), leaving **117.2 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit: the single app chunk is now **553.49 kB** (553,485 B, since FR-246) against a 560 kB `chunkSizeWarningLimit` — **6,515 B of slack**, against this gate's 117.2 KB, so the next dashboard brief meets that warning first. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |

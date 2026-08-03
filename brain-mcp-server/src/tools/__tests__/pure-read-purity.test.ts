@@ -126,6 +126,23 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
    *    edge, erased at compile time. No `db.js` edge, no import-time side
    *    effect. Verified by reading `engine/helpers.ts`, not assumed from the
    *    name (L-711).
+   *  - `../utils/substring-search.js` / `../../../utils/substring-search.js` —
+   *    FR-246. The SAME file from the two directory depths this set spans. It
+   *    holds one interface, one string constant and two pure string functions;
+   *    it has **no imports at all**, so it cannot reach `db.js` transitively.
+   *    Verified by reading it (L-711), not inferred from "utils".
+   *  - `./memory-read.js` — FR-246, and the one entry that needs its own
+   *    argument because it is an edge BETWEEN two members of this layer, which
+   *    the other entries are not. `briefs-read.ts` imports the `RetrievalReport`
+   *    SHAPE from it with `import type`, so the edge is erased at compile time
+   *    and no runtime dependency exists in `dist/`. It is allowed rather than
+   *    avoided because the alternative — a second hand-copied definition of the
+   *    same report — is the drift this layer's MAINTAINING row exists to stop.
+   *    Note what this entry does NOT license: a VALUE import from
+   *    `memory-read.js` would also pass this allowlist, because the specifier is
+   *    all the scan can see. It stays safe because `memory-read.ts` is itself in
+   *    `PURE_READERS` and is scanned by the same RULES — do not add an entry
+   *    here for a module that is not covered by that loop.
    */
   const ALLOWED_IMPORTS = new Set([
     'better-sqlite3',
@@ -133,9 +150,37 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
     '../utils/embeddings.js',
     '../utils/vector-search.js',
     '../utils/hybrid-search.js',
+    '../utils/substring-search.js',
+    '../../../utils/substring-search.js',
     '../../helpers.js',
     '../engine/helpers.js',
+    './memory-read.js',
   ]);
+
+  /** Every `from '…'` specifier in a source file, comments stripped. */
+  const importsOf = (url: URL): string[] => {
+    const src = stripComments(readFileSync(fileURLToPath(url), 'utf-8'));
+    return [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map((m) => m[1]);
+  };
+
+  /**
+   * The allowlist's justification for `substring-search.js` is "it has no
+   * imports, so it cannot reach `db.js` transitively". That is a CLAIM about a
+   * file, and a claim in a comment is not a gate — the whole point of this
+   * suite. So it is asserted.
+   *
+   * PROVES: the FR-246 helper cannot acquire a transitive edge without this
+   * going red. Does NOT prove anything about the helper's behaviour — that is
+   * `substring-search.test.ts`'s job.
+   */
+  it('the FR-246 substring helper is import-free, so its allowlist entry cannot hide a transitive edge', () => {
+    const helper = new URL('../../utils/substring-search.ts', import.meta.url);
+    expect(importsOf(helper)).toEqual([]);
+    // Self-negative-control: the SAME extractor over a file that certainly has
+    // imports must be non-empty. Without this, a regex that stopped matching
+    // would make the assertion above pass by returning nothing at all.
+    expect(importsOf(new URL('../briefs-read.ts', import.meta.url)).length).toBeGreaterThan(0);
+  });
 
   for (const reader of PURE_READERS) {
     it(`${reader.label} imports only allowlisted modules`, () => {

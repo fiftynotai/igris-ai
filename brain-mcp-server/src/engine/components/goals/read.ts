@@ -30,6 +30,12 @@
 
 import type Database from 'better-sqlite3';
 import { WhereBuilder } from '../../helpers.js';
+import {
+  likePattern,
+  substringReport,
+  LIKE_ESCAPE_CLAUSE,
+} from '../../../utils/substring-search.js';
+import type { SubstringSearchReport } from '../../../utils/substring-search.js';
 
 /**
  * Shape of a row in `goals` as returned to callers.
@@ -65,6 +71,18 @@ export interface ListGoalsOptions {
   status?: unknown;
   /** Already `Math.floor`-ed and known non-negative. */
   upcoming_days?: number;
+  /**
+   * FR-246 — an honest SUBSTRING filter over `title` + `description`. Not
+   * retrieval: no ranking, no recall, and the payload's `search` block says so.
+   *
+   * Substring is proportionate here and the number is the argument, measured
+   * read-only on the operator brain rather than assumed: `SELECT COUNT(*) FROM
+   * goals` = **6**. Goals are hand-created, one per objective. There is no
+   * `goals_fts` and no `goals_vec`, and a schema migration to rank six rows
+   * would be ceremony. If that population ever grows by an order of magnitude,
+   * this is the line to revisit.
+   */
+  q?: string;
   /** Already clamped to `1..1000`. */
   limit: number;
   /** Already known non-negative. */
@@ -83,6 +101,15 @@ export interface ListGoalsResult {
   total: number;
   limit: number;
   offset: number;
+  /**
+   * FR-246 D3-f — what the `q` filter actually did, or `null` when no `q` was
+   * supplied. A PAYLOAD field, not a UI sentence, so a gate can assert it.
+   *
+   * Appended LAST so the pre-FR-246 key order — which the MCP wrapper
+   * `JSON.stringify`s straight onto the wire and `wrapper-wire-parity.test.ts`
+   * pins — is unchanged for every existing consumer.
+   */
+  search: SubstringSearchReport | null;
 }
 
 /** One brief serving a goal, as `igris_goal_get` returns it. */
@@ -125,6 +152,20 @@ export function listGoals(
     where.addAlways("date(deadline) <= date('now', ?)", `+${opts.upcoming_days} days`);
   }
 
+  // FR-246 — the substring filter. BOUND parameters and an explicit ESCAPE, so
+  // `?q=%` matches rows containing a literal per-cent sign rather than matching
+  // everything while looking like a filter.
+  const searchFields = ['title', 'description'];
+  if (opts.q && opts.q.trim() !== '') {
+    const pattern = likePattern(opts.q);
+    where.addAlways(
+      `(LOWER(title) LIKE ? ${LIKE_ESCAPE_CLAUSE}` +
+        ` OR LOWER(COALESCE(description, '')) LIKE ? ${LIKE_ESCAPE_CLAUSE})`,
+      pattern,
+      pattern,
+    );
+  }
+
   // handlers.ts:421-441 — deadline ASC NULLS LAST, then created_at DESC. Goals
   // approaching a deadline sort to the top; deadline-less goals stay visible at
   // the bottom rather than disappearing.
@@ -159,6 +200,7 @@ export function listGoals(
     total: countRow.total,
     limit: opts.limit,
     offset: opts.offset,
+    search: substringReport(opts.q, searchFields),
   };
 }
 

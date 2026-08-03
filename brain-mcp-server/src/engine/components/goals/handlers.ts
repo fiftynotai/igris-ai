@@ -425,7 +425,26 @@ export function handleGoalList(args: Record<string, unknown>): ToolResult {
     offset,
   });
 
-  return successResult(JSON.stringify(result, null, 2));
+  // FR-246: `search` is a DASHBOARD field and is projected out here on purpose.
+  // This object is `JSON.stringify`d STRAIGHT onto the MCP wire, whose exact key
+  // set `tools/__tests__/wrapper-wire-parity.test.ts` pins, and `igris_goal_list`
+  // has no `q` to report — so emitting it would add a permanently-`null` key to
+  // a contract the skills parse, in exchange for nothing. Listing the keys
+  // explicitly rather than deleting one also makes the wire shape readable at
+  // the call site.
+  return successResult(
+    JSON.stringify(
+      {
+        goals: result.goals,
+        count: result.count,
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
+      },
+      null,
+      2,
+    ),
+  );
 }
 
 // ---------------------------------------------------------------------------

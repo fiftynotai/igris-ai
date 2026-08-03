@@ -326,6 +326,17 @@ export interface FilterDef {
   options: readonly string[] | null;
   /** The value that is NOT a narrowing — omitted from the request. */
   fallback?: string;
+  /**
+   * FR-246 — this filter's control is a TEXT BOX, not a chip radiogroup.
+   *
+   * `FilterBar` renders only controls whose `options` are non-empty, so a
+   * `text` def is invisible there BY CONSTRUCTION; the page wires it to the
+   * bar's existing `search` slot instead. That is the whole of D4's "`q` is a
+   * FILTER, not a second search mode": `useLayerList` already owns filter
+   * state and `listQuery` already serialises every known filter, so four
+   * surfaces gained a search box without a new state machine or a new control.
+   */
+  kind?: "chips" | "text";
 }
 
 /** `learnings.category` — a real CHECK constraint (params.ts:165). */
@@ -367,6 +378,22 @@ export const GOAL_STATUSES = ["active", "achieved", "abandoned", "deferred"] as 
 /** `upcoming_days` — a UI convenience over the numeric filter routes.ts parses. */
 export const GOAL_HORIZONS = ["7", "30", "90"] as const;
 
+/**
+ * FR-246 — the substring filter, defined ONCE and shared by every surface that
+ * has one.
+ *
+ * No `fallback`: any non-empty `q` IS a narrowing, so `hasActiveFilters` counts
+ * it and `emptyStateFor` renders "no rows match" rather than "this project has
+ * nothing" — which is the difference between the operator refining a query and
+ * the operator concluding the brain is empty.
+ */
+export const Q_FILTER: FilterDef = {
+  name: "q",
+  label: "text filter",
+  options: null,
+  kind: "text",
+};
+
 export const FILTERS: Record<LayerId, readonly FilterDef[]> = {
   briefs: [
     { name: "status", label: "status", options: null },
@@ -384,14 +411,18 @@ export const FILTERS: Record<LayerId, readonly FilterDef[]> = {
       options: LEARNING_REVIEW_STATUS,
       fallback: DEFAULT_REVIEW_STATUS,
     },
+    Q_FILTER,
   ],
-  // The inventory is a complete per-project list from one digest call — there is
-  // nothing to filter server-side, and inventing a client-side filter over 12
-  // rows would be a control that looks like the others but means something else.
-  "context-docs": [],
+  // FR-246 revises the note that stood here: there is still nothing to filter
+  // by CHIP (the inventory is a complete per-project list from one digest call,
+  // and a client-side chip over 12 rows would look like the others and mean
+  // something else) — but there IS something to filter by TEXT, because the doc
+  // BODIES are prose on disk and `?q=` greps them server-side.
+  "context-docs": [Q_FILTER],
   goals: [
     { name: "status", label: "status", options: GOAL_STATUSES },
     { name: "upcoming_days", label: "due within", options: GOAL_HORIZONS },
+    Q_FILTER,
   ],
 };
 
@@ -439,6 +470,29 @@ export function listQuery(input: {
   }
   q.set("limit", String(input.limit));
   q.set("offset", String(input.offset));
+  return q;
+}
+
+/**
+ * Build the query string for `/api/briefs/search` — FR-246.
+ *
+ * Deliberately NOT `searchQuery` with a layer parameter. The two endpoints
+ * accept DIFFERENT filters (`review_status` is meaningful to learnings recall
+ * and meaningless to briefs), and a shared builder would either send a param
+ * the server reports back as unknown or grow a branch per layer inside a
+ * function whose whole value is being trivially readable.
+ */
+export function briefsSearchQuery(input: {
+  query: string;
+  project: string | null;
+  limit: number;
+}): URLSearchParams {
+  const q = new URLSearchParams();
+  q.set("q", input.query);
+  if (input.project !== null && input.project.length > 0) {
+    q.set("project", input.project);
+  }
+  q.set("limit", String(input.limit));
   return q;
 }
 

@@ -87,7 +87,10 @@ wait_for_url() {
   # the METHOD for it. That prefix is load-bearing here — it is what makes the
   # set-equality check able to tell "the write path is probed" from "some other
   # GET was added", and it is why the block below can single the POST out.
-  local expected="/ /api/brief /api/briefs /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/suggestions /api/summary POST /api/triage"
+  # FR-246 adds exactly ONE: `/api/briefs/search`. Goals, context docs,
+  # suggestions and candidates gained a `q` PARAMETER on paths that already
+  # exist, which is why this set moves once rather than five times.
+  local expected="/ /api/brief /api/briefs /api/briefs/search /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/suggestions /api/summary POST /api/triage"
   local actual
   actual="$(echo "$output" | node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
@@ -128,7 +131,11 @@ wait_for_url() {
     });
   " <<< "$output"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '16 read paths all 200, 1 write path 400'
+  # 16 -> 17: FR-246 added `/api/briefs/search`, the ONE path it adds. This
+  # count is the digest's OWN summary line, computed from `reads.length` above —
+  # so it is a SECOND place the endpoint count is spelled out, and the exact-set
+  # assertion earlier in this test does not cover it.
+  echo "$output" | grep -q '17 read paths all 200, 1 write path 400'
 }
 
 @test "dashboard --smoke releases the lock on exit" {

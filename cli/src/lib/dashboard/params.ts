@@ -211,19 +211,41 @@ export const BRIEF_FILTERS: readonly FilterSpec[] = [
   { name: "brief_type", allowed: null },
 ];
 
-/** The five learning filters. */
+/** The learning filters — five, plus FR-246's `q`. */
 export const LEARNING_FILTERS: readonly FilterSpec[] = [
   { name: "project", allowed: null },
   { name: "category", allowed: LEARNING_CATEGORIES },
   { name: "scope", allowed: LEARNING_SCOPES },
   { name: "provenance", allowed: LEARNING_PROVENANCE },
   { name: "review_status", allowed: LEARNING_REVIEW_STATUS },
+  /**
+   * FR-246 — the honest SUBSTRING filter. `allowed: null` because operator
+   * prose has no vocabulary.
+   *
+   * IT IS A FILTER, NOT A QUERY, and the distinction is mechanical: `q` here
+   * goes through `parseFilters`, where an empty value means "no filter"
+   * (:137-141). `/api/briefs/search` uses `parseQuery` instead, where an empty
+   * value is a REFUSAL (:466-470) — because a search endpoint with no query has
+   * nothing to answer, while a list with no filter has the whole list.
+   */
+  { name: "q", allowed: null },
 ];
 
-/** The two goal filters. */
+/** The goal filters — two, plus FR-246's `q`. */
 export const GOAL_FILTERS: readonly FilterSpec[] = [
   { name: "project", allowed: null },
   { name: "status", allowed: GOAL_STATUSES },
+  /**
+   * FR-246 — the honest SUBSTRING filter. `allowed: null` because operator
+   * prose has no vocabulary.
+   *
+   * IT IS A FILTER, NOT A QUERY, and the distinction is mechanical: `q` here
+   * goes through `parseFilters`, where an empty value means "no filter"
+   * (:137-141). `/api/briefs/search` uses `parseQuery` instead, where an empty
+   * value is a REFUSAL (:466-470) — because a search endpoint with no query has
+   * nothing to answer, while a list with no filter has the whole list.
+   */
+  { name: "q", allowed: null },
 ];
 
 /** `suggestions.status` — a real CHECK constraint (`suggestions` DDL). */
@@ -282,6 +304,17 @@ export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
   { name: "status", allowed: SUGGESTION_STATUSES },
   { name: "priority", allowed: SUGGESTION_PRIORITIES },
   { name: "source_module", allowed: null },
+  /**
+   * FR-246 — the honest SUBSTRING filter. `allowed: null` because operator
+   * prose has no vocabulary.
+   *
+   * IT IS A FILTER, NOT A QUERY, and the distinction is mechanical: `q` here
+   * goes through `parseFilters`, where an empty value means "no filter"
+   * (:137-141). `/api/briefs/search` uses `parseQuery` instead, where an empty
+   * value is a REFUSAL (:466-470) — because a search endpoint with no query has
+   * nothing to answer, while a list with no filter has the whole list.
+   */
+  { name: "q", allowed: null },
 ];
 
 // ---------------------------------------------------------------------------

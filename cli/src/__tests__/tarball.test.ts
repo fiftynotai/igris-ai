@@ -648,17 +648,84 @@ interface PackReport {
  *   twelvefold on one changelog entry. The rule is the same either way — run
  *   the measurement, then write the number.
  *
- *   ONE READING FOR THE NEXT PLANNER, because it is closer to its own limit
- *   than this one is: the single minified app chunk now measures **549.83 kB**
- *   (549_831 B on disk) against `dashboard/vite.config.ts`'s
- *   `chunkSizeWarningLimit` of 560 kB — **10_169 B of slack**. Note the UNITS
+ *   (SUPERSEDED BY FR-246's READING BELOW — at FR-245 the chunk was 549_831 B
+ *   with 10_169 B of slack. Kept as the provenance of that figure, not as the
+ *   current one.)
+ *
+ * FR-246 MEASURED LAST, after its final code-touching step:
+ *   packed              1_745_049    unpacked 6_783_829, 797 entries (+4: the
+ *                                    compiled `briefs-read` and
+ *                                    `utils/substring-search` pairs, each with
+ *                                    a `.d.ts`/`.js` and their maps)
+ *   cumulative delta    +432.8 KB    (443_198 B over PACK_BASELINE_PACKED)
+ *   FR-246's own share  +27_055 B    against FR-245's 1_717_994  (26.42 KB)
+ *   headroom remaining  ~117.2 KB    (120_002 B under TD-329's +550)
+ *   built app chunk     553_485 B    (+3_654 B over FR-245's 549_831)
+ *
+ *   RE-MEASURED after EACH review round, and the packed total MOVED TWICE —
+ *   recorded as a CHAIN (TD-326's shape) so a re-measure does not read as a
+ *   drift, and so neither reading is overwritten by the next:
+ *     1_744_020 -> 1_744_965  (+945 B, r1: ~10 lines in
+ *        `routes.ts#briefsSearch` — drop-and-report for the four brief filters
+ *        that path allow-lists but cannot bind — plus its rationale comment)
+ *     1_744_965 -> 1_745_049  (+84 B, r2: three claim corrections, TWO of them
+ *        comments in `cli/src/lib/**`)
+ *   +1_029 B across both rounds.
+ *
+ *   [The r1 arrow above read `1_744_020 -> 1_745_049, +945 B` for one round.
+ *   The endpoint had been class-grep-swapped to the r2 value while the DELTA
+ *   computed from the r1 value was left standing, so the subtraction was
+ *   false. Worth naming because of the carrier: **a delta carries no copy of
+ *   EITHER operand**, so a grep for the packed value and a grep for the KB
+ *   class both walk straight past it. That is the same blind spot the
+ *   comparative clause had — and it survived the very round that deleted the
+ *   comparative one. When you re-measure, re-derive every SUBTRACTION, not
+ *   just every figure.]
+ *
+ *   `cli/src/lib/**` is the expensive surface precisely because `tsc` PRESERVES
+ *   comments into `dist/` and pays for them TWICE (`.js` and `.js.map`). The
+ *   chunk did NOT move (553_485 B, byte-identical): nothing in the round
+ *   touched `cli/dashboard/src/**`. Contrast FR-245's review round, which moved
+ *   neither number, and FR-244's, which moved its own share twelvefold on one
+ *   changelog entry. The rule is the same in all three cases — run the
+ *   measurement, then write the number; a structural argument that a review
+ *   round is byte-free is only as good as its enumeration of `files`.
+ *
+ *   THE TWO NUMBERS MOVED IN OPPOSITE PROPORTIONS, and the reason is this
+ *   ledger's own recurring lesson rather than a surprise. FR-246 wrote far more
+ *   CLIENT code than FR-245's predecessor rows did — a shared readout
+ *   component, a filter hook, a search mode on the briefs list, `q` wiring on
+ *   four pages — and all of it cost **3.6 KB**, because Vite MINIFIES
+ *   `cli/dashboard/src/**` and this brief is comment-dense. What cost 25 KB is
+ *   everything else, and none of it is client code:
+ *     - `dist/brain-mcp-server/**` — the v23 migration block with its measured
+ *       storage note, the six triggers, and `briefs-read.js` growing from two
+ *       readers to four (22_377 B packed, plus a 12_264 B source map and a
+ *       10_788 B `.d.ts`). Learning 1132's premise, paying out again: a brief
+ *       that touches only the brain STILL spends packed bytes here.
+ *     - `dist/lib/**` — `routes.ts` (`briefsSearch` plus the `q` forwarding),
+ *       `brain-bridge.ts` (the type facade) and `types.ts`. `tsc` PRESERVES
+ *       COMMENTS into `dist/`, so a rationale-dense comment in `cli/src/lib/**`
+ *       costs its full length twice — once in `.js` and again in `.js.map`.
+ *     - `CHANGELOG.md`, which `files` carries and which therefore SHIPS
+ *       (41_579 B total after this entry). The FR-244 row below records the
+ *       same line item moving that brief's share TWELVEFOLD.
+ *   Estimated at ~5.2 KB against the CHUNK budget and spent 3.6 KB there — the
+ *   estimate was right about the surface it was made against, and silent about
+ *   the one that actually moved (26.42 KB, a 7x ratio). **Estimate BOTH
+ *   ceilings, or say which one the estimate is about.**
+ *
+ *   ONE READING FOR THE NEXT PLANNER, because it is still closer to its own
+ *   limit than this gate is: the single minified app chunk now measures
+ *   **553.49 kB** (553_485 B on disk) against `dashboard/vite.config.ts`'s
+ *   `chunkSizeWarningLimit` of 560 kB — **6_515 B of slack**. Note the UNITS
  *   differ from this gate's: Vite reports kB as 1000 bytes, the ceiling here is
  *   KiB. That is a build-time WARNING about one chunk, NOT this gate — the two
- *   must not be confused — but 10 KB of slack against the packed ceiling's
- *   143.6 KB means the next dashboard brief will hit the warning first. The
- *   comparison figure recorded when the limit was raised to 560 (524.69 KB)
- *   predates FR-244 and was not re-measured then, so do NOT read the gap as
- *   FR-245's own contribution; it is not separable from that reading.)
+ *   must not be confused — but 6.5 KB of slack against the packed ceiling's
+ *   117.2 KB means the next dashboard brief WILL hit the warning first, and now
+ *   by a wider margin than FR-245 faced. FR-246 declared a cut ladder before
+ *   writing anything and did not need it (3_654 B against 10_169 B); the next
+ *   brief has 6_515 B and should declare one too. **Raise NEITHER limit.**
  *
  * FR-244 IS THE CHEAPEST ROW IN THIS LEDGER, and it is the CONVERSE of TD-328's
  * lesson rather than a contradiction of it. TD-328 spent 24.3 KB writing only
@@ -685,7 +752,12 @@ interface PackReport {
  *     CSS block together came to under 200 bytes of chunk.
  * The generalisation for the next planner: estimate against WHICH PACKAGE and
  * WHICH PIPELINE a change lands in, not against how much was written. A
- * comment in `cli/src/lib/**` costs more than a page of client code.
+ * comment in `cli/src/lib/**` costs more than a page of client code. **FR-246
+ * is the sharpest instance so far**: it wrote MORE client code than any row
+ * above and spent 3_654 chunk bytes on it, while the same brief's brain
+ * migration, its `cli/src/lib/**` comments and one changelog entry came to
+ * 26_026 packed bytes — a 7x ratio, in the direction the intuition does not
+ * point.
  *
  * TD-328 IS THE ROW THAT BREAKS THE "IT'S ONLY THE DASHBOARD" READING OF THIS
  * LEDGER, and it is here because a WRONG STRUCTURAL CLAIM was inherited from a
@@ -750,21 +822,47 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~143.6 KB is what is left (the
- * FR-245 reading above; ~147.2 KB was FR-244's, ~149.3 KB TD-328's and
- * ~173.6 KB TD-326's, all superseded). The "five GL-006 briefs remain" this
- * sentence used to carry was not re-derivable, so it is now read off the goal's
- * own edges instead: TWO are unshipped (FR-246 and FR-247, both `Ready`), and
- * FR-245 was the third. Their ~83-115 KB estimate against shipped analogues
- * stands on the same basis as before. So the margin is roughly THREE FR-240s
- * (48.4 KB each) of slack: FR-239 (95.5 KB) WOULD now fit, FR-238 (187.9 KB)
- * would not. [Corrected at FR-245 review. The prior revision read "roughly ONE
- * FR-240 of slack, not room for a surprise the size of FR-239" — true at 48.4
- * KB of headroom, false at 143.6. It is the SECOND time this exact sentence
- * went stale while every copy of the NUMBER six lines up was updated
- * correctly, which is the whole reason the parenthetical below exists: a
- * claim ABOUT a value carries no copy of it, so grep the comparison, not just
- * the figure.] The answer when it binds is still to cut or to vendor less,
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~117.2 KB is what is left (the
+ * FR-246 reading above; ~143.6 KB was FR-245's, ~147.2 KB FR-244's,
+ * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded). The "five
+ * GL-006 briefs remain" this sentence used to carry was not re-derivable, so it
+ * is now read off the goal's own edges instead. Re-derived READ-ONLY at FR-246
+ * (`serves_goal` edges into GL-006, deleted-flag excluded): BR-082, FR-244,
+ * FR-245, TD-326, TD-328 and TD-329 are `Done`, FR-246 is the brief writing
+ * this line, and **FR-247 is the single remaining `Ready` one**. Its
+ * ~83-115 KB estimate against shipped analogues stands on the same basis as
+ * before — and note it is now the
+ * same order as the whole remaining margin, which was not true when this
+ * sentence was written.
+ *
+ * THE RATIOS ARE GONE, DELIBERATELY, AT THE FOURTH FAILURE. This sentence used
+ * to translate the headroom into "N FR-240s of slack" and to name which past
+ * briefs would still fit. It went stale FOUR times. The headroom above is the
+ * number; the per-brief own-share table in this same file is the divisor; a
+ * reader who wants the ratio can divide, and their division cannot rot. Nothing
+ * gated the comparison — `PACK_HARD_CEILING_DELTA` gates the BYTE figure and
+ * there is no assertion anywhere behind a ratio — so it was a claim with no
+ * gradient, which is precisely the failure TD-328 diagnosed about tolerance
+ * without observation, in a different costume. **If you find yourself re-adding
+ * a ratio here, that is the fifth time: don't.** [Kept below: the record of the
+ * four failures, because it is why this paragraph is shaped the way it is.]
+ *
+ * [Corrected AGAIN at FR-246 review — the THIRD time this exact
+ * sentence has gone stale while every copy of the NUMBER six lines up was
+ * updated correctly. At FR-245 it read "roughly ONE FR-240 of slack" (true at
+ * 48.4 KB, false at 143.6); at FR-246 it read "roughly THREE" (true at 143.6,
+ * false at 118.2), and the brief-count clause had gone wrong in a second way —
+ * it named FR-246 as unshipped while FR-246 WAS the brief updating the number
+ * beside it, and the figure moved a THIRD time inside the review round itself
+ * (118.2 -> 117.3 -> 117.2 KB across the two rounds). Three strikes on one sentence is no longer drift, it is a
+ * structural property of the sentence: a claim ABOUT a value carries no copy of
+ * that value, so a class-grep for `1\d\d\.\d KB` finds the figure and walks
+ * straight past the comparison. **Grep the COMPARISON — "FR-240s of slack",
+ * "would fit", "unshipped" — not just the figure**, and if you are editing this
+ * paragraph for a fourth time, consider whether it should carry ratios at
+ * all." At the fourth time, they WERE removed — see above. Past-tensed because
+ * a live imperative inside a preserved history block is the shape that gets
+ * obeyed by someone who did not read twenty lines up.] The answer when it binds is still to cut or to vendor less,
  * never to raise `PACK_HARD_CEILING_DELTA` — TD-329 raised it ONCE, before the
  * work, as a recorded operator decision, and that is not a precedent.
  *
@@ -806,9 +904,13 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~143.6 KB is what is left** (the
- * FR-245 reading above; ~147.2 KB was FR-244's, ~149.3 KB TD-328's and
- * ~173.6 KB TD-326's, all superseded). And note TD-328's correction to the SCOPE of this budget: a
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~117.2 KB is what is left** (the
+ * FR-246 reading above; ~143.6 KB was FR-245's, ~147.2 KB FR-244's,
+ * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded). **And the OTHER
+ * ceiling is now the binding one**: 6_515 B of chunk slack against this gate's
+ * 117.2 KB. FR-246 estimated against the chunk alone and was right about it
+ * (+3_654 B) while spending +27_055 B here — so estimate BOTH, or say which one
+ * the estimate is about. And note TD-328's correction to the SCOPE of this budget: a
  * brief that touches only
  * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise

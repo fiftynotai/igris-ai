@@ -19,14 +19,14 @@ import { getDb } from '../db.js';
 // it; `briefs-read.ts` holds the SQL and imports no singleton, which is what
 // lets the FR-238 dashboard reach the same queries with its own read-only
 // handle. Do not move query logic back up here.
-import { listBriefs, getBrief } from './briefs-read.js';
+import { listBriefs, getBrief, searchBriefsByVector } from './briefs-read.js';
 import {
   normalizePhase,
   normalizePriority,
   normalizeBriefType,
   nonCanonicalBriefTypeNote,
 } from './brief-normalize.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
 
@@ -851,10 +851,20 @@ function extractBriefProblem(title: string, content: string): string {
 }
 
 /**
- * Find briefs that are semantically similar to a query.
+ * Find briefs that are semantically similar to a query — MCP wrapper.
  *
- * Uses vector search against briefs_vec and converts L2 distance to
- * cosine similarity, filtering by threshold.
+ * FR-246 D1-b: the query body moved DOWN to
+ * `briefs-read.ts#searchBriefsByVector`; this handler keeps exactly two things,
+ * which is what a wrapper is for — it resolves the handle and it renders the
+ * prose. Every sentence below is byte-identical to the pre-extraction version
+ * and is pinned by `__tests__/wrapper-wire-parity.test.ts`, because `/register`
+ * reads this output to decide whether a brief is a duplicate.
+ *
+ * **This tool stays PURE VECTOR** while `/api/briefs/search` is hybrid. The
+ * reason is in the threshold: it accepts a candidate at cosine similarity
+ * `>= 0.85`, and a BM25 hit has no cosine similarity to compare. Adding a
+ * lexical arm here would not "improve" dup detection, it would feed it rows it
+ * cannot score. See the FR-246 note at the head of the reader pair.
  *
  * @param args - Search parameters
  * @returns MCP-formatted response with similar briefs
@@ -864,123 +874,66 @@ async function handleBriefSimilar(args: BriefSimilarInput): Promise<{ content: {
   const threshold = args.threshold ?? 0.85;
   const limit = args.limit ?? 5;
 
-  if (!isVectorSearchAvailable(db)) {
-    return {
-      content: [{
-        type: 'text',
-        text: 'Brief similarity search unavailable: sqlite-vec extension is not loaded.',
-      }],
-    };
-  }
+  const result = await searchBriefsByVector(db, {
+    query: args.query,
+    project: args.project,
+    threshold,
+    limit,
+  });
 
-  let queryEmbedding: Float32Array;
-  try {
-    queryEmbedding = await generateEmbedding(args.query);
-  } catch (err) {
-    // BR-070: when the embeddings backend is unavailable (transformers
-    // absent, offline cold-cache, or native-load failure), return a clean
-    // capability message mirroring the sqlite-vec-unavailable branch above
-    // rather than leaking a raw ERR_MODULE_NOT_FOUND string. Other errors
-    // still surface their detail for diagnosis.
-    if (err instanceof EmbeddingsUnavailableError) {
-      return {
-        content: [{
-          type: 'text',
-          text: 'Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).',
-        }],
-      };
+  const say = (text: string) => ({ content: [{ type: 'text', text }] });
+
+  switch (result.status) {
+    case 'vector_unavailable':
+      return say('Brief similarity search unavailable: sqlite-vec extension is not loaded.');
+
+    case 'vector_table_absent':
+      // The one NEW sentence (see `BriefVectorSearchResult`'s doc comment): this
+      // state used to throw, so no consumer can have depended on the old output.
+      return say('Brief similarity search unavailable: briefs_vec index is absent on this brain.');
+
+    case 'embeddings_unavailable':
+      // BR-070: a clean capability message rather than a leaked
+      // ERR_MODULE_NOT_FOUND.
+      return say('Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).');
+
+    case 'embedding_failed':
+      return say(`Failed to generate embedding for query: ${result.error}`);
+
+    case 'no_vector_hits':
+      return say('No similar briefs found.');
+
+    case 'below_threshold':
+      return say(`No briefs found above similarity threshold (${threshold}).`);
+
+    case 'ok': {
+      const results = result.matches.map((match) => {
+        const row = match.row ?? {};
+        return [
+          `--- Similarity: ${match.similarity.toFixed(4)} ---`,
+          `Brief: ${row.brief_id}`,
+          `Project: ${row.project}`,
+          `Title: ${row.title}`,
+          `Status: ${row.status}`,
+          `Priority: ${row.priority || '(none)'}`,
+          `Type: ${row.brief_type || '(none)'}`,
+        ].join('\n');
+      });
+
+      if (results.length === 0) {
+        // Reached when a project filter dropped every threshold-passing row.
+        return say(
+          args.project
+            ? `No similar briefs found in project "${args.project}" above threshold (${threshold}).`
+            : `No briefs found above similarity threshold (${threshold}).`,
+        );
+      }
+
+      return say(
+        `Found ${results.length} similar brief(s) (threshold >= ${threshold}):\n\n${results.join('\n\n')}`,
+      );
     }
-    return {
-      content: [{
-        type: 'text',
-        text: `Failed to generate embedding for query: ${err instanceof Error ? err.message : String(err)}`,
-      }],
-    };
   }
-
-  // Search with extra headroom for filtering
-  const vecResults = vectorSearchFrom(db, 'briefs_vec', queryEmbedding, limit * 3);
-
-  if (vecResults.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: 'No similar briefs found.',
-      }],
-    };
-  }
-
-  // Convert to cosine similarity and filter by threshold
-  const candidates = vecResults
-    .map(r => ({ rowid: r.rowid, similarity: l2ToCosine(r.distance) }))
-    .filter(r => r.similarity >= threshold);
-
-  if (candidates.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: `No briefs found above similarity threshold (${threshold}).`,
-      }],
-    };
-  }
-
-  // Fetch full brief metadata
-  const ids = candidates.map(c => c.rowid);
-  const placeholders = ids.map(() => '?').join(',');
-  let sql = `
-    SELECT bs.id, bs.project, bs.brief_id, bs.title, bs.status, bs.priority, bs.brief_type
-    FROM brief_status bs
-    WHERE bs.id IN (${placeholders})
-  `;
-  const params: unknown[] = [...ids];
-
-  if (args.project) {
-    sql += ' AND bs.project = ?';
-    params.push(args.project);
-  }
-
-  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
-
-  // Build lookup
-  const rowMap = new Map<number, Record<string, unknown>>();
-  for (const row of rows) {
-    rowMap.set(row.id as number, row);
-  }
-
-  // Format results in similarity order
-  const results: string[] = [];
-  for (const candidate of candidates) {
-    const row = rowMap.get(candidate.rowid);
-    if (!row) continue;
-    results.push([
-      `--- Similarity: ${candidate.similarity.toFixed(4)} ---`,
-      `Brief: ${row.brief_id}`,
-      `Project: ${row.project}`,
-      `Title: ${row.title}`,
-      `Status: ${row.status}`,
-      `Priority: ${row.priority || '(none)'}`,
-      `Type: ${row.brief_type || '(none)'}`,
-    ].join('\n'));
-    if (results.length >= limit) break;
-  }
-
-  if (results.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: args.project
-          ? `No similar briefs found in project "${args.project}" above threshold (${threshold}).`
-          : `No briefs found above similarity threshold (${threshold}).`,
-      }],
-    };
-  }
-
-  return {
-    content: [{
-      type: 'text',
-      text: `Found ${results.length} similar brief(s) (threshold >= ${threshold}):\n\n${results.join('\n\n')}`,
-    }],
-  };
 }
 
 /**

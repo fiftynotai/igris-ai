@@ -95,6 +95,80 @@ beforeEach(() => {
 
 afterEach(() => db.close());
 
+describe('listSuggestions q — the FR-246 substring filter', () => {
+  /**
+   * Seeded HERE, not in the shared `beforeEach`: `SEEDS` is deliberately
+   * asymmetric so a facet computed over the wrong WHERE clause cannot produce
+   * the right numbers by luck, and every facet assertion in this file is
+   * written against those exact six rows. The outer `beforeEach` rebuilds `db`
+   * per test, so these three cannot leak.
+   *
+   * Asymmetric in their own way too: one matches by TITLE only, one by
+   * EVIDENCE only, one carries a literal per-cent sign. A corpus where every
+   * match came from the same column could not tell a title-only predicate from
+   * a title-OR-evidence one.
+   */
+  beforeEach(() => {
+    const q = db.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status, created_at)
+       VALUES (?,?,?,?,?,?,?)`,
+    );
+    q.run('gap', 'a', 'kiln schedule', '{}', 'low', 'pending', '2026-07-07 00:00:00');
+    q.run('gap', null, 's-brain', '{"note":"bisque firing"}', 'low', 'pending', '2026-07-08 00:00:00');
+    q.run('gap', 'a', '100% coverage', '{}', 'low', 'pending', '2026-07-09 00:00:00');
+  });
+
+  it('matches title OR evidence', () => {
+    const byTitle = listSuggestions(db, { q: 'kiln', limit: 100 });
+    expect(byTitle.suggestions.map((r) => r.title)).toEqual(['kiln schedule']);
+    const byEvidence = listSuggestions(db, { q: 'bisque', limit: 100 });
+    expect(byEvidence.suggestions.map((r) => r.title)).toEqual(['s-brain']);
+  });
+
+  it('q="%" matches only the row with a literal per-cent sign', () => {
+    const r = listSuggestions(db, { q: '%', limit: 100 });
+    expect(r.suggestions.map((s) => s.title)).toEqual(['100% coverage']);
+    // 9 rows exist; an unescaped LIKE would have returned all of them.
+    expect(listSuggestions(db, { limit: 100 }).total).toBe(9);
+  });
+
+  it('reports mode "substring" in the payload, null without q', () => {
+    expect(listSuggestions(db, { q: 'kiln', limit: 100 }).search).toEqual({
+      mode: 'substring',
+      fields: ['title', 'evidence'],
+    });
+    expect(listSuggestions(db, { limit: 100 }).search).toBeNull();
+  });
+
+  /**
+   * The DELIBERATE DIVERGENCE from the FR-246 plan, pinned so it is a decision
+   * rather than an accident. The plan asked for `q` to be EXCLUDED from
+   * `brain_level`; the reader applies it. `brain_level`'s question is "how many
+   * rows the project scope is hiding", and with a text filter active the only
+   * useful answer is "how many MATCHING rows" — an unfiltered 8 next to a
+   * filtered list of 1 is a number about a population the operator is not
+   * looking at.
+   */
+  it('q narrows the brain_level facet too — the divergence, asserted', () => {
+    const scoped = listSuggestions(db, { project_slug: 'a', q: 'bisque', limit: 100 });
+    // The matching row is brain-level (project_slug IS NULL) so the scoped list
+    // cannot show it...
+    expect(scoped.suggestions).toEqual([]);
+    // ...and the facet says exactly how many matching rows the scope hid.
+    expect(scoped.facets.brain_level).toBe(1);
+    // The DISCRIMINATING line is the next one, not this one. Unfiltered, this
+    // fixture's brain-level population happens to be 1 as well, so the
+    // `q: 'bisque'` reading above is NOT attributable to `q` on its own — an
+    // earlier revision of this comment claimed it was ("without `q` the same
+    // scope hides more"), which the asserted value contradicts.
+    expect(listSuggestions(db, { project_slug: 'a', limit: 100 }).facets.brain_level).toBe(1);
+    // THIS is the one that can only hold if `q` reached the facet query: a term
+    // that matches a PROJECT-BEARING row and no brain-level one drives the
+    // facet to 0, where an unfiltered facet would still report 1.
+    expect(listSuggestions(db, { project_slug: 'a', q: 'kiln', limit: 100 }).facets.brain_level).toBe(0);
+  });
+});
+
 describe('listSuggestions — the lifted query', () => {
   it('takes the CALLER\'s handle and returns every row unfiltered', () => {
     const r = listSuggestions(db, { limit: 100 });

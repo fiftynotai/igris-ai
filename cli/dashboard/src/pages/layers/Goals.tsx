@@ -53,6 +53,8 @@ import {
 } from "../../layers/model";
 import { useLayerList } from "../../layers/useLayerList";
 import { useNeighbours } from "../../layers/useNeighbours";
+import { useQFilter } from "../../layers/useQFilter";
+import { SearchReadout } from "../../components/record/SearchReadout";
 import type { LayerViewProps } from "../Layers";
 
 const LAYER = "goals" as const;
@@ -92,12 +94,21 @@ function GoalListView({ project, search, live }: LayerViewProps) {
   // apart cannot disagree about what "today" is.
   const now = new Date();
 
+  // `def.options ?? []` is what keeps the `q` def OUT of the chip strip:
+  // `FilterBar` renders only controls with options, so a `kind: "text"` filter
+  // is invisible there by construction and is wired to the bar's `search` slot
+  // instead. One filter model, two controls.
   const controls = (FILTERS[LAYER] ?? []).map((def) => ({
     name: def.name,
     label: def.label,
     options: def.options ?? [],
     value: list.values[def.name] ?? "",
   }));
+
+  const qFilter = useQFilter({
+    applied: list.values.q ?? "",
+    onApply: (next) => list.setFilter("q", next),
+  });
 
   return (
     <RecordList
@@ -122,10 +133,18 @@ function GoalListView({ project, search, live }: LayerViewProps) {
               REQUEST ADJUSTED — {payload.params.join(" · ")}
             </div>
           )}
+          {/*
+            FR-246 — rendered from the PAYLOAD's own `search` block, never from
+            "the box has text in it". The distinction is the whole point: this
+            line states what the SERVER did, so it cannot drift from the
+            implementation the way a hard-coded sentence would.
+          */}
+          <SearchReadout substring={payload?.search} />
         </>
       }
       filters={{
         controls,
+        search: qFilter,
         onChange: list.setFilter,
         onClearAll: list.clearFilters,
         readout:

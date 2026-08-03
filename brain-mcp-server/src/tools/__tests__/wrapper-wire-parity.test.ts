@@ -112,7 +112,9 @@ vi.mock('../../utils/vector-search.js', () => ({
   ),
   insertEmbeddingInto: vi.fn(),
   deleteEmbeddingFrom: vi.fn(),
-  vectorSearchFrom: vi.fn(() => []),
+  vectorSearchFrom: vi.fn((_db: unknown, _table: string, _q: Float32Array, limit: number) =>
+    vecState.store.slice(0, limit).map((rowid, i) => ({ rowid, distance: (i + 1) * 0.1 })),
+  ),
 }));
 
 // Goals live under engine/components/goals and mock the same db module by a
@@ -128,7 +130,7 @@ vi.mock('../../../db.js', () => ({
 // ---------------------------------------------------------------------------
 
 import { getDb } from '../../db.js';
-import { handleBriefList, handleBriefGet } from '../briefs.js';
+import { handleBriefList, handleBriefGet, handleBriefSimilar } from '../briefs.js';
 import { handleMemoryGet, handleMemoryHybridSearch } from '../memory.js';
 import {
   handleGoalList,
@@ -317,6 +319,88 @@ describe('WIRE GOLDEN — handleBriefGet', () => {
 
   it('missing args', () => {
     expect(text(handleBriefGet({ project: '', brief_id: '' }))).toMatchSnapshot();
+  });
+});
+
+/**
+ * FR-246 — `igris_brief_similar`'s prose across the wrapper extraction.
+ *
+ * **These are LITERAL expectations, not `toMatchSnapshot()`, and that is the
+ * point.** Every other golden in this file was recorded with `-u` against the
+ * code as it stood BEFORE its refactor. `handleBriefSimilar` is being extracted
+ * NOW, so a snapshot taken now would record the POST-extraction output and
+ * assert only that the new code equals itself — the vacuous form of this whole
+ * file. The strings below were instead transcribed from
+ * `git show HEAD:…/briefs.ts` before the edit, so the assertion is genuinely
+ * "the new wrapper reproduces the old bytes".
+ *
+ * `/register` parses this output to decide whether a brief is a duplicate, so
+ * every one of these sentences is a contract.
+ */
+describe('WIRE GOLDEN — handleBriefSimilar (FR-246 extraction, literal not snapshot)', () => {
+  it('sqlite-vec unavailable', async () => {
+    vecState.available = false;
+    expect(text(await handleBriefSimilar({ query: 'dashboard' }))).toBe(
+      'Brief similarity search unavailable: sqlite-vec extension is not loaded.',
+    );
+  });
+
+  it('no vector hits', async () => {
+    vecState.available = true;
+    vecState.store = [];
+    expect(text(await handleBriefSimilar({ query: 'dashboard' }))).toBe(
+      'No similar briefs found.',
+    );
+  });
+
+  it('below threshold', async () => {
+    vecState.available = true;
+    vecState.store = [1];
+    expect(text(await handleBriefSimilar({ query: 'dashboard', threshold: 0.999 }))).toBe(
+      'No briefs found above similarity threshold (0.999).',
+    );
+  });
+
+  it('project filter drops every candidate — the project-scoped empty sentence', async () => {
+    vecState.available = true;
+    vecState.store = [1];
+    expect(
+      text(await handleBriefSimilar({ query: 'dashboard', project: 'nope', threshold: 0.5 })),
+    ).toBe('No similar briefs found in project "nope" above threshold (0.5).');
+  });
+
+  it('hits — the full block, field order and separators included', async () => {
+    vecState.available = true;
+    vecState.store = [1, 2];
+    expect(text(await handleBriefSimilar({ query: 'dashboard', threshold: 0.5 }))).toBe(
+      [
+        'Found 2 similar brief(s) (threshold >= 0.5):',
+        '',
+        '--- Similarity: 0.9950 ---',
+        'Brief: FR-240',
+        'Project: igris-ai',
+        'Title: Dashboard layer views',
+        'Status: In Progress',
+        'Priority: P1-High',
+        'Type: feature',
+        '',
+        '--- Similarity: 0.9800 ---',
+        'Brief: TD-312',
+        'Project: igris-ai',
+        'Title: CI does not run brain vitest',
+        'Status: Pending',
+        'Priority: P2-Medium',
+        'Type: tech-debt',
+      ].join('\n'),
+    );
+  });
+
+  it('limit caps the rendered block', async () => {
+    vecState.available = true;
+    vecState.store = [1, 2, 3];
+    const out = text(await handleBriefSimilar({ query: 'dashboard', threshold: 0.5, limit: 1 }));
+    expect(out.startsWith('Found 1 similar brief(s) (threshold >= 0.5):')).toBe(true);
+    expect(out).not.toContain('TD-312');
   });
 });
 

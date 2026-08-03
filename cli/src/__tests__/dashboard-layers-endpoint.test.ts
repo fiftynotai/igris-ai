@@ -787,3 +787,118 @@ describe("G-EP-3 — every layer endpoint inherits the FR-238 degraded contract"
     expect(r.retrieval).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// FR-246 — the four `q` SUBSTRING surfaces
+// ---------------------------------------------------------------------------
+
+/**
+ * These four are NOT retrieval, and the test's job is to prove they SAY so.
+ *
+ * The brief's named trap is four `filter(includes)` boxes shipping alongside
+ * one real hybrid search and looking identical. The defence is a PAYLOAD field
+ * (`search.mode`) rather than a sentence in the UI, because a sentence in the
+ * UI is a claim no gate can check. So every case below asserts both halves: the
+ * filter narrowed the list, AND the payload admits how.
+ */
+describe("FR-246 — the `q` substring surfaces declare their own mode", () => {
+  interface WithSearch {
+    items: unknown[];
+    total?: number;
+    search: { mode: string; fields: string[] } | null;
+    degraded: { reason: string } | null;
+  }
+
+  beforeEach(async () => {
+    seed();
+    await start();
+  });
+
+  it("/api/goals?q= filters and reports substring over title+description", async () => {
+    const all = await json<WithSearch>("/api/goals");
+    const filtered = await json<WithSearch>("/api/goals?q=lens");
+    expect(filtered.items.length).toBeLessThan(all.items.length);
+    expect(filtered.items.length).toBeGreaterThan(0);
+    expect(filtered.search).toEqual({ mode: "substring", fields: ["title", "description"] });
+    // No `q` means no claim at all — distinguishable from "searched, matched
+    // everything", which is what an always-present block would say.
+    expect(all.search).toBeNull();
+  });
+
+  it("/api/suggestions?q= filters and reports substring over title+evidence", async () => {
+    const all = await json<WithSearch>("/api/suggestions");
+    const filtered = await json<WithSearch>("/api/suggestions?q=gap");
+    // STRICTLY less, matching the goals case above. `toBeLessThanOrEqual` was
+    // the first form and it is satisfied by a `q` that filtered NOTHING —
+    // which is the precise failure this whole block exists to catch.
+    expect(all.items.length).toBeGreaterThan(0);
+    expect(filtered.items.length).toBeGreaterThan(0);
+    expect(filtered.items.length).toBeLessThan(all.items.length);
+    expect(filtered.search).toEqual({ mode: "substring", fields: ["title", "evidence"] });
+    expect(all.search).toBeNull();
+  });
+
+  it("/api/suggestions?q= matches EVIDENCE, not only the title", async () => {
+    // `gap` appears in two rows' `evidence` JSON and in NO row's title, so the
+    // hit is attributable to the second column rather than to the first.
+    const all = await json<WithSearch & { items: { title: string }[] }>("/api/suggestions");
+    expect(all.items.every((i) => !i.title.toLowerCase().includes("gap"))).toBe(true);
+    const filtered = await json<WithSearch>("/api/suggestions?q=gap");
+    expect(filtered.items.length).toBeGreaterThan(0);
+  });
+
+  it("/api/learnings?q= filters the CANDIDATES browse, including pending rows", async () => {
+    // The D3 argument, driven: `hybridSearchLearnings` structurally cannot
+    // return a `pending_review` row (FR-109 gates both arms), so the triage
+    // queue needs a filter rather than a search. Here it gets one.
+    const pending = await json<WithSearch>(
+      "/api/learnings?review_status=pending_review&q=wrapper",
+    );
+    expect(pending.items.length).toBeGreaterThan(0);
+    expect(pending.search).toEqual({ mode: "substring", fields: ["title", "content"] });
+  });
+
+  it("/api/context-docs?q= greps BODIES and says `body`, not a column name", async () => {
+    const r = await json<
+      WithSearch & { docs: { type: string; matches?: { line: number; snippet: string }[] }[] }
+    >("/api/context-docs?project=demo&q=zzzznomatchterm");
+    // The sandbox may or may not have doc files; either way the CLAIM is the
+    // assertable part, and it must name `body` rather than a column — there is
+    // no table here at all.
+    expect(r.search).toEqual({ mode: "substring", fields: ["body"] });
+  });
+
+  it("a substring surface NEVER emits a retrieval block — that is the trap", async () => {
+    // The server-side twin of `G-BR-13b`. A `retrieval` key on one of these
+    // payloads is exactly how a filter starts being read as recall.
+    for (const path of [
+      "/api/goals?q=lens",
+      "/api/suggestions?q=gap",
+      "/api/learnings?q=wrapper",
+      "/api/context-docs?project=demo&q=guideline",
+    ]) {
+      const body = await json<Record<string, unknown>>(path);
+      expect(
+        Object.prototype.hasOwnProperty.call(body, "retrieval"),
+        `${path} must not carry a retrieval block`,
+      ).toBe(false);
+      expect((body.search as { mode: string }).mode).toBe("substring");
+    }
+    // ...and the SELF-NEGATIVE-CONTROL: the one surface that IS retrieval does
+    // carry it, and carries no `search` block. Without this pair the assertion
+    // above is satisfied by a payload with neither field.
+    const real = await json<Record<string, unknown>>("/api/briefs/search?q=dashboard");
+    expect(Object.prototype.hasOwnProperty.call(real, "retrieval")).toBe(true);
+    expect(Object.prototype.hasOwnProperty.call(real, "search")).toBe(false);
+  });
+
+  it("`?q=%` does not match everything — the LIKE wildcard is escaped end to end", async () => {
+    // The whole-stack form of the reader-level case: a filter that silently
+    // matches every row is worse than one that errors, because the operator
+    // reads the full list as a result.
+    const all = await json<WithSearch>("/api/goals");
+    const pct = await json<WithSearch>("/api/goals?q=%25");
+    expect(all.items.length).toBeGreaterThan(0);
+    expect(pct.items.length).toBe(0);
+  });
+});

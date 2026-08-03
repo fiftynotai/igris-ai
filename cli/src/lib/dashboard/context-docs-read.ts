@@ -218,3 +218,109 @@ export function readDoc(slug: string, type: string): DocResult {
     };
   }
 }
+
+// ---------------------------------------------------------------------------
+// FR-246 — the `q` body grep
+// ---------------------------------------------------------------------------
+
+/**
+ * Hard ceiling on the TOTAL bytes one grep request may read.
+ *
+ * `readDoc` already bounds each doc at {@link MAX_DOC_BYTES}, but a per-item
+ * bound is not a request bound: five registered types at 2 MB each is 10 MB of
+ * synchronous `readFileSync` per keystroke-driven request. This is the second
+ * fence, on the axis the first one does not cover.
+ */
+export const MAX_GREP_TOTAL_BYTES = 4 * 1024 * 1024;
+
+/** Matches kept per doc. Beyond this the answer is "yes, and a lot". */
+export const MAX_MATCHES_PER_DOC = 5;
+
+/** Characters of context around a hit. */
+export const SNIPPET_CHARS = 160;
+
+/** One grep hit: the 1-based line it was on, and a bounded excerpt. */
+export interface DocMatch {
+  line: number;
+  snippet: string;
+}
+
+/** What {@link grepDocs} found for one doc type. */
+export interface DocGrepHit {
+  type: string;
+  matches: DocMatch[];
+  /** True when the doc had more matches than {@link MAX_MATCHES_PER_DOC}. */
+  more: boolean;
+}
+
+/**
+ * Substring-grep the BODIES of a project's existing context docs.
+ *
+ * **This is grep, and the payload says grep.** Five registered types of prose
+ * on disk is not a retrieval problem — there is no `context_docs` table, no FTS
+ * and no embedding, and building any of those to rank five files would be
+ * ceremony. What would be dishonest is dressing the result up as recall, which
+ * is why the payload carries `search.mode: "substring"` and the UI renders it
+ * through the same component that renders a real `RetrievalReport`.
+ *
+ * EVERY BYTE IS READ THROUGH {@link readDoc}, deliberately, so the three fences
+ * it already owns apply unchanged: the registry-validated slug, the target
+ * taken from the DIGEST ROW rather than from user input, and the
+ * realpath+commonpath guard against a symlink planted in a directory the
+ * operator writes. A second read path here would be a second place to get that
+ * wrong.
+ *
+ * Bounded on three axes: EXISTING docs only, {@link MAX_GREP_TOTAL_BYTES}
+ * across the request, and {@link MAX_MATCHES_PER_DOC} snippets of
+ * {@link SNIPPET_CHARS} each.
+ *
+ * Never throws: an unreadable doc is skipped, because one bad file must not
+ * turn a search into an error page.
+ */
+export function grepDocs(
+  slug: string,
+  q: string,
+  rows: readonly { type: string; exists: boolean }[],
+): DocGrepHit[] {
+  const needle = q.toLowerCase();
+  if (needle.length === 0) return [];
+
+  const hits: DocGrepHit[] = [];
+  let budget = MAX_GREP_TOTAL_BYTES;
+
+  for (const row of rows) {
+    if (!row.exists) continue;
+    if (budget <= 0) break;
+
+    const doc = readDoc(slug, row.type);
+    if (!doc.ok) continue;
+    budget -= doc.bytes;
+
+    const matches: DocMatch[] = [];
+    let more = false;
+    const lines = doc.content.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const at = lines[i].toLowerCase().indexOf(needle);
+      if (at === -1) continue;
+      if (matches.length >= MAX_MATCHES_PER_DOC) {
+        more = true;
+        break;
+      }
+      // Centre the excerpt on the hit rather than taking the line's head: a
+      // match 400 characters into a paragraph would otherwise produce a snippet
+      // that does not contain the thing the operator searched for.
+      const start = Math.max(0, at - Math.floor(SNIPPET_CHARS / 2));
+      const raw = lines[i].slice(start, start + SNIPPET_CHARS);
+      matches.push({
+        line: i + 1,
+        snippet: `${start > 0 ? "…" : ""}${raw.trim()}${
+          start + SNIPPET_CHARS < lines[i].length ? "…" : ""
+        }`,
+      });
+    }
+
+    if (matches.length > 0) hits.push({ type: row.type, matches, more });
+  }
+
+  return hits;
+}

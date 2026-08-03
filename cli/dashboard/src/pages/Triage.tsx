@@ -74,6 +74,8 @@ import { ProjectScope } from "../components/chrome/ProjectScope";
 import { StatePage } from "../components/ui/StatePage";
 import { BulkBar } from "../components/triage/BulkBar";
 import { RecordList, type RecordListRow } from "../components/record/RecordList";
+import { SearchReadout } from "../components/record/SearchReadout";
+import { useQFilter } from "../layers/useQFilter";
 import {
   api,
   type LearningListRow,
@@ -269,6 +271,15 @@ function SuggestionsTab({ live, search, project }: TabProps) {
   const write = writeState(live);
   const facets = payload?.facets.source_module ?? {};
 
+  // FR-246 — `q` rides the SAME `values` bag the chip filters use, so the
+  // fetch above already forwards it (`for (const [k, v] of …values)`) and
+  // `useLayerList` already resets the page offset when it changes. No new
+  // state machine; that is D4's whole argument for making `q` a filter.
+  const qFilter = useQFilter({
+    applied: list.values.q ?? "",
+    onApply: (next) => list.setFilter("q", next),
+  });
+
   return (
     <>
       <BulkBar
@@ -358,9 +369,11 @@ function SuggestionsTab({ live, search, project }: TabProps) {
                 REQUEST ADJUSTED — {payload.params.join(" · ")}
               </div>
             )}
+            <SearchReadout substring={payload?.search} />
           </>
         }
         filters={{
+          search: qFilter,
           controls: [
             {
               name: "status",
@@ -465,10 +478,17 @@ function CandidatesTab({ live, search, project }: TabProps) {
     // ZERO NEW ENDPOINTS. FR-240 shipped both halves and pre-reserved this use:
     // `memory-read.ts:228-230` says in words that the perception-review surface
     // fetches pending rows by id for the approval UI.
-    fetch: ({ limit, offset }, signal) => {
+    fetch: ({ limit, offset, values }, signal) => {
       const q = new URLSearchParams();
       if (project !== null) q.set("project", project);
       q.set("review_status", "pending_review");
+      // FR-246 — a FILTER, not a search, and deliberately so.
+      // `hybridSearchLearnings` hard-gates `review_status = 'approved'` on both
+      // arms (FR-109) and again on hydration (TD-059), so routing this tab
+      // through recall would return an empty list for every query. Widening
+      // that gate is a cognition decision, not a search one (BR-085).
+      const text = values.q ?? "";
+      if (text.length > 0) q.set("q", text);
       q.set("limit", String(limit));
       q.set("offset", String(offset));
       return api.learnings(q, signal);
@@ -497,6 +517,11 @@ function CandidatesTab({ live, search, project }: TabProps) {
   const hardCount = triageRows.filter(
     (r) => (r.seen_again_count ?? 0) === 0,
   ).length;
+
+  const qFilter = useQFilter({
+    applied: list.values.q ?? "",
+    onApply: (next) => list.setFilter("q", next),
+  });
 
   return (
     <>
@@ -562,8 +587,15 @@ function CandidatesTab({ live, search, project }: TabProps) {
                 every registered project. Scope above before bulk-acting.
               </div>
             )}
+            <SearchReadout substring={payload?.search} />
           </>
         }
+        filters={{
+          controls: [],
+          search: qFilter,
+          onChange: list.setFilter,
+          onClearAll: list.clearFilters,
+        }}
         rows={rows.map((row) => toCandidateRow(row, selection, setSelection))}
         page={
           payload !== null
@@ -580,7 +612,9 @@ function CandidatesTab({ live, search, project }: TabProps) {
           layer: "candidates",
           total: payload?.total ?? 0,
           degraded: payload?.degraded?.reason ?? list.error,
-          filtersActive: false,
+          // A submitted `q` IS a narrowing: "no candidates" must not read as
+          // "the queue is clear" when it means "nothing matched that word".
+          filtersActive: (list.values.q ?? "").length > 0,
           searchActive: search.trim().length > 0,
           project,
         })}

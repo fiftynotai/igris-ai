@@ -43,6 +43,15 @@ import { generateEmbedding } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, vectorSearch } from '../utils/vector-search.js';
 import type { VectorSearchResult } from '../utils/vector-search.js';
 import { computeRRF } from '../utils/hybrid-search.js';
+import {
+  likePattern,
+  substringReport,
+  LIKE_ESCAPE_CLAUSE,
+} from '../utils/substring-search.js';
+import type { SubstringSearchReport } from '../utils/substring-search.js';
+
+/** The columns FR-246's `q` filter searches. Named once; reported verbatim. */
+const LEARNING_SEARCH_FIELDS = ['title', 'content'];
 
 // ---------------------------------------------------------------------------
 // Row and option shapes
@@ -160,6 +169,23 @@ export interface ListLearningsOptions {
   provenance?: string;
   /** Defaults to `'approved'` at the CALLER; passing undefined means no filter. */
   review_status?: string;
+  /**
+   * FR-246 — an honest SUBSTRING filter over `title` + `content`. Not
+   * retrieval; the payload's `search` block says so.
+   *
+   * WHY THE CANDIDATES TAB FILTERS RATHER THAN SEARCHES, which is a decision
+   * and not a shortcut: {@link hybridSearchLearnings} hard-gates
+   * `review_status = 'approved'` on BOTH arms (FR-109) and again on hydration
+   * (TD-059), so it CANNOT return a `pending_review` row. Routing the triage
+   * queue through it would return an empty list for every query, or would
+   * require widening FR-109's conscious/subconscious boundary — a cognition
+   * decision, not a search one. So this browse path gains a filter instead, and
+   * says `mode: "substring"` rather than implying recall it does not do.
+   *
+   * NOTE `HybridSearchOptions` deliberately does NOT gain `q`. The two are
+   * different questions on different populations.
+   */
+  q?: string;
   limit?: number;
   offset?: number;
 }
@@ -214,6 +240,12 @@ export interface ListLearningsResult {
   offset: number;
   /** Set when the `learnings` table is absent (L-133); the arrays are empty. */
   degraded: string | null;
+  /**
+   * FR-246 D3-f — what the `q` filter actually did, or `null` when no `q` was
+   * supplied. A PAYLOAD field, not a UI sentence, so a gate can assert it.
+   * Appended LAST, leaving the pre-FR-246 key order untouched.
+   */
+  search: SubstringSearchReport | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -290,6 +322,7 @@ export function listLearnings(
       limit,
       offset,
       degraded: 'brain table absent: learnings',
+      search: substringReport(opts.q, LEARNING_SEARCH_FIELDS),
     };
   }
 
@@ -315,6 +348,16 @@ export function listLearnings(
   if (opts.review_status) {
     conditions.push('review_status = ?');
     params.push(opts.review_status);
+  }
+  // FR-246 — bound params + explicit ESCAPE, so `?q=%` matches rows containing
+  // a literal per-cent sign rather than matching everything.
+  if (opts.q && opts.q.trim() !== '') {
+    const pattern = likePattern(opts.q);
+    conditions.push(
+      `(LOWER(title) LIKE ? ${LIKE_ESCAPE_CLAUSE}` +
+        ` OR LOWER(COALESCE(content, '')) LIKE ? ${LIKE_ESCAPE_CLAUSE})`,
+    );
+    params.push(pattern, pattern);
   }
 
   const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -344,6 +387,7 @@ export function listLearnings(
     limit,
     offset,
     degraded: null,
+    search: substringReport(opts.q, LEARNING_SEARCH_FIELDS),
   };
 }
 
