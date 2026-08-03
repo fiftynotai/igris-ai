@@ -48,7 +48,12 @@
  * got there that way, so the copy can say so instead of implying certainty.
  */
 
-/** The five actions, mirroring `brain-write-bridge.ts#TRIAGE_ACTIONS`' keys. */
+/**
+ * The five TRIAGE-TAB actions — the `target: "id"` rows of
+ * `brain-write-bridge.ts#TRIAGE_ACTIONS`. Since FR-247 that map has SEVEN rows;
+ * the two `brief-ref` rows are brief writes and live on the Briefs surface, not
+ * here. This mirrors 5 of 7 deliberately, not by omission.
+ */
 export const TRIAGE_ACTIONS = [
   "dismiss",
   "acted",
@@ -99,23 +104,52 @@ export interface TriageRow {
 // Selection algebra
 // ---------------------------------------------------------------------------
 
-/** Selected ids. A `Set` because membership is the only query the UI makes. */
-export type Selection = ReadonlySet<number>;
+/**
+ * Selected keys. A `Set` because membership is the only query the UI makes.
+ *
+ * FR-247 generalised the key TYPE, not the algebra. A suggestion is an integer
+ * id; a brief is the `(project, brief_id)` PAIR, carried as the row key
+ * `"<project>|<brief_id>"` the record list already builds. The default type
+ * parameter is `number`, so every FR-241 declaration reads unchanged.
+ */
+export type SelectionKey = string | number;
+export type Selection<K extends SelectionKey = number> = ReadonlySet<K>;
 
 export const EMPTY_SELECTION: Selection = new Set<number>();
+/** FR-247 — the string-keyed empty set, for brief selections. */
+export const EMPTY_KEY_SELECTION: Selection<string> = new Set<string>();
 
-export function toggleSelected(current: Selection, id: number): Selection {
+export function toggleSelected<K extends SelectionKey>(
+  current: Selection<K>,
+  id: K,
+): Selection<K> {
   const next = new Set(current);
   if (next.has(id)) next.delete(id);
   else next.add(id);
   return next;
 }
 
+/**
+ * Select every key given, ADDING to what is already selected.
+ *
+ * The key-taking form. `selectAll` below is this function over `rows.map(r =>
+ * r.id)`, kept because four shipped call sites pass rows.
+ */
+export function selectAllKeys<K extends SelectionKey>(
+  current: Selection<K>,
+  keys: readonly K[],
+): Selection<K> {
+  const next = new Set(current);
+  for (const k of keys) next.add(k);
+  return next;
+}
+
 /** Select every visible row, ADDING to what is already selected. */
 export function selectAll(current: Selection, rows: readonly TriageRow[]): Selection {
-  const next = new Set(current);
-  for (const r of rows) next.add(r.id);
-  return next;
+  return selectAllKeys(
+    current,
+    rows.map((r) => r.id),
+  );
 }
 
 /**
@@ -133,9 +167,28 @@ export function confineToVisible(
   current: Selection,
   rows: readonly TriageRow[],
 ): Selection {
-  const visible = new Set(rows.map((r) => r.id));
-  const next = new Set<number>();
-  for (const id of current) if (visible.has(id)) next.add(id);
+  return confineToKeys(
+    current,
+    rows.map((r) => r.id),
+  );
+}
+
+/**
+ * The key-taking form of {@link confineToVisible}, and it carries the SAME
+ * safety property — not a convenience overload.
+ *
+ * FR-247's briefs list confines on `"<project>|<brief_id>"`, so a selection
+ * made on page 1 cannot survive a project change and then be written to by a
+ * bulk priority set. That is the case the property was written for, and it is
+ * the first time the selection can reach rows in a DIFFERENT project.
+ */
+export function confineToKeys<K extends SelectionKey>(
+  current: Selection<K>,
+  keys: readonly K[],
+): Selection<K> {
+  const visible = new Set<K>(keys);
+  const next = new Set<K>();
+  for (const k of current) if (visible.has(k)) next.add(k);
   return next;
 }
 
@@ -154,10 +207,15 @@ export function selectedRows(
  * an empty `ids` array (a 400), and a UI that can fire an empty bulk action is
  * a UI whose selection state is wrong. `[]` here means "there is nothing to
  * send", which the caller must treat as "do not send".
+ *
+ * FR-247 made it generic over the item type so it also chunks `refs`. The NAME
+ * is kept: renaming it sweeps this file, `useTriage.ts` and two suites for a
+ * noun, which is D5's reasoning one level down. It chunks a batch; the batch
+ * used to only ever be ids.
  */
-export function chunkIds(ids: readonly number[], size: number = MAX_BULK): number[][] {
+export function chunkIds<T>(ids: readonly T[], size: number = MAX_BULK): T[][] {
   if (size < 1) throw new RangeError(`chunk size must be >= 1 (got ${size})`);
-  const out: number[][] = [];
+  const out: T[][] = [];
   for (let i = 0; i < ids.length; i += size) out.push([...ids.slice(i, i + size)]);
   return out;
 }
@@ -362,9 +420,19 @@ export function reasonRequired(action: TriageAction): boolean {
 
 /** Mirrors `cli/src/types.ts#TriageItemResultPayload`. */
 export interface TriageItemOutcome {
-  id: number;
+  id: number | null;
+  /** FR-247 — populated instead of `id` for a brief-addressed action. */
+  ref?: { project: string; brief_id: string } | null;
   ok: boolean;
   error: string | null;
+}
+
+/** How a failure names its subject: an id, or a brief. Never "undefined". */
+export function outcomeLabel(o: TriageItemOutcome): string {
+  if (o.ref !== undefined && o.ref !== null) {
+    return `${o.ref.project}/${o.ref.brief_id}`;
+  }
+  return o.id === null ? "?" : `#${o.id}`;
 }
 
 /** One request's response, narrowed to what the merge needs. */
@@ -416,9 +484,192 @@ export function mergeResults(
 }
 
 /** The one-line readout under the bulk bar after an apply. */
-export function summaryLine(action: TriageAction, s: TriageSummary): string {
+export function summaryLine(action: string, s: TriageSummary): string {
   const head = `${action.toUpperCase()} — ${s.applied} of ${s.requested} applied`;
   const tail = s.failed > 0 ? `, ${s.failed} failed` : "";
   const deg = s.degraded !== null ? ` · ${s.degraded}` : "";
   return `${head}${tail}${deg}`;
+}
+
+// ---------------------------------------------------------------------------
+// FR-247 — the two BRIEF writes
+// ---------------------------------------------------------------------------
+
+/**
+ * The brief-addressed actions, mirroring the `target: "brief-ref"` rows of
+ * `brain-write-bridge.ts#TRIAGE_ACTIONS`.
+ *
+ * Deliberately a SEPARATE constant from `TRIAGE_ACTIONS` above rather than two
+ * more entries in it: the two lists answer different questions. That one is
+ * "what may the triage tabs offer"; this one is "what may a BRIEF row offer",
+ * and the surfaces have no overlap. A single list would need every consumer to
+ * filter it by target, which is the map's job, not the client's.
+ */
+export const BRIEF_WRITE_ACTIONS = ["set_priority", "attach_goal"] as const;
+export type BriefWriteAction = (typeof BRIEF_WRITE_ACTIONS)[number];
+
+/** Every action this client can post. Used where the two families converge. */
+export type WriteAction = TriageAction | BriefWriteAction;
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE PRIORITY VOCABULARY — A MIRROR, AND WHY IT IS A HAND-LIST ON PURPOSE
+ * ═══════════════════════════════════════════════════════════════════════════
+ * Mirrors `brain-mcp-server/src/tools/brief-normalize.ts:92#CANONICAL_PRIORITIES`,
+ * which the Vite chunk cannot import (the brain bundle is not a client
+ * dependency). MAINTAINING carries the contract row and names this file as the
+ * FIRST out-of-brain consumer of a vocabulary that had exactly one source; the
+ * change procedure is: edit the brain source, mirror here, re-run the mirror
+ * assertion in `__tests__/model.test.ts`.
+ *
+ * THIS CONTRADICTS FR-245's "enumerate from the data, not a hand-list" — AND
+ * THAT IS THE POINT. That instruction was written for a READ surface (the board
+ * columns, the filter options), where enumerating faithfully is exactly right
+ * because the UI is REPORTING what the brain holds. A PICKER does not report a
+ * vocabulary, it PRESCRIBES one. Enumerating from the data here would offer
+ * `P4-Trivial` and a bare `P2` as things an operator can ASSIGN — i.e. the UI
+ * would manufacture new instances of the drift TD-338 exists to explain.
+ * Measured on the operator brain (Phase-0 P0.2): 5 bare `P2`, 2 bare `P1`, 1
+ * `P4-Trivial` out of 1,818 rows.
+ *
+ * THE NON-CANONICAL VALUES DO NOT VANISH. Three places, all shipped and all
+ * untouched by this brief:
+ *   1. the list-row badge renders `row.priority` VERBATIM (`Briefs.tsx`), so a
+ *      `P4-Trivial` brief still reads `P4-Trivial`;
+ *   2. the FILTER's options come from `optionsFromRows` — data-derived — so
+ *      `P4-Trivial` stays filterable;
+ *   3. `priorityChoices` below renders a non-canonical CURRENT value as a
+ *      DISABLED `not offerable` entry, so a selected brief never looks unset
+ *      when it is not.
+ *
+ * STATED CONSEQUENCE, not pursued: `normalizePriority` folds at the handler, so
+ * writing ANY value to a bare-`P2` brief also canonicalises it. That is a side
+ * effect of a correct write. TD-338 owns the 8 rows and the SYNC path that
+ * minted them (an LWW column copy with no normaliser); folding them here
+ * without closing that door would just re-run.
+ */
+export const CANONICAL_PRIORITIES = [
+  "P0-Critical",
+  "P1-High",
+  "P2-Medium",
+  "P3-Low",
+] as const;
+export type CanonicalPriority = (typeof CANONICAL_PRIORITIES)[number];
+
+/**
+ * The sentinel the picker uses for "unset it".
+ *
+ * A distinct token rather than `""`: an empty string is what a CLEARED FILTER
+ * emits and every filter path in this app reads it as "no filter", so reusing
+ * it here would make "clear this brief's priority" indistinguishable from "do
+ * nothing" one refactor from now. `buildBriefWriteRequest` turns it into the
+ * empty string ON THE WIRE, which is what `normalizePriority` folds to SQL
+ * NULL — the "Unset" family since v18/TD-238.
+ */
+export const PRIORITY_CLEAR = "__clear__";
+
+/** One entry of the priority picker. */
+export interface PriorityChoice {
+  value: string;
+  label: string;
+  /** A non-canonical CURRENT value: shown so it is not lost, never assignable. */
+  offerable: boolean;
+}
+
+/**
+ * The picker's entries for a given current value.
+ *
+ * `current` is the value the selected brief holds, or `null`. When it is
+ * non-canonical and non-null it is prepended as a DISABLED entry — see the
+ * vocabulary block above for why it must be visible rather than silently
+ * absent. When the selection is mixed (more than one brief, differing values)
+ * the caller passes `null` and gets the canonical set plus CLEAR.
+ */
+export function priorityChoices(current: string | null): PriorityChoice[] {
+  const canonical = CANONICAL_PRIORITIES as readonly string[];
+  const out: PriorityChoice[] = [];
+  if (current !== null && current.length > 0 && !canonical.includes(current)) {
+    out.push({ value: current, label: `${current} — not offerable`, offerable: false });
+  }
+  for (const p of CANONICAL_PRIORITIES) out.push({ value: p, label: p, offerable: true });
+  out.push({ value: PRIORITY_CLEAR, label: "CLEAR (unset)", offerable: true });
+  return out;
+}
+
+/**
+ * Build one brief-write request body.
+ *
+ * Same posture as `buildTriageRequest`: only the keys the server's
+ * `parseTriageBody` accepts for this action, and only when they have a value.
+ * `refs` and `ids` are MUTUALLY EXCLUSIVE on the wire and the server 400s a
+ * body carrying the wrong one, so this never emits `ids`.
+ */
+export function buildBriefWriteRequest(
+  action: BriefWriteAction,
+  refs: readonly { project: string; brief_id: string }[],
+  extra: { priority?: string; goalId?: string } = {},
+): { action: string; refs: { project: string; brief_id: string }[]; priority?: string; goal_id?: string } {
+  const body = {
+    action,
+    refs: refs.map((r) => ({ project: r.project, brief_id: r.brief_id })),
+  } as {
+    action: string;
+    refs: { project: string; brief_id: string }[];
+    priority?: string;
+    goal_id?: string;
+  };
+  if (action === "set_priority" && extra.priority !== undefined) {
+    // The sentinel becomes the empty string on the wire — `normalizePriority`
+    // folds that to SQL NULL. The sentinel itself is never sent: a literal
+    // `"__clear__"` reaching the brain would be stored verbatim as a NINTH
+    // non-canonical value, which is precisely the drift this file refuses to add to.
+    body.priority = extra.priority === PRIORITY_CLEAR ? "" : extra.priority;
+  }
+  if (action === "attach_goal") {
+    const g = extra.goalId?.trim();
+    if (g !== undefined && g.length > 0) body.goal_id = g;
+  }
+  return body;
+}
+
+/** The `(project, brief_id)` pair, encoded as the record list's row key. */
+export function refKey(ref: { project: string; brief_id: string }): string {
+  return `${ref.project}|${ref.brief_id}`;
+}
+
+/**
+ * The confirmation copy for a brief write.
+ *
+ * A SEPARATE, much smaller function from `confirmCopy` above, and deliberately
+ * so: that one's whole subject is the DELETE tiering (L-140's three tiers, the
+ * typed confirmation, the hard-delete sentence). Neither brief write can delete
+ * anything — a priority set is a column update on a nullable column and an
+ * attach is an idempotent edge insert — so routing them through the tier
+ * machinery would mean rendering "there is no un-set_priority tool" in the
+ * register reserved for permanent deletion. Warning about a reversible thing in
+ * the voice used for an irreversible one is how the irreversible warning stops
+ * being read.
+ */
+export function briefWriteCopy(
+  action: BriefWriteAction,
+  count: number,
+  detail: string,
+): { title: string; lines: string[]; confirmLabel: string } {
+  const noun = plural(count, "brief");
+  const priority = action === "set_priority";
+  return {
+    title: priority ? `Set priority on ${noun}?` : `Attach ${noun} to ${detail}?`,
+    lines: [
+      priority
+        ? detail === PRIORITY_CLEAR
+          ? `${noun}: priority UNSET (NULL).`
+          : `${noun}: priority ${detail}.`
+        : `${noun}: a serves_goal edge to ${detail}.`,
+      // The ONE sentence that has to be here. It states what is NOT touched —
+      // the operator is looking at a bulk write on the surface whose sibling
+      // action can delete a row permanently, and the difference is the point.
+      "Reversible, and nothing else on the brief changes — not status, not phase, not the body.",
+    ],
+    confirmLabel: priority ? `SET PRIORITY ON ${count}` : `ATTACH ${count}`,
+  };
 }

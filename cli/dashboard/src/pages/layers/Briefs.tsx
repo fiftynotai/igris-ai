@@ -31,11 +31,31 @@ import {
   ApiError,
   type BriefDetailPayload,
   type BriefListRow,
+  type BriefRef,
   type BriefsPayload,
   type BriefsSearchPayload,
+  type GoalListRowPayload,
 } from "../../lib/api";
 import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
 import { Chip } from "../../components/ui/Chip";
+import {
+  CANONICAL_PRIORITIES,
+  EMPTY_KEY_SELECTION,
+  briefWriteCopy,
+  confineToKeys,
+  outcomeLabel,
+  plural,
+  priorityChoices,
+  refKey,
+  selectAllKeys,
+  summaryLine,
+  toggleSelected,
+  type BriefWriteAction,
+  type Selection,
+  type TriageItemOutcome,
+} from "../../triage/model";
+import { useTriage } from "../../triage/useTriage";
 import { RecordList, type RecordListRow } from "../../components/record/RecordList";
 import { RecordBoard } from "../../components/record/RecordBoard";
 import {
@@ -158,10 +178,30 @@ function ViewToggle({
  * The board is "a different arrangement of the same rows" — and this function
  * is where that stops being a claim and becomes a fact. Two mappers would be
  * two chances for a card to show a different badge set from a list row.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * FR-247 — `affordance` IS A PARAMETER, AND THAT IS THE WHOLE GUARD
+ * ─────────────────────────────────────────────────────────────────────────
+ * Because this mapper is shared, giving it an unconditional `select` would put
+ * checkboxes and a write path on BOARD CARDS as well as list rows. The board's
+ * read-only claim is asserted (`browser-gate.mjs` G-BR-12f scopes `draggable` /
+ * `ondragstart` / `ondrop` / `form` and a non-GET counter to `.record-board`),
+ * and `status` is the canonical build-state source — so a write affordance
+ * leaking onto the status board is a write path INTO TD-311's invariant wearing
+ * a convenience.
+ *
+ * So the LIST supplies the builder and the BOARD does not. It is a parameter
+ * rather than a flag because a boolean would still have to be threaded through
+ * the board's call site, where the honest value is "nothing at all".
+ * `br14-affordance-on-board` injects the leak to prove G-BR-14c can fire.
  */
-function briefRow(row: BriefListRow): RecordListRow {
+function briefRow(
+  row: BriefListRow,
+  affordance?: (row: BriefListRow) => RecordListRow["select"],
+): RecordListRow {
   return {
     key: `${row.project}|${row.brief_id}`,
+    ...(affordance !== undefined ? { select: affordance(row) } : {}),
     eye: `// ${row.brief_id}${row.brief_type !== null ? ` · ${row.brief_type}` : ""}`,
     title: row.title,
     href: recordHash({ layer: LAYER, project: row.project, id: row.brief_id }),
@@ -202,6 +242,271 @@ function optionsFromRows(rows: readonly BriefListRow[], name: string): string[] 
         .filter((v) => v.length > 0),
     ),
   ].sort();
+}
+
+// ---------------------------------------------------------------------------
+// FR-247 — the two brief writes (LIST ONLY; see `briefRow`'s header)
+// ---------------------------------------------------------------------------
+
+/**
+ * The write surface's state, read off the shell's 5-second health beat.
+ *
+ * The same rule and the same wrong-way-to-be-wrong as `Triage.tsx#writeState`:
+ * before the first beat lands, assume UNAVAILABLE. Rendering live write
+ * controls against a surface whose state is unknown is the failure; a bar that
+ * appears 5 seconds late is not.
+ *
+ * A THIRD copy of this would be a smell, but the second is deliberate: lifting
+ * it into `lib/` would put a triage concern in the shared tier for two call
+ * sites, and `BRIEF_WRITE_ACTIONS` below is the thing that keeps the two
+ * surfaces' vocabularies apart.
+ */
+function briefWriteState(live: LayerViewProps["live"]): {
+  available: boolean;
+  reason: string | null;
+} {
+  const w = live.health?.write;
+  if (w === undefined) {
+    return { available: false, reason: "waiting for the first /api/health beat" };
+  }
+  // NOT also checked here: whether `w.actions` contains this surface's two
+  // action names. `/api/health` serves the frozen map's keys and the client
+  // mirrors the same map from the same installed package, so the two can only
+  // disagree if the server is older than the client it is serving — which a
+  // single-package install makes unreachable. A check for it would be a claim
+  // about a state that cannot exist, paid for in chunk bytes.
+  return { available: w.available, reason: w.reason };
+}
+
+/**
+ * The selection bar for the briefs LIST: set priority, attach to a goal.
+ *
+ * Deliberately NOT `components/triage/BulkBar.tsx`. That component's whole
+ * subject is the DELETE tiering — `destructiveness`, the hard-delete sentence,
+ * the typed confirmation — and neither write here can delete anything. Reusing
+ * it would mean rendering "there is no un-set_priority tool" in the register
+ * reserved for permanent deletion, which is how an irreversible warning stops
+ * being read. The copy comes from `model.ts#briefWriteCopy` for the same reason
+ * `BulkBar`'s comes from `confirmCopy`: the sentence the operator is shown is a
+ * pure function a unit test can pin.
+ */
+function BriefWriteBar({
+  selection,
+  rows,
+  goals,
+  goalsError,
+  onSelectAll,
+  onClear,
+  onApply,
+  busy,
+  writeAvailable,
+  writeReason,
+  readout,
+  failures,
+}: {
+  selection: Selection<string>;
+  rows: readonly BriefListRow[];
+  goals: readonly { goal_id: string; title: string }[];
+  goalsError: string | null;
+  onSelectAll: () => void;
+  onClear: () => void;
+  onApply: (
+    action: BriefWriteAction,
+    refs: BriefRef[],
+    extra: { priority?: string; goalId?: string },
+  ) => void;
+  busy: boolean;
+  writeAvailable: boolean;
+  writeReason: string | null;
+  readout: string | null;
+  failures: readonly TriageItemOutcome[];
+}) {
+  const [pending, setPending] = useState<BriefWriteAction | null>(null);
+  const [priority, setPriority] = useState<string>(CANONICAL_PRIORITIES[0]);
+  const [goalId, setGoalId] = useState<string>("");
+
+  const chosen = rows.filter((r) => selection.has(refKey(r)));
+  const count = chosen.length;
+
+  // Close the dialog if the selection empties underneath it — the list refetches
+  // on the 5-second beat and a dialog whose subject no longer exists is how you
+  // write to the wrong batch.
+  useEffect(() => {
+    if (count === 0) setPending(null);
+  }, [count]);
+
+  if (!writeAvailable) {
+    // DISABLED, NOT BROKEN — and the affordances DISAPPEAR rather than grey out
+    // (AC-7). A button that will certainly fail is worse than no button.
+    return (
+      <div className="shell-banner" role="status">
+        BRIEF WRITES DISABLED — {writeReason ?? "no reason reported"}
+      </div>
+    );
+  }
+
+  /*
+   * The picker's CURRENT value: the selection's priority when they agree, else
+   * `null`. Only a unanimous selection can surface a non-canonical current
+   * value as the disabled `not offerable` entry — with a mixed selection there
+   * is no single current value to show, and inventing one would be a claim
+   * about rows the operator can see are different.
+   */
+  const currents = [...new Set(chosen.map((r) => r.priority ?? ""))];
+  const current = currents.length === 1 ? (currents[0] ?? "") : null;
+  const choices = priorityChoices(current === null || current === "" ? null : current);
+
+  const goal = goals.find((g) => g.goal_id === goalId) ?? null;
+  const copy =
+    pending === null
+      ? null
+      : briefWriteCopy(
+          pending,
+          count,
+          pending === "set_priority"
+            ? priority
+            : goal === null
+              ? goalId
+              : `${goal.goal_id} — ${goal.title}`,
+        );
+
+  const refs = (): BriefRef[] =>
+    chosen.map((r) => ({ project: r.project, brief_id: r.brief_id }));
+
+  return (
+    <>
+      <div className="triage-bulk brief-write" data-selected={count}>
+        <span className="record-readout">{plural(count, "brief")} selected</span>
+        <button type="button" className="record-filter-run" onClick={onSelectAll}>
+          SELECT PAGE
+        </button>
+        <button
+          type="button"
+          className="record-filter-run"
+          onClick={onClear}
+          disabled={count === 0}
+        >
+          CLEAR
+        </button>
+        <span className="record-filters-spacer" />
+
+        <label className="brief-write-field">
+          <span className="record-readout">priority</span>
+          <select
+            className="brief-write-select"
+            value={priority}
+            aria-label="Priority to assign"
+            onChange={(e) => setPriority(e.target.value)}
+          >
+            {choices.map((c) => (
+              // A non-canonical CURRENT value is rendered and DISABLED, so a
+              // `P4-Trivial` brief never looks unset. TD-338 owns folding it;
+              // this picker refuses to mint a ninth value, and refuses to hide
+              // the eight that exist.
+              <option key={c.value} value={c.value} disabled={!c.offerable}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          size="sm"
+          variant="primary"
+          disabled={count === 0 || busy}
+          onClick={() => setPending("set_priority")}
+        >
+          SET PRIORITY
+        </Button>
+
+        <label className="brief-write-field">
+          <span className="record-readout">goal</span>
+          <select
+            className="brief-write-select"
+            value={goalId}
+            aria-label="Goal to attach to"
+            onChange={(e) => setGoalId(e.target.value)}
+          >
+            <option value="">— choose —</option>
+            {goals.map((g) => (
+              <option key={g.goal_id} value={g.goal_id}>
+                {g.goal_id} · {g.title}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Button
+          size="sm"
+          variant="secondary"
+          // Attachment needs an EXISTING goal. Creation is FR-249, and it is a
+          // deferred half of a stated request rather than an oversight — see
+          // `docs/dashboard.md`.
+          disabled={count === 0 || busy || goalId.length === 0}
+          onClick={() => setPending("attach_goal")}
+        >
+          ATTACH TO GOAL
+        </Button>
+      </div>
+
+      {goalsError !== null && (
+        <div className="shell-banner" role="status">
+          GOALS UNAVAILABLE — {goalsError}
+        </div>
+      )}
+      {readout !== null && (
+        <p className="record-readout" role="status">
+          {readout}
+        </p>
+      )}
+      {failures.length > 0 && (
+        <div className="shell-banner" role="status">
+          {plural(failures.length, "brief")} failed —{" "}
+          {failures
+            .slice(0, 5)
+            .map((f) => `${outcomeLabel(f)}: ${f.error ?? "no message"}`)
+            .join(" · ")}
+          {failures.length > 5 ? ` · …and ${failures.length - 5} more` : ""}
+        </div>
+      )}
+
+      {pending !== null && copy !== null && (
+        <div
+          className="triage-confirm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-label={copy.title}
+          data-action={pending}
+          data-hard-delete="0"
+        >
+          <h2 className="triage-confirm-title">{copy.title}</h2>
+          {copy.lines.map((line) => (
+            <p key={line} className="triage-confirm-line">
+              {line}
+            </p>
+          ))}
+          <div className="triage-confirm-actions">
+            <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={busy}>
+              CANCEL
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy || count === 0}
+              onClick={() => {
+                onApply(
+                  pending,
+                  refs(),
+                  pending === "set_priority" ? { priority } : { goalId },
+                );
+                setPending(null);
+              }}
+            >
+              {busy ? "…" : copy.confirmLabel}
+            </Button>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -271,6 +576,47 @@ function BriefListView({
     return () => ctrl.abort();
   }, [query, project]);
 
+  /*
+   * FR-247 — the write half. Everything below is LIST-ONLY; `BriefBoardView`
+   * takes none of it (see `briefRow`'s header for why that separation is the
+   * guard rather than a preference).
+   */
+  const [selection, setSelection] = useState<Selection<string>>(EMPTY_KEY_SELECTION);
+  const [goals, setGoals] = useState<GoalListRowPayload[]>([]);
+  const [goalsError, setGoalsError] = useState<string | null>(null);
+  const mutation = useTriage(() => live.refresh());
+
+  /*
+   * The goal list, read ONCE per scope through the EXISTING `/api/goals`.
+   *
+   * No new endpoint — the whole point of FR-247's shape is that the surface
+   * stays sixteen GET + one POST. Not on the 5-second beat either: there are 6
+   * goals on the operator brain and they are hand-created, so re-reading them
+   * every tick would be four requests a minute for a list that changes monthly.
+   *
+   * UNSCOPED on purpose. `goals.project_slug` is nullable and a brief may
+   * legitimately serve a brain-level goal, so scoping this to the selected
+   * project would silently hide exactly the goals that span projects.
+   */
+  useEffect(() => {
+    const ctrl = new AbortController();
+    const q = new URLSearchParams();
+    q.set("status", "active");
+    q.set("limit", "100");
+    api
+      .goals(q, ctrl.signal)
+      .then((p) => {
+        if (ctrl.signal.aborted) return;
+        setGoals(p.items);
+        setGoalsError(p.degraded?.reason ?? null);
+      })
+      .catch((err: unknown) => {
+        if (ctrl.signal.aborted) return;
+        setGoalsError(err instanceof ApiError ? err.message : String(err));
+      });
+    return () => ctrl.abort();
+  }, []);
+
   const browsing = query === null;
   const descriptor = layerById(LAYER);
   const payload = list.payload;
@@ -310,8 +656,60 @@ function BriefListView({
     ? (payload?.degraded?.reason ?? list.error)
     : (hits?.degraded?.reason ?? searchError);
 
+  /*
+   * Confine the selection to what is on screen after every re-read.
+   *
+   * `model.ts#confineToKeys`' safety property, and this is the surface it was
+   * generalised for: the key is `"<project>|<brief_id>"`, so a selection made
+   * under one project cannot survive a scope change and then be written to. A
+   * search submission replaces the browse list entirely, which is why the
+   * SUBMITTED-query mode drops the selection too — the hit rows are a different
+   * page, not a narrowing of this one.
+   */
+  const selectableKeys = browsing ? muted.map((r) => refKey(r)) : [];
+  useEffect(() => {
+    setSelection((cur) => confineToKeys(cur, selectableKeys));
+    // The row identity SET is what matters, not the array's identity.
+  }, [selectableKeys.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const write = briefWriteState(live);
+
   return (
-    <RecordList
+    <>
+      {/*
+        FR-247 — the write bar rides ABOVE the list and only in browse mode.
+        A ranked recall page has no stable offset semantics and its rows are a
+        different set; offering a bulk write over it would mean acting on a
+        selection whose membership the operator cannot page back to.
+      */}
+      {browsing && (
+        <BriefWriteBar
+          selection={selection}
+          rows={muted}
+          goals={goals}
+          goalsError={goalsError}
+          onSelectAll={() =>
+            setSelection((cur) => selectAllKeys(cur, selectableKeys))
+          }
+          onClear={() => setSelection(EMPTY_KEY_SELECTION)}
+          busy={mutation.busy}
+          writeAvailable={write.available}
+          writeReason={write.reason}
+          readout={
+            mutation.error !== null
+              ? `REQUEST FAILED — ${mutation.error}. Re-read before assuming nothing landed.`
+              : mutation.summary !== null && mutation.lastAction !== null
+                ? summaryLine(mutation.lastAction, mutation.summary)
+                : null
+          }
+          failures={mutation.summary?.failures ?? []}
+          onApply={(action, refs, extra) => {
+            setSelection(EMPTY_KEY_SELECTION);
+            void mutation.applyRefs(action, refs, extra);
+          }}
+        />
+      )}
+      <RecordList
       eye={descriptor?.eye ?? "// BRIEFS"}
       heading="BRIEFS"
       actions={actions}
@@ -364,7 +762,28 @@ function BriefListView({
             ? `MUTED ${(browsing ? muted : hitRows).length}/${(browsing ? items.length : (hits?.items.length ?? 0))} THIS PAGE`
             : undefined,
       }}
-      rows={browsing ? muted.map(briefRow) : hitRows.map(briefHitRow)}
+      rows={
+        browsing
+          ? muted.map((r) =>
+              // The LIST supplies the affordance builder. The BOARD does not,
+              // and `br14-affordance-on-board` proves the check for that can
+              // fire. Gated on `write.available` so the checkboxes DISAPPEAR
+              // with the rest of the write surface (AC-7) rather than offering
+              // a selection nothing can act on.
+              briefRow(
+                r,
+                write.available
+                  ? (row) => ({
+                      checked: selection.has(refKey(row)),
+                      onToggle: () =>
+                        setSelection((cur) => toggleSelected(cur, refKey(row))),
+                      label: `Select ${row.brief_id} in ${row.project}`,
+                    })
+                  : undefined,
+              ),
+            )
+          : hitRows.map(briefHitRow)
+      }
       // Search results are ONE ranked page — RRF over two arms has no stable
       // offset semantics, so a second page would not be the continuation of the
       // first. Browse mode paginates; recall does not.
@@ -389,7 +808,8 @@ function BriefListView({
         searchActive: search.trim().length > 0 && items.length > 0,
         project,
       })}
-    />
+      />
+    </>
   );
 }
 
@@ -504,7 +924,12 @@ function BriefBoardView({
       r.status,
       r.brief_type,
       r.phase,
-    ]).map(briefRow),
+      // ONE argument, always. The board passes NO affordance builder, which is
+      // what keeps checkboxes and the priority control off `.record-board`
+      // (G-BR-12f's subject). `.map(briefRow)` would hand `Array#map`'s INDEX
+      // in as the builder — the compiler refuses it, so this call site cannot
+      // regress into the leak by tidying.
+    ]).map((r) => briefRow(r)),
   }));
 
   const unmerged = board.columns.length > KNOWN_BRIEF_STATUSES.length;

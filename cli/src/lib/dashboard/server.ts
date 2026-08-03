@@ -46,7 +46,7 @@
  *
  * The mutation itself performs no SQL here — `routes.ts#triage` delegates every
  * write to the brain's own gateway through `brain-write-bridge.ts`'s frozen
- * five-row map.
+ * frozen map (five rows at FR-241, SEVEN since FR-247's two brief writes).
  */
 
 import {

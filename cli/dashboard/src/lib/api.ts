@@ -567,17 +567,34 @@ export interface SuggestionsPayload extends ListEnvelope {
   search: SubstringSearch | null;
 }
 
+/** FR-247 — a brief's address. Mirrors the server's `refs[]` entry. */
+export interface BriefRef {
+  project: string;
+  brief_id: string;
+}
+
 /** Mirrors `TriageRequest`. The `action` values come from `health.write.actions`. */
 export interface TriageRequest {
   action: string;
-  ids: number[];
+  /** `target: "id"` actions only. Never sent together with `refs`. */
+  ids?: number[];
+  /** FR-247 — `target: "brief-ref"` actions only. Never sent with `ids`. */
+  refs?: BriefRef[];
   reason?: string;
   brief_id?: string;
+  priority?: string;
+  goal_id?: string;
 }
 
-/** Mirrors `TriageItemResultPayload`. `error` is the BRAIN's own message. */
+/**
+ * Mirrors `TriageItemResultPayload`. `error` is the BRAIN's own message.
+ *
+ * FR-247 made `id` nullable: exactly one of `id`/`ref` identifies the item, and
+ * a renderer must read whichever is non-null rather than assume an integer.
+ */
 export interface TriageItemResult {
-  id: number;
+  id: number | null;
+  ref: BriefRef | null;
   ok: boolean;
   error: string | null;
 }

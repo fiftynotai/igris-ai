@@ -36,6 +36,11 @@ import {
   type DashboardServer,
 } from "../lib/dashboard/server.js";
 import { contentTypeFor, resolveStatic } from "../lib/dashboard/static.js";
+import {
+  TRIAGE_ACTIONS,
+  TRIAGE_ACTION_NAMES,
+  type TriageActionSpec,
+} from "../lib/brain-write-bridge.js";
 
 /** ASYNC child spawn — see `postFromChild`; a SYNC one deadlocks the server. */
 const execFileAsync = promisify(execFile);
@@ -1210,5 +1215,198 @@ describe("G-SEC-1 — the write surface's fences", () => {
     const r = await send("POST", "/api/triage", VALID);
     expect(r.headers["access-control-allow-origin"]).toBeUndefined();
     expect(r.headers["cache-control"]).toContain("no-store");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-247 AC-3(a) — the TD-311 boundary, asserted over the FROZEN OBJECT
+// ---------------------------------------------------------------------------
+
+/**
+ * STRUCTURAL, AT RUNTIME, OVER THE REAL MAP — not a source grep.
+ *
+ * The claim is "no dashboard mutation can reach `status`, `phase` or brief
+ * content". A grep over `brain-write-bridge.ts` cannot make that claim, for two
+ * reasons that matter: a row added by a `as unknown as` cast is invisible to a
+ * pattern that looks for literals, and the file's own PROSE names every one of
+ * the forbidden fields (it has to — it explains why they are forbidden), so a
+ * naive grep would fire on the explanation.
+ *
+ * Reading the frozen object closes both. What is asserted is a SET
+ * intersection over `extra ∪ keys(fixed)`, for every row, plus a set claim
+ * about the rows themselves — "the complete set of mutations" is a claim about
+ * a set, and a claim about a set needs the set asserted, not sampled.
+ *
+ * PAIRING (learning 1095): this proves what the MAP permits. It does NOT prove
+ * that the code which consumes the map honours it — a builder that ignored
+ * `extra` and copied the whole body would pass every assertion here. Its
+ * siblings are `dashboard-triage-endpoint.test.ts` G-TR-9 (the builders' output
+ * key sets, parser bypassed) and G-TR-10 (the args the brain's own handler
+ * actually received, by call trace). All three are required; do not weaken any
+ * of them on the assumption another has it covered.
+ */
+describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state field", () => {
+  /** TD-311's invariant, plus the two content fields. */
+  const FORBIDDEN = ["status", "phase", "content", "title", "filename"] as const;
+
+  /** Every key a row can put in front of a brain tool, from the row itself. */
+  const surfaceOf = (row: TriageActionSpec): string[] => [
+    ...row.extra,
+    ...Object.keys(row.fixed ?? {}),
+    ...Object.keys(row.refKeys ?? {}),
+  ];
+
+  const violationsIn = (map: Record<string, TriageActionSpec>): string[] => {
+    const out: string[] = [];
+    for (const [name, row] of Object.entries(map)) {
+      for (const key of surfaceOf(row)) {
+        if ((FORBIDDEN as readonly string[]).includes(key)) {
+          out.push(`${name}.${key}`);
+        }
+      }
+      if (row.tool === "igris_brief_sync") out.push(`${name}.tool=igris_brief_sync`);
+    }
+    return out.sort();
+  };
+
+  it("no row names status, phase, content, title or filename", () => {
+    expect(
+      violationsIn(TRIAGE_ACTIONS as Record<string, TriageActionSpec>),
+    ).toEqual([]);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the predicate fires on a deliberately dirty map", () => {
+    // Without this, "[] " is indistinguishable between "the map is clean" and
+    // "the predicate is broken" (learning 1094). Both the field ban and the
+    // tool ban are planted, so neither half can rot unnoticed.
+    const dirty: Record<string, TriageActionSpec> = {
+      sneaky_status: {
+        tool: "igris_brief_update",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: ["status"] as unknown as TriageActionSpec["extra"],
+      },
+      sneaky_fixed_phase: {
+        tool: "igris_brief_update",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: [],
+        fixed: { phase: "COMMITTING" },
+      },
+      sneaky_sync: {
+        tool: "igris_brief_sync",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: [],
+      },
+    };
+    expect(violationsIn(dirty)).toEqual([
+      "sneaky_fixed_phase.phase",
+      "sneaky_status.status",
+      "sneaky_sync.tool=igris_brief_sync",
+    ]);
+    // WHAT THIS CONTROL DOES NOT COVER: a row that reaches a forbidden column
+    // through a `rename` whose TARGET is forbidden but whose source key is not
+    // (`extra: ["reason"], rename: {reason: "status"}`). The next assertion is
+    // the one that covers that, and it is separate on purpose.
+  });
+
+  it("no `rename` TARGET is a forbidden field either — the indirect route", () => {
+    const targets = Object.values(
+      TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
+    ).flatMap((r) => Object.values(r.rename ?? {}));
+    for (const t of targets) {
+      expect((FORBIDDEN as readonly string[]).includes(t), `rename -> ${t}`).toBe(false);
+    }
+    // Self-negative-control for THIS assertion: the shipped map does use
+    // `rename`, so the corpus above is non-empty and the loop really ran.
+    expect(targets, "no row uses `rename` — this guard has no corpus").toContain("to_id");
+  });
+
+  it("the row set is EXACTLY the seven expected keys", () => {
+    // A claim about a SET. `TRIAGE_ACTION_NAMES` is what `/api/health` serves,
+    // so this also pins the vocabulary the client is offered.
+    expect([...TRIAGE_ACTION_NAMES].sort()).toEqual([
+      "acted",
+      "apply",
+      "approve",
+      "attach_goal",
+      "dismiss",
+      "reject",
+      "set_priority",
+    ]);
+    expect(Object.isFrozen(TRIAGE_ACTIONS)).toBe(true);
+    for (const [name, row] of Object.entries(TRIAGE_ACTIONS)) {
+      expect(Object.isFrozen(row), `${name} is not frozen`).toBe(true);
+    }
+  });
+
+  it("FR-247's widening is ADDITIVE — the five FR-241 rows are otherwise unchanged", () => {
+    // The regression claim, made mechanical. `target` is the ONE field the five
+    // gained; everything else must be byte-for-byte what FR-241 shipped, and
+    // none of them may have acquired `fixed`, `refKeys` or `rename`.
+    const FR241 = {
+      dismiss: { tool: "igris_suggestion_dismiss", bulk: true, idKey: "id", extra: ["reason"] },
+      acted: { tool: "igris_suggestion_acted", bulk: true, idKey: "id", extra: ["brief_id"] },
+      apply: { tool: "igris_suggestion_apply_action", bulk: false, idKey: "id", extra: [] },
+      approve: { tool: "igris_perception_approve", bulk: true, idKey: "learning_id", extra: [] },
+      reject: { tool: "igris_perception_reject", bulk: true, idKey: "learning_id", extra: ["reason"] },
+    } as const;
+    for (const [name, expected] of Object.entries(FR241)) {
+      const row = TRIAGE_ACTIONS[name] as TriageActionSpec;
+      expect(row, `${name} vanished`).toBeDefined();
+      expect({
+        tool: row.tool,
+        bulk: row.bulk,
+        idKey: row.idKey,
+        extra: [...row.extra],
+      }).toEqual({ ...expected, extra: [...expected.extra] });
+      expect(row.target, `${name} lost its target`).toBe("id");
+      expect(row.fixed, `${name} acquired a fixed block`).toBeUndefined();
+      expect(row.refKeys, `${name} acquired refKeys`).toBeUndefined();
+      expect(row.rename, `${name} acquired a rename`).toBeUndefined();
+    }
+  });
+
+  it("`target` and the addressing fields agree, row by row", () => {
+    // The invariant a discriminated union would have carried in the type. It is
+    // asserted here instead — which is the stronger instrument, because it also
+    // covers a row added through a cast (as the dirty map above is).
+    for (const [name, row] of Object.entries(
+      TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
+    )) {
+      if (row.target === "id") {
+        expect(row.idKey, `${name}: an id row with no idKey`).toBeDefined();
+        expect(row.refKeys, `${name}: an id row with refKeys`).toBeUndefined();
+      } else {
+        expect(row.target).toBe("brief-ref");
+        expect(row.refKeys, `${name}: a brief-ref row with no refKeys`).toBeDefined();
+        expect(row.idKey, `${name}: a brief-ref row with an idKey`).toBeUndefined();
+        // Every ref key must name a real half of the ref, or the builder would
+        // emit `undefined` into a required gateway argument.
+        for (const field of Object.values(row.refKeys ?? {})) {
+          expect(["project", "brief_id"]).toContain(field);
+        }
+      }
+    }
+  });
+
+  it("every `fixed` value is a STRING CONSTANT, never caller-shaped", () => {
+    // `fixed` is the only place a map row asserts a brain-side enum value
+    // (`edge_type: 'serves_goal'`). If a row ever carried a placeholder there,
+    // one map row would silently become many mutations.
+    for (const [name, row] of Object.entries(
+      TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
+    )) {
+      for (const [k, v] of Object.entries(row.fixed ?? {})) {
+        expect(typeof v, `${name}.fixed.${k} is not a string`).toBe("string");
+        expect(v.length, `${name}.fixed.${k} is empty`).toBeGreaterThan(0);
+        // ...and it is not a key the caller could also supply.
+        expect(row.extra as readonly string[], `${name}: ${k} is both fixed and extra`).not.toContain(k);
+      }
+    }
   });
 });

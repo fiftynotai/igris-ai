@@ -94,11 +94,18 @@ describe("the bar itself", () => {
         selection={new Set([1])}
         initialPending={null}
         readout="REJECT — 2 of 3 applied, 1 failed"
-        failures={[{ id: 7, error: "Suggestion 7 already acted; cannot dismiss" }]}
+        failures={[
+          { id: 7, ok: false, error: "Suggestion 7 already acted; cannot dismiss" },
+        ]}
       />,
     );
     expect(out).toContain("REJECT — 2 of 3 applied, 1 failed");
     expect(out).toContain("Suggestion 7 already acted; cannot dismiss");
+    // FR-247 — the id still renders as `#7`. `outcomeLabel` reads `ref` first,
+    // and this surface never carries one, so the id-addressed form must be
+    // what comes out. Without this the widening could have silently turned
+    // every triage failure into a bare `?`.
+    expect(out).toContain("#7:");
   });
 });
 

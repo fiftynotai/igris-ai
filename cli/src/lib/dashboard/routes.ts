@@ -1373,6 +1373,9 @@ export async function triage(
 ): Promise<{ status: number; payload: TriageResultPayload | { error: string } }> {
   const parsed = parseTriageBody(body, (a) => write.triageAction(a) !== null, {
     bulkAllowed: (a) => write.triageAction(a)?.bulk === true,
+    // FR-247 — the map decides how an action is addressed. This route never
+    // hand-lists which actions take refs; it asks.
+    targetOf: (a) => write.triageAction(a)?.target ?? "id",
   });
   if (!parsed.ok) {
     return { status: 400, payload: { error: parsed.reason } };
@@ -1380,7 +1383,9 @@ export async function triage(
 
   const base = {
     action: parsed.action,
-    requested: parsed.ids.length,
+    // Exactly one of the two is non-empty (`parseTriageBody` enforces it), so
+    // the sum IS the count and does not need a branch to say so.
+    requested: parsed.ids.length + parsed.refs.length,
     applied: 0,
     failed: 0,
     results: [] as TriageResultPayload["results"],
@@ -1398,14 +1403,24 @@ export async function triage(
     };
   }
 
-  const dispatched = await write.dispatchTriage(
-    parsed.action,
-    parsed.ids,
-    {
-      ...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
-      ...(parsed.brief_id !== undefined ? { brief_id: parsed.brief_id } : {}),
-    },
-  );
+  // The extras are assembled ONCE for both address kinds. Each row's `extra`
+  // allow-list is what decides which of them reaches the tool, so handing all
+  // four to either dispatcher is not laxity — it is the single place the
+  // allow-list is allowed to be the only filter.
+  const extra = {
+    ...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
+    ...(parsed.brief_id !== undefined ? { brief_id: parsed.brief_id } : {}),
+    ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
+    ...(parsed.goal_id !== undefined ? { goal_id: parsed.goal_id } : {}),
+  };
+
+  // FR-247 — ONE branch, on the resolved spec's `target`. Not a new handler,
+  // not a new export, and still no SQL: both arms end at
+  // `gateway.dispatch(<a name from the frozen map>, args)`.
+  const dispatched =
+    write.triageAction(parsed.action)?.target === "brief-ref"
+      ? await write.dispatchBriefWrite(parsed.action, parsed.refs, extra)
+      : await write.dispatchTriage(parsed.action, parsed.ids, extra);
 
   if (!dispatched.ok) {
     // The DISCRIMINATED cause, verbatim — `engine_unavailable` (packaging) and

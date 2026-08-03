@@ -1949,3 +1949,60 @@ h6.record-md-h {
     width: 240px;
   }
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   FR-247 · brief writes (LIST ONLY)
+
+   THE NEW GRAMMAR THIS BRIEF INTRODUCES, WRITTEN DOWN HERE ON PURPOSE.
+   `design_system.md` is applicable-but-absent for this project and is already
+   filed as TD-335, so FR-247 does not re-file it and does not ground it —
+   instead it leaves TD-335 a record rather than an archaeology problem. Three
+   things are new to the record layer:
+
+     1. an INLINE PICKER inside a selection bar (a labelled `<select>`), where
+        every previous control was a chip, a button or a text field;
+     2. a selection bar on a NON-TRIAGE surface. `.triage-bulk` is reused
+        verbatim rather than cloned, because a briefs list whose selection bar
+        looked different from the triage one would be two vocabularies for one
+        gesture. `.brief-write` is a marker for the browser gate to scope to,
+        not a restyle;
+     3. a confirm dialog with NO danger register. `.triage-danger` is never
+        emitted here: neither brief write can delete anything, and borrowing
+        the permanent-deletion styling for a reversible act is how the
+        permanent-deletion styling stops being read.
+
+   Token-only, no custom property, no radius, hairline borders — the same rules
+   the FR-240 block above is scanned for, which this block is INSIDE (the scan
+   runs from "FR-240 · the record layer" to EOF).
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.brief-write-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+}
+/* 44px tap target, same as `.record-filter-run` — the coding guidelines' floor
+   applies to a `<select>` exactly as it does to a button. */
+.brief-write-select {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0.5px solid var(--line);
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: border-color var(--t-quick) var(--e-std);
+}
+.brief-write-select:hover:not([disabled]) {
+  border-color: var(--accent);
+}
+/* A non-canonical CURRENT value (`P4-Trivial`, a bare `P2` — 8 rows on the
+   operator brain) is rendered so the brief never looks unset, and DISABLED so
+   it cannot be assigned. TD-338 owns folding them; this control owns not
+   minting a ninth. */
+.brief-write-select option[disabled] {
+  color: var(--muted);
+}

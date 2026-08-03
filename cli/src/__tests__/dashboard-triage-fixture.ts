@@ -111,7 +111,57 @@ export const TRIAGE_FIXTURE = {
   recurringSeenAgain: 3,
   /** An already-approved learning: `approve` on it is a no-op-ish success. */
   approvedLearningId: 6,
+
+  // --- FR-247 ---------------------------------------------------------------
+  /** The project every seeded brief belongs to. */
+  briefProject: "demo",
+  /**
+   * 17 briefs at `P2-Medium`, ids `FR-001`…`FR-017`.
+   *
+   * The same 17/12/5 split G-TR-2 uses for suggestions, deliberately: the
+   * discriminating half of a bulk assertion is "and the OTHER five are
+   * byte-identical", and reusing a shape whose off-by-one is already visible
+   * beats inventing a second one.
+   */
+  briefCount: 17,
+  briefBasePriority: "P2-Medium",
+  /**
+   * A brief carrying a NON-CANONICAL priority (D2).
+   *
+   * `P4-Trivial` exists on the operator brain — exactly ONE row out of 1,818
+   * (Phase-0 P0.2). Seeded here so the picker's "render the current value,
+   * disabled" case has a subject, and so a test can assert that writing a
+   * canonical value to it CANONICALISES it (a stated side effect of a correct
+   * write; TD-338 owns the population, this brief does not chase it).
+   */
+  nonCanonicalBriefId: "TD-900",
+  nonCanonicalPriority: "P4-Trivial",
+  /**
+   * THE D6 SUBJECT: a brief in `brief_files` with NO `brief_status` row.
+   *
+   * Measured on the operator brain: **1** such row exists (Phase-0 P0.3). Real,
+   * rare, and catastrophic to write to unguarded — `handleBriefUpdate` takes
+   * its INSERT branch and invents `status='Ready'` with `title=''`, which is a
+   * write into the TD-311 build-state invariant through the handler this brief
+   * was told to trust.
+   */
+  filesOnlyBriefId: "BR-900",
+  /** Its `brief_files.content`, so the red-first proof can assert it survived. */
+  filesOnlyContent: "# BR-900\n\nA brief with a file and no status row.\n",
+  /** A brief id that exists in NEITHER table. */
+  missingBriefId: "ZZ-999",
+
+  /** Two goals. `attach_goal` targets these; creation is FR-249, not here. */
+  goalIds: ["GL-100", "GL-101"],
 } as const;
+
+/** Every brief id the fixture seeds with a `brief_status` row at P2-Medium. */
+export function seededBriefIds(): string[] {
+  return Array.from(
+    { length: TRIAGE_FIXTURE.briefCount },
+    (_, i) => `FR-${String(i + 1).padStart(3, "0")}`,
+  );
+}
 
 /** Every id the fixture seeds as a pending suggestion WITH a project. */
 export function pendingSuggestionIds(): number[] {
@@ -247,6 +297,72 @@ function seedRows(db: Database.Database): void {
     "approved",
     0,
   );
+
+  seedBriefRows(db);
+}
+
+/**
+ * FR-247 — briefs, goals, and the `brief_files`-only brief.
+ *
+ * `brief_status.project` carries a FOREIGN KEY to `projects(slug)`, so the
+ * project row comes first. (SQLite only enforces it with `foreign_keys = ON`,
+ * which the engine sets — a fixture that skipped it would work here and fail
+ * the moment the engine opened the file.)
+ */
+function seedBriefRows(db: Database.Database): void {
+  const project = TRIAGE_FIXTURE.briefProject;
+  const insProject = db.prepare(
+    "INSERT OR IGNORE INTO projects (slug, name, path) VALUES (?, ?, ?)",
+  );
+  insProject.run(project, "Demo", "/tmp/demo");
+  insProject.run("other", "Other", "/tmp/other");
+
+  const insStatus = db.prepare(
+    `INSERT INTO brief_status
+       (project, brief_id, title, status, priority, effort, phase, brief_type, updated_at)
+     VALUES (?, ?, ?, ?, ?, 'M', NULL, 'Feature', '2026-08-01 10:00:00')`,
+  );
+  for (const briefId of seededBriefIds()) {
+    // A NON-EMPTY, DISTINCT title on every row. The AC-4 control asserts the
+    // title is byte-identical after a priority-only write, and a fixture of
+    // empty or identical titles would make that assertion pass against the very
+    // blanking it exists to detect.
+    insStatus.run(
+      project,
+      briefId,
+      `Title of ${briefId}`,
+      "Ready",
+      TRIAGE_FIXTURE.briefBasePriority,
+    );
+  }
+  // The non-canonical row (D2). Its status is deliberately NOT `Ready`, so a
+  // write that silently re-invented one would be visible.
+  insStatus.run(
+    project,
+    TRIAGE_FIXTURE.nonCanonicalBriefId,
+    `Title of ${TRIAGE_FIXTURE.nonCanonicalBriefId}`,
+    "In Progress",
+    TRIAGE_FIXTURE.nonCanonicalPriority,
+  );
+
+  // THE D6 SUBJECT — `brief_files` ONLY. No `brief_status` row, on purpose.
+  db.prepare(
+    `INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+     VALUES ('fr247-files-only', ?, ?, ?, ?, 'sha-none', '2026-08-01 10:00:00')`,
+  ).run(
+    project,
+    TRIAGE_FIXTURE.filesOnlyBriefId,
+    `${TRIAGE_FIXTURE.filesOnlyBriefId}.md`,
+    TRIAGE_FIXTURE.filesOnlyContent,
+  );
+
+  const insGoal = db.prepare(
+    `INSERT INTO goals (goal_id, project_slug, title, description, outcome, status, priority, created_at, updated_at, metadata)
+     VALUES (?, ?, ?, NULL, 'an outcome', 'active', 'high', '2026-08-01 10:00:00', '2026-08-01 10:00:00', '{}')`,
+  );
+  for (const goalId of TRIAGE_FIXTURE.goalIds) {
+    insGoal.run(goalId, project, `Goal ${goalId}`);
+  }
 }
 
 /**
@@ -344,6 +460,107 @@ export function learningState(dbPath: string, id: number): LearningState | null 
   }
 }
 
+// --- FR-247 readers ---------------------------------------------------------
+
+/**
+ * A brief's WHOLE mutable row. Read as a unit rather than field by field: the
+ * discriminating half of AC-3/AC-4 is "every field the caller did not name is
+ * byte-identical", and that is a claim about the row, not about `priority`.
+ */
+export interface BriefStatusState {
+  project: string;
+  brief_id: string;
+  title: string;
+  status: string;
+  priority: string | null;
+  effort: string | null;
+  phase: string | null;
+  brief_type: string | null;
+}
+
+export function briefStatusRows(dbPath: string): BriefStatusState[] {
+  const db = readTriageBrain(dbPath);
+  try {
+    return db
+      .prepare(
+        `SELECT project, brief_id, title, status, priority, effort, phase, brief_type
+           FROM brief_status ORDER BY project, brief_id`,
+      )
+      .all() as BriefStatusState[];
+  } finally {
+    db.close();
+  }
+}
+
+export function briefStatusRow(
+  dbPath: string,
+  project: string,
+  briefId: string,
+): BriefStatusState | null {
+  return (
+    briefStatusRows(dbPath).find(
+      (r) => r.project === project && r.brief_id === briefId,
+    ) ?? null
+  );
+}
+
+/** How many `brief_status` rows exist for a `(project, brief_id)`. 0 or 1. */
+export function briefStatusCount(
+  dbPath: string,
+  project: string,
+  briefId: string,
+): number {
+  return briefStatusRows(dbPath).filter(
+    (r) => r.project === project && r.brief_id === briefId,
+  ).length;
+}
+
+/** `entity_edges` rows, for the `attach_goal` assertions. */
+export interface EdgeState {
+  from_type: string;
+  from_id: string;
+  to_type: string;
+  to_id: string;
+  edge_type: string;
+}
+
+export function edgeRows(dbPath: string): EdgeState[] {
+  const db = readTriageBrain(dbPath);
+  try {
+    return db
+      .prepare(
+        "SELECT from_type, from_id, to_type, to_id, edge_type FROM entity_edges ORDER BY id",
+      )
+      .all() as EdgeState[];
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * The `NOT NULL` on `brief_status.status`, read out of the LIVE schema.
+ *
+ * `brain-write-bridge.ts#hasBriefStatusRow` keys the D6 precondition on
+ * `status !== null`, because `getBrief` LEFT-JOINs and therefore returns a
+ * non-null record with null status columns for a `brief_files`-only brief. That
+ * predicate is only sound while the column is `NOT NULL` — if a migration ever
+ * relaxes it, a real brief with a null status would start being refused AND the
+ * guard's meaning would quietly change. So the constraint is read from the
+ * schema the engine actually built, not assumed from `db.ts`.
+ */
+export function briefStatusStatusIsNotNull(dbPath: string): boolean {
+  const db = readTriageBrain(dbPath);
+  try {
+    const cols = db.prepare("PRAGMA table_info(brief_status)").all() as {
+      name: string;
+      notnull: number;
+    }[];
+    return cols.some((c) => c.name === "status" && c.notnull === 1);
+  } finally {
+    db.close();
+  }
+}
+
 /** The comparable columns of an `event_log` row. See the parity differ. */
 export interface EventRow {
   event_name: string;
@@ -394,6 +611,8 @@ export interface DomainSnapshot {
   dismissed_patterns: unknown[];
   learnings: unknown[];
   entity_edges: unknown[];
+  /** FR-247 — the table `set_priority` writes. One line; the rest was there. */
+  brief_status: unknown[];
 }
 
 /**
@@ -432,6 +651,13 @@ export function domainSnapshot(dbPath: string): DomainSnapshot {
       ),
       entity_edges: dump(
         "SELECT from_type, from_id, to_type, to_id, edge_type FROM entity_edges ORDER BY id",
+      ),
+      // FR-247. `title` and `status` are COMPARED, not excluded: the whole
+      // point of the priority parity arm is that the two paths change the same
+      // one column and leave the same others alone.
+      brief_status: dump(
+        `SELECT project, brief_id, title, status, priority, effort, phase, brief_type
+           FROM brief_status ORDER BY project, brief_id`,
       ),
     };
   } finally {

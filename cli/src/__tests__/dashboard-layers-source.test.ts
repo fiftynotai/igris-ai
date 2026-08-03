@@ -555,20 +555,141 @@ describe("FR-245 AC-6 · the board has no state-mutating affordance", () => {
     expect(dragHits(BOARD_FILES), `drag affordance: ${dragHits(BOARD_FILES).join(", ")}`).toEqual([]);
   });
 
+  /**
+   * The write vocabulary, in every spelling it can arrive in.
+   *
+   * FR-247 added two: `applyrefs` (the brief-write entry point on `useTriage`)
+   * and `briefwriteaction` (the two brief-addressed map rows). A vocabulary
+   * that did not grow with the write surface would keep passing while the
+   * surface it guards acquired new verbs.
+   */
+  const WRITE_VOCAB = [
+    "api.triage",
+    "triageaction",
+    "triage_actions",
+    "usetriage",
+    "applyrefs",
+    "briefwriteaction",
+    "onapprove",
+    "onreject",
+  ];
+
+  /**
+   * `Briefs.tsx` hosts BOTH arrangements, so FR-247 broke this scan's shape —
+   * legitimately, and the fix is not an exemption.
+   *
+   * The LIST now carries a real write path (a priority picker and a goal
+   * attach). The BOARD must not. Dropping `Briefs.tsx` from the corpus would
+   * have satisfied the assertion and silently ended its coverage; keeping the
+   * whole-file grep would have forbidden a feature the brief exists to ship.
+   *
+   * So the file is SLICED. `BriefBoardView` and everything it renders lives
+   * between the two section banners below, and the write vocabulary is asserted
+   * absent from THAT REGION. The slice is delimited by comment banners that
+   * already existed for readers, which makes them a contract — if either is
+   * renamed, `boardSlice()` throws rather than silently scanning "".
+   */
+  const BOARD_SLICE_START = "// Board (FR-245)";
+  const BOARD_SLICE_END = "// Detail";
+
+  /**
+   * The RAW file, because `code()` strips the very banners the slice is
+   * delimited by. Comments are stripped from the SLICE afterwards, so the
+   * assertions still run over code rather than over prose that names the verbs
+   * in order to forbid them.
+   */
+  function rawBriefs(): string {
+    return readFileSync(join(DASH_SRC, "pages", "layers", "Briefs.tsx"), "utf-8");
+  }
+  const stripComments = (src: string): string =>
+    src
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
+
+  function boardSlice(): string {
+    const src = rawBriefs();
+    const from = src.indexOf(BOARD_SLICE_START);
+    const to = src.indexOf(BOARD_SLICE_END, from);
+    if (from < 0 || to < 0) {
+      throw new Error(
+        `Briefs.tsx section banners moved (${BOARD_SLICE_START} / ${BOARD_SLICE_END}) — ` +
+          "this scan's corpus is delimited by them and would otherwise be empty",
+      );
+    }
+    return stripComments(src.slice(from, to));
+  }
+
+  /** Everything BEFORE the board banner — the shared mapper and the list. */
+  function listSlice(): string {
+    const src = rawBriefs();
+    return stripComments(src.slice(0, src.indexOf(BOARD_SLICE_START)));
+  }
+
   it("S2 — no board file names the write path", () => {
     for (const file of BOARD_FILES) {
+      if (file === join(DASH_SRC, "pages", "layers", "Briefs.tsx")) continue;
       const lower = code(file).toLowerCase();
-      for (const verb of [
-        "api.triage",
-        "triageaction",
-        "triage_actions",
-        "usetriage",
-        "onapprove",
-        "onreject",
-      ]) {
+      for (const verb of WRITE_VOCAB) {
         expect(lower, `${rel(file)} names ${verb}`).not.toContain(verb);
       }
     }
+  });
+
+  it("S2b — FR-247: the BOARD REGION of Briefs.tsx names no write verb", () => {
+    const lower = boardSlice().toLowerCase();
+    expect(lower.length, "the board slice is empty — the banners moved").toBeGreaterThan(
+      500,
+    );
+    for (const verb of WRITE_VOCAB) {
+      expect(lower, `the board region of Briefs.tsx names ${verb}`).not.toContain(verb);
+    }
+  });
+
+  it("S2c — SELF-NEGATIVE-CONTROL: the LIST region DOES name them", () => {
+    /*
+     * Without this, S2b is satisfiable by a slicer that returns the wrong
+     * region, by one that returns a comment block, and by a vocabulary that
+     * matches nothing anywhere. The exclusion above is load-bearing precisely
+     * because the same FILE contains both answers — so both are asserted.
+     */
+    const lower = listSlice().toLowerCase();
+    expect(lower, "the list region names no write path — is the write surface gone?").toContain(
+      "usetriage",
+    );
+    expect(lower).toContain("applyrefs");
+  });
+
+  it("S2d — FR-247: the board's row mapper is called with NO affordance builder", () => {
+    /*
+     * The structural half, and the one a vocabulary grep cannot reach.
+     * `briefRow` is ONE mapper shared by both arrangements (that sharing is
+     * FR-245's own guarantee that a card and a list row cannot drift), so the
+     * only thing keeping checkboxes and the priority control off board cards is
+     * that the board passes no second argument.
+     *
+     * `.map(briefRow)` would hand `Array#map`'s INDEX in as the builder — the
+     * compiler refuses that today, but a future `.map((r, i) => briefRow(r, i))`
+     * would type-check against a different signature. So the call shape is
+     * pinned here as well.
+     *
+     * Sibling: `browser-gate.mjs` G-BR-14c counts `.record-select` and write
+     * controls inside `.record-board` in a real browser, with
+     * `br14-affordance-on-board` to prove it can fire. Both are required.
+     */
+    const slice = boardSlice();
+    const calls = [...slice.matchAll(/briefRow\s*\(([^)]*)\)/g)].map((m) => m[1]!.trim());
+    expect(calls, "the board stopped calling briefRow — has it forked the mapper?").not.toEqual(
+      [],
+    );
+    for (const argList of calls) {
+      expect(argList.includes(","), `the board passed a second argument: briefRow(${argList})`).toBe(
+        false,
+      );
+    }
+    // ...and the mapper is never passed by reference, where `map` would supply
+    // the index as the second argument.
+    expect(slice).not.toMatch(/\.map\s*\(\s*briefRow\s*\)/);
   });
 
   it("S3 — no board file specifies a request method or calls fetch", () => {

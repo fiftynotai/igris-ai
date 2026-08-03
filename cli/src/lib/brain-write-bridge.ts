@@ -198,6 +198,72 @@
  * than assumed.
  *
  * ===========================================================================
+ * FR-247 PHASE-0 PROBE RESULTS — RECORDED VERBATIM (2026-08-03)
+ * ===========================================================================
+ * Read READ-ONLY off the operator brain with
+ * `sqlite3 "file:$HOME/.igris/memory/knowledge.db?mode=ro"`. The live brain was
+ * never opened read-write, and `schema_version` is v23 throughout.
+ *
+ * P0.2 — `brief_status.priority` histogram, ALL projects:
+ *     P2-Medium 726 · P1-High 606 · P3-Low 332 · P0-Critical 87 · NULL 59
+ *     · bare `P2` 5 · bare `P1` 2 · `P4-Trivial` 1
+ *   (The plan predicted `P2-Medium` 724; the drift is +2 and changes nothing.)
+ *   So the NON-canonical population is 8 rows and it is REAL. D2: the picker
+ *   offers the canonical four plus CLEAR; the 8 stay VISIBLE (the list badge
+ *   renders `row.priority` verbatim, the FILTER's options are derived from the
+ *   rows, and the picker renders a non-canonical current value as a DISABLED
+ *   `not offerable` entry). TD-338 owns folding them — they arrived by SYNC,
+ *   which is an LWW column copy with no normaliser, so folding here without
+ *   closing that door just re-runs.
+ *
+ * P0.3 — THE D6 POPULATION, measured rather than assumed:
+ *     brief_files rows with NO matching brief_status row = **1**
+ *   Non-zero, so the guard below has a real subject; small, so an operator is
+ *   unlikely to meet it by accident. The red-first proof therefore needs a
+ *   SEEDED fixture (`TRIAGE_FIXTURE.filesOnlyBrief`), which is what it uses.
+ *
+ * P0.4 — THE BR-078 GOAL JOIN (D3). `goals/read.ts#getGoal` builds
+ *   `serving_briefs` as
+ *     FROM entity_edges e JOIN brief_status bs ON bs.brief_id = e.from_id
+ *     WHERE e.to_type='goal' AND e.to_id=? AND e.from_type='brief' …
+ *   — there is **no project predicate on either side**. Two consequences, both
+ *   recorded rather than fixed here (see D3 / R6; a TD is owed):
+ *     (a) a `serves_goal` edge is genuinely project-ambiguous, so the dashboard
+ *         is MINTING ambiguity when it attaches. `attach_goal`'s row drops the
+ *         ref's `project` explicitly, at the point it is minted, so the loss is
+ *         visible in the map rather than buried in a builder;
+ *     (b) the join is an INNER join on `brief_status`, so an edge whose brief
+ *         has no `brief_status` row is INVISIBLE in the goal detail. That is
+ *         the second, independent reason the precondition below refuses such a
+ *         ref for `attach_goal` too, not only for `set_priority`.
+ *
+ * P0.5 — THE AUTO-PUSH FENCE (R4). `sync/index.ts:720` wires
+ *   `bus.on('brief.synced', onImmediateEvent)` UNCONDITIONALLY, and that
+ *   handler fire-and-forgets `pushTables({brief_status, brief_files})` to
+ *   `remote_brain.url` whenever `_autoPushConfig` is non-null. `_autoPushConfig`
+ *   is `loadAutoPushConfig()`, which reads `join(homedir(), '.igris',
+ *   'config.json')` and returns null unless `config.auto_push === true`.
+ *   On this machine `auto_push` is ABSENT (top-level keys: cli_targets,
+ *   cognition, database, features, installed_at, onboarding, paths,
+ *   remote_brain, source_repo, version, vps), so the path is inert — but
+ *   `remote_brain.url` IS configured (`https://brain.fifty.dev`), so the only
+ *   thing between a fixture write and a real egress is one boolean in a file
+ *   the tests do not own. Every mutating suite therefore arms
+ *   `armAutoPushFence()` (`__tests__/auto-push-fence.ts`), which points `HOME`
+ *   at the sandbox AND replaces `globalThis.fetch` with a recording thrower,
+ *   and ASSERTS both are armed before a single write. A priority write is the
+ *   first dashboard mutation that can reach that listener at all: none of
+ *   FR-241's five actions emits `brief.synced`.
+ *
+ * P0.6 — `edge.created` / `goal.created` are in NEITHER
+ *   `monitoring/index.ts#EVENT_COMPONENT_MAP` (:46-100) NOR monitoring's
+ *   `bus.on` list (:263-292) — re-grepped, whole component, zero hits for
+ *   /edge|goal/. `'brief.synced': 'briefs'` IS in both (:56, :272). So:
+ *   `set_priority` writes a REAL `event_log` row and is AC-5's positive
+ *   control; `attach_goal` is DECLARED-EMPTY and its "something happened" half
+ *   is carried by `entity_edges`, which the parity differ already selects.
+ *
+ * ===========================================================================
  * THIS FILE CONTAINS ZERO SQL, and that is asserted mechanically by
  * `dashboard-server.test.ts`'s scope scan. It is not a query layer, it is a
  * DELEGATION layer: nothing here parses SQL and nothing here knows what a
@@ -212,6 +278,9 @@ import { brainDbPath } from "./paths.js";
 import {
   ENGINE_MODULE_REL,
   brainBundleCandidates,
+  lastLayerReadersFailure,
+  loadLayerReaders,
+  openBrainReadonly,
   resolveBundleModule,
 } from "./brain-bridge.js";
 
@@ -281,45 +350,228 @@ type BootEngineFn = (config: {
  * keys, so a client that posts `{reason, brief_id, winner_id}` at `dismiss`
  * cannot reach the handler with `winner_id`. (The gateway would reject it too —
  * this is the defence-in-depth half, and it keeps the 400 client-side.)
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE TD-311 BOUNDARY — READ THIS BEFORE ADDING A ROW
+ * ───────────────────────────────────────────────────────────────────────────
+ * `brief_status.status`, `.phase` and a brief's `content`/`title`/`filename`
+ * are the BUILD-STATE INVARIANT. `docs/architecture/brief-state-source-of-truth.md`
+ * (TD-311/TD-257) makes the brain the single source of truth for them, and the
+ * `/hunt` state machine plus the pre-commit phase guard are their only sanctioned
+ * writers. A dashboard that could set `status` would be a second writer for the
+ * one column whose whole value is having exactly one.
+ *
+ * So, as a RULE OVER THIS MAP and not as a convention:
+ *
+ *   1. **No row may name `status`, `phase`, `content`, `title` or `filename`
+ *      in `extra`, in `fixed`, in `refKeys`, or as the TARGET of a `rename`.**
+ *      All four, not just the first two — the runtime predicate covers every
+ *      one, and `rename` is the route a row-adder is most likely to think is
+ *      permitted, because it names the forbidden field on the RIGHT-hand side
+ *      where a reader's eye does not look for it (`rename: {reason: "status"}`
+ *      would smuggle a status write past a rule that only read `extra`).
+ *      Asserted at runtime over the frozen object
+ *      by `dashboard-server.test.ts` (AC-3(a)), with a self-negative-control
+ *      that runs the same predicate over a deliberately dirty map and requires
+ *      it to fire — a comment cannot fool a runtime set intersection, and a
+ *      predicate that only ever reports "clean" is indistinguishable from a
+ *      broken one (learning 1094).
+ *   2. **`igris_brief_sync` is FORBIDDEN BY NAME** — for a reason that is NOT
+ *      the one BR-080/TD-323 give, and the difference was measured rather than
+ *      read. Those record it as an upsert whose `ON CONFLICT DO UPDATE SET
+ *      title = excluded.title, status = excluded.status, …` binds an OMITTED
+ *      `title` as NULL (`briefs.ts:139-161`). True of the SQL, and UNREACHABLE
+ *      through this door: the tool declares
+ *      `required: ['project','brief_id','title','status']`, so the gateway's
+ *      BR-080 walk refuses a title-less call before the handler runs
+ *      (`dashboard-triage-endpoint.test.ts` G-TR-11 drives it and quotes the
+ *      verbatim rejection).
+ *      The reason that survives is weaker and sufficient: because it REQUIRES
+ *      `title` and `status`, every call OVERWRITES them. A row using this tool
+ *      could not express a priority-only write at all — it would be a full-row
+ *      write into the invariant above by construction, whatever the caller
+ *      intended. `igris_brief_update` is the correct tool precisely because its
+ *      SET list is built from the fields actually supplied.
+ *   3. **One row = one `gateway.dispatch`.** No row may fire two tools or thread
+ *      one tool's output into another's input. This is why goal CREATION is
+ *      deferred to FR-249 rather than shipped here: `dispatchTriage` discards the
+ *      tool payload (`results.push({id, ok:true, error:null})`), so
+ *      create-then-attach would need one row to orchestrate — and the property
+ *      that makes this map a review artifact is that it cannot.
+ *
+ * If a future brief needs to move `status` from the dashboard, that is a
+ * decision about TD-311's boundary and it belongs in a brief that argues the
+ * boundary, not in a diff that adds a row here.
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * TWO TARGET KINDS (FR-247) — AND WHY THAT IS NOT A NEW ENDPOINT
+ * ───────────────────────────────────────────────────────────────────────────
+ * The five FR-241 rows address a row by INTEGER id. A brief is not addressable
+ * that way: `igris_brief_update` declares `required: ['project','brief_id']`
+ * (`briefs/index.ts:377`), and although `brief_status.id` exists and is even on
+ * the wire, NO brain tool accepts it — translating id -> (project, brief_id) in
+ * this tier would mean a SQL lookup, which the zero-SQL scan forbids by
+ * construction.
+ *
+ * So the ROW SHAPE widens once, additively: `target` says whether the caller
+ * supplies `ids: number[]` or `refs: {project, brief_id}[]`. `POST /api/triage`
+ * is unchanged as a PATH — the surface stays sixteen GET + one POST, which
+ * `dashboard.bats`'s exact-set string asserts byte-identically. That is the
+ * payoff of refusing a new endpoint, and it is a measurement rather than a
+ * claim.
+ *
+ * `refKeys` and `fixed` are what keep a `brief-ref` row honest:
+ *   - `fixed` values come from the MAP, never from the caller. If
+ *     `attach_goal`'s `edge_type` were caller-supplied, that ONE row would
+ *     silently become ~20 mutations (`VALID_EDGE_TYPES`). Only `goal_id` is
+ *     caller-supplied, and `rename` maps it to `to_id`.
+ *   - `refKeys` states, per row, WHICH parts of the ref reach the tool.
+ *     `set_priority` forwards both; `attach_goal` forwards `brief_id` alone,
+ *     and the ABSENCE of `project` is the BR-078 asymmetry written down where
+ *     the ambiguity is minted (Phase-0 P0.4).
+ *
+ * `idKey` and `refKeys` are mutually exclusive and each is optional here rather
+ * than modelled as a discriminated union, deliberately: a union would make
+ * `TRIAGE_ACTIONS.dismiss?.idKey` a type error across four shipped suites for
+ * no behavioural gain, and the invariant ("exactly one of the two, matching
+ * `target`") is asserted at RUNTIME over the frozen object instead — which is
+ * the stronger instrument here anyway, since it also covers a row added by a
+ * cast.
  */
+
+/** Every body field any row may name. The union IS the allow-list. */
+export type TriageExtraKey = "reason" | "brief_id" | "priority" | "goal_id";
+
+/** FR-247 — how a `brief-ref` row addresses its subject. */
+export interface BriefRef {
+  project: string;
+  brief_id: string;
+}
+
 export interface TriageActionSpec {
   readonly tool: string;
   readonly bulk: boolean;
-  readonly idKey: "id" | "learning_id";
-  readonly extra: readonly ("reason" | "brief_id")[];
+  /** FR-247. `"id"` = `ids: number[]`; `"brief-ref"` = `refs: BriefRef[]`. */
+  readonly target: "id" | "brief-ref";
+  /** `target: "id"` only. The tool's own required id argument name. */
+  readonly idKey?: "id" | "learning_id";
+  /**
+   * `target: "brief-ref"` only. `<tool argument> -> <which half of the ref>`.
+   * A ref field that is not named here NEVER reaches the tool.
+   */
+  readonly refKeys?: Readonly<Record<string, keyof BriefRef>>;
+  readonly extra: readonly TriageExtraKey[];
+  /** Constants the MAP pins. Never caller-supplied. See the header. */
+  readonly fixed?: Readonly<Record<string, string>>;
+  /** `<body field> -> <tool argument>`, when they differ. */
+  readonly rename?: Readonly<Record<string, string>>;
 }
 
 export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
   Object.freeze({
+    // --- FR-241: the five id-addressed triage rows. `target` is the ONLY
+    //     field FR-247 added to them, and `dashboard-server.test.ts` asserts
+    //     the other fields are byte-identical to their FR-241 values, so the
+    //     widening is provably additive rather than argued to be.
     dismiss: Object.freeze({
       tool: "igris_suggestion_dismiss",
       bulk: true,
+      target: "id",
       idKey: "id",
       extra: Object.freeze(["reason"]),
     }),
     acted: Object.freeze({
       tool: "igris_suggestion_acted",
       bulk: true,
+      target: "id",
       idKey: "id",
       extra: Object.freeze(["brief_id"]),
     }),
     apply: Object.freeze({
       tool: "igris_suggestion_apply_action",
       bulk: false,
+      target: "id",
       idKey: "id",
       extra: Object.freeze([]),
     }),
     approve: Object.freeze({
       tool: "igris_perception_approve",
       bulk: true,
+      target: "id",
       idKey: "learning_id",
       extra: Object.freeze([]),
     }),
     reject: Object.freeze({
       tool: "igris_perception_reject",
       bulk: true,
+      target: "id",
       idKey: "learning_id",
       extra: Object.freeze(["reason"]),
+    }),
+
+    // --- FR-247: the two brief-addressed rows.
+    /**
+     * Set a brief's priority. `igris_brief_update` is a GENUINE partial update
+     * — read, not assumed: `allowedColumns` maps each field and the SET list is
+     * built by `if (val !== undefined)`, so a priority-only call emits
+     * `priority = ?, updated_at = ?` and leaves `title` alone
+     * (`briefs.ts:629-647`).
+     *
+     * IT HAS A FORK, AND THE FORK IS WHY `dispatchBriefWrite` READS FIRST. When
+     * the brief exists in `brief_files` with NO `brief_status` row, the same
+     * call takes the ELSE branch (`briefs.ts:653-676`) and creates a row with
+     * `args.title ?? ''` and `args.status ?? 'Ready'` — so a priority-only
+     * write would blank the title AND invent a status, violating the TD-311
+     * boundary above through the very handler that is otherwise correct. The
+     * precondition read refuses such a ref; see `dispatchBriefWrite`.
+     *
+     * The VALUE is not validated here. Three layers, three jobs: the parser
+     * allow-lists the KEY, the brain's `normalizePriority` folds the VALUE
+     * (`briefs.ts:632`), and the picker prescribes the CHOICES
+     * (`triage/model.ts#CANONICAL_PRIORITIES`). A fourth copy of the vocabulary
+     * in this tier would be a fourth thing to drift.
+     */
+    set_priority: Object.freeze({
+      tool: "igris_brief_update",
+      bulk: true,
+      target: "brief-ref",
+      refKeys: Object.freeze({ project: "project", brief_id: "brief_id" }),
+      extra: Object.freeze(["priority"]),
+    }),
+    /**
+     * Attach a brief to an EXISTING goal. An EDGE write, not a brief-column
+     * write — which is why it belongs in this map (a second map would be a
+     * second place a mutation can be added, which the change procedure forbids)
+     * and why `fixed` exists.
+     *
+     * `from_type`/`to_type`/`edge_type` are pinned HERE. The tool's `edge_type`
+     * is an enum over `VALID_EDGE_TYPES`; a caller-supplied one would make this
+     * single row ~20 different mutations behind one confirm.
+     *
+     * `refKeys` FORWARDS ONLY `brief_id`. `entity_edges.from_id` is the BARE
+     * brief id with no project column, and `BR-001` names a different brief in
+     * 25 projects — so a `serves_goal` edge is project-ambiguous and
+     * `getGoal`'s `serving_briefs` join has no project predicate (Phase-0
+     * P0.4). That is PRE-EXISTING (BR-078) and not this brief's to fix, but the
+     * dashboard is minting new instances of it, so the drop is written down at
+     * the point it happens rather than hidden in a builder.
+     *
+     * GOAL CREATION IS NOT HERE. Deferred to FR-249 by operator decision, on
+     * rule 3 above — see the TD-311 boundary block. `docs/dashboard.md` states
+     * the deferral and its reasoning so this reads as a decision, not a gap.
+     */
+    attach_goal: Object.freeze({
+      tool: "igris_edge_create",
+      bulk: true,
+      target: "brief-ref",
+      refKeys: Object.freeze({ from_id: "brief_id" }),
+      extra: Object.freeze(["goal_id"]),
+      fixed: Object.freeze({
+        from_type: "brief",
+        to_type: "goal",
+        edge_type: "serves_goal",
+      }),
+      rename: Object.freeze({ goal_id: "to_id" }),
     }),
   } as Record<string, TriageActionSpec>);
 
@@ -616,9 +868,18 @@ export function resetWriteEngine(): void {
 // Dispatch
 // ---------------------------------------------------------------------------
 
-/** One id's outcome. `ok:false` carries the HANDLER's or GATEWAY's own message. */
+/**
+ * One item's outcome. `ok:false` carries the HANDLER's or GATEWAY's own message.
+ *
+ * FR-247: exactly one of `id` / `ref` is populated, matching the row's
+ * `target`. `id` became nullable rather than gaining a sentinel because `0` and
+ * `-1` are both things an operator could read as an id, and a result the client
+ * cannot attribute to a row is a result it cannot render.
+ */
 export interface TriageItemResult {
-  id: number;
+  id: number | null;
+  /** FR-247 — the `(project, brief_id)` this result belongs to, or `null`. */
+  ref: BriefRef | null;
   ok: boolean;
   /** The brain's verbatim message when `ok` is false; null otherwise. */
   error: string | null;
@@ -644,6 +905,15 @@ export function buildTriageArgs(
   id: number,
   extra: Record<string, string>,
 ): Record<string, unknown> {
+  if (spec.target !== "id" || spec.idKey === undefined) {
+    // Not reachable through the route (`triage()` branches on `target` first),
+    // but this function is exported and a silent `{undefined: 3}` argument
+    // object would reach the gateway as a TD-128 rejection whose message named
+    // the wrong problem.
+    throw new TypeError(
+      `buildTriageArgs called for a non-id action (${spec.tool}, target=${spec.target})`,
+    );
+  }
   const args: Record<string, unknown> = { [spec.idKey]: id };
   for (const key of spec.extra) {
     const value = extra[key];
@@ -651,6 +921,43 @@ export function buildTriageArgs(
     // presence-not-truthiness rule, but a caller that simply did not send the
     // key must not have one invented for it.
     if (value !== undefined) args[key] = value;
+  }
+  return args;
+}
+
+/**
+ * FR-247 — build one BRIEF-addressed dispatch's args from the map row.
+ *
+ * Fully declarative: every argument that reaches the tool comes from `fixed`,
+ * from `refKeys` or from the `extra` allow-list, all three of which are on the
+ * row a reviewer is already reading. There is no branch on the tool NAME here,
+ * because a builder that special-cased `igris_edge_create` would be a second
+ * copy of the map, in code, out of the reviewer's line of sight.
+ *
+ * Consequences that matter and are asserted (`G-TR-9`):
+ *  - a caller-supplied `status`/`content`/`title` cannot reach the tool, even
+ *    if the parser were to let it past — the built object's key set is exactly
+ *    `fixed ∪ refKeys ∪ (extra ∩ supplied)`;
+ *  - `attach_goal` really does drop the ref's `project`, because `refKeys` does
+ *    not name it (P0.4 / BR-078).
+ */
+export function buildBriefArgs(
+  spec: TriageActionSpec,
+  ref: BriefRef,
+  extra: Record<string, string>,
+): Record<string, unknown> {
+  if (spec.target !== "brief-ref" || spec.refKeys === undefined) {
+    throw new TypeError(
+      `buildBriefArgs called for a non-brief-ref action (${spec.tool}, target=${spec.target})`,
+    );
+  }
+  const args: Record<string, unknown> = { ...(spec.fixed ?? {}) };
+  for (const [argKey, refField] of Object.entries(spec.refKeys)) {
+    args[argKey] = ref[refField];
+  }
+  for (const key of spec.extra) {
+    const value = extra[key];
+    if (value !== undefined) args[spec.rename?.[key] ?? key] = value;
   }
   return args;
 }
@@ -702,6 +1009,7 @@ export async function dispatchTriage(
       if (res.isError === true) {
         results.push({
           id,
+          ref: null,
           ok: false,
           // The handler's verbatim text (`Suggestion 12 already acted; cannot
           // dismiss`). Re-wording it here would hide the one fact the operator
@@ -709,15 +1017,226 @@ export async function dispatchTriage(
           error: res.content?.[0]?.text ?? "brain reported an error",
         });
       } else {
-        results.push({ id, ok: true, error: null });
+        results.push({ id, ref: null, ok: true, error: null });
       }
     } catch (err) {
       results.push({
         id,
+        ref: null,
         ok: false,
         error: err instanceof Error ? err.message : String(err),
       });
     }
   }
+  return { ok: true, results };
+}
+
+// ---------------------------------------------------------------------------
+// FR-247 — the BRIEF-addressed dispatch, and its precondition read
+// ---------------------------------------------------------------------------
+
+/**
+ * The refusal message for a ref whose brief has no `brief_status` row.
+ *
+ * Exported so the test asserts the SHIPPED string rather than a copy of it, and
+ * written as a function so the two facts it states stay attached to the ref
+ * they are about.
+ *
+ * Both halves are real and were measured (Phase-0 P0.3/P0.4):
+ *  - `igris_brief_update` would CREATE the row, with an empty title and an
+ *    invented `status`, which is a write into TD-311's invariant;
+ *  - `igris_edge_create` would succeed and the edge would be INVISIBLE, because
+ *    `getGoal`'s `serving_briefs` inner-joins `brief_status`.
+ * So the refusal is uniform across both brief-ref rows, for two different
+ * reasons, and neither reason is speculative.
+ */
+export function briefStatusRequiredReason(ref: BriefRef): string {
+  return (
+    `FR-247 ${ref.project}/${ref.brief_id}: no brief_status row — refusing. ` +
+    `A priority write would CREATE one with status='Ready' and title='' ` +
+    `(briefs.ts:653-676), and a serves_goal edge to it would be invisible to ` +
+    `getGoal's brief_status join (BR-078).`
+  );
+}
+
+/** The other refusal: the ref names a brief that is in NEITHER table. */
+export function unknownBriefReason(ref: BriefRef): string {
+  return `FR-247 ${ref.project}/${ref.brief_id}: no such brief in this project — refusing.`;
+}
+
+/**
+ * Does this ref have a `brief_status` row? THE PREDICATE IS `status !== null`,
+ * NOT `record !== null`, AND THE DIFFERENCE IS THE WHOLE GUARD.
+ *
+ * `getBrief` (`briefs-read.ts:218-277`) tries `brief_files LEFT JOIN
+ * brief_status` FIRST, and only falls back to a `brief_status`-only lookup if
+ * that misses. So for exactly the population this guard exists to catch — a
+ * brief in `brief_files` with no `brief_status` row — it returns a NON-NULL
+ * record whose six status-side fields are all `null`. A `record !== null` test
+ * would therefore have passed every ref it was written to refuse: the guard
+ * would have been present, readable, commented, and vacuous.
+ *
+ * `status` is the right field of the six to key on because it is the only one
+ * the schema makes `NOT NULL` (`db.ts:299`, `status TEXT NOT NULL`) — `title`
+ * is also NOT NULL but the fork writes `''` into it, and `priority`, `effort`,
+ * `phase` and `brief_type` are all legitimately nullable, so a guard on any of
+ * those would refuse real briefs. This function therefore DEPENDS on that
+ * `NOT NULL`, and `dashboard-triage-endpoint.test.ts` pins it: it reads the
+ * live DDL out of the sandbox schema and asserts the constraint is there, so a
+ * migration relaxing it fails loudly here instead of silently un-arming this.
+ */
+function hasBriefStatusRow(record: { status: unknown } | null): boolean {
+  return record !== null && record.status !== null && record.status !== undefined;
+}
+
+/** Why the precondition read itself could not run. Degrades the whole call. */
+function preconditionUnavailable(cause: string): string {
+  return (
+    `FR-247 precondition read unavailable: ${cause}. ` +
+    `Refusing every ref rather than writing unguarded.`
+  );
+}
+
+/**
+ * Dispatch a BRIEF-addressed action across refs, SEQUENTIALLY (FR-247).
+ *
+ * ───────────────────────────────────────────────────────────────────────────
+ * THE PRECONDITION READ, AND WHY IT USES THE **READ** DOOR
+ * ───────────────────────────────────────────────────────────────────────────
+ * Every ref is checked through `loadLayerReaders().getBrief` on an
+ * `openBrainReadonly()` handle before ANY dispatch. Three properties come out
+ * of using FR-240's read door rather than a query here:
+ *
+ *   - no SQL enters this tier (the zero-SQL scan stays true by construction);
+ *   - the handle is opened with `query_only = ON`, so an accidental write on it
+ *     throws `SQLITE_READONLY` rather than succeeding quietly;
+ *   - ONE read-only connection per POST, not per ref. A read-only connection is
+ *     safe alongside the live write engine; a read-WRITE one is not — opening
+ *     and closing a second read-write connection while the engine holds the
+ *     file leaves the engine writing into an unlinked `-wal`, and every later
+ *     reader then reports the PRE-dispatch state (measured; see
+ *     `dashboard-triage-fixture.ts`'s header).
+ *
+ * THE THREE ALTERNATIVES, REJECTED:
+ *   - *trust the handler* — it invents `status`; AC-3 asks for a mechanical
+ *     guarantee, not a reviewed one;
+ *   - *guard client-side* — a client guard is not a guard;
+ *   - *fix `handleBriefUpdate`* — a behaviour change to a brain tool with many
+ *     callers, plus packed bytes, for a defect nobody asked this brief to fix.
+ *     A TD is owed instead.
+ *
+ * A DEGRADED READ LAYER DEGRADES THE WHOLE CALL. It never silently skips the
+ * guard: the failure returns `ok:false` and the route renders it as
+ * `200 + degraded, applied: 0`, which is the same shape a down write surface
+ * produces and the same shape the UI already knows how to say.
+ */
+export async function dispatchBriefWrite(
+  action: string,
+  refs: readonly BriefRef[],
+  extra: Record<string, string> = {},
+): Promise<DispatchTriageResult> {
+  const spec = triageAction(action);
+  if (spec === null || spec.target !== "brief-ref") {
+    return {
+      ok: false,
+      kind: "engine_unavailable",
+      reason: `unknown brief-write action: ${action}`,
+    };
+  }
+
+  // The read door is loaded lazily and separately from the write engine, so a
+  // bundle that can read but not boot still reports the RIGHT cause.
+  const readers = await loadLayerReaders();
+  if (readers === null) {
+    return {
+      ok: false,
+      kind: "brain_unavailable",
+      reason: preconditionUnavailable(
+        lastLayerReadersFailure() ?? "the brain read layer could not be loaded",
+      ),
+    };
+  }
+
+  const booted = await bootWriteEngine();
+  if (!booted.ok) return booted;
+
+  // ONE handle for the whole POST. Opened AFTER the engine so the two orders
+  // cannot differ between a first and a subsequent request.
+  const db = openBrainReadonly();
+  if (db === null) {
+    return {
+      ok: false,
+      kind: "brain_unavailable",
+      reason: preconditionUnavailable("no read-only brain handle"),
+    };
+  }
+
+  const results: TriageItemResult[] = [];
+  try {
+    for (const ref of refs) {
+      let record: { status: unknown } | null;
+      try {
+        record = readers.getBrief(db, ref.project, ref.brief_id);
+      } catch (err) {
+        // A THROWN precondition is a per-ref refusal, never an assumed pass.
+        results.push({
+          id: null,
+          ref,
+          ok: false,
+          error: preconditionUnavailable(
+            err instanceof Error ? err.message : String(err),
+          ),
+        });
+        continue;
+      }
+      if (!hasBriefStatusRow(record)) {
+        results.push({
+          id: null,
+          ref,
+          ok: false,
+          // The two refusals are DISTINGUISHED: "this brief does not exist" and
+          // "this brief exists but has no status row" send an operator to
+          // completely different places, and collapsing them would hide the
+          // second — which is the interesting one.
+          error:
+            record === null
+              ? unknownBriefReason(ref)
+              : briefStatusRequiredReason(ref),
+        });
+        continue;
+      }
+
+      try {
+        const res = await booted.engine.gateway.dispatch(
+          spec.tool,
+          buildBriefArgs(spec, ref, extra),
+        );
+        results.push(
+          res.isError === true
+            ? {
+                id: null,
+                ref,
+                ok: false,
+                error: res.content?.[0]?.text ?? "brain reported an error",
+              }
+            : { id: null, ref, ok: true, error: null },
+        );
+      } catch (err) {
+        results.push({
+          id: null,
+          ref,
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  } finally {
+    try {
+      db.close();
+    } catch {
+      /* a teardown must not throw */
+    }
+  }
+
   return { ok: true, results };
 }

@@ -652,6 +652,69 @@ interface PackReport {
  *   with 10_169 B of slack. Kept as the provenance of that figure, not as the
  *   current one.)
  *
+ * FR-247 MEASURED LAST, after its final code-touching step:
+ *   packed              1_756_181    unpacked 6_831_457, 797 entries (UNCHANGED
+ *                                    — FR-247's one new file, `auto-push-fence.ts`,
+ *                                    lives in `src/__tests__` and `tsconfig`
+ *                                    excludes it from `dist`)
+ *   cumulative delta    +443.7 KB    (454_330 B over PACK_BASELINE_PACKED)
+ *   FR-247's own share  +11_132 B    against FR-246's 1_745_049  (10.84 KB)
+ *   headroom remaining  ~106.3 KB    (108_870 B under TD-329's +550)
+ *   built app chunk     559_384 B    (+5_899 B over FR-246's 553_485)
+ *   chunk slack         616 B        (560_000 B limit; Vite kB = 1000 B)
+ *
+ *   EVERY SUBTRACTION ABOVE IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT, not
+ *   carried forward: 1_756_181 - 1_745_049 = 11_132; 1_756_181 - 1_301_851 =
+ *   454_330; 550*1024 - 454_330 = 108_870; 559_384 - 553_485 = 5_899;
+ *   560_000 - 559_384 = 616. That discipline is the FR-246 bracket below —
+ *   a delta carries no copy of either operand, so a class-grep for the packed
+ *   value walks straight past a stale one.
+ *
+ *   BOTH SURFACES WERE ESTIMATED BEFORE THE WORK, which is the FR-246 lesson
+ *   applied. The plan said 2.5-4.6 KB of chunk and 17-32 KB of packed. Actual:
+ *   **5_899 B of chunk (over the estimate) and 11_132 B of packed (under it)**.
+ *   The chunk over-run is the honest one to explain: the estimate costed a
+ *   picker, a goal control, an affordance parameter and a confirm copy, and did
+ *   not cost the SELECTION BAR that hosts them — a component with two labelled
+ *   selects, two buttons, a failure banner and a dialog. The packed under-run
+ *   has the same cause as FR-244's: the bulky work is a browser gate
+ *   (`cli/scripts/`, not packed), four suites (excluded from `dist`), `docs/`
+ *   and MAINTAINING. What DID cost is `dist/lib/**` — `brain-write-bridge.ts`
+ *   grew a Phase-0 probe block, the TD-311 boundary paragraph and two map rows,
+ *   and `tsc` PRESERVES comments into `dist/` and pays for them TWICE — plus
+ *   `cli/CHANGELOG.md`, which ships. **`brain-mcp-server/**` was not touched at
+ *   all**, and that zero is the single largest reason this row is small.
+ *
+ *   THE CHUNK IS NOW THE BINDING CEILING BY A WIDE MARGIN, and the next
+ *   dashboard brief has to plan around it rather than budget against it:
+ *   **616 B**, against this gate's 106.3 KB. That is not headroom. A brief that
+ *   adds any UI to this bundle should expect to SPLIT the chunk (a route-level
+ *   dynamic import for the layers or the graph) as its first step, not as a
+ *   cut-ladder rung. **Raise NEITHER limit** — TD-329 raised the packed one
+ *   ONCE, before the work, as a recorded operator decision, and that is not a
+ *   precedent.
+ *
+ *   THE CUT LADDER WAS DECLARED BEFORE THE WORK AND WAS NOT INVOKED. Rung by
+ *   rung, with what each was measured to be worth:
+ *     1. drop the brief-flavoured confirm copy for `confirmCopy`'s generic
+ *        tier-1 path — **NOT AVAILABLE.** That path says "there is no
+ *        un-set_priority tool -- reversing this means hand-editing the brain",
+ *        which is FALSE for a reversible column write, in the register reserved
+ *        for permanent deletion. The nearest available variant is dropping the
+ *        confirm DIALOG entirely, MEASURED at 711 B (559_384 -> 558_673) — not
+ *        taken, because a confirm is what makes a 200-brief bulk safe and 711 B
+ *        does not buy that.
+ *     2/3. move either write to the DETAIL view only — these rungs assume a
+ *        detail-view control already exists as the cheap alternative. It does
+ *        not; building one costs MORE than the list control it would replace.
+ *     4. drop goal attach from v1 — would gut AC-2, and the operator's D1 is
+ *        explicit that attach-to-existing is the half that ships.
+ *     5. no per-row selection — weakens `confineToKeys`' stated safety property.
+ *   Two savings WERE taken, and neither is a ladder rung because neither costs a
+ *   property: an unmotivated `write.actions` membership check in `Briefs.tsx`
+ *   (a state a single-package install cannot reach) and three over-long UI
+ *   strings. Together **461 B** (559_845 -> 559_384).
+ *
  * FR-246 MEASURED LAST, after its final code-touching step:
  *   packed              1_745_049    unpacked 6_783_829, 797 entries (+4: the
  *                                    compiled `briefs-read` and
@@ -715,8 +778,10 @@ interface PackReport {
  *   the one that actually moved (26.42 KB, a 7x ratio). **Estimate BOTH
  *   ceilings, or say which one the estimate is about.**
  *
- *   ONE READING FOR THE NEXT PLANNER, because it is still closer to its own
- *   limit than this gate is: the single minified app chunk now measures
+ *   ONE READING FOR THE NEXT PLANNER (SUPERSEDED BY FR-247's ROW ABOVE — the
+ *   chunk is now 559_384 B with 616 B of slack. Kept as the provenance of the
+ *   6_515 B figure, not as the current one), because it is still closer to its
+ *   own limit than this gate is: the single minified app chunk then measured
  *   **553.49 kB** (553_485 B on disk) against `dashboard/vite.config.ts`'s
  *   `chunkSizeWarningLimit` of 560 kB — **6_515 B of slack**. Note the UNITS
  *   differ from this gate's: Vite reports kB as 1000 bytes, the ceiling here is
@@ -822,18 +887,25 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~117.2 KB is what is left (the
- * FR-246 reading above; ~143.6 KB was FR-245's, ~147.2 KB FR-244's,
- * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded). The "five
- * GL-006 briefs remain" this sentence used to carry was not re-derivable, so it
- * is now read off the goal's own edges instead. Re-derived READ-ONLY at FR-246
- * (`serves_goal` edges into GL-006, deleted-flag excluded): BR-082, FR-244,
- * FR-245, TD-326, TD-328 and TD-329 are `Done`, FR-246 is the brief writing
- * this line, and **FR-247 is the single remaining `Ready` one**. Its
- * ~83-115 KB estimate against shipped analogues stands on the same basis as
- * before — and note it is now the
- * same order as the whole remaining margin, which was not true when this
- * sentence was written.
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~106.3 KB is what is left (the
+ * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
+ * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
+ * superseded). **BUT THE PACKED FIGURE IS NO LONGER THE ONE THAT BINDS.** The
+ * app chunk has **616 B** of slack against `vite.config.ts`'s
+ * `chunkSizeWarningLimit` (559_384 B of 560_000). A brief adding ANY UI to this
+ * bundle should plan a route-level code split as its FIRST step, not as a
+ * cut-ladder rung — there is no longer a budget to cut from.
+ *
+ * The "five GL-006 briefs remain" this sentence used to carry was not
+ * re-derivable, so it is read off the goal's own edges instead. Re-derived
+ * READ-ONLY at FR-247 (`serves_goal` edges into GL-006, deleted-flag excluded,
+ * project-qualified to `igris-ai` — the join in `getGoal` is NOT
+ * project-qualified, which is BR-078 and is why this reading adds the
+ * predicate itself): BR-082, FR-244, FR-245, FR-246, TD-326, TD-328 and TD-329
+ * are `Done`, and **FR-247 is the brief writing this line**. The goal's
+ * `serves_goal` set is therefore EXHAUSTED — there is no next brief on GL-006
+ * whose estimate this paragraph could carry, and the deferred FR-249 (goal
+ * creation from the dashboard) is not yet attached to it.
  *
  * THE RATIOS ARE GONE, DELIBERATELY, AT THE FOURTH FAILURE. This sentence used
  * to translate the headroom into "N FR-240s of slack" and to name which past
@@ -904,13 +976,16 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~117.2 KB is what is left** (the
- * FR-246 reading above; ~143.6 KB was FR-245's, ~147.2 KB FR-244's,
- * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded). **And the OTHER
- * ceiling is now the binding one**: 6_515 B of chunk slack against this gate's
- * 117.2 KB. FR-246 estimated against the chunk alone and was right about it
- * (+3_654 B) while spending +27_055 B here — so estimate BOTH, or say which one
- * the estimate is about. And note TD-328's correction to the SCOPE of this budget: a
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~106.3 KB is what is left** (the
+ * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
+ * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
+ * superseded). **And the OTHER ceiling is not merely binding now, it is
+ * effectively spent**: **616 B** of chunk slack against this gate's 106.3 KB.
+ * FR-246 estimated against the chunk alone and was right about it (+3_654 B)
+ * while spending +27_055 B here; FR-247 estimated BOTH and inverted the error —
+ * +5_899 B of chunk against a 2.5-4.6 KB estimate, +11_132 B packed against a
+ * 17-32 KB one. Two briefs, two directions, one rule: **estimate BOTH, measure
+ * BOTH, and name which surface any single number is about.** And note TD-328's correction to the SCOPE of this budget: a
  * brief that touches only
  * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
  * brief needs more, the answer is to cut or to vendor less — NOT to raise

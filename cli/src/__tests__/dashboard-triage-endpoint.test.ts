@@ -78,6 +78,8 @@ import {
 import {
   TRIAGE_ACTIONS,
   bootWriteEngine,
+  buildBriefArgs,
+  dispatchBriefWrite,
   dispatchTriage,
   resetWriteEngine,
   writeEngineState,
@@ -87,13 +89,21 @@ import { brainDbPath } from "../lib/paths.js";
 import { MAX_BULK } from "../lib/dashboard/params.js";
 import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
 import { bundleStaged } from "./hermetic-embeddings.js";
+import { armAutoPushFence, type AutoPushFence } from "./auto-push-fence.js";
 import {
   TRIAGE_FIXTURE,
+  briefStatusCount,
+  briefStatusRow,
+  briefStatusRows,
+  briefStatusStatusIsNotNull,
   countPendingBrainLevel,
   countPendingWithProject,
+  edgeRows,
   learningState,
   pendingSuggestionIds,
+  readTriageBrain,
   seedTriageBrain,
+  seededBriefIds,
   suggestionStates,
 } from "./dashboard-triage-fixture.js";
 
@@ -242,13 +252,37 @@ interface TriagePayload {
   requested: number;
   applied: number;
   failed: number;
-  results: { id: number; ok: boolean; error: string | null }[];
+  results: {
+    id: number | null;
+    ref: { project: string; brief_id: string } | null;
+    ok: boolean;
+    error: string | null;
+  }[];
   params: string[];
   degraded: { reason: string } | null;
 }
 
+/** FR-247 — the fixture's project, spelled once. */
+const P = TRIAGE_FIXTURE.briefProject;
+const ref = (briefId: string): { project: string; brief_id: string } => ({
+  project: P,
+  brief_id: briefId,
+});
+
+/**
+ * FR-247 — the auto-push egress fence, armed for EVERY test in this file.
+ *
+ * Armed before `seedTriageBrain` (which boots the engine, which is where
+ * `sync` reads its config) and released in `afterEach`. See
+ * `auto-push-fence.ts`'s header for the chain this closes; G-TR-13 below is
+ * what proves it closes anything.
+ */
+let fence: AutoPushFence | null = null;
+
 beforeEach(async () => {
   sandbox = mkdtempSync(join(tmpdir(), "igris-fr241-tr-"));
+  fence = armAutoPushFence(sandbox);
+  fence.assertArmed();
   process.env.IGRIS_BRAIN_DIR = sandbox;
   // The ACCESS witness, recorded WHILE the fence is up. It cannot be taken in
   // `afterAll` — teardown restores `IGRIS_BRAIN_DIR` first, so `brainDbPath()`
@@ -280,6 +314,10 @@ afterEach(async () => {
   resetBrainBridge();
   resetLayerReaders();
   rmSync(sandbox, { recursive: true, force: true });
+  if (fence !== null) {
+    fence.release();
+    fence = null;
+  }
   if (prevBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
   else process.env.IGRIS_BRAIN_DIR = prevBrainDir;
   if (prevDbPath === undefined) delete process.env.IGRIS_DB_PATH;
@@ -388,7 +426,11 @@ describe("G-TR-1 — one action at a time, PRE-state asserted, row change read b
     expect(r.status).toBe(200);
     const p = r.json<TriagePayload>();
     expect(p).toMatchObject({ action: "dismiss", requested: 1, applied: 1, failed: 0 });
-    expect(p.results).toEqual([{ id: 1, ok: true, error: null }]);
+    // FR-247 widened the item shape: `ref` is EXPLICITLY null on an
+    // id-addressed result, and asserted as such rather than dropped from the
+    // comparison — "exactly one of id/ref is populated" is the contract, and a
+    // `toMatchObject` here would not have noticed a row carrying both.
+    expect(p.results).toEqual([{ id: 1, ref: null, ok: true, error: null }]);
 
     const after = suggestionStates(dbPath()).find((s) => s.id === 1);
     expect(after).toMatchObject({
@@ -925,5 +967,745 @@ describe("G-TR-7 — TD-326: bulk-triaging the rows that belong to no project", 
     });
     expect(r.json<TriagePayload>().applied).toBe(TRIAGE_FIXTURE.demoPendingIds.length);
     expect(countPendingBrainLevel(dbPath())).toBe(beforeBrain);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FR-247 — the two BRIEF writes
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * G-TR-8 … G-TR-13, and what each proves and does NOT prove.
+ *
+ *  G-TR-8   AC-3, over the WIRE. A body naming `status` is a 400 at the parser,
+ *           and the `ids`/`refs` exclusivity is refused by name.
+ *           Proves: the forbidden fields cannot enter through the door.
+ *           Does NOT prove: that a field bypassing the parser would be dropped
+ *           — G-TR-9.
+ *
+ *  G-TR-9   AC-3, BYPASSING the parser. `buildBriefArgs` called directly with a
+ *           dirty `extra`, asserting the built key SET.
+ *           Proves: the map's `extra` allow-list is the filter, not the parser.
+ *           Does NOT prove: the handler received those args — G-TR-10.
+ *
+ *  G-TR-10  AC-3, BEHAVIOURAL. Spy the RESOLVED bundle's `handleBriefUpdate`
+ *           and read the args it received, then re-read the row.
+ *           Proves: what reached the brain's own handler, by call trace.
+ *           Does NOT prove: anything about a brief with no status row — G-TR-11.
+ *
+ *  G-TR-11  AC-4, RED-FIRST, against the SHIPPED handler. The `brief_files`-only
+ *           brief. RED first (the precondition removed by calling the handler
+ *           the way the map would), then GREEN (the endpoint refuses).
+ *           Plus the `handleBriefSync` contrast, so the suite DEMONSTRATES why
+ *           `_update` is the right tool rather than asserting it.
+ *
+ *  G-TR-12  AC-6, BULK. Pre-state asserted, 12 of 17 moved, the other 5
+ *           byte-identical, empty `refs` REFUSED, and the reader proven live.
+ *
+ *  G-TR-13  R4, THE EGRESS FENCE, PROVEN IN BOTH ARMS.
+ *
+ *  G-TR-14  AC-7, the degraded write surface for a brief write, with its
+ *           negative control.
+ */
+
+// ---------------------------------------------------------------------------
+// G-TR-8 — AC-3 at the door
+// ---------------------------------------------------------------------------
+
+describe("G-TR-8 — no brief write can name status, phase or content", () => {
+  it("a body carrying `status` beside a priority is a 400, and nothing moves", async () => {
+    const before = briefStatusRow(dbPath(), P, "FR-001");
+    expect(before, "fixture pre-state").toMatchObject({
+      priority: TRIAGE_FIXTURE.briefBasePriority,
+      status: "Ready",
+    });
+
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-001")],
+      priority: "P0-Critical",
+      status: "Done",
+    });
+    expect(r.status).toBe(400);
+    expect(r.json<{ error: string }>().error).toContain("unknown field: status");
+    // THE POST-STATE, not just the status code: a 400 that had already written
+    // would be the worst of both.
+    expect(briefStatusRow(dbPath(), P, "FR-001")).toEqual(before);
+  });
+
+  it("`phase`, `content`, `title` and `filename` are refused the same way", async () => {
+    for (const field of ["phase", "content", "title", "filename"]) {
+      const r = await triage({
+        action: "set_priority",
+        refs: [ref("FR-002")],
+        priority: "P1-High",
+        [field]: "x",
+      });
+      expect(r.status, `${field} was accepted`).toBe(400);
+      expect(r.json<{ error: string }>().error).toContain(`unknown field: ${field}`);
+    }
+    expect(briefStatusRow(dbPath(), P, "FR-002")?.priority).toBe(
+      TRIAGE_FIXTURE.briefBasePriority,
+    );
+  });
+
+  it("`ids` and `refs` are EXCLUSIVE, refused by name in both directions", async () => {
+    const a = await triage({ action: "set_priority", ids: [1], priority: "P1-High" });
+    expect(a.status).toBe(400);
+    expect(a.json<{ error: string }>().error).toContain("'ids' is not accepted for it");
+
+    const b = await triage({ action: "dismiss", refs: [ref("FR-001")], reason: "x" });
+    expect(b.status).toBe(400);
+    expect(b.json<{ error: string }>().error).toContain("'refs' is not accepted for it");
+
+    // ...and neither reached anything.
+    expect(briefStatusRow(dbPath(), P, "FR-001")?.priority).toBe(
+      TRIAGE_FIXTURE.briefBasePriority,
+    );
+    expect(suggestionStates(dbPath()).find((s) => s.id === 1)?.status).toBe("pending");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-9 — AC-3 with the parser bypassed
+// ---------------------------------------------------------------------------
+
+describe("G-TR-9 — the map's allow-list is the filter, not the parser", () => {
+  it("buildBriefArgs over a DIRTY extra emits exactly {project, brief_id, priority}", () => {
+    const spec = TRIAGE_ACTIONS.set_priority!;
+    const args = buildBriefArgs(spec, ref("FR-001"), {
+      priority: "P0-Critical",
+      // Everything below is what a compromised or buggy client would send if it
+      // got past the parser. None of it may appear in the output.
+      status: "Done",
+      phase: "COMMITTING",
+      content: "x",
+      title: "",
+      filename: "x.md",
+      goal_id: "GL-100",
+      reason: "r",
+    });
+    expect(Object.keys(args).sort()).toEqual(["brief_id", "priority", "project"]);
+    expect(args).toEqual({ project: P, brief_id: "FR-001", priority: "P0-Critical" });
+  });
+
+  it("attach_goal pins the edge shape and DROPS the ref's project (BR-078)", () => {
+    const spec = TRIAGE_ACTIONS.attach_goal!;
+    const args = buildBriefArgs(spec, ref("FR-001"), {
+      goal_id: "GL-100",
+      // A caller-supplied `edge_type` would turn ONE map row into ~20 different
+      // mutations. It is not in `extra`, so it cannot arrive.
+      edge_type: "blocks",
+      status: "Done",
+    });
+    expect(args).toEqual({
+      from_type: "brief",
+      to_type: "goal",
+      edge_type: "serves_goal",
+      from_id: "FR-001",
+      to_id: "GL-100",
+    });
+    // The `project` DROP, asserted rather than left to a comment. It is the
+    // point at which the dashboard mints a BR-078-ambiguous edge, and the
+    // absence is deliberate (`refKeys` does not name it).
+    expect(Object.keys(args)).not.toContain("project");
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the builder really does copy an allowed key", () => {
+    // Without this, "the dirty keys are absent" is also what you observe from a
+    // builder that returns a constant.
+    const spec = TRIAGE_ACTIONS.set_priority!;
+    expect(buildBriefArgs(spec, ref("X-1"), { priority: "P3-Low" })).toEqual({
+      project: P,
+      brief_id: "X-1",
+      priority: "P3-Low",
+    });
+    // ...and an ABSENT allowed key is not invented (BR-080's presence rule).
+    expect(Object.keys(buildBriefArgs(spec, ref("X-1"), {})).sort()).toEqual([
+      "brief_id",
+      "project",
+    ]);
+  });
+
+  it("the two builders REFUSE each other's rows rather than emitting a wrong shape", () => {
+    expect(() => buildBriefArgs(TRIAGE_ACTIONS.dismiss!, ref("FR-001"), {})).toThrow(
+      /non-brief-ref action/,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-10 — AC-3, behavioural
+// ---------------------------------------------------------------------------
+
+describe("G-TR-10 — the args the BRAIN's own handler received", () => {
+  it("a real priority POST reaches handleBriefUpdate with no forbidden key", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    const briefsUrl = resolveBundleModule("tools/briefs.js");
+    expect(briefsUrl, "the briefs tools module did not resolve").not.toBeNull();
+    const mod = (await import(new URL(`file://${briefsUrl!}`).href)) as Record<
+      string,
+      unknown
+    >;
+    const original = mod.handleBriefUpdate as (a: Record<string, unknown>) => unknown;
+    expect(typeof original, "handleBriefUpdate is not exported").toBe("function");
+
+    const calls: Record<string, unknown>[] = [];
+    Object.defineProperty(mod, "handleBriefUpdate", {
+      configurable: true,
+      writable: true,
+      value: (a: Record<string, unknown>) => {
+        calls.push(a);
+        return original(a);
+      },
+    });
+
+    try {
+      resetWriteEngine();
+      const before = briefStatusRow(dbPath(), P, "FR-003");
+      expect(before?.title).toBe("Title of FR-003");
+
+      const r = await triage({
+        action: "set_priority",
+        refs: [ref("FR-003")],
+        priority: "P0-Critical",
+      });
+      expect(r.status).toBe(200);
+      expect(r.json<TriagePayload>().applied).toBe(1);
+
+      // THE CALL TRACE. A reimplementation in the server layer would change the
+      // row and call nothing.
+      expect(calls, "the brain's own handler was never invoked").toHaveLength(1);
+      expect(Object.keys(calls[0]!).sort()).toEqual([
+        "brief_id",
+        "priority",
+        "project",
+      ]);
+      for (const forbidden of ["status", "phase", "content", "title", "filename"]) {
+        expect(calls[0], `${forbidden} reached the handler`).not.toHaveProperty(
+          forbidden,
+        );
+      }
+
+      // ...and the ROW: the one named column moved, every other one is
+      // byte-identical. This is the half a call-trace cannot give.
+      const after = briefStatusRow(dbPath(), P, "FR-003");
+      expect(after).toEqual({ ...before, priority: "P0-Critical" });
+    } finally {
+      Object.defineProperty(mod, "handleBriefUpdate", {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+      resetWriteEngine();
+    }
+  });
+
+  it("attach_goal writes ONE serves_goal edge and touches no brief column", async () => {
+    const before = briefStatusRows(dbPath());
+    expect(edgeRows(dbPath())).toEqual([]);
+
+    const r = await triage({
+      action: "attach_goal",
+      refs: [ref("FR-004")],
+      goal_id: TRIAGE_FIXTURE.goalIds[0],
+    });
+    expect(r.status).toBe(200);
+    expect(r.json<TriagePayload>()).toMatchObject({ applied: 1, failed: 0 });
+
+    expect(edgeRows(dbPath())).toEqual([
+      {
+        from_type: "brief",
+        from_id: "FR-004",
+        to_type: "goal",
+        to_id: TRIAGE_FIXTURE.goalIds[0],
+        edge_type: "serves_goal",
+      },
+    ]);
+    // NOT ONE brief_status column moved. An edge write that also nudged
+    // `updated_at`'s neighbours would be a second writer nobody declared.
+    expect(briefStatusRows(dbPath())).toEqual(before);
+  });
+
+  it("the per-item result carries the REF, and `id` is null", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-005"), ref("FR-006")],
+      priority: "P3-Low",
+    });
+    const p = r.json<TriagePayload>();
+    expect(p.results).toEqual([
+      { id: null, ref: ref("FR-005"), ok: true, error: null },
+      { id: null, ref: ref("FR-006"), ok: true, error: null },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-11 — AC-4, RED-FIRST, against the SHIPPED handler
+// ---------------------------------------------------------------------------
+
+/**
+ * The brief asks for a proof "against a handler that upserts". The shipped
+ * handler supplies a BETTER subject than a straw man, and this gate is built on
+ * it: `handleBriefUpdate` is a genuine partial update for a brief that HAS a
+ * `brief_status` row, and takes a row-CREATING branch for one that does not.
+ *
+ * RED and GREEN are both driven here, in the same file, so the defect is
+ * DEMONSTRATED rather than described:
+ *   - RED  — dispatch what the map would dispatch, with the precondition
+ *            bypassed, and OBSERVE the damage.
+ *   - GREEN— the same write through the endpoint is refused, and the damage is
+ *            absent.
+ */
+describe("G-TR-11 — a priority-only write cannot invent a status or blank a title", () => {
+  it("the fixture really seeds a brief_files-only brief — the pre-state", () => {
+    // Without this reading every assertion below is satisfiable by zero rows.
+    expect(briefStatusCount(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId)).toBe(0);
+    // ...and it is not merely absent from BOTH tables, which would make the
+    // whole gate a test of "unknown brief" instead.
+    const db = readTriageBrain(dbPath());
+    try {
+      const n = (
+        db
+          .prepare("SELECT COUNT(*) AS n FROM brief_files WHERE project = ? AND brief_id = ?")
+          .get(P, TRIAGE_FIXTURE.filesOnlyBriefId) as { n: number }
+      ).n;
+      expect(n, "the brief_files row is missing — this gate has no subject").toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("RED — the SHIPPED handler, dispatched unguarded, INVENTS status='Ready' and title=''", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    const booted = await bootWriteEngine();
+    expect(booted.ok, booted.ok ? "" : booted.reason).toBe(true);
+    if (!booted.ok) return;
+
+    // THE DEFECT, driven on purpose. This is exactly `buildBriefArgs`' output
+    // for this ref — i.e. what the map dispatches — with `dispatchBriefWrite`'s
+    // precondition read taken out of the path. Nothing here is a straw man: the
+    // tool name, the args and the handler are the shipped ones.
+    const args = buildBriefArgs(
+      TRIAGE_ACTIONS.set_priority!,
+      ref(TRIAGE_FIXTURE.filesOnlyBriefId),
+      { priority: "P0-Critical" },
+    );
+    expect(args).toEqual({
+      project: P,
+      brief_id: TRIAGE_FIXTURE.filesOnlyBriefId,
+      priority: "P0-Critical",
+    });
+    const res = await booted.engine.gateway.dispatch("igris_brief_update", args);
+    expect(res.isError, JSON.stringify(res)).not.toBe(true);
+
+    // THE OBSERVED DAMAGE. A row that did not exist now does, carrying a status
+    // nobody asked for and an EMPTY title — two writes into the TD-311
+    // build-state invariant from a request that named neither field.
+    const created = briefStatusRow(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId);
+    expect(created, "the INSERT branch did not fire — has briefs.ts:653-676 changed?").not.toBeNull();
+    expect(created).toMatchObject({ status: "Ready", title: "", priority: "P0-Critical" });
+  });
+
+  it("GREEN — the same write through the endpoint is REFUSED, and no row appears", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref(TRIAGE_FIXTURE.filesOnlyBriefId)],
+      priority: "P0-Critical",
+    });
+    // A refusal is a per-item RESULT, not an HTTP error: the request was
+    // well-formed and other refs in the same batch may well have applied.
+    expect(r.status).toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 1, applied: 0, failed: 1 });
+    expect(p.results[0]?.ref).toEqual(ref(TRIAGE_FIXTURE.filesOnlyBriefId));
+    expect(p.results[0]?.error).toContain("no brief_status row");
+    expect(p.results[0]?.error).toContain("status='Ready'");
+
+    // THE DAMAGE IS ABSENT.
+    expect(briefStatusCount(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId)).toBe(0);
+  });
+
+  it("GREEN — attach_goal on the same ref is refused too, and mints NO edge", async () => {
+    // The second, independent reason (Phase-0 P0.4): `getGoal`'s
+    // `serving_briefs` INNER-joins `brief_status`, so an edge to a
+    // status-less brief is invisible in the goal detail. Creating it would be
+    // a silent no-op from the operator's point of view.
+    const r = await triage({
+      action: "attach_goal",
+      refs: [ref(TRIAGE_FIXTURE.filesOnlyBriefId)],
+      goal_id: TRIAGE_FIXTURE.goalIds[0],
+    });
+    expect(r.json<TriagePayload>().applied).toBe(0);
+    expect(edgeRows(dbPath())).toEqual([]);
+  });
+
+  it("a ref naming a brief in NEITHER table gets its OWN message", async () => {
+    // Two refusals, distinguished. Collapsing them would hide the interesting
+    // one behind the boring one.
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref(TRIAGE_FIXTURE.missingBriefId)],
+      priority: "P1-High",
+    });
+    const p = r.json<TriagePayload>();
+    expect(p.failed).toBe(1);
+    expect(p.results[0]?.error).toContain("no such brief in this project");
+    expect(p.results[0]?.error).not.toContain("no brief_status row");
+  });
+
+  it("a refused ref does NOT stop the rest of the batch (D6: no rollback)", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-007"), ref(TRIAGE_FIXTURE.filesOnlyBriefId), ref("FR-008")],
+      priority: "P0-Critical",
+    });
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 3, applied: 2, failed: 1 });
+    expect(briefStatusRow(dbPath(), P, "FR-007")?.priority).toBe("P0-Critical");
+    expect(briefStatusRow(dbPath(), P, "FR-008")?.priority).toBe("P0-Critical");
+    expect(briefStatusCount(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId)).toBe(0);
+  });
+
+  /**
+   * THE UPSERT CONTRAST — and a CORRECTION to the premise this brief was
+   * handed, found by running it rather than by reading it.
+   *
+   * The plan (and BR-080/TD-323) says `igris_brief_sync` is dangerous because
+   * its `ON CONFLICT DO UPDATE SET title = excluded.title, …` binds an OMITTED
+   * `title` as NULL. That is true of the SQL. It is NOT reachable through the
+   * gateway: `igris_brief_sync` declares
+   * `required: ['project','brief_id','title','status']`, so a title-omitting
+   * call is refused by the BR-080 strict-input walk before the handler runs —
+   * measured here, with the gateway's verbatim message.
+   *
+   * So the map's reason for forbidding the tool BY NAME is not the one the
+   * plan gave, and stating the weaker true reason is worth more than repeating
+   * the stronger false one: `igris_brief_sync` OVERWRITES `title` and `status`
+   * on EVERY call, because it requires them. A map row using it could not
+   * express a priority-only write at all — it would be a full-row write into
+   * TD-311's invariant by construction, whatever the caller intended. Both
+   * halves are asserted below.
+   */
+  it("THE UPSERT CONTRAST — the gateway refuses a title-less sync, and a sync OVERWRITES", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    const booted = await bootWriteEngine();
+    if (!booted.ok) return;
+
+    const before = briefStatusRow(dbPath(), P, "FR-009");
+    expect(before).toMatchObject({ title: "Title of FR-009", status: "Ready" });
+
+    // HALF 1 — BR-080 is the FIRST fence, and it holds. The omitted-title
+    // upsert TD-323 describes cannot be reached through this door.
+    await expect(
+      booted.engine.gateway.dispatch("igris_brief_sync", {
+        project: P,
+        brief_id: "FR-009",
+        priority: "P0-Critical",
+      }),
+    ).rejects.toThrow(/missing required argument 'title'.*BR-080/s);
+    expect(briefStatusRow(dbPath(), P, "FR-009")).toEqual(before);
+
+    // HALF 2 — and this is the reason that actually survives: a WELL-FORMED
+    // sync overwrites `title` and `status` with whatever the caller supplied.
+    // There is no way to spell "set only the priority" with this tool.
+    await booted.engine.gateway.dispatch("igris_brief_sync", {
+      project: P,
+      brief_id: "FR-009",
+      title: "OVERWRITTEN BY SYNC",
+      status: "Done",
+      priority: "P0-Critical",
+    });
+    expect(briefStatusRow(dbPath(), P, "FR-009")).toMatchObject({
+      title: "OVERWRITTEN BY SYNC",
+      status: "Done",
+    });
+
+    // ...which is why the map forbids it by name, and really does.
+    expect(Object.values(TRIAGE_ACTIONS).map((s) => s.tool)).not.toContain(
+      "igris_brief_sync",
+    );
+  });
+
+  it("the D6 predicate's LOAD-BEARING schema constraint is still in place", () => {
+    // `hasBriefStatusRow` keys on `status !== null` because `getBrief`
+    // LEFT-JOINs and returns a non-null record with null status columns for a
+    // `brief_files`-only brief. That is only sound while the column is NOT
+    // NULL. Read from the schema the ENGINE built, not from `db.ts`.
+    expect(
+      briefStatusStatusIsNotNull(dbPath()),
+      "brief_status.status is no longer NOT NULL — re-read hasBriefStatusRow",
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-12 — AC-6, bulk, with the PRE-state and the named vacuous case
+// ---------------------------------------------------------------------------
+
+describe("G-TR-12 — a bulk priority write acts on the selection and ONLY the selection", () => {
+  it("17 at P2-Medium -> 12 to P0-Critical -> the other 5 are BYTE-IDENTICAL", async () => {
+    // 1. THE PRE-STATE. Both halves: what will move, and what must not.
+    const all = seededBriefIds();
+    expect(all).toHaveLength(17);
+    const before = briefStatusRows(dbPath());
+    expect(
+      before.filter((r) => r.priority === TRIAGE_FIXTURE.briefBasePriority),
+    ).toHaveLength(17);
+    expect(before.filter((r) => r.priority === "P0-Critical")).toHaveLength(0);
+
+    const target = all.slice(0, 12);
+    const survivors = all.slice(12);
+    expect(survivors).toHaveLength(5);
+
+    // 2. THE ACTION.
+    const r = await triage({
+      action: "set_priority",
+      refs: target.map(ref),
+      priority: "P0-Critical",
+    });
+    expect(r.status).toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 12, applied: 12, failed: 0 });
+    expect(p.results.map((x) => x.ref?.brief_id)).toEqual(target);
+
+    // 3. THE POST-STATE and 4. THE UNTOUCHED REMAINDER — the discriminating
+    //    half. A bulk that silently widened to "everything in scope" passes a
+    //    count-of-12 check and fails this one.
+    const after = briefStatusRows(dbPath());
+    expect(after.filter((x) => x.priority === "P0-Critical").map((x) => x.brief_id)).toEqual(
+      target,
+    );
+    for (const id of survivors) {
+      expect(
+        after.find((x) => x.brief_id === id),
+        `${id} was touched by a bulk that did not name it`,
+      ).toEqual(before.find((x) => x.brief_id === id));
+    }
+    // ...and the non-canonical row, which was in neither half, is untouched.
+    expect(
+      after.find((x) => x.brief_id === TRIAGE_FIXTURE.nonCanonicalBriefId),
+    ).toEqual(before.find((x) => x.brief_id === TRIAGE_FIXTURE.nonCanonicalBriefId));
+  });
+
+  it("SELF-NEGATIVE-CONTROL — an EMPTY refs bulk is a 400, not a 200/applied:0", async () => {
+    // FR-247's OWN named vacuous case, driven on purpose. A 200/applied:0 here
+    // would make every "bulk works" assertion above satisfiable by a no-op.
+    const before = briefStatusRows(dbPath());
+    const r = await triage({ action: "set_priority", refs: [], priority: "P0-Critical" });
+    expect(r.status).toBe(400);
+    expect(r.json<{ error: string }>().error).toContain("'refs' must not be empty");
+    // THE PRE-STATE IS RE-READ, not assumed: the claim is that nothing moved.
+    expect(briefStatusRows(dbPath())).toEqual(before);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the reader really reads, out of band", async () => {
+    // Without this, "the other 5 are identical" is also what you observe from a
+    // `briefStatusRows` that returns a constant.
+    expect(briefStatusRow(dbPath(), P, "FR-017")?.priority).toBe("P2-Medium");
+    await triage({ action: "set_priority", refs: [ref("FR-017")], priority: "P3-Low" });
+    expect(briefStatusRow(dbPath(), P, "FR-017")?.priority).toBe("P3-Low");
+  });
+
+  it("duplicate refs are dropped ONCE and reported", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-010"), ref("FR-010"), ref("FR-011")],
+      priority: "P1-High",
+    });
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 2, applied: 2, failed: 0 });
+    expect(p.params.join(" ")).toContain(`duplicate ref (${P}|FR-010)`);
+  });
+
+  it("a 250-ref batch CLAMPS to 200 and says so", async () => {
+    const refs = Array.from({ length: 250 }, (_, i) => ref(`GEN-${i}`));
+    const p = (
+      await triage({ action: "set_priority", refs, priority: "P1-High" })
+    ).json<TriagePayload>();
+    expect(p.requested).toBe(MAX_BULK);
+    expect(p.params.join(" ")).toContain(`refs: clamped to ${MAX_BULK}`);
+    expect(p.params.join(" ")).toContain("the rest were NOT applied");
+  });
+
+  it("CLEAR sends the empty string and the brain folds it to NULL", async () => {
+    // The picker's CLEAR (`model.ts#PRIORITY_CLEAR`) becomes `""` on the wire —
+    // the sentinel itself is never sent, because a literal `__clear__` reaching
+    // the brain would be stored verbatim as a NINTH non-canonical value.
+    expect(briefStatusRow(dbPath(), P, "FR-012")?.priority).toBe("P2-Medium");
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-012")],
+      priority: "",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+    expect(briefStatusRow(dbPath(), P, "FR-012")?.priority).toBeNull();
+  });
+
+  it("writing to a NON-CANONICAL brief canonicalises it — stated, not chased", async () => {
+    // D2's stated consequence. `normalizePriority` folds at the handler, so a
+    // correct write to the `P4-Trivial` row also cleans it. That is a side
+    // effect, not a fix: TD-338 owns the population and the SYNC path that
+    // minted it, and this test exists so the behaviour is recorded rather than
+    // discovered.
+    expect(briefStatusRow(dbPath(), P, TRIAGE_FIXTURE.nonCanonicalBriefId)?.priority).toBe(
+      TRIAGE_FIXTURE.nonCanonicalPriority,
+    );
+    await triage({
+      action: "set_priority",
+      refs: [ref(TRIAGE_FIXTURE.nonCanonicalBriefId)],
+      priority: "P1-High",
+    });
+    expect(briefStatusRow(dbPath(), P, TRIAGE_FIXTURE.nonCanonicalBriefId)).toMatchObject({
+      priority: "P1-High",
+      // ...and its status, which was NOT `Ready`, is untouched. A write that
+      // had gone through the INSERT branch would have made it `Ready`.
+      status: "In Progress",
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-13 — R4: the auto-push egress fence, PROVEN IN BOTH ARMS
+// ---------------------------------------------------------------------------
+
+/**
+ * The safety property this whole brief hangs on, and the one that cannot be
+ * established by observing that nothing happened.
+ *
+ * ARM A (the fence's normal state): no `auto_push` in the sandbox config, so
+ * zero outbound requests. On its own that reading is worthless — it is equally
+ * what you get from a fence that does nothing and from a listener that was
+ * never wired.
+ *
+ * ARM B: a sandbox config that says `auto_push: true`, pointed at a fictional
+ * remote. The SAME priority write must now produce a BLOCKED outbound POST to
+ * that remote's `/sync/push`. That single reading proves three things at once —
+ * the egress path is real, the fence catches it, and Arm A's zero means
+ * something.
+ */
+describe("G-TR-13 — a fixture write cannot egress to a remote brain", () => {
+  it("the fence is ARMED, and it is not the operator's real HOME", () => {
+    expect(fence, "the fence was not installed").not.toBeNull();
+    fence!.assertArmed();
+    expect(homedir()).toBe(sandbox);
+    expect(homedir()).not.toBe(REAL_BRAIN.replace("/.igris/memory/knowledge.db", ""));
+  });
+
+  it("ARM A — with no auto_push configured, a priority write reaches no network", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-013")],
+      priority: "P0-Critical",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+    // `sync`'s push is FIRE-AND-FORGET, so give the microtask queue a turn
+    // before reading the counter — otherwise a zero could just be a race.
+    await new Promise((res) => setTimeout(res, 50));
+    expect(
+      fence!.attempts,
+      `an outbound request escaped: ${JSON.stringify(fence!.attempts)}`,
+    ).toEqual([]);
+  });
+
+  it("ARM B — with auto_push:true, the SAME write attempts a push, and it is BLOCKED", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    // `loadAutoPushConfig` runs at `sync`'s init, i.e. at engine boot — so the
+    // config has to be in place before the engine, and the engine has to be
+    // torn down first because at most one may be live per process.
+    await srv!.close();
+    srv = null;
+    resetWriteEngine();
+    fence!.writeConfig({
+      auto_push: true,
+      remote_brain: {
+        url: "https://fr247-fictional-remote.invalid",
+        api_key: "fr247-not-a-real-key",
+      },
+    });
+    srv = await startServer({ port: 0, cliVersion: "test" });
+
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-014")],
+      priority: "P0-Critical",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+    await new Promise((res) => setTimeout(res, 200));
+
+    // THE EGRESS PATH IS REAL. `brief.synced` -> `sync`'s immediate handler ->
+    // `pushTables({brief_status, brief_files})` -> `POST <remote>/sync/push`.
+    expect(
+      fence!.attempts.length,
+      "no push was attempted — either brief.synced stopped reaching sync, or the fence is not intercepting",
+    ).toBeGreaterThan(0);
+    expect(fence!.attempts[0]?.url).toContain("fr247-fictional-remote.invalid");
+    expect(fence!.attempts[0]?.url).toContain("/sync/push");
+    expect(fence!.attempts[0]?.method).toBe("POST");
+    // ...and it never reached the operator's REAL remote.
+    for (const a of fence!.attempts) {
+      expect(a.url, "a request was aimed at the real remote brain").not.toContain(
+        "brain.fifty.dev",
+      );
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-14 — AC-7, with its negative control
+// ---------------------------------------------------------------------------
+
+describe("G-TR-14 — a down write surface makes brief writes DISABLED, not broken", () => {
+  it("no brain -> 200 + degraded, applied 0, no stack trace", async () => {
+    await srv!.close();
+    srv = null;
+    resetWriteEngine();
+    rmSync(dbPath(), { force: true });
+    rmSync(`${dbPath()}-wal`, { force: true });
+    rmSync(`${dbPath()}-shm`, { force: true });
+    resetBrainBridge();
+    resetLayerReaders();
+    closeBrainDb();
+    closeRegistryDb();
+    srv = await startServer({ port: 0, cliVersion: "test" });
+
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-001")],
+      priority: "P0-Critical",
+    });
+    expect(r.status, "a down write surface must never be a 500").toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ applied: 0, failed: 0, results: [] });
+    expect(p.degraded).not.toBeNull();
+    expect(r.body).not.toContain("    at ");
+    expect(r.body).not.toContain("node:internal");
+  });
+
+  it("NEGATIVE CONTROL — with the brain present the SAME post applies", async () => {
+    const r = await triage({
+      action: "set_priority",
+      refs: [ref("FR-001")],
+      priority: "P0-Critical",
+    });
+    expect(r.json<TriagePayload>()).toMatchObject({ applied: 1, degraded: null });
+    expect(briefStatusRow(dbPath(), P, "FR-001")?.priority).toBe("P0-Critical");
+  });
+
+  it("a brief write never boots the engine from a REJECTED body", async () => {
+    resetWriteEngine();
+    expect(writeEngineState()).toBe("not-booted");
+    const r = await triage({ action: "set_priority", refs: [], priority: "P0-Critical" });
+    expect(r.status).toBe(400);
+    expect(writeEngineState(), "a 400 booted the write engine").toBe("not-booted");
+  });
+
+  it("dispatchBriefWrite refuses an id-addressed action outright", async () => {
+    const before = briefStatusRows(dbPath());
+    const r = await dispatchBriefWrite("dismiss", [ref("FR-001")], {});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("unknown brief-write action");
+    expect(briefStatusRows(dbPath())).toEqual(before);
   });
 });

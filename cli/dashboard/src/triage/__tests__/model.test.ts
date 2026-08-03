@@ -38,19 +38,30 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  BRIEF_WRITE_ACTIONS,
+  CANONICAL_PRIORITIES,
+  EMPTY_KEY_SELECTION,
   EMPTY_SELECTION,
   MAX_BULK,
+  PRIORITY_CLEAR,
   TAB_ACTIONS,
   TRIAGE_ACTIONS,
+  briefWriteCopy,
+  buildBriefWriteRequest,
   buildTriageRequest,
   chunkIds,
+  confineToKeys,
   confineToVisible,
   confirmCopy,
   destructiveness,
   mergeResults,
+  outcomeLabel,
   plural,
+  priorityChoices,
+  refKey,
   reasonRequired,
   selectAll,
+  selectAllKeys,
   selectedRows,
   summaryLine,
   toggleSelected,
@@ -460,5 +471,259 @@ describe("G-UI-1h · the vocabularies are complete and partitioned", () => {
     expect(plural(1, "item")).toBe("1 item");
     expect(plural(0, "item")).toBe("0 items");
     expect(plural(12, "item")).toBe("12 items");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-247 — the priority vocabulary MIRROR, and the key-type generalisation
+// ---------------------------------------------------------------------------
+
+/**
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THE MIRROR ASSERTION. READ THIS BEFORE EDITING `CANONICAL_PRIORITIES`.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * `model.ts#CANONICAL_PRIORITIES` is a MIRROR of
+ * `brain-mcp-server/src/tools/brief-normalize.ts#CANONICAL_PRIORITIES`. The Vite
+ * chunk cannot import the brain bundle, so the two cannot be the same array —
+ * which makes this the dashboard's FIRST out-of-brain consumer of a vocabulary
+ * that had exactly one source. MAINTAINING carries the contract row.
+ *
+ * THE CHANGE PROCEDURE, in this order: edit the brain source, mirror here,
+ * re-run this test.
+ *
+ * WHAT THIS TEST PROVES: the mirror holds the four values, in the brain's
+ * order, and the picker offers exactly them plus CLEAR.
+ * WHAT IT DOES NOT PROVE: that the BRAIN's array still says the same thing —
+ * a vitest suite in `cli/dashboard` cannot import `brain-mcp-server`. The
+ * cross-package half is the MAINTAINING row plus
+ * `scripts/check_contract_consumers.sh`; do not weaken either on the
+ * assumption this test has it covered.
+ */
+describe("FR-247 — the priority picker prescribes, it does not report", () => {
+  it("the mirror is the four canonical values, in the brain's order", () => {
+    expect([...CANONICAL_PRIORITIES]).toEqual([
+      "P0-Critical",
+      "P1-High",
+      "P2-Medium",
+      "P3-Low",
+    ]);
+  });
+
+  it("with a canonical current value, the picker offers exactly 4 + CLEAR", () => {
+    const choices = priorityChoices("P2-Medium");
+    expect(choices.map((c) => c.value)).toEqual([
+      ...CANONICAL_PRIORITIES,
+      PRIORITY_CLEAR,
+    ]);
+    expect(choices.every((c) => c.offerable)).toBe(true);
+  });
+
+  it("a NON-CANONICAL current value is shown, FIRST, and is NOT offerable", () => {
+    // D2's stated requirement: `P4-Trivial` (1 row on the operator brain) and
+    // the 7 bare `P1`/`P2` rows must not silently look UNSET. They are visible
+    // and disabled — TD-338 owns folding them; this control owns not minting a
+    // ninth value.
+    const choices = priorityChoices("P4-Trivial");
+    expect(choices[0]).toEqual({
+      value: "P4-Trivial",
+      label: "P4-Trivial — not offerable",
+      offerable: false,
+    });
+    expect(choices.filter((c) => c.offerable).map((c) => c.value)).toEqual([
+      ...CANONICAL_PRIORITIES,
+      PRIORITY_CLEAR,
+    ]);
+  });
+
+  it("a MIXED or absent current value shows no disabled entry", () => {
+    // A mixed selection has no single current value, and inventing one would
+    // be a claim about rows the operator can see are different.
+    for (const current of [null, ""]) {
+      expect(priorityChoices(current).every((c) => c.offerable)).toBe(true);
+    }
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the non-canonical branch really can fire", () => {
+    // Without this, "every choice is offerable" above is also what you observe
+    // from a `priorityChoices` that ignores its argument.
+    expect(priorityChoices("P4-Trivial").some((c) => !c.offerable)).toBe(true);
+    expect(priorityChoices("P2-Medium").some((c) => !c.offerable)).toBe(false);
+  });
+});
+
+describe("FR-247 — the brief-write request body", () => {
+  const refs = [
+    { project: "demo", brief_id: "FR-001" },
+    { project: "other", brief_id: "FR-002" },
+  ];
+
+  it("set_priority emits refs + priority, and NEVER `ids`", () => {
+    expect(buildBriefWriteRequest("set_priority", refs, { priority: "P0-Critical" })).toEqual(
+      { action: "set_priority", refs, priority: "P0-Critical" },
+    );
+  });
+
+  it("CLEAR becomes the EMPTY STRING on the wire, never the sentinel", () => {
+    // A literal `__clear__` reaching the brain would be stored verbatim as a
+    // ninth non-canonical value — precisely the drift D2 refuses to add to.
+    const body = buildBriefWriteRequest("set_priority", refs, {
+      priority: PRIORITY_CLEAR,
+    });
+    expect(body.priority).toBe("");
+    expect(JSON.stringify(body)).not.toContain(PRIORITY_CLEAR);
+  });
+
+  it("attach_goal emits goal_id and drops a blank one", () => {
+    expect(
+      buildBriefWriteRequest("attach_goal", refs, { goalId: " GL-100 " }),
+    ).toEqual({ action: "attach_goal", refs, goal_id: "GL-100" });
+    expect(
+      Object.keys(buildBriefWriteRequest("attach_goal", refs, { goalId: "  " })),
+    ).toEqual(["action", "refs"]);
+  });
+
+  it("each action ignores the OTHER's extra", () => {
+    // The server would 400 an unknown field, but the two actions share one
+    // control surface — so a stale `goalId` in component state must not ride
+    // along on a priority write.
+    expect(
+      buildBriefWriteRequest("set_priority", refs, {
+        priority: "P1-High",
+        goalId: "GL-100",
+      }),
+    ).toEqual({ action: "set_priority", refs, priority: "P1-High" });
+  });
+
+  it("the refs are COPIED, so a later mutation of the selection cannot rewrite an in-flight body", () => {
+    const live = [{ project: "demo", brief_id: "FR-001" }];
+    const body = buildBriefWriteRequest("set_priority", live, { priority: "P1-High" });
+    live[0]!.brief_id = "FR-999";
+    expect(body.refs[0]?.brief_id).toBe("FR-001");
+  });
+
+  it("the two brief actions are exactly the map's two brief-ref rows", () => {
+    expect([...BRIEF_WRITE_ACTIONS]).toEqual(["set_priority", "attach_goal"]);
+    // ...and they are DISJOINT from the triage tabs' vocabulary. One list would
+    // need every consumer to filter it by target, which is the map's job.
+    for (const a of BRIEF_WRITE_ACTIONS) {
+      expect(TRIAGE_ACTIONS as readonly string[]).not.toContain(a);
+    }
+  });
+});
+
+describe("FR-247 — briefWriteCopy warns in the RIGHT register", () => {
+  it("says what changes, says what does not, and demands nothing typed", () => {
+    const copy = briefWriteCopy("set_priority", 12, "P0-Critical");
+    expect(copy.title).toBe("Set priority on 12 briefs?");
+    expect(copy.lines[0]).toContain("P0-Critical");
+    expect(copy.lines.join(" ")).toContain("not status, not phase, not the body");
+    expect(copy.confirmLabel).toBe("SET PRIORITY ON 12");
+  });
+
+  it("never borrows the permanent-deletion register", () => {
+    // The safety property: `confirmCopy`'s tier-3 vocabulary is reserved for
+    // the one action that cannot be undone. A reversible write that shouted
+    // PERMANENTLY DELETED would train the operator to click through the case
+    // where the shouting was true.
+    for (const action of BRIEF_WRITE_ACTIONS) {
+      const copy = briefWriteCopy(action, 3, "GL-100");
+      const text = `${copy.title} ${copy.lines.join(" ")} ${copy.confirmLabel}`;
+      for (const banned of ["PERMANENT", "cannot be undone", "hand-editing", "DELETE"]) {
+        expect(text, `${action} used the delete register: ${banned}`).not.toContain(banned);
+      }
+      expect(text).toContain("Reversible");
+    }
+  });
+
+  it("SELF-NEGATIVE-CONTROL — confirmCopy's tier-3 path DOES use that register", () => {
+    // Without this, "the banned words are absent" is also what you observe from
+    // a matcher that never matches anything.
+    const hard = confirmCopy("reject", {
+      tier1: 0,
+      tier2: 0,
+      tier3: 3,
+      unknownTier3: 0,
+      total: 3,
+    });
+    expect(`${hard.lines.join(" ")} ${hard.confirmLabel}`).toContain("PERMANENT");
+  });
+
+  it("CLEAR gets its own sentence — 'set to __clear__' would be gibberish", () => {
+    const copy = briefWriteCopy("set_priority", 1, PRIORITY_CLEAR);
+    expect(copy.lines[0]).toContain("UNSET");
+    expect(copy.lines[0]).not.toContain(PRIORITY_CLEAR);
+  });
+});
+
+describe("FR-247 — the selection algebra over STRING keys", () => {
+  const key = refKey;
+  const a = { project: "demo", brief_id: "FR-001" };
+  const b = { project: "other", brief_id: "FR-001" };
+
+  it("refKey distinguishes the SAME brief id in two projects (BR-078)", () => {
+    // The whole reason a brief cannot be selected by an integer or by its id
+    // alone: `BR-001` names a different brief in 25 projects.
+    expect(key(a)).not.toBe(key(b));
+    expect(key(a)).toBe("demo|FR-001");
+  });
+
+  it("toggleSelected / selectAllKeys / confineToKeys work over strings", () => {
+    let sel = EMPTY_KEY_SELECTION;
+    sel = toggleSelected(sel, key(a));
+    sel = toggleSelected(sel, key(b));
+    expect([...sel].sort()).toEqual(["demo|FR-001", "other|FR-001"]);
+    sel = toggleSelected(sel, key(a));
+    expect([...sel]).toEqual(["other|FR-001"]);
+
+    sel = selectAllKeys(sel, [key(a), key(b)]);
+    expect(sel.size).toBe(2);
+  });
+
+  it("confineToKeys DROPS a selection the operator can no longer see", () => {
+    // The safety property, on the surface it was generalised for: a selection
+    // made under one project must not survive a scope change and then be
+    // written to.
+    const sel = selectAllKeys(EMPTY_KEY_SELECTION, [key(a), key(b)]);
+    expect([...confineToKeys(sel, [key(b)])]).toEqual(["other|FR-001"]);
+    expect([...confineToKeys(sel, [])]).toEqual([]);
+  });
+
+  it("the NUMBER-keyed forms are unchanged — FR-241's callers still read the same", () => {
+    // The generalisation is a widening, not a replacement. If this ever fails,
+    // the triage page's selection has changed meaning.
+    const rows: TriageRow[] = [{ id: 1 }, { id: 2 }];
+    expect([...selectAll(EMPTY_SELECTION, rows)]).toEqual([1, 2]);
+    expect([...confineToVisible(selectAll(EMPTY_SELECTION, rows), [{ id: 2 }])]).toEqual([2]);
+  });
+
+  it("chunkIds chunks REFS as well as ids, with the same empty-input rule", () => {
+    const refs = Array.from({ length: MAX_BULK + 1 }, (_, i) => ({
+      project: "demo",
+      brief_id: `FR-${i}`,
+    }));
+    const chunks = chunkIds(refs);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0]).toHaveLength(MAX_BULK);
+    expect(chunks[1]).toHaveLength(1);
+    // ZERO chunks for an empty batch — the client can never issue the empty
+    // `refs` request the server 400s.
+    expect(chunkIds([] as { project: string; brief_id: string }[])).toEqual([]);
+  });
+});
+
+describe("FR-247 — outcomeLabel names a failure's subject", () => {
+  it("reads the ref when there is one, the id when there is not", () => {
+    expect(
+      outcomeLabel({ id: null, ref: { project: "demo", brief_id: "FR-1" }, ok: false, error: null }),
+    ).toBe("demo/FR-1");
+    expect(outcomeLabel({ id: 7, ref: null, ok: false, error: null })).toBe("#7");
+    // The shape FR-241 shipped, with no `ref` key at all.
+    expect(outcomeLabel({ id: 7, ok: false, error: null })).toBe("#7");
+  });
+
+  it("never renders `#null` or `undefined`", () => {
+    // The failure banner is what an operator reads when something went wrong.
+    // `#null: <brain message>` is a bug report nobody can act on.
+    expect(outcomeLabel({ id: null, ref: null, ok: false, error: null })).toBe("?");
   });
 });

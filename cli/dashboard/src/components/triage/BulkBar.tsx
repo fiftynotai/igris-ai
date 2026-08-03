@@ -30,10 +30,12 @@ import { Input } from "../ui/Input";
 import {
   confirmCopy,
   destructiveness,
+  outcomeLabel,
   plural,
   reasonRequired,
   selectedRows,
   type Selection,
+  type TriageItemOutcome,
   type TriageAction,
   type TriageRow,
 } from "../../triage/model";
@@ -59,8 +61,16 @@ export interface BulkBarProps {
   writeReason: string | null;
   /** The last batch's readout, already formatted by `model.ts#summaryLine`. */
   readout: string | null;
-  /** Per-id failures, carrying the BRAIN's own messages. */
-  failures: readonly { id: number; error: string | null }[];
+  /**
+   * Per-item failures, carrying the BRAIN's own messages.
+   *
+   * FR-247 made `id` nullable on the shared outcome type (a brief-addressed
+   * result carries a `ref` instead), so this reads through `outcomeLabel`
+   * rather than interpolating `#${f.id}` — an `#null` in a failure banner is a
+   * bug report nobody can act on. This surface only ever sees id-addressed
+   * results, but the TYPE is shared and the renderer must not assume.
+   */
+  failures: readonly TriageItemOutcome[];
   /**
    * Which action's dialog is open on FIRST RENDER. Defaults to none.
    *
@@ -176,7 +186,7 @@ export function BulkBar({
           {plural(failures.length, "item")} failed —{" "}
           {failures
             .slice(0, 5)
-            .map((f) => `#${f.id}: ${f.error ?? "no message"}`)
+            .map((f) => `${outcomeLabel(f)}: ${f.error ?? "no message"}`)
             .join(" · ")}
           {failures.length > 5 ? ` · …and ${failures.length - 5} more` : ""}
         </div>

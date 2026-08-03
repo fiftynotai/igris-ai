@@ -27,8 +27,10 @@ import {
   MAX_LIMIT,
   MAX_QUERY_LENGTH,
   PROJECT_SCOPES,
+  MAX_BULK,
   SUGGESTION_FILTERS,
   parseFilters,
+  parseTriageBody,
   parsePageParams,
   parseQuery,
 } from "../lib/dashboard/params.js";
@@ -330,5 +332,184 @@ describe("parseQuery", () => {
     // definition of the query grammar.
     const r = parseQuery(new URLSearchParams({ q: 'what? "quoted" AND *' }));
     expect(r).toEqual({ ok: true, query: 'what? "quoted" AND *' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-247 — `refs`, and the `ids` XOR `refs` rule
+// ---------------------------------------------------------------------------
+
+/**
+ * `parseTriageBody` is PURE, so the whole `refs` grammar is unit-testable with
+ * no socket, no brain and no engine. The endpoint suite exercises the same
+ * rules over real HTTP; these are here because the EDGE cases (a ref carrying a
+ * third key, an empty `brief_id`, a 250-ref clamp) are the ones a wire test
+ * would only sample.
+ *
+ * The two injected callbacks are the map's, so this file still holds no copy of
+ * the action vocabulary.
+ */
+describe("FR-247 — parseTriageBody over `refs`", () => {
+  /** The map's answers, injected. `set_priority` is the brief-ref action. */
+  const known = (a: string): boolean =>
+    ["dismiss", "apply", "set_priority", "attach_goal"].includes(a);
+  const targetOf = (a: string): "id" | "brief-ref" =>
+    a === "set_priority" || a === "attach_goal" ? "brief-ref" : "id";
+  const opts = { targetOf, bulkAllowed: (a: string) => a !== "apply" };
+
+  const parse = (body: unknown) => parseTriageBody(body, known, opts);
+  const ref = (brief_id: string, project = "demo") => ({ project, brief_id });
+
+  it("accepts a well-formed refs body and reports both arrays", () => {
+    const r = parse({
+      action: "set_priority",
+      refs: [ref("FR-001"), ref("FR-002")],
+      priority: "P0-Critical",
+    });
+    expect(r).toEqual({
+      ok: true,
+      action: "set_priority",
+      ids: [],
+      refs: [ref("FR-001"), ref("FR-002")],
+      priority: "P0-Critical",
+      params: [],
+    });
+  });
+
+  it("REFUSES an empty refs array — FR-247's named vacuous case", () => {
+    // `params.ts` states this posture for `ids`; `refs` inherits it, and the
+    // inheritance is pinned here rather than assumed from the comment.
+    expect(parse({ action: "set_priority", refs: [], priority: "P0-Critical" })).toEqual({
+      ok: false,
+      reason: "'refs' must not be empty",
+    });
+  });
+
+  it("refuses the WRONG address kind, by name, in both directions", () => {
+    expect(parse({ action: "set_priority", ids: [1], priority: "P1-High" })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("'ids' is not accepted for it"),
+    });
+    expect(parse({ action: "dismiss", refs: [ref("FR-001")] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("'refs' is not accepted for it"),
+    });
+  });
+
+  it("refuses a ref carrying a THIRD key", () => {
+    // A ref that could carry `status` is a body whose shape nobody can state,
+    // even though the map's allow-list would drop it downstream.
+    expect(
+      parse({
+        action: "set_priority",
+        refs: [{ project: "demo", brief_id: "FR-001", status: "Done" }],
+      }),
+    ).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("accept only project and brief_id"),
+    });
+  });
+
+  it("refuses an empty or non-string project / brief_id", () => {
+    for (const bad of [
+      { project: "", brief_id: "FR-001" },
+      { project: "demo", brief_id: "" },
+      { project: 1, brief_id: "FR-001" },
+      { project: "demo", brief_id: null },
+    ]) {
+      expect(
+        parse({ action: "set_priority", refs: [bad] }),
+        JSON.stringify(bad),
+      ).toMatchObject({ ok: false });
+    }
+    // ...and a non-object entry.
+    expect(parse({ action: "set_priority", refs: ["FR-001"] })).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("{project, brief_id} objects"),
+    });
+  });
+
+  it("dedupes on the PAIR, not on either half", () => {
+    const r = parse({
+      action: "set_priority",
+      refs: [ref("FR-001"), ref("FR-001"), ref("FR-001", "other"), ref("FR-002")],
+    });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // `FR-001` in `other` is a DIFFERENT brief (BR-078 — the id alone names a
+    // different brief in 25 projects), so it must survive.
+    expect(r.refs).toEqual([ref("FR-001"), ref("FR-001", "other"), ref("FR-002")]);
+    expect(r.params.join(" ")).toContain("duplicate ref (demo|FR-001)");
+  });
+
+  it("clamps at MAX_BULK and REPORTS it", () => {
+    const refs = Array.from({ length: MAX_BULK + 50 }, (_, i) => ref(`FR-${i}`));
+    const r = parse({ action: "set_priority", refs });
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.refs).toHaveLength(MAX_BULK);
+    expect(r.params.join(" ")).toContain(`refs: clamped to ${MAX_BULK}`);
+  });
+
+  it("`priority` and `goal_id` are accepted as strings and NOT vocabulary-checked", () => {
+    // Deliberate: the server allow-lists the KEY, `normalizePriority` folds the
+    // VALUE, and the picker prescribes the CHOICES. A fourth copy of the
+    // vocabulary here would be a fourth thing to drift — so a nonsense value
+    // must pass this layer and be the brain's problem.
+    const r = parse({
+      action: "set_priority",
+      refs: [ref("FR-001")],
+      priority: "P9-Nonsense",
+    });
+    expect(r).toMatchObject({ ok: true, priority: "P9-Nonsense" });
+    expect(parse({ action: "set_priority", refs: [ref("FR-1")], priority: 3 })).toMatchObject(
+      { ok: false, reason: "'priority' must be a string" },
+    );
+  });
+
+  it("the empty-string priority (CLEAR) is a VALUE, not an absence", () => {
+    // `""` is what the picker's CLEAR sends, and `normalizePriority` folds it
+    // to SQL NULL. If this layer treated it as "not supplied" the control would
+    // silently do nothing.
+    const r = parse({ action: "set_priority", refs: [ref("FR-1")], priority: "" });
+    expect(r).toMatchObject({ ok: true, priority: "" });
+    if (r.ok) expect(Object.keys(r)).toContain("priority");
+  });
+
+  it("the forbidden build-state fields are unknown at the door, for EVERY action", () => {
+    for (const field of ["status", "phase", "content", "title", "filename"]) {
+      expect(
+        parse({ action: "set_priority", refs: [ref("FR-1")], [field]: "x" }),
+        field,
+      ).toMatchObject({ ok: false, reason: `unknown field: ${field}. Accepted: action, ids, refs, reason, brief_id, priority, goal_id` });
+      // ...and on an id-addressed action too, so the ban is not brief-specific.
+      expect(parse({ action: "dismiss", ids: [1], [field]: "x" }), field).toMatchObject({
+        ok: false,
+      });
+    }
+  });
+
+  it("single-item-only still bites on the refs path", () => {
+    const single = { targetOf: () => "brief-ref" as const, bulkAllowed: () => false };
+    expect(
+      parseTriageBody(
+        { action: "set_priority", refs: [ref("FR-1"), ref("FR-2")] },
+        known,
+        single,
+      ),
+    ).toMatchObject({ ok: false, reason: expect.stringContaining("single-item only") });
+  });
+
+  it("BACKWARD COMPATIBILITY — with no `targetOf`, every action is id-addressed", () => {
+    // Four shipped call sites (and the whole FR-241 test surface) call this
+    // with two arguments. The default has to be `id`, and it is asserted rather
+    // than left to a comment.
+    expect(parseTriageBody({ action: "dismiss", ids: [1] }, known)).toEqual({
+      ok: true,
+      action: "dismiss",
+      ids: [1],
+      refs: [],
+      params: [],
+    });
   });
 });

@@ -61,7 +61,7 @@ The dashboard is the first network listener this CLI has ever opened, so:
 | `Origin` header (POST only) | Absent (a `curl`, the `--smoke` probe) or **exactly** the served origin → allowed; anything else, including the literal string `null`, → **403**. Compared as a whole string against both loopback spellings, never by `startsWith`: `http://127.0.0.1:7317` is a prefix of `http://127.0.0.1:7317.evil.test`. |
 | `Content-Type` (POST only) | `application/json` required → otherwise **415**. This is the fence that actually blocks the classic no-JS CSRF: an HTML `<form>` can POST cross-origin without a preflight, but only as `application/x-www-form-urlencoded`, `multipart/form-data` or `text/plain`. Requiring JSON forces a preflight, which the `Origin` fence then answers. |
 | Request body cap (POST only) | 64 KB, enforced **while reading** rather than after → otherwise **413**, so an unbounded upload is never buffered first and rejected second. |
-| Write endpoints | **Exactly one, since FR-241: `POST /api/triage`.** Every mutation it performs is a `gateway.dispatch` of a tool named by a frozen five-row map — there is no code path in this tier that writes any other way. See *The write path* below. |
+| Write endpoints | **Exactly one, since FR-241: `POST /api/triage`.** Every mutation it performs is a `gateway.dispatch` of a tool named by a frozen map (five rows at FR-241, SEVEN since FR-247) — there is no code path in this tier that writes any other way. See *The write path* below. |
 | Static serving | Path-traversal guarded (normalise, then resolved-prefix check — a LEXICAL check; see `static.ts` for why `realpath` is not needed while the bundle is a build artifact). Unknown extensions serve as `application/octet-stream`. |
 | Response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` — on **every** response, from `dashboard/headers.ts`. The framing pair landed in FR-238 as defence in depth on a then-read-only surface with nothing to actuate and no cookies, in anticipation of a write endpoint. **FR-241 added that endpoint**, so the pair is now load-bearing rather than anticipatory: a framed dashboard with a working bulk-reject button is a real clickjacking target. |
 | Caching | `Cache-Control: no-store` on all of `/api/*`; `no-cache` on `index.html`; long immutable max-age only on content-hashed `assets/`. |
@@ -548,24 +548,145 @@ residual, not a new one. It is also why the write engine must stay **lazy**:
 G-RO-5's fixture is a `journal_mode = delete` brain, and a write engine booted on
 a browsing session would flip it.
 
-### The write path (FR-241)
+### The write path (FR-241, extended by FR-247)
 
 `POST /api/triage` is the only endpoint on this surface that changes a row, and
 it is deliberately **one** endpoint with an `action` discriminator rather than
 five verb endpoints. That shape is what makes the whole delegation rule a single
 table a reviewer reads in one glance.
 
+**FR-247 added two mutations and NO endpoint.** The path set is still sixteen GET
+and one POST, and that is a measurement rather than a claim: `dashboard.bats`'s
+exact-set string and `SMOKE_PROBE_PATHS` are byte-identical to their pre-FR-247
+values. What widened is the request BODY.
+
+**The name is now wrong, and it stays.** `triage` no longer describes what this
+path carries. Renaming it would sweep MAINTAINING rows 109 and 110,
+`SMOKE_PROBE_PATHS`, `dashboard.bats`'s exact-set string *and* its
+`17 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
+document, the parity harness and the browser gate — for a noun. Read the path as
+**a stable identifier for the write door**; the MAP, not the path, is the
+vocabulary.
+
 **The delegation rule:** *a dashboard mutation may only ever be added by adding a
 row to the frozen `TRIAGE_ACTIONS` map in `cli/src/lib/brain-write-bridge.ts`,
 and a mutation that does not resolve to a registered brain tool is forbidden.*
 
-| `action` | brain tool | bulk | id key | allowed extras |
-|---|---|---|---|---|
-| `dismiss` | `igris_suggestion_dismiss` | yes | `id` | `reason` |
-| `acted` | `igris_suggestion_acted` | yes | `id` | `brief_id` |
-| `apply` | `igris_suggestion_apply_action` | **no** | `id` | — |
-| `approve` | `igris_perception_approve` | yes | `learning_id` | — |
-| `reject` | `igris_perception_reject` | yes | `learning_id` | `reason` |
+| `action` | brain tool | bulk | target | addressed by | allowed extras |
+|---|---|---|---|---|---|
+| `dismiss` | `igris_suggestion_dismiss` | yes | `id` | `id` | `reason` |
+| `acted` | `igris_suggestion_acted` | yes | `id` | `id` | `brief_id` |
+| `apply` | `igris_suggestion_apply_action` | **no** | `id` | `id` | — |
+| `approve` | `igris_perception_approve` | yes | `id` | `learning_id` | — |
+| `reject` | `igris_perception_reject` | yes | `id` | `learning_id` | `reason` |
+| `set_priority` (FR-247) | `igris_brief_update` | yes | `brief-ref` | `project` + `brief_id` | `priority` |
+| `attach_goal` (FR-247) | `igris_edge_create` | yes | `brief-ref` | `brief_id` **only** | `goal_id` |
+
+#### Why a brief needed a second target kind
+
+The five FR-241 rows address a row by **integer id**. A brief is not addressable
+that way: `igris_brief_update` declares `required: ['project', 'brief_id']`, and
+although `brief_status.id` exists and is even on the wire, **no brain tool
+accepts it** — translating id → `(project, brief_id)` in this tier would mean a
+SQL lookup, which the zero-SQL scan forbids by construction. So the body gained
+`refs: [{project, brief_id}]` beside `ids`, and `target` says which one a row
+takes. The two are **mutually exclusive** and the wrong one is refused by name.
+
+`attach_goal` forwards **`brief_id` alone**. `entity_edges.from_id` is the bare
+brief id with no project column, and `BR-001` names a different brief in 25
+projects, so a `serves_goal` edge is genuinely project-ambiguous (BR-078) — and
+`getGoal`'s serving-briefs join carries no project predicate either. That is
+pre-existing and not FR-247's to fix, but the dashboard is *minting* new
+instances of it, so the drop is written down in the map row where it happens
+rather than buried in a builder.
+
+`attach_goal`'s `from_type`, `to_type` and `edge_type` come from a **`fixed`**
+block on the map row, never from the caller. A caller-supplied `edge_type` would
+silently turn that one row into ~20 different mutations.
+
+#### Goal CREATION is deferred to FR-249 — a decision, not a gap
+
+The request was "attach to a new goal or an old one". v1 ships the old-one half,
+and the reason is mechanical rather than appetite: `dispatchTriage` **discards
+the tool's success payload** (it pushes `{id, ok, error}` and nothing else), so
+create-then-attach would need one map row to fire two tools and thread the new
+goal's id between them. That would be the first exception to *one row is one
+dispatch* — which is the property that makes this map a review artifact at all.
+A `create_goal` row firing `igris_goal_create` **alone**, with the operator
+attaching in a second click, preserves the property and is what FR-249 is for.
+
+#### What the priority picker offers — and what it refuses to offer
+
+The picker offers exactly **`P0-Critical`, `P1-High`, `P2-Medium`, `P3-Low`**
+(mirrored from `brief-normalize.ts#CANONICAL_PRIORITIES`) plus **CLEAR**, which
+sends the empty string and lands as SQL NULL.
+
+This is deliberately **not** the data-derived rule FR-245 applied to the board's
+columns and the filter chips. That rule was written for a READ surface, where
+enumerating faithfully is exactly right because the UI is *reporting* what the
+brain holds. **A picker prescribes a vocabulary; it does not report one.**
+Enumerating from data here would offer `P4-Trivial` and a bare `P2` as things an
+operator can *assign* — the UI would manufacture new instances of the drift
+TD-338 exists to explain.
+
+The non-canonical values do not vanish. Measured read-only on the operator brain
+(2026-08-03): 5 bare `P2`, 2 bare `P1`, 1 `P4-Trivial`, out of 1,818 rows. They
+stay visible in three places, all shipped and all untouched by FR-247:
+
+1. the list-row badge renders `row.priority` **verbatim**;
+2. the **filter** control's options are still derived from the rows, so
+   `P4-Trivial` remains filterable;
+3. the picker renders a non-canonical **current** value as a *disabled,
+   `not offerable`* entry — so a brief holding one never silently looks unset.
+
+Stated consequence, not pursued: `normalizePriority` folds at the handler, so
+writing any value to a bare-`P2` brief also canonicalises it. **TD-338 owns those
+8 rows and the SYNC path that minted them** (an LWW column copy with no
+normaliser); folding them here without closing that door would just re-run.
+
+#### A priority write reads before it writes
+
+`igris_brief_update` is a genuine partial update — but it **forks**. For a brief
+that exists in `brief_files` with **no `brief_status` row**, the same call takes
+a row-CREATING branch and writes `title = ''` and `status = 'Ready'`. A
+priority-only click would therefore blank a title and invent a status: two writes
+into the build-state invariant, from a request that named neither field.
+
+So `dispatchBriefWrite` reads every ref through the **FR-240 read door**
+(`loadLayerReaders().getBrief` on an `openBrainReadonly()` handle, one connection
+per POST, `query_only = ON`) and **refuses** any ref with no `brief_status` row,
+with the reason stated per item. The refusal covers `attach_goal` too, for an
+independent reason: `getGoal`'s serving-briefs join is an INNER join on
+`brief_status`, so an edge to such a brief would be invisible in the goal detail.
+
+The predicate is `status !== null`, **not** `record !== null`. `getBrief`
+LEFT-JOINs `brief_files → brief_status`, so for exactly the population this guard
+exists to catch it returns a non-null record with null status columns; a
+`record !== null` test would have passed every ref it was written to refuse. It
+holds because `brief_status.status` is `NOT NULL` in the schema, and the endpoint
+suite reads that constraint out of the live DDL so a migration relaxing it fails
+loudly rather than silently un-arming the guard.
+
+#### A brief write can EGRESS — and the tests are fenced accordingly
+
+`igris_brief_update` emits `brief.synced`. The `sync` component subscribes that
+event **unconditionally** and, when `auto_push` is true in
+`~/.igris/config.json`, fire-and-forgets `pushTables({brief_status, brief_files})`
+at `remote_brain.url`. `sync` is deliberately **enabled** in the dashboard's write
+engine (the only disabled component is `schedules`), so this is **parity, not a
+leak**: an MCP `igris_brief_update` does exactly the same thing. It is documented
+here rather than suppressed, because an operator who did not know it would be
+surprised by rows appearing on their VPS after a dashboard click.
+
+The consequence for tests is not optional. A fixture write on a machine with
+`auto_push` enabled would land in the real remote brain, which is worse than
+touching the local one because it is not undoable from that machine. Every
+mutating suite arms `cli/src/__tests__/auto-push-fence.ts` (which points `HOME`
+at the sandbox **and** replaces `globalThis.fetch` with a recording thrower, and
+reads both back), and the parity harness sets `HOME` in each arm's child env.
+G-TR-13 proves the fence bites rather than asserting it: one arm configures
+`auto_push: true` against a fictional remote and requires the blocked POST to be
+**observed**, which is what makes the zero in every other test mean something.
 
 The `id` / `learning_id` asymmetry is not an inconsistency to tidy: the three
 suggestion tools declare `required: ['id']` and the two perception tools declare
@@ -1423,7 +1544,7 @@ the server is `node:http`.
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246), leaving **117.2 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit: the single app chunk is now **553.49 kB** (553,485 B, since FR-246) against a 560 kB `chunkSizeWarningLimit` — **6,515 B of slack**, against this gate's 117.2 KB, so the next dashboard brief meets that warning first. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246) → **+443.7 KB** (FR-247), leaving **106.3 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit — since FR-247 it is not merely the binding one, it is effectively SPENT: the single app chunk is now **559.38 kB** (559,384 B) against a 560 kB `chunkSizeWarningLimit` — **616 B of slack**, against this gate's 106.3 KB. A brief adding any UI to this bundle should plan a route-level code SPLIT as its first step rather than budget against a cut ladder. FR-247 spent **+11,104 B** here against a 17-32 KB estimate and **+5,899 B** of chunk against a 2.5-4.6 KB one — two errors in opposite directions across two briefs, which is why both surfaces must be estimated AND measured. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
@@ -1431,7 +1552,9 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-learnings-search.test.ts` | FR-240 AC #2 — recall semantics (hybrid / `bm25_only` / `vector_only` / `none`), the `retrieval` block field by field, and the hermetic-by-construction guard that asserts **itself** armed |
 | `cli/src/__tests__/dashboard-context-docs.test.ts` | FR-240 D8 — the inventory is forwarded not recomputed; traversal slug, traversal `type`, unregistered slug and a planted symlink are all refused; the lens does not CREATE the brain |
 | `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness |
-| `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text. **G-TR-7 (TD-326)** bulk-dismisses the project-less cohort and asserts BOTH directions of non-interference — the projects are unmoved by a brain-level bulk, and the brain-level rows are unmoved by a project bulk |
+| `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text. **G-TR-7 (TD-326)** bulk-dismisses the project-less cohort and asserts BOTH directions of non-interference — the projects are unmoved by a brain-level bulk, and the brain-level rows are unmoved by a project bulk **FR-247 adds G-TR-8..G-TR-14**: the forbidden build-state fields refused at the door and the `ids` versus `refs` exclusivity refused by name (G-TR-8); the built argument key SET with the parser BYPASSED, including `attach_goal` dropping the ref's project (G-TR-9); the args the resolved `handleBriefUpdate` actually RECEIVED, by call trace, plus the row read back field by field (G-TR-10); **AC-4 RED-FIRST against the SHIPPED handler** — the `brief_files`-only brief is dispatched unguarded and the invented `status='Ready'` and blanked `title` are OBSERVED, then the same write through the endpoint is refused and the damage is absent, with the `igris_brief_sync` contrast and the live NOT NULL constraint the guard's predicate depends on (G-TR-11); a bulk over 12 of 17 briefs with the other 5 asserted byte-identical and an empty `refs` refused with a 400 (G-TR-12); **the auto-push egress fence PROVEN in both arms** — zero blocked requests with no config, and an observed blocked POST to a fictional remote when auto-push is on (G-TR-13); and the degraded surface with its negative control (G-TR-14) |
+| `cli/src/__tests__/auto-push-fence.ts` | FR-247 — the R4 egress fence every mutating suite arms. TWO independent layers, both read back before a single write: `HOME` is pointed at the sandbox so `loadAutoPushConfig` reads a config the test owns, and `globalThis.fetch` is replaced by a RECORDING THROWER so even a config that said `auto_push: true` cannot reach the network. It is PROVEN rather than asserted by G-TR-13's second arm — a fence over a machine where auto-push is already off proves nothing, since zero requests is equally what a broken fence and an unwired listener produce |
+| `cli/src/__tests__/dashboard-triage-parity.test.ts` (FR-247) | **G-EP-4 is this family's first genuinely NON-EMPTY parity control.** FR-241's differ compared `[]` with `[]` for four of five actions; `brief.synced` is in `EVENT_COMPONENT_MAP` and monitoring subscribes it, so a priority write through MCP and through the dashboard each produce exactly one identical `event_log` row — asserted as literals (`brief.synced` / `briefs` / the project slug / the payload), not assumed. **G-EP-5** is the declared-EMPTY complement: `edge.created` is in neither the map nor the listen list, so an attach is event-silent BY CONSTRUCTION and `entity_edges` carries the something-happened half. **G-EP-6** flips four ways against G-EP-4's non-empty rows, including a `brief_status`-ONLY difference with `event_log` still matching — the failure an event-only differ cannot see, and the reason `brief_status` joined the domain set |
 | `cli/src/__tests__/dashboard-triage-parity.test.ts` | FR-241 — the twin-brain differ. Two brains in two **processes** (`setAdapter` is a module global, measured to cross-contaminate two engines in one process), identical fixtures, identical boot config: one dispatches through the engine directly, the other over HTTP. Diffs the `event_log` delta **and** the mutated domain tables, with the excluded-column list itself asserted so it cannot quietly grow to cover a real difference. Its empty case declares that it EXPECTED empty and cites why; its positive control is a recurring reject, then mutated to prove the differ can fail |
 | `cli/dashboard/src/triage/__tests__/model.test.ts` + `components/triage/__tests__/BulkBar.test.tsx` | FR-241 — the tiering logic and the confirm copy, table-driven: a mixed selection of 3 recurring + 2 first-time rejects names **2** as permanently deleted, not 5 and not 0; the empty selection and the all-tier-3 case; the typed-count requirement |
 | `cli/src/__tests__/dashboard-params.test.ts` | FR-240 — the pure clamp/allowlist: hostile `limit`/`offset`, unknown filters named rather than ignored. TD-326 adds `project_scope`: a CLOSED vocabulary, a near-miss dropped and named, no OTHER filter set declaring it, and an executable statement of the REJECTED design (a magic `project` value is accepted verbatim by every set) |
@@ -1511,7 +1634,7 @@ a single-world run cannot tell "the empty state renders" from "the empty state
 always renders".
 
 `--gates=11` runs a named subset. It is a development aid for iterating on one
-gate without paying for the other eleven, and it is fenced: a filtered run stamps
+gate without paying for the other thirteen, and it is fenced: a filtered run stamps
 `FILTERED` and the list of gates that did not run into its own verdict line, so
 a filtered transcript cannot be quoted as evidence of a green ladder. **Evidence
 reported for a brief is always an unfiltered run.**
@@ -1724,14 +1847,14 @@ And on `#/layers`, the two things the automated gate cannot judge:
 ## Out of scope
 
 Auth, remote hosting, per-user identity · a `/dashboard` skill (the verb is the
-product) · any mutation that is not one of the five actions in the delegation
+product) · any mutation that is not one of the SEVEN actions in the delegation
 map — including editing a brief, storing a learning, or running an extractor.
 
 *Layer views left this list when FR-240 shipped, and cognition triage plus the
 write path left it when FR-241 did* — each time the same one-line edit to
 `PENDING_ROUTES` in `router.tsx`. What did **not** leave with FR-241: writes
 still reach the brain only through `gateway.dispatch`, so "all write actions" was
-replaced by a bounded five-row map rather than by an open door.
+replaced by a bounded map — five rows at FR-241, SEVEN since FR-247 — rather than by an open door.
 
 `NodeInspector` renders payload fields only and still issues **no second fetch**.
 FR-240 arrived and the resolution was a LINK, not an endpoint: `OPEN RECORD`

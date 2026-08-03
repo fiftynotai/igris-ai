@@ -166,6 +166,17 @@ const seed = new D(DB);
 seed.prepare("INSERT INTO suggestions (id, source_module, project_slug, title, evidence, priority, status, created_at) VALUES (1,'gap','demo','parity row','{\"kind\":\"gap\"}','high','pending','2026-07-01 09:00:00')").run();
 seed.prepare("INSERT INTO learnings (id, project, category, title, content, confidence, provenance, review_status, source_extractor, seen_again_count, tags, tech_stack, scope) VALUES (1,'demo','pattern','recurring parity','body',0.8,'inferred','pending_review','perception',3,'','','local')").run();
 seed.prepare("INSERT INTO learnings (id, project, category, title, content, confidence, provenance, review_status, source_extractor, seen_again_count, tags, tech_stack, scope) VALUES (2,'demo','pattern','first-time parity','body',0.8,'inferred','pending_review','perception',0,'','','local')").run();
+// FR-247. NO BACKTICKS IN THIS BLOCK -- it is inside a template literal, and
+// one backtick ends the arm's whole source. brief_status.project has a FK to
+// projects(slug) and better-sqlite3 opens with foreign_keys = 1, so the
+// project row is inserted first. TWO briefs: one carrying a canonical priority
+// and one carrying NULL, so the priority arm exercises both an
+// UPDATE-over-a-value and an UPDATE-over-NULL.
+seed.prepare("INSERT INTO projects (slug, name, path) VALUES ('demo','Demo','/tmp/demo')").run();
+seed.prepare("INSERT INTO brief_status (project, brief_id, title, status, priority, effort, phase, brief_type, updated_at) VALUES ('demo','FR-900','Parity brief one','Ready','P2-Medium','M',NULL,'Feature','2026-08-01 10:00:00')").run();
+seed.prepare("INSERT INTO brief_status (project, brief_id, title, status, priority, effort, phase, brief_type, updated_at) VALUES ('demo','FR-901','Parity brief two','Ready',NULL,'S',NULL,'Feature','2026-08-01 10:00:00')").run();
+seed.prepare("INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at) VALUES ('parity-file','demo','FR-900','FR-900.md','body','sha','2026-08-01 10:00:00')").run();
+seed.prepare("INSERT INTO goals (goal_id, project_slug, title, outcome, status, priority, created_at, updated_at, metadata) VALUES ('GL-900','demo','Parity goal','an outcome','active','high','2026-08-01 10:00:00','2026-08-01 10:00:00','{}')").run();
 seed.close();
 
 const watermark = (() => {
@@ -189,6 +200,11 @@ function harvest(response) {
     dismissed_patterns: strip(c.prepare("SELECT source_module, project_slug, evidence_signature, dismiss_count, reasons FROM dismissed_patterns ORDER BY id").all()),
     learnings: strip(c.prepare("SELECT id, project, title, review_status, seen_again_count, deleted_at FROM learnings ORDER BY id").all()),
     entity_edges: strip(c.prepare("SELECT from_type, from_id, to_type, to_id, edge_type FROM entity_edges ORDER BY id").all()),
+    // FR-247 -- ONE line, and no backticks (template literal). title and
+    // status are COMPARED rather than stripped: the whole point of the
+    // priority arm is that both paths move the same single column and leave
+    // the same others alone.
+    brief_status: strip(c.prepare("SELECT project, brief_id, title, status, priority, effort, phase, brief_type FROM brief_status ORDER BY project, brief_id").all()),
   };
   // The arm reports event_log's OWN column list so the parent can assert the
   // COMPARED+EXCLUDED union equals it. The parent has no brain of its own, and
@@ -252,6 +268,20 @@ function runArm(source: string): ArmResult {
       // own, and this makes an accidental inheritance impossible rather than
       // merely unlikely.
       IGRIS_BRAIN_DIR: join(scratch, "must-be-overridden"),
+      // FR-247 R4 — THE EGRESS FENCE FOR THE ARMS.
+      //
+      // `set_priority` dispatches `igris_brief_update`, which emits
+      // `brief.synced`; `sync` listens for it unconditionally and
+      // fire-and-forgets `pushTables({brief_status, brief_files})` to
+      // `remote_brain.url` whenever `auto_push` is true. `loadAutoPushConfig`
+      // reads `join(homedir(), '.igris', 'config.json')`, and a child process
+      // inherits `HOME` — so without this line the arms would read the
+      // OPERATOR'S config, and a parity fixture row could land in the real
+      // remote brain. Pointing `HOME` at the scratch dir makes that
+      // structurally impossible rather than dependent on one boolean in a file
+      // no test owns. The in-process suites use `auto-push-fence.ts`, which
+      // also proves the mechanism is real (G-TR-13 ARM B).
+      HOME: scratch,
     },
     encoding: "utf-8",
     maxBuffer: 32 * 1024 * 1024,
@@ -570,6 +600,232 @@ describe("G-EP-3 — the differ CAN fail: three injected differences, three catc
     // above. The recurring branch is chosen precisely because it is not empty.
     expect(dash.events.length).toBeGreaterThan(1);
     expect((dash.domain.learnings as unknown[]).length).toBeGreaterThan(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FR-247 — the two brief writes, through the SAME two-process differ
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * G-EP-4 is a genuinely NON-EMPTY positive control, and that is new for this
+ * family. FR-241's headline parity AC was near-vacuous: four of its five
+ * actions write nothing to `event_log`, so `[] === []` carried the claim.
+ *
+ * `set_priority` does not have that problem, and the reason was traced rather
+ * than hoped for:
+ *   - `briefs/index.ts:398` — `igris_brief_update`'s registration emits
+ *     `brief.synced` on EVERY update;
+ *   - `monitoring/index.ts:56` — `EVENT_COMPONENT_MAP` carries
+ *     `'brief.synced': 'briefs'`;
+ *   - `monitoring/index.ts:272` — monitoring subscribes it.
+ * So a priority write produces a real `event_log` row on both arms, at zero
+ * brain-side cost.
+ *
+ * G-EP-5 is the complement, and it is DECLARED-EMPTY rather than merely empty:
+ * `edge.created` is in NEITHER `EVENT_COMPONENT_MAP` nor monitoring's listen
+ * list (re-grepped over the whole component, zero hits for /edge|goal/), so an
+ * attach is event-silent BY CONSTRUCTION. `entity_edges` carries the
+ * "something really happened" half, which the differ already selected.
+ */
+
+describe("G-EP-4 — set_priority: a REAL event_log row, byte-equal on both sides", () => {
+  const args = { project: "demo", brief_id: "FR-900", priority: "P0-Critical" };
+  const mcp = armMcp("igris_brief_update", args);
+  const dash = armDashboard({
+    action: "set_priority",
+    refs: [{ project: "demo", brief_id: "FR-900" }],
+    priority: "P0-Critical",
+  });
+
+  it("BOTH arms wrote EXACTLY ONE event_log row — this control is not empty", () => {
+    expect(
+      mcp.events.length,
+      "the MCP priority write logged nothing — has brief.synced stopped reaching monitoring?",
+    ).toBe(1);
+    expect(dash.events.length).toBe(1);
+  });
+
+  it("the row is brief.synced / component='briefs' / the right project — ASSERTED, not assumed", () => {
+    // `component` is a LITERAL from `EVENT_COMPONENT_MAP:56`, not something
+    // derived at read time. G-EP-2 records the L-857 trap on the perception
+    // side (the legacy `'perception'` rather than `'cognition.perception'`);
+    // this is the same discipline applied to a different map entry.
+    for (const arm of [mcp, dash]) {
+      expect(arm.events[0]?.event_name).toBe("brief.synced");
+      expect(arm.events[0]?.component).toBe("briefs");
+      expect(arm.events[0]?.project_slug).toBe("demo");
+      expect(JSON.parse(String(arm.events[0]?.payload))).toEqual({
+        project: "demo",
+        brief_id: "FR-900",
+      });
+    }
+  });
+
+  it("ARM B really went over HTTP and really applied — not a silent no-op", () => {
+    const body = JSON.parse(dash.response) as {
+      applied: number;
+      degraded: unknown;
+      results: { ref: unknown }[];
+    };
+    expect(body.applied).toBe(1);
+    expect(body.degraded).toBeNull();
+    expect(body.results[0]?.ref).toEqual({ project: "demo", brief_id: "FR-900" });
+  });
+
+  it("the brief_status row moved on BOTH arms, and ONLY in `priority`", () => {
+    // The half that keeps the event comparison from being satisfiable by two
+    // arms that both did nothing.
+    for (const arm of [mcp, dash]) {
+      const rows = arm.domain.brief_status as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[0]).toEqual({
+        project: "demo",
+        brief_id: "FR-900",
+        title: "Parity brief one",
+        status: "Ready",
+        priority: "P0-Critical",
+        effort: "M",
+        phase: null,
+        brief_type: "Feature",
+        // `deleted` is the SHARED stripper's artifact — it folds every
+        // `deleted_at` into a presence flag for the learnings arm. Asserted
+        // rather than dropped from the comparison, so the expectation is the
+        // WHOLE row and a new column cannot slip in uncompared.
+        deleted: 0,
+      });
+      // ...and the OTHER brief, which neither arm named, is untouched with its
+      // priority still NULL.
+      expect(rows[1]).toMatchObject({ brief_id: "FR-901", priority: null });
+    }
+  });
+
+  it("the two arms are IDENTICAL on event_log AND on every domain table", () => {
+    expect(diff(mcp, dash).join("\n")).toBe("");
+  });
+});
+
+describe("G-EP-5 — attach_goal: DECLARED-empty on event_log, non-empty on entity_edges", () => {
+  const args = {
+    from_type: "brief",
+    from_id: "FR-900",
+    to_type: "goal",
+    to_id: "GL-900",
+    edge_type: "serves_goal",
+  };
+  const mcp = armMcp("igris_edge_create", args);
+  const dash = armDashboard({
+    action: "attach_goal",
+    refs: [{ project: "demo", brief_id: "FR-900" }],
+    goal_id: "GL-900",
+  });
+
+  it("DECLARED: an edge write logs nothing, for a traced reason", () => {
+    // `edges/index.ts` DOES `bus.emit('edge.created', …)`, and NOBODY listens:
+    // `edge.created` is absent from `EVENT_COMPONENT_MAP` and from
+    // `monitoring`'s `bus.on` list (`edges/index.ts:759` self-listens only, to
+    // invalidate the traversal cache). So `[]` here is a FINDING. If either
+    // side ever starts logging, this assertion is what says so.
+    expect(mcp.events, "the MCP edge path started logging").toEqual([]);
+    expect(dash.events, "the dashboard edge path started logging").toEqual([]);
+  });
+
+  it("...and `entity_edges` is NOT empty, so `[] === []` cannot read as `nothing happened`", () => {
+    for (const arm of [mcp, dash]) {
+      expect(arm.domain.entity_edges).toEqual([
+        {
+          from_type: "brief",
+          from_id: "FR-900",
+          to_type: "goal",
+          to_id: "GL-900",
+          edge_type: "serves_goal",
+          // The shared stripper's `deleted_at` presence flag — see G-EP-4.
+          deleted: 0,
+        },
+      ]);
+    }
+  });
+
+  it("the dashboard arm DROPPED the ref's project, exactly as the MCP arm never had one", () => {
+    // BR-078, made visible where it is minted. `entity_edges.from_id` is the
+    // BARE brief id with no project column, so the two arms can only agree
+    // because the map's `refKeys` forwards `brief_id` alone. If a future edit
+    // ever threaded `project` through, this diff would go red rather than
+    // silently minting a differently-shaped edge from the dashboard.
+    expect(diff(mcp, dash).join("\n")).toBe("");
+  });
+
+  it("no brief COLUMN moved on either arm — an attach is not a brief write", () => {
+    for (const arm of [mcp, dash]) {
+      const rows = arm.domain.brief_status as Record<string, unknown>[];
+      expect(rows[0]).toMatchObject({
+        title: "Parity brief one",
+        status: "Ready",
+        priority: "P2-Medium",
+      });
+    }
+  });
+});
+
+describe("G-EP-6 — THE FLIP: the FR-247 comparisons can actually fail", () => {
+  const mcp = armMcp("igris_brief_update", {
+    project: "demo",
+    brief_id: "FR-900",
+    priority: "P0-Critical",
+  });
+  const dash = armDashboard({
+    action: "set_priority",
+    refs: [{ project: "demo", brief_id: "FR-900" }],
+    priority: "P0-Critical",
+  });
+
+  /** A structural clone with one field rewritten. */
+  const tamper = (arm: ArmResult, fn: (clone: ArmResult) => void): ArmResult => {
+    const clone = JSON.parse(JSON.stringify(arm)) as ArmResult;
+    fn(clone);
+    return clone;
+  };
+
+  it("a mutated PAYLOAD is caught", () => {
+    const bad = tamper(dash, (c) => {
+      c.events[0]!.payload = JSON.stringify({ project: "demo", brief_id: "FR-999" });
+    });
+    expect(diff(mcp, bad).join("\n")).toContain("event_log differs");
+  });
+
+  it("a mutated COMPONENT is caught — the L-857 shape", () => {
+    const bad = tamper(dash, (c) => {
+      c.events[0]!.component = "cognition.briefs";
+    });
+    expect(diff(mcp, bad).join("\n")).toContain("event_log differs");
+  });
+
+  it("a DROPPED row is caught — i.e. a dashboard write that logged nothing", () => {
+    const bad = tamper(dash, (c) => {
+      c.events = [];
+    });
+    expect(diff(mcp, bad).join("\n")).toContain("event_log differs");
+  });
+
+  it("a brief_status-ONLY difference is caught while event_log still matches", () => {
+    // The most important flip of the four. A dashboard write that produced the
+    // right event and the WRONG row is exactly the failure an event-only differ
+    // cannot see — and `brief_status` was added to the domain set for this.
+    const bad = tamper(dash, (c) => {
+      (c.domain.brief_status as Record<string, unknown>[])[0]!.title = "BLANKED";
+    });
+    const d = diff(mcp, bad).join("\n");
+    expect(d).toContain("brief_status differs");
+    expect(d, "the event comparison should still agree").not.toContain("event_log differs");
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the arms really produced rows to mutate", () => {
+    // Every flip above is vacuous over an empty array.
+    expect(dash.events.length).toBeGreaterThan(0);
+    expect((dash.domain.brief_status as unknown[]).length).toBeGreaterThan(0);
+    // ...and the UNTAMPERED comparison agrees, so the flips are measuring the
+    // tamper rather than a pre-existing difference.
+    expect(diff(mcp, dash).join("\n")).toBe("");
   });
 });
 

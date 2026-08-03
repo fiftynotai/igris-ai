@@ -331,14 +331,31 @@ export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
  */
 export const MAX_BULK = 200;
 
-/** The parsed, validated body — or a stated reason it is a 400. */
+/** FR-247 — a brief's address. Mirrors `brain-write-bridge.ts#BriefRef`. */
+export interface ParsedBriefRef {
+  project: string;
+  brief_id: string;
+}
+
+/**
+ * The parsed, validated body — or a stated reason it is a 400.
+ *
+ * FR-247: `ids` and `refs` are BOTH always present and exactly one is non-empty,
+ * chosen by the action's `target`. Two always-present arrays rather than a
+ * discriminated union because every consumer wants `ids.length + refs.length`
+ * as the requested count, and a union would make that one line into four.
+ */
 export type TriageBodyResult =
   | {
       ok: true;
       action: string;
       ids: number[];
+      /** FR-247 — non-empty for a `brief-ref` action, empty otherwise. */
+      refs: ParsedBriefRef[];
       reason?: string;
       brief_id?: string;
+      priority?: string;
+      goal_id?: string;
       /** Clamp/dedupe notes. Empty when the body was clean. */
       params: string[];
     }
@@ -369,7 +386,16 @@ const MAX_TEXT = 2000;
 export function parseTriageBody(
   body: unknown,
   isKnownAction: (action: string) => boolean,
-  opts: { bulkAllowed?: (action: string) => boolean } = {},
+  opts: {
+    bulkAllowed?: (action: string) => boolean;
+    /**
+     * FR-247 — the action's `target`, injected for the same reason
+     * `isKnownAction` is: this module keeps its zero-dependency, zero-I/O
+     * property, and the map stays the ONE definition of the vocabulary.
+     * Absent means "id", so every pre-FR-247 caller is unchanged.
+     */
+    targetOf?: (action: string) => "id" | "brief-ref";
+  } = {},
 ): TriageBodyResult {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     return { ok: false, reason: "body must be a JSON object" };
@@ -389,55 +415,147 @@ export function parseTriageBody(
     };
   }
 
-  const rawIds = b.ids;
-  if (!Array.isArray(rawIds)) {
-    return { ok: false, reason: "'ids' is required and must be an array" };
-  }
-  if (rawIds.length === 0) {
-    // An empty batch is REFUSED rather than treated as a no-op success. A UI
-    // that can fire an empty bulk action is a UI whose selection state is
-    // wrong, and a 200/applied:0 would hide that — this is also the shape of
-    // the vacuous "bulk-act on zero items" gate, so the server refuses to
-    // participate in it.
-    return { ok: false, reason: "'ids' must not be empty" };
-  }
-
+  const target = opts.targetOf?.(action) ?? "id";
   const params: string[] = [];
-  const seen = new Set<number>();
   const ids: number[] = [];
-  for (const raw of rawIds) {
-    if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+  const refs: ParsedBriefRef[] = [];
+
+  // THE TWO KEYS ARE EXCLUSIVE, AND THE WRONG ONE IS REFUSED BY NAME. A body
+  // carrying both would leave "which one did the server act on?" answerable
+  // only by reading this file — and the answer would be a mutation.
+  if (target === "id") {
+    if (b.refs !== undefined) {
       return {
         ok: false,
-        reason: `'ids' must contain only positive integers (got ${JSON.stringify(raw)})`,
+        reason: `action '${action}' is addressed by 'ids'; 'refs' is not accepted for it`,
       };
     }
-    // Dedupe: dismissing the same id twice in one batch would report one
-    // success and one "already dismissed" failure, and a `failed: 1` on a
-    // request that fully succeeded is a lie the operator has to decode.
-    if (seen.has(raw)) {
-      params.push(`ids: dropped a duplicate id (${raw})`);
-      continue;
+    const rawIds = b.ids;
+    if (!Array.isArray(rawIds)) {
+      return { ok: false, reason: "'ids' is required and must be an array" };
     }
-    seen.add(raw);
-    ids.push(raw);
+    if (rawIds.length === 0) {
+      // An empty batch is REFUSED rather than treated as a no-op success. A UI
+      // that can fire an empty bulk action is a UI whose selection state is
+      // wrong, and a 200/applied:0 would hide that — this is also the shape of
+      // the vacuous "bulk-act on zero items" gate, so the server refuses to
+      // participate in it.
+      return { ok: false, reason: "'ids' must not be empty" };
+    }
+
+    const seen = new Set<number>();
+    for (const raw of rawIds) {
+      if (typeof raw !== "number" || !Number.isInteger(raw) || raw < 1) {
+        return {
+          ok: false,
+          reason: `'ids' must contain only positive integers (got ${JSON.stringify(raw)})`,
+        };
+      }
+      // Dedupe: dismissing the same id twice in one batch would report one
+      // success and one "already dismissed" failure, and a `failed: 1` on a
+      // request that fully succeeded is a lie the operator has to decode.
+      if (seen.has(raw)) {
+        params.push(`ids: dropped a duplicate id (${raw})`);
+        continue;
+      }
+      seen.add(raw);
+      ids.push(raw);
+    }
+  } else {
+    if (b.ids !== undefined) {
+      return {
+        ok: false,
+        reason: `action '${action}' is addressed by 'refs'; 'ids' is not accepted for it`,
+      };
+    }
+    const rawRefs = b.refs;
+    if (!Array.isArray(rawRefs)) {
+      return { ok: false, reason: "'refs' is required and must be an array" };
+    }
+    if (rawRefs.length === 0) {
+      // `refs` INHERITS the anti-vacuity posture stated above for `ids`, and it
+      // matters more here: "a bulk write over zero briefs" is FR-247's own
+      // named vacuous case, so the server refuses to be the thing that makes it
+      // look like a success.
+      return { ok: false, reason: "'refs' must not be empty" };
+    }
+
+    const seenRefs = new Set<string>();
+    for (const raw of rawRefs) {
+      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+        return {
+          ok: false,
+          reason: `'refs' must contain only {project, brief_id} objects (got ${JSON.stringify(raw)})`,
+        };
+      }
+      const r = raw as Record<string, unknown>;
+      // EXACTLY the two keys. A ref carrying `status` would be dropped by the
+      // map's allow-list downstream anyway, but a body that can carry it
+      // silently is a body whose shape nobody can state.
+      const extraKeys = Object.keys(r).filter(
+        (k) => k !== "project" && k !== "brief_id",
+      );
+      if (extraKeys.length > 0) {
+        return {
+          ok: false,
+          reason: `'refs' entries accept only project and brief_id (got ${extraKeys.join(", ")})`,
+        };
+      }
+      for (const field of ["project", "brief_id"] as const) {
+        const v = r[field];
+        if (typeof v !== "string" || v.length === 0) {
+          return {
+            ok: false,
+            reason: `'refs' entries need a non-empty string ${field}`,
+          };
+        }
+        if (v.length > MAX_TEXT) {
+          return {
+            ok: false,
+            reason: `'refs' ${field} must be at most ${MAX_TEXT} characters`,
+          };
+        }
+      }
+      const project = r.project as string;
+      const briefId = r.brief_id as string;
+      const key = `${project}|${briefId}`;
+      if (seenRefs.has(key)) {
+        params.push(`refs: dropped a duplicate ref (${key})`);
+        continue;
+      }
+      seenRefs.add(key);
+      refs.push({ project, brief_id: briefId });
+    }
   }
 
-  if (opts.bulkAllowed !== undefined && !opts.bulkAllowed(action) && ids.length > 1) {
+  const count = ids.length + refs.length;
+
+  if (opts.bulkAllowed !== undefined && !opts.bulkAllowed(action) && count > 1) {
     return {
       ok: false,
-      reason: `action '${action}' is single-item only; got ${ids.length} ids`,
+      reason: `action '${action}' is single-item only; got ${count} ids`,
     };
   }
 
+  // ONE clamp, reused verbatim for both address kinds — the ceiling is about
+  // how much one confirm may mutate, which does not depend on how the rows are
+  // named.
   if (ids.length > MAX_BULK) {
     params.push(
       `ids: clamped to ${MAX_BULK} (asked ${ids.length}); the rest were NOT applied`,
     );
     ids.length = MAX_BULK;
   }
+  if (refs.length > MAX_BULK) {
+    params.push(
+      `refs: clamped to ${MAX_BULK} (asked ${refs.length}); the rest were NOT applied`,
+    );
+    refs.length = MAX_BULK;
+  }
 
-  const text = (key: "reason" | "brief_id"): TriageBodyResult | string | undefined => {
+  const text = (
+    key: "reason" | "brief_id" | "priority" | "goal_id",
+  ): TriageBodyResult | string | undefined => {
     const v = b[key];
     if (v === undefined) return undefined;
     if (typeof v !== "string") return { ok: false, reason: `'${key}' must be a string` };
@@ -451,12 +569,39 @@ export function parseTriageBody(
   if (typeof reason === "object") return reason;
   const briefId = text("brief_id");
   if (typeof briefId === "object") return briefId;
+  // FR-247. NEITHER is validated against a vocabulary here. `priority` is the
+  // brain's to fold (`normalizePriority`) and the picker's to prescribe; a
+  // fourth copy of `CANONICAL_PRIORITIES` in this file would be a fourth thing
+  // to drift. `goal_id` is a `GL-XXX` whose existence only the brain can
+  // answer, and a shape check that accepted a non-existent goal would be
+  // reassurance rather than validation.
+  const priority = text("priority");
+  if (typeof priority === "object") return priority;
+  const goalId = text("goal_id");
+  if (typeof goalId === "object") return goalId;
 
   // Unknown top-level keys are REFUSED, mirroring the gateway's TD-128 posture
   // one layer out: a client that sends `{action, ids, resaon}` has a typo whose
   // symptom would otherwise be a silently reason-less dismissal, and the
   // dismiss reason is the signal that stops the backlog re-growing.
-  const KNOWN = new Set(["action", "ids", "reason", "brief_id"]);
+  //
+  // The set is GLOBAL rather than per-action, deliberately and unchanged from
+  // FR-241: the map's `extra` allow-list is what stops a key REACHING the
+  // handler (`buildTriageArgs`/`buildBriefArgs` copy only the named keys), and
+  // `dashboard-triage-endpoint.test.ts` G-TR-6 pins that a `brief_id` on a
+  // `dismiss` is accepted-then-dropped rather than a 400. Narrowing this per
+  // action would flip that shipped behaviour for no gain — while `status`,
+  // `phase`, `content` and `title` are refused HERE, by absence, for every
+  // action, which is the property TD-311 actually needs.
+  const KNOWN = new Set([
+    "action",
+    "ids",
+    "refs",
+    "reason",
+    "brief_id",
+    "priority",
+    "goal_id",
+  ]);
   for (const key of Object.keys(b)) {
     if (!KNOWN.has(key)) {
       return {
@@ -470,8 +615,11 @@ export function parseTriageBody(
     ok: true,
     action,
     ids,
+    refs,
     ...(reason !== undefined ? { reason } : {}),
     ...(briefId !== undefined ? { brief_id: briefId } : {}),
+    ...(priority !== undefined ? { priority } : {}),
+    ...(goalId !== undefined ? { goal_id: goalId } : {}),
     params,
   };
 }

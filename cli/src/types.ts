@@ -1442,15 +1442,28 @@ export interface SuggestionsPayload {
  * `POST /api/triage` — the request body.
  *
  * ONE endpoint with an `action` discriminator rather than five verb endpoints
- * (D3). The whole delegation rule is then a single frozen five-row map a
+ * (D3). The whole delegation rule is then a single frozen map a
  * reviewer reads in one glance, and "the server layer performs no mutation of
  * its own" is true by construction: there is no other route that can write.
  */
 export interface TriageRequest {
   /** One of `brain-write-bridge.ts#TRIAGE_ACTIONS`' keys. */
   action: string;
-  /** Positive integers. `apply` accepts exactly one (D4). */
-  ids: number[];
+  /**
+   * Positive integers. `apply` accepts exactly one (D4).
+   *
+   * FR-247: required for a `target: "id"` action and REFUSED for a
+   * `target: "brief-ref"` one. Never both `ids` and `refs`.
+   */
+  ids?: number[];
+  /**
+   * FR-247 — the BRIEF address. A brief is the `(project, brief_id)` PAIR:
+   * `igris_brief_update` declares `required: ['project','brief_id']` and no
+   * brain tool accepts `brief_status.id`, so the integer key the other five
+   * actions use cannot address one. This widens the BODY, not the path set —
+   * `POST /api/triage` is still the only write endpoint.
+   */
+  refs?: { project: string; brief_id: string }[];
   /**
    * Free-text dismissal/rejection reason. NOT decoration: it feeds
    * `dismissed_patterns` and therefore the suppression loop that stops the
@@ -1459,11 +1472,25 @@ export interface TriageRequest {
   reason?: string;
   /** `acted` only — which brief the operator opened in response. */
   brief_id?: string;
+  /**
+   * FR-247 `set_priority` only. NOT validated against a vocabulary here: the
+   * server allow-lists the KEY, the brain's `normalizePriority` folds the
+   * VALUE, and the picker prescribes the CHOICES. Three layers, three jobs.
+   */
+  priority?: string;
+  /** FR-247 `attach_goal` only — an EXISTING `goals.goal_id` (`GL-XXX`). */
+  goal_id?: string;
 }
 
-/** One id's outcome. `error` is the BRAIN's verbatim message, never a rewrite. */
+/**
+ * One item's outcome. `error` is the BRAIN's verbatim message, never a rewrite.
+ *
+ * FR-247: exactly one of `id` / `ref` is populated, matching the action's
+ * target. A client renders whichever is non-null.
+ */
 export interface TriageItemResultPayload {
-  id: number;
+  id: number | null;
+  ref: { project: string; brief_id: string } | null;
   ok: boolean;
   error: string | null;
 }

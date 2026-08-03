@@ -229,6 +229,23 @@ const MUTATIONS = {
     gate: "G-BR-13c",
     how: "strip `q` on the way to the wire for `/api/goals`, so the rendered count stays at its UNFILTERED value while the endpoint's own answer for the same `q` moves. The `br12-board-drops-filters` shape, one layer over. ALSO reddens 13b: with `q` stripped the payload carries no `search` block at all, so the substring readout stops rendering — a second, honest consequence of the same drop",
   },
+  // --- FR-247 -------------------------------------------------------------
+  "br14-brief-bulk-on-empty": {
+    gate: "G-BR-14a",
+    how: "run the BRIEF bulk write with NOTHING selected and assert it succeeded — FR-247's own named vacuous case (a bulk write over zero briefs), driven on purpose. TWO fences catch it and the mutation reaches both: the confirm button is `disabled` at a zero selection so the dialog never opens, and the gate then POSTs an empty `refs` directly to show the server's 400. The client guard is the one that fires first; the server one is the guarantee. ALSO reddens 14b, as honest collateral: nothing moved, so the expected set does not match",
+  },
+  "br14-priority-from-selection": {
+    gate: "G-BR-14b",
+    how: "write to a DIFFERENT TWO briefs (FR-902/FR-904) than the two the check expects (FR-901/FR-903) — a write that hit the wrong set of the SAME SIZE. A count-only assertion is blind to it by construction (`moved.length === 2` either way), which is exactly why G-BR-14b reads the identities AND the untouched remainder rather than a count",
+  },
+  "br14-affordance-on-board": {
+    gate: "G-BR-14c",
+    how: "inject a `.record-select` checkbox and a priority `<select>` into every `.record-board` card — F4's shared-mapper leak made observable. `briefRow` is ONE mapper for the list and the board, so an unconditional `select` would put a write path onto the status board, which is a write into TD-311's own view. Pairs with the shipped `br12-drag-affordance` / `br12-post-from-board`",
+  },
+  "br14-write-affordance-when-down": {
+    gate: "G-BR-14d",
+    how: "assert the brief write controls are PRESENT in the world whose write surface is unavailable — AC-7 inverted, the `br8-write-affordance-when-down` shape on the briefs surface",
+  },
   "br13-silent-empty-search": {
     gate: "G-BR-13d",
     how: "rewrite the briefs-search response the BROWSER sees to claim `mode: \"hybrid\"` with zero items, while the gate reads the endpoint directly from node and sees the true mode. 'a degrade is loud' inverted, and the exact shape a missing-migration ship would produce: a search that answers nothing while looking perfectly healthy. ALSO reddens 13a, because the rewritten body renders zero rows while the endpoint returns one",
@@ -568,6 +585,22 @@ function seedTriageWorld(db) {
       insL.run(3, "first-time candidate 3", 0);
       insL.run(4, "recurring candidate 4", 5);
       insL.run(5, "recurring candidate 5", 2);
+      // FR-247 — FIVE briefs on \`demo\`, all at P2-Medium, plus ONE goal.
+      //
+      // Five and not two: G-BR-14b selects TWO and asserts the OTHER THREE are
+      // untouched, which is the reading a count-only check cannot make. Five is
+      // also small enough to fit one page, so the selection and the remainder
+      // are both on screen and \`confineToKeys\` never enters the picture.
+      //
+      // All five share a priority so the post-state is unambiguous, and NONE of
+      // them is P0-Critical, so a page that wrote to everything is visible.
+      const insB = db.prepare(
+        "INSERT INTO brief_status (project, brief_id, title, status, priority, effort, brief_type, updated_at) VALUES ('demo',?,?,'Ready','P2-Medium','M','Feature','2026-08-01 10:00:00')"
+      );
+      for (let i = 1; i <= 5; i++) insB.run("FR-90" + i, "gate brief " + i);
+      db.prepare(
+        "INSERT INTO goals (goal_id, project_slug, title, outcome, status, priority, created_at, updated_at, metadata) VALUES ('GL-900','demo','Gate goal','an outcome','active','high','2026-08-01 10:00:00','2026-08-01 10:00:00','{}')"
+      ).run();
       db.close();
       `,
     ],
@@ -3270,6 +3303,345 @@ async function gBr8(tabs, worlds) {
   );
 }
 
+/**
+ * G-BR-14 — FR-247. **The briefs LIST can write; the briefs BOARD cannot.**
+ *
+ * PROVES, in a real browser against a real brain:
+ *   14a  a bulk priority write fires from a REAL SELECTION, through a REAL
+ *        confirm dialog, and lands — witnessed by reading the endpoint
+ *        independently rather than by reading the page back;
+ *   14b  it lands on the SELECTION AND ONLY THE SELECTION. The untouched
+ *        remainder is read, not inferred from a count;
+ *   14c  the BOARD carries no `.record-select` and no write control, and
+ *        issued no non-GET while it was mounted — with a POSITIVE control
+ *        (`GET > 0`) so the zero is a measurement and not a dead counter;
+ *   14d  every brief write affordance DISAPPEARS when the write surface is
+ *        unavailable, with a negative control in a world where it is not.
+ *
+ * DOES NOT PROVE that the write reached the brain's own handler rather than
+ * some other path — a browser cannot see a call graph. Siblings:
+ * `dashboard-triage-endpoint.test.ts` G-TR-10 (spies the resolved
+ * `handleBriefUpdate` and reads the args it received) and G-TR-9 (the built
+ * argument key set with the parser bypassed). Nor does it prove the map cannot
+ * NAME a forbidden field — that is `dashboard-server.test.ts` AC-3(a), over the
+ * frozen object. All of them are required; do not weaken one on the assumption
+ * another has it covered.
+ *
+ * WHY THE `triage` WORLD. It is the only world whose brain is built by the
+ * ENGINE's own migrations, which is the only schema the write door can boot
+ * against (`seedTriageWorld`). It runs AFTER G-BR-10, which mutates that
+ * world's SUGGESTIONS — a different table, so neither disturbs the other, and
+ * this gate's five briefs are seeded for it alone.
+ */
+async function gBr14(tabs, worlds) {
+  gate("G-BR-14", "FR-247: the briefs list writes, the briefs board does not");
+
+  const tab = tabs.triage;
+  const world = worlds.triage;
+
+  /** Read the five gate briefs straight from the endpoint. Out of band. */
+  const briefState = async () => {
+    const p = await apiJson(`${world.url}/api/briefs?project=demo&limit=50`);
+    const out = {};
+    for (const r of p.items) if (/^FR-90\d$/.test(r.brief_id)) out[r.brief_id] = r.priority;
+    return out;
+  };
+
+  await tab.hash("#/layers/briefs");
+  await tab.until(has(".brief-write"), { label: "the brief write bar mounts" });
+  await untilListStable(tab);
+
+  const before = await briefState();
+  const beforeIds = Object.keys(before).sort();
+  check(
+    "14-pre",
+    beforeIds.length === 5 && Object.values(before).every((v) => v === "P2-Medium"),
+    `PRE-STATE from the endpoint: ${JSON.stringify(before)} — five briefs, all P2-Medium. ` +
+      `Every assertion below is satisfiable by zero rows without this reading.`,
+  );
+
+  /** Tick the checkbox whose `data-select-key` names this brief. */
+  const selectBrief = async (briefId) => {
+    const box = await tab.eval(`
+      const cb = document.querySelector('.record-select[data-select-key="demo|' + ${JSON.stringify(briefId)} + '"]');
+      if (cb === null) return null;
+      cb.scrollIntoView({ block: 'center' });
+      const r = cb.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    `);
+    if (box === null) throw new Error(`no selectable brief row for ${briefId}`);
+    await tab.clickAt(box.x, box.y);
+  };
+
+  /** Drive a native `<select>` the way React sees a real user change it. */
+  const chooseOption = async (ariaLabel, value) => {
+    const ok = await tab.eval(`
+      const el = document.querySelector('select[aria-label=' + JSON.stringify(${JSON.stringify(ariaLabel)}) + ']');
+      if (el === null) return null;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+      setter.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return el.value;
+    `);
+    if (ok !== value) throw new Error(`could not set ${ariaLabel} to ${value} (got ${ok})`);
+    await tab.settle(150);
+  };
+
+  // --- 14a: a bulk priority write, from a real selection --------------------
+  //
+  // TWO of five. `br14-brief-bulk-on-empty` skips the selection entirely and
+  // then asserts the write succeeded — FR-247's own named vacuous case, driven
+  // on purpose. The server's 400 on an empty `refs` is what catches it.
+  const TARGET = ["FR-901", "FR-903"];
+  // `br14-priority-from-selection` writes to a DIFFERENT TWO briefs while the
+  // check still expects TARGET. That is the shape a count-only assertion is
+  // blind to by construction — `moved.length === 2` is true either way — and it
+  // is why 14b reads the identities and the untouched remainder instead.
+  const WRITE_TO = mut("br14-priority-from-selection")
+    ? ["FR-902", "FR-904"]
+    : TARGET;
+  if (!mut("br14-brief-bulk-on-empty")) {
+    for (const id of WRITE_TO) await selectBrief(id);
+  }
+  const selected = await tab.eval(
+    "const e = document.querySelector('.brief-write'); return e === null ? null : e.getAttribute('data-selected');",
+  );
+  const wantSelected = mut("br14-brief-bulk-on-empty") ? 0 : WRITE_TO.length;
+  await chooseOption("Priority to assign", "P0-Critical");
+
+  const beforePosts = (await tab.instrument()).triagePost;
+  await clickButton(tab, "SET PRIORITY", { scroll: true });
+  let confirmed = false;
+  try {
+    await tab.until(has(".triage-confirm"), {
+      label: "the brief-write confirm dialog opens",
+      timeout: 8_000,
+    });
+    // The dialog states what changes AND what does not. A reversible write
+    // must not borrow the permanent-deletion register — asserted in the DOM
+    // here, and table-driven in `triage/__tests__/model.test.ts`.
+    const dialog = await tab.eval(`
+      const d = document.querySelector('.triage-confirm');
+      return d === null ? null : {
+        action: d.getAttribute('data-action'),
+        hardDelete: d.getAttribute('data-hard-delete'),
+        text: d.textContent.replace(/\\s+/g, ' ').trim(),
+        typedInput: d.querySelector('input') !== null,
+      };
+    `);
+    check(
+      "14a-copy",
+      dialog !== null &&
+        dialog.action === "set_priority" &&
+        dialog.hardDelete === "0" &&
+        dialog.typedInput === false &&
+        dialog.text.includes("Reversible") &&
+        !dialog.text.includes("PERMANENT") &&
+        !dialog.text.includes("cannot be undone"),
+      `confirm dialog: ${JSON.stringify(dialog)} — a reversible write must not borrow ` +
+        `the permanent-deletion register, and must demand nothing typed`,
+    );
+    await clickButton(tab, `SET PRIORITY ON ${WRITE_TO.length}`, { scroll: true });
+    confirmed = true;
+  } catch (err) {
+    if (!mut("br14-brief-bulk-on-empty")) throw err;
+    // TWO fences catch the empty bulk, and the mutation reaches BOTH. The
+    // CLIENT one fires first (a zero selection leaves the button `disabled`,
+    // so the dialog never opens); the SERVER one is the guarantee, because a
+    // client guard is not a guard. It is driven explicitly here so the run's
+    // record shows the 400 rather than only the dialog that did not open.
+    // `tab.eval` wraps the body in a NON-async IIFE and awaits whatever it
+    // returns, so this is a promise chain rather than an `await`.
+    const refused = await tab.eval(`
+      return fetch('/api/triage', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'set_priority', refs: [], priority: 'P0-Critical' }),
+      }).then((res) => res.text().then((body) => ({ status: res.status, body: body.slice(0, 200) })));
+    `);
+    note(
+      `14a [MUTATED] the confirm dialog never opened (a zero selection disables the ` +
+        `button), and the server independently refused an empty bulk: ` +
+        `${refused.status} ${refused.body}`,
+    );
+  }
+  await tab.settle(600);
+  await untilListStable(tab);
+
+  const afterPosts = (await tab.instrument()).triagePost;
+  const after = await briefState();
+  const moved = Object.entries(after)
+    .filter(([, v]) => v === "P0-Critical")
+    .map(([k]) => k)
+    .sort();
+
+  check(
+    "14a",
+    selected === String(wantSelected) &&
+      confirmed &&
+      afterPosts > beforePosts &&
+      moved.length > 0,
+    `selection=${selected} · triagePost ${beforePosts} -> ${afterPosts} · ` +
+      `now P0-Critical: ${JSON.stringify(moved)}${
+        mut("br14-brief-bulk-on-empty")
+          ? "  [MUTATED: the bulk was fired on an EMPTY selection and is asserted to have succeeded]"
+          : ""
+      }`,
+  );
+
+  // --- 14b: the SELECTION and only the selection ---------------------------
+  //
+  // The discriminating half. A bulk that silently widened to "every brief on
+  // the page" moves five rows and still satisfies a count-of-two check — so
+  // the UNTOUCHED REMAINDER is read, not inferred. `br14-priority-from-selection`
+  // asserts the count alone, which is exactly the check that cannot see it.
+  const remainder = Object.entries(after)
+    .filter(([k]) => !TARGET.includes(k))
+    .map(([k, v]) => `${k}=${v}`)
+    .sort();
+  const remainderIntact = Object.entries(after)
+    .filter(([k]) => !TARGET.includes(k))
+    .every(([k, v]) => v === before[k]);
+  check(
+    "14b",
+    moved.join(",") === TARGET.join(",") && remainderIntact,
+    `moved=${JSON.stringify(moved)} (expected exactly ${JSON.stringify(TARGET)}) · ` +
+      `remainder=${JSON.stringify(remainder)} intact=${remainderIntact}${
+        mut("br14-priority-from-selection")
+          ? `  [MUTATED: the write went to ${JSON.stringify(WRITE_TO)} instead — ` +
+            `note a COUNT-ONLY check would have PASSED here, since moved.length=` +
+            `${moved.length} equals the selection size. That is precisely what this ` +
+            `check reads identities and the remainder to catch]`
+          : ""
+      }`,
+  );
+
+  // --- 14c: the BOARD inherits no affordance -------------------------------
+  //
+  // `briefRow` is ONE mapper for both arrangements (FR-245's own guarantee that
+  // a card and a list row cannot drift), so the only thing keeping checkboxes
+  // and the priority control off board cards is that the board passes no
+  // affordance builder. `status` is the canonical build-state source, so a
+  // write path onto the status board would be a write into TD-311's own view.
+  //
+  // THE WINDOW OPENS BEFORE THE TOGGLE, and that correction was measured rather
+  // than reasoned. The first draft opened a quiet 1.5 s window with the board
+  // already mounted and used `fetch` as the positive control — and read
+  // `fetch 39 -> 39`. The board is NOT on the 5-second beat: it reads ONCE per
+  // scope and carries an AS OF stamp (FR-245 D5). So the control was dead BY
+  // DESIGN on the one surface it was pointed at, and the `nonGet` zero beside
+  // it meant nothing. The live window is the TRANSITION: mounting the board
+  // issues 1 + N column reads, so `fetch` must grow across exactly the same
+  // interval in which `nonGet` must not.
+  const boardBefore = await tab.instrument();
+  await clickButton(tab, "BOARD", { scroll: true });
+  await tab.until(has(".record-board"), { label: "the briefs board mounts" });
+  await tab.settle(900);
+
+  if (mut("br14-affordance-on-board")) {
+    // The leak, injected: exactly what an unconditional `select` on the shared
+    // mapper would render.
+    await tab.eval(`
+      for (const card of document.querySelectorAll('.record-board .record-row')) {
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'record-select';
+        card.parentElement.insertBefore(cb, card);
+        const sel = document.createElement('select');
+        sel.className = 'brief-write-select';
+        card.parentElement.insertBefore(sel, card);
+      }
+      return 1;
+    `);
+    await tab.settle(200);
+  }
+
+  const boardAfter = await tab.instrument();
+  const board = await tab.eval(`
+    const b = document.querySelector('.record-board');
+    return b === null ? null : {
+      cards: b.querySelectorAll('.record-row').length,
+      selects: b.querySelectorAll('.record-select').length,
+      writeControls: b.querySelectorAll('select, form, input').length,
+      writeBar: document.querySelector('.brief-write') !== null,
+    };
+  `);
+  // The assertion does NOT move under the mutation. `br14-affordance-on-board`
+  // injects the real defect (the DOM a shared mapper with an unconditional
+  // `select` would render), so the SHIPPED expectation is what has to catch it
+  // — an expectation that adapted to the injection would cancel it out and
+  // report a vacuous pass, which is what the first draft of this check did.
+  check(
+    "14c",
+    board !== null &&
+      board.cards > 0 &&
+      board.selects === 0 &&
+      board.writeControls === 0 &&
+      board.writeBar === false &&
+      boardAfter.nonGet === boardBefore.nonGet &&
+      boardAfter.fetch > boardBefore.fetch,
+    `board: ${JSON.stringify(board)} · nonGet ${boardBefore.nonGet} -> ${boardAfter.nonGet} ` +
+      `(must not move) · fetch ${boardBefore.fetch} -> ${boardAfter.fetch} ` +
+      `(POSITIVE CONTROL: the counter is live, so the nonGet zero is a measurement)${
+        mut("br14-affordance-on-board")
+          ? "  [MUTATED: write affordances injected into .record-board]"
+          : ""
+      }`,
+  );
+  note(
+    "14c's `fetch` positive control is the FR-245 lesson: a non-GET counter that " +
+      "reads zero is indistinguishable from a counter nothing is incrementing. The " +
+      "window is the LIST->BOARD transition and not a quiet interval afterwards, " +
+      "because the board reads once per scope rather than on the beat (D5) — a " +
+      "quiet window measured fetch 39 -> 39 and would have made this zero vacuous.",
+  );
+
+  // --- 14d: a down write surface renders NO brief write control ------------
+  const downTab = tabs.missing;
+  await downTab.hash("#/layers/briefs");
+  await downTab.until(has(".shell-banner"), {
+    label: "the briefs page mounts (missing world)",
+  });
+  await downTab.settle(300);
+  const down = await downTab.eval(`
+    return {
+      banners: [...document.querySelectorAll('.shell-banner')].map(e => e.textContent.trim()),
+      writeBar: document.querySelector('.brief-write') !== null,
+      picker: document.querySelector('.brief-write-select') !== null,
+      checkboxes: document.querySelectorAll('.record-select').length,
+    };
+  `);
+  const wantAffordance = mut("br14-write-affordance-when-down");
+  check(
+    "14d",
+    down.banners.some((b) => b.includes("BRIEF WRITES DISABLED")) &&
+      down.writeBar === wantAffordance &&
+      down.picker === wantAffordance &&
+      (down.checkboxes > 0) === wantAffordance,
+    `write surface down -> BRIEF WRITES DISABLED banner present, bar=${down.writeBar}, ` +
+      `picker=${down.picker}, checkboxes=${down.checkboxes} (expected affordances=${wantAffordance})${
+        wantAffordance ? "  [MUTATED: expecting the affordances to be PRESENT]" : ""
+      }`,
+  );
+  // NEGATIVE CONTROL, in the same reading: the same page in the TRIAGE world
+  // still has its bar, so 14d's absence is caused by the write surface being
+  // down and not by the page failing to mount.
+  // Back to the LIST arrangement first: the view toggle persists in
+  // `sessionStorage` (FR-245 D4), so this tab is still on BOARD after 14c and
+  // the write bar is LIST-only by construction. Without this the control below
+  // would read a legitimate absence as a failure.
+  await tab.hash("#/layers/briefs");
+  await tab.until(has(".record-board, .record-list"), { label: "the briefs layer" });
+  await clickButton(tab, "LIST", { scroll: true });
+  await tab.until(has(".record-list"), { label: "back to the list arrangement" });
+  await tab.settle(400);
+  check(
+    "14d-control",
+    (await tab.eval("return document.querySelector('.brief-write') !== null;")) === true,
+    `NEGATIVE CONTROL — the same page in the TRIAGE world still renders its write bar`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -5223,6 +5595,12 @@ async function main() {
     // viewport overrides cannot disturb any earlier gate — G-BR-7 in particular
     // measures `/api/graph` request counts on the `seeded` document, and G-BR-4
     // measures that document at rest.
+    // FR-247, after G-BR-12 (which leaves the shared tabs on the seeded world)
+    // and after G-BR-10 (which MUTATES the triage world's suggestions — a
+    // different table from the five briefs this gate writes to). It runs on the
+    // triage world because that is the only one whose brain is engine-migrated,
+    // i.e. the only one the write door can boot against.
+    await runGate("G-BR-14", () => gBr14(tabs, worlds));
     await runGate("G-BR-11", () => gBr11(tabs.dense));
   } finally {
     teardown();
