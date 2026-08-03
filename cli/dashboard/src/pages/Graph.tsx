@@ -370,7 +370,10 @@ export function Graph({ search, focus = null }: GraphProps) {
             The move is what frees the vertical column: as a sibling of
             `.graph-layout` the twin was a second vertical consumer, so the
             canvas had to be clamped to leave room for it and the page scrolled
-            anyway (measured: scrollHeight 1164 at innerHeight 900). Exemption
+            anyway (measured: scrollHeight 1164 at innerHeight 900). FR-250 gave
+            the SCROLL back deliberately — the column is doubled and the page
+            scrolls by a bounded amount — but not the CLAMP, which is what this
+            paragraph is about and which stays retired. Exemption
             04 asks for the twin to be *"adjacent to the canvas, in mono,
             always"* — adjacency is a relationship, not a particular edge, and
             beside the canvas is at least as adjacent as beneath it.

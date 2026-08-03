@@ -853,7 +853,10 @@ body[data-motion="low"] *::after {
    and the query twin sat in a full-width block BELOW `.graph-layout`. Together
    those meant the canvas could never exceed 900px however tall the display
    was, AND the page scrolled at 1440x900 (measured: scrollHeight 1164 against
-   innerHeight 900). Both are gone: the twin moved into the side column
+   innerHeight 900). Both were gone — and FR-250 deliberately GAVE THE SECOND
+   ONE BACK: the cap stays retired, but the canvas is now 2x the column by
+   operator decision, so the page scrolls by a bounded amount again. `11c`
+   asserts that bound rather than asserting no scroll. Both are gone: the twin moved into the side column
    (exemption 04 is satisfied by ADJACENCY, which the side column is), leaving
    `.graph-layout` as the only vertical consumer, so the canvas can take the
    rest of the column.
@@ -871,8 +874,17 @@ body[data-motion="low"] *::after {
      grew past the viewport and the scrollbar came back: 922px against a 900px
      viewport, 21px of it the inspector's overflow. A definite height is what
      lets `.graph-layout` shrink and its inner column scroll instead. */
+  /* FR-250 — DOUBLED, and the page scrolls again ON PURPOSE.
+     `--graph-column-scale` multiplies the derived column. At 1 this is FR-244's
+     exactly-one-viewport page; at 2 the canvas is twice the column and the page
+     scrolls by roughly one viewport, which is arithmetic on a screen that has
+     not got taller, not a regression. The operator was shown that cost against
+     two alternatives (reclaim the ~390px of chrome for ~1.5x with no scroll; a
+     fullscreen toggle) and chose this. STILL NO LITERAL HEIGHTS — the column is
+     derived, and `dvh` still keeps the bottom clear of a mobile URL bar. */
   height: calc(
-    100dvh - var(--nav-h) - var(--shell-pad-y) - var(--shell-pad-b)
+    var(--graph-column-scale) *
+      (100dvh - var(--nav-h) - var(--shell-pad-y) - var(--shell-pad-b))
   );
 }
 

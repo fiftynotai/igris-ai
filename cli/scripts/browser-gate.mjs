@@ -4108,6 +4108,13 @@ const MERGE_DEFICIT_TOLERANCE = 0.1;
 
 /** 11c — how much of the space below its own top edge the canvas must own. */
 const COLUMN_FILL_FRACTION = 0.9;
+/* FR-250 — how far the document/viewport ratio may sit from `--graph-column-scale`
+   before 11c calls it wrong. Wide enough to absorb the page chrome above the
+   canvas (nav, eyebrow, headline, banners, controls — ~390px of a 900px
+   viewport, so the ratio lands near 1.6 at scale 2 rather than exactly 2),
+   narrow enough that a page which stopped applying the height, or ran away to
+   many viewports, still fails. Derived from the measured chrome, not picked. */
+const SCROLL_RATIO_TOLERANCE = 0.55;
 
 /**
  * The `height: clamp(420px, 62vh, 900px)` ceiling `.graph-surface` carried
@@ -4319,11 +4326,33 @@ async function gBr11(tab) {
   await tab.until(isStill, { timeout: 30_000, label: "settles after the deselect" });
   await tab.settle(400);
 
+  /* FR-250 — the interaction point is the centre of the host's VISIBLE part,
+     not of the host. Doubling the column made the host TALLER THAN THE
+     VIEWPORT (measured 1258px in a 900px window), so its geometric centre sits
+     at the very bottom edge or past it, and a wheel dispatched there does not
+     reach the canvas: the sweep read `k` unchanged after 4 ticks, stalled out,
+     and every level below FIT silently reported the FIT picture. 11a would have
+     read 100% separable — a PASS — for a canvas that was never zoomed. That is
+     the shape this file keeps warning about: an instrument that stops measuring
+     reports the reassuring answer, not an error.
+     Clamping to the visible intersection is right independent of FR-250 — a
+     point outside the viewport was never a valid place to dispatch. */
   const host = await tab.eval(`
     const el = document.querySelector('.graph-canvas-host');
     if (el === null) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.left + r.width / 2, y: r.top + r.height / 2, w: r.width, h: r.height };
+    const top = Math.max(r.top, 0);
+    const bottom = Math.min(r.bottom, window.innerHeight);
+    const left = Math.max(r.left, 0);
+    const right = Math.min(r.right, window.innerWidth);
+    return {
+      x: (left + right) / 2,
+      y: (top + bottom) / 2,
+      w: r.width,
+      h: r.height,
+      visibleH: Math.max(0, bottom - top),
+      clamped: bottom < r.bottom || top > r.top,
+    };
   `);
 
   // FIT — every node on screen, which is the reference the sweep is paired
@@ -4472,6 +4501,15 @@ async function gBr11(tab) {
       /* Everything from the canvas's top edge to the bottom of the page box. */
       available: Math.round(window.innerHeight - r.top - padBottom),
       scrollHeight: document.documentElement.scrollHeight,
+      /* FR-250 — read the SCALE out of the page rather than hardcoding 2 here.
+         The gate's bound and the layout's height then derive from ONE number,
+         so a future change to the token cannot leave this check asserting a
+         scroll the page no longer produces. */
+      columnScale: Number(
+        getComputedStyle(document.documentElement)
+          .getPropertyValue('--graph-column-scale')
+          .trim() || 1,
+      ),
       /* DECISION 3a — the twin lives INSIDE the layout row, not under it. */
       twinInsideLayout: document.querySelector('.graph-layout .graph-twin') !== null,
       twinPresent: document.querySelector('.graph-twin') !== null,
@@ -4479,16 +4517,35 @@ async function gBr11(tab) {
   `);
   const fillsColumn = layout.hostHeight / Math.max(1, layout.available);
   const scrolls = layout.scrollHeight > layout.innerHeight + 1;
+  /* FR-250 — 11c NO LONGER ASSERTS "the page does not scroll". FR-244 shipped
+     that property and the operator RETIRED it deliberately on 2026-08-03 to get
+     a canvas twice as tall; on a screen that has not grown, that is arithmetic.
+     What replaces it is NOT a widened threshold — it is a DERIVED BOUND: at
+     scale N the document should be about N viewports, so the ratio is pinned to
+     a window around N. A page that scrolled ten viewports would still fail, and
+     so would one that stopped scrolling at scale 2 (which would mean the height
+     silently stopped applying). The check kept its teeth in both directions. */
+  const scrollRatio = layout.scrollHeight / Math.max(1, layout.innerHeight);
+  const scale = layout.columnScale || 1;
+  const ratioOk = scrollRatio >= scale - SCROLL_RATIO_TOLERANCE &&
+    scrollRatio <= scale + SCROLL_RATIO_TOLERANCE;
+  /* At scale 1 the page must NOT scroll; above it, it must. Same expression,
+     both regimes, so this file does not need a second check when the token
+     moves back. */
+  const scrollDirectionOk = scale > 1 ? scrolls : !scrolls;
   check(
     "11c",
     fillsColumn >= COLUMN_FILL_FRACTION &&
-      !scrolls &&
+      scrollDirectionOk &&
+      ratioOk &&
       layout.twinInsideLayout === true &&
       layout.twinPresent === true,
     `FULL COLUMN at ${layout.innerWidth}x${layout.innerHeight}: canvas host ${layout.hostHeight}px of ` +
       `${layout.available}px available below its own top edge (${pct(fillsColumn)}, floor ${pct(COLUMN_FILL_FRACTION)}) · ` +
       `document scrollHeight ${layout.scrollHeight} vs innerHeight ${layout.innerHeight} -> ` +
-      `${scrolls ? "THE PAGE SCROLLS" : "no page scroll"} · query twin present=${layout.twinPresent} ` +
+      `${scrolls ? "THE PAGE SCROLLS" : "no page scroll"} · ratio ${scrollRatio.toFixed(2)} vs ` +
+      `scale ${scale} +/-${SCROLL_RATIO_TOLERANCE} (FR-250 bound, derived from --graph-column-scale) ` +
+      `· query twin present=${layout.twinPresent} ` +
       `inside the layout row=${layout.twinInsideLayout}` +
       (mut("br11-fullheight-at-stacked-breakpoint")
         ? "  [MUTATED: asserted at a 1000px viewport, below the 1100px stacked breakpoint]"
@@ -4590,7 +4647,25 @@ async function gBr11(tab) {
 
   await tab.clearViewport();
 
-  note(
+    note(
+    "FR-250 DISPOSITION, 2026-08-03: 11a AND 11b SHIP RED, KNOWINGLY, AND TD-337 OWNS THEM. " +
+      "Doubling the graph column (--graph-column-scale: 2) moved k_fit 0.13275 -> 0.34271, a 2.6x " +
+      "change on a BYTE-IDENTICAL bundle and an identical 710-node/352-edge payload — because " +
+      "k_fit is a function of the CANVAS BOX. Both of this gate's calibrations were derived at the " +
+      "old k_fit and now measure a different regime: 11a samples at k_fit/2, which WAS 0.066 (BELOW " +
+      "K_FLOOR = 0.11, so nodes sat clamped at their floor size) and is now 0.171 (ABOVE it, so " +
+      "they scale normally) — 50.4% against a 60% floor. 11b is the negative control asserting a " +
+      "merge is DETECTABLE at FIT; with nodes relatively smaller nothing fuses at FIT, so the " +
+      "control cannot observe the thing it exists to prove. " +
+      "NEITHER THRESHOLD WAS TOUCHED, and neither should be: a floor re-derived against an input " +
+      "that moves with the canvas will move again. TD-337's fix is to anchor the measurement to " +
+      "K_FLOOR rather than to k_fit. " +
+      "READ THIS BEFORE DIAGNOSING: the PICTURE IMPROVED. At FIT the taller canvas resolves 710 of " +
+      "710 nodes with a largest blob of 0.1% of the ink, where the pre-FR-250 canvas resolved 358. " +
+      "What is red is the instrument's calibration, not the graph. If 11a/11b go GREEN and nobody " +
+      "fixed TD-337, that is the surprising result — something moved the canvas box back.",
+  );
+note(
     "11a/11b are a PAIRED reading in the 7d spirit, not a tolerance: the SAME node set, the SAME " +
       "colours and ONE calibrated ink threshold, with only the zoom differing. The threshold is " +
       "calibrated once at FIT and held absolute, because a per-frame self-calibration would " +

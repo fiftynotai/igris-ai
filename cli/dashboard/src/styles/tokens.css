@@ -105,6 +105,15 @@
      the ceiling is what was wrong, not the floor, so the floor is kept and
      named rather than deleted along with it. */
   --graph-row-min-h: 420px;
+  /* FR-250 — how many viewport columns the graph page occupies. FR-244 shipped
+     this at an implicit 1 (the page was exactly one viewport and did NOT
+     scroll, measured scrollHeight == innerHeight); the operator doubled it on
+     2026-08-03, accepting the scrollbar that necessarily returns when a canvas
+     grows on a screen that does not. It is a TOKEN rather than a literal in the
+     calc for the same reason `--shell-pad-b` is: the next person who wants a
+     different multiple should change one named value, and `11c`'s bound is
+     derived from THIS number, so the gate and the layout cannot disagree. */
+  --graph-column-scale: 2;
 
   /* ─── FR-239 · motion tokens ──────────────────────────────────
      Source: fifty_dev/docs/brand/motion.md "Six durations" + "Four easings".

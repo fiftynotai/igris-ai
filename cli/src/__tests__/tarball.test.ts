@@ -653,19 +653,19 @@ interface PackReport {
  *   current one.)
  *
  * FR-247 MEASURED LAST, after its final code-touching step:
- *   packed              1_756_181    unpacked 6_831_457, 797 entries (UNCHANGED
+ *   packed              1_757_652    unpacked 6_831_457, 797 entries (UNCHANGED
  *                                    — FR-247's one new file, `auto-push-fence.ts`,
  *                                    lives in `src/__tests__` and `tsconfig`
  *                                    excludes it from `dist`)
- *   cumulative delta    +443.7 KB    (454_330 B over PACK_BASELINE_PACKED)
+ *   cumulative delta    +445.1 KB    (455_801 B over PACK_BASELINE_PACKED)
  *   FR-247's own share  +11_132 B    against FR-246's 1_745_049  (10.84 KB)
- *   headroom remaining  ~106.3 KB    (108_870 B under TD-329's +550)
+ *   headroom remaining  ~104.9 KB    (107_399 B under TD-329's +550)
  *   built app chunk     559_384 B    (+5_899 B over FR-246's 553_485)
  *   chunk slack         616 B        (560_000 B limit; Vite kB = 1000 B)
  *
  *   EVERY SUBTRACTION ABOVE IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT, not
- *   carried forward: 1_756_181 - 1_745_049 = 11_132; 1_756_181 - 1_301_851 =
- *   454_330; 550*1024 - 454_330 = 108_870; 559_384 - 553_485 = 5_899;
+ *   carried forward: 1_757_652 - 1_745_049 = 11_132; 1_757_652 - 1_301_851 =
+ *   455_801; 550*1024 - 455_801 = 107_399; 559_384 - 553_485 = 5_899;
  *   560_000 - 559_384 = 616. That discipline is the FR-246 bracket below —
  *   a delta carries no copy of either operand, so a class-grep for the packed
  *   value walks straight past a stale one.
@@ -687,7 +687,7 @@ interface PackReport {
  *
  *   THE CHUNK IS NOW THE BINDING CEILING BY A WIDE MARGIN, and the next
  *   dashboard brief has to plan around it rather than budget against it:
- *   **616 B**, against this gate's 106.3 KB. That is not headroom. A brief that
+ *   **616 B**, against this gate's 104.9 KB. That is not headroom. A brief that
  *   adds any UI to this bundle should expect to SPLIT the chunk (a route-level
  *   dynamic import for the layers or the graph) as its first step, not as a
  *   cut-ladder rung. **Raise NEITHER limit** — TD-329 raised the packed one
@@ -887,7 +887,7 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~106.3 KB is what is left (the
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~104.9 KB is what is left (the
  * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
  * superseded). **BUT THE PACKED FIGURE IS NO LONGER THE ONE THAT BINDS.** The
@@ -976,11 +976,11 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~106.3 KB is what is left** (the
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~104.9 KB is what is left** (the
  * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
  * superseded). **And the OTHER ceiling is not merely binding now, it is
- * effectively spent**: **616 B** of chunk slack against this gate's 106.3 KB.
+ * effectively spent**: **616 B** of chunk slack against this gate's 104.9 KB.
  * FR-246 estimated against the chunk alone and was right about it (+3_654 B)
  * while spending +27_055 B here; FR-247 estimated BOTH and inverted the error —
  * +5_899 B of chunk against a 2.5-4.6 KB estimate, +11_132 B packed against a
