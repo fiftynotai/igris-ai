@@ -40,9 +40,13 @@ release is allowed. If this step does not PASS, the ENTIRE workflow aborts — d
 not proceed to Steps 1–4, do not bump the version, do not author a changelog,
 do not tag.
 
-The query below is DRY-sourced from coding_guidelines §17.2 — the
-`priority` / `status` / `brief_type` literals and the `brief_status` table MUST
-stay byte-aligned with that section (they move in lockstep).
+The query below is DRY-sourced from coding_guidelines §17.2 — the `priority`
+literals, the `status` notation-fold expression, the `brief_type` literals and
+the `brief_status` table MUST stay byte-aligned with that section (they move in
+lockstep). "`In Progress`" above means the STATE, in any notation — the query
+folds `In Progress` / `InProgress` / `in_progress` / `IN-PROGRESS` together
+(TD-340). It does NOT fold terminal states: see the asymmetry note in the
+query's comment block.
 
 ```bash
 DB="$HOME/.igris/memory/knowledge.db"
@@ -58,17 +62,42 @@ if [ ! -f "$DB" ]; then
 elif [ "$(sqlite3 "$DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='brief_status';" 2>/dev/null)" != "1" ]; then
   echo "AUDIT=HARDWARN reason=table-absent db=$DB slug=$SLUG"
 else
-  # §17.2 audit query — byte-aligned with coding_guidelines §17.2. The
-  # brief_type IN-list enumerates the real (inconsistent) feature/bug
-  # vocabulary — 'Bug'/'BR' + 'Feature'/'FR'/'Feature Request' (TD-289). Do
+  # §17.2 audit query — byte-aligned with coding_guidelines §17.2. It has TWO
+  # halves; each has been holed once. Move BOTH in lockstep with §17.2 and
+  # with the pins in cli/tests/integration/release-audit-brief-type.bats.
+  #
+  # brief_type half (TD-289) — the IN-list enumerates the real (inconsistent)
+  # feature/bug vocabulary: 'Bug'/'BR' + 'Feature'/'FR'/'Feature Request'. Do
   # NOT drop synonyms: FR/Feature-typed P0/P1 blockers escaped the old
-  # ('Bug','Feature Request') list. Move in lockstep with §17.2.
+  # ('Bug','Feature Request') list.
+  #
+  # status half (TD-340) — FOLDS NOTATION instead of enumerating literals. It
+  # used to read `status IN ('Ready','In Progress','Blocked')`, which cannot
+  # match the 'InProgress' spelling that exists in the live brain; three
+  # P1-High attendance_app blockers were invisible and the gate printed
+  # AUDIT=PASS. The fold collapses case + space + hyphen + underscore, so
+  # 'In Progress' / 'InProgress' / 'in_progress' / 'IN-PROGRESS' all block.
+  # Do NOT "simplify" it back to a literal list, and do NOT patch a future
+  # spelling by appending one more literal — that re-opens the same hole one
+  # notation further out.
+  #
+  # !! ASYMMETRY — DO NOT "COMPLETE" THE STATUS LIST !!
+  # This IN-list enumerates states that BLOCK a release. 'Done', 'Completed',
+  # 'Complete' and 'Archived' are ABSENT BY DESIGN: a FINISHED brief must not
+  # block a release. Their absence is CORRECT, not an oversight. Adding them
+  # would INVERT the gate and make every release un-taggable. The fold above
+  # collapses NOTATION only, never VOCABULARY — 'Completed' folds to
+  # 'completed', which is deliberately not in the list. The canonical status
+  # vocabulary (a new WORD, as opposed to a new SPELLING) WILL be owned by
+  # normalizeStatus / CANONICAL_STATUSES in
+  # brain-mcp-server/src/tools/brief-normalize.ts once TD-333 ships. NOT
+  # SHIPPED as of TD-340 — that file names them only as a forward reference.
   ROWS="$(sqlite3 -noheader "$DB" "
     SELECT brief_id || '  ' || priority || '  ' || status || '  ' || brief_type || '  ' || title
     FROM brief_status
     WHERE project='$SLUG'
       AND priority IN ('P0-Critical','P1-High')
-      AND status IN ('Ready','In Progress','Blocked')
+      AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') IN ('ready','inprogress','blocked')
       AND brief_type IN ('Bug','BR','Feature','FR','Feature Request');")"
   if [ -z "$ROWS" ]; then
     echo "AUDIT=PASS slug=$SLUG (zero P0/P1 broken-feature rows)"

@@ -184,10 +184,28 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
     # phase transition; brief cache files are NOT updated. The guard's
     # enforcement logic (refuse on BUILDING|TESTING) is unchanged — only the
     # brief-discovery source above changed (FR-186 / G-01R).
+    #
+    # TD-340 — the status filter FOLDS NOTATION instead of matching one
+    # literal. It used to read `status='In Progress'`, which cannot match the
+    # 'InProgress' spelling that exists in the live brain; the SELECT returned
+    # empty and this guard FAILED OPEN (silently allowed a mid-BUILDING
+    # commit). The fold `replace(replace(replace(lower(status),' ',''),
+    # '-',''),'_','')` collapses case + space + hyphen + underscore, so every
+    # notation of the same word ('In Progress' / 'InProgress' / 'in_progress'
+    # / 'IN-PROGRESS') gates identically. Keep byte-aligned with the identical
+    # expression in core/hooks/shared/pre_tool_use.sh.
+    #
+    # It folds NOTATION ONLY, never VOCABULARY: a different WORD ('Completed',
+    # 'Done', 'Active', 'WIP') is deliberately NOT matched. This expression
+    # catches a new SPELLING; catching a new WORD belongs to the canonical
+    # status vocabulary, which TD-333 WILL add as normalizeStatus /
+    # CANONICAL_STATUSES in brain-mcp-server/src/tools/brief-normalize.ts.
+    # NOT SHIPPED as of TD-340 — that file currently names them only as a
+    # forward reference, so do not import or grep for them yet.
     BRIEF_SQL="${ACTIVE_BRIEF//\'/\'\'}"
     PROJECT_SQL="${PROJECT//\'/\'\'}"
     ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
-      "SELECT phase FROM brief_status WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' AND status='In Progress' LIMIT 1;" \
+      "SELECT phase FROM brief_status WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','')='inprogress' LIMIT 1;" \
       2>/dev/null)"
 
     case "$ACTIVE_PHASE" in

@@ -132,6 +132,67 @@ event_count() {
 }
 
 # -----------------------------------------------------------------------------
+# TD-340 helpers.
+#
+# WHY `|| return 1` AND NOT A BARE `[[ ... ]]`: bash does NOT fire the ERR trap
+# for a `[[ ]]` compound conditional, and bats-core 1.12 detects mid-test
+# failures via that trap (errexit itself is OFF inside a test body — verified:
+# `set -o` reports `errexit off`). A bare `[[ ... ]]` that is not the FINAL
+# command of the @test body therefore fails SILENTLY and the test still
+# reports `ok`. Single-bracket `[ ... ]` (the `test` builtin) IS trapped.
+# These TD-340 assertions must be able to fail, so every substring check is
+# written `[[ ... ]] || return 1`. See the TD-340 report for the repo-wide
+# count of pre-existing vacuous assertions.
+seed_brief_with_status() {
+  sqlite3 "$DB" "
+    INSERT INTO projects (slug,name,path) VALUES ('myproj','myproj','$PROJ');
+    INSERT INTO brief_status (project,brief_id,title,status)
+      VALUES ('myproj','$1','t','$2');
+  "
+}
+
+# -----------------------------------------------------------------------------
+# (a2) TD-340: the SAME active brief spelled 'InProgress' (no space) -> ALLOW.
+#      The pre-TD-340 gate filtered `status = 'In Progress'`, which cannot
+#      match, so a genuinely-active brief looked like NO brief and the gate
+#      DENIED every write. Unlike the pre-commit phase guard (which failed
+#      OPEN on the same token), this site fails CLOSED — a nuisance, not a
+#      hole — but it is the same defect and is fixed with the same fold.
+# -----------------------------------------------------------------------------
+@test "(a2) TD-340: active brief spelled 'InProgress' -> allow + quiet" {
+  seed_brief_with_status "TD-340" "InProgress"
+  run_hook_split_stderr "$PROJ" "$PROJ/src/x.go"
+  [ "$status" -eq 0 ]
+  [[ "$STDOUT" != *"permissionDecision"* ]] || return 1
+  [[ "$STDERR" != *"WARNING"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (a3) TD-340 notation generalisation: a FOURTH notation ('in-progress') is
+#      also recognised. Fails if the hole is "fixed" by hardcoding a second
+#      literal instead of folding notation.
+# -----------------------------------------------------------------------------
+@test "(a3) TD-340: a fourth notation ('in-progress') is recognised as active" {
+  seed_brief_with_status "TD-341" "in-progress"
+  run_hook_split_stderr "$PROJ" "$PROJ/src/x.go"
+  [ "$status" -eq 0 ]
+  [[ "$STDOUT" != *"permissionDecision"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (a4) TD-340 ASYMMETRY control: 'Completed' is a TERMINAL state and must NOT
+#      be folded into in-flight. Same code path as (a2)/(a3) — same seed helper,
+#      same query, only the status WORD differs -> the gate must DENY. This is
+#      what proves the fold collapses notation without collapsing vocabulary.
+# -----------------------------------------------------------------------------
+@test "(a4) TD-340: terminal 'Completed' is NOT treated as an active brief" {
+  seed_brief_with_status "TD-342" "Completed"
+  run_hook_split_stderr "$PROJ" "$PROJ/src/x.go"
+  [ "$status" -eq 0 ]
+  [[ "$STDOUT" == *"deny"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
 # (b) Brain has no active brief, no .md fallback -> QUIET DENY.
 # -----------------------------------------------------------------------------
 @test "(b) brain empty + no .md fallback -> quiet deny (no WARNING, no event)" {

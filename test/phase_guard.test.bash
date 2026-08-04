@@ -107,12 +107,15 @@ seed_instance() {
   "
 }
 
-# seed_brief <brief> <phase>
+# seed_brief <brief> <phase> [status-spelling]
+# The status spelling is parameterised because the live brain holds MORE THAN
+# ONE in-flight spelling ('In Progress' 26 rows, 'InProgress' 4 rows as of
+# TD-340). The guard must gate on the STATE, not on one notation of it.
 seed_brief() {
-  local brief="$1" phase="$2"
+  local brief="$1" phase="$2" bstatus="${3:-In Progress}"
   sqlite3 "$DB" "
     INSERT INTO brief_status (project, brief_id, title, status, phase)
-      VALUES ('$PROJECT', '$brief', 't', 'In Progress', '$phase');
+      VALUES ('$PROJECT', '$brief', 't', '$bstatus', '$phase');
   "
 }
 
@@ -131,6 +134,63 @@ seed_brief() {
   [[ "$output" == *"phase guard"* ]]
   [[ "$output" == *"FR-999"* ]]
   [[ "$output" == *"BUILDING"* ]]
+}
+
+# -----------------------------------------------------------------------------
+# (a2) TD-340 THE HOLE: identical fixture to (a) but the brief's status is
+#      spelled 'InProgress' (no space) — a spelling that exists in the live
+#      brain (4 rows). The pre-TD-340 guard filtered `status='In Progress'`,
+#      which cannot match, so the phase lookup returned EMPTY and the guard
+#      FAILED OPEN: exit 0 while a BUILDING brief was mid-hunt.
+#
+#      This test FAILS on the pre-fix hook (observed: exit 0, no output) and
+#      passes on the notation-folded predicate.
+# -----------------------------------------------------------------------------
+@test "(a2) TD-340: status spelled 'InProgress' -> guard still refuses (no fail-open)" {
+  seed_instance "FR-997" "active" "$HOSTNAME_LOCAL" "BUILDING"
+  seed_brief "FR-997" "BUILDING" "InProgress"
+
+  run_guard
+  [ "$status" -eq 1 ]
+  # `|| return 1`: bash does not fire the ERR trap for a `[[ ]]` compound
+  # conditional, and bats-core detects mid-test failures via that trap
+  # (errexit is OFF inside a test body). A bare non-final `[[ ... ]]` fails
+  # SILENTLY. These TD-340 assertions must be able to fail.
+  [[ "$output" == *"phase guard"* ]] || return 1
+  [[ "$output" == *"FR-997"* ]] || return 1
+  [[ "$output" == *"BUILDING"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (a3) TD-340 notation generalisation: the fold covers case/space/hyphen/
+#      underscore, not just the one extra literal 'InProgress'. A FOURTH
+#      notation ('in_progress') must also gate. This is the test that fails if
+#      someone "fixes" the hole by hardcoding a second literal instead.
+# -----------------------------------------------------------------------------
+@test "(a3) TD-340: a fourth notation ('in_progress') also gates the guard" {
+  seed_instance "FR-996" "active" "$HOSTNAME_LOCAL" "BUILDING"
+  seed_brief "FR-996" "BUILDING" "in_progress"
+
+  run_guard
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"FR-996"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (a4) TD-340 ASYMMETRY control: the fold must NOT swallow terminal states.
+#      A brief whose status is 'Completed' is finished — the phase guard must
+#      NOT fire on it even if a stale phase value says BUILDING. This is the
+#      negative control that travels the SAME code path as (a2)/(a3): same
+#      instance discovery, same SQL, only the status word differs.
+# -----------------------------------------------------------------------------
+@test "(a4) TD-340: terminal status 'Completed' is NOT folded into in-flight" {
+  seed_instance "FR-995" "active" "$HOSTNAME_LOCAL" "BUILDING"
+  seed_brief "FR-995" "BUILDING" "Completed"
+
+  run_guard
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refusing commit"* ]] || return 1
+  [[ "$output" != *"FR-995"* ]] || return 1
 }
 
 # -----------------------------------------------------------------------------

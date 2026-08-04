@@ -20,11 +20,15 @@
 #
 # Dependencies: jq (preferred), python3 (fallback); sqlite3 (optional — brief-DB lookup)
 #
-# Brief-first resolution order (TD-146, hardened TD-150):
+# Brief-first resolution order (TD-146, hardened TD-150, TD-340):
 #   1. Brain DB (sqlite3): SELECT brief_id FROM brief_status
-#      WHERE project = <slug> AND status = 'In Progress'  -- canonical (v5+)
+#      WHERE project = <slug> AND <status folds to 'inprogress'>  -- canonical (v5+)
 #   2. Filesystem fallback: grep for '**Status:** In Progress' in
-#      ~/.igris/projects/<slug>/briefs/  -- v6 brain-directory cache
+#      ~/.igris/projects/<slug>/briefs/  -- v6 brain-directory cache.
+#      LITERAL BY DESIGN, not a site TD-340 missed. A regex here would be a
+#      FOURTH notation-matching implementation with different semantics from the
+#      SQL fold above, pinned by nothing. Fold it when TD-333 ships a shared
+#      definition to fold TO -- one matching rule beats several.
 #   3. Neither -> deny via JSON output.
 # Slug is resolved by walking PROJECT_DIR up its ancestors and matching
 # `projects.path` in the brain DB after pwd -P realpath normalisation
@@ -241,8 +245,20 @@ find_active_brief_in_brain() {
   local stdout stderr_file rc
   stderr_file=$(mktemp -t igris_brief_gate.XXXXXX 2>/dev/null || echo "/tmp/igris_brief_gate_stderr.$$")
   set +e
+  # TD-340 — the status filter FOLDS NOTATION instead of matching one literal.
+  # It used to read `status = 'In Progress'`, which cannot match the
+  # 'InProgress' spelling that exists in the live brain, so a genuinely-active
+  # brief looked like NO brief. This site fails CLOSED (spurious deny — a
+  # nuisance) where the pre-commit phase guard failed OPEN on the same token,
+  # but it is the same defect. Byte-aligned with scripts/git-hooks/pre-commit.
+  #
+  # Folds NOTATION ONLY (case + space + hyphen + underscore), never VOCABULARY:
+  # a different WORD ('Completed', 'Done', 'Active') is deliberately NOT
+  # matched. Vocabulary WILL be owned by normalizeStatus / CANONICAL_STATUSES
+  # in brain-mcp-server/src/tools/brief-normalize.ts once TD-333 ships — NOT
+  # SHIPPED as of TD-340.
   stdout=$(sqlite3 "$db" \
-    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND status = 'In Progress' ORDER BY updated_at DESC LIMIT 1;" \
+    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress' ORDER BY updated_at DESC LIMIT 1;" \
     2>"$stderr_file")
   rc=$?
   set -e

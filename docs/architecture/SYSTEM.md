@@ -178,7 +178,7 @@ flowchart TB
     A["Write/Edit invoked"] --> B["Resolve project slug<br/>(realpath ancestors → projects.path,<br/>fallback basename)"]
     B --> C{"Slug valid?<br/>^[a-z0-9_-]+$"}
     C -->|"no"| ALLOW1["ALLOW<br/>(exempt path or unknown project)"]
-    C -->|"yes"| D{"Brain DB has<br/>brief status='In Progress'<br/>for slug?"}
+    C -->|"yes"| D{"Brain DB has an<br/>in-flight brief for slug?<br/>(status folded, TD-340)"}
     D -->|"yes"| ALLOW2["ALLOW"]
     D -->|"no / DB error"| E{"Filesystem grep<br/>~/.igris/projects/&lt;slug&gt;/briefs/<br/>finds '**Status:** In Progress'?"}
     E -->|"yes"| ALLOW3["ALLOW<br/>+ emit brief_gate.fallback_fired"]
@@ -188,7 +188,7 @@ flowchart TB
 ```
 
 **Resolution order** (cite `core/hooks/shared/pre_tool_use.sh:23-36`):
-1. Brain DB query: `SELECT brief_id FROM brief_status WHERE project = '{slug}' AND status = 'In Progress'`.
+1. Brain DB query: `SELECT brief_id FROM brief_status WHERE project = '{slug}' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress'`. The fold is TD-340: it collapses NOTATION (`InProgress`, `in_progress`, `IN-PROGRESS`) but never VOCABULARY (`Done`, `Completed`, `Active`, `WIP` stay out). Before it, an `InProgress` brief left this gate silently inert.
 2. If brain miss / error → filesystem grep against `~/.igris/projects/{slug}/briefs/*.md`; emit `brief_gate.fallback_fired`.
 3. If both empty → DENY and emit `brief_gate.denied`.
 

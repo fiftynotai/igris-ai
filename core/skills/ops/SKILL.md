@@ -91,9 +91,17 @@ sqlite3 ~/.igris/memory/knowledge.db "
          p.name as project_name
   FROM brief_status bs
   LEFT JOIN projects p ON p.slug = bs.project
-  WHERE bs.status IN ('In Progress', 'Blocked')
+  -- Folds NOTATION, not VOCABULARY (TD-340). `InProgress` / `in_progress` /
+  -- `IN-PROGRESS` are the same state as `In Progress` and must appear here;
+  -- `Done` / `Completed` / `Active` / `WIP` are different WORDS and must not.
+  -- Same expression as the §17.2 gate — see MAINTAINING.md `brief_status.status`.
+  -- The `bs.` qualifier is REQUIRED here and is the one deviation from the other
+  -- copies: `projects` also has a `status` column, so a bare `status` inside this
+  -- LEFT JOIN is ambiguous. Do not strip it to restore byte-identity.
+  WHERE replace(replace(replace(lower(bs.status),' ',''),'-',''),'_','') IN ('inprogress','blocked')
   ORDER BY
-    CASE bs.status WHEN 'Blocked' THEN 0 WHEN 'In Progress' THEN 1 ELSE 2 END,
+    CASE replace(replace(replace(lower(bs.status),' ',''),'-',''),'_','')
+      WHEN 'blocked' THEN 0 WHEN 'inprogress' THEN 1 ELSE 2 END,
     bs.updated_at DESC;
 "
 ```
