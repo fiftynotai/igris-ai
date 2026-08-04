@@ -210,7 +210,13 @@ refute_output_has() {
   run_validator
   assert_failure
   # Class 1: the follow-up, and the two things NOT to do.
-  assert_output_has "RESOLUTION -> the documented brief lifecycle has six states"
+  # The RESOLUTION line must name a BRIEF ID, not just describe the work. A
+  # standing WARN whose resolution path is prose is a wish; one that names a
+  # brief is actionable. TD-333 shipped this line carrying only a description
+  # and TD-342 was filed to own it — assert the id so the line cannot regress
+  # back to a description-only form.
+  assert_output_has "RESOLUTION -> TD-342"
+  assert_output_has "the documented brief lifecycle has six states"
   assert_output_has "STATE EDIT"
   # Class 2: the fold-table route, and the payload route.
   assert_output_has "STATUS_ALIASES"
