@@ -73,7 +73,10 @@
  * that is not a loadout projection stays flagged for manual resolution; --fix
  * prints the before/after enumeration as the no-loss proof).
  * --remove-orphans deletes path-missing rows after per-row confirmation
- * (skip prompt with --yes).
+ * (skip prompt with --yes). A row the brain still references — a project with
+ * briefs or sessions — cannot be deleted without orphaning that history, so it
+ * is SKIPPED and reported per project and the sweep continues (BR-084); a
+ * skipped row is still drift, so the verb exits 1.
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -82,6 +85,7 @@ import { createInterface } from "node:readline";
 import {
   listProjects,
   deleteProjectRow,
+  type DeleteProjectOutcome,
 } from "../lib/registry.js";
 import {
   claudeJsonPath,
@@ -351,21 +355,57 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
     }
   }
 
+  // BR-084: slugs whose delete the DB REFUSED (still referenced). They are the
+  // one class of path-missing row that --remove-orphans does NOT resolve, so
+  // they must not be discounted from the exit code below.
+  const skippedOrphans = new Set<string>();
+
   if (opts.removeOrphans) {
     const orphans = drift.filter((r) => r.driftClass === "path-missing");
     if (orphans.length === 0) {
       info("No orphans to remove.");
     } else {
-      const removed = await confirmAndRemoveOrphans(orphans, opts.yes);
-      info(`Removed ${removed} orphan registry row(s).`);
+      const sweep = await confirmAndRemoveOrphans(orphans, opts.yes);
+      info(`Removed ${sweep.removed} orphan registry row(s).`);
+      if (sweep.skipped > 0) {
+        for (const r of sweep.results) {
+          if (!r.ok) skippedOrphans.add(r.slug);
+        }
+        // Names the slugs rather than saying "see above": the per-row reasons go
+        // to stderr and this line to stdout, so the two can be redirected apart.
+        info(
+          `Skipped ${sweep.skipped} orphan registry row(s) still referenced by ` +
+            `brain rows: ${[...skippedOrphans].join(", ")}. The sweep completed ` +
+            `for the rest; each skip's blocking count is in the warnings.`,
+        );
+      }
     }
   }
 
   // Exit code: 0 if all clean, 1 if any non-clean drift remains, 1 on fix errors.
   const nonCleanRemaining = drift.some((r) => {
     if (r.driftClass === "clean") return false;
-    // After --remove-orphans, path-missing is conceptually resolved.
-    if (opts.removeOrphans && r.driftClass === "path-missing") return false;
+    // After --remove-orphans, path-missing is conceptually resolved — EXCEPT
+    // for a row the DB refused to delete (BR-084). That registry row is still
+    // there and still drifted, so exiting 0 would be the silent pass-over the
+    // per-project reporting exists to prevent.
+    //
+    // THAT EXCEPTION IS NOT EXHAUSTIVE, AND THIS PREDICATE IS NOT YET HONEST.
+    // Three more cases leave a drifted row alive and still return false here,
+    // because `attempt` never ran so the slug never entered `skippedOrphans`:
+    // the operator answers `n`, the operator aborts with `a`, and piped stdin
+    // runs dry (the second `question` never resolves, so the sweep stops after
+    // one answer). All three were measured at exit 0 with the row surviving,
+    // in BOTH the pre- and post-BR-084 builds — they are pre-existing, and
+    // BR-084 narrowed the discount rather than widening it. BR-087 owns them,
+    // and its structural fix is to derive this from a RE-READ of the registry
+    // rather than from the sweep's own report — which is what the
+    // `hooks-missing` branch below already does ("re-check rather than
+    // assume"). Until then, read this as "the DB-refusal case is honest", not
+    // "the exit code is".
+    if (opts.removeOrphans && r.driftClass === "path-missing") {
+      return skippedOrphans.has(r.slug);
+    }
     if (opts.fix) {
       // After --fix, the auto-fixable classes are conceptually resolved (best-effort).
       if (
@@ -1165,10 +1205,46 @@ function printDriftTable(drift: DriftRow[]): void {
 export type PromptFn = (question: string) => Promise<string>;
 
 /**
+ * What one `--remove-orphans` sweep did. Per-project, never per-batch (BR-084).
+ *
+ * `results` carries one entry per ATTEMPTED delete, in sweep order — a row the
+ * user declined (`n`) or one never reached (`a`) is not an attempt and does not
+ * appear. `removed + skipped === results.length` by construction.
+ */
+export interface OrphanSweepResult {
+  removed: number;
+  /** Attempts the DB refused. Each carries its reason in `results`. */
+  skipped: number;
+  results: DeleteProjectOutcome[];
+}
+
+/**
  * Interactive orphan confirmation flow. Exported for vitest stdin-fixture
  * tests (TD-111): tests inject a synthetic `prompt` function so they can
  * exercise the `[y/N/a/all]` decision tree without monkey-patching
  * `process.stdin` or fighting readline's per-question listener race.
+ *
+ * BR-084 — WHAT HAPPENS TO A PROJECT THAT STILL HAS BRIEFS, and why.
+ *
+ * Its registry row is KEPT and the project is REPORTED as skipped, with the
+ * dependent count as the reason. The two alternatives were considered and
+ * rejected:
+ *
+ *   - *delete the dependents too* (cascade, or an extra prompt). This destroys
+ *     brief history — the brain's build record — to tidy a registry row, and it
+ *     is offered by a verb whose whole contract is "diagnose and repair drift".
+ *     The blast radius is unbounded (654 briefs on the operator's own brain) and
+ *     irreversible, and a `--yes` sweep would take it WITHOUT asking. A doctor
+ *     verb must not be the loudest destructive path in the CLI.
+ *   - *re-point the briefs at another slug*. That is a data migration with no
+ *     obvious target slug, and it belongs with the brief/project coupling work
+ *     (TD-328), not inside a registry sweep.
+ *
+ * Skip-and-report is also the only option that leaves the operator's next move
+ * intact: the row is still there to delete deliberately once the briefs are
+ * dealt with. So the sweep's failure mode is "one row survives, loudly", not
+ * "history is gone, quietly" — and NOT (as before BR-084) "every other orphan
+ * survives too, because the first refusal threw".
  *
  * @param prompt  Optional async function that returns the user's answer for
  *                a given prompt string. Defaults to a `readline`-backed
@@ -1178,15 +1254,34 @@ export async function confirmAndRemoveOrphans(
   orphans: DriftRow[],
   skipPrompt: boolean,
   prompt?: PromptFn,
-): Promise<number> {
-  if (skipPrompt) {
-    let n = 0;
-    for (const o of orphans) {
-      deleteProjectRow(o.slug);
+): Promise<OrphanSweepResult> {
+  const results: DeleteProjectOutcome[] = [];
+
+  // The ONLY route to deleteProjectRow in this function — one guard rather than
+  // four. NB this closure constrains nothing outside this function, and since
+  // BR-084 made deleteProjectRow NON-THROWING, a new caller that drops the
+  // returned outcome compiles clean and fails SILENTLY (pre-BR-084 it crashed).
+  // So the "only route" is pinned by a source scan in registry.test.ts, not by
+  // this comment — a claim of the form "there is only one X" needs a mechanism,
+  // which is the FR-247 / FR-240 precedent in this repo.
+  const attempt = (o: DriftRow): void => {
+    const outcome = deleteProjectRow(o.slug);
+    results.push(outcome);
+    if (outcome.ok) {
       info(`removed: ${o.slug}`);
-      n++;
+    } else {
+      warn(`skipped: ${o.slug} — ${outcome.error ?? "unknown reason"}`);
     }
-    return n;
+  };
+  const summarize = (): OrphanSweepResult => ({
+    removed: results.filter((r) => r.ok).length,
+    skipped: results.filter((r) => !r.ok).length,
+    results,
+  });
+
+  if (skipPrompt) {
+    for (const o of orphans) attempt(o);
+    return summarize();
   }
 
   // Production prompt: spin up a readline interface against process.stdin.
@@ -1205,46 +1300,45 @@ export async function confirmAndRemoveOrphans(
     });
 
   let yesAll = false;
-  let removed = 0;
 
-  for (const o of orphans) {
-    if (yesAll) {
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-      continue;
+  // BR-084: `finally`, not a trailing statement. `attempt` no longer throws, but
+  // `ask` still can (a closed or erroring stdin), and the pre-BR-084 shape left
+  // the readline interface — and with it the process's hold on stdin — open on
+  // every throwing path. Cleanup belongs to the scope that created it.
+  try {
+    for (const o of orphans) {
+      if (yesAll) {
+        attempt(o);
+        continue;
+      }
+      // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
+      // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
+      // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
+      // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
+      // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
+      const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
+        .trim()
+        .toLowerCase();
+      if (ans === "a") {
+        info("aborted by user");
+        break;
+      }
+      if (ans === "y") {
+        attempt(o);
+      } else if (ans === "yes-all" || ans === "all") {
+        yesAll = true;
+        attempt(o);
+      } else {
+        info(`kept: ${o.slug}`);
+      }
     }
-    // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
-    // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
-    // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
-    // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
-    // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
-    const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
-      .trim()
-      .toLowerCase();
-    if (ans === "a") {
-      info("aborted by user");
-      break;
-    }
-    if (ans === "y") {
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-    } else if (ans === "yes-all" || ans === "all") {
-      yesAll = true;
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-    } else {
-      info(`kept: ${o.slug}`);
+  } finally {
+    // Close the readline interface only if we created it (i.e. production
+    // path with no injected prompt). Tests pass their own prompt and have
+    // nothing for us to clean up.
+    if (rl !== null) {
+      (rl as ReturnType<typeof createInterface>).close();
     }
   }
-
-  // Close the readline interface only if we created it (i.e. production
-  // path with no injected prompt). Tests pass their own prompt and have
-  // nothing for us to clean up.
-  if (rl !== null) {
-    (rl as ReturnType<typeof createInterface>).close();
-  }
-  return removed;
+  return summarize();
 }

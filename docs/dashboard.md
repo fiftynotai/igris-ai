@@ -110,7 +110,7 @@ projects", and the difference is per-table:**
 
 | Field | Unscoped meaning | Same as the sum over projects? |
 |---|---|---|
-| `briefs.*` | every `brief_status` row | **yes** — `project` is `NOT NULL` with a declared FK to `projects(slug)`, and better-sqlite3 enables `foreign_keys` by default on **every** handle (measured), so deleting a project that still has briefs is BLOCKED rather than orphaning them. Measured against the real schema: `DELETE FROM projects WHERE slug='igris-ai'` (654 briefs) → `FOREIGN KEY constraint failed`. Note this makes `doctor --remove-orphans` throw on such a project — see the CLI-connection note in `brain-db.ts`. |
+| `briefs.*` | every `brief_status` row | **yes** — `project` is `NOT NULL` with a declared FK to `projects(slug)`, and better-sqlite3 enables `foreign_keys` by default on **every** handle (measured), so deleting a project that still has briefs is BLOCKED rather than orphaning them. Measured against the real schema: `DELETE FROM projects WHERE slug='igris-ai'` (654 briefs) → `FOREIGN KEY constraint failed`. Since BR-084 `doctor --remove-orphans` treats that refusal as a per-project result: it reports the project as skipped with the count of rows that blocked it, keeps its registry row, and sweeps the remaining orphans in the same run (it used to let the throw abort the whole sweep) — see the CLI-connection note in `brain-db.ts`. |
 | `instances.active` | every active instance | **no** — `project_slug` is nullable with no FK, so a session belonging to no project is in this count and in no project's count |
 
 `dashboard-server.test.ts` seeds exactly such a project-less session and asserts

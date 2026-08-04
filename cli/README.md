@@ -176,6 +176,13 @@ brain MCP; `secret-perms` by chmod 600. Other classes require manual decisions.
 prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`
 (yes-all).
 
+A row the brain still references — a project that has briefs or sessions — is
+**skipped, not deleted**: the DELETE is refused by the foreign key (deleting it
+would orphan that history), so the sweep reports `skipped: <slug>` with the
+count that blocked it, keeps the registry row, and carries on with the other
+orphans. Deal with the briefs first, then re-run. A skipped row is still drift,
+so `igris doctor --remove-orphans` exits 1 when one is left behind.
+
 ## `igris sync`
 
 Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).

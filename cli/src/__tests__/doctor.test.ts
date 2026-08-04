@@ -799,12 +799,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(reg.listProjects().length).toBe(2);
 
     // 'y' for first, 'n' for second — net delete = 1.
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-1", "orphan-2"]),
       false,
       makePrompt(["y", "n"]),
     );
-    expect(removed).toBe(1);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(0);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["orphan-2"]);
   });
@@ -813,12 +814,14 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     await seedOrphans(["orphan-keep"]);
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-keep"]),
       false,
       makePrompt(["n"]),
     );
-    expect(removed).toBe(0);
+    expect(sweep.removed).toBe(0);
+    // A declined row is not an ATTEMPT — it must not show up as a skip.
+    expect(sweep.results).toEqual([]);
     expect(reg.listProjects().length).toBe(1);
   });
 
@@ -830,12 +833,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     // We seed exactly one answer; the queue would throw if the loop
     // didn't break (defensive: catches a regression that walks past the
     // 'a' branch).
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-x", "orphan-y", "orphan-z"]),
       false,
       makePrompt(["a"]),
     );
-    expect(removed).toBe(0);
+    expect(sweep.removed).toBe(0);
+    expect(sweep.results).toEqual([]);
     expect(reg.listProjects().length).toBe(3);
   });
 
@@ -847,12 +851,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     // deleted in the body of the loop without further reads. Queue has
     // exactly one entry; if yesAll didn't latch, the second loop iter
     // would throw "more times than answers queued".
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["bulk-1", "bulk-2", "bulk-3"]),
       false,
       makePrompt(["all"]),
     );
-    expect(removed).toBe(3);
+    expect(sweep.removed).toBe(3);
+    expect(sweep.skipped).toBe(0);
     expect(reg.listProjects().length).toBe(0);
   });
 
@@ -864,14 +869,212 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     await seedOrphans(["upper-1", "upper-2"]);
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["upper-1", "upper-2"]),
       false,
       makePrompt(["Y", "n"]),
     );
-    expect(removed).toBe(1);
+    expect(sweep.removed).toBe(1);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["upper-2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-084: a project that still has briefs must not abort the WHOLE sweep.
+//
+// `brief_status.project` carries a live FK to `projects(slug)` and
+// better-sqlite3's bundled SQLite is compiled with SQLITE_DEFAULT_FOREIGN_KEYS=1,
+// so the DELETE is BLOCKED for such a project — the safe direction. Pre-BR-084
+// the throw was unguarded at all four call sites, so it escaped
+// confirmAndRemoveOrphans and every OTHER orphan in the same run survived too.
+//
+// THE FIXTURE HAS TWO ORPHANS AND THE BRIEFED ONE IS SWEPT FIRST. That is the
+// whole point: with ONE orphan, "aborted after the throw" and "completed with a
+// skip" are indistinguishable — the same single row survives either way. The
+// discriminator is the SECOND, clean orphan: it survives an abort and is removed
+// by a completed sweep.
+// ---------------------------------------------------------------------------
+describe("doctor — --remove-orphans partial failure (BR-084)", () => {
+  const BRIEFED = "orphan-with-briefs";
+  const CLEAN = "orphan-clean";
+
+  function rowsFor(slugs: string[]): Array<{
+    slug: string;
+    path: string;
+    driftClass: "path-missing";
+    recommendedFix: string;
+  }> {
+    return slugs.map((slug) => ({
+      slug,
+      path: `/no/such/dir/${slug}`,
+      driftClass: "path-missing" as const,
+      recommendedFix: "delete row",
+    }));
+  }
+
+  /**
+   * Two registry rows, both path-missing; ONE of them owns a `brief_status` row.
+   *
+   * The brief is written through a SEPARATE, short-lived handle opened only
+   * after `closeDb()` has released the registry's own — never two live RW
+   * connections to the same file at once.
+   *
+   * The fixture ARMS itself before returning: it asserts `foreign_keys` is
+   * actually ON for this handle shape and that the DELETE really is refused.
+   * Without that, a sandbox where the FK happened not to bite would make every
+   * assertion below pass for the wrong reason.
+   */
+  async function seedTwoOrphansOneBriefed(): Promise<void> {
+    const reg = await import("../lib/registry.js");
+    for (const slug of [BRIEFED, CLEAN]) {
+      reg.upsertProject({
+        slug,
+        name: slug,
+        path: `/no/such/dir/${slug}`,
+        tech_stack: "",
+        igris_version: "7.0.0",
+      });
+    }
+    reg.closeDb();
+
+    const { brainDbPath } = await import("../lib/paths.js");
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(brainDbPath());
+    // Mirrors brain-mcp-server/src/db.ts:296-308 — the FK is the load-bearing
+    // part; the column list is trimmed to the NOT NULL ones.
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS brief_status (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         project TEXT NOT NULL,
+         brief_id TEXT NOT NULL,
+         title TEXT NOT NULL,
+         status TEXT NOT NULL,
+         FOREIGN KEY (project) REFERENCES projects(slug)
+       );`,
+    );
+    db.prepare(
+      "INSERT INTO brief_status (project, brief_id, title, status) VALUES (?, ?, ?, ?)",
+    ).run(BRIEFED, "BR-084", "fixture brief", "Open");
+
+    expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+    let refused = false;
+    try {
+      db.prepare("DELETE FROM projects WHERE slug = ?").run(BRIEFED);
+    } catch {
+      refused = true;
+    }
+    expect(refused).toBe(true);
+    db.close();
+  }
+
+  it("--yes: the briefed project is skipped WITH ITS REASON and the other orphan is still removed", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([CLEAN, BRIEFED]);
+
+    // BRIEFED first — the throw used to happen here, before CLEAN was reached.
+    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true);
+
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(1);
+    // The sweep CONTINUED: the clean orphan is gone, the briefed one is kept.
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+
+    const failed = sweep.results.find((r) => !r.ok);
+    expect(failed?.slug).toBe(BRIEFED);
+    // Reported with the REASON, not a bare "failed": the count and the table
+    // that blocked it are what tell an operator what to do next.
+    expect(failed?.error).toContain("1 brief_status row(s)");
+    expect(failed?.error).toContain("registry row kept");
+    const succeeded = sweep.results.find((r) => r.ok);
+    expect(succeeded?.slug).toBe(CLEAN);
+    expect(succeeded?.error).toBeNull();
+  });
+
+  it("interactive 'y','y': the refusal on the first orphan does not stop the second", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+
+    const answers = ["y", "y"];
+    const sweep = await confirmAndRemoveOrphans(
+      rowsFor([BRIEFED, CLEAN]),
+      false,
+      async () => {
+        const next = answers.shift();
+        if (next === undefined) {
+          throw new Error("test bug: prompt called more times than answers queued");
+        }
+        return next;
+      },
+    );
+
+    // BOTH prompts were consumed — the loop reached the second orphan.
+    expect(answers.length).toBe(0);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+  });
+
+  it("runDoctor --remove-orphans --yes: completes, and exits 1 because the skipped row is STILL drifted", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+
+    // Pre-BR-084 this call REJECTED (the throw escaped runDoctor entirely).
+    const code = await runDoctor({ fix: false, removeOrphans: true, yes: true });
+
+    // The sibling test "--remove-orphans --yes deletes path-missing rows" pins
+    // exit 0 for two REMOVABLE orphans in this same baseline, so the 1 here is
+    // attributable to the skipped row and nothing else in the sandbox.
+    expect(code).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+  });
+
+  it("rl.close() runs on the throwing path (the interactive path no longer leaks readline)", async () => {
+    // The readline interface is only built on the PRODUCTION path (no injected
+    // prompt), so this is the one test that must reach it. `node:readline` is
+    // mocked for a freshly-reset module graph and restored in `finally`.
+    const reg0 = await import("../lib/registry.js");
+    reg0.closeDb();
+    vi.resetModules();
+
+    let created = 0;
+    let closed = 0;
+    vi.doMock("node:readline", () => {
+      const createInterface = (): unknown => {
+        created++;
+        return {
+          question: (): never => {
+            throw new Error("synthetic stdin failure");
+          },
+          close: (): void => {
+            closed++;
+          },
+        };
+      };
+      const emitKeypressEvents = (): void => {};
+      return { createInterface, emitKeypressEvents, default: { createInterface, emitKeypressEvents } };
+    });
+
+    try {
+      const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+      await expect(
+        confirmAndRemoveOrphans(rowsFor(["never-reached"]), false),
+      ).rejects.toThrow("synthetic stdin failure");
+      // Arm: the production readline branch really was taken. Without this, a
+      // `closed === 0` regression could hide behind "rl was never created".
+      expect(created).toBe(1);
+      // Pre-BR-084 `rl.close()` sat AFTER the loop, so a throw skipped it: 0.
+      expect(closed).toBe(1);
+    } finally {
+      vi.doUnmock("node:readline");
+      vi.resetModules();
+      const reg = await import("../lib/registry.js");
+      reg.closeDb();
+    }
   });
 });
 

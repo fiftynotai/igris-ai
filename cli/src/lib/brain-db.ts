@@ -698,10 +698,23 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
  *
  * CONSEQUENCE worth knowing: `registry.ts#deleteProjectRow` issues a bare
  * DELETE with no cascade, and its caller is `igris doctor --remove-orphans`.
- * On a project that still has briefs that DELETE THROWS rather than orphaning —
- * the safe direction — but the throw is UNGUARDED at all four call sites, so it
- * ABORTS THE WHOLE SWEEP, including orphans that would have deleted cleanly.
- * Tracked as BR-084.
+ * On a project that still has briefs — or sessions, since `sessions.project`
+ * carries the same FK (db.ts:290) — that DELETE is REFUSED rather than
+ * orphaning the dependents, which is the safe direction.
+ *
+ * Until BR-084 the refusal was an UNGUARDED throw at all four call sites, and
+ * the cost was NOT "the verb cannot remove that one project": the exception
+ * escaped `confirmAndRemoveOrphans` and ABORTED THE WHOLE SWEEP, so every other
+ * orphan that would have deleted cleanly survived too, and the interactive path
+ * leaked its readline interface on the way out. One reachable input took down a
+ * bulk-cleanup verb wholesale.
+ *
+ * Since BR-084 the refusal is a per-project RESULT, which is FR-241 D6's
+ * posture applied here: `deleteProjectRow` returns `{slug, ok, error}` and does
+ * not throw, the sweep CONTINUES, and the blocked project is reported with the
+ * dependent count that blocked it. Its registry row is KEPT — no cascade, since
+ * destroying brief history is not an action a `doctor` verb should take — and
+ * because that row is still drifted it keeps `igris doctor` at exit 1.
  *
  * Do NOT generalise that to the other tables a caller may widen alongside this
  * one. `instances.project_slug` is nullable with no FK, so an unfiltered
