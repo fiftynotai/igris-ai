@@ -557,8 +557,15 @@ export async function briefsSearch(
   // `unknown filter: status` note into a silent drop.
   //
   // So every filter this endpoint cannot bind is dropped AND NAMED — the same
-  // drop-and-report posture `learningsSearch` uses for `review_status`, and the
-  // shape the FR-246 sign-off requires: *a parameter this brief parses must be
+  // drop-and-report posture `learningsSearch` uses for `category` / `scope` /
+  // `provenance`. NB it no longer uses that posture for `review_status`:
+  // BR-085 moved that one into BOUND_BY, so the loop `continue`s and it is
+  // never named. Do not cite it as the exemplar here — that is the mistake
+  // this file already records against itself ~250 lines down, and it is the
+  // one a reader would repeat.
+  //
+  // Drop-and-report is also the shape the FR-246 sign-off requires: *a
+  // parameter this brief parses must be
   // forwarded, or must not be parsed.* `hybridSearchBriefs` binds `q`, `project`
   // and `limit` and nothing else; widening it to rank a filtered subcorpus is a
   // retrieval decision, not a plumbing one.
@@ -819,6 +826,26 @@ const SEARCH_PREVIEW_CHARS = 300;
  * loud instead of invisible, and what makes AC #2 assertable at all: a
  * `mode: "bm25_only"` response is a legitimate state (no extension, or a
  * cold/absent HF model cache) and the UI banners it rather than shrugging.
+ *
+ * BR-085 — `review_status` IS FORWARDED, AND THE PAYLOAD ECHOES WHAT THE READER
+ * APPLIED. Until BR-085 this handler parsed the filter and did not pass it on,
+ * while `Learnings.tsx` bannered "SHOWING PENDING REVIEW ROWS" over approved
+ * ones. FR-246 made the drop audible; BR-085 removes it. Two properties are
+ * load-bearing and are asserted in `dashboard-learnings-search-params.test.ts`
+ * (NOT `dashboard-learnings-search.test.ts`, which contains no `review_status`
+ * assertion at all — a citation pointing confidently at the wrong file sends
+ * the next reader somewhere that looks authoritative and is not):
+ *
+ *   1. EVERY allow-listed filter is either FORWARDED or NAMED. The drop notes
+ *      below are derived from `LEARNING_FILTERS` minus the keys this handler
+ *      actually binds, so a seventh learning filter cannot land here unreported
+ *      — the defect CLASS, closed, rather than this one instance.
+ *   2. The banner's scope comes from `r.review_status` — the reader's own echo —
+ *      never from `reviewStatus` (the request). They differ exactly when the
+ *      loaded read layer is an older VENDORED bundle than this file, which is a
+ *      routine state in a repo checkout mid-build. In that case the request is
+ *      un-honourable and the payload says `approved` plus a note, rather than
+ *      re-committing BR-085's original lie with newer code.
  */
 export async function learningsSearch(
   search: URLSearchParams,
@@ -832,20 +859,61 @@ export async function learningsSearch(
   const parsed = parseQuery(search);
   const notes = [...page.rejected, ...filters.rejected];
 
-  // D3-e — the SILENT drop, made visible. `review_status` is parsed by
-  // `LEARNING_FILTERS` but `hybridSearchLearnings` has no such option: it
-  // hard-gates `review_status = 'approved'` on BOTH arms (FR-109) and again on
-  // hydration (TD-059), so a `pending_review` row is STRUCTURALLY unreachable
-  // here. Before FR-246 the value was parsed and then dropped without a word,
-  // while `Learnings.tsx` banners "SHOWING PENDING REVIEW ROWS" — so an
-  // operator who filtered to pending and searched was shown approved rows under
-  // a banner claiming otherwise. FR-246 does NOT widen FR-109's gate (that is a
-  // cognition decision, filed as BR-085); it converts the silent lie into a
-  // stated one, using the existing drop-and-report posture.
-  const rs = filters.values.review_status;
-  if (rs !== undefined && rs !== DEFAULT_REVIEW_STATUS) {
+  const reviewStatus = filters.values.review_status ?? DEFAULT_REVIEW_STATUS;
+
+  // The forwarded options, built BEFORE the drop report so the report can be
+  // derived from them. This ordering is the fix to BR-085's CLASS: the list of
+  // "what this handler binds" is no longer a comment that can go stale beside
+  // the call, it is the object being passed.
+  const searchOpts = {
+    query: parsed.ok ? parsed.query : "",
+    project: filters.values.project,
+    review_status: reviewStatus,
+    limit: page.limit,
+  };
+
+  /**
+   * Wire filter name → the `HybridSearchOptions` key it binds.
+   *
+   * `q` maps to `query` (the route's own parse, see above), so it is bound
+   * despite the names differing — which is exactly why this is a MAP and not a
+   * `Set` of names: a name-equality check would have called `q` unbound and
+   * reported a drop for the one parameter this endpoint exists to use.
+   *
+   * The VALUES are unused at runtime and are not decoration: typing them
+   * `keyof typeof searchOpts` makes the map fail to COMPILE if it claims a
+   * binding the options object does not have. Removing a key from `searchOpts`
+   * without removing it here — the way BR-085 would come back — is a type
+   * error, and if it somehow were not, the loop would then report the drop.
+   */
+  const BOUND_BY: ReadonlyMap<string, keyof typeof searchOpts> = new Map([
+    ["project", "project"],
+    ["review_status", "review_status"],
+    ["q", "query"],
+  ]);
+
+  // Enumerated from `LEARNING_FILTERS` at RUNTIME rather than hand-listed —
+  // `briefsSearch`'s posture, applied to its twin. `category`, `scope` and
+  // `provenance` are allow-listed by the shared spec list and CANNOT be bound by
+  // ranked recall (filtering a fused subcorpus is a retrieval decision, barred
+  // from this brief), so they are NAMED. Before BR-085 they were dropped in
+  // silence — the same shape as `review_status`, in the same handler.
+  for (const spec of LEARNING_FILTERS) {
+    if (BOUND_BY.has(spec.name)) continue;
+    if (filters.values[spec.name] !== undefined) {
+      notes.push(
+        `${spec.name}: dropped — ranked recall binds only q + project + review_status; filter by ${spec.name} on /api/learnings`,
+      );
+    }
+  }
+
+  // `offset` is PARSED by `parsePageParams` and cannot be forwarded: RRF over
+  // two arms has no stable offset semantics, so there is no second page to
+  // serve. Silently returning page one for `?offset=20` is BR-085's shape with
+  // a page control instead of a filter, so it is named too.
+  if (page.offset > 0) {
     notes.push(
-      `review_status: dropped — hybrid recall is gated to approved rows (FR-109)`,
+      `offset: dropped — ranked recall returns one fused page; page /api/learnings instead`,
     );
   }
 
@@ -864,6 +932,13 @@ export async function learningsSearch(
     items: [] as LearningSearchRowPayload[],
     count: 0,
     retrieval: emptyRetrieval,
+    // Every path below that returns `base` unmodified is a path on which NO
+    // read happened, so no scope was applied and none may be claimed. It reads
+    // `approved` — the value that renders NO scope banner — rather than the
+    // request: a degraded search must show the degraded banner and nothing
+    // else. Over-claiming here would be BR-085 with an empty list instead of a
+    // wrong one.
+    review_status: DEFAULT_REVIEW_STATUS,
     params: notes,
     generated_at: now(),
   };
@@ -896,11 +971,26 @@ export async function learningsSearch(
   }
 
   try {
-    const r = await readers.hybridSearchLearnings(handle.db, {
-      query: parsed.query,
-      project: filters.values.project,
-      limit: page.limit,
-    });
+    const r = await readers.hybridSearchLearnings(handle.db, searchOpts);
+
+    // WHAT THE READER APPLIED, not what we asked for. A read layer built before
+    // BR-085 has no `review_status` in its result — and its behaviour is known
+    // exactly: every such build hard-gated `approved` on both arms, so the
+    // fallback below is the truth about those rows and not a guess. The
+    // mismatch is NAMED, because "your filter did nothing" is information the
+    // operator can act on (rebuild) and a silently ignored filter is not.
+    const applied = r.review_status ?? DEFAULT_REVIEW_STATUS;
+    const appliedNotes =
+      applied === searchOpts.review_status
+        ? []
+        : [
+            // Phrased about the DISAGREEMENT, not its cause. The condition is
+            // "the reader applied a scope other than the one asked for";
+            // predating BR-085 is only today's reason for that, and a future
+            // reader clamping for some other reason would be misdiagnosed by a
+            // cause-shaped message. The rebuild stays as the likely remedy.
+            `review_status: asked ${searchOpts.review_status}, applied ${applied} — the loaded brain read layer did not honour the requested scope (most likely a vendored bundle predating BR-085; rebuild it)`,
+          ];
 
     // A hydration miss (`row === null`) is dropped from the wire rather than
     // shipped as a placeholder: the MCP wrapper renders "(record not found)"
@@ -951,6 +1041,8 @@ export async function learningsSearch(
         // `node_modules`, a `load()` throw.
         reason: handle.vector_reason ?? r.retrieval.reason,
       },
+      review_status: applied,
+      params: [...notes, ...appliedNotes],
       degraded: null,
     };
   } catch (err) {

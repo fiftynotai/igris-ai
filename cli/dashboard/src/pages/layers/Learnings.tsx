@@ -68,6 +68,7 @@ import {
   listQuery,
   muteRows,
   recordHash,
+  scopeBanner,
   searchQuery,
   splitTags,
 } from "../../layers/model";
@@ -116,6 +117,7 @@ function LearningListView({ project, search, live }: LayerViewProps) {
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
+  /** What the FILTER asks for. Drives the REQUEST, never the banner. */
   const reviewStatus = list.values.review_status ?? DEFAULT_REVIEW_STATUS;
 
   // The recall read. Keyed on the SUBMITTED query, not the draft: an embedding
@@ -249,6 +251,22 @@ function LearningListView({ project, search, live }: LayerViewProps) {
     ? (payload?.degraded?.reason ?? list.error)
     : (hits?.degraded?.reason ?? searchError);
 
+  /**
+   * THE SCOPE THE ROWS ON SCREEN CAME FROM — BR-085.
+   *
+   * Fed the payload that produced the VISIBLE rows, so the banner describes the
+   * response and not the request. The decision itself lives in `model.ts` where
+   * it is unit-tested; see `scopeBanner`'s docstring for why this is the whole
+   * fix rather than a refactor.
+   */
+  const scope = scopeBanner({
+    source: browsing ? payload : hits,
+    requested: reviewStatus,
+  });
+
+  /** The server's notes for whichever read produced the rows on screen. */
+  const paramNotes = (browsing ? payload?.params : hits?.params) ?? [];
+
   return (
     <RecordList
       eye={descriptor?.eye ?? "// LEARNINGS"}
@@ -262,11 +280,12 @@ function LearningListView({ project, search, live }: LayerViewProps) {
               {browsing ? "LEARNINGS DEGRADED" : "SEARCH DEGRADED"} — {degradedReason}
             </div>
           )}
-          {reviewStatus !== DEFAULT_REVIEW_STATUS && (
-            // D9's explicit banner. It names the boundary as well as the state:
-            // this lens READS these rows, and nothing here can approve one.
+          {scope.show && (
+            // D9's explicit banner, sourced from the RESPONSE (BR-085). It names
+            // the boundary as well as the state: this lens READS these rows, and
+            // nothing here can approve one.
             <div className="shell-banner" role="status">
-              SHOWING {reviewStatus.toUpperCase().replace("_", " ")} ROWS — these
+              SHOWING {scope.scope.toUpperCase().replace("_", " ")} ROWS — these
               have not entered the model's conscious channel (FR-109). This view
               is read-only; triage ships with FR-241.
             </div>
@@ -274,9 +293,13 @@ function LearningListView({ project, search, live }: LayerViewProps) {
           {!browsing && hits !== null && (
             <SearchReadout retrieval={hits.retrieval} />
           )}
-          {payload != null && payload.params.length > 0 && (
+          {paramNotes.length > 0 && (
+            // BR-085: the SEARCH payload's notes render too. They did not
+            // before — only the browse payload's did — so the server could
+            // report a dropped parameter into a banner nobody rendered, which
+            // is a reported drop that is still a silent one on screen.
             <div className="shell-banner" role="status">
-              REQUEST ADJUSTED — {payload.params.join(" · ")}
+              REQUEST ADJUSTED — {paramNotes.join(" · ")}
             </div>
           )}
         </>

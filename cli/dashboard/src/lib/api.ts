@@ -382,12 +382,17 @@ export interface LearningSearchRow {
   vector_rank: number | null;
 }
 
-/** Mirrors `LearningsSearchPayload`. */
+/**
+ * Mirrors `LearningsSearchPayload`. `review_status` is the scope the reader
+ * APPLIED (BR-085) — the view banners from it rather than from its own filter
+ * state, which is the whole fix.
+ */
 export interface LearningsSearchPayload {
   query: string;
   items: LearningSearchRow[];
   count: number;
   retrieval: RetrievalReport;
+  review_status: string;
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;

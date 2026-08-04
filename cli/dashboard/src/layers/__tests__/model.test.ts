@@ -53,6 +53,7 @@ import {
   prevOffset,
   recordHash,
   recordHrefForNode,
+  scopeBanner,
   searchQuery,
   splitTags,
   type RecordAddress,
@@ -746,5 +747,117 @@ describe("FR-246 — briefsSearchQuery", () => {
     // builder would send one the server reports back as unknown.
     const params = briefsSearchQuery({ query: "kiln", project: null, limit: 20 });
     expect(params.has("review_status")).toBe(false);
+  });
+});
+
+describe("BR-085 — the scope banner describes the RESPONSE, not the request", () => {
+  /**
+   * THE BUG, AS A TEST. The learnings lens asked for `pending_review`, the
+   * search endpoint dropped the filter, the reader returned `approved` rows —
+   * and the banner still read "SHOWING PENDING REVIEW ROWS", because it was
+   * computed from the filter control. Every assertion below is about which of
+   * the two inputs wins when they disagree.
+   */
+
+  it("names the APPLIED scope when the response disagrees with the request", () => {
+    // The exact BR-085 state. The rows are approved; the control says pending.
+    // The banner must side with the rows.
+    const b = scopeBanner({
+      source: { review_status: "approved" },
+      requested: "pending_review",
+    });
+    expect(b.scope).toBe("approved");
+    expect(b.show).toBe(false);
+  });
+
+  it("banners pending rows when the response really is pending", () => {
+    // The paired control: without it, "show is false" above could mean the
+    // banner is simply dead. Same function, same shape, opposite verdict.
+    const b = scopeBanner({
+      source: { review_status: "pending_review" },
+      requested: "pending_review",
+    });
+    expect(b.scope).toBe("pending_review");
+    expect(b.show).toBe(true);
+  });
+
+  it("banners pending rows even when the CONTROL says approved", () => {
+    // The mirror of the defect, and the reason `source` is not merely a
+    // fallback: rows outside the conscious channel must be labelled whatever
+    // the control claims. A banner is a statement about the rows.
+    const b = scopeBanner({
+      source: { review_status: "pending_review" },
+      requested: DEFAULT_REVIEW_STATUS,
+    });
+    expect(b.show).toBe(true);
+  });
+
+  it("falls back to the request ONLY before a response exists", () => {
+    // The pre-payload instant: no rows are on screen, so there is nothing to
+    // mislabel, and the operator's own selection is the honest thing to show.
+    expect(scopeBanner({ source: null, requested: "pending_review" })).toEqual({
+      scope: "pending_review",
+      show: true,
+    });
+    expect(scopeBanner({ source: null, requested: DEFAULT_REVIEW_STATUS }).show).toBe(
+      false,
+    );
+  });
+
+  it("stays silent for the default scope — the lens does not banner its baseline", () => {
+    expect(
+      scopeBanner({
+        source: { review_status: DEFAULT_REVIEW_STATUS },
+        requested: DEFAULT_REVIEW_STATUS,
+      }).show,
+    ).toBe(false);
+  });
+});
+
+describe("BR-085 — an empty PENDING search reads as filtered, not as empty", () => {
+  it("a scoped recall with no hits says 'nothing matches this filter'", () => {
+    // AC #4. A reviewer searching the pending queue for a candidate that is not
+    // there must not be told the project has no learnings — it has 725 of them,
+    // just none matching this query in this scope. `filtersActive` carries a
+    // submitted recall query as well as the filter controls, which is why the
+    // view passes `|| !browsing`.
+    const copy = emptyStateFor({
+      layer: "learnings",
+      total: 0,
+      degraded: null,
+      filtersActive: true,
+      searchActive: false,
+      project: "igris-ai",
+    });
+    expect(copy.kind).toBe("filtered");
+    expect(copy.message).toContain("Rows may exist outside this filter");
+  });
+
+  it("and a genuinely empty project still says so — the pair, not the half", () => {
+    // The control. Without it, "filtered" above could be the only answer this
+    // function ever gives, which would break the AC #6 distinction it exists for.
+    const copy = emptyStateFor({
+      layer: "learnings",
+      total: 0,
+      degraded: null,
+      filtersActive: false,
+      searchActive: false,
+      project: "igris-ai",
+    });
+    expect(copy.kind).toBe("empty");
+    expect(copy.message).toContain("/harvest");
+  });
+
+  it("a degraded search beats both — the rows are missing for a third reason", () => {
+    const copy = emptyStateFor({
+      layer: "learnings",
+      total: 0,
+      degraded: "brain database not found",
+      filtersActive: true,
+      searchActive: false,
+      project: "igris-ai",
+    });
+    expect(copy.kind).toBe("degraded");
+    expect(copy.meta).toBe("brain database not found");
   });
 });

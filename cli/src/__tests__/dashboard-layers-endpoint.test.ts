@@ -848,9 +848,13 @@ describe("FR-246 — the `q` substring surfaces declare their own mode", () => {
   });
 
   it("/api/learnings?q= filters the CANDIDATES browse, including pending rows", async () => {
-    // The D3 argument, driven: `hybridSearchLearnings` structurally cannot
-    // return a `pending_review` row (FR-109 gates both arms), so the triage
-    // queue needs a filter rather than a search. Here it gets one.
+    // The D3 argument, driven — with its premise RETIRED by BR-085. It used to
+    // read "`hybridSearchLearnings` structurally cannot return a
+    // `pending_review` row (FR-109 gates both arms)"; that gate is now a
+    // PARAMETER defaulting to `approved`, so recall can. The surviving half of
+    // D3 is the one that still holds: the triage queue wants a substring
+    // FILTER over the whole pending set, not ranked recall over part of it —
+    // different shapes for different jobs. Here it gets the filter.
     const pending = await json<WithSearch>(
       "/api/learnings?review_status=pending_review&q=wrapper",
     );

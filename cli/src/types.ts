@@ -1209,12 +1209,21 @@ export interface LearningSearchRowPayload {
   vector_rank: number | null;
 }
 
-/** `GET /api/learnings/search?q=<query>&project=<slug>&limit=`. */
+/**
+ * `GET /api/learnings/search?q=<query>&project=<slug>&review_status=&limit=`.
+ *
+ * BR-085 adds `review_status`, and it is the scope the READER APPLIED — not the
+ * one the request asked for. The UI banners from this field for that reason: the
+ * defect this brief fixes was a banner sourced from the request while the rows
+ * came from a different scope entirely.
+ */
 export interface LearningsSearchPayload {
   query: string;
   items: LearningSearchRowPayload[];
   count: number;
   retrieval: RetrievalPayload;
+  /** The review scope these `items` were actually recalled from (BR-085). */
+  review_status: string;
   params: DashboardParamNotes;
   generated_at: string;
   degraded: DashboardDegraded | null;

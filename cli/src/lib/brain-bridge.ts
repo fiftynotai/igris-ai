@@ -835,6 +835,18 @@ export interface LearningRow {
 export interface HybridSearchOptions {
   query: string;
   project?: string;
+  /**
+   * BR-085 — the review scope to recall over; the reader defaults it to
+   * `approved` when absent, so omitting it is the FR-109 conscious channel.
+   *
+   * DECLARING IT HERE DOES NOT MAKE THE LOADED BUNDLE HONOUR IT. This interface
+   * describes the module `loadLayerReaders` imports at runtime, and that module
+   * is a VENDORED build (`cli/dist/brain-mcp-server/dist/`) that can predate
+   * this declaration. That is why {@link HybridSearchResult} carries the
+   * reader's own echo and why `routes.ts` renders the ECHO rather than the
+   * request — a type is a claim about source, not about the artifact on disk.
+   */
+  review_status?: string;
   limit?: number;
   bm25_weight?: number;
   vector_weight?: number;
@@ -871,6 +883,16 @@ export interface HybridSearchEntry {
 export interface HybridSearchResult {
   rows: HybridSearchEntry[];
   retrieval: RetrievalReport;
+  /**
+   * BR-085 — the review scope the reader ACTUALLY applied.
+   *
+   * Typed `string | undefined` rather than `string`, and that is the whole
+   * point: a vendored bundle built before BR-085 returns an object without this
+   * key, and TypeScript would otherwise let `routes.ts` treat the absent value
+   * as a promise kept. `undefined` here means "this reader has no review axis",
+   * which the route reports instead of bannering a scope it did not get.
+   */
+  review_status?: string;
 }
 
 /** goals/read.ts:43 — `GoalRow` (LIFTED there from `handlers.ts:80` by FR-240). */

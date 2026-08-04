@@ -509,13 +509,50 @@ export function searchQuery(input: {
     q.set("project", input.project);
   }
   // Only the filters the search endpoint accepts. `review_status` is one of
-  // them; `category`/`scope`/`provenance` are dropped because the reader's
-  // recall path does not bind them, and sending them would have the server
-  // report them back as unknown.
+  // them — and since BR-085 the endpoint FORWARDS it to the reader, where it
+  // scopes both RRF arms. `category`/`scope`/`provenance` are still dropped
+  // here because ranked recall cannot bind them; the server names them if they
+  // are sent anyway, which is how that stays honest rather than assumed.
   const review = input.values.review_status;
   if (review !== undefined && review.length > 0) q.set("review_status", review);
   q.set("limit", String(input.limit));
   return q;
+}
+
+// ---------------------------------------------------------------------------
+// BR-085 — which review scope the rows on screen are FROM
+// ---------------------------------------------------------------------------
+
+/** What the scope banner should say, and whether it should appear at all. */
+export interface ScopeBanner {
+  /** The scope to name. Always the applied one when the server has answered. */
+  scope: string;
+  /** False for the default scope — the lens does not banner its own baseline. */
+  show: boolean;
+}
+
+/**
+ * Decide the review-scope banner from the RESPONSE that produced the rows.
+ *
+ * THIS FUNCTION IS BR-085. The bug was a banner computed from the filter
+ * CONTROL while the rows came from a request the server had silently narrowed:
+ * "SHOWING PENDING REVIEW ROWS" over `approved` learnings, with no error, no
+ * empty state and no badge. Sourcing the banner from `source.review_status` —
+ * the scope the server says it APPLIED — makes that state unrepresentable: if
+ * the filter is ever again not honoured, the banner reverts on its own.
+ *
+ * `requested` is the fallback for the pre-response instant ONLY (first load, or
+ * a failed fetch), where there are no rows on screen for a banner to mislabel.
+ *
+ * @param source the payload the visible rows came from, or null before it lands
+ * @param requested the filter control's current value
+ */
+export function scopeBanner(input: {
+  source: { review_status: string } | null;
+  requested: string;
+}): ScopeBanner {
+  const scope = input.source?.review_status ?? input.requested;
+  return { scope, show: scope !== DEFAULT_REVIEW_STATUS };
 }
 
 // ---------------------------------------------------------------------------

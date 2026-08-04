@@ -936,10 +936,32 @@ interface PackReport {
  * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
  * superseded). **BUT THE PACKED FIGURE IS NO LONGER THE ONE THAT BINDS.** The
- * app chunk has **616 B** of slack against `vite.config.ts`'s
- * `chunkSizeWarningLimit` (559_384 B of 560_000). A brief adding ANY UI to this
+ * app chunk has **484 B** of slack against `vite.config.ts`'s
+ * `chunkSizeWarningLimit` (559_516 B of 560_000). A brief adding ANY UI to this
  * bundle should plan a route-level code split as its FIRST step, not as a
  * cut-ladder rung — there is no longer a budget to cut from.
+ *
+ * BR-085 measured 2026-08-04: **559_384 -> 559_516 B, +132 B**, spending 21% of
+ * the 616 B FR-247 left.
+ *
+ * CHUNK figure is SOLID; the PACKED figure below is a FLOOR, not a reading.
+ * `npm pack` packs `dist/`, and on this machine `npm run build` in `cli/` is a
+ * live deploy (it rewrites the vendored brain server the operator's MCP runs
+ * from), so `dist/` was NOT rebuilt after this brief's review-round comment
+ * edits. The dashboard bundle WAS rebuilt (`build-dashboard.sh` touches only
+ * the gitignored `dist/dashboard`), which is why the chunk number is real. The
+ * packed total below therefore reflects the pre-review build: **1_812_952 B
+ * over 804 entries**, and the review round added roughly 400 B of comment to
+ * `src/lib/dashboard/routes.ts` that tsc will preserve on the next real build.
+ * Do not read a `+0 B` delta here as "free" — it means the artifact did not
+ * move because it was not rebuilt. Re-take this reading after the next build.
+ *
+ * The 132 B
+ * are the client-side review-scope plumbing (the `review_status` field on the
+ * search row type, the banner's scope source, and the search-params render) —
+ * a genuinely small UI change, which is the point: **at 484 B, "small" is no
+ * longer automatically affordable.** FR-248 and FR-249 both add UI and cannot
+ * both fit; whichever runs first owns the route-level split.
  *
  * The "five GL-006 briefs remain" this sentence used to carry was not
  * re-derivable, so it is read off the goal's own edges instead. Re-derived

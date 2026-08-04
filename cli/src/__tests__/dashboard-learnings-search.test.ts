@@ -423,7 +423,11 @@ describe.skipIf(!bundleStaged())(
 // ---------------------------------------------------------------------------
 
 describe("the search endpoint's contract", () => {
-  it("pending_review rows never surface through search (FR-109)", async () => {
+  // Title is deliberately scoped to the UN-SCOPED case. Before BR-085 an
+  // unqualified "never surface through search" was true; it is now false for a
+  // search that asks for them. A universal title over a surface that has since
+  // been widened is how a green test comes to assert a retired invariant.
+  it("pending_review rows never surface through an UN-SCOPED search (FR-109 default)", async () => {
     await start();
     const r = await json<SearchPayload>(
       `/api/learnings/search?q=${encodeURIComponent(QUERY)}`,

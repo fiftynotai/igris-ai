@@ -482,11 +482,15 @@ function CandidatesTab({ live, search, project }: TabProps) {
       const q = new URLSearchParams();
       if (project !== null) q.set("project", project);
       q.set("review_status", "pending_review");
-      // FR-246 — a FILTER, not a search, and deliberately so.
-      // `hybridSearchLearnings` hard-gates `review_status = 'approved'` on both
-      // arms (FR-109) and again on hydration (TD-059), so routing this tab
-      // through recall would return an empty list for every query. Widening
-      // that gate is a cognition decision, not a search one (BR-085).
+      // FR-246 — a FILTER, not a search, and deliberately so. BR-085 has since
+      // made recall's review gate a parameter, so "recall cannot reach pending
+      // rows" is no longer the reason and is not asserted here. The reason is
+      // that a QUEUE and a RECALL answer different questions: this tab must
+      // show every candidate, in a stable order, with an honest `total` and
+      // continuous pages, which is what the substring filter preserves. Ranked
+      // recall returns one fused page with no stable offset semantics — the
+      // right tool for FINDING a candidate (the Learnings lens offers it), the
+      // wrong one for CLEARING a queue.
       const text = values.q ?? "";
       if (text.length > 0) q.set("q", text);
       q.set("limit", String(limit));

@@ -1100,3 +1100,89 @@ describe("the graphCache hoist did not change the graph page's logic", () => {
     expect(graph).toContain("fetchScope");
   });
 });
+
+describe("BR-085 · the review-scope banner is sourced from the RESPONSE", () => {
+  /**
+   * The claim these scans own, which no unit test can make: that the VIEW wires
+   * `scopeBanner` to the payload rather than to its own filter state.
+   * `model.test.ts` proves the decision; `renderToStaticMarkup` runs no effects,
+   * so no render test can see the search payload arrive. What is left is the
+   * wiring, and the wiring is a property of the file.
+   *
+   * The regression this refuses is not "the banner disappears" — it is the
+   * banner being fed a hand-made source built from the filter control, which
+   * restores BR-085 exactly while keeping every other test green.
+   */
+  const LEARNINGS = join(DASH_SRC, "pages", "layers", "Learnings.tsx");
+
+  /**
+   * The ARGUMENT of the `scopeBanner` call, and only that.
+   *
+   * The predicate below is scoped to this slice rather than to the file, and
+   * the first draft of this scan proved why: file-wide, `review_status:
+   * reviewStatus` also matches the REQUEST builder
+   * (`searchQuery({ values: { review_status: reviewStatus } })`), which is the
+   * correct and necessary way to ask the server for a scope. A detector that
+   * cannot tell the request from the banner would forbid the fix along with
+   * the bug.
+   */
+  function scopeBannerArgs(src: string): string {
+    const from = src.indexOf("scopeBanner({");
+    if (from < 0) return "";
+    const to = src.indexOf("})", from);
+    return to < 0 ? src.slice(from) : src.slice(from, to);
+  }
+
+  /** The defect, as a predicate over that slice. Used on the real file AND a plant. */
+  function fakesTheSource(args: string): boolean {
+    return /source:\s*\{/.test(args) || /review_status/.test(args);
+  }
+
+  it("exactly ONE shipped file renders the scope banner", () => {
+    const hits = shipped().filter((f) => /SHOWING \{scope/.test(code(f)));
+    expect(hits.map(rel)).toEqual([rel(LEARNINGS)]);
+  });
+
+  it("that file takes the scope from the shared decision, not from its filter state", () => {
+    const args = scopeBannerArgs(code(LEARNINGS));
+    // The slice is non-empty and is the right slice — without this the two
+    // assertions below would both pass over "".
+    expect(args, "no scopeBanner call in Learnings.tsx").toContain("requested:");
+    // The payload that produced the VISIBLE rows — browse payload or search
+    // hits, chosen by the same flag that chooses the rows.
+    expect(args).toMatch(/source:\s*browsing \? payload : hits/);
+    expect(fakesTheSource(args), "Learnings.tsx builds a synthetic scope source").toBe(
+      false,
+    );
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the detector fires on a hand-made source", () => {
+    // Without this, `fakesTheSource` returning false above is indistinguishable
+    // from a regex that matches nothing. The plant goes through the SAME slicer,
+    // so the control exercises the extraction as well as the predicate.
+    const planted = scopeBannerArgs(
+      "const s = scopeBanner({ source: { review_status: reviewStatus }, requested: reviewStatus });",
+    );
+    expect(planted).toContain("requested:");
+    expect(fakesTheSource(planted)).toBe(true);
+    // ...and the shipped spelling is NOT a false positive, including the
+    // request builder that legitimately names the field elsewhere in the file.
+    expect(
+      fakesTheSource(
+        scopeBannerArgs(
+          "scopeBanner({ source: browsing ? payload : hits, requested: reviewStatus });",
+        ),
+      ),
+    ).toBe(false);
+  });
+
+  it("the search payload's own params render — a reported drop is shown, not buried", () => {
+    // FR-246 made `/api/learnings/search` REPORT a dropped parameter; this view
+    // rendered only the BROWSE payload's notes, so the report landed in a
+    // banner nobody drew. A drop that is reported and not rendered is still a
+    // silent one on screen.
+    const src = code(LEARNINGS);
+    expect(src).toMatch(/browsing \? payload\?\.params : hits\?\.params/);
+    expect(src).toContain("REQUEST ADJUSTED");
+  });
+});

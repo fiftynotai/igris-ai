@@ -33,6 +33,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
 
 const { fakeEmbedding } = vi.hoisted(() => {
   function fakeEmbedding(text: string): Float32Array {
@@ -372,10 +373,11 @@ describe('listLearnings q — a FILTER that says it is a filter', () => {
     expect(listLearnings(db).search).toBeNull();
   });
 
-  it('a pending_review row is reachable by q and NOT by hybrid search — why this is a filter', async () => {
-    // The whole D3 argument for candidates, asserted rather than asserted-in-prose:
-    // `hybridSearchLearnings` hard-gates review_status='approved' on both arms
-    // (FR-109), so the triage queue is structurally invisible to it.
+  it('a pending_review row is reachable by q and NOT by DEFAULT-scoped hybrid search', async () => {
+    // The D3 argument for candidates, narrowed by BR-085 to what is still true:
+    // recall DEFAULTS to `approved` on both arms (FR-109), so the triage queue
+    // is invisible to a caller that does not ask for it. It is no longer
+    // structurally unreachable — see the BR-085 block below.
     expect(listLearnings(db, { q: 'pending' }).learnings.map((l) => l.id)).toEqual([4]);
     vec.available = false;
     const hybrid = await hybridSearchLearnings(db, { query: 'pending' });
@@ -544,6 +546,215 @@ describe('hybridSearchLearnings — the FR-109 / TD-059 gates survived the move'
     const r = await hybridSearchLearnings(db, { query: 'wrapper', project: 'igris-ai' });
     expect(ids(r)).not.toContain(3);
     expect(r.retrieval.vector_hits).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-085 — the review gate is a PARAMETER, and it binds both arms + hydration
+// ---------------------------------------------------------------------------
+
+describe('BR-085 — review_status scopes recall, on BOTH arms', () => {
+  /**
+   * THE TRAP THIS BLOCK EXISTS FOR.
+   *
+   * `computeRRF` scores a row by its POSITION in each arm's list. A review gate
+   * applied to one arm (or only at hydration) therefore does not merely return
+   * the wrong SET — it hands the fusion ranks computed over rows the other arm
+   * could never contribute, and every surviving row's rank shifts. The result
+   * looks ordered and is wrong. So the assertions below are not only about
+   * membership: `bm25_hits` / `vector_hits` / the per-row ranks are asserted
+   * because those are what witness the filter landing BEFORE the fusion.
+   *
+   * Fixture recap: 1, 2 and 3 are `approved`, 4 is `pending_review`. 1, 2 and 4
+   * all contain "wrapper"; 3 shares no token with it.
+   */
+
+  it('the DEFAULT is unchanged — omitting the option is the FR-109 conscious channel', async () => {
+    // The MCP wrapper (`memory.ts:1086`) enumerates its arguments and passes no
+    // `review_status`, and `igris_memory_hybrid_search`'s input schema has no
+    // such property under `additionalProperties: false`. So this call IS the
+    // conscious channel, and it must behave exactly as it did before BR-085.
+    vec.available = true;
+    vec.hits = [4, 3];
+    const r = await hybridSearchLearnings(db, { query: 'wrapper' });
+    expect(ids(r)).not.toContain(4);
+    expect(r.review_status).toBe('approved');
+    expect(r.retrieval.bm25_hits).toBe(2);
+    // The vector arm offered 4 and it was refused there too — `vector_hits`
+    // counts POST-filter, so this is the arm's own gate, not hydration's.
+    expect(r.retrieval.vector_hits).toBe(1);
+  });
+
+  it('the BM25 arm binds it — a pending scope returns the pending row and REFUSES the approved ones', async () => {
+    vec.available = false;
+    const r = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(ids(r)).toEqual([4]);
+    expect(r.review_status).toBe('pending_review');
+    // EXACT, not `>= 1`: the ungated arm would report 3 (rows 1, 2 and 4 all
+    // match "wrapper"), so this is the number that witnesses a PRE-fusion
+    // filter rather than a post-hoc drop.
+    expect(r.retrieval.bm25_hits).toBe(1);
+    // The row carries its body — but note this branch is BM25-only, which
+    // returns the arm's own SELECT and never reaches the hydration SELECT. The
+    // hydration gate has its own test below, for exactly that reason.
+    expect(r.rows[0].row?.title).toBe('Pending wrapper note');
+  });
+
+  it('the HYDRATION gate binds it too — the fused branch returns a hydrated row, not a null one', async () => {
+    // THE THIRD GATE, and the one with no other witness. Hydration runs ONLY on
+    // the fused branch (`vectorAvailable && vecResults.length > 0`), so every
+    // assertion on a BM25-only result is vacuous for it: those rows come from
+    // the arm's own SELECT. Driven red by pinning the hydration SELECT back to
+    // the 'approved' literal, which leaves ids intact and the ranks intact and
+    // turns `row` into null — a result the dashboard renders as ZERO items
+    // while `retrieval` reports hits. An empty list that reports a non-zero hit
+    // count is the shape this assertion exists to refuse.
+    vec.available = true;
+    vec.hits = [3, 4];
+    const r = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(r.retrieval.mode).toBe('hybrid');
+    expect(ids(r)).toEqual([4]);
+    expect(r.rows[0].row).not.toBeNull();
+    expect(r.rows[0].row?.title).toBe('Pending wrapper note');
+  });
+
+  it('the VECTOR arm binds it too — the approved rows the KNN offered are refused', async () => {
+    // Zero-overlap query, so BM25 contributes NOTHING and anything that arrives
+    // came through the vector arm. The KNN offers all four rows.
+    vec.available = true;
+    vec.hits = [1, 2, 3, 4];
+    const r = await hybridSearchLearnings(db, {
+      query: 'zzzznomatchterm',
+      review_status: 'pending_review',
+    });
+    expect(r.retrieval.bm25_hits).toBe(0);
+    expect(ids(r)).toEqual([4]);
+    // 4 of 4 offered, 1 survived the arm's own gate.
+    expect(r.retrieval.vector_hits).toBe(1);
+    expect(r.rows[0].vector_rank).not.toBeNull();
+    expect(r.rows[0].bm25_rank).toBeNull();
+  });
+
+  it('a row outside the scope cannot arrive via EITHER arm — offered by both, refused by both', async () => {
+    // THE AC #2 ASSERTION. Row 1 is `approved`; the scope is `pending_review`.
+    // It is offered by the BM25 arm (it contains "wrapper") AND by the vector
+    // arm (the KNN returns it), so a gate missing from either one would let it
+    // through. The paired control below proves both offers were real.
+    vec.available = true;
+    vec.hits = [1, 2, 3];
+    const scoped = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(ids(scoped)).toEqual([4]);
+    expect(scoped.rows.every((e) => e.row !== null)).toBe(true);
+
+    // PAIRED CONTROL — the same corpus, the same query, the same KNN hits, one
+    // option changed. Row 1 arrives through BOTH arms here, which is what makes
+    // its absence above attributable to the gate rather than to a corpus, a
+    // tokenisation or a KNN that never offered it.
+    vec.available = true;
+    vec.hits = [1, 2, 3];
+    const control = await hybridSearchLearnings(db, { query: 'wrapper' });
+    const one = control.rows.find((e) => e.id === 1);
+    expect(one?.bm25_rank).not.toBeNull();
+    expect(one?.vector_rank).not.toBeNull();
+  });
+
+  it('the ranks are computed over the FILTERED arms, not filtered after fusion', async () => {
+    // The ranking half of the trap, made observable. Both arms offer row 3
+    // (approved) ahead of row 4 (pending) in the vector list; under the pending
+    // scope row 4 must rank FIRST in that arm. A gate applied after fusion
+    // would leave 3 in the list, push 4 to vector_rank 2, and then drop 3 at
+    // hydration — same set, different order, and only this assertion sees it.
+    vec.available = true;
+    vec.hits = [3, 4];
+    const r = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(ids(r)).toEqual([4]);
+    expect(r.rows[0].vector_rank).toBe(1);
+    expect(r.rows[0].bm25_rank).toBe(1);
+    expect(r.retrieval.vector_hits).toBe(1);
+    expect(r.retrieval.bm25_hits).toBe(1);
+  });
+
+  it('an EMPTY scope is not an UNFILTERED one — the un-scoped read is unreachable', async () => {
+    // `listLearnings` treats `undefined`/'' as "no filter"; this door must not,
+    // or `?review_status=` would put rejected rows into conscious recall. Row 2
+    // is rejected here, so an unfiltered read would return [1, 2].
+    db.prepare("UPDATE learnings SET review_status = 'rejected' WHERE id = 2").run();
+    const empty = await hybridSearchLearnings(db, { query: 'wrapper', review_status: '' });
+    expect(ids(empty)).toEqual([1]);
+    expect(empty.review_status).toBe('approved');
+
+    // Self-negative-control: the rejected row IS lexically matchable, so its
+    // absence is the gate's doing and not the index's.
+    const ungated = db
+      .prepare(
+        `SELECT l.id FROM learnings_fts fts JOIN learnings l ON l.id = fts.rowid
+         WHERE learnings_fts MATCH 'wrapper'`,
+      )
+      .all() as { id: number }[];
+    expect(ungated.map((x) => x.id)).toContain(2);
+  });
+
+  it('the applied scope is echoed on EVERY exit, including the empty ones', async () => {
+    // The echo is what the dashboard banners from, so an exit that omits it is
+    // an exit where the UI would fall back to describing the REQUEST — BR-085's
+    // original defect, reintroduced through a return statement.
+    const none = await hybridSearchLearnings(db, {
+      query: 'zzzznomatchterm',
+      review_status: 'pending_review',
+    });
+    expect(none.retrieval.mode).toBe('none');
+    expect(none.rows).toEqual([]);
+    expect(none.review_status).toBe('pending_review');
+
+    vec.available = false;
+    const bm25Only = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(bm25Only.retrieval.mode).toBe('bm25_only');
+    expect(bm25Only.review_status).toBe('pending_review');
+
+    vec.available = true;
+    vec.hits = [4];
+    const fused = await hybridSearchLearnings(db, {
+      query: 'wrapper',
+      review_status: 'pending_review',
+    });
+    expect(fused.retrieval.mode).toBe('hybrid');
+    expect(fused.review_status).toBe('pending_review');
+  });
+
+  it('the CONSCIOUS channel cannot ask for a scope — no such property on the tool schema', () => {
+    // FR-109's boundary, asserted where it is actually enforced. Widening the
+    // reader is only safe because the MCP surface has no way to reach the new
+    // option: the tool declares `additionalProperties: false`, so a caller that
+    // sent `review_status` would be REFUSED by the gateway rather than served
+    // pending rows. Source-scanned because the schema is data, not behaviour.
+    const src = readFileSync(
+      new URL('../../engine/components/memory/index.ts', import.meta.url),
+      'utf-8',
+    );
+    const start = src.indexOf("name: 'igris_memory_hybrid_search'");
+    expect(start).toBeGreaterThan(-1);
+    const end = src.indexOf("name: 'igris_memory_", start + 10);
+    const block = src.slice(start, end === -1 ? undefined : end);
+    // Self-negative-control for the SLICE: a mis-anchored window would be empty
+    // or point at another tool, and "review_status is absent" would be vacuous.
+    expect(block).toContain('rrf_k');
+    expect(block).toContain('additionalProperties: false');
+    expect(block).not.toContain('review_status');
   });
 });
 

@@ -84,10 +84,43 @@ export interface LearningRow {
   promoted_to_doc?: string | null;
 }
 
+/**
+ * The review scope {@link hybridSearchLearnings} applies when the caller names
+ * none. FR-109's gate, now a DEFAULT rather than a constant (BR-085).
+ *
+ * Exported so a caller can echo the value it is relying on instead of
+ * re-spelling the literal — the drift `routes.ts` would otherwise grow.
+ */
+export const DEFAULT_HYBRID_REVIEW_STATUS = 'approved';
+
 /** Options for {@link hybridSearchLearnings}. Mirrors `HybridSearchInput`. */
 export interface HybridSearchOptions {
   query: string;
   project?: string;
+  /**
+   * BR-085 — the review scope to recall over. Defaults to
+   * {@link DEFAULT_HYBRID_REVIEW_STATUS}.
+   *
+   * NOTE THE ASYMMETRY WITH {@link ListLearningsOptions.review_status}, which is
+   * deliberate and load-bearing: there, `undefined` means NO FILTER (the browse
+   * path may legitimately show every status at once). Here `undefined` — and an
+   * empty string — mean `'approved'`. Recall with no review predicate would put
+   * `pending_review` AND `rejected` rows into the model's conscious channel,
+   * which is precisely what FR-109 exists to prevent, so the un-filtered state
+   * is not reachable through this door at all.
+   *
+   * WHY THIS IS A PARAMETER AND NOT STILL A CONSTANT. FR-109 gates the MODEL's
+   * conscious channel; `igris_memory_hybrid_search` never passes this field (its
+   * input schema has no such property and the wrapper enumerates its arguments),
+   * so that channel is byte-identical to the pre-BR-085 behaviour. The other
+   * consumer is the operator's own eyes — FR-240 D9 already made the dashboard
+   * lens the first non-`igris_perception_*` reader of `pending_review` rows, and
+   * a reviewer who cannot SEARCH the review queue is the user BR-085 was filed
+   * for. Both arms are indexed for it: the `learnings_ai` FTS trigger is
+   * unconditional (`db.ts:226`) and `memory.ts:320` embeds pending rows on
+   * insert by design.
+   */
+  review_status?: string;
   limit?: number;
   bm25_weight?: number;
   vector_weight?: number;
@@ -159,6 +192,23 @@ export interface HybridSearchEntry {
 export interface HybridSearchResult {
   rows: HybridSearchEntry[];
   retrieval: RetrievalReport;
+  /**
+   * BR-085 — the review scope this call ACTUALLY applied, echoed back.
+   *
+   * Not a copy of the request: it is the value the three gates were bound with.
+   * A caller that renders "showing pending review rows" must render it from
+   * THIS, not from what it asked for, because those are different facts whenever
+   * the caller and this module are different build artifacts (the CLI ships a
+   * VENDORED copy of this bundle — `cli/dist/brain-mcp-server/dist/`). An older
+   * bundle simply has no such field, so `undefined` is a readable "this reader
+   * does not know about review scopes" rather than a silent lie, which is the
+   * exact failure BR-085 documents.
+   *
+   * Deliberately NOT inside {@link RetrievalReport}: that block is shared shape
+   * with the briefs search, which has no review axis, and a field that is
+   * meaningless in half its instances is not a contract.
+   */
+  review_status: string;
 }
 
 /** Filters and pagination accepted by {@link listLearnings}. */
@@ -174,13 +224,15 @@ export interface ListLearningsOptions {
    * retrieval; the payload's `search` block says so.
    *
    * WHY THE CANDIDATES TAB FILTERS RATHER THAN SEARCHES, which is a decision
-   * and not a shortcut: {@link hybridSearchLearnings} hard-gates
-   * `review_status = 'approved'` on BOTH arms (FR-109) and again on hydration
-   * (TD-059), so it CANNOT return a `pending_review` row. Routing the triage
-   * queue through it would return an empty list for every query, or would
-   * require widening FR-109's conscious/subconscious boundary — a cognition
-   * decision, not a search one. So this browse path gains a filter instead, and
-   * says `mode: "substring"` rather than implying recall it does not do.
+   * and not a shortcut. It is NOT (any longer) that recall cannot reach pending
+   * rows: BR-085 made {@link hybridSearchLearnings}'s review gate a parameter,
+   * so it can. It is that the two answer different questions. A triage queue
+   * must be shown EXHAUSTIVELY and in a stable order the operator can work
+   * down; `q` narrows that list while keeping its `total` honest and its pages
+   * continuous. Ranked recall returns ONE fused page with no stable offset
+   * semantics — a fine way to FIND a candidate, a bad way to CLEAR a queue. So
+   * this browse path keeps its filter and says `mode: "substring"` rather than
+   * implying recall it does not do.
    *
    * NOTE `HybridSearchOptions` deliberately does NOT gain `q`. The two are
    * different questions on different populations.
@@ -400,10 +452,23 @@ export function listLearnings(
  * implementation, two presentations.
  *
  * Preserved exactly:
- *  - the FR-109 `review_status = 'approved'` gate on BOTH arms;
- *  - the TD-059 defence-in-depth gate on the hydration SELECT;
+ *  - the FR-109 review gate on BOTH arms — now BOUND to `opts.review_status`,
+ *    which DEFAULTS to `'approved'`, so every caller that does not ask for a
+ *    scope gets the pre-BR-085 behaviour unchanged;
+ *  - the TD-059 defence-in-depth gate on the hydration SELECT, bound to the
+ *    SAME resolved value;
  *  - the `limit * 2` over-fetch on each arm before fusion;
  *  - the raw (un-normalised) query embedding — MAINTAINING row 100, see header.
+ *
+ * BR-085 — WHY ALL THREE GATES MOVE TOGETHER, AND WHY THAT IS NOT COSMETIC.
+ * The two arms are filtered BEFORE fusion, not after. Applying the scope to one
+ * arm (or only at hydration) does not merely return a wrong SET: `computeRRF`
+ * scores a row by its POSITION in each arm's list, so an unfiltered arm hands
+ * the fusion ranks computed over rows that the other arm could never contribute,
+ * and every surviving row's rank is shifted. The result would look ordered and
+ * be wrong — the failure mode hardest to notice. A row outside the scope must
+ * therefore be unreachable through EITHER arm, which is what the paired gates
+ * below assert.
  *
  * NEVER throws for a vector-arm failure: a missing extension, an absent HF
  * model cache and an offline host are all ordinary states that degrade to
@@ -420,6 +485,14 @@ export async function hybridSearchLearnings(
   const vectorWeight = opts.vector_weight ?? 0.5;
   const k = opts.rrf_k ?? 60;
 
+  // Resolved ONCE and used by all three gates. An empty string collapses to the
+  // default rather than to "no predicate" — see the option's doc comment: the
+  // un-scoped read is not reachable through this door.
+  const reviewStatus =
+    opts.review_status !== undefined && opts.review_status.length > 0
+      ? opts.review_status
+      : DEFAULT_HYBRID_REVIEW_STATUS;
+
   const weights = { bm25: bm25Weight, vector: vectorWeight };
 
   // --- 1. BM25 search via FTS5 (memory.ts:1086-1118) ----------------------
@@ -427,9 +500,10 @@ export async function hybridSearchLearnings(
   let bm25Rows: LearningRow[] = [];
 
   if (sanitized) {
-    // FR-109 filter: hybrid search is part of the conscious channel.
-    // Pending_review rows must not surface here — only `igris_perception_*`
-    // tools see them.
+    // FR-109 filter, BR-085 parameterised: hybrid search defaults to the
+    // conscious channel, where `pending_review` rows must not surface. A caller
+    // that names another scope gets that scope on this arm — bound, never
+    // interpolated, and the route that supplies it allow-lists the vocabulary.
     let bm25Sql = `
       SELECT l.id, l.project, l.category, l.title, l.content, l.tags,
              l.tech_stack, l.scope, l.source_brief, l.confidence,
@@ -437,9 +511,9 @@ export async function hybridSearchLearnings(
       FROM learnings_fts fts
       JOIN learnings l ON l.id = fts.rowid
       WHERE learnings_fts MATCH ?
-        AND l.review_status = 'approved'
+        AND l.review_status = ?
     `;
-    const bm25Params: (string | number)[] = [sanitized];
+    const bm25Params: (string | number)[] = [sanitized, reviewStatus];
 
     if (opts.project) {
       bm25Sql += ' AND l.project = ?';
@@ -475,14 +549,16 @@ export async function hybridSearchLearnings(
       vectorAvailable = true;
 
       // If project filter is set, filter vector results to matching project.
-      // FR-109: always gate on review_status='approved' (whether or not the
-      // caller passed a project filter) so pending_review rows are hidden
-      // from the conscious channel via the vector path too.
+      // FR-109: ALWAYS gate on the review scope (whether or not the caller
+      // passed a project filter) so out-of-scope rows are hidden via the vector
+      // path too. BR-085 binds the same resolved value the BM25 arm used —
+      // filtering one arm and not the other corrupts the fusion RANKING, not
+      // just the set (see this function's header).
       if (vecResults.length > 0) {
         const ids = vecResults.map(r => r.rowid);
         const placeholders = ids.map(() => '?').join(',');
-        let filterSql = `SELECT id FROM learnings WHERE id IN (${placeholders}) AND review_status = 'approved'`;
-        const filterParams: unknown[] = [...ids];
+        let filterSql = `SELECT id FROM learnings WHERE id IN (${placeholders}) AND review_status = ?`;
+        const filterParams: unknown[] = [...ids, reviewStatus];
         if (opts.project) {
           filterSql += ' AND project = ?';
           filterParams.push(opts.project);
@@ -515,7 +591,11 @@ export async function hybridSearchLearnings(
 
   // --- 3. No results at all (memory.ts:1152-1160) -------------------------
   if (bm25Rows.length === 0 && vecResults.length === 0) {
-    return { rows: [], retrieval: noneReport() };
+    // The echo rides EVERY exit, including the empty ones. An empty result is
+    // exactly when a caller renders "no candidates match" and must be able to
+    // say WHICH scope was empty — an empty-state that names the wrong scope is
+    // the same defect as a row list that does.
+    return { rows: [], retrieval: noneReport(), review_status: reviewStatus };
   }
 
   // --- 4. BM25-only fallback if vector unavailable (memory.ts:1162-1171) --
@@ -533,6 +613,7 @@ export async function hybridSearchLearnings(
         vector_rank: null,
       })),
       retrieval: { ...noneReport(), mode: 'bm25_only' },
+      review_status: reviewStatus,
     };
   }
 
@@ -542,22 +623,25 @@ export async function hybridSearchLearnings(
 
   const topIds = topEntries.map(e => e.id);
   if (topIds.length === 0) {
-    return { rows: [], retrieval: noneReport() };
+    return { rows: [], retrieval: noneReport(), review_status: reviewStatus };
   }
 
   const placeholders = topIds.map(() => '?').join(',');
-  // TD-059: defense-in-depth `review_status='approved'` filter on the hybrid
-  // search hydration path. `bm25Rows` and `vecResults` already exclude
-  // pending_review rows upstream, but a future caller bypassing those filters
-  // must not leak unapproved rows through this hydration step.
+  // TD-059: defence-in-depth review filter on the hybrid search hydration path.
+  // `bm25Rows` and `vecResults` already exclude out-of-scope rows upstream, but
+  // a future caller bypassing those filters must not leak them through this
+  // hydration step. BR-085 binds it to the SAME resolved scope rather than the
+  // literal — a hydration gate that disagreed with the arms would turn every
+  // in-scope hit into a `row: null` the caller drops, i.e. an empty result that
+  // reports a non-zero `bm25_hits`.
   const fullRows = db.prepare(
     `SELECT id, project, category, title, content, tags, tech_stack, scope,
             source_brief, confidence, created_at, access_count, provenance,
             promoted_to_doc
      FROM learnings
      WHERE id IN (${placeholders})
-       AND review_status = 'approved'`,
-  ).all(...topIds) as LearningRow[];
+       AND review_status = ?`,
+  ).all(...topIds, reviewStatus) as LearningRow[];
 
   const rowMap = new Map<number, LearningRow>();
   for (const row of fullRows) {
@@ -579,5 +663,6 @@ export async function hybridSearchLearnings(
       // the pre-extraction code did. The distinction is reported, not acted on.
       mode: bm25Rows.length > 0 ? 'hybrid' : 'vector_only',
     },
+    review_status: reviewStatus,
   };
 }
