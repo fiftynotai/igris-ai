@@ -269,6 +269,17 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // `npm pack --dry-run` runs npm + spawns a child; modest headroom
   // over vitest's 5 s default is enough now that node_modules is
   // excluded from the manifest (BR-068).
+  //
+  // TD-336 UPDATE — that "modest headroom" was reasoned about before anyone
+  // measured it. These two TD-168 tests each spawn their OWN un-memoised
+  // `npm pack` and carry 15_000; under the sustained 8-way load that motivated
+  // TD-336 they measured 9464 ms and 7256 ms — 63% and 48% of that budget, for
+  // the SAME operation that now carries PACK_TIMEOUT_MS = 30_000 seven hundred
+  // lines below. They are not reconciled here deliberately: they pass no
+  // `timeout` in their own options objects, so swapping the constant in would
+  // give them one half of a two-half contract whose docblock insists on both.
+  // TD-344 owns doing it properly. Do not "harmonize" these to
+  // PACK_TIMEOUT_MS without also adding options.timeout at :276 and :362.
   it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
@@ -1053,10 +1064,70 @@ const PACK_BASELINE_PACKED = 1_301_851;
 const PACK_HARD_CEILING_DELTA = 550 * 1024; // TD-329, operator, 2026-08-02
 
 /**
+ * TD-336: how long a pack-dependent test is allowed to take.
+ *
+ * This is a MEASUREMENT, not a round number chosen to be safely large.
+ * `npm pack --dry-run` on this package, measured 2026-08-04:
+ *
+ * TWO SURFACES, NAMED — per this file's own rule 40 lines up: estimate both,
+ * measure both, and say which surface any single number is about. The `npm
+ * pack --dry-run` CALL and the enclosing TEST are not the same duration, and
+ * an earlier draft of this block quoted one of each as if they were one series.
+ *
+ *   the CALL, idle                1357 / 1427 / 1579 ms
+ *   the CALL, 8-way contention    2460 - 2950 ms
+ *   the TEST, full suite in flight 4438 - 6654 ms over fifteen measured runs
+ *   the TEST, sustained 8-way load  up to 9157 ms
+ *
+ * vitest's default `testTimeout` is 5000 ms, so the TEST straddles it under the
+ * suite's own parallel load — which is why this file failed intermittently, on
+ * whichever pack-dependent test happened to run first, reporting as an
+ * assertion about `index.html` when the actual event was a 6 s subprocess.
+ * The fastest PASSING run of that test was 4438 ms: still 89% of the old
+ * budget. It was never "sometimes slow"; it was always near the line, and the
+ * default reporter shows you nothing about proximity — only about crossing.
+ *
+ * 30 s is ~4.5x the worst full-suite test duration (6654 ms) and ~3.3x the
+ * worst under sustained load (9157 ms). The margin is deliberately generous
+ * because the load that causes this is the CI/dev machine's, not ours.
+ *
+ * TWO HALVES, AND THEY BOUND DIFFERENT THINGS. This constant is used twice:
+ * as each pack-dependent test's `testTimeout`, and as `options.timeout` on the
+ * `execFileSync` itself. The test timeout is POST-HOC DETECTION — it cannot
+ * preempt a synchronous body, so against a genuinely hung npm the worker's
+ * event loop blocks and the timer never fires. Only `options.timeout` SIGTERMs
+ * the child. Keep both: the first attributes the failure to a test, the second
+ * is what actually stops a hang.
+ *
+ * That reasoning holds BECAUSE every pack-dependent body here is synchronous.
+ * If a future edit makes one of them `async`, vitest can preempt it and this
+ * framing silently stops applying to that test — re-derive it rather than
+ * assuming the comment still covers you.
+ *
+ * Measured both ways against a real 20 s hang: WITH `options.timeout` the call
+ * dies at 2008 ms (`spawnSync ETIMEDOUT`); WITHOUT it, the per-test timeout
+ * alone let it run the full 20040 ms and then reported `SyntaxError:
+ * Unexpected end of JSON input` — a misleading error, because the synchronous
+ * body threw before the timeout could be reported. That is the same
+ * "reports as a different bug" failure this brief exists to kill.
+ *
+ * NOT `beforeAll`. Warming the cache in a hook would pay the cost in a place
+ * that is *about* paying it, which is tempting, but a hook failure is far less
+ * legible than a test failure — it fails the whole describe with no assertion
+ * to read. Per-test timeouts keep the failure attached to the thing that failed.
+ */
+const PACK_TIMEOUT_MS = 30_000;
+
+/**
  * Memoised. `npm pack --dry-run` walks the whole package and takes a couple of
  * seconds; running it once per file rather than once per assertion keeps the
  * suite fast, and computing it LAZILY (not in the describe body) keeps it out
  * of collection for a filtered run of any other test in this file.
+ *
+ * The laziness is load-bearing and TD-336 deliberately preserved it: only the
+ * FIRST pack-dependent test to run pays the subprocess cost, and a filtered run
+ * of any other test in this file never spawns npm at all. Every test that can
+ * reach here carries PACK_TIMEOUT_MS, because any of them may be the first.
  */
 let packReportCache: PackReport | null = null;
 function packReport(): PackReport {
@@ -1068,6 +1139,12 @@ function packReport(): PackReport {
     encoding: "utf-8",
     maxBuffer: 32 * 1024 * 1024,
     stdio: ["ignore", "pipe", "ignore"],
+    // This is what makes the per-test PACK_TIMEOUT_MS mean what its docblock
+    // says. A vitest test timeout is POST-HOC detection: it cannot preempt a
+    // synchronous body, so if npm truly hangs, the worker's event loop blocks
+    // and the timer never fires. `options.timeout` SIGTERMs the child, which
+    // is the half that actually bounds a hang.
+    timeout: PACK_TIMEOUT_MS,
   });
   packReportCache = (JSON.parse(raw) as PackReport[])[0];
   return packReportCache;
@@ -1081,7 +1158,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
 
   it("includes dist/dashboard/index.html", () => {
     expect(packedPaths().has("dist/dashboard/index.html")).toBe(true);
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("includes the three vendored woff2 fonts", () => {
     const paths = packedPaths();
@@ -1092,13 +1169,13 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
     ]) {
       expect(paths.has(f), `missing from tarball: ${f}`).toBe(true);
     }
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("includes the hashed JS and CSS assets", () => {
     const assets = [...packedPaths()].filter((p) => p.startsWith("dist/dashboard/assets/"));
     expect(assets.some((p) => p.endsWith(".js"))).toBe(true);
     expect(assets.some((p) => p.endsWith(".css"))).toBe(true);
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("still ships the vendored brain engine the FR-238 bridge imports", () => {
     // The bridge is a path-literal dependency on this artifact (R2). If the
@@ -1109,7 +1186,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         "dist/brain-mcp-server/dist/engine/components/edges/whole-graph.js",
       ),
     ).toBe(true);
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("ships FR-241's suggestion reader AND the engine module the WRITE door boots", () => {
     // MAINTAINING row 107, extended again by FR-241. The two entries are
@@ -1137,7 +1214,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         true,
       );
     }
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("ships the three FR-240 pure READ modules the layer endpoints import", () => {
     // MAINTAINING row 107, extended by FR-240. Same failure mode as the builder
@@ -1158,7 +1235,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         true,
       );
     }
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("ships the MCP wrappers whose SQL those readers now hold", () => {
     // The wrappers import the readers. Shipping a reader without its wrapper (or
@@ -1175,7 +1252,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         true,
       );
     }
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("stays under the hard packed-size ceiling (+550 KB over baseline)", () => {
     const report = packReport();
@@ -1186,7 +1263,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         `+${PACK_HARD_CEILING_DELTA / 1024} KB ceiling ` +
         `(packed ${report.size}, baseline ${PACK_BASELINE_PACKED})`,
     ).toBeLessThan(PACK_HARD_CEILING_DELTA);
-  });
+  }, PACK_TIMEOUT_MS);
 
   it("ships the vendored graph library — bundled, never fetched (AC #4)", () => {
     // `force-graph` is a devDependency BUNDLED BY VITE into the dashboard's
@@ -1205,5 +1282,5 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
       ),
       "the hashed dashboard chunk that carries it is missing",
     ).toBe(true);
-  });
+  }, PACK_TIMEOUT_MS);
 });
