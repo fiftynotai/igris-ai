@@ -71,8 +71,17 @@ config.json
 # Local overrides (developer-specific, never commit)
 CLAUDE.local.md
 
-# Agent working memory (local-only)
-.claude/agent-memory/
+# Agent working memory — local-only in EVERY package, not just the repo root.
+# The leading `**/` is load-bearing: a pattern with a non-trailing `/` is
+# anchored to this file's directory, so a bare `.claude/agent-memory/` would
+# match the root store only and let every nested one be committed by accident.
+# That is TD-317, which found 6 such files tracked under brain-mcp-server/.
+# Deliberately not enumerating the nested stores here — the list drifts as
+# packages are added, and the `**/` is general precisely so it need not.
+# NB: the sibling rule in cli/src/lib/sync/code.ts (RSYNC_EXCLUDES) stays a
+# bare `.claude/agent-memory/` on purpose — rsync matches against the END of a
+# pathname, so it is already recursive. Do not "widen" it to match this.
+**/.claude/agent-memory/
 
 # Per-developer local Claude settings — approved-command permission strings
 # that may embed machine-local secrets. Must NEVER be committed (TD-159 C1).
