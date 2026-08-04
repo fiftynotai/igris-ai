@@ -36,8 +36,11 @@ set -e
 #       Triggers if: MAINTAINING.md is staged, OR the staged diff
 #                    deletes/renames any path (where a mapped `file` contract
 #                    would surface). Surfaces the consumer list (WARN, does not
-#                    block); hard-fails only on a STALE MAP (a consumer
-#                    citation whose file no longer exists).
+#                    block); hard-fails on a STALE MAP, which since TD-334 has
+#                    THREE causes: a citation naming a missing file, a line
+#                    number out of range for its file, or a glob matching
+#                    nothing. A citation on a blank line or a bare closing
+#                    delimiter WARNS instead (exit 0).
 #   - validate_brief_state_reconciliation.sh  (TD-257)
 #       Triggers if: core/skills/hunt/SKILL.md OR
 #                    brain-mcp-server/src/tools/briefs.ts OR MAINTAINING.md
@@ -430,9 +433,11 @@ if [ "$needs_contract_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   # The checker DEFAULTS TO WARN (exit 0) for the rename/deletion case — it
-  # surfaces the consumer list without vetoing a legitimate refactor. It only
-  # exits non-zero on a STALE MAP (a consumer citation whose file is gone),
-  # which IS a hard-fail aggregated here.
+  # surfaces the consumer list without vetoing a legitimate refactor. It exits
+  # non-zero on a STALE MAP, which IS a hard-fail aggregated here. Since TD-334
+  # a STALE MAP has THREE causes: a citation naming a missing file, a line
+  # number out of range for its file, or a glob matching nothing. If you are
+  # blocked here by a line number, the hook is not broken — the map is.
   if ! bash "$REPO_ROOT/scripts/check_contract_consumers.sh"; then
     echo "[pre-commit] MAINTAINING.md is stale — fix the consumer citation(s) above."
     failed=1

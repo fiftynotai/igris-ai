@@ -5,8 +5,15 @@
 #
 # The checker parses a MAINTAINING.md map, scans `git diff --cached` for
 # deletions/renames of mapped tokens, and surfaces the consumer list. Default
-# verdict is WARN (exit 0); the ONE hard-fail is a STALE MAP (a consumer
-# citation whose file no longer exists -> exit 1).
+# verdict is WARN (exit 0). A STALE MAP is the hard-fail (exit 1), and since
+# TD-334 it has THREE causes, not one:
+#   1. a citation naming a file that does not exist;
+#   2. a citation whose line number is out of range for its file;
+#   3. a glob (or brace member) that matches nothing.
+# A citation pointing at a blank line or a bare closing delimiter WARNS at
+# exit 0 — a proxy for "points at a construct" should not veto a commit.
+# Tests (m)/(m3) cover cause 2 and (o)/(o2) cover cause 3, so a header saying
+# "the ONE hard-fail is a missing file" would contradict this file's own tests.
 #
 # Test isolation
 # --------------
@@ -19,10 +26,35 @@
 # --------------------------------------
 # Memory ID 29: cover the edge verdicts (stale-map hard-fail, anchored-match
 # no-false-positive, clean-diff no-op), not just the happy path.
+#
+# TD-341: a bare `[[ ... ]]` that is not the final command of an @test body does
+# NOT fire bash's ERR trap, so bats reports `ok` on a FALSE assertion. Every
+# substring assertion in this file therefore goes through assert_contains /
+# assert_not_contains (a function whose nonzero return IS trapped) AND is
+# written with an explicit `|| return 1`. Do not reintroduce a bare `[[ ]]`.
 
 load test_helper
 
 CHECKER="$IGRIS_ROOT/scripts/check_contract_consumers.sh"
+
+# assert_contains <needle> — LITERAL substring assertion on $output.
+# (test_helper's assert_output_contains is a REGEX match; these needles carry
+# `*`, `{`, `(` and `.` and must not be read as a pattern.)
+assert_contains() {
+  if [[ "$output" != *"$1"* ]]; then
+    echo "Expected output to contain the literal: $1" >&2
+    echo "Actual output: $output" >&2
+    return 1
+  fi
+}
+
+assert_not_contains() {
+  if [[ "$output" == *"$1"* ]]; then
+    echo "Expected output NOT to contain the literal: $1" >&2
+    echo "Actual output: $output" >&2
+    return 1
+  fi
+}
 
 setup() {
   [ -f "$CHECKER" ] || { echo "checker not found at $CHECKER"; return 1; }
@@ -77,8 +109,8 @@ MD
 
   run_checker
   [ "$status" -eq 0 ]
-  [[ "$output" == *"foo/bar.md"* ]]
-  [[ "$output" == *"scripts/baz.sh:1"* ]]
+  assert_contains "foo/bar.md" || return 1
+  assert_contains "scripts/baz.sh:1" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -99,8 +131,8 @@ MD
 
   run_checker
   [ "$status" -eq 1 ]
-  [[ "$output" == *"STALE MAP"* ]]
-  [[ "$output" == *"does/not/exist.sh:1"* ]]
+  assert_contains "STALE MAP" || return 1
+  assert_contains "does/not/exist.sh:1" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -128,8 +160,8 @@ MD
 
   run_checker
   [ "$status" -eq 0 ]
-  [[ "$output" != *"IGRIS_BYPASS_PHASE_GUARD ("* ]]
-  [[ "$output" != *"may break"* ]]
+  assert_not_contains "IGRIS_BYPASS_PHASE_GUARD (" || return 1
+  assert_not_contains "may break" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -156,8 +188,8 @@ MD
 
   run_checker
   [ "$status" -eq 0 ]
-  [[ "$output" == *"IGRIS_BYPASS_PHASE_GUARD"* ]]
-  [[ "$output" == *"code.sh:1"* ]]
+  assert_contains "IGRIS_BYPASS_PHASE_GUARD" || return 1
+  assert_contains "code.sh:1" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -185,8 +217,8 @@ MD
 
   run_checker
   [ "$status" -eq 0 ]
-  [[ "$output" != *"may break"* ]]
-  [[ "$output" != *"STALE MAP"* ]]
+  assert_not_contains "may break" || return 1
+  assert_not_contains "STALE MAP" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -212,7 +244,7 @@ MD
 
   run_checker "--paths foo-bar.md"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"scripts/baz.sh:1"* ]]
+  assert_contains "scripts/baz.sh:1" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -229,4 +261,562 @@ MD
   run_checker
   [ "$status" -eq 0 ]
   [ -z "$output" ]
+}
+
+# =============================================================================
+# TD-334 (merges TD-322) — the map self-consistency check validates BOTH
+# citation forms, and its skips are counted rather than silent.
+#
+# Every test below plants the defect and asserts RED, or removes it and asserts
+# GREEN. A guard shown only green proves nothing — that is why this brief
+# exists.
+# =============================================================================
+
+# seed_repo_with_map — commit a small tree the fixtures cite into, so the
+# tracked-file index (`git ls-files`) is non-empty in the sandbox.
+seed_repo_with_map() {
+  mkdir -p "$REPO/src/lib" "$REPO/pages" "$REPO/skills/boot" "$REPO/skills/hunt" "$REPO/docs"
+  echo "x" > "$REPO/src/lib/real.ts"
+  echo "y" > "$REPO/pages/Graph.tsx"
+  echo "b" > "$REPO/skills/boot/SKILL.md"
+  echo "h" > "$REPO/skills/hunt/SKILL.md"
+  echo "d" > "$REPO/docs/one.md"
+  echo "e" > "$REPO/docs/two.md"
+}
+
+# -----------------------------------------------------------------------------
+# (l) §A — a BARE-path citation naming a nonexistent file hard-fails. Before
+#     TD-334 this exited 0 with no output: only `path:line` was ever checked.
+# -----------------------------------------------------------------------------
+@test "(l) bare-path citation to a nonexistent file -> hard-fail (exit 1)" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "STALE MAP" || return 1
+  assert_contains "src/lib/NOT_A_REAL_FILE.ts" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (l2) POSITIVE CONTROL for (l): the identical map with the REAL filename exits
+#      0. Proves (l)'s red came from the missing file, not from the new code
+#      rejecting bare paths wholesale.
+# -----------------------------------------------------------------------------
+@test "(l2) bare-path citation to an existing file -> clean (exit 0)" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+  assert_contains "map citations: 1 validated" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (l3) Short-form citations (relative to a directory the row's prose
+#      establishes) resolve as a path SUFFIX of a tracked file — and a stale
+#      short form still fails. Both directions in one test.
+# -----------------------------------------------------------------------------
+@test "(l3) short-form citation resolves by suffix; a stale short form fails" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `pages/Graph.tsx` (short form) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+
+  # Same short form, one letter off -> nothing in the tree ends with it.
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `pages/Graphs.tsx` (short form) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "pages/Graphs.tsx" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (m) §B — a citation whose line number does not exist hard-fails, and the
+#     citation is named. Before TD-334 `gateway.ts:99999` exited 0.
+# -----------------------------------------------------------------------------
+@test "(m) line number past end of file -> hard-fail naming the citation" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:99999` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "STALE MAP" || return 1
+  assert_contains "src/lib/real.ts:99999" || return 1
+  assert_contains "names line 99999" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (m2) POSITIVE CONTROL for (m): the same file at a line that DOES exist is
+#      clean, and is counted as a line-ref citation.
+# -----------------------------------------------------------------------------
+@test "(m2) in-range line number -> clean (exit 0), counted as a line ref" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:1` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+  assert_contains "(1 with line refs)" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (m3) A range (`:a-b`) and a list (`:a,b`) are checked NUMBER BY NUMBER — an
+#      in-range first number does not excuse an out-of-range second.
+# -----------------------------------------------------------------------------
+@test "(m3) range/list line refs: the second number is checked too" {
+  seed_repo_with_map
+  printf 'a\nb\nc\n' > "$REPO/src/lib/real.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:1-500` (a range) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "names line 500" || return 1
+
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:1,500` (a list) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "names line 500" || return 1
+
+  # Both numbers in range -> clean.
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:1-3` (a range) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (n) A citation pointing at a BLANK line is WARNED, not failed (the chosen
+#     posture — "points at a construct" is a proxy, not a proof). The warning
+#     is real output and is counted, which is what the old header only claimed.
+# -----------------------------------------------------------------------------
+@test "(n) citation on a blank line -> WARN, exit 0, counted" {
+  seed_repo_with_map
+  printf 'const a = 1;\n\nconst b = 2;\n' > "$REPO/src/lib/real.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_contains "WARN" || return 1
+  assert_contains "BLANK line" || return 1
+  assert_contains "1 line-drift warning(s)" || return 1
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (n2) A citation pointing at a bare closing delimiter is WARNED the same way.
+# -----------------------------------------------------------------------------
+@test "(n2) citation on a bare closing delimiter -> WARN, exit 0" {
+  seed_repo_with_map
+  printf 'function f() {\n  return 1;\n}\n' > "$REPO/src/lib/real.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:3` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_contains "bare closing delimiter" || return 1
+  assert_contains "1 line-drift warning(s)" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (n3) ARM CHECK for (n)/(n2): the SAME file cited at a line carrying real code
+#      produces NO warning. Proves the warning tracks the line's content, not
+#      the mere presence of a line ref.
+# -----------------------------------------------------------------------------
+@test "(n3) citation on a substantive line -> no warning (arm check)" {
+  seed_repo_with_map
+  printf 'function f() {\n  return 1;\n}\n' > "$REPO/src/lib/real.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "WARN" || return 1
+  assert_contains "0 line-drift warning(s)" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (o) Glob disposition: globs are RESOLVED, not skipped. A glob matching zero
+#     files is exactly the staleness worth catching.
+# -----------------------------------------------------------------------------
+@test "(o) glob matching nothing -> hard-fail; a matching glob is clean" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `skills/*/NOPE.md` (all skills) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "skills/*/NOPE.md" || return 1
+  assert_contains "matches nothing" || return 1
+
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `skills/*/SKILL.md` (all skills) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (o2) Brace expansion: a member that no longer exists fails even though the
+#      other members do. A glob-only rule would pass this.
+# -----------------------------------------------------------------------------
+@test "(o2) brace citation with a missing member -> hard-fail naming the member" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `docs/{one,gone}.md` (two docs) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "docs/gone.md" || return 1
+
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `docs/{one,two}.md` (two docs) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (o3) A trailing `/**` is validated as its directory ("**" is not a bash-3.2
+#      pattern, so it cannot be expanded literally).
+# -----------------------------------------------------------------------------
+@test "(o3) trailing /** is validated as the directory" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/**` (everything under it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/nosuchdir/**` (everything under it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "src/nosuchdir/" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (p) NO FALSE POSITIVES. The Consumers column is prose containing backticked
+#     identifiers that are NOT files. A naive "contains a slash" rule fails
+#     this test — that is the hazard the brief called out.
+# -----------------------------------------------------------------------------
+@test "(p) non-file backticked tokens do not produce a STALE MAP" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts` (`buildBrainGraph(db, opts)` builds it; the schema pointer is `$defs/surface_contract`, the tool family is `igris_catalog_*`, the harness doc is `core/os/harness-specific/<harness>.md`, the runtime reader is `~/.igris/core/skills/boot/SKILL.md`, the import specifier is `../../../db.js`, the placeholder line ref is `handlers.ts:NN`, the sibling repo doc is `fifty_dev:docs/brand/dataviz.md`, and `index.ts` is shorthand) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+  # Exactly one token in that cell is a repo path; the rest are counted skips,
+  # not silent drops.
+  assert_contains "map citations: 1 validated" || return 1
+  assert_contains "9 skipped" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (q) A citation git IGNORES is skipped, not failed: build output does not
+#     exist on a clean checkout, so failing on it would make the gate
+#     machine-dependent.
+# -----------------------------------------------------------------------------
+@test "(q) git-ignored (generated) citation is skipped, not failed" {
+  seed_repo_with_map
+  echo "dist/" > "$REPO/.gitignore"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `dist/bundle/thing.js` (generated) | TD-334 | rebuild it |
+MD
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+
+  # ARM: the same path with no .gitignore rule covering it DOES fail, proving
+  # the skip came from the ignore rule and not from the path shape.
+  echo "unrelated/" > "$REPO/.gitignore"
+  git -C "$REPO" add -A
+  run_checker
+  [ "$status" -eq 1 ]
+  assert_contains "dist/bundle/thing.js" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (r) SCOPE, documented: check_map_self_consistency reads column 3 ONLY. A
+#     bogus citation planted in the CONTRACT cell is not seen. Anyone arming
+#     this guard must plant into a Consumers cell or they will "prove" it works
+#     when it never ran.
+# -----------------------------------------------------------------------------
+@test "(r) a bogus citation in the Contract column is NOT checked (column 3 only)" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `src/lib/NOT_A_REAL_FILE.ts` | `file` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (s) The staged gate is real: with MAINTAINING.md UNSTAGED, default mode does
+#     not run the map check at all — which is exactly why an exit 0 from an
+#     interactive pre-commit run proves nothing. `--paths` mode always runs it.
+# -----------------------------------------------------------------------------
+@test "(s) default mode skips the map check when the map is unstaged; --paths does not" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -qm init
+  echo "z" > "$REPO/unrelated.txt"
+  git -C "$REPO" add unrelated.txt
+
+  run_checker
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+  assert_not_contains "map citations:" || return 1
+
+  run_checker "--paths unrelated.txt"
+  [ "$status" -eq 1 ]
+  assert_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (t) `--paths` cannot be silently vacuous: a comma-joined argument and a
+#     no-argument invocation are usage errors (exit 2).
+# -----------------------------------------------------------------------------
+@test "(t) --paths rejects a comma-joined argument and an empty argument list" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  run_checker "--paths a.ts,b.ts"
+  [ "$status" -eq 2 ]
+  assert_contains "SPACE-separated" || return 1
+
+  run_checker "--paths"
+  [ "$status" -eq 2 ]
+  assert_contains "at least one path" || return 1
+
+  # ARM: the space-separated form of the same invocation is accepted.
+  run_checker "--paths a.ts b.ts"
+  [ "$status" -eq 0 ]
+}
+
+# -----------------------------------------------------------------------------
+# (u) The REAL MAINTAINING.md passes, and (u2) proves that pass is not vacuous.
+# -----------------------------------------------------------------------------
+@test "(u) the real MAINTAINING.md validates clean" {
+  [ -f "$IGRIS_ROOT/MAINTAINING.md" ] || skip "no MAINTAINING.md in this repo"
+
+  run bash -c "cd '$IGRIS_ROOT' && bash '$CHECKER' --paths MAINTAINING.md 2>&1"
+  [ "$status" -eq 0 ]
+  assert_not_contains "STALE MAP" || return 1
+  assert_contains "0 line-drift warning(s)" || return 1
+}
+
+@test "(u2) ARM: the real map with one planted bogus citation fails" {
+  [ -f "$IGRIS_ROOT/MAINTAINING.md" ] || skip "no MAINTAINING.md in this repo"
+
+  local armed="$SANDBOX/armed.md"
+  sed 's|core/skills/hunt/SKILL\.md|core/skills/TD334_NOT_A_SKILL/SKILL.md|g' \
+    "$IGRIS_ROOT/MAINTAINING.md" > "$armed"
+  # The arm is only meaningful if the substitution actually landed. If the map
+  # stops citing that path, fail loudly rather than pass vacuously.
+  if cmp -s "$armed" "$IGRIS_ROOT/MAINTAINING.md"; then
+    echo "ARM NOT PLANTED: MAINTAINING.md no longer cites core/skills/hunt/SKILL.md" >&2
+    return 1
+  fi
+
+  run bash -c "cd '$IGRIS_ROOT' && bash '$CHECKER' --map '$armed' --paths MAINTAINING.md 2>&1"
+  [ "$status" -eq 1 ]
+  assert_contains "STALE MAP" || return 1
+  assert_contains "core/skills/TD334_NOT_A_SKILL/SKILL.md" || return 1
 }
