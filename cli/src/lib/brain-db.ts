@@ -38,6 +38,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, sep } from "node:path";
 import { brainDbPath } from "./paths.js";
+// TD-338: the GENERATED mirror of the brain's write-boundary normalizers. Never
+// hand-edited — `npm run gen:brief-normalize-mirror` in brain-mcp-server/ writes
+// it, and a brain-side parity test byte-locks it. See coding_guidelines §13.
+import { normalizeSyncRow } from "./brief-normalize.generated.js";
 import type {
   SessionFileRow,
   InstanceRow,
@@ -930,19 +934,68 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
   },
 ];
 
-/** Per-row merge failure — verbatim from `MergeRowFailure` (sync.ts:537-540). */
+/** Per-row merge failure — verbatim from `MergeRowFailure` (sync.ts). */
 export interface MergeRowFailure {
   key: string;
   error: string;
 }
 
-/** Merge counts for one table — verbatim from `MergeRowsResult` (sync.ts:543-550). */
+/**
+ * TD-338 — one field folded on ingress. Verbatim from `MergeRowNormalization`
+ * (sync.ts).
+ */
+export interface MergeRowNormalization {
+  key: string;
+  field: string;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * TD-338 — one non-canonical value stored verbatim. Verbatim from
+ * `MergeRowNonCanonical` (sync.ts).
+ */
+export interface MergeRowNonCanonical {
+  key: string;
+  field: string;
+  value: string;
+}
+
+/** Merge counts for one table — verbatim from `MergeRowsResult` (sync.ts). */
 export interface MergeRowsResult {
   inserted: number;
   updated: number;
   skipped: number;
   failed: number;
   failures?: MergeRowFailure[];
+  /** TD-338: count of ROWS whose stored value differed from the inbound value. */
+  normalized: number;
+  normalizations?: MergeRowNormalization[];
+  nonCanonical?: MergeRowNonCanonical[];
+}
+
+/**
+ * Render a row's syncKey values as the `|`-joined diagnostic key.
+ * Verbatim from `formatSyncKey` (sync.ts).
+ */
+function formatSyncKey(keyValues: unknown[]): string {
+  return keyValues
+    .map((v) => {
+      if (v === null || v === undefined) return "";
+      if (
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean"
+      ) {
+        return String(v);
+      }
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return "<unserializable>";
+      }
+    })
+    .join("|");
 }
 
 /**
@@ -958,7 +1011,7 @@ function mergeTags(localTags: string, remoteTags: string): string {
 
 /**
  * Merge incoming rows into the local DB for one table config — the last-write-
- * wins upsert. Verbatim port of `mergeRows` (sync.ts:574-667):
+ * wins upsert. Verbatim port of `mergeRows` (sync.ts):
  *   - manual `SELECT * WHERE syncKey = ?` lookup (NOT ON CONFLICT — syncKey
  *     columns are not UNIQUE; see the section header);
  *   - absent row → INSERT only the columns the row defines;
@@ -968,6 +1021,20 @@ function mergeTags(localTags: string, remoteTags: string): string {
  *     fields; equal-or-older → skip;
  *   - row-level try/catch: one bad row records a failure + continues (never
  *     poisons sibling rows). Caller wraps the whole table set in a transaction.
+ *
+ * TD-338 — THIS IS A NORMALIZATION BOUNDARY, and it is THE LIVE ONE ON A
+ * WORKSTATION. Awaken / `igris boot-sync` pulls VPS→local through THIS copy,
+ * not through the brain's `handleBrainPull`, so a brain-only fix would have
+ * closed the door nobody walks through. Every inbound row for a table in
+ * `SYNC_NORMALIZED_FIELDS` passes through the same write-boundary normalizers
+ * (`normalizeSyncRow`, from the GENERATED mirror — never a hand copy).
+ *
+ * `updated_at` is deliberately absent from that map, so the fold cannot bump
+ * the LWW comparison column: a folded row produces no delta with a newer
+ * timestamp, our next push carries EQUAL timestamps and the remote skips, and
+ * the fixed point is reached on the first arrival of each row version. Folds
+ * are recorded ONLY from a branch that actually wrote the row, so a row that
+ * loses LWW is never folded nor reported.
  */
 function mergeRows(
   handle: Database.Database,
@@ -978,7 +1045,10 @@ function mergeRows(
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+  let normalized = 0;
   const failures: MergeRowFailure[] = [];
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
 
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
     .map((k) => `${k} = ?`)
@@ -991,6 +1061,24 @@ function mergeRows(
 
   for (const row of rows) {
     const keyValues = config.syncKey.map((k) => row[k]);
+    // TD-338: fold BEFORE the row can reach either writer. Returns the SAME
+    // object for an unmapped table or an already-canonical row (one map lookup
+    // on the hot full-re-pull path). syncKey columns are never in the map, so
+    // the lookup key above is unaffected.
+    const {
+      row: normRow,
+      folds,
+      nonCanonical: rowNonCanonical,
+    } = normalizeSyncRow(config.table, row);
+    const recordNormalization = (): void => {
+      if (folds.length === 0 && rowNonCanonical.length === 0) return;
+      const key = formatSyncKey(keyValues);
+      if (folds.length > 0) {
+        normalized++;
+        for (const f of folds) normalizations.push({ key, ...f });
+      }
+      for (const nc of rowNonCanonical) nonCanonical.push({ key, ...nc });
+    };
     try {
       const existing = lookupStmt.get(...keyValues) as
         | Record<string, unknown>
@@ -998,21 +1086,24 @@ function mergeRows(
 
       if (!existing) {
         const cols = config.columns.filter(
-          (c) => row[c] !== undefined && existingColumns.has(c),
+          (c) => normRow[c] !== undefined && existingColumns.has(c),
         );
         const placeholders = cols.map(() => "?").join(", ");
         handle
           .prepare(
             `INSERT INTO ${config.table} (${cols.join(", ")}) VALUES (${placeholders})`,
           )
-          .run(...cols.map((c) => row[c] ?? null));
+          .run(...cols.map((c) => normRow[c] ?? null));
         inserted++;
+        recordNormalization();
       } else if (config.strategy === "append") {
         skipped++;
       } else {
-        // LWW strategy: compare timestamps.
+        // LWW strategy: compare timestamps. `timestampCol` is deliberately
+        // absent from SYNC_NORMALIZED_FIELDS, so normRow[timestampCol] ===
+        // row[timestampCol] by construction — the fold cannot move LWW.
         const localTs = (existing[config.timestampCol] as string) ?? "";
-        const remoteTs = (row[config.timestampCol] as string) ?? "";
+        const remoteTs = (normRow[config.timestampCol] as string) ?? "";
 
         if (remoteTs > localTs) {
           const setClauses: string[] = [];
@@ -1027,7 +1118,7 @@ function mergeRows(
               setValues.push(
                 mergeTags(
                   (existing[col] as string) || "",
-                  (row[col] as string) || "",
+                  (normRow[col] as string) || "",
                 ),
               );
             } else if (config.mergeFields?.[col] === "max") {
@@ -1035,12 +1126,12 @@ function mergeRows(
               setValues.push(
                 Math.max(
                   (existing[col] as number) || 0,
-                  (row[col] as number) || 0,
+                  (normRow[col] as number) || 0,
                 ),
               );
             } else {
               setClauses.push(`${col} = ?`);
-              setValues.push(row[col] ?? null);
+              setValues.push(normRow[col] ?? null);
             }
           }
 
@@ -1052,6 +1143,7 @@ function mergeRows(
               )
               .run(...setValues, ...keyValues);
             updated++;
+            recordNormalization();
           } else {
             skipped++;
           }
@@ -1061,29 +1153,22 @@ function mergeRows(
       }
     } catch (rowErr) {
       failed++;
-      const keyStr = keyValues
-        .map((v) => {
-          if (v === null || v === undefined) return "";
-          if (
-            typeof v === "string" ||
-            typeof v === "number" ||
-            typeof v === "boolean"
-          )
-            return String(v);
-          try {
-            return JSON.stringify(v);
-          } catch {
-            return "<unserializable>";
-          }
-        })
-        .join("|");
+      const keyStr = formatSyncKey(keyValues);
       const error = rowErr instanceof Error ? rowErr.message : String(rowErr);
       failures.push({ key: keyStr, error });
     }
   }
 
-  const result: MergeRowsResult = { inserted, updated, skipped, failed };
+  const result: MergeRowsResult = {
+    inserted,
+    updated,
+    skipped,
+    failed,
+    normalized,
+  };
   if (failed > 0) result.failures = failures;
+  if (normalizations.length > 0) result.normalizations = normalizations;
+  if (nonCanonical.length > 0) result.nonCanonical = nonCanonical;
   return result;
 }
 
@@ -1113,6 +1198,15 @@ export interface PullMergeSummary {
   totalMerged: number;
   /** Per-table merge counts, keyed by table name (only tables with received rows). */
   perTable: Record<string, MergeRowsResult>;
+  /**
+   * TD-338: total rows folded on ingress across all tables. 0 on a clean pull —
+   * the boot-sync digest stays silent at zero so a clean sync gains no noise.
+   */
+  totalNormalized: number;
+  /** Every fold, named. Empty when nothing folded. */
+  normalizations: MergeRowNormalization[];
+  /** Every non-canonical value stored verbatim — the "arrived via sync" observer. */
+  nonCanonical: MergeRowNonCanonical[];
 }
 
 /**
@@ -1164,6 +1258,9 @@ export function mergePulledTables(
 
   const perTable: Record<string, MergeRowsResult> = {};
   let totalMerged = 0;
+  let totalNormalized = 0;
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
 
   // One transaction around the whole merge (matches handleBrainPull:965).
   handle.transaction(() => {
@@ -1181,6 +1278,7 @@ export function mergePulledTables(
           updated: 0,
           skipped: 0,
           failed: rows.length,
+          normalized: 0,
           failures: [
             {
               key: "*",
@@ -1194,11 +1292,16 @@ export function mergePulledTables(
       const result = mergeRows(handle, config, rows);
       perTable[config.table] = result;
       totalMerged += result.inserted + result.updated;
+      // TD-338: aggregate the ingress-normalization report across tables so
+      // boot-sync can surface it in one place.
+      totalNormalized += result.normalized;
+      if (result.normalizations) normalizations.push(...result.normalizations);
+      if (result.nonCanonical) nonCanonical.push(...result.nonCanonical);
       upsertState.run(remoteUrl, config.table, pulledAt);
     }
   })();
 
-  return { totalMerged, perTable };
+  return { totalMerged, perTable, totalNormalized, normalizations, nonCanonical };
 }
 
 // ===========================================================================

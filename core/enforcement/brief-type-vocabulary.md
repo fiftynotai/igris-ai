@@ -94,17 +94,47 @@ recorded exception, not an oversight.
 > `RF-` prefix in `/register` would remove the exception; that is not in scope
 > for TD-328.
 
-## The two observers
+## The three observers
 
 | Surface | Catches | Where | Posture |
 |---|---|---|---|
 | **Write-boundary echo** | **Minting** — a 51st spelling at the instant it is created, in whichever harness is running | `brain-mcp-server/src/tools/briefs.ts` (`igris_brief_create` / `_sync` / `_update` append a NOTE to the response) | Informs; never rejects, never rewrites |
 | **Repo validator** | **Accumulation** — a value that arrived via remote sync or an older client, where nobody saw the echo | `scripts/validate_brief_type_vocabulary.sh`, wired into `scripts/git-hooks/pre-commit` | **WARN only** — prints the report, does not block |
+| **Ingress report (TD-338)** | **Arrival** — a value REWRITTEN or PASSED THROUGH at replication ingress, named at the moment it lands | `mergeRows` in both packages; surfaced in the `igris_brain_pull` summary, the `POST /sync/push` response body, and the `igris boot-sync` digest | Informs; silent when clean |
 
-The validator is WARN, not hard-fail, for the same reason the write boundary
+The third observer closes the gap the first two structurally could not see. The
+write-boundary echo needs a tool RESPONSE to append a NOTE to, and an inbound
+sync row is an LWW **column copy** — there is no tool call and no response. The
+repo validator sees the aftermath but not the event, so it can tell you a
+spelling exists and never which sync brought it. See
+`core/enforcement/sync-ingress-normalization.md`.
+
+The validators are WARN, not hard-fail, for the same reason the write boundary
 does not reject: a blocking gate here would re-introduce the hard-reject posture
-the brief rejected. Flipping it to hard-fail once the data is proven clean is a
+the brief rejected. Flipping to hard-fail once the data is proven clean is a
 one-line change in the hook.
+
+## The "apply v22 on the VPS too" instruction (TD-338 AC-5)
+
+The v22 comment and this doc both instruct: *apply the migration on the VPS
+brain too.* TD-338 asked whether the ingress fold retires that instruction. It
+does not — it **demotes** it, and the honest outcome is worth recording.
+
+- **Before TD-338** the instruction was load-bearing for LOCAL correctness. Or
+  so it read. In fact the sharper statement is: it was load-bearing for local
+  correctness *only for rows the remote would go on to touch*, because an
+  untouched row arrives at an equal timestamp and loses LWW anyway.
+- **After TD-338** an un-migrated remote cannot write a non-canonical spelling
+  into us at all — ingress folds it. The instruction now buys only (a) the
+  remote's OWN reads being clean and (b) the two stores being literally
+  identical.
+- **It is not retirable**, because an ingress fold deliberately does not write
+  back (that is what keeps LWW honest) and no code path lets brain A migrate
+  brain B. It is only demotable from **correctness** to **hygiene**.
+
+The measured consequence of NOT doing it, as of 2026-08-03: 339 `brief_status`
+rows hold the canonical spelling locally and the pre-v22 spelling on the VPS, at
+identical timestamps, and neither side will ever overwrite the other.
 
 **Packaging note — `brain-mcp-server/` IS shipped, so brain-side changes cost
 tarball bytes.** The `cli` npm package bundles the compiled brain server at

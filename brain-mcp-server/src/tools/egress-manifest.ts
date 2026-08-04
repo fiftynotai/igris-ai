@@ -25,6 +25,21 @@
  */
 
 import type { SyncTableConfig } from './sync.js';
+import { SYNC_NORMALIZED_FIELDS } from './brief-normalize.js';
+
+// ---------------------------------------------------------------------------
+// TD-338 — ingress normalization disclosure
+// ---------------------------------------------------------------------------
+
+/**
+ * `table.column` names normalized on replication INGRESS, DERIVED from
+ * `SYNC_NORMALIZED_FIELDS` so the disclosure cannot drift from the map that
+ * actually drives the fold. Adding a normalized field (TD-333's `status`, say)
+ * updates this doc automatically — and the parity test fails until the
+ * artifacts are regenerated.
+ */
+const NORMALIZED_INGRESS_COLUMNS: string[] = Object.entries(SYNC_NORMALIZED_FIELDS)
+  .flatMap(([table, fields]) => Object.keys(fields).map((f) => `${table}.${f}`));
 
 // ---------------------------------------------------------------------------
 // Committed-artifact locations (repo-relative) — referenced by the disclosure
@@ -214,6 +229,34 @@ function renderMarkdown(manifest: EgressManifest): string {
   }
 
   lines.push(
+    '## What we rewrite on the way IN (TD-338)',
+    '',
+    'Egress is only half the honesty contract. Rows arriving FROM a remote brain',
+    'are merged last-write-wins into your local store, and a small, declared set',
+    'of `brief_status` columns is **normalized on arrival** — the same fold the',
+    'local write boundary applies when you create or update a brief:',
+    '',
+    `- ${NORMALIZED_INGRESS_COLUMNS.map((c) => `\`${c}\``).join(', ')}.`,
+    '',
+    'The rules, in full:',
+    '',
+    '- **Only declared synonyms fold.** `P1` becomes `P1-High` because the fold',
+    '  table says they are the same value; `TD` becomes `Technical Debt` for the',
+    '  same reason.',
+    '- **Unknown values are never folded and never dropped.** A value with no',
+    '  declared canonical form (`P4-Trivial`, `Spike`) is stored exactly as it',
+    '  arrived, and reported.',
+    '- **Every fold and every unknown value is named** in the sync output — the',
+    '  pull summary, the `POST /sync/push` response body (so the machine that',
+    '  pushed learns its row was folded on arrival), and the `igris boot-sync`',
+    '  digest. Nothing is rewritten silently.',
+    '- **Timestamps are never touched.** The last-write-wins comparison column is',
+    '  deliberately excluded from the fold, so normalizing a row cannot make your',
+    '  brain and the remote overwrite each other in a loop. The consequence is',
+    '  stated plainly: your copy may hold the canonical spelling while an',
+    '  older remote keeps its own, at the same timestamp, and neither will',
+    '  overwrite the other.',
+    '',
     '## What egresses',
     '',
     'Rows changed since the last successful sync are pushed. Tables are grouped',
@@ -317,6 +360,9 @@ function buildDisclosureLines(manifest: EgressManifest): string[] {
     'Remote sync egresses the following to your configured VPS (over HTTPS):',
     `  categories: ${manifest.categorySummary}`,
     `  ${redactedClause}`,
+    // TD-338: what we rewrite on the way IN belongs at the consent moment too —
+    // the operator is agreeing to a two-way exchange, not just an upload.
+    `  on arrival, these columns are normalized to the canonical vocabulary (unknown values kept + reported): ${NORMALIZED_INGRESS_COLUMNS.join(', ')}`,
     `  full manifest: ${MANIFEST_DOC_REL_PATH}`,
   ];
 }

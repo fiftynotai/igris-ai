@@ -29,6 +29,34 @@ Redacted columns:
 - `projects.path`
 - `instances.project_path`
 
+## What we rewrite on the way IN (TD-338)
+
+Egress is only half the honesty contract. Rows arriving FROM a remote brain
+are merged last-write-wins into your local store, and a small, declared set
+of `brief_status` columns is **normalized on arrival** — the same fold the
+local write boundary applies when you create or update a brief:
+
+- `brief_status.brief_type`, `brief_status.priority`, `brief_status.phase`.
+
+The rules, in full:
+
+- **Only declared synonyms fold.** `P1` becomes `P1-High` because the fold
+  table says they are the same value; `TD` becomes `Technical Debt` for the
+  same reason.
+- **Unknown values are never folded and never dropped.** A value with no
+  declared canonical form (`P4-Trivial`, `Spike`) is stored exactly as it
+  arrived, and reported.
+- **Every fold and every unknown value is named** in the sync output — the
+  pull summary, the `POST /sync/push` response body (so the machine that
+  pushed learns its row was folded on arrival), and the `igris boot-sync`
+  digest. Nothing is rewritten silently.
+- **Timestamps are never touched.** The last-write-wins comparison column is
+  deliberately excluded from the fold, so normalizing a row cannot make your
+  brain and the remote overwrite each other in a loop. The consequence is
+  stated plainly: your copy may hold the canonical spelling while an
+  older remote keeps its own, at the same timestamp, and neither will
+  overwrite the other.
+
 ## What egresses
 
 Rows changed since the last successful sync are pushed. Tables are grouped

@@ -225,9 +225,9 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       }
     });
 
-    it('advances schema_version to exactly 23', () => {
+    it('advances schema_version to exactly 24', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
     });
 
     it('removes the engine_migrations rows for tasks + coordination, keeps survivors', () => {
@@ -254,12 +254,12 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       expect(names).toContain('nightly-cleanup');
     });
 
-    it('is idempotent — a second migrateSchema() does not throw and keeps version at 23', () => {
+    it('is idempotent — a second migrateSchema() does not throw and keeps version at 24', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
 
       expect(() => migrateSchema(db)).not.toThrow();
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
       for (const t of WORKER_TABLES) {
         expect(tableExists(db, t)).toBe(false);
       }
@@ -280,9 +280,9 @@ describe('migration v20 — worker-subsystem table teardown (TD-265)', () => {
       expect(() => migrateSchema(db)).not.toThrow();
     });
 
-    it('advances schema_version to exactly 23 with the no-op drop', () => {
+    it('advances schema_version to exactly 24 with the no-op drop', () => {
       migrateSchema(db);
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
       for (const t of WORKER_TABLES) {
         expect(tableExists(db, t)).toBe(false);
       }

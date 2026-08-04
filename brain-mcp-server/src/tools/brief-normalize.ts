@@ -166,8 +166,14 @@ export const CANONICAL_BRIEF_TYPES = [
  * Priority alias fold map (legacy form → canonical form). Keys are matched
  * case-insensitively against the trimmed input. Canonical values map to
  * themselves so the normalizer is idempotent.
+ *
+ * EXPORTED (TD-338) as the single source the generated CLI mirror
+ * (`cli/src/lib/brief-normalize.generated.ts`) is rendered from — the CLI's
+ * `mergeRows` needs the same fold table and the two packages have zero
+ * cross-imports. Nothing hand-copies this object; see
+ * `brain-mcp-server/src/tools/brief-normalize-mirror.ts`.
  */
-const PRIORITY_ALIASES: Record<string, string> = {
+export const PRIORITY_ALIASES: Record<string, string> = {
   // Bare P{N} forms.
   p0: 'P0-Critical',
   p1: 'P1-High',
@@ -485,4 +491,217 @@ export function normalizeBriefType(v: string | null | undefined): string | null 
   const key = trimmed.toLowerCase();
   // Alias fold first, then canonical case-fold, else passthrough untouched.
   return BRIEF_TYPE_ALIASES[key] ?? BRIEF_TYPE_CANONICAL[key] ?? v;
+}
+
+/**
+ * Is `v` a canonical priority? Trim-tolerant, case-SENSITIVE on the canonical
+ * spelling — every case variant already folds via `PRIORITY_ALIASES`, so a
+ * value that reaches here in the wrong case was never normalized and SHOULD be
+ * reported. NULL is *unset*, not an offender: it returns false, and every
+ * caller skips reporting for null/empty (see `normalizeSyncRow`).
+ */
+export function isCanonicalPriority(v: string | null | undefined): boolean {
+  if (v === null || v === undefined) return false;
+  const trimmed = v.trim();
+  return CANONICAL_PRIORITIES.some((p) => p === trimmed);
+}
+
+/**
+ * Is `v` a canonical phase? Case-insensitive (the normalizer upper-cases known
+ * phases), trim-tolerant.
+ */
+export function isCanonicalPhase(v: string | null | undefined): boolean {
+  if (v === null || v === undefined) return false;
+  const upper = v.trim().toUpperCase();
+  return CANONICAL_PHASES.some((p) => p === upper);
+}
+
+/**
+ * The priority twin of {@link nonCanonicalBriefTypeNote} (TD-338).
+ *
+ * `priority` had no observer at all before TD-338: the TD-328 echo covers
+ * `brief_type` only, so a `P4-Trivial` could sit in the corpus indefinitely
+ * with nothing naming it. Returns a NOTE for a non-canonical STORED value, or
+ * `null` when there is nothing to say. Informs; never rejects, never rewrites.
+ *
+ * @param stored - the value as normalized and written (NOT the raw input)
+ */
+export function nonCanonicalPriorityNote(stored: string | null | undefined): string | null {
+  if (stored === null || stored === undefined || stored.trim() === '') return null;
+  if (isCanonicalPriority(stored)) return null;
+  return (
+    `NOTE: priority ${JSON.stringify(stored)} is not a canonical priority (stored as-is).\n` +
+    `      Canonical: ${CANONICAL_PRIORITIES.join(', ')} (or NULL for unset).\n` +
+    '      Unknown values are kept, never dropped — but they are reported (TD-338).'
+  );
+}
+
+// ===========================================================================
+// TD-338 — REPLICATION-INGRESS NORMALIZATION
+// ===========================================================================
+//
+// Every MCP write boundary (`igris_brief_create` / `_sync` / `_update`) folds
+// these fields before storing. `mergeRows` — the row writer for BOTH sync
+// ingress doors — did not, so an inbound row was copied byte-for-byte into the
+// same columns the write boundary defends. TD-338 makes ingress a normalization
+// boundary too, by making it read THIS map.
+//
+// WHY A MAP AND NOT THREE CALLS AT EACH SITE: there are two `mergeRows` copies
+// (brain + CLI, separate npm packages, zero cross-imports). Three inline calls
+// per site is four hand-written lists of "which fields normalize" across the
+// repo — the TD-330 defect class. One exported map, read by both sites and
+// GENERATED into the CLI mirror.
+//
+// THE FULL COST OF ADDING A NORMALIZED FIELD, stated exactly (it is not "one
+// line" — that claim was corrected in review, then made true by construction):
+//   1. one entry in `SYNC_NORMALIZED_FIELDS` below;
+//   2. if the field needs a NEW normalizer id, its `normalizeX`/`isCanonicalX`
+//      pair here, its `SYNC_NORMALIZERS` row below, and its body in
+//      `NORMALIZER_BODIES` (brief-normalize-mirror.ts);
+//   3. `npm run gen:brief-normalize-mirror`, plus one test.
+// The mirror's `SyncNormalizerId` union and its dispatch table are DERIVED from
+// this map, so they move on their own — the only per-normalizer text left in
+// the builder is the function body, and a mapped id with no body THROWS at
+// generation time naming what to add. TD-333 (fold `status`) reuses no existing
+// id, so it is: this map + a `normalizeStatus`/`isCanonicalStatus` pair + its
+// mirror body.
+//
+// WHAT IS DELIBERATELY ABSENT:
+//   - `updated_at` — the LWW comparison column. A fold that bumped it would
+//     manufacture a write no operator made and make folded rows fight an
+//     un-migrated remote. Its absence from this map is what makes the fold
+//     non-oscillating, and it is asserted by a test, not trusted to this
+//     comment (`sync-ingress-normalize.test.ts`).
+//   - `status` — until TD-333 ships `normalizeStatus`. Stated so the gap reads
+//     as a decision, not an oversight.
+//   - `sessions.phase` — `sessions` is an append-strategy table (insert-only,
+//     no LWW update) with no observed drift, and MAINTAINING row 64 scopes the
+//     phase vocabulary contract to `brief_status`.
+//   - `title` / `effort` — free text with no canonical vocabulary to fold to.
+
+/**
+ * Stable normalizer id. The generated CLI mirror dispatches on this string —
+ * and DERIVES its own copy of this union from the values used in
+ * `SYNC_NORMALIZED_FIELDS`, so only this declaration is hand-maintained.
+ */
+export type SyncNormalizerId = 'priority' | 'brief_type' | 'phase';
+
+/**
+ * Which synced columns pass through a write-boundary normalizer on INGRESS,
+ * per table. Table names are `SYNC_TABLES` table names; a table absent from
+ * this map is copied verbatim, exactly as before TD-338.
+ *
+ * THE SINGLE EXTENSION POINT for WHICH COLUMNS fold. Adding a field that reuses
+ * an existing normalizer id really is one entry here plus a regeneration; a
+ * field needing a NEW id also needs its normalizer pair, its `SYNC_NORMALIZERS`
+ * row, and its body in the mirror builder — see the header block above for the
+ * full, exact cost.
+ */
+export const SYNC_NORMALIZED_FIELDS: Record<string, Record<string, SyncNormalizerId>> = {
+  brief_status: {
+    brief_type: 'brief_type',
+    priority: 'priority',
+    phase: 'phase',
+  },
+};
+
+/** A normalizer + its canonicality predicate, resolved from a normalizer id. */
+interface SyncNormalizerEntry {
+  normalize(v: string | null | undefined): string | null;
+  isCanonical(v: string | null | undefined): boolean;
+}
+
+const SYNC_NORMALIZERS: Record<SyncNormalizerId, SyncNormalizerEntry> = {
+  priority: { normalize: normalizePriority, isCanonical: isCanonicalPriority },
+  brief_type: { normalize: normalizeBriefType, isCanonical: isCanonicalBriefType },
+  phase: { normalize: normalizePhase, isCanonical: isCanonicalPhase },
+};
+
+/** One field folded on ingress: what it arrived as, what was stored. */
+export interface SyncFieldFold {
+  field: string;
+  from: string;
+  to: string | null;
+}
+
+/** One field that arrived non-canonical and was stored AS-IS (never folded). */
+export interface SyncFieldPassthrough {
+  field: string;
+  value: string;
+}
+
+/** The result of normalizing one inbound sync row. */
+export interface SyncRowNormalizeResult {
+  /**
+   * The row to store. **The SAME object** as the input when nothing folded, so
+   * an unmapped table (or a already-canonical row) costs one map lookup and no
+   * allocation on the hot full-re-pull path.
+   */
+  row: Record<string, unknown>;
+  /** Fields whose stored value differs from the inbound value. */
+  folds: SyncFieldFold[];
+  /** Fields stored verbatim whose value is not canonical (the observer). */
+  nonCanonical: SyncFieldPassthrough[];
+}
+
+const NO_FOLDS: SyncFieldFold[] = [];
+const NO_PASSTHROUGHS: SyncFieldPassthrough[] = [];
+
+/**
+ * Fold an inbound replication row through the write-boundary normalizers.
+ *
+ * FOLD-KNOWN / PASSTHROUGH-UNKNOWN / REPORT-BOTH — the same total function the
+ * remote's own write boundary would have applied had it been running current
+ * code. `PRIORITY_ALIASES` declares `P1 ≡ P1-High`; folding a declared synonym
+ * destroys nothing the fold table does not already call synonymous. An UNKNOWN
+ * value (`P4-Trivial`, `Spike`) is stored verbatim and REPORTED — the fold
+ * never invents (the reasoning TD-328 used to refuse folding `Spike`).
+ *
+ * Idempotent, because every underlying normalizer is: `f(f(x)) === f(x)`, so a
+ * row that arrives twice folds to the same value both times.
+ *
+ * @param table - the SYNC_TABLES table name the row belongs to
+ * @param row   - the inbound wire row (never mutated)
+ */
+export function normalizeSyncRow(
+  table: string,
+  row: Record<string, unknown>,
+): SyncRowNormalizeResult {
+  const fields = SYNC_NORMALIZED_FIELDS[table];
+  if (!fields) return { row, folds: NO_FOLDS, nonCanonical: NO_PASSTHROUGHS };
+
+  let out = row;
+  let folds: SyncFieldFold[] | null = null;
+  let nonCanonical: SyncFieldPassthrough[] | null = null;
+
+  for (const field of Object.keys(fields)) {
+    const raw = row[field];
+    // Column absent from this payload — the INSERT branch filters on
+    // `!== undefined`, so introducing the key here would widen the INSERT.
+    if (raw === undefined) continue;
+    // Defensive: a non-string, non-null value is not ours to normalize. Leave
+    // it for the row-level try/catch to reject at bind time if it is unbindable.
+    if (raw !== null && typeof raw !== 'string') continue;
+
+    const entry = SYNC_NORMALIZERS[fields[field]];
+    const next = entry.normalize(raw);
+
+    if (next !== raw) {
+      if (out === row) out = { ...row };
+      out[field] = next;
+      (folds ??= []).push({ field, from: raw as string, to: next });
+    }
+
+    // Report the STORED value, not the inbound one. NULL/empty is *unset*, not
+    // an offender — the dashboard renders NULL as "Unset".
+    if (next !== null && next.trim() !== '' && !entry.isCanonical(next)) {
+      (nonCanonical ??= []).push({ field, value: next });
+    }
+  }
+
+  return {
+    row: out,
+    folds: folds ?? NO_FOLDS,
+    nonCanonical: nonCanonical ?? NO_PASSTHROUGHS,
+  };
 }

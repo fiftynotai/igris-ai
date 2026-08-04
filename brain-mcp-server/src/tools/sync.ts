@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, sep } from 'node:path';
 import { getDb } from '../db.js';
+import { normalizeSyncRow } from './brief-normalize.js';
 import { errMsg } from '../engine/helpers.js';
 import { embedNullLearnings } from '../utils/learning-embed.js';
 import { deleteEmbedding, isVectorSearchAvailable } from '../utils/vector-search.js';
@@ -575,6 +576,29 @@ export interface MergeRowFailure {
   error: string;
 }
 
+/**
+ * TD-338 — one field folded on ingress, on a row that was actually STORED.
+ * `key` is the `|`-joined syncKey, matching {@link MergeRowFailure.key}.
+ */
+export interface MergeRowNormalization {
+  key: string;
+  field: string;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * TD-338 — one non-canonical value STORED VERBATIM on ingress (never folded).
+ * This is the "arrived via sync" observer the TD-328 write-boundary echo
+ * structurally cannot see: an inbound row is an LWW column copy, not a tool
+ * call, so no response exists to append a NOTE to.
+ */
+export interface MergeRowNonCanonical {
+  key: string;
+  field: string;
+  value: string;
+}
+
 /** Result of a mergeRows call including row-level failure breakdown. */
 export interface MergeRowsResult {
   inserted: number;
@@ -583,6 +607,33 @@ export interface MergeRowsResult {
   failed: number;
   /** Present (and non-empty) only when failed > 0. */
   failures?: MergeRowFailure[];
+  /**
+   * TD-338: count of ROWS (not fields) whose stored value differed from the
+   * inbound value because a write-boundary normalizer folded it. Always
+   * present; 0 on a clean merge.
+   */
+  normalized: number;
+  /** Per-field fold detail. Present (and non-empty) only when normalized > 0. */
+  normalizations?: MergeRowNormalization[];
+  /** Non-canonical values stored verbatim. Present only when non-empty. */
+  nonCanonical?: MergeRowNonCanonical[];
+}
+
+/**
+ * Render a row's syncKey values as the `|`-joined diagnostic key used by
+ * {@link MergeRowFailure}, {@link MergeRowNormalization} and
+ * {@link MergeRowNonCanonical}. Defensive: some entries may be objects.
+ */
+function formatSyncKey(keyValues: unknown[]): string {
+  return keyValues
+    .map((v) => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        return String(v);
+      }
+      try { return JSON.stringify(v); } catch { return '<unserializable>'; }
+    })
+    .join('|');
 }
 
 /**
@@ -602,10 +653,40 @@ export interface MergeRowsResult {
  * row-level catches mean a single bad row no longer poisons sibling rows
  * in the same call.
  *
+ * TD-338 — THIS IS A NORMALIZATION BOUNDARY. Every inbound row for a table in
+ * `SYNC_NORMALIZED_FIELDS` passes through the SAME normalizers the MCP write
+ * boundary applies (`normalizeSyncRow`), so replication can no longer write a
+ * spelling `igris_brief_create` would have folded. Three properties make this
+ * safe rather than a new source of divergence:
+ *
+ *   1. **Only declared synonyms fold.** `P1 ≡ P1-High` is a fold-table fact,
+ *      not a guess. Unknown values (`P4-Trivial`, `Spike`) are stored VERBATIM
+ *      and reported in `nonCanonical`.
+ *   2. **`updated_at` is not in the map, so the fold cannot bump it.** No merge
+ *      path in this codebase writes a timestamp it did not receive, so a folded
+ *      row produces no delta with a newer timestamp: the remote's
+ *      `WHERE updated_at > since` stops selecting it, and our next push carries
+ *      EQUAL timestamps so the remote's own `remoteTs > localTs` is false and it
+ *      skips. The system reaches its fixed point on the FIRST arrival of each
+ *      row version. Pinned by `sync-ingress-normalize.test.ts` (T3), not
+ *      trusted to this paragraph.
+ *   3. **The fold is recorded only for rows actually WRITTEN.** A row that loses
+ *      LWW is skipped before any fold is counted, so normalization can never
+ *      resurrect a stale row nor inflate the report.
+ *
+ * THE REJECTED LEVER, RECORDED: folding AND bumping `updated_at` WOULD heal an
+ * un-migrated remote on our next push (and still would not oscillate — older
+ * remote code never re-writes a row spontaneously). It is rejected because it
+ * manufactures a write no operator made and mutates a column the dashboard,
+ * `briefStatusSummary` and velocity ordering all read. See the v22 comment in
+ * `db.ts` for the same discipline. Pull this lever only on an explicit operator
+ * decision to make sync heal remotes.
+ *
  * @param db - The database instance to merge into
  * @param config - The sync table configuration
  * @param rows - The incoming rows to merge
- * @returns Counts of inserted/updated/skipped/failed plus per-row failures
+ * @returns Counts of inserted/updated/skipped/failed plus per-row failures and
+ *          the TD-338 normalization report
  */
 export function mergeRows(
   db: Database.Database,
@@ -616,7 +697,10 @@ export function mergeRows(
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+  let normalized = 0;
   const failures: MergeRowFailure[] = [];
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
 
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${
     config.syncKey.map(k => `${k} = ?`).join(' AND ')
@@ -625,22 +709,43 @@ export function mergeRows(
 
   for (const row of rows) {
     const keyValues = config.syncKey.map(k => row[k]);
+    // TD-338: fold BEFORE the row can reach either writer. `normalizeSyncRow`
+    // returns the SAME object for an unmapped table or an already-canonical
+    // row, so this is one map lookup on the hot path. syncKey columns are never
+    // in the map, so the lookup key above is unaffected by the fold.
+    const { row: normRow, folds, nonCanonical: rowNonCanonical } =
+      normalizeSyncRow(config.table, row);
+    // Recorded ONLY from a branch that actually wrote the row — a row that
+    // loses LWW must not appear in the report (T5).
+    const recordNormalization = (): void => {
+      if (folds.length === 0 && rowNonCanonical.length === 0) return;
+      const key = formatSyncKey(keyValues);
+      if (folds.length > 0) {
+        normalized++;
+        for (const f of folds) normalizations.push({ key, ...f });
+      }
+      for (const nc of rowNonCanonical) nonCanonical.push({ key, ...nc });
+    };
     try {
       const existing = lookupStmt.get(...keyValues) as Record<string, unknown> | undefined;
 
       if (!existing) {
-        const cols = config.columns.filter(c => row[c] !== undefined);
+        const cols = config.columns.filter(c => normRow[c] !== undefined);
         const placeholders = cols.map(() => '?').join(', ');
         db.prepare(
           `INSERT INTO ${config.table} (${cols.join(', ')}) VALUES (${placeholders})`
-        ).run(...cols.map(c => row[c] ?? null));
+        ).run(...cols.map(c => normRow[c] ?? null));
         inserted++;
+        recordNormalization();
       } else if (config.strategy === 'append') {
         skipped++;
       } else {
         // LWW strategy: compare timestamps
         const localTs = (existing[config.timestampCol] as string) ?? '';
-        const remoteTs = (row[config.timestampCol] as string) ?? '';
+        // TD-338: `timestampCol` is deliberately absent from
+        // SYNC_NORMALIZED_FIELDS, so normRow[timestampCol] === row[timestampCol]
+        // by construction — the fold can neither advance nor retard LWW.
+        const remoteTs = (normRow[config.timestampCol] as string) ?? '';
 
         if (remoteTs > localTs) {
           const setClauses: string[] = [];
@@ -653,17 +758,17 @@ export function mergeRows(
               setClauses.push(`${col} = ?`);
               setValues.push(mergeTags(
                 (existing[col] as string) || '',
-                (row[col] as string) || ''
+                (normRow[col] as string) || ''
               ));
             } else if (config.mergeFields?.[col] === 'max') {
               setClauses.push(`${col} = ?`);
               setValues.push(Math.max(
                 (existing[col] as number) || 0,
-                (row[col] as number) || 0
+                (normRow[col] as number) || 0
               ));
             } else {
               setClauses.push(`${col} = ?`);
-              setValues.push(row[col] ?? null);
+              setValues.push(normRow[col] ?? null);
             }
           }
 
@@ -679,7 +784,7 @@ export function mergeRows(
           // learnings table only.
           const learningTextChanged =
             config.table === 'learnings' &&
-            (existing.title !== row.title || existing.content !== row.content);
+            (existing.title !== normRow.title || existing.content !== normRow.content);
           if (learningTextChanged) {
             setClauses.push('embedding = ?', 'embedding_model = ?');
             setValues.push(null, null);
@@ -691,6 +796,7 @@ export function mergeRows(
               `UPDATE ${config.table} SET ${setClauses.join(', ')} WHERE ${whereClause}`
             ).run(...setValues, ...keyValues);
             updated++;
+            recordNormalization();
 
             // Lockstep vec-delete for the just-NULLed embedding. DEFENSIVE:
             // only when sqlite-vec is available. If the extension is missing the
@@ -721,19 +827,16 @@ export function mergeRows(
       // error=Too few parameter values were provided") instead of a
       // generic "HTTP 500".
       failed++;
-      // Stringify keyValues defensively — some entries may be objects.
-      const keyStr = keyValues.map((v) => {
-        if (v === null || v === undefined) return '';
-        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-        try { return JSON.stringify(v); } catch { return '<unserializable>'; }
-      }).join('|');
+      const keyStr = formatSyncKey(keyValues);
       failures.push({ key: keyStr, error: errMsg(rowErr) });
       console.error(`[brain] mergeRows row failed: table=${config.table} key=${keyStr} error=${errMsg(rowErr)}`);
     }
   }
 
-  const result: MergeRowsResult = { inserted, updated, skipped, failed };
+  const result: MergeRowsResult = { inserted, updated, skipped, failed, normalized };
   if (failed > 0) result.failures = failures;
+  if (normalizations.length > 0) result.normalizations = normalizations;
+  if (nonCanonical.length > 0) result.nonCanonical = nonCanonical;
   return result;
 }
 
@@ -1143,9 +1246,24 @@ async function handleBrainPull(
         results[config.table] = result;
         totalMerged += result.inserted + result.updated;
         const failedSuffix = result.failed > 0 ? `, ${result.failed} failed` : '';
+        // TD-338: silent when zero — a clean pull gains no new noise.
+        const normalizedSuffix = result.normalized > 0 ? `, ${result.normalized} normalized` : '';
         summary.push(
-          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix})`
+          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix}${normalizedSuffix})`
         );
+        // TD-338: name every fold and every non-canonical passthrough. The
+        // brief's honesty contract — the fold is allowed to be lossy only in
+        // the sense the fold table already licenses, and never silently.
+        for (const n of result.normalizations ?? []) {
+          summary.push(
+            `      normalized ${config.table} ${n.key}: ${n.field} ${JSON.stringify(n.from)} -> ${JSON.stringify(n.to)}`
+          );
+        }
+        for (const nc of result.nonCanonical ?? []) {
+          summary.push(
+            `      NON-CANONICAL (stored as-is) ${config.table} ${nc.key}: ${nc.field}=${JSON.stringify(nc.value)}`
+          );
+        }
         if (result.failures && result.failures.length > 0) {
           // BR-066: surface row-level failures during pull. We do not abort
           // the pull on row failures (last-write-wins is best-effort by

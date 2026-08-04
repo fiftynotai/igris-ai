@@ -18,7 +18,9 @@
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts",
     "normalize-brief-types": "tsx scripts/normalize_brief_types.ts",
     "gen:egress-manifest": "tsx scripts/gen-egress-manifest.ts",
-    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check"
+    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check",
+    "gen:brief-normalize-mirror": "tsx scripts/gen-brief-normalize-mirror.ts",
+    "gen:brief-normalize-mirror:check": "tsx scripts/gen-brief-normalize-mirror.ts --check"
   },
   "author": "fifty.dev",
   "license": "MIT",

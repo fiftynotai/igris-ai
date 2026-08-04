@@ -95,7 +95,7 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
 
       // With vec available the whole chain runs to the terminal version, now
       // v23 (FR-246 `briefs_fts`).
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
     },
   );
 
@@ -154,7 +154,7 @@ describe('migration v17 — registry asset-reference columns (FR-198)', () => {
       // Exactly one of each — no duplicate ADD COLUMN.
       expect(cols.sort()).toEqual(['source', 'source_ref', 'when_to_use']);
       // Chain runs to the terminal version once vec is available — v23 (FR-246).
-      expect(getSchemaVersion(db)).toBe(23);
+      expect(getSchemaVersion(db)).toBe(24);
     },
   );
 

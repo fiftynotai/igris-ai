@@ -55,6 +55,21 @@ set -e
 #       boundary echo in briefs.ts catches MINTING, this catches values that
 #       arrive via remote sync or an older client. WARN only — surfaces the
 #       report, does NOT block the commit.
+#   - validate_brief_priority_vocabulary.sh  (TD-338)
+#       Triggers if: brain-mcp-server/src/tools/brief-normalize.ts OR
+#                    brain-mcp-server/src/tools/sync.ts OR
+#                    brain-mcp-server/src/db.ts OR cli/src/lib/brain-db.ts OR
+#                    MAINTAINING.md is staged.
+#       The priority twin of the brief_type validator. Reports the
+#       brief_status.priority distribution and names every non-canonical
+#       value; NULL is *unset*, not an offender. priority had NO observer at
+#       all before TD-338 (the TD-328 echo covers brief_type only), which is
+#       how a lone P4-Trivial sat unnoticed for months. The two mergeRows
+#       triggers are here because replication ingress is now a normalization
+#       boundary and those files are where it can regress. WARN only —
+#       P4-Trivial is a standing WARN by design (folding it would invent a
+#       value; adopting it would trigger the FR-247 picker mirror sweep for
+#       one row), so it stays reported until a human retypes the brief.
 #   - validate_error_fingerprint_loop.sh  (TD-240)
 #       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
 #                    staged.
@@ -204,6 +219,7 @@ needs_skill_os_leak_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
 needs_brief_type_check=0
+needs_brief_priority_check=0
 needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -271,6 +287,18 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_type_vocabulary.sh" ]; then
   if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/db\.ts|MAINTAINING\.md)$'; then
     needs_brief_type_check=1
+  fi
+fi
+
+# TD-338: trigger the priority vocabulary validator on the same surfaces as the
+# brief_type one, PLUS the two replication-ingress choke points. `priority` had
+# no observer at all before TD-338 — the TD-328 echo covers brief_type only —
+# which is how a P4-Trivial sat unnoticed until a hand census found it. The
+# validator scans the whole DB regardless of which file changed, so the trigger
+# only decides whether to run at all.
+if [ -f "$REPO_ROOT/scripts/validate_brief_priority_vocabulary.sh" ]; then
+  if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/tools/sync\.ts|brain-mcp-server/src/db\.ts|cli/src/lib/brain-db\.ts|MAINTAINING\.md)$'; then
+    needs_brief_priority_check=1
   fi
 fi
 
@@ -390,6 +418,18 @@ if [ "$needs_brief_type_check" = "1" ]; then
   # is proven clean, change the next line's body to `failed=1`.
   if ! bash "$REPO_ROOT/scripts/validate_brief_type_vocabulary.sh"; then
     echo "[pre-commit] brief_type vocabulary drift surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_brief_priority_check" = "1" ]; then
+  echo "[pre-commit] Checking priority vocabulary (TD-338)..."
+  # WARN-ONLY, for the same reason as the brief_type block above: unknown
+  # values are KEPT and REPORTED, never rejected. `P4-Trivial` is a standing
+  # WARN by design — it has no canonical target, so folding it would be
+  # inventing and adopting it would trigger the FR-247 picker mirror sweep for
+  # one row. It stays reported until a human retypes the brief.
+  if ! bash "$REPO_ROOT/scripts/validate_brief_priority_vocabulary.sh"; then
+    echo "[pre-commit] priority vocabulary drift surfaced above (WARN only — not blocking)."
   fi
 fi
 

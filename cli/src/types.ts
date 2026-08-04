@@ -464,6 +464,28 @@ export interface ContextDocsInventoryDigest {
 export interface BootSyncPull {
   ok: boolean;
   summary: string;
+  /**
+   * TD-338 — the ingress-normalization report for this pull. OMITTED ENTIRELY
+   * when nothing was folded and nothing non-canonical arrived, so a clean sync
+   * adds no noise to the digest (and no existing digest assertion changes).
+   *
+   * `normalized` counts ROWS whose stored value differed from the inbound
+   * value because a write-boundary normalizer folded it; `folds` names each one
+   * (`brief_status igris-ai|TD-277: priority "P2" -> "P2-Medium"`), and
+   * `non_canonical` names values that were stored VERBATIM because no fold
+   * table declares a target for them — the "arrived via sync" observer.
+   */
+  normalization?: BootSyncNormalization;
+}
+
+/** TD-338 — the ingress-normalization half of a boot-sync pull digest. */
+export interface BootSyncNormalization {
+  /** Rows folded on ingress across all pulled tables. */
+  normalized: number;
+  /** One human line per fold: `<table> <key>: <field> "<from>" -> "<to>"`. */
+  folds: string[];
+  /** One human line per non-canonical passthrough: `<table> <key>: <field>="<v>"`. */
+  non_canonical: string[];
 }
 
 /** FR-195 (M3) — the queue-drain result inside the `boot-sync` digest. */

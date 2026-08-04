@@ -1318,12 +1318,32 @@ function migrateSchema(db: Database.Database): void {
   // when it folded priority/brief_type while leaving status alone.
   //
   // LWW: `brief_type` is in the CLI's sync column sets
-  // (`cli/src/lib/brain-db.ts:896,1256`), so a folded local row must NOT bump
+  // (`cli/src/lib/brain-db.ts`), so a folded local row must NOT bump
   // `updated_at` — that would make folded rows fight an un-migrated remote
   // brain and rewrite a column v18 explicitly protects. The fold is
   // DETERMINISTIC, so once v22 has applied on both ends they converge to the
   // same value regardless of which side wins LWW. Apply v22 on the VPS brain
   // too; the D6 validator catches anything that leaks back.
+  //
+  // TD-338 AMENDMENT (COMMENT ONLY — no statement of this shipped migration is
+  // edited; the behaviour above is untouched). Two things this paragraph said
+  // or implied need correcting now that ingress normalizes:
+  //   1. "Apply v22 on the VPS brain too" is now HYGIENE, not correctness. An
+  //      un-migrated remote can no longer write a non-canonical spelling into
+  //      us — `mergeRows` folds it on arrival, in both packages. The
+  //      instruction survives because an ingress fold deliberately does not
+  //      write back and no code path lets brain A migrate brain B, so it is
+  //      the only way to make the remote's OWN reads clean. It is not
+  //      retirable, only demotable.
+  //   2. "The D6 validator catches anything that leaks back" was the whole
+  //      defence, and it was never a defence — it reports, it does not prevent.
+  //      The prevention is the ingress fold.
+  // And the cost of NOT applying v22 on the VPS is now MEASURED rather than
+  // hypothesised: 339 `brief_status` rows hold the canonical spelling here and
+  // the pre-v22 spelling there, at identical timestamps, with neither side able
+  // to overwrite the other (read-only census, 2026-08-03). That silent
+  // content divergence at equal timestamps is the deliberate price of the
+  // no-bump rule — see `core/enforcement/sync-ingress-normalization.md`.
   //
   // Three fold classes, all WHERE-guarded and all bound-param (§14 — no
   // interpolation; strictly better than v18's inline literals because the
@@ -1806,6 +1826,157 @@ function migrateSchema(db: Database.Database): void {
             'unavailable until this succeeds.',
         );
       }
+    }
+  }
+
+  // v24: priority vocabulary re-fold (TD-338).
+  //
+  // WHAT IT TOUCHES: `brief_status.priority`. NOTHING ELSE. Not brief_type, not
+  // title, not status, not phase, not claimed_by, not embedding — and
+  // explicitly NOT `updated_at` (see LWW below). Same column discipline v18 and
+  // v22 relied on (#230).
+  //
+  // WHY A SECOND PRIORITY FOLD AFTER v18 ALREADY RAN ONE — and the provenance
+  // CORRECTED, because the obvious story is wrong:
+  //   v18 (2026-06-22 19:15:33 on the operator brain) folded every bare `P1`/
+  //   `P2` that existed at that moment. Eight non-canonical rows nevertheless
+  //   carry `updated_at` values AFTER it. The natural hypothesis — and the one
+  //   TD-338's plan proposed — was that the 2026-06-24 cutover from the old
+  //   cleartext-IP remote to `https://brain.fifty.dev` created a FRESH `sync_state` cursor
+  //   row (the key is `(remote_url, table_name)`), so the first pull from the
+  //   new URL ran with `since=1970` and re-pulled the un-migrated VPS's whole
+  //   `brief_status` back into an already-v18 brain.
+  //
+  //   THAT HYPOTHESIS IS REFUTED. Read-only forensics on the live brain:
+  //     - `sync_state` shows the http remote's `brief_status` pull cursor last
+  //       advanced 2026-06-22 19:17:20 — MORE THAN TWELVE HOURS BEFORE the earliest
+  //       dirty row's `updated_at` (2026-06-23 08:02:02). A pull only advances
+  //       that cursor when it DELIVERS rows for the table, and both ingress
+  //       doors share the key, so no pull delivered these rows.
+  //     - `sync_queue` id 4788 records a PUSH queued 2026-06-23 08:12:35
+  //       carrying `moca-ai-agent/BR-045 priority:"P1"` with its own
+  //       `updated_at:"2026-06-23 08:02:02"` — the local row was already dirty
+  //       ten minutes after it was written, and we EXPORTED it.
+  //     - the VPS today holds `P1-High`/`P2-Medium` for five of those rows (it
+  //       booted a build carrying v18 and folded its own copies) while WE still
+  //       hold the bare forms. The remote is CLEANER than us here.
+  //   So these rows were BORN LOCALLY through a writer that did not normalize,
+  //   and travelled OUT. Sync is not how they arrived. TD-338's ingress fold is
+  //   therefore a PREVENTION (an un-migrated remote can no longer write a
+  //   spelling into us on any future cursor reset or remote-side edit), not the
+  //   cure for these eight rows. This migration is the cure, and it is purely
+  //   local.
+  //
+  // WHY THIS IS SAFE TO RUN AFTER THE INGRESS FOLD LANDS, AND ONLY THEN:
+  //   folding rows before closing ingress would let the next pull undo the work.
+  //   With `mergeRows` normalizing (TD-338), a re-pull of these keys either
+  //   skips (equal timestamps — the live case for all eight) or arrives folded.
+  //
+  // LWW — NO `updated_at` BUMP. `priority` is in both packages' sync column sets
+  // (`sync.ts` SYNC_TABLES, `cli/src/lib/brain-db.ts` BOOT_SYNC_PULL_TABLES), so
+  // a folded local row must NOT bump the LWW comparison column: that would
+  // manufacture a write no operator made and mutate a column the dashboard,
+  // `briefStatusSummary` and velocity ordering all read. The consequence is
+  // stated plainly rather than hidden: after this migration our stored value
+  // differs from the VPS's for the two rows the VPS still holds bare
+  // (igris-ai TD-277 / TD-278), at EQUAL timestamps, and neither side will ever
+  // push it to the other. That silent content divergence is the deliberate
+  // price of keeping LWW honest, and it already exists at scale — 339 rows
+  // diverge this way from the v22 brief_type fold. See the v22 comment above.
+  //
+  // `P4-Trivial` IS DELIBERATELY NOT TOUCHED. No fold table says
+  // `Trivial` = `Low`, so folding it would be INVENTING (the same reasoning
+  // TD-328 used to refuse folding `Spike`/`Investigation`), and adopting it as a
+  // fifth canonical priority would trigger the FR-247 dashboard-picker mirror
+  // sweep (MAINTAINING row 66) for one row of unknown provenance. It stays,
+  // and `scripts/validate_brief_priority_vocabulary.sh` names it on every
+  // pre-commit until a human retypes the brief through `igris_brief_update`.
+  //
+  // NO BACKUP SNAPSHOT — and this is a DECISION, not an oversight. v22 and v23
+  // take a verified `VACUUM INTO` snapshot because v22 is DESTRUCTIVE (the old
+  // brief_type spelling is unrecoverable from the row) and v23 is a
+  // multi-megabyte structural write. v24 is neither: it runs the SAME
+  // WHERE-guarded statements v18 already ran on this table, against SEVEN rows,
+  // and every fold is meaning-preserving by the declaration of PRIORITY_ALIASES
+  // (`P1` IS `P1-High`). There is nothing unrecoverable to snapshot.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 24 is recorded. All values are fixed literals (§14 — no
+  // interpolation).
+  //
+  // Gate behind v23's actual completion (re-read `schema_version`, L-209) so
+  // this DATA-only migration — which has NO vec and NO FTS dependency — applies
+  // even on a machine where an earlier structural step stopped the chain. The
+  // db-migration-v24.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV23Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV23Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: `brief_status` must exist. A DB without it is a partial
+  // / fixture schema, not a brain — recording v24 against it would falsely mark
+  // it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal precedent) so
+  // the next boot retries once the table is there.
+  const haveBriefStatusV24 =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV23Version >= 23 && postV23Version < 24 && haveBriefStatusV24) {
+    try {
+      db.transaction(() => {
+        // The v18 statement set, verbatim. P0/P3 are included for symmetry even
+        // though they match zero rows on the operator brain today — this is the
+        // same total function `normalizePriority` applies, not a hand-picked
+        // subset, so a bare `P0` minted tomorrow by an un-normalized writer is
+        // folded by the same code rather than needing a v25.
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P0-Critical'
+             WHERE priority IN ('P0', 'P0 - Critical')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P1-High'
+             WHERE priority IN ('P1', 'P1 - High')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P2-Medium'
+             WHERE priority IN ('P2', 'P2 - Medium')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P3-Low'
+             WHERE priority IN ('P3', 'P3 - Low')`,
+        ).run();
+        // Unset family -> NULL. Narrower than v18's version on purpose: v18
+        // used `TRIM(COALESCE(priority,'')) = ''`, which also re-writes every
+        // already-NULL row (a no-op write that still reports `changes`). This
+        // form touches ONLY rows that are actually non-NULL and blank, so a
+        // re-run is genuinely zero-changes.
+        db.prepare(
+          `UPDATE brief_status SET priority = NULL
+             WHERE priority = 'Unset'
+                OR (priority IS NOT NULL AND TRIM(priority) = '')`,
+        ).run();
+
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (24)').run();
+      })();
+      console.error(
+        '[brain] Schema migrated to version 24 (TD-338 priority vocabulary re-fold)',
+      );
+    } catch (err) {
+      // Degrade, never throw: the whole brain must still boot. `schema_version`
+      // stays at 23 and the next boot retries.
+      console.error(
+        '[brain] v24 SKIPPED — priority re-fold failed ' +
+          `(${err instanceof Error ? err.message : String(err)}). ` +
+          'schema_version NOT advanced; the priority validator will keep ' +
+          'reporting the non-canonical rows until this succeeds.',
+      );
     }
   }
 }

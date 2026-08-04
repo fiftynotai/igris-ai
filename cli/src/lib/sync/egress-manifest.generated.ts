@@ -30,5 +30,6 @@ export const EGRESS_DISCLOSURE_LINES: readonly string[] = [
   "Remote sync egresses the following to your configured VPS (over HTTPS):",
   "  categories: project registry, learnings & errors, session, brief & task content, instance & host metadata, knowledge graph, reusable-asset catalog, schedules & runs, perception & subconscious",
   "  local filesystem paths are relativized to ~ before egress (projects.path, instances.project_path)",
+  "  on arrival, these columns are normalized to the canonical vocabulary (unknown values kept + reported): brief_status.brief_type, brief_status.priority, brief_status.phase",
   "  full manifest: docs/reference/sync-egress-manifest.md",
 ];
