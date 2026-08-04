@@ -24,6 +24,11 @@ import {
   normalizePhase,
   normalizePriority,
   normalizeBriefType,
+  CANONICAL_STATUSES,
+  STATUS_ALIASES,
+  isCanonicalStatus,
+  normalizeStatus,
+  nonCanonicalStatusNote,
 } from '../brief-normalize.js';
 
 describe('normalizePhase (TD-238)', () => {
@@ -345,5 +350,190 @@ describe('BRIEF_TYPE_COMPOUND_FOLDS — the D4 gated fold table', () => {
 
   it('does NOT contain `bug/feature` — it has no head type (D4)', () => {
     expect(BRIEF_TYPE_COMPOUND_FOLDS).not.toHaveProperty('bug/feature');
+  });
+});
+
+// ===========================================================================
+// TD-333 — the `status` vocabulary
+// ===========================================================================
+
+describe('normalizeStatus (TD-333)', () => {
+  // T1 — THE AC-3 PROOF. Every row here is red against the pre-TD-333 module,
+  // which exports no `normalizeStatus` at all (the import does not resolve).
+  const cases: Array<[string | null | undefined, string | null]> = [
+    // the three folds — the entire fold table, one row each
+    ['Completed', 'Done'],
+    ['Complete', 'Done'],
+    ['InProgress', 'In Progress'],
+    // case + padding variants of a canonical member
+    ['in progress', 'In Progress'],
+    ['IN PROGRESS', 'In Progress'],
+    ['  Done  ', 'Done'],
+    ['done', 'Done'],
+    ['ARCHIVED', 'Archived'],
+    // case + padding variants of an ALIAS key
+    ['  completed ', 'Done'],
+    ['inprogress', 'In Progress'],
+    ['IN-PROGRESS', 'IN-PROGRESS'], // notation the SQL gates fold; vocabulary does NOT
+    // canonical → canonical (idempotent fixed points)
+    ['Done', 'Done'],
+    ['In Progress', 'In Progress'],
+    ['Ready', 'Ready'],
+    // unknown → passthrough untouched (read-widen; the fold never invents)
+    ['Cancelled', 'Cancelled'],
+    ['Superseded', 'Superseded'],
+    ['Deferred', 'Deferred'],
+    ['Closed', 'Closed'],
+    ['WIP', 'WIP'],
+    // null policy — the field was not supplied
+    [null, null],
+    [undefined, null],
+  ];
+
+  it.each(cases)('normalizeStatus(%j) === %j', (input, expected) => {
+    expect(normalizeStatus(input)).toBe(expected);
+  });
+
+  it('does NOT map the empty string to NULL — `status` is TEXT NOT NULL', () => {
+    // The deliberate asymmetry with the three sibling normalizers. priority /
+    // phase / brief_type are NULLABLE columns where NULL is a legitimate
+    // *unset*, so they fold '' → null. `brief_status.status` is NOT NULL, so
+    // the same fold would turn a meaningless-but-tolerated write into a
+    // constraint violation at the write boundary and a SILENTLY DROPPED ROW at
+    // sync ingress. Passthrough keeps the module's never-hard-reject posture.
+    expect(normalizeStatus('')).toBe('');
+    expect(normalizeStatus('   ')).toBe('   ');
+    // ...and the echo still names it, because '' is an offender, not an unset.
+    expect(isCanonicalStatus('')).toBe(false);
+    expect(nonCanonicalStatusNote('')).toContain('not a canonical status');
+    // Contrast, pinned so a future editor sees the asymmetry is intentional:
+    expect(normalizePriority('')).toBeNull();
+    expect(normalizePhase('')).toBeNull();
+    expect(normalizeBriefType('')).toBeNull();
+  });
+
+  // T2 — idempotence + closure over the whole table.
+  it('is idempotent for every canonical status', () => {
+    for (const s of CANONICAL_STATUSES) {
+      expect(normalizeStatus(s)).toBe(s);
+      expect(normalizeStatus(normalizeStatus(s))).toBe(s);
+    }
+  });
+
+  it('f(f(x)) === f(x) for every alias key and every alias target', () => {
+    const corpus = [...Object.keys(STATUS_ALIASES), ...Object.values(STATUS_ALIASES)];
+    for (const input of corpus) {
+      const once = normalizeStatus(input);
+      expect(normalizeStatus(once), `f(f(${input}))`).toBe(once);
+    }
+  });
+
+  it('every alias TARGET is itself canonical', () => {
+    for (const [alias, target] of Object.entries(STATUS_ALIASES)) {
+      expect(isCanonicalStatus(target), `${alias} → ${target}`).toBe(true);
+    }
+  });
+
+  it('alias KEYS are lowercase, trimmed, and never a canonical spelling', () => {
+    for (const key of Object.keys(STATUS_ALIASES)) {
+      expect(key).toBe(key.trim().toLowerCase());
+      // A key that is already a case-variant of a canonical member would be a
+      // no-op row pretending to be a fold.
+      expect(
+        CANONICAL_STATUSES.some((s) => s.toLowerCase() === key),
+        `${key} is already canonical`,
+      ).toBe(false);
+    }
+  });
+});
+
+describe('STATUS_ALIASES — the TD-311 exclusion pins (T3)', () => {
+  // Every fold below IS a state edit. TD-311 forbids resolving a brief-state
+  // contradiction by editing brief data, and these tests are what make that
+  // rule mechanical: a well-meaning future addition goes RED here instead of
+  // silently retyping live briefs.
+  const forbiddenKeys = [
+    'cancelled', // → Archived would move "we decided not to" to "we finished it"
+    'canceled',
+    'superseded', // → Done would claim work happened that another brief carries
+    'deferred', // → Blocked confuses postponed with externally prevented
+    'draft', // → Ready advances the state machine
+    'blocked', // → In Progress advances the state machine
+    'closed', // no live rows AND no documented meaning; folding would invent
+  ];
+
+  it.each(forbiddenKeys)('has NO `%s` key — that fold would be a STATE EDIT', (key) => {
+    expect(STATUS_ALIASES).not.toHaveProperty(key);
+  });
+
+  it('leaves the three MISSING STATES byte-identical', () => {
+    for (const v of ['Cancelled', 'Superseded', 'Deferred']) {
+      expect(normalizeStatus(v)).toBe(v);
+      expect(isCanonicalStatus(v)).toBe(false);
+    }
+  });
+
+  it('leaves the welded-payload and SENTENCE statuses byte-identical', () => {
+    // `Done(Resolved…)` carries a commit sha with no other copy — folding it to
+    // `Done` is a DATA edit that destroys it. The two `Split (…)` rows are a
+    // parent's lineage crammed into the state field, and `Done`/`Archived`/
+    // `Superseded` are all defensible readings the operator chose none of.
+    const untouchable = [
+      'Done(Resolvedbydec8d1f)',
+      'Split (see FR-061, FR-062, FR-063)',
+      'Split (see FR-161, FR-162, FR-163, FR-164, FR-165, FR-166, FR-167)',
+    ];
+    for (const v of untouchable) {
+      expect(normalizeStatus(v)).toBe(v);
+      expect(isCanonicalStatus(v)).toBe(false);
+      expect(nonCanonicalStatusNote(v)).toContain('not a canonical status');
+    }
+  });
+
+  it('the fold table is EXACTLY the three argued entries', () => {
+    // A whole-table equality, not a spot check: an added row fails here even if
+    // its key is not on the forbidden list above.
+    expect(STATUS_ALIASES).toEqual({
+      completed: 'Done',
+      complete: 'Done',
+      inprogress: 'In Progress',
+    });
+  });
+});
+
+describe('CANONICAL_STATUSES — the documented lifecycle, NOT widened by TD-333', () => {
+  it('is exactly the six documented statuses, in lifecycle order', () => {
+    // The ONE written source is docs/architecture/brief-state-source-of-truth.md
+    // and cli/dashboard/src/layers/board.ts mirrors it. TD-333 normalises the
+    // vocabulary; it does not change the state machine.
+    expect([...CANONICAL_STATUSES]).toEqual([
+      'Draft',
+      'Ready',
+      'In Progress',
+      'Blocked',
+      'Done',
+      'Archived',
+    ]);
+  });
+
+  it('isCanonicalStatus is case-insensitive and trim-tolerant (the echo pivots on it)', () => {
+    for (const s of CANONICAL_STATUSES) {
+      expect(isCanonicalStatus(s)).toBe(true);
+      expect(isCanonicalStatus(s.toLowerCase())).toBe(true);
+      expect(isCanonicalStatus(`  ${s.toUpperCase()}  `)).toBe(true);
+      expect(nonCanonicalStatusNote(s)).toBeNull();
+    }
+    expect(isCanonicalStatus(null)).toBe(false);
+    expect(isCanonicalStatus(undefined)).toBe(false);
+    expect(nonCanonicalStatusNote(null)).toBeNull();
+    expect(nonCanonicalStatusNote(undefined)).toBeNull();
+  });
+
+  it('the note names every canonical value so the reader can retype the brief', () => {
+    const note = nonCanonicalStatusNote('Cancelled');
+    expect(note).not.toBeNull();
+    for (const s of CANONICAL_STATUSES) {
+      expect(note as string).toContain(s);
+    }
   });
 });

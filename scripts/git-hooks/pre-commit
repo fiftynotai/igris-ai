@@ -70,6 +70,22 @@ set -e
 #       P4-Trivial is a standing WARN by design (folding it would invent a
 #       value; adopting it would trigger the FR-247 picker mirror sweep for
 #       one row), so it stays reported until a human retypes the brief.
+#   - validate_brief_status_vocabulary.sh  (TD-333)
+#       Triggers if: brain-mcp-server/src/tools/brief-normalize.ts OR
+#                    brain-mcp-server/src/db.ts OR
+#                    core/skills/release/SKILL.md OR
+#                    scripts/validate_brief_state_reconciliation.sh OR
+#                    MAINTAINING.md is staged.
+#       The status twin, and the one that matters most: brief_status.status is
+#       the CANONICAL BUILD-STATE SOURCE and had neither a normalizer nor an
+#       observer until TD-333, which is how 15 distinct values accumulated for
+#       six documented states. Reports the distribution and SPLITS the
+#       offenders into two classes — DOCUMENTED GAP (Cancelled / Superseded /
+#       Deferred, non-canonical by decision, with the follow-up brief named)
+#       and STRAY (everything else, which wants a human now) — so a permanent
+#       expected WARN cannot train the reader to ignore a real one. The
+#       release-gate and reconciler triggers are here because those two files
+#       are where a status predicate can regress. WARN only.
 #   - validate_error_fingerprint_loop.sh  (TD-240)
 #       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
 #                    staged.
@@ -198,10 +214,10 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
     # It folds NOTATION ONLY, never VOCABULARY: a different WORD ('Completed',
     # 'Done', 'Active', 'WIP') is deliberately NOT matched. This expression
     # catches a new SPELLING; catching a new WORD belongs to the canonical
-    # status vocabulary, which TD-333 WILL add as normalizeStatus /
+    # status vocabulary, shipped by TD-333 as normalizeStatus /
     # CANONICAL_STATUSES in brain-mcp-server/src/tools/brief-normalize.ts.
-    # NOT SHIPPED as of TD-340 — that file currently names them only as a
-    # forward reference, so do not import or grep for them yet.
+    # This file's own validate_brief_status_vocabulary.sh block (see the
+    # header inventory above) is the bash-side observer of that vocabulary.
     BRIEF_SQL="${ACTIVE_BRIEF//\'/\'\'}"
     PROJECT_SQL="${PROJECT//\'/\'\'}"
     ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
@@ -238,6 +254,7 @@ needs_contract_check=0
 needs_reconciliation_check=0
 needs_brief_type_check=0
 needs_brief_priority_check=0
+needs_brief_status_check=0
 needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -317,6 +334,19 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_priority_vocabulary.sh" ]; then
   if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/tools/sync\.ts|brain-mcp-server/src/db\.ts|cli/src/lib/brain-db\.ts|MAINTAINING\.md)$'; then
     needs_brief_priority_check=1
+  fi
+fi
+
+# TD-333: trigger the status vocabulary validator on the vocabulary surfaces,
+# PLUS the two files that carry a status PREDICATE — the release gate's Step 0
+# executor and the reconciliation validator. `status` is the canonical
+# build-state source, so a regression in either of those is a gate that stops
+# seeing rows, which is exactly the TD-340 failure mode. The validator scans the
+# whole DB regardless of which file changed, so the trigger only decides whether
+# to run at all.
+if [ -f "$REPO_ROOT/scripts/validate_brief_status_vocabulary.sh" ]; then
+  if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/db\.ts|core/skills/release/SKILL\.md|scripts/validate_brief_state_reconciliation\.sh|MAINTAINING\.md)$'; then
+    needs_brief_status_check=1
   fi
 fi
 
@@ -448,6 +478,19 @@ if [ "$needs_brief_priority_check" = "1" ]; then
   # one row. It stays reported until a human retypes the brief.
   if ! bash "$REPO_ROOT/scripts/validate_brief_priority_vocabulary.sh"; then
     echo "[pre-commit] priority vocabulary drift surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_brief_status_check" = "1" ]; then
+  echo "[pre-commit] Checking status vocabulary (TD-333)..."
+  # WARN-ONLY, for the same reason as the two blocks above: unknown values are
+  # KEPT and REPORTED, never rejected. Two of the report's classes are standing
+  # WARNs BY DESIGN — `Cancelled`/`Superseded`/`Deferred` await the lifecycle
+  # follow-up, and the two `Split (see ...)` rows are an operator decision the
+  # planner has no authority to make (TD-311). Blocking here would push someone
+  # to "resolve" them by editing brief state, which is the forbidden move.
+  if ! bash "$REPO_ROOT/scripts/validate_brief_status_vocabulary.sh"; then
+    echo "[pre-commit] status vocabulary drift surfaced above (WARN only — not blocking)."
   fi
 fi
 

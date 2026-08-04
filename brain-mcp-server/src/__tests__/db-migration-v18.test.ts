@@ -191,7 +191,7 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(status.phase).toBe('COMPLETE');
   });
 
-  it('records v18 and advances the chain past it (now to 24 — TD-338)', () => {
+  it('records v18 and advances the chain past it (now to 25 — TD-333)', () => {
     expect(getSchemaVersion(db)).toBe(17);
     migrateSchema(db);
     // v18 is recorded in the ladder...
@@ -202,7 +202,7 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     // ...and migrateSchema runs to completion (v19 registry→catalog, v20
     // worker-subsystem teardown, v21 rename, v22 brief_type fold and v23
     // briefs_fts follow v18).
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
   });
 
   it('is idempotent — a second migration changes zero rows', () => {
@@ -214,14 +214,14 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
     // migrateSchema runs to completion (v18 -> v24); terminal is 24 (TD-338).
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
 
     // Second run: no version bump, no row change.
     expect(() => migrateSchema(db)).not.toThrow();
     const after2 = db
       .prepare(`SELECT brief_id, brief_type, status, priority, phase FROM brief_status ORDER BY brief_id`)
       .all();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     expect(after2).toEqual(after1);
   });
 
@@ -249,7 +249,7 @@ describe('migration v18 — brief metadata normalization + C1 (TD-238)', () => {
     expect(row.brief_type).toBe('Technical Debt');
     expect(row.phase).toBe('COMPLETE');
     // v18 applied via the re-read gate; chain runs through v19..v23 to completion.
-    expect(getSchemaVersion(fresh)).toBe(24);
+    expect(getSchemaVersion(fresh)).toBe(25);
     fresh.close();
   });
 });

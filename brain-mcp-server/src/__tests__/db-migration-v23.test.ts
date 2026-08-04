@@ -133,7 +133,7 @@ describe('migration v23 — briefs_fts (FR-246)', () => {
     expect(getSchemaVersion(db)).toBe(22);
     migrateSchema(db);
     expect(db.prepare('SELECT 1 FROM schema_version WHERE version = 23').get()).toBeDefined();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
   });
 
   it('creates briefs_fts as a CONTENTLESS fts5 — the measured storage decision', () => {
@@ -345,7 +345,7 @@ describe('migration v23 — briefs_fts (FR-246)', () => {
     fs.rmSync(`${dbPath}.pre-v23.bak`);
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     expect(ftsHits(db, 'bisque')).toEqual([idOf(db, 'FR-001')]);
   });
 });
@@ -360,7 +360,7 @@ describe('migration v23 — :memory: DBs skip the snapshot (v19/v22 precedent)',
 
       migrateSchema(mem);
 
-      expect(getSchemaVersion(mem)).toBe(24);
+      expect(getSchemaVersion(mem)).toBe(25);
       expect(ftsHits(mem, 'bisque')).toEqual([idOf(mem, 'FR-001')]);
     } finally {
       mem.close();

@@ -40,6 +40,20 @@ import { migrateSchema } from '../db.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Is `v` RECORDED in the ladder? Distinct from the TERMINAL version, which
+ * moves every time a migration ships (TD-333 took it to 25). A test whose
+ * subject is v24 should assert v24 is RECORDED and let the terminal float, or
+ * it becomes one of the ~23 pins the next migration has to chase.
+ */
+function hasVersion(db: Database.Database, v: number): boolean {
+  return (
+    (db.prepare('SELECT COUNT(*) AS c FROM schema_version WHERE version = ?').get(v) as {
+      c: number;
+    }).c > 0
+  );
+}
+
 function getSchemaVersion(db: Database.Database): number {
   const row = db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as {
     v: number | null;
@@ -140,7 +154,7 @@ function seedLiveCensus(db: Database.Database): void {
 // ---------------------------------------------------------------------------
 
 describe('v24 — priority vocabulary re-fold (TD-338)', () => {
-  it('folds the seven bare P1/P2 rows and advances schema_version to 24', () => {
+  it('folds the seven bare P1/P2 rows and RECORDS v24 in the ladder', () => {
     const db = new Database(':memory:');
     buildSchemaAtV23(db);
     expect(getSchemaVersion(db)).toBe(23);
@@ -148,7 +162,10 @@ describe('v24 — priority vocabulary re-fold (TD-338)', () => {
 
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(24);
+    // v24 is this test's subject; the TERMINAL floats with whatever shipped
+    // last (25 since TD-333), so assert the recording, not the ceiling.
+    expect(hasVersion(db, 24)).toBe(true);
+    expect(getSchemaVersion(db)).toBeGreaterThanOrEqual(24);
     expect(priorityOf(db, 'BR-045')).toBe('P1-High');
     expect(priorityOf(db, 'BR-046')).toBe('P1-High');
     expect(priorityOf(db, 'BR-047')).toBe('P2-Medium');
@@ -281,7 +298,7 @@ describe('v24 — priority vocabulary re-fold (TD-338)', () => {
     db.close();
   });
 
-  it('a second migrateSchema() is a no-op and leaves the version at 24', () => {
+  it('a second migrateSchema() is a no-op and keeps v24 recorded', () => {
     const db = new Database(':memory:');
     buildSchemaAtV23(db);
     seedLiveCensus(db);
@@ -293,7 +310,7 @@ describe('v24 — priority vocabulary re-fold (TD-338)', () => {
 
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(hasVersion(db, 24)).toBe(true);
     expect(untouchedSnapshot(db)).toEqual(afterFirst);
     expect(
       db
@@ -325,7 +342,7 @@ describe('v24 — priority vocabulary re-fold (TD-338)', () => {
 
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(hasVersion(db, 24)).toBe(true);
     expect(priorityOf(db, 'BR-045')).toBe('P1-High');
     db.close();
   });

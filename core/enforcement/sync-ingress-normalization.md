@@ -3,14 +3,15 @@ obligation: "Every replication ingress must write through the same normalizers t
 mechanism: gate
 status: shipped
 lives_in: "brain-mcp-server/src/tools/sync.ts (mergeRows) + cli/src/lib/brain-db.ts (mergeRows)"
-summary: "TD-338 resting contract for replication ingress — a row arriving from a remote brain passes through the write-boundary normalizers before it is stored, in BOTH mergeRows copies. Fold-known / passthrough-unknown / report-both, with the LWW timestamp column deliberately excluded so a fold can never oscillate. The field map is single-sourced in brief-normalize.ts and GENERATED into the CLI mirror."
+summary: "TD-338 resting contract for replication ingress — a row arriving from a remote brain passes through the write-boundary normalizers before it is stored, in BOTH mergeRows copies. Fold-known / passthrough-unknown / report-both, with the LWW timestamp column deliberately excluded so a fold can never oscillate. The field map is single-sourced in brief-normalize.ts and GENERATED into the CLI mirror. TD-333 added brief_status.status as the fourth mapped column and corrected this doc's undercounted cost for a NEW normalizer id."
 ---
 
 # Replication ingress is a normalization boundary (TD-338)
 
 A brief's metadata vocabulary is defended at every MCP write boundary:
 `igris_brief_create` / `_sync` / `_update` all call `normalizePriority` /
-`normalizeBriefType` / `normalizePhase` before storing. **Replication did not.**
+`normalizeBriefType` / `normalizePhase` — and, since TD-333, `normalizeStatus` —
+before storing. **Replication did not.**
 
 `mergeRows` — the only row writer for inbound sync, in BOTH packages — copied
 every non-`mergeFields` column with `row[col] ?? null`. So a remote brain
@@ -96,6 +97,14 @@ as an exclusion, not an omission.
 append-strategy table (insert-only, no LWW update) with no observed drift, and
 `MAINTAINING.md` scopes the phase vocabulary contract to `brief_status`.
 
+**The `igris import` exclusion now also applies to `status` (TD-333)**, and it
+matters more there than for the other three: `status` is the canonical
+build-state source, so an imported bundle can reintroduce a spelling that the
+release gate, the phase guard and the reconciler each read. The belt for that is
+the reconciler's RETAINED SYNONYMS (`completed|complete` stay in its terminal
+arm after schema v25 empties them) and the vocabulary validator's cross-project
+scan — not a fold at the import writer.
+
 ## Adding a normalized field
 
 The field map is the SINGLE extension point:
@@ -105,36 +114,62 @@ brief-normalize.ts:
   SYNC_NORMALIZED_FIELDS = {
     brief_status: { brief_type: 'brief_type',
                     priority:   'priority',
-                    phase:      'phase' },
+                    phase:      'phase',
+                    status:     'status' },   // TD-333
   }
 ```
 
 **If the field REUSES an existing normalizer id** (`brief_type` / `phase` /
-`priority`):
+`priority` / `status`):
 
 1. Add the entry.
 2. Regenerate: `npm run gen:brief-normalize-mirror` (in `brain-mcp-server/`).
 3. Re-run both `mergeRows` test suites.
 
-**If the field needs a NEW normalizer id**, add three more things:
+That really is the whole cost. **A NEW normalizer id is a different shape, and
+this doc used to undercount it.**
 
-4. its `normalizeX` / `isCanonicalX` pair in `brief-normalize.ts`;
-5. its `SYNC_NORMALIZERS` row there;
-6. its body in `NORMALIZER_BODIES` (`brief-normalize-mirror.ts`).
+### A NEW normalizer id — the MEASURED cost (corrected by TD-333)
 
-Nothing else. The mirror's `SyncNormalizerId` union and its dispatch table are
-**derived** from the map, so they widen on their own, and a mapped id with no
-authored body **throws at generation time** naming exactly what to add — rather
-than emitting a module that does not compile.
+Three of these are in `brief-normalize.ts`:
 
-> **TD-333 (fold `status`) is the second shape**, not the first: `status` reuses
-> no existing id, so it is the map entry plus a `normalizeStatus` /
-> `isCanonicalStatus` pair plus its mirror body. What it does NOT touch: either
-> `mergeRows`, the generator, the reporting shape, or the derived union and
-> dispatch. *(An earlier draft of this doc said "one line" two paragraphs after
+4. its `normalizeX` / `isCanonicalX` pair;
+5. its `SYNC_NORMALIZERS` row;
+6. its canonical set and/or fold table, exported.
+
+**And six are in `brief-normalize-mirror.ts`** — this is the half the old step
+list omitted. The mirror's `SyncNormalizerId` union, its dispatch table and its
+emission order ARE derived from the map and do move on their own. **Its DATA
+layer is not:** `renderCliModule` hand-lists every canonical set and every fold
+map by name, and a function body that references a table the renderer never
+emitted produces a mirror that does not compile.
+
+7. the body in `NORMALIZER_BODIES`;
+8. the imports of the canonical set / fold map / normalizer / predicate;
+9. a `renderStringArray` call for the canonical set, a `renderRecord` call for
+   the fold map, and any derived lookup const the body reads
+   (`STATUS_CANONICAL`, the twin of `BRIEF_TYPE_CANONICAL`);
+10. one more `out.push` in `buildFixtures()`;
+11. one more `out.push` in `buildPredicateFixtures()`;
+12. seeds in `fixtureInputs()` plus cases in `FIXTURE_EDGE_CASES` and
+    `FIXTURE_ROWS` — otherwise the new id gets a corpus made entirely of the
+    OTHER fields' edge cases, every row a vacuous passthrough.
+
+What a new id still does NOT touch: either `mergeRows` copy, the generator
+script, the reporting shape, or the derived union and dispatch.
+
+> **The generator guard covers step 7 only.** `assertNormalizerBodies` throws at
+> generation time when a mapped id has no authored body, naming exactly what to
+> add — TD-333 hit it on purpose and it worked. Steps 8-12 surface later and
+> less kindly: 8-9 as a CLI typecheck error, 10-12 as a fixture corpus that
+> replays green while proving nothing.
+>
+> *Provenance, recorded because both halves of the contradiction are still
+> tempting to write: an early draft said "one line" two paragraphs after
 > correctly hedging "and, if it is a new normalizer, its `SYNC_NORMALIZERS`
-> pair". Recorded because the two halves of that contradiction are still both
-> tempting to write.)*
+> pair". The hedge was then made true for the LOGIC layer by deriving the union
+> and the dispatch — and the claim quietly generalised to the DATA layer, where
+> it was never true. TD-333 paid the difference and corrected it here.*
 
 **Never hand-copy the vocabulary into the CLI.** `cli/src/lib/brief-normalize.generated.ts`
 is written by `brain-mcp-server/scripts/gen-brief-normalize-mirror.ts` and
@@ -151,9 +186,18 @@ CLI-side test replays them:
 
 | Table | Covers |
 |---|---|
-| `NORMALIZE_FIXTURES` | the three leaf normalizers |
-| `PREDICATE_FIXTURES` | the three `isCanonical*` predicates (they decide what gets REPORTED) |
+| `NORMALIZE_FIXTURES` | every leaf normalizer (one row per id per input; the id set is DERIVED, so the count moves with the map) |
+| `PREDICATE_FIXTURES` | every `isCanonical*` predicate (they decide what gets REPORTED) |
 | `SYNC_ROW_FIXTURES` | `normalizeSyncRow` — the function both `mergeRows` copies actually call |
+
+> **The replay DISPATCH is not derived, and that is a live hazard.** Both the
+> CLI-side replay and the brain-side fixture-provenance check resolve
+> `f.normalizer` to a function. Until TD-333 both did it with a hand-written
+> chain whose final `else` was `phase`/`normalizePhase` — so the 99 new `status`
+> fixtures would have been replayed through the PHASE normalizer, some agreeing
+> by accident. Both are now maps with an explicit completeness assertion against
+> `normalizerIdsInUse(SYNC_NORMALIZED_FIELDS)`. **Do not reintroduce a fallback
+> arm.**
 
 Together these cover **every authored function in the emitted module**, so logic
 drift fails on the CLI side with zero cross-imports. `SYNC_ROW_FIXTURES` carries
@@ -173,6 +217,7 @@ true as long as that holds.)*
 | Ingress report | A value REWRITTEN or PASSED THROUGH on arrival | pull summary, `/sync/push` response, `boot-sync` digest | Informs; silent when clean |
 | `brief_type` validator | Accumulation across the whole corpus | `scripts/validate_brief_type_vocabulary.sh` | WARN only |
 | `priority` validator | Accumulation across the whole corpus | `scripts/validate_brief_priority_vocabulary.sh` | WARN only |
+| `status` validator (TD-333) | Accumulation across the whole corpus, SPLIT into a documented-gap class and a stray class | `scripts/validate_brief_status_vocabulary.sh` | WARN only |
 
 ## What TD-338 did NOT do — the corrected provenance
 

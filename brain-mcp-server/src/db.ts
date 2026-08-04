@@ -24,6 +24,9 @@ import {
   BRIEF_TYPE_ALIASES,
   BRIEF_TYPE_COMPOUND_FOLDS,
   BRIEF_ID_PREFIX_TYPES,
+  // TD-333 (v25): the status fold table + canonical set, same discipline.
+  CANONICAL_STATUSES,
+  STATUS_ALIASES,
 } from './tools/brief-normalize.js';
 
 /**
@@ -1977,6 +1980,236 @@ function migrateSchema(db: Database.Database): void {
           'schema_version NOT advanced; the priority validator will keep ' +
           'reporting the non-canonical rows until this succeeds.',
       );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // v25: status vocabulary fold (TD-333).
+  // -------------------------------------------------------------------------
+  //
+  // WHAT IT TOUCHES: `brief_status.status`. NOTHING ELSE. Not brief_type, not
+  // priority, not phase, not title, not content, not claimed_by — and
+  // explicitly NOT `updated_at` (see LWW below). The same column discipline
+  // v18 / v22 / v24 relied on (#230).
+  //
+  // WHAT IT FOLDS — exactly the three entries in STATUS_ALIASES, and the
+  // canonical case-fold. Measured read-only on the operator brain 2026-08-04,
+  // all projects: `Completed` 24 -> `Done`, `Complete` 1 -> `Done`,
+  // `InProgress` 4 -> `In Progress`. 29 rows. Total row count unchanged; the
+  // (project, brief_id) set unchanged; no row created or deleted.
+  //
+  // ===== TD-311, HEAD ON. READ THIS BEFORE CHANGING THE FOLD TABLE. =====
+  //
+  //   TD-311: a brief-state contradiction must NEVER be resolved by editing
+  //   brief data. `status` IS brief state, so this migration does not inherit
+  //   TD-328's "a type fold is not a state edit" carve-out and has to make the
+  //   argument itself.
+  //
+  //   THE ARGUMENT: a brief's STATE is what the operator recorded; a
+  //   predicate's VERDICT is what a consumer computes. The operator who typed
+  //   `Completed` recorded *"this work is finished"*, and `Done` is the
+  //   documented member that means *"this work is finished"*. This migration
+  //   changes SPELLING, not which state any brief is IN. Corroboration from
+  //   the codebase rather than from taste: `tools/projects.ts` already counts
+  //   `status IN ('Done','Completed','Closed')` as ONE terminal bucket.
+  //
+  //   IT RESOLVES ZERO CONTRADICTIONS. It does the OPPOSITE of the forbidden
+  //   move: it removes a SPELLING-BASED EXEMPTION that was HIDING them.
+  //   `scripts/validate_brief_state_reconciliation.sh` evaluated `Done` and
+  //   `Archived` and let everything else fall to a default arm commented
+  //   "other in-flight states" — which was FALSE for 26 terminal rows. Those
+  //   rows were exempt from the Done<->COMPLETE<->commit invariant for their
+  //   entire lifetime.
+  //
+  //   SO EXPECT THE RECONCILIATION COUNTS TO RISE, and by a pre-declared
+  //   amount. Measured before this migration ran: 24 rows are terminal-by-
+  //   meaning, spelled `Completed`/`Complete`, and carry a phase that is not
+  //   `COMPLETE` — they become C1 the moment the spelling is uniform (23 in
+  //   `lifeOS`, 1 in `fifty-agent-sdk`; C2 for those two projects is
+  //   git-dependent and their repos are not on the machine this was measured
+  //   on). C3 must not move AT ALL: no fold source or target touches `Ready`
+  //   or `Draft`, and that is the cheapest tripwire here — if C3 moves,
+  //   something folded that must not have.
+  //
+  //   A brief that "goes red" after v25 was red before v25. The store's answer
+  //   to "is this built?" is unchanged; only the auditor's ability to check it
+  //   changed. The surfaced rows are then handed to a HUMAN, which is exactly
+  //   what TD-311 demands. DO NOT resolve them here.
+  //
+  // WHAT IS DELIBERATELY *NOT* FOLDED — each absence is a decision, not a gap:
+  //   - `Cancelled` (23) / `Superseded` (18) / `Deferred` (7). MISSING STATES,
+  //     not spellings: each names an outcome the documented six cannot
+  //     express. Folding `Cancelled` to `Archived` moves "we decided not to do
+  //     this" to "we finished it and shelved it" — a STATE EDIT. Promoting
+  //     them changes the documented lifecycle and sweeps board.ts, the bash
+  //     validator and the reconciler's terminal-set reasoning, which is
+  //     "changing the state machine itself" and out of TD-333's scope. They
+  //     stay, and `scripts/validate_brief_status_vocabulary.sh` names them in
+  //     its DOCUMENTED GAP class on every run until the follow-up brief lands.
+  //   - `Done(Resolvedbydec8d1f)` (1). Terminal, with a commit sha WELDED ON.
+  //     The sha is operator data with no other copy, so a mechanical fold to
+  //     `Done` would DESTROY it and break the "loses nothing recoverable"
+  //     guarantee TD-328 established. Hand-migrated instead: the sha moves
+  //     into the brief's own content as a `## Resolution` line (its correct
+  //     home — it is closing-commit evidence, which is what reconciliation
+  //     class C2 checks) and only then is the row retyped by hand. Two writes,
+  //     one of which is a genuine operator decision.
+  //   - the two `Split (see FR-...)` rows. A parent brief's SPLIT LINEAGE
+  //     crammed into the state field. `Done`, `Archived` and `Superseded` are
+  //     ALL defensible readings and the operator chose none of them — picking
+  //     one here would be this migration deciding a brief's state. The lineage
+  //     belongs in the edge graph as `derived_from` edges, which is ADDITIVE
+  //     and destroys nothing; the status is left byte-for-byte alone.
+  //   - the empty string. `status` is TEXT NOT NULL and has no unset member,
+  //     so there is nothing to fold it to; `normalizeStatus` passes it through
+  //     for the same reason. Zero such rows exist.
+  //
+  // LWW — NO `updated_at` BUMP. `status` is in both packages' sync column sets
+  // (`sync.ts` SYNC_TABLES, `cli/src/lib/brain-db.ts` BOOT_SYNC_PULL_TABLES),
+  // so a folded local row must NOT bump the LWW comparison column: that would
+  // manufacture a write no operator made. The consequence, stated plainly
+  // rather than hidden: after this migration our stored value differs from an
+  // un-migrated remote's for these rows, at EQUAL timestamps, and neither side
+  // will push it to the other. That silent content divergence is the
+  // deliberate price of keeping LWW honest and it already exists at scale from
+  // the v22 and v24 folds. Asserted by a test, not trusted to this comment.
+  //
+  // BACKUP — v22's shape, and for v22's reason: **v25 IS DESTRUCTIVE.** The old
+  // spelling is unrecoverable from the row itself once folded (unlike v24,
+  // whose folds re-ran statements v18 had already run). So the snapshot is
+  // taken OUTSIDE the transaction (VACUUM cannot run inside one) and then
+  // PROVEN: `PRAGMA integrity_check` must return 'ok' AND the backup's
+  // `brief_status` row count must equal the source's. On any failure or
+  // unverifiability v25 logs and ABORTS, leaving the DB at v24; the next boot
+  // retries. Skipped entirely for `:memory:` / `file::memory:` DBs.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 25 is recorded. All values are BOUND PARAMS read from the
+  // single-source fold table (§14 — no interpolation, and no hand-copied list
+  // that could drift from `normalizeStatus`).
+  //
+  // Gate behind v24's actual completion (re-read `schema_version`, L-209) so
+  // this DATA-only migration — which has NO vec and NO FTS dependency — applies
+  // even on a machine where an earlier structural step stopped the chain. The
+  // db-migration-v25.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV24Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV24Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: `brief_status` must exist. A DB without it is a partial
+  // / fixture schema, not a brain — recording v25 against it would falsely mark
+  // it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal precedent) so
+  // the next boot retries once the table is there.
+  const haveBriefStatusV25 =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV24Version >= 24 && postV24Version < 25 && haveBriefStatusV25) {
+    const dbFileV25 = db.name;
+    const isFileDbV25 =
+      dbFileV25 !== '' && dbFileV25 !== ':memory:' && !dbFileV25.startsWith('file::memory:');
+
+    // --- Backup + PROOF (abort on failure — v22's rule, v22's reason) -------
+    let v25BackupVerified = true;
+    let v25AbortReason = '';
+    if (isFileDbV25) {
+      const backupPath = `${dbFileV25}.pre-v25.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v25 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            v25BackupVerified = false;
+            v25AbortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            v25BackupVerified = false;
+            v25AbortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        v25BackupVerified = false;
+        v25AbortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!v25BackupVerified) {
+      // ABORT at v24. v25 is destructive; without a proven-restorable snapshot
+      // we do not fold. The next boot retries (the stale/partial .bak is left
+      // in place on purpose so an operator can inspect it).
+      console.error(
+        `[brain] v25 ABORTED — backup snapshot unusable (${v25AbortReason}). ` +
+          'DB left at schema version 24; the status fold is destructive and will ' +
+          'not run without a verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      try {
+        db.transaction(() => {
+          // (A) Unconditional alias folds — driven by the SINGLE-SOURCE table,
+          // bound params. Reading STATUS_ALIASES rather than hand-listing the
+          // three pairs is what makes this migration and `normalizeStatus`
+          // incapable of disagreeing.
+          const foldAlias = db.prepare(
+            `UPDATE brief_status SET status = ?
+               WHERE status IS NOT NULL AND LOWER(TRIM(status)) = ?`,
+          );
+          for (const [alias, canonical] of Object.entries(STATUS_ALIASES)) {
+            foldAlias.run(canonical, alias);
+          }
+          // (A2) Canonical case-fold — 'done' / '  DONE ' -> 'Done'. The
+          // `status <> ?` guard keeps already-canonical rows untouched so the
+          // statement is a genuine no-op on a second run (v22's (A2), verbatim).
+          const foldCase = db.prepare(
+            `UPDATE brief_status SET status = ?
+               WHERE status IS NOT NULL
+                 AND LOWER(TRIM(status)) = ?
+                 AND status <> ?`,
+          );
+          for (const canonical of CANONICAL_STATUSES) {
+            foldCase.run(canonical, canonical.toLowerCase(), canonical);
+          }
+
+          db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (25)').run();
+        })();
+        console.error(
+          '[brain] Schema migrated to version 25 (TD-333 status vocabulary fold)',
+        );
+      } catch (err) {
+        // Degrade, never throw: the whole brain must still boot. `schema_version`
+        // stays at 24 and the next boot retries.
+        console.error(
+          '[brain] v25 SKIPPED — status fold failed ' +
+            `(${err instanceof Error ? err.message : String(err)}). ` +
+            'schema_version NOT advanced; the status validator will keep ' +
+            'reporting the non-canonical rows until this succeeds.',
+        );
+      }
     }
   }
 }

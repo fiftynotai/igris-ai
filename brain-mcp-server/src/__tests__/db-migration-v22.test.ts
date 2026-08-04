@@ -273,7 +273,7 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
     // ...and the chain runs to completion in the same call. This number moves
     // with every migration, by design: it is the assertion that notices when a
     // new migration silently fails to run.
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
   });
 
   it('folds every unconditional alias to its canonical type', () => {
@@ -416,7 +416,7 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
       .all();
 
     expect(afterSecond).toEqual(afterFirst);
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
   });
 
   it('is idempotent even with the version gate removed (the UPDATEs self-guard)', () => {
@@ -493,7 +493,7 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
     fs.rmSync(`${dbPath}.pre-v22.bak`);
     migrateSchema(db);
 
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     expect(typeOf(db, 'TD-003')).toBe('Technical Debt');
   });
 
@@ -562,7 +562,7 @@ describe('migration v22 — :memory: DBs skip the snapshot (v19 precedent)', () 
       expect(typeOf(mem, 'TD-001')).toBe('Technical Debt');
       // v23 skips its snapshot on `:memory:` for the same reason and by the
       // same branch, so the chain still reaches its terminal here.
-      expect(getSchemaVersion(mem)).toBe(24);
+      expect(getSchemaVersion(mem)).toBe(25);
     } finally {
       mem.close();
     }

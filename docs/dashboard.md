@@ -304,7 +304,7 @@ and `#/graph`. The honest trade is stated in the UI: the board is less live than
 the list.
 
 **The board is READ-ONLY, and there is no drag-to-change-status — ever.**
-`brief_status.status` is the canonical build-state source (MAINTAINING row 94)
+`brief_status.status` is the canonical build-state source (MAINTAINING row 95)
 and TD-311 forbids resolving a state contradiction by editing brief data, so a
 drag affordance would be a write path into the column the whole build state is
 read from, arriving as a convenience. Because "this page issues no writes" is

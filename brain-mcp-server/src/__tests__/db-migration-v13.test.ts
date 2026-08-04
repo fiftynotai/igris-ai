@@ -177,7 +177,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // applied — 23 since FR-246 added `briefs_fts`. (The number in this
       // comment previously said 21 while the assertion said 22; corrected here
       // rather than made one version staler.)
-      expect(getSchemaVersion(db)).toBe(24);
+      expect(getSchemaVersion(db)).toBe(25);
     },
   );
 
@@ -207,7 +207,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // applied — 23 since FR-246 added `briefs_fts`. (The number in this
       // comment previously said 21 while the assertion said 22; corrected here
       // rather than made one version staler.)
-      expect(getSchemaVersion(db)).toBe(24);
+      expect(getSchemaVersion(db)).toBe(25);
 
       const learningsCount = db
         .prepare('SELECT COUNT(*) AS n FROM learnings_vec')
@@ -267,7 +267,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // applied — 23 since FR-246 added `briefs_fts`. (The number in this
       // comment previously said 21 while the assertion said 22; corrected here
       // rather than made one version staler.)
-      expect(getSchemaVersion(db)).toBe(24);
+      expect(getSchemaVersion(db)).toBe(25);
       expect(tableExists(db, 'learnings_vec')).toBe(true);
       expect(tableExists(db, 'errors_vec')).toBe(true);
       expect(tableExists(db, 'briefs_vec')).toBe(true);
@@ -310,7 +310,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // applied — 23 since FR-246 added `briefs_fts`. (The number in this
       // comment previously said 21 while the assertion said 22; corrected here
       // rather than made one version staler.)
-      expect(getSchemaVersion(db)).toBe(24);
+      expect(getSchemaVersion(db)).toBe(25);
     },
   );
 
@@ -333,7 +333,7 @@ describe('migration v13 — vec0 backfill (TD-050)', () => {
       // applied — 23 since FR-246 added `briefs_fts`. (The number in this
       // comment previously said 21 while the assertion said 22; corrected here
       // rather than made one version staler.)
-      expect(getSchemaVersion(db)).toBe(24);
+      expect(getSchemaVersion(db)).toBe(25);
 
       // 3 rows seeded, row 0 had a malformed (100-byte) embedding → skipped.
       // Other 2 must still be backfilled.

@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   CANONICAL_PRIORITIES,
+  CANONICAL_STATUSES,
   NORMALIZE_FIXTURES,
   PREDICATE_FIXTURES,
   SYNC_NORMALIZED_FIELDS,
@@ -30,23 +31,46 @@ import {
   isCanonicalBriefType,
   isCanonicalPhase,
   isCanonicalPriority,
+  isCanonicalStatus,
   normalizeBriefType,
   normalizePhase,
   normalizePriority,
+  normalizeStatus,
   normalizeSyncRow,
 } from "../lib/brief-normalize.generated.js";
 
-function applyByName(normalizer: string, input: string): string | null {
-  switch (normalizer) {
-    case "priority":
-      return normalizePriority(input);
-    case "brief_type":
-      return normalizeBriefType(input);
-    case "phase":
-      return normalizePhase(input);
-    default:
-      throw new Error(`unknown normalizer id: ${normalizer}`);
+/**
+ * ONE dispatch table for both replays.
+ *
+ * This used to be two hand-written dispatches — a `switch` with a
+ * `default: throw`, and a nested ternary whose final `else` was
+ * `isCanonicalPhase`. TD-333 added a FOURTH normalizer id, and the ternary
+ * would have routed every `status` fixture through the PHASE predicate: 99
+ * fixtures replayed against the wrong function, some of them agreeing by
+ * accident. A single map with an explicit missing-id assertion below makes a
+ * new id fail LOUDLY at the dispatch instead of silently mis-routing.
+ */
+const NORMALIZERS: Record<
+  string,
+  {
+    normalize: (v: string | null | undefined) => string | null;
+    isCanonical: (v: string | null | undefined) => boolean;
   }
+> = {
+  priority: { normalize: normalizePriority, isCanonical: isCanonicalPriority },
+  brief_type: { normalize: normalizeBriefType, isCanonical: isCanonicalBriefType },
+  phase: { normalize: normalizePhase, isCanonical: isCanonicalPhase },
+  status: { normalize: normalizeStatus, isCanonical: isCanonicalStatus },
+};
+
+function entryFor(normalizer: string): (typeof NORMALIZERS)[string] {
+  const entry = NORMALIZERS[normalizer];
+  if (!entry) throw new Error(`unknown normalizer id: ${normalizer}`);
+  return entry;
+}
+
+function applyByName(normalizer: string, input: string): string | null {
+  return entryFor(normalizer).normalize(input);
 }
 
 describe("TD-338 — the CLI mirror reproduces the BRAIN's normalizer behaviour", () => {
@@ -121,17 +145,27 @@ describe("TD-338 — the mirrored isCanonical* predicates", () => {
 
   it("replays every predicate fixture through the CLI copy", () => {
     for (const f of PREDICATE_FIXTURES) {
-      const actual =
-        f.normalizer === "priority"
-          ? isCanonicalPriority(f.input)
-          : f.normalizer === "brief_type"
-            ? isCanonicalBriefType(f.input)
-            : isCanonicalPhase(f.input);
       expect(
-        actual,
+        entryFor(f.normalizer).isCanonical(f.input),
         `isCanonical(${f.normalizer}, ${JSON.stringify(f.input)}) diverged from the brain`,
       ).toBe(f.expected);
     }
+  });
+});
+
+describe("the replay dispatch covers every normalizer id in the corpus", () => {
+  // THE ARM CHECK for the two replays above. If a fifth normalizer id ships
+  // and this file is not updated, the replays would either throw (fine) or —
+  // as the pre-TD-333 ternary did — silently route the new id's fixtures
+  // through the wrong function. This asserts the dispatch is complete.
+  it("names every id the fixture corpora and the field map use", () => {
+    const idsInCorpus = new Set<string>([
+      ...NORMALIZE_FIXTURES.map((f) => f.normalizer as string),
+      ...PREDICATE_FIXTURES.map((f) => f.normalizer as string),
+      ...Object.values(SYNC_NORMALIZED_FIELDS).flatMap((t) => Object.values(t) as string[]),
+    ]);
+    expect([...idsInCorpus].sort()).toEqual(["brief_type", "phase", "priority", "status"]);
+    for (const id of idsInCorpus) expect(NORMALIZERS, id).toHaveProperty(id);
   });
 });
 
@@ -192,7 +226,54 @@ describe("TD-338 — the mirrored normalizeSyncRow", () => {
       brief_type: "brief_type",
       priority: "priority",
       phase: "phase",
+      // TD-333 — `status`, the canonical build-state source, joins the map.
+      status: "status",
     });
     expect(Object.keys(SYNC_NORMALIZED_FIELDS.brief_status)).not.toContain("updated_at");
+  });
+});
+
+describe("TD-333 — the mirrored status normalizer", () => {
+  it("folds the exact spellings the live corpus holds", () => {
+    expect(normalizeStatus("Completed")).toBe("Done");
+    expect(normalizeStatus("Complete")).toBe("Done");
+    expect(normalizeStatus("InProgress")).toBe("In Progress");
+    expect(normalizeStatus("in progress")).toBe("In Progress");
+    expect(normalizeStatus("  Done  ")).toBe("Done");
+  });
+
+  it("never invents a state — the TD-311 exclusion list, mirrored", () => {
+    for (const v of [
+      "Cancelled",
+      "Superseded",
+      "Deferred",
+      "Done(Resolvedbydec8d1f)",
+      "Split (see FR-061, FR-062, FR-063)",
+    ]) {
+      expect(normalizeStatus(v)).toBe(v);
+      expect(isCanonicalStatus(v)).toBe(false);
+    }
+  });
+
+  it("does NOT fold '' to NULL — `status` is TEXT NOT NULL (the asymmetry)", () => {
+    expect(normalizeStatus("")).toBe("");
+    expect(normalizeStatus("   ")).toBe("   ");
+    expect(isCanonicalStatus("")).toBe(false);
+    // ...while the three NULLABLE siblings still do.
+    expect(normalizePriority("")).toBeNull();
+    expect(normalizePhase("")).toBeNull();
+    expect(normalizeBriefType("")).toBeNull();
+  });
+
+  it("mirrors the documented six, not a widened set", () => {
+    expect([...CANONICAL_STATUSES]).toEqual([
+      "Draft",
+      "Ready",
+      "In Progress",
+      "Blocked",
+      "Done",
+      "Archived",
+    ]);
+    for (const s of CANONICAL_STATUSES) expect(isCanonicalStatus(s)).toBe(true);
   });
 });

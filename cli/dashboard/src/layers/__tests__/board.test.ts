@@ -112,7 +112,7 @@ describe("B2/B3 · the vocabulary fills in what the data is silent about", () =>
 
   it("the vocabulary is the documented lifecycle, in lifecycle order", () => {
     // Mirrored from `docs/architecture/brief-state-source-of-truth.md:13`.
-    // MAINTAINING row 94 sweeps this constant when that vocabulary changes.
+    // MAINTAINING row 95 sweeps this constant when that vocabulary changes.
     expect([...KNOWN_BRIEF_STATUSES]).toEqual([
       "Draft",
       "Ready",

@@ -33,6 +33,7 @@ import {
   normalizeBriefType,
   normalizePhase,
   normalizePriority,
+  normalizeStatus,
   normalizeSyncRow,
 } from '../brief-normalize.js';
 import { SYNC_TABLES } from '../sync.js';
@@ -59,18 +60,31 @@ describe('brief-normalize mirror parity (TD-338)', () => {
 
   it('the fixtures are the BRAIN normalizers own output, not a hand-written table', () => {
     // If this ever diverges, the generator stopped calling the real normalizers.
+    //
+    // THE DISPATCH IS A MAP, NOT A TERNARY CHAIN. It used to be a nested
+    // ternary whose final `else` was `normalizePhase`, so TD-333's `status`
+    // fixtures were checked against the PHASE normalizer — 99 rows replayed
+    // through the wrong function. A map plus the completeness assertion below
+    // makes a new id fail LOUDLY instead of silently mis-routing.
+    const byId: Record<string, (v: string | null | undefined) => string | null> = {
+      priority: normalizePriority,
+      brief_type: normalizeBriefType,
+      phase: normalizePhase,
+      status: normalizeStatus,
+    };
     expect(fixtures.length).toBeGreaterThan(50);
+    const idsSeen = new Set<string>();
     for (const f of fixtures) {
-      const actual =
-        f.normalizer === 'priority'
-          ? normalizePriority(f.input)
-          : f.normalizer === 'brief_type'
-            ? normalizeBriefType(f.input)
-            : normalizePhase(f.input);
-      expect(actual, `fixture drift for ${f.normalizer}(${JSON.stringify(f.input)})`).toBe(
+      const fn = byId[f.normalizer];
+      expect(fn, `no dispatch arm for normalizer id '${f.normalizer}'`).toBeDefined();
+      idsSeen.add(f.normalizer);
+      expect(fn(f.input), `fixture drift for ${f.normalizer}(${JSON.stringify(f.input)})`).toBe(
         f.expected,
       );
     }
+    // ...and every id the MAP declares must actually appear in the corpus, so a
+    // mapped-but-unseeded normalizer cannot pass by having zero fixtures.
+    expect([...idsSeen].sort()).toEqual(normalizerIdsInUse(SYNC_NORMALIZED_FIELDS));
   });
 
   it('covers every fold-table key and every canonical priority', () => {
@@ -79,6 +93,66 @@ describe('brief-normalize mirror parity (TD-338)', () => {
     expect(covered.has('P1')).toBe(true);
     expect(covered.has('P4-Trivial')).toBe(true); // the unknown that must NOT fold
     expect(covered.has('td')).toBe(true);
+  });
+
+  it('TD-333: all three corpora carry status rows, and they DISCRIMINATE', () => {
+    // A new normalizer id that is mapped but not seeded gets a corpus of the
+    // OTHER fields' edge cases — every row a vacuous passthrough. So assert the
+    // outcome CLASSES, not just the count.
+    const { predicateFixtures, rowFixtures } = buildBriefNormalizeMirror();
+    const statusLeaf = fixtures.filter((f) => f.normalizer === 'status');
+    expect(statusLeaf.length).toBeGreaterThan(20);
+    expect(
+      statusLeaf.some((f) => f.expected !== null && f.expected !== f.input),
+      'no status FOLD in the corpus',
+    ).toBe(true);
+    expect(
+      statusLeaf.some((f) => f.expected === f.input),
+      'no status PASSTHROUGH in the corpus',
+    ).toBe(true);
+    // The three folds, by name.
+    for (const [input, expected] of [
+      ['Completed', 'Done'],
+      ['Complete', 'Done'],
+      ['InProgress', 'In Progress'],
+    ] as const) {
+      expect(
+        statusLeaf.some((f) => f.input === input && f.expected === expected),
+        `${input} -> ${expected} missing from the corpus`,
+      ).toBe(true);
+    }
+    // The TD-311 exclusions must be REPRESENTED as passthroughs, or a future
+    // fold of them would not be caught cross-package.
+    for (const untouchable of [
+      'Cancelled',
+      'Superseded',
+      'Done(Resolvedbydec8d1f)',
+      'Split (see FR-061, FR-062, FR-063)',
+    ]) {
+      expect(
+        statusLeaf.some((f) => f.input === untouchable && f.expected === untouchable),
+        `${untouchable} missing from the corpus`,
+      ).toBe(true);
+    }
+
+    const statusPred = predicateFixtures.filter((f) => f.normalizer === 'status');
+    expect(statusPred.some((f) => f.expected === true)).toBe(true);
+    expect(statusPred.some((f) => f.expected === false)).toBe(true);
+
+    const statusRows = rowFixtures.filter((f) =>
+      f.expectedFolds.some((d) => d.field === 'status'),
+    );
+    expect(statusRows.length).toBeGreaterThan(0);
+    expect(
+      rowFixtures.some((f) => f.expectedNonCanonical.some((d) => d.field === 'status')),
+      'no status passthrough row fixture',
+    ).toBe(true);
+    // A status fold alongside a foldable-looking updated_at — the no-bump arm
+    // re-armed for the FOURTH normalizer, not inherited from priority's.
+    expect(
+      statusRows.some((f) => f.row.updated_at === 'P2' && f.expectedRow.updated_at === 'P2'),
+      'no status-fold row with a foldable-looking updated_at',
+    ).toBe(true);
   });
 
   it('bakes fixtures for EVERY authored function family, not just the leaf normalizers', () => {
@@ -123,6 +197,7 @@ describe('the mirror renderer DERIVES the normalizer surface from the map (TD-33
       'brief_type',
       'phase',
       'priority',
+      'status', // TD-333
     ]);
     // A second table reusing an id must not duplicate it.
     expect(
@@ -132,43 +207,62 @@ describe('the mirror renderer DERIVES the normalizer surface from the map (TD-33
 
   it('emits the union and the dispatch table from that derived set', () => {
     const { cliModule } = buildBriefNormalizeMirror();
-    // Neither is hand-listed in the builder any more, so adding a map entry
-    // widens both automatically — this is what makes TD-333 "one line plus one
-    // body" TRUE rather than a claim that needed correcting.
+    // Neither is hand-listed in the builder, so adding a map entry widens both
+    // automatically — the half of the TD-333 sequencing claim that WAS true.
+    // (The DATA layer was not: TD-333 paid six edits in the builder. See the
+    // NORMALIZER_BODIES docstring.) `status` joined this union under TD-333.
     expect(cliModule).toContain(
-      'export type SyncNormalizerId = "brief_type" | "phase" | "priority";',
+      'export type SyncNormalizerId = "brief_type" | "phase" | "priority" | "status";',
     );
     expect(cliModule).toContain(
       '  priority: { normalize: normalizePriority, isCanonical: isCanonicalPriority },',
     );
+    expect(cliModule).toContain(
+      '  status: { normalize: normalizeStatus, isCanonical: isCanonicalStatus },',
+    );
+    // ...and the DATA the status body reads must be emitted too, or the mirror
+    // does not compile. This is the edit class the "one line" claim omitted.
+    expect(cliModule).toContain('export const CANONICAL_STATUSES: readonly string[] = [');
+    expect(cliModule).toContain('export const STATUS_ALIASES: Readonly<Record<string, string>> = {');
+    expect(cliModule).toContain('const STATUS_CANONICAL: Readonly<Record<string, string>> =');
   });
 
   it('a NEW mapped id widens the union and the dispatch WITHOUT a renderer edit', () => {
-    // Simulate TD-333 by mapping `status` to an id that HAS a body. The point is
-    // the union/dispatch move on their own; only the body is authored.
+    // Map a field to an id that HAS a body. The point is that the union and the
+    // dispatch move on their own; only the body is authored.
     const { cliModule } = buildBriefNormalizeMirror({
-      brief_status: { priority: 'priority', status: 'phase' },
+      brief_status: { priority: 'priority', effort: 'phase' },
     });
     expect(cliModule).toContain('export type SyncNormalizerId = "phase" | "priority";');
-    expect(cliModule).toContain('    "status": "phase",');
+    expect(cliModule).toContain('    "effort": "phase",');
     expect(cliModule).toContain(
       '  phase: { normalize: normalizePhase, isCanonical: isCanonicalPhase },',
     );
   });
 
   it('THROWS at generation time when a mapped id has no authored body', () => {
-    // The real TD-333 shape: `status: 'status'` with no normalizeStatus yet.
-    // Without this guard the renderer emits a dispatch row calling a function it
-    // never defined, and the first symptom is a CLI typecheck error far from
-    // the cause.
+    // TD-333 DROVE THIS GUARD FOR REAL. `status: 'status'` was added to the map
+    // before `NORMALIZER_BODIES.status` existed and the generator threw exactly
+    // this message, naming `normalizeStatus`/`isCanonicalStatus`. It is now a
+    // shipped id, so the guard is re-armed here with the NEXT unmapped one.
+    // Without it the renderer emits a dispatch row calling a function it never
+    // defined, and the first symptom is a CLI typecheck error far from the cause.
     expect(() =>
-      buildBriefNormalizeMirror({ brief_status: { status: 'status' } }),
-    ).toThrow(/no authored body for normalizer id\(s\) 'status'/);
+      buildBriefNormalizeMirror({ brief_status: { effort: 'effort' } }),
+    ).toThrow(/no authored body for normalizer id\(s\) 'effort'/);
     // ...and the message must say exactly what to add.
-    expect(() => assertNormalizerBodies(['status'])).toThrow(
-      /normalizeStatus\/isCanonicalStatus/,
+    expect(() => assertNormalizerBodies(['effort'])).toThrow(
+      /normalizeEffort\/isCanonicalEffort/,
     );
-    expect(() => assertNormalizerBodies(['brief_type', 'phase', 'priority'])).not.toThrow();
+    // A multi-word id must PascalCase correctly in the remediation text — that
+    // is what made the TD-333 message actionable (`normalizeStatus`, and
+    // `normalizeBriefType` for the snake_case case).
+    expect(() => assertNormalizerBodies(['claimed_by'])).toThrow(
+      /normalizeClaimedBy\/isCanonicalClaimedBy/,
+    );
+    expect(() =>
+      assertNormalizerBodies(['brief_type', 'phase', 'priority', 'status']),
+    ).not.toThrow();
   });
 });
 

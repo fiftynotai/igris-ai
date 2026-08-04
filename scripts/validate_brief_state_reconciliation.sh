@@ -32,6 +32,22 @@ set -e
 # brief mid-hunt is correctly 'In Progress'/phase='BUILDING' with no commit
 # yet. The invariant only fires for TERMINAL states.
 #
+# TD-333 — WHAT COUNTS AS A TERMINAL STATUS HERE:
+#   The `case` below folds NOTATION (case, space, hyphen, underscore — the same
+#   fold TD-340 applied in portable SQL at the five gate sites) and names the
+#   two retained VOCABULARY synonyms `completed`/`complete`. Before TD-333 it
+#   matched three bare literals, so 26 terminal rows spelled `Completed` /
+#   `Complete` / `Done(Resolvedbydec8d1f)` fell to the default arm — commented
+#   "other in-flight states", which was FALSE for every one of them — and were
+#   exempt from this invariant for their entire lifetime.
+#
+#   EXPECT THE C1/C2 COUNTS TO RISE the first time this runs against a corpus
+#   that still holds those spellings. That is the exemption closing, not a
+#   regression: every contradiction it surfaces was already true. The rows are
+#   then handed to a human, which is what TD-311 requires — this validator
+#   never edits brief state, and neither did the TD-333 fold that made the
+#   spellings uniform.
+#
 # Usage: scripts/validate_brief_state_reconciliation.sh
 # Env overrides (test injection):
 #   BRAIN_DB   override brain DB path (default: ~/.igris/memory/knowledge.db)
@@ -120,8 +136,42 @@ while IFS='|' read -r brief_id status phase; do
     continue
   fi
 
-  case "$status" in
-    Done|Archived)
+  # --- TD-333: fold NOTATION before matching -------------------------------
+  # Byte-identical in effect to TD-340's portable SQL fold at the five gate
+  # sites: replace(replace(replace(lower(status),' ',''),'-',''),'_','').
+  # bash 3.2 has no ${var,,}, so `tr` does the case half.
+  #
+  # WHY THIS ARM EXISTS AT ALL. Before TD-333 the `case` matched three literal
+  # spellings and everything else fell to a SILENT no-op arm commented "other
+  # in-flight states". `Completed` and `Complete` are not in-flight — they are
+  # TERMINAL, and they had therefore been EXEMPT from the
+  # Done<->COMPLETE<->commit invariant for their entire lifetime. That is 25
+  # rows the canonical build-state validator never once evaluated. Widening the
+  # arm does not create contradictions; it stops a spelling from hiding them.
+  #
+  # `Done(Resolvedbydec8d1f)` is a 26th terminal row that this widening does
+  # NOT recover: the notation fold yields `done(resolvedbydec8d1f)`, which
+  # still falls to `*)`. That is deliberate — see the `*)` arm below, which
+  # names it as vacuous BY DESIGN because a welded commit sha is an operator
+  # note in the wrong field, not a spelling. Do not "fix" it with a prefix
+  # match; v25 has a test asserting that row survives byte-identical.
+  status_folded="$(printf '%s' "$status" | tr '[:upper:]' '[:lower:]')"
+  status_folded="${status_folded// /}"
+  status_folded="${status_folded//-/}"
+  status_folded="${status_folded//_/}"
+
+  case "$status_folded" in
+    done|archived|completed|complete)
+      # RETAINED SYNONYMS, deliberately (TD-289's rule, applied to `status`).
+      # After schema v25 `completed`/`complete` match ZERO rows in the local
+      # brain — the fold emptied them. They stay as DEFENSE IN DEPTH, because a
+      # fold only folds what the fold table DECLARES and the column is still
+      # reachable by paths outside it: `igris import` (FR-230) is a deliberate
+      # NON-consumer of the sync-ingress fold, an older direct writer can still
+      # write any string, and the write boundary never hard-rejects. Deleting
+      # these two entries would silently re-open the exemption above.
+      # DO NOT "CLEAN UP" THIS LIST.
+
       # C1 Done-but-not-COMPLETE: terminal status, non-terminal phase.
       if [ "$phase" != "$TERMINAL_PHASE" ]; then
         report+="  CONTRADICTION C1 (Done-but-not-COMPLETE): $brief_id status='$status' phase='${phase:-<none>}' — expected phase='$TERMINAL_PHASE'"$'\n'
@@ -133,7 +183,13 @@ while IFS='|' read -r brief_id status phase; do
         contradictions=$((contradictions + 1))
       fi
       ;;
-    Ready|Draft)
+    ready|draft)
+      # NOT WIDENED — and that is a decision. Only the NOTATION of `Ready` and
+      # `Draft` is folded here; no third state was added. Adding one (say
+      # `Deferred`) would change what C3 MEANS, which is a lifecycle question
+      # and not a normalisation one. C3's count must be identical before and
+      # after the v25 fold — it is the cheapest tripwire TD-333 has.
+
       # C3 committed-but-open: a closing commit exists, store still calls it open.
       if has_closing_commit "$brief_id"; then
         report+="  CONTRADICTION C3 (committed-but-open): $brief_id status='$status' — a closing commit exists but the canonical status is not terminal (#811 inverse)"$'\n'
@@ -141,8 +197,16 @@ while IFS='|' read -r brief_id status phase; do
       fi
       ;;
     *)
-      # In Progress / Blocked / other in-flight states satisfy the invariant
-      # vacuously — not flagged.
+      # GENUINELY in-flight or genuinely undecided — the invariant is vacuous
+      # and the row is not flagged. Since TD-333 this arm holds ONLY:
+      #   - `In Progress` / `InProgress` / `Blocked` — in flight;
+      #   - `Cancelled` / `Superseded` / `Deferred` — the three MISSING STATES
+      #     (scripts/validate_brief_status_vocabulary.sh reports them by name;
+      #     whether they are terminal for C1/C2 is the follow-up brief's
+      #     question, not this validator's to assume);
+      #   - a value carrying an operator PAYLOAD (a commit sha, a split
+      #     lineage). Those are named by the vocabulary validator too.
+      # It no longer holds a terminal status wearing a different spelling.
       :
       ;;
   esac

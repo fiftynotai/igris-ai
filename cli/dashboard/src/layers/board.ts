@@ -14,22 +14,36 @@
  * THIS FILE FOLDS NOTHING. THAT IS THE DESIGN, NOT A DEFECT.
  * ─────────────────────────────────────────────────────────────────────────
  * `brief_status.status` has NO CHECK constraint (see `params.ts`'s filter
- * vocabularies, which are `null` for exactly this reason), and the operator's
- * brain currently holds FIFTEEN distinct values including three spellings of
- * "finished" (`Done` 1195 / `Completed` 24 / `Complete` 1), two of in-flight
- * (`In Progress` 26 / `InProgress` 4), one with a commit hash welded into it,
- * and two that are whole sentences. (Counts read READ-ONLY on 2026-08-02 and
- * reproduced in `__tests__/board.test.ts`'s fixture; they are illustrative of
- * the SHAPE, not a contract — nothing here reads them.)
+ * vocabularies, which are `null` for exactly this reason). When this board was
+ * built the operator's brain held FIFTEEN distinct values including three
+ * spellings of "finished" (`Done` 1195 / `Completed` 24 / `Complete` 1), two of
+ * in-flight (`In Progress` 26 / `InProgress` 4), one with a commit hash welded
+ * into it, and two that are whole sentences. (Counts read READ-ONLY on
+ * 2026-08-02 and reproduced in `__tests__/board.test.ts`'s fixture; they are
+ * illustrative of the SHAPE, not a contract — nothing here reads them.)
  *
- * The board renders EVERY ONE of them as its own column, with its own count,
- * from its own query. It does not merge `Done` with `Completed`, because
- * merging is arithmetic over values the system does not know are the same —
- * and the moment the UI performs that arithmetic, the operator's read of their
- * own backlog is silently rewritten and the data defect becomes invisible.
- * **TD-333 owns the status vocabulary.** The UI's job is to be honest about it.
+ * **TD-333 HAS SINCE SHIPPED, and it resolved the vocabulary this docstring was
+ * waiting on** — `normalizeStatus` / `CANONICAL_STATUSES` in
+ * `brain-mcp-server/src/tools/brief-normalize.ts`, a fold at every write
+ * boundary and at both sync-ingress doors, and schema v25 folding the 29
+ * historical rows. **The census above is now HISTORICAL.** After v25 the three
+ * folded spellings are gone from a migrated brain; `Cancelled` / `Superseded` /
+ * `Deferred` remain deliberately non-canonical (they are MISSING STATES, not
+ * spellings — see that file's exclusion list), and so do the welded-payload row
+ * and the two sentences, which are hand-migrated rather than folded.
+ *
+ * **NONE OF THAT CHANGES ONE LINE OF CODE HERE, and that is the point.** The
+ * board renders EVERY value as its own column, with its own count, from its own
+ * query. It does not merge `Done` with `Completed`, because merging is
+ * arithmetic over values the system does not know are the same — and the moment
+ * the UI performs that arithmetic, the operator's read of their own backlog is
+ * silently rewritten and the data defect becomes invisible. TD-333 fixed the
+ * STORE; the UI's job is still to be honest about whatever the store holds,
+ * including whatever the next un-normalised writer puts there.
  * `layers/__tests__/board.test.ts` B6 pins THREE separate columns so a future
- * "helpful" merge fails a test rather than shipping.
+ * "helpful" merge fails a test rather than shipping. **Do not delete that pin
+ * on the grounds that the data is now clean** — the fold-nothing design is what
+ * makes the NEXT drift visible.
  *
  * The one concession is ORDER (D7): spellings that normalise to the same string
  * sort into the same lifecycle slot, so `InProgress` sits beside `In Progress`
@@ -37,7 +51,9 @@
  * the queries. Synonyms — `Completed`, `Complete`, `Done(Resolvedbydec8d1f)` —
  * are NOT normalised-equal to anything, so they land in the tail. Recognising
  * them would need a synonym table, and a synonym table is one keystroke from a
- * fold.
+ * fold. (`STATUS_ALIASES` is now exactly that table, one package away, and it is
+ * deliberately NOT imported here: a display layer that folds is a display layer
+ * that can hide a store defect.)
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHERE THE COLUMN SET COMES FROM: DATA UNION VOCABULARY (D1)
@@ -58,9 +74,14 @@ import { FILTERS, listQuery, type FilterValues } from "./model";
  *
  * SOURCE, and there is exactly one: `docs/architecture/brief-state-source-of-truth.md`
  * line 13, the `brief_status.status` row of its authority table. Mirroring it
- * here makes this file a consumer of MAINTAINING row 94 (`brief_status.status`,
- * the canonical build-state source) — a vocabulary change sweeps this constant
- * in the same commit. It is a DISPLAY vocabulary, exactly as `params.ts`'s
+ * here makes this file a consumer of MAINTAINING row 95 (`brief_status.status`,
+ * the canonical build-state source — this citation said "row 94" until TD-333
+ * checked it and found the row had been pushed down by an insertion above it,
+ * which is exactly why that table is APPENDED to and never inserted into) — a vocabulary change sweeps this constant
+ * in the same commit. **TD-333 verified this set and did NOT change it**: the
+ * canonical six are unchanged, and `CANONICAL_STATUSES` in
+ * `brain-mcp-server/src/tools/brief-normalize.ts` is element-identical to this
+ * array, in the same order. It is a DISPLAY vocabulary, exactly as `params.ts`'s
  * filter specs are: it decides which columns appear when the data is silent,
  * and it never filters a row out.
  */

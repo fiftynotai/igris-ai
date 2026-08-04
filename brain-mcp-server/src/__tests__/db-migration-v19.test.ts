@@ -10,7 +10,7 @@
  *      pre-existing rows remain searchable after the 'rebuild' step.
  *   5. The catalog_ai/au/ad triggers fire on INSERT/UPDATE/DELETE post-rename.
  *   6. Idempotency — a second migrateSchema() changes nothing and does not throw.
- *   7. schema_version runs the chain to completion (terminal v24 after TD-338).
+ *   7. schema_version runs the chain to completion (terminal v25 after TD-333).
  *   8. A DB stalled at v12 (registry only) reaches v19 via the L-209 re-read gate.
  *
  * Gate-dodge proof: this migration has NO vec dependency, so the suite runs
@@ -288,7 +288,7 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
     expect(afterDelete).toHaveLength(0);
   });
 
-  it('records v19 and runs the chain to completion (terminal v24 — TD-338)', () => {
+  it('records v19 and runs the chain to completion (terminal v25 — TD-333)', () => {
     expect(getSchemaVersion(db)).toBe(18);
     migrateSchema(db);
     // v19 is recorded in the ladder...
@@ -296,7 +296,7 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
     // ...and migrateSchema runs to completion (v20 worker-subsystem teardown,
     // v21 rename, v22 brief_type fold and v23 briefs_fts follow v19 in the same
     // call).
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
   });
 
   it('is idempotent — a second migration changes nothing and does not throw', () => {
@@ -310,12 +310,12 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
 
     migrateSchema(db);
     const after1 = db.prepare('SELECT * FROM catalog ORDER BY id').all();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
 
     // Second run: no version bump, no row change, no throw.
     expect(() => migrateSchema(db)).not.toThrow();
     const after2 = db.prepare('SELECT * FROM catalog ORDER BY id').all();
-    expect(getSchemaVersion(db)).toBe(24);
+    expect(getSchemaVersion(db)).toBe(25);
     expect(after2).toEqual(after1);
     // catalog still present, registry still gone.
     expect(tableExists(db, 'catalog')).toBe(true);
@@ -347,7 +347,7 @@ describe('migration v19 — reusable-assets store rename registry → catalog (T
 
     migrateSchema(fresh);
 
-    expect(getSchemaVersion(fresh)).toBe(24);
+    expect(getSchemaVersion(fresh)).toBe(25);
     expect(tableExists(fresh, 'catalog')).toBe(true);
     expect(tableExists(fresh, 'registry')).toBe(false);
     const row = fresh

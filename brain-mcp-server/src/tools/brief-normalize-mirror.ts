@@ -41,14 +41,18 @@ import {
   CANONICAL_BRIEF_TYPES,
   CANONICAL_PHASES,
   CANONICAL_PRIORITIES,
+  CANONICAL_STATUSES,
   PRIORITY_ALIASES,
+  STATUS_ALIASES,
   SYNC_NORMALIZED_FIELDS,
   isCanonicalBriefType,
   isCanonicalPhase,
   isCanonicalPriority,
+  isCanonicalStatus,
   normalizeBriefType,
   normalizePhase,
   normalizePriority,
+  normalizeStatus,
   normalizeSyncRow,
   type SyncFieldFold,
   type SyncFieldPassthrough,
@@ -101,6 +105,25 @@ const FIXTURE_EDGE_CASES = [
   'SUPERSEDED-BY-FR-201',
   'technical debt',
   'TECH DEBT',
+  // --- TD-333 status cases ---------------------------------------------------
+  // The three FOLDS, in the casing that actually travels on the wire (the
+  // `STATUS_ALIASES` keys seeded below are LOWERCASE lookup keys, so the live
+  // spellings are only covered if listed here).
+  'Completed',
+  'Complete',
+  'InProgress',
+  'in progress',
+  ' Done ',
+  // The three MISSING STATES — must pass through UNTOUCHED and be reported.
+  'Cancelled',
+  'Superseded',
+  // The welded-payload row and a SENTENCE row: neither is a spelling, both must
+  // survive byte-for-byte through both packages.
+  'Done(Resolvedbydec8d1f)',
+  'Split (see FR-061, FR-062, FR-063)',
+  // Notation the SQL gates fold but the VOCABULARY deliberately does not
+  // (TD-340 folds `-`/`_`/space in its predicate; `normalizeStatus` does not).
+  'IN-PROGRESS',
 ] as const;
 
 function fixtureInputs(): string[] {
@@ -111,8 +134,10 @@ function fixtureInputs(): string[] {
   for (const v of CANONICAL_PRIORITIES) push(v);
   for (const v of CANONICAL_PHASES) push(v);
   for (const v of CANONICAL_BRIEF_TYPES) push(v);
+  for (const v of CANONICAL_STATUSES) push(v);
   for (const k of Object.keys(PRIORITY_ALIASES)) push(k);
   for (const k of Object.keys(BRIEF_TYPE_ALIASES)) push(k);
+  for (const k of Object.keys(STATUS_ALIASES)) push(k);
   for (const v of FIXTURE_EDGE_CASES) push(v);
   return [...seen];
 }
@@ -131,6 +156,7 @@ function buildFixtures(): NormalizeFixture[] {
     out.push({ normalizer: 'priority', input, expected: normalizePriority(input) });
     out.push({ normalizer: 'brief_type', input, expected: normalizeBriefType(input) });
     out.push({ normalizer: 'phase', input, expected: normalizePhase(input) });
+    out.push({ normalizer: 'status', input, expected: normalizeStatus(input) });
   }
   return out;
 }
@@ -154,6 +180,7 @@ function buildPredicateFixtures(): PredicateFixture[] {
     out.push({ normalizer: 'priority', input, expected: isCanonicalPriority(input) });
     out.push({ normalizer: 'brief_type', input, expected: isCanonicalBriefType(input) });
     out.push({ normalizer: 'phase', input, expected: isCanonicalPhase(input) });
+    out.push({ normalizer: 'status', input, expected: isCanonicalStatus(input) });
   }
   return out;
 }
@@ -263,12 +290,71 @@ const FIXTURE_ROWS: { table: string; row: Record<string, unknown> }[] = [
       updated_at: '2026-08-04 00:00:00',
     },
   },
+  // --- TD-333: the `status` column joins the map -----------------------------
+  // A status FOLD alongside a foldable-looking `updated_at`: the no-bump arm,
+  // re-armed for the fourth normalizer. If the status fold ever reached the LWW
+  // comparison column this row's `expectedRow.updated_at` would move.
+  {
+    table: 'brief_status',
+    row: { project: 'p', brief_id: 'ST-FOLD-1', status: 'Completed', updated_at: 'P2' },
+  },
+  // The whitespace fold, and the ONE fold whose target is itself multi-word.
+  {
+    table: 'brief_status',
+    row: {
+      project: 'p',
+      brief_id: 'ST-FOLD-2',
+      status: 'InProgress',
+      phase: 'building',
+      updated_at: '2026-08-04 00:00:00',
+    },
+  },
+  // A status PASSTHROUGH that is not a spelling of anything: a whole SENTENCE
+  // the operator wrote into the state field. Stored verbatim, reported. The
+  // fold never invents (TD-333 §5.3).
+  {
+    table: 'brief_status',
+    row: {
+      project: 'p',
+      brief_id: 'ST-PASS-1',
+      status: 'Split (see FR-061, FR-062, FR-063)',
+      updated_at: '2026-08-04 00:00:00',
+    },
+  },
+  // A MISSING STATE (`Cancelled`) and the welded-payload row: both untouched,
+  // both reported. Pins the TD-311 exclusion list at the ROW level, not just at
+  // the leaf normalizer.
+  {
+    table: 'brief_status',
+    row: { project: 'p', brief_id: 'ST-PASS-2', status: 'Cancelled', priority: 'P1-High' },
+  },
+  {
+    table: 'brief_status',
+    row: { project: 'p', brief_id: 'ST-PASS-3', status: 'Done(Resolvedbydec8d1f)' },
+  },
+  // THE NOT-NULL ASYMMETRY, pinned. `status` is TEXT NOT NULL, so unlike the
+  // three sibling normalizers `normalizeStatus` does NOT fold '' to SQL NULL —
+  // that would turn a meaningless write into a dropped row at ingress. It
+  // passes through, and `normalizeSyncRow`'s shared reporter skips a stored
+  // value whose trim() is empty, so it is NOT in `expectedNonCanonical`. That
+  // residual is baked here so it is visible rather than assumed.
+  {
+    table: 'brief_status',
+    row: { project: 'p', brief_id: 'ST-EMPTY-1', status: '', priority: '' },
+  },
   // Unmapped tables are copied verbatim — the hook is brief_status-scoped.
+  // `status` is a column name several other tables carry, so the scope guard
+  // matters more after TD-333 than before it.
   {
     table: 'learnings',
     row: { project: 'p', title: 'P2', content: 'TD', phase: 'building', updated_at: 'P2' },
   },
-  { table: 'not_a_sync_table', row: { priority: 'P2' } },
+  {
+    table: 'goals',
+    row: { project: 'p', title: 'g', status: 'Completed', updated_at: '2026-08-04 00:00:00' },
+  },
+  { table: 'projects', row: { slug: 'p', status: 'InProgress' } },
+  { table: 'not_a_sync_table', row: { priority: 'P2', status: 'Completed' } },
 ];
 
 /**
@@ -369,18 +455,40 @@ function pascal(id: string): string {
 }
 
 /**
- * The two function BODIES per normalizer id — the only per-normalizer layer
- * still authored by hand in this builder.
+ * The two function BODIES per normalizer id — the largest, but NOT the only,
+ * per-normalizer layer authored by hand in this builder.
  *
- * Everything else about a normalizer is derived from `SYNC_NORMALIZED_FIELDS`:
- * the `SyncNormalizerId` union, the `SYNC_NORMALIZERS` dispatch row, and the
- * order things are emitted in. So adding a normalized column really is **one
- * line in the map plus one body here** — which is what the TD-333 sequencing
- * claim asserts, and it is now true by construction rather than by correction.
+ * WHAT IS GENUINELY DERIVED from `SYNC_NORMALIZED_FIELDS`: the
+ * `SyncNormalizerId` union, the `SYNC_NORMALIZERS` dispatch row, the emission
+ * order, and the fixture-table header counts. Those move on their own.
+ *
+ * ⚠ **"ONE LINE IN THE MAP PLUS ONE BODY HERE" IS AN UNDERCOUNT, and TD-333
+ * paid the difference.** That sentence used to live in this docstring, in
+ * `brief-normalize.ts`'s TD-338 header block and in
+ * `core/enforcement/sync-ingress-normalization.md`. It is true of the LOGIC
+ * layer and false of the DATA layer, because `renderCliModule` hand-lists every
+ * canonical set and every fold map by name. A body referencing a table that was
+ * never emitted produces a mirror that does not compile. The real cost of a NEW
+ * normalizer id, measured on TD-333:
+ *
+ *   1. this `NORMALIZER_BODIES` entry;
+ *   2. the imports of its canonical set / fold map / normalizer / predicate;
+ *   3. a `renderStringArray` call for its canonical set AND a `renderRecord`
+ *      call for its fold map, plus any derived lookup const the body reads
+ *      (`STATUS_CANONICAL`, the twin of `BRIEF_TYPE_CANONICAL`);
+ *   4. one more `out.push` in `buildFixtures()`;
+ *   5. one more `out.push` in `buildPredicateFixtures()`;
+ *   6. the seeds in `fixtureInputs()` + cases in `FIXTURE_EDGE_CASES` and
+ *      `FIXTURE_ROWS`, or the new id gets a corpus of other fields' edge cases.
+ *
+ * Six edits in this file. Deriving 3-6 as well is a real improvement and is
+ * left as such — recorded here so the NEXT brief is not told "one line" again.
  *
  * A mapped id with NO entry here THROWS at generation time (see
  * `assertNormalizerBodies`), because the alternative is emitting a module that
- * does not compile — a failure that would surface far from its cause.
+ * does not compile — a failure that would surface far from its cause. That
+ * guard covers edit 1 only; 2-6 surface as a CLI typecheck error or a thin
+ * fixture corpus.
  */
 const NORMALIZER_BODIES: Record<string, string[]> = {
   priority: [
@@ -443,6 +551,34 @@ const NORMALIZER_BODIES: Record<string, string[]> = {
     '  if (v === null || v === undefined) return false;',
     '  const upper = v.trim().toUpperCase();',
     '  return CANONICAL_PHASES.some((p) => p === upper);',
+    '}',
+  ],
+  status: [
+    '/**',
+    ' * Normalize a brief status to its canonical spelling (TD-333). Known aliases',
+    ' * fold, any case/padding variant of a canonical status folds to its canonical',
+    ' * form, unknown values pass through UNCHANGED. null/undefined -> null.',
+    ' *',
+    ' * NOTE the missing empty-string clause the three siblings have. It is a SCHEMA',
+    ' * fact, not an omission: `brief_status.status` is TEXT NOT NULL, so folding',
+    " * '' to SQL NULL would turn a meaningless write into a NOT NULL violation at",
+    ' * the write boundary and a SILENTLY DROPPED ROW here at ingress (the per-row',
+    " * try/catch). '' passes through and isCanonicalStatus('') is false.",
+    ' */',
+    'export function normalizeStatus(v: string | null | undefined): string | null {',
+    '  if (v === null || v === undefined) return null;',
+    '  const key = v.trim().toLowerCase();',
+    '  return STATUS_ALIASES[key] ?? STATUS_CANONICAL[key] ?? v;',
+    '}',
+    '',
+    '/**',
+    ' * Is `v` a canonical status? Case-insensitive, trim-tolerant. The empty string',
+    ' * is FALSE — an offender, not an *unset*: `status` is NOT NULL and has no',
+    ' * unset member (unlike `priority`, where NULL means unset).',
+    ' */',
+    'export function isCanonicalStatus(v: string | null | undefined): boolean {',
+    '  if (v === null || v === undefined) return false;',
+    '  return STATUS_CANONICAL[v.trim().toLowerCase()] !== undefined;',
     '}',
   ],
 };
@@ -544,8 +680,8 @@ function renderCliModule(
     '// because the bodies are authored in the builder rather than derived from the',
     '// source. Three fixture tables close that, each computed by running the',
     "// BRAIN's real code at generation time and replayed by the CLI-side test:",
-    '//   NORMALIZE_FIXTURES  — the three leaf normalizers',
-    '//   PREDICATE_FIXTURES  — the three isCanonical* predicates',
+    `//   NORMALIZE_FIXTURES  — the ${ids.length} leaf normalizers`,
+    `//   PREDICATE_FIXTURES  — the ${ids.length} isCanonical* predicates`,
     '//   SYNC_ROW_FIXTURES   — normalizeSyncRow, the function mergeRows calls',
     '// Together they cover every authored function in this module, so a brain-side',
     '// logic change that is not reproduced here fails on the CLI side.',
@@ -577,9 +713,24 @@ function renderCliModule(
       BRIEF_TYPE_ALIASES,
       '/** brief_type unconditional alias fold map. Keys are lowercase + trimmed. */',
     ),
+    ...renderStringArray(
+      'CANONICAL_STATUSES',
+      CANONICAL_STATUSES,
+      '/** Canonical brief statuses (TD-333) — the documented lifecycle, NOT widened. */',
+    ),
+    ...renderRecord(
+      'STATUS_ALIASES',
+      STATUS_ALIASES,
+      '/** status alias fold map (TD-333). Keys are lowercase + trimmed. Adjacency is a STATE EDIT — see brief-normalize.ts for the exclusion list. */',
+    ),
     '/** Canonical brief_type lookup keyed by lowercase, for idempotent case-folding. */',
     'const BRIEF_TYPE_CANONICAL: Readonly<Record<string, string>> = Object.fromEntries(',
     '  CANONICAL_BRIEF_TYPES.map((t) => [t.toLowerCase(), t]),',
+    ');',
+    '',
+    '/** Canonical status lookup keyed by lowercase, for idempotent case-folding. */',
+    'const STATUS_CANONICAL: Readonly<Record<string, string>> = Object.fromEntries(',
+    '  CANONICAL_STATUSES.map((s) => [s.toLowerCase(), s]),',
     ');',
     '',
     '/**',

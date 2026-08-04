@@ -24,7 +24,10 @@ import {
   normalizePhase,
   normalizePriority,
   normalizeBriefType,
+  normalizeStatus,
   nonCanonicalBriefTypeNote,
+  nonCanonicalPriorityNote,
+  nonCanonicalStatusNote,
 } from './brief-normalize.js';
 import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
@@ -136,6 +139,25 @@ interface BriefUpdateInput {
 function handleBriefSync(args: BriefSyncInput): { content: { type: string; text: string }[] } {
   const db = getDb();
 
+  // TD-333: `status` is the canonical build-state source and had no normalizer
+  // until now. The `?? args.status` tail is not defensive noise: normalizeStatus
+  // returns null ONLY for a null/undefined input, so this preserves the
+  // pre-TD-333 binding EXACTLY for a caller that omitted the (schema-required)
+  // field, instead of turning it into a NOT NULL constraint error.
+  const storedStatus = normalizeStatus(args.status) ?? args.status;
+
+  // Same shape for the two sibling vocabulary fields, so every echo below can
+  // report the STORED value rather than the raw argument. These must be
+  // guarded on the STORED value, not the arg: the unset family ('Unset', '')
+  // is TRUTHY but folds to null, so an inline
+  // `args.priority ? \`Priority: ${normalizePriority(args.priority)}\``
+  // would print the literal `Priority: null`. Hoisting also collapses what
+  // were three separate normalizePriority(args.priority) calls (the insert,
+  // the note, and the echo) into one.
+  const storedPriority = normalizePriority(args.priority);
+  const storedPhase = normalizePhase(args.phase);
+  const storedBriefType = normalizeBriefType(args.brief_type);
+
   db.prepare(`
     INSERT INTO brief_status
       (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at)
@@ -152,17 +174,21 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
     args.project,
     args.brief_id,
     // TD-238: normalize metadata only (phase/brief_type/priority); never content.
-    normalizeBriefType(args.brief_type),
+    storedBriefType,
     args.title,
-    args.status,
-    normalizePriority(args.priority),
+    storedStatus,
+    storedPriority,
     args.effort ?? null,
-    normalizePhase(args.phase)
+    storedPhase
   );
 
-  // TD-328 D6(c): report a non-canonical type back to the caller. Informs;
-  // never rejects, never alters what was stored.
-  const typeNote = nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type));
+  // TD-328 D6(c) / TD-338 / TD-333: report a non-canonical STORED value back to
+  // the caller, for each of the three vocabulary fields. Informs; never rejects,
+  // never alters what was stored. `nonCanonicalPriorityNote` shipped with
+  // TD-338 and had ZERO callers until TD-333 wired it here.
+  const typeNote = nonCanonicalBriefTypeNote(storedBriefType);
+  const priorityNote = nonCanonicalPriorityNote(storedPriority);
+  const statusNote = nonCanonicalStatusNote(storedStatus);
 
   return {
     content: [{
@@ -173,11 +199,21 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
         `Project: ${args.project}`,
         `Brief: ${args.brief_id}`,
         `Title: ${args.title}`,
-        `Status: ${args.status}`,
-        args.priority ? `Priority: ${args.priority}` : null,
+        // TD-333: echo what was STORED, not the raw argument. This line printed
+        // `args.status` before, so a caller that synced `Completed` was told
+        // `Status: Completed` while the row held `Done` — a response that
+        // contradicts the store is worse than no response at all. The same was
+        // true one line down for `priority` and `phase`, which echoed raw while
+        // storing normalized, so they now follow the same rule. `effort` is
+        // stored verbatim (no normalizer), so echoing the arg IS the stored
+        // value there.
+        `Status: ${storedStatus}`,
+        storedPriority ? `Priority: ${storedPriority}` : null,
         args.effort ? `Effort: ${args.effort}` : null,
-        args.phase ? `Phase: ${args.phase}` : null,
+        storedPhase ? `Phase: ${storedPhase}` : null,
         typeNote ? `\n${typeNote}` : null,
+        priorityNote ? `\n${priorityNote}` : null,
+        statusNote ? `\n${statusNote}` : null,
       ].filter(Boolean).join('\n'),
     }],
   };
@@ -417,7 +453,10 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
   const fileId = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const filename = args.filename ?? `${args.brief_id}.md`;
-  const status = args.status ?? 'Ready';
+  // TD-333: normalize at the MINT surface too. `?? 'Ready'` runs FIRST so an
+  // omitted status still defaults exactly as before, then the default (which is
+  // canonical) passes through the normalizer unchanged.
+  const status = normalizeStatus(args.status ?? 'Ready') ?? 'Ready';
 
   db.transaction(() => {
     // Upsert brief_files
@@ -516,8 +555,11 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
   }
 
   // TD-328 D6(c): the mint surface is where a 51st spelling is born, so this is
-  // the highest-value place to report one. Informs; never rejects.
+  // the highest-value place to report one. Informs; never rejects. TD-333 adds
+  // the status twin and wires TD-338's priority twin, which had no callers.
   const typeNote = nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type));
+  const priorityNote = nonCanonicalPriorityNote(normalizePriority(args.priority));
+  const statusNote = nonCanonicalStatusNote(status);
 
   return {
     content: [{
@@ -532,7 +574,9 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
         `Content hash: ${contentHash.substring(0, 12)}...`,
         `Size: ${args.content.length} chars`,
       ].join('\n') + embeddingNote + similarityWarning +
-        (typeNote ? `\n\n${typeNote}` : ''),
+        (typeNote ? `\n\n${typeNote}` : '') +
+        (priorityNote ? `\n\n${priorityNote}` : '') +
+        (statusNote ? `\n\n${statusNote}` : ''),
     }],
   };
 }
@@ -621,14 +665,16 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
 
     // Update brief_status if metadata fields provided
     // Whitelist of allowed columns to prevent SQL injection.
-    // TD-238: normalize metadata only (phase/brief_type/priority) and ONLY
-    // when the field was actually provided — preserve partial-update semantics
-    // (an undefined field stays undefined so the loop below skips it; never
-    // turn a not-provided field into an explicit null write). Content/title/
-    // status are never normalized.
+    // TD-238 + TD-333: normalize the four VOCABULARY fields
+    // (phase/brief_type/priority/status) and ONLY when the field was actually
+    // provided — preserve partial-update semantics (an undefined field stays
+    // undefined so the loop below skips it; never turn a not-provided field
+    // into an explicit null write). CONTENT and TITLE are still never
+    // normalized: they are free text with no canonical vocabulary. `status`
+    // WAS in that sentence until TD-333 gave it one.
     const allowedColumns: Record<string, unknown> = {
       title: args.title,
-      status: args.status,
+      status: args.status !== undefined ? normalizeStatus(args.status) : undefined,
       priority: args.priority !== undefined ? normalizePriority(args.priority) : undefined,
       effort: args.effort,
       phase: args.phase !== undefined ? normalizePhase(args.phase) : undefined,
@@ -664,8 +710,9 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
           args.project,
           args.brief_id,
           args.title ?? '',
-          args.status ?? 'Ready',
-          // TD-238: normalize metadata only (phase/brief_type/priority).
+          // TD-333: same shape as `_create` — default first, then normalize.
+          normalizeStatus(args.status ?? 'Ready') ?? 'Ready',
+          // TD-238: normalize metadata only (phase/brief_type/priority/status).
           normalizePriority(args.priority),
           args.effort ?? null,
           normalizePhase(args.phase),
@@ -686,12 +733,20 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
     };
   }
 
-  // TD-328 D6(c): only when brief_type was actually part of this update —
+  // TD-328 D6(c): only when the field was actually part of this update —
   // re-typing a brief is the other way a non-canonical value enters the store.
+  // TD-333 adds the status and priority twins on the same "only if provided"
+  // condition, so an update that never mentions a field says nothing about it.
   const typeNote =
     args.brief_type !== undefined
       ? nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type))
       : null;
+  const priorityNote =
+    args.priority !== undefined
+      ? nonCanonicalPriorityNote(normalizePriority(args.priority))
+      : null;
+  const statusNote =
+    args.status !== undefined ? nonCanonicalStatusNote(normalizeStatus(args.status)) : null;
 
   return {
     content: [{
@@ -703,6 +758,8 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
         `Brief: ${args.brief_id}`,
         `Updated fields: ${updated.join(', ')}`,
         typeNote ? `\n${typeNote}` : null,
+        priorityNote ? `\n${priorityNote}` : null,
+        statusNote ? `\n${statusNote}` : null,
       ].filter(Boolean).join('\n'),
     }],
   };

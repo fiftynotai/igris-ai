@@ -339,3 +339,133 @@ describe("TD-338 T10 — the ingress report reaches the digest", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// TD-333 T7 — `status` folds at the CLI door too, and the two copies AGREE.
+// The payloads and outcomes here mirror the brain-side T6/T8 one-for-one.
+// ---------------------------------------------------------------------------
+
+describe("TD-333 T7 — the CLI pull door folds `status`", () => {
+  it("folds Completed -> Done and InProgress -> In Progress on a real pull", async () => {
+    seedSchema();
+    const lb = makePullLoopback({
+      brief_status: [
+        // hold the other three fields canonical so `status` is the only mover
+        dirtyRow({
+          brief_id: "BR-045",
+          status: "Completed",
+          brief_type: "Feature",
+          priority: "P1-High",
+          phase: "COMPLETE",
+        }),
+        dirtyRow({
+          brief_id: "BR-002",
+          status: "InProgress",
+          brief_type: "Feature",
+          priority: "P1-High",
+          phase: "BUILDING",
+        }),
+      ],
+    });
+    await listen(lb);
+    try {
+      const d = await bootSync(`http://127.0.0.1:${lb.port()}`);
+      expect(d.brain_pull.ok).toBe(true);
+
+      withDb((db) => {
+        const rows = db
+          .prepare("SELECT brief_id, status, updated_at FROM brief_status ORDER BY brief_id")
+          .all() as Record<string, unknown>[];
+        expect(rows).toEqual([
+          { brief_id: "BR-002", status: "In Progress", updated_at: "2026-08-04 00:00:00" },
+          { brief_id: "BR-045", status: "Done", updated_at: "2026-08-04 00:00:00" },
+        ]);
+      });
+
+      const n = d.brain_pull.normalization;
+      expect(n?.normalized).toBe(2);
+      expect(n?.folds).toEqual(
+        expect.arrayContaining([
+          'brief_status moca-ai-agent|BR-045: status "Completed" -> "Done"',
+          'brief_status moca-ai-agent|BR-002: status "InProgress" -> "In Progress"',
+        ]),
+      );
+      expect(n?.non_canonical ?? []).toEqual([]);
+    } finally {
+      await close(lb);
+    }
+  });
+
+  it("stores a SENTENCE status VERBATIM and reports it (the fold never invents)", async () => {
+    seedSchema();
+    const sentence = "Split (see FR-161, FR-162, FR-163, FR-164, FR-165, FR-166, FR-167)";
+    const lb = makePullLoopback({
+      brief_status: [
+        dirtyRow({
+          brief_id: "FR-160",
+          status: sentence,
+          brief_type: "Feature",
+          priority: "P1-High",
+          phase: "COMPLETE",
+        }),
+      ],
+    });
+    await listen(lb);
+    try {
+      const d = await bootSync(`http://127.0.0.1:${lb.port()}`);
+
+      withDb((db) => {
+        const row = db
+          .prepare("SELECT * FROM brief_status WHERE brief_id = 'FR-160'")
+          .get() as Record<string, unknown>;
+        // Byte-for-byte: no fold, no truncation, no "cleanup".
+        expect(row.status).toBe(sentence);
+      });
+
+      const n = d.brain_pull.normalization;
+      expect(n?.normalized).toBe(0);
+      expect(n?.folds ?? []).toEqual([]);
+      expect(n?.non_canonical).toEqual([
+        `brief_status moca-ai-agent|FR-160: status="${sentence}"`,
+      ]);
+    } finally {
+      await close(lb);
+    }
+  });
+
+  it("reports the three MISSING STATES rather than folding them (TD-311)", async () => {
+    seedSchema();
+    const lb = makePullLoopback({
+      brief_status: ["Cancelled", "Superseded", "Deferred"].map((status, i) =>
+        dirtyRow({
+          brief_id: `TD-10${i}`,
+          status,
+          brief_type: "Feature",
+          priority: "P1-High",
+          phase: "COMPLETE",
+        }),
+      ),
+    });
+    await listen(lb);
+    try {
+      const d = await bootSync(`http://127.0.0.1:${lb.port()}`);
+
+      withDb((db) => {
+        const rows = db
+          .prepare("SELECT status FROM brief_status ORDER BY brief_id")
+          .all() as Record<string, unknown>[];
+        expect(rows.map((r) => r.status)).toEqual(["Cancelled", "Superseded", "Deferred"]);
+      });
+
+      const n = d.brain_pull.normalization;
+      expect(n?.normalized).toBe(0);
+      expect(n?.non_canonical).toEqual([
+        'brief_status moca-ai-agent|TD-100: status="Cancelled"',
+        'brief_status moca-ai-agent|TD-101: status="Superseded"',
+        'brief_status moca-ai-agent|TD-102: status="Deferred"',
+      ]);
+    } finally {
+      await close(lb);
+    }
+  });
+});

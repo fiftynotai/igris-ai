@@ -27,8 +27,17 @@
 #      ~/.igris/projects/<slug>/briefs/  -- v6 brain-directory cache.
 #      LITERAL BY DESIGN, not a site TD-340 missed. A regex here would be a
 #      FOURTH notation-matching implementation with different semantics from the
-#      SQL fold above, pinned by nothing. Fold it when TD-333 ships a shared
-#      definition to fold TO -- one matching rule beats several.
+#      SQL fold above, pinned by nothing.
+#      TD-333 HAS NOW SHIPPED normalizeStatus / CANONICAL_STATUSES, and this arm
+#      was DELIBERATELY left literal anyway. That vocabulary is TypeScript; this
+#      is a bash fallback that must run with no node process, so there is still
+#      nothing here to fold TO -- shipping TD-333 did not change that. The arm
+#      also only fires when the DB arm misses, and the brief templates write
+#      'In Progress', so the exposure is a cache file hand-edited to a variant
+#      spelling. Closing it properly requires a bash-consumable export of the
+#      canonical vocabulary (the same thing scripts/validate_brief_status_
+#      vocabulary.sh hand-mirrors today, and the TD-330 defect class). No brief
+#      owns that yet -- do not "fix" this with an ad-hoc regex in the meantime.
 #   3. Neither -> deny via JSON output.
 # Slug is resolved by walking PROJECT_DIR up its ancestors and matching
 # `projects.path` in the brain DB after pwd -P realpath normalisation
@@ -254,9 +263,10 @@ find_active_brief_in_brain() {
   #
   # Folds NOTATION ONLY (case + space + hyphen + underscore), never VOCABULARY:
   # a different WORD ('Completed', 'Done', 'Active') is deliberately NOT
-  # matched. Vocabulary WILL be owned by normalizeStatus / CANONICAL_STATUSES
-  # in brain-mcp-server/src/tools/brief-normalize.ts once TD-333 ships — NOT
-  # SHIPPED as of TD-340.
+  # matched. Vocabulary is owned by normalizeStatus / CANONICAL_STATUSES in
+  # brain-mcp-server/src/tools/brief-normalize.ts — SHIPPED by TD-333. Both
+  # mechanisms stay: this one guards NOTATION at the gate, that one guards
+  # VOCABULARY at the write boundary and at sync ingress.
   stdout=$(sqlite3 "$db" \
     "SELECT brief_id FROM brief_status WHERE project = '$slug' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress' ORDER BY updated_at DESC LIMIT 1;" \
     2>"$stderr_file")

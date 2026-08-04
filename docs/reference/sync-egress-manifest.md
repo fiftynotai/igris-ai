@@ -36,7 +36,7 @@ are merged last-write-wins into your local store, and a small, declared set
 of `brief_status` columns is **normalized on arrival** — the same fold the
 local write boundary applies when you create or update a brief:
 
-- `brief_status.brief_type`, `brief_status.priority`, `brief_status.phase`.
+- `brief_status.brief_type`, `brief_status.priority`, `brief_status.phase`, `brief_status.status`.
 
 The rules, in full:
 

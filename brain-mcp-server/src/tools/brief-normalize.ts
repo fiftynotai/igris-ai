@@ -1,11 +1,17 @@
 /**
  * Igris Brain -- Brief Metadata Normalization (TD-238)
  *
- * Canonicalizes the three free-text metadata fields written at the brief
- * write boundaries (`igris_brief_sync` / `_create` / `_update`):
+ * Canonicalizes the FOUR free-text metadata fields written at the brief
+ * write boundaries (`igris_brief_sync` / `_create` / `_update`) and, since
+ * TD-338, at replication ingress:
  *   - phase
  *   - priority
  *   - brief_type
+ *   - status      (TD-333 — the last one to get a normalizer, and the one the
+ *                  system treats as AUTHORITATIVE: it is the canonical
+ *                  build-state source. Fifteen distinct values had accumulated
+ *                  for six documented states, including three spellings of
+ *                  *finished*. See CANONICAL_STATUSES below.)
  *
  * Design posture (insert-narrow / read-widen — memory #228, CORRECTED by TD-328):
  *   These helpers NORMALIZE; they do NOT hard-reject. Known legacy forms are
@@ -45,6 +51,13 @@
  *   collapsing the unset family to NULL fixes the split-bucket double-count
  *   without inventing a priority for a genuinely unset brief.
  *
+ *   THE MIRROR-IMAGE EXCEPTION (TD-333): `normalizeStatus` does NOT map the
+ *   empty string to NULL, and that asymmetry is a SCHEMA fact rather than an
+ *   inconsistency. `brief_status.status` is `TEXT NOT NULL` — the only one of
+ *   the four whose column is — so there is no unset member to fold to, and
+ *   folding would convert a meaningless write into a hard reject at the write
+ *   boundary and a silently dropped row at ingress. See `normalizeStatus`.
+ *
  * Idempotency: every normalizer maps canonical input to itself (a fixed
  * point), so applying a normalizer twice equals applying it once. This is the
  * property the v18 data migration relies on for safe re-runs.
@@ -58,7 +71,14 @@
  *   THE SAME APPLIES TO CANONICAL_BRIEF_TYPES (TD-328), with one important
  *   difference: its bash twin lives in scripts/validate_brief_type_vocabulary.sh
  *   and it has NO equivalent parity guard yet — only a presence spot-check. See
- *   the note on CANONICAL_BRIEF_TYPES below. TD-330 owns closing that gap.
+ *   the note on CANONICAL_BRIEF_TYPES below.
+ *
+ *   ...AND TO CANONICAL_STATUSES (TD-333), whose bash twin is in
+ *   scripts/validate_brief_status_vocabulary.sh. **TD-330 now owes a parity
+ *   guard for THREE bash canonical arrays, not one.** The status and priority
+ *   pairs are small enough that their bats suites check element COUNT in both
+ *   directions, which is a real guard; the 12-member brief_type pair is still
+ *   only spot-checked. The generic guard is TD-330's.
  *
  * @module tools/brief-normalize
  * @author fifty.dev
@@ -537,6 +557,208 @@ export function nonCanonicalPriorityNote(stored: string | null | undefined): str
 }
 
 // ===========================================================================
+// TD-333 — THE `status` VOCABULARY
+// ===========================================================================
+
+/**
+ * Canonical brief statuses (TD-333) — the DOCUMENTED LIFECYCLE.
+ *
+ * THE DEFINING RULE, and the reason this fold is mechanical rather than taste:
+ * the canonical set is the lifecycle written down at
+ * `docs/architecture/brief-state-source-of-truth.md` (the "Source" table) — the
+ * SAME six values `cli/dashboard/src/layers/board.ts` mirrors as
+ * `KNOWN_BRIEF_STATUSES`. TD-333 does NOT widen it. From that anchor:
+ *
+ *   - a live value is a SPELLING if it is a morphological variant of a
+ *     documented member AND the documented set has no separate slot for what it
+ *     means  →  it folds (see STATUS_ALIASES);
+ *   - a live value is a MISSING STATE if it names an outcome the documented set
+ *     has no member for at all  →  it does NOT fold. It passes through, and the
+ *     observers report it until a human decides (see the note below).
+ *
+ * THE THREE MISSING STATES, named so their absence reads as a decision:
+ * `Cancelled` (23 rows), `Superseded` (18) and `Deferred` (7), measured
+ * read-only on 2026-08-04. Each names an outcome the documented six cannot
+ * express. Promoting them would change the ONE written lifecycle source and
+ * sweep `board.ts`, the bash validator and the reconciler's terminal-set
+ * reasoning (is a `Cancelled` brief terminal for C1/C2? a real design
+ * question) — which is "changing the state machine itself", explicitly out of
+ * TD-333's scope. So they stay non-canonical AND REPORTED: 3 values / 48 rows
+ * of standing WARN, which is the pressure that gets the follow-up brief hunted.
+ * Tolerance without observation has no gradient (TD-328's finding).
+ *
+ * ⚠ THIS ARRAY HAS A SECOND COPY, the same shape `CANONICAL_BRIEF_TYPES` and
+ * `CANONICAL_PRIORITIES` already carry: `scripts/validate_brief_status_vocabulary.sh`
+ * holds a `CANONICAL_STATUSES` bash array that MUST stay element-identical.
+ * There is no build step generating one from the other and the bats trio only
+ * SPOT-CHECKS presence, so editing this array is a two-file edit you have to
+ * remember. TD-330 now owes a real element-for-element parity guard for THREE
+ * bash canonical arrays, not one.
+ */
+export const CANONICAL_STATUSES = [
+  'Draft',
+  'Ready',
+  'In Progress',
+  'Blocked',
+  'Done',
+  'Archived',
+] as const;
+
+/**
+ * status alias fold map (spelling → documented member).
+ *
+ * Keys are LOWERCASE and TRIMMED; lookup is `value.trim().toLowerCase()`.
+ *
+ * THE TD-311 ARGUMENT, because `status` is the canonical build-state source and
+ * a status edit is exactly what TD-311 forbids:
+ *
+ *   TD-311 says brief-state contradictions must NEVER be resolved by editing
+ *   brief data. This table does not resolve one. A brief's STATE is what the
+ *   operator recorded; a predicate's VERDICT is what a consumer computes. The
+ *   operator who typed `Completed` recorded *"this work is finished"*, and
+ *   `Done` is the documented member that means *"this work is finished"*. After
+ *   the fold the brief still means what it meant. No brief ends up in a state
+ *   the operator did not record.
+ *
+ *   THE INVARIANT A REVIEWER CAN CHECK IN ONE PASS: every entry here maps to a
+ *   target whose documented meaning is IDENTICAL to the source's, not merely
+ *   ADJACENT. Adjacency is a state edit.
+ *
+ * Each entry, argued individually:
+ *   `completed` → `Done` (24 rows). English past participle of the same verb,
+ *     and the codebase already asserts they are one state:
+ *     `tools/projects.ts` counts `status IN ('Done','Completed','Closed')` as a
+ *     single terminal bucket. That is evidence from the code, not from taste.
+ *   `complete`  → `Done` (1 row). Adjectival form of the same word; no consumer
+ *     names it anywhere in the tree.
+ *   `inprogress` → `In Progress` (4 rows). A whitespace difference and nothing
+ *     else. `cli/dashboard/src/layers/board.ts` already normalises exactly this
+ *     pair to one sort key and its test pins
+ *     `statusRank('InProgress') === statusRank('In Progress')` — the codebase
+ *     has already asserted these are the same lifecycle slot. The fold makes
+ *     the store agree with the UI rather than the reverse.
+ *
+ * ⛔ THE EXCLUSION LIST — folds a well-meaning future editor might add. EVERY
+ *    ONE OF THESE IS A STATE EDIT AND IS FORBIDDEN HERE. A test pins their
+ *    absence, so adding one goes red rather than silently retyping briefs:
+ *
+ *   `Cancelled` → `Archived`   moves "we decided not to do this" to "we
+ *                              finished it and shelved it" — opposite meanings
+ *                              for a release audit.
+ *   `Superseded` → `Archived`/`Done`  `Superseded` says another brief carries
+ *                              the work; `Done` says the work happened.
+ *   `Deferred`  → `Blocked`    `Blocked` is externally prevented; `Deferred` is
+ *                              deliberately postponed.
+ *   `Draft` → `Ready`, `Blocked` → `In Progress`   advance a brief through the
+ *                              state machine. Categorically forbidden.
+ *   `Done(Resolved…)` → `Done` not a state edit but a DATA edit: the trailing
+ *                              token is a commit sha with no other copy, and
+ *                              folding destroys it. Hand-migrated instead (the
+ *                              payload moves into the brief's own content as a
+ *                              `## Resolution` line, then the row is retyped by
+ *                              hand through `igris_brief_update`).
+ *   `Split (see …)` → anything THREE plausible targets (`Done`, `Archived`,
+ *                              `Superseded`) and the operator chose none of
+ *                              them. Picking one is the planner deciding a
+ *                              brief's state. The lineage belongs in the edge
+ *                              graph (`derived_from`), which is ADDITIVE and
+ *                              destroys nothing; the state stays untouched.
+ */
+export const STATUS_ALIASES: Record<string, string> = {
+  completed: 'Done',
+  complete: 'Done',
+  inprogress: 'In Progress',
+};
+
+/**
+ * Canonical status lookup, keyed by lowercase, for idempotent case-folding
+ * (`'done'` / `'  DONE  '` → `'Done'`, `'in progress'` → `'In Progress'`).
+ */
+const STATUS_CANONICAL: Record<string, string> = Object.fromEntries(
+  CANONICAL_STATUSES.map((s) => [s.toLowerCase(), s]),
+);
+
+/**
+ * Normalize a brief status to its canonical spelling.
+ *
+ * Known aliases (STATUS_ALIASES — `Completed`/`Complete` → `Done`,
+ * `InProgress` → `In Progress`) fold, and any case/padding variant of a
+ * canonical status folds to its canonical form. Unknown values pass through
+ * UNCHANGED (read-widen — never drop operator data) and the caller is expected
+ * to REPORT them.
+ *
+ * ⚠ ONE DELIBERATE ASYMMETRY WITH THE OTHER THREE NORMALIZERS, and it is a
+ * SCHEMA fact rather than a style choice: `normalizePriority` / `normalizePhase`
+ * / `normalizeBriefType` map the empty string to SQL NULL because their columns
+ * are NULLABLE and NULL is a legitimate *unset*. **`brief_status.status` is
+ * `TEXT NOT NULL`** (`db.ts`, and confirmed against the live schema). There is
+ * no "unset" status — `_create` defaults to `'Ready'` — so folding `''` to NULL
+ * would not canonicalise anything: it would turn a tolerated, meaningless write
+ * into a NOT NULL constraint violation at the write boundary, and into a
+ * SILENTLY DROPPED ROW at replication ingress (the per-row try/catch). That is a
+ * hard reject, which this module's whole posture forbids. So an empty or
+ * whitespace-only status passes through UNCHANGED like any other unrecognised
+ * value, and `isCanonicalStatus('')` is false so the write-boundary echo names
+ * it. (Residual, stated rather than hidden: `normalizeSyncRow`'s shared reporter
+ * skips a stored value whose `trim()` is empty — that clause is correct for the
+ * three NULLABLE fields and means an empty status arriving over SYNC is stored
+ * verbatim and NOT reported. Zero such rows exist; a fixture row pins the
+ * behaviour so it is visible rather than assumed.)
+ *
+ * `null`/`undefined` → `null` (the field was not supplied; there is nothing to
+ * normalize).
+ *
+ * Idempotent: canonical input returns itself, and every alias TARGET is itself
+ * canonical (pinned by a test), so `f(f(x)) === f(x)` holds for the whole table.
+ */
+export function normalizeStatus(v: string | null | undefined): string | null {
+  if (v === null || v === undefined) return null;
+  const key = v.trim().toLowerCase();
+  // Alias fold first, then canonical case-fold, else passthrough untouched.
+  // NOTE the missing `if (trimmed === '') return null` the three siblings have —
+  // see the NOT NULL asymmetry above. `''` falls through to the passthrough.
+  return STATUS_ALIASES[key] ?? STATUS_CANONICAL[key] ?? v;
+}
+
+/**
+ * Is `v` a canonical status? Case-insensitive and trim-tolerant, so `'done'`
+ * does not trigger a spurious "non-canonical" report.
+ *
+ * The empty string is FALSE — an offender, not an *unset*. Unlike `priority`,
+ * `status` is NOT NULL and has no unset member (see `normalizeStatus`).
+ */
+export function isCanonicalStatus(v: string | null | undefined): boolean {
+  if (v === null || v === undefined) return false;
+  return STATUS_CANONICAL[v.trim().toLowerCase()] !== undefined;
+}
+
+/**
+ * The status twin of {@link nonCanonicalBriefTypeNote} (TD-333).
+ *
+ * `status` is the CANONICAL BUILD-STATE SOURCE and it had no observer at all:
+ * 15 distinct values accumulated, including three spellings of *finished*, two
+ * of *in-flight*, a status with a commit sha welded on and two whole SENTENCES.
+ * Returns a NOTE for a non-canonical STORED value, or `null` when there is
+ * nothing to say. Informs; never rejects, never rewrites.
+ *
+ * DIVERGENCE FROM THE TWO TWINS, deliberate: they return `null` for an empty
+ * stored value because NULL/empty is *unset* for their nullable columns. This
+ * one REPORTS it, because `status` is NOT NULL and an empty status is a broken
+ * row rather than an unset field.
+ *
+ * @param stored - the value as normalized and written (NOT the raw input)
+ */
+export function nonCanonicalStatusNote(stored: string | null | undefined): string | null {
+  if (stored === null || stored === undefined) return null;
+  if (isCanonicalStatus(stored)) return null;
+  return (
+    `NOTE: status ${JSON.stringify(stored)} is not a canonical status (stored as-is).\n` +
+    `      Canonical: ${CANONICAL_STATUSES.join(', ')}.\n` +
+    '      Unknown values are kept, never dropped — but they are reported (TD-333).'
+  );
+}
+
+// ===========================================================================
 // TD-338 — REPLICATION-INGRESS NORMALIZATION
 // ===========================================================================
 //
@@ -560,11 +782,14 @@ export function nonCanonicalPriorityNote(stored: string | null | undefined): str
 //      `NORMALIZER_BODIES` (brief-normalize-mirror.ts);
 //   3. `npm run gen:brief-normalize-mirror`, plus one test.
 // The mirror's `SyncNormalizerId` union and its dispatch table are DERIVED from
-// this map, so they move on their own — the only per-normalizer text left in
-// the builder is the function body, and a mapped id with no body THROWS at
-// generation time naming what to add. TD-333 (fold `status`) reuses no existing
-// id, so it is: this map + a `normalizeStatus`/`isCanonicalStatus` pair + its
-// mirror body.
+// this map, so they move on their own, and a mapped id with no body THROWS at
+// generation time naming what to add. **But the DATA layer of the mirror is NOT
+// derived**: `renderCliModule` hand-lists each canonical set and each fold map
+// by name, so a NEW normalizer id also costs its `renderStringArray` /
+// `renderRecord` calls, any lookup const its body reads, one push in each of
+// the two fixture builders, and its seeds in the fixture corpora. TD-333 paid
+// six edits in `brief-normalize-mirror.ts`, not one. The exact list is in the
+// `NORMALIZER_BODIES` docstring there — read it before estimating the next one.
 //
 // WHAT IS DELIBERATELY ABSENT:
 //   - `updated_at` — the LWW comparison column. A fold that bumped it would
@@ -572,8 +797,12 @@ export function nonCanonicalPriorityNote(stored: string | null | undefined): str
 //     un-migrated remote. Its absence from this map is what makes the fold
 //     non-oscillating, and it is asserted by a test, not trusted to this
 //     comment (`sync-ingress-normalize.test.ts`).
-//   - `status` — until TD-333 ships `normalizeStatus`. Stated so the gap reads
-//     as a decision, not an oversight.
+//   (`status` used to be listed here as "absent until TD-333 ships
+//   `normalizeStatus`". TD-333 shipped: it is now in the map above, and it is
+//   the FOURTH normalizer id. What that brief actually cost in the mirror
+//   builder is recorded in the `NORMALIZER_BODIES` docstring — the "one line
+//   plus one body" figure above is true of the LOGIC layer and undercounts the
+//   DATA layer by five edits.)
 //   - `sessions.phase` — `sessions` is an append-strategy table (insert-only,
 //     no LWW update) with no observed drift, and MAINTAINING row 64 scopes the
 //     phase vocabulary contract to `brief_status`.
@@ -584,7 +813,7 @@ export function nonCanonicalPriorityNote(stored: string | null | undefined): str
  * and DERIVES its own copy of this union from the values used in
  * `SYNC_NORMALIZED_FIELDS`, so only this declaration is hand-maintained.
  */
-export type SyncNormalizerId = 'priority' | 'brief_type' | 'phase';
+export type SyncNormalizerId = 'priority' | 'brief_type' | 'phase' | 'status';
 
 /**
  * Which synced columns pass through a write-boundary normalizer on INGRESS,
@@ -602,6 +831,7 @@ export const SYNC_NORMALIZED_FIELDS: Record<string, Record<string, SyncNormalize
     brief_type: 'brief_type',
     priority: 'priority',
     phase: 'phase',
+    status: 'status',
   },
 };
 
@@ -615,6 +845,7 @@ const SYNC_NORMALIZERS: Record<SyncNormalizerId, SyncNormalizerEntry> = {
   priority: { normalize: normalizePriority, isCanonical: isCanonicalPriority },
   brief_type: { normalize: normalizeBriefType, isCanonical: isCanonicalBriefType },
   phase: { normalize: normalizePhase, isCanonical: isCanonicalPhase },
+  status: { normalize: normalizeStatus, isCanonical: isCanonicalStatus },
 };
 
 /** One field folded on ingress: what it arrived as, what was stored. */

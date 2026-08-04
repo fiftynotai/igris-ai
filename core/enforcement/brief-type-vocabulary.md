@@ -170,6 +170,13 @@ there** — keep the filter honest and fix the data instead.
    agree. TD-330 owns building the real guard (the shape
    `test/validate_canonical_phase_parity.test.bash` already has for
    `CANONICAL_PHASES`). Until then this step is a HUMAN obligation.
+   **TD-330's scope is now THREE bash canonical arrays, not one**: TD-338 added
+   `CANONICAL_PRIORITIES` to `scripts/validate_brief_priority_vocabulary.sh` and
+   TD-333 added `CANONICAL_STATUSES` to
+   `scripts/validate_brief_status_vocabulary.sh`. Those two are small enough
+   that their bats suites check element COUNT in both directions, which IS a
+   real guard for them — this 12-member pair is the one still only
+   spot-checked, and the generic guard is what TD-330 owes.
 3. Fold historical rows in a **NEW migration version** — never edit a shipped
    one.
 4. **Extending the `/register` prefix map REQUIRES adding the matching canonical

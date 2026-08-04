@@ -652,6 +652,40 @@ interface PackReport {
  *   with 10_169 B of slack. Kept as the provenance of that figure, not as the
  *   current one.)
  *
+ * TD-333 MEASURED LAST, after its final code-touching step:
+ *   packed              1_811_683    unpacked 7_138_039, 804 entries (UNCHANGED
+ *                                    — TD-333's two new source files are a bash
+ *                                    validator and a bats suite, neither of
+ *                                    which is packed, and its one new TS file
+ *                                    is `src/__tests__/db-migration-v25.test.ts`,
+ *                                    which `tsconfig` excludes from `dist`)
+ *   TD-333's own share  +17_915 B    (17.50 KB) against HEAD's 1_793_768,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding, packing, and restoring —
+ *                                    NOT by subtracting from the previous
+ *                                    ledger entry, which is four briefs stale
+ *   cumulative delta    +497.9 KB    (509_832 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~52.1 KB     (53_368 B under TD-329's +550)
+ *   built app chunk     559_384 B    (BYTE-IDENTICAL — the only `cli/dashboard/**`
+ *                                    edit was a docstring, and Vite minifies
+ *                                    comments away)
+ *
+ *   THE SHARE IS ALMOST ENTIRELY COMMENT PROSE IN `brain-mcp-server/**`, and
+ *   that is the ledger's oldest lesson rather than a surprise: TD-333 modified
+ *   NO `cli/src/**` runtime file except the GENERATED normalizer mirror, yet
+ *   still spent 17.5 KB, because `cli` packs the compiled brain server at
+ *   `dist/brain-mcp-server/dist/**` and `tsc` PRESERVES comments into it and
+ *   pays for them TWICE (`.js` and `.js.map`). The unpacked figure moved
+ *   +109_557 B for +17_915 B packed — a ~6.1x compression ratio, which is what
+ *   prose looks like in this budget.
+ *
+ *   WHY THE PREVIOUS ENTRY IS NOT THE BASELINE HERE. FR-250, TD-338 and TD-340
+ *   all shipped after FR-247 WITHOUT recording an entry, so the gap between
+ *   FR-247's 1_757_652 and this reading is 54_031 B of which only 17_915 B is
+ *   TD-333's. Subtracting from the last recorded line would have over-attributed
+ *   this brief by 3x. **Measure against HEAD, not against the ledger's tail** —
+ *   the ledger is a record of readings, not a continuous series.
+ *
  * FR-247 MEASURED LAST, after its final code-touching step:
  *   packed              1_757_652    unpacked 6_831_457, 797 entries (UNCHANGED
  *                                    — FR-247's one new file, `auto-push-fence.ts`,

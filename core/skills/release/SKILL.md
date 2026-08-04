@@ -88,10 +88,13 @@ else
   # would INVERT the gate and make every release un-taggable. The fold above
   # collapses NOTATION only, never VOCABULARY — 'Completed' folds to
   # 'completed', which is deliberately not in the list. The canonical status
-  # vocabulary (a new WORD, as opposed to a new SPELLING) WILL be owned by
+  # vocabulary (a new WORD, as opposed to a new SPELLING) is owned by
   # normalizeStatus / CANONICAL_STATUSES in
-  # brain-mcp-server/src/tools/brief-normalize.ts once TD-333 ships. NOT
-  # SHIPPED as of TD-340 — that file names them only as a forward reference.
+  # brain-mcp-server/src/tools/brief-normalize.ts — SHIPPED by TD-333.
+  # The two mechanisms guard two different failure modes and BOTH are load-
+  # bearing: this fold stays even though v25 cleaned the data, because
+  # `igris import` or a non-normalizing writer can deliver 'In_Progress'
+  # tomorrow. Do not simplify it away on the grounds that the data is clean.
   ROWS="$(sqlite3 -noheader "$DB" "
     SELECT brief_id || '  ' || priority || '  ' || status || '  ' || brief_type || '  ' || title
     FROM brief_status

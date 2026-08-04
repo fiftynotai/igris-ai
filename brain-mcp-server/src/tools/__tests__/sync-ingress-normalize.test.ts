@@ -266,6 +266,8 @@ describe('TD-338 T3 — AC-3: the fold does not bump updated_at, so it cannot fi
       brief_type: 'brief_type',
       priority: 'priority',
       phase: 'phase',
+      // TD-333 — `status`, the canonical build-state source, joins the map.
+      status: 'status',
     });
     // ...including for a row whose updated_at is itself a foldable-looking string.
     const { row, folds } = normalizeSyncRow('brief_status', {
@@ -434,5 +436,213 @@ describe('TD-338 — normalizeSyncRow is idempotent', () => {
       // A second pass folds nothing — the first reached the fixed point.
       expect(normalizeSyncRow('brief_status', once).folds).toEqual([]);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-333 — `status`, the CANONICAL BUILD-STATE SOURCE, folds at ingress too
+// ---------------------------------------------------------------------------
+
+describe('TD-333 T6 — the status fold at the BRAIN ingress door', () => {
+  it('folds InProgress -> In Progress on the INSERT branch', () => {
+    const db = makeDb();
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({
+        brief_id: 'BR-002',
+        status: 'InProgress',
+        // hold the other three fields canonical so `status` is the only mover
+        brief_type: 'Feature',
+        priority: 'P1-High',
+        phase: 'BUILDING',
+      }),
+    ]);
+
+    expect(result.inserted).toBe(1);
+    expect(readRow(db, 'BR-002').status).toBe('In Progress');
+    expect(result.normalized).toBe(1);
+    expect(result.normalizations).toEqual([
+      {
+        key: 'moca-ai-agent|BR-002',
+        field: 'status',
+        from: 'InProgress',
+        to: 'In Progress',
+      },
+    ]);
+    expect(result.nonCanonical).toBeUndefined();
+  });
+
+  it('folds Completed -> Done on the LWW-UPDATE branch', () => {
+    const db = makeDb();
+    db.prepare(
+      `INSERT INTO brief_status (project, brief_id, brief_type, title, status, priority, effort, phase, updated_at)
+       VALUES ('moca-ai-agent','BR-045','Feature','old title','Ready','P3-Low','S','INIT','2026-01-01 00:00:00')`,
+    ).run();
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({ status: 'Completed', brief_type: 'Feature', priority: 'P1-High', phase: 'BUILDING' }),
+    ]);
+
+    expect(result.updated).toBe(1);
+    expect(readRow(db).status).toBe('Done');
+    expect(result.normalized).toBe(1);
+  });
+
+  it('folds on the POST /sync/push path too, and tells the pusher', () => {
+    const db = makeDb();
+
+    const { results, ok } = processSyncPush(db, {
+      brief_status: [dirtyRow({ status: 'Complete' })],
+    });
+
+    expect(ok).toBe(true);
+    expect(readRow(db).status).toBe('Done');
+    expect(results.brief_status.normalizations).toEqual(
+      expect.arrayContaining([
+        { key: 'moca-ai-agent|BR-045', field: 'status', from: 'Complete', to: 'Done' },
+      ]),
+    );
+  });
+
+  it('stores the INBOUND updated_at byte-for-byte on a status-folded row', () => {
+    // THE NO-BUMP GUARANTEE, re-armed for the fourth normalizer. `status` is an
+    // LWW-synced column (sync.ts SYNC_TABLES), so a fold that bumped
+    // `updated_at` would manufacture a write no operator made.
+    const db = makeDb();
+    const inbound = dirtyRow({ status: 'Completed', updated_at: '2026-08-04 11:22:33' });
+
+    mergeRows(db, BRIEF_STATUS_CONFIG, [inbound]);
+
+    expect(readRow(db).status).toBe('Done');
+    expect(readRow(db).updated_at).toBe('2026-08-04 11:22:33');
+  });
+
+  it('re-merging the SAME folded row is skipped — the fixed point holds', () => {
+    const db = makeDb();
+    const inbound = dirtyRow({ status: 'Completed' });
+
+    mergeRows(db, BRIEF_STATUS_CONFIG, [inbound]);
+    const second = mergeRows(db, BRIEF_STATUS_CONFIG, [inbound]);
+
+    expect(second.skipped).toBe(1);
+    expect(second.updated).toBe(0);
+    expect(readRow(db).status).toBe('Done');
+  });
+});
+
+describe('TD-333 T8 — the status fold never invents', () => {
+  it('stores a MISSING STATE verbatim and REPORTS it', () => {
+    const db = makeDb();
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({ status: 'Cancelled', brief_type: 'Feature', priority: 'P1-High', phase: 'BUILDING' }),
+    ]);
+
+    expect(readRow(db).status).toBe('Cancelled');
+    expect(result.normalized).toBe(0);
+    expect(result.normalizations).toBeUndefined();
+    expect(result.nonCanonical).toEqual([
+      { key: 'moca-ai-agent|BR-045', field: 'status', value: 'Cancelled' },
+    ]);
+  });
+
+  it('stores a SENTENCE status verbatim and REPORTS it — no truncation, no fold', () => {
+    // TD-333 §5.3: `Done`, `Archived` and `Superseded` are all defensible
+    // readings of "split into children" and the operator picked none of them.
+    // Choosing one would be a STATE EDIT (TD-311). The 66-character value must
+    // survive the wire byte-for-byte.
+    const db = makeDb();
+    const sentence = 'Split (see FR-161, FR-162, FR-163, FR-164, FR-165, FR-166, FR-167)';
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({ status: sentence, brief_type: 'Feature', priority: 'P1-High', phase: 'BUILDING' }),
+    ]);
+
+    expect(readRow(db).status).toBe(sentence);
+    expect(result.normalizations).toBeUndefined();
+    expect(result.nonCanonical).toEqual([
+      { key: 'moca-ai-agent|BR-045', field: 'status', value: sentence },
+    ]);
+  });
+
+  it('stores the WELDED-PAYLOAD status verbatim — the sha has no other copy', () => {
+    const db = makeDb();
+    const welded = 'Done(Resolvedbydec8d1f)';
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({ status: welded, brief_type: 'Feature', priority: 'P1-High', phase: 'BUILDING' }),
+    ]);
+
+    expect(readRow(db).status).toBe(welded);
+    expect(result.nonCanonical).toEqual([
+      { key: 'moca-ai-agent|BR-045', field: 'status', value: welded },
+    ]);
+  });
+
+  it('does NOT fold an empty status to NULL — `status` is TEXT NOT NULL', () => {
+    // The asymmetry that keeps the never-hard-reject posture true. If
+    // `normalizeStatus` folded '' to null the way its three siblings do, this
+    // row would violate NOT NULL and mergeRows' per-row try/catch would DROP it
+    // — replication silently losing an operator's brief.
+    const db = makeDb();
+
+    const result = mergeRows(db, BRIEF_STATUS_CONFIG, [
+      dirtyRow({ status: '', brief_type: 'Feature', priority: 'P1-High', phase: 'BUILDING' }),
+    ]);
+
+    expect(result.inserted).toBe(1);
+    expect(result.errors ?? []).toEqual([]);
+    expect(readRow(db).status).toBe('');
+    // RESIDUAL, pinned rather than hidden: the shared reporter skips a stored
+    // value whose trim() is empty (correct for the three NULLABLE fields), so
+    // an empty status arrives unreported. Zero such rows exist in any brain.
+    expect(result.nonCanonical).toBeUndefined();
+  });
+});
+
+describe('TD-333 T15 — the status hook is brief_status-scoped', () => {
+  it('leaves a `status`-bearing row in an UNMAPPED table byte-identical', () => {
+    // `status` is a column name several tables carry, so the scope guard is
+    // load-bearing in a way it was not for `brief_type`/`priority`/`phase`.
+    for (const table of ['learnings', 'goals', 'projects', 'not_a_sync_table']) {
+      const row = { project: 'p', id: 1, status: 'Completed', phase: 'building' };
+      const out = normalizeSyncRow(table, row);
+      expect(out.row, table).toBe(row); // SAME object — nothing allocated
+      expect(out.row.status, table).toBe('Completed');
+      expect(out.folds, table).toEqual([]);
+      expect(out.nonCanonical, table).toEqual([]);
+    }
+  });
+
+  it('copies a learnings row carrying a `status` column verbatim through mergeRows', () => {
+    const db = makeDb();
+    const before = db.prepare('SELECT * FROM learnings').all();
+    expect(before).toEqual([]);
+
+    const result = mergeRows(db, LEARNINGS_CONFIG, [
+      {
+        project: 'igris-ai',
+        title: 'Done',
+        category: 'InProgress', // a string the status fold WOULD have rewritten
+        content: 'Completed', // ...and another
+        tags: '',
+        scope: 'project',
+        source_brief: null,
+        confidence: 0.8,
+        created_at: '2026-08-04 00:00:00',
+        updated_at: '2026-08-04 00:00:00',
+        access_count: 0,
+        last_accessed_at: null,
+        review_status: null,
+        provenance: null,
+        source_extractor: null,
+      },
+    ]);
+
+    expect(result.inserted).toBe(1);
+    expect(result.normalized).toBe(0);
+    const stored = db.prepare('SELECT * FROM learnings').get() as Record<string, unknown>;
+    expect(stored.content).toBe('Completed');
+    expect(stored.category).toBe('InProgress');
   });
 });

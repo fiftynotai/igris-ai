@@ -246,3 +246,201 @@ run_validator() {
   assert_output_contains "C1"
   assert_output_contains "WARN only"
 }
+
+# ===========================================================================
+# TD-333 — the widened terminal arm, and the negative controls that prove
+# each half of the widening is load-bearing.
+# ===========================================================================
+
+# Write a copy of the validator with its terminal `case` arm NARROWED back to
+# the pre-TD-333 vocabulary, for use as a negative control. Proves the mutation
+# actually landed before returning — a control that silently failed to mutate
+# would "pass" for the wrong reason.
+narrowed_validator() {
+  local out="$SCRATCH/validator_narrow.sh"
+  sed 's/^    done|archived|completed|complete)$/    done|archived)/' \
+    "$VALIDATOR" > "$out"
+  # ARM CHECK: the file must actually differ, and in exactly this way.
+  ! cmp -s "$VALIDATOR" "$out" || return 1
+  grep -q '^    done|archived)$' "$out" || return 1
+  ! grep -q 'completed|complete)' "$out" || return 1
+  echo "$out"
+}
+
+# The same, for the NOTATION half: strip the three `tr`/expansion fold lines so
+# the case matches the raw status.
+unfolded_validator() {
+  local out="$SCRATCH/validator_unfolded.sh"
+  sed 's/^  status_folded="\$(printf .*$/  status_folded="$status"/' "$VALIDATOR" \
+    | sed '/^  status_folded="\${status_folded\/\//d' > "$out"
+  ! cmp -s "$VALIDATOR" "$out" || return 1
+  grep -q '^  status_folded="\$status"$' "$out" || return 1
+  ! grep -q 'tr .\[:upper:\]' "$out" || return 1
+  echo "$out"
+}
+
+run_with() {
+  local script="$1"
+  run env BRAIN_DB="$FIXTURE_DB" REPO_DIR="$FIXTURE_REPO" PROJECT="$FIXTURE_PROJECT" \
+    bash "$script"
+}
+
+@test "TD-333 T12: Completed + phase=COMMITTING fires C1 (the exemption is closed)" {
+  init_fixture_db
+  init_fixture_repo
+  # This row was TERMINAL by meaning and INVISIBLE to this validator for its
+  # entire lifetime: `Completed` fell to the default arm, commented "other
+  # in-flight states". 26 live rows were exempt exactly this way.
+  seed_brief "FR-900" "Completed" "COMMITTING"
+  make_closing_commit "FR-900"   # commit exists, so ONLY C1 should fire
+
+  run_validator
+  assert_failure
+  assert_output_contains "C1"
+  assert_output_contains "FR-900"
+  # The report echoes the STORED spelling, not the folded key.
+  assert_output_contains "status='Completed'"
+}
+
+@test "TD-333 T12 NEGATIVE CONTROL: the pre-TD-333 arm does NOT fire on Completed" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "FR-900" "Completed" "COMMITTING"
+  make_closing_commit "FR-900"
+
+  local narrow
+  narrow="$(narrowed_validator)" || return 1
+  run_with "$narrow"
+  # Silence, and exit 0 — the defect this widening removes.
+  assert_success
+  assert_output_contains "reconciliation clean"
+}
+
+@test "TD-333 T12: Complete (adjectival, 1 live row) fires C1 too" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "TD-001" "Complete" "DONE"
+  make_closing_commit "TD-001"
+
+  run_validator
+  assert_failure
+  assert_output_contains "C1"
+  assert_output_contains "TD-001"
+}
+
+@test "TD-333 T12: the NOTATION fold catches DONE / in-flight spellings" {
+  init_fixture_db
+  init_fixture_repo
+  # A terminal status in a notation the literal list never named.
+  seed_brief "FR-901" "DONE" "COMMITTING"
+  make_closing_commit "FR-901"
+
+  run_validator
+  assert_failure
+  assert_output_contains "C1"
+  assert_output_contains "FR-901"
+}
+
+@test "TD-333 T12 NEGATIVE CONTROL: without the notation fold, DONE escapes" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "FR-901" "DONE" "COMMITTING"
+  make_closing_commit "FR-901"
+
+  local unfolded
+  unfolded="$(unfolded_validator)" || return 1
+  run_with "$unfolded"
+  assert_success
+  assert_output_contains "reconciliation clean"
+}
+
+@test "TD-333: InProgress stays VACUOUS — in-flight is not a contradiction" {
+  init_fixture_db
+  init_fixture_repo
+  # The notation fold must not sweep an in-flight spelling into the terminal
+  # arm. `inprogress` is neither terminal nor C3-eligible.
+  seed_brief "BR-002" "InProgress" "BUILDING"
+  seed_brief "BR-003" "In Progress" "BUILDING"
+  seed_brief "BR-004" "in_progress" "BUILDING"
+
+  run_validator
+  assert_success
+  assert_output_contains "reconciliation clean"
+}
+
+@test "TD-333: the three MISSING STATES stay VACUOUS — this validator does not decide" {
+  init_fixture_db
+  init_fixture_repo
+  # Whether Cancelled/Superseded/Deferred are terminal for C1/C2 is the
+  # follow-up lifecycle brief's question. Assuming an answer here would be the
+  # planner deciding a brief's state (TD-311).
+  seed_brief "TD-010" "Cancelled" "BUILDING"
+  seed_brief "TD-011" "Superseded" "INIT"
+  seed_brief "TD-012" "Deferred" "INIT"
+  make_closing_commit "TD-010"
+
+  run_validator
+  assert_success
+  assert_output_contains "reconciliation clean"
+}
+
+@test "TD-333: the SENTENCE and welded-payload statuses stay VACUOUS and unflagged" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "FR-054" "Split (see FR-061, FR-062, FR-063)" "INIT"
+  seed_brief "BR-128" "Done(Resolvedbydec8d1f)" "COMMITTING"
+
+  run_validator
+  assert_success
+  assert_output_contains "reconciliation clean"
+}
+
+@test "TD-333 T13: C3 is IDENTICAL across the whole fold source+target corpus" {
+  init_fixture_db
+  init_fixture_repo
+
+  # Every fold SOURCE and every fold TARGET, plus the C3 population. No fold
+  # source or target touches Ready/Draft, so C3 must be exactly 2 — this is the
+  # cheapest tripwire TD-333 has: if C3 moves, something folded that must not.
+  seed_brief "FR-001" "Completed" "COMPLETE"
+  seed_brief "FR-002" "Complete" "COMPLETE"
+  seed_brief "FR-003" "InProgress" "BUILDING"
+  seed_brief "FR-004" "Done" "COMPLETE"
+  seed_brief "FR-005" "In Progress" "BUILDING"
+  seed_brief "FR-006" "Archived" "COMPLETE"
+  seed_brief "FR-007" "Ready" "INIT"
+  seed_brief "FR-008" "Draft" "INIT"
+  for b in FR-001 FR-002 FR-003 FR-004 FR-005 FR-006 FR-007 FR-008; do
+    make_closing_commit "$b"
+  done
+
+  run_validator
+  assert_failure
+  local c3_after
+  c3_after="$(printf '%s\n' "$output" | grep -c 'CONTRADICTION C3' || true)"
+  [ "$c3_after" -eq 2 ] || { echo "C3 was $c3_after, expected 2"; return 1; }
+
+  # Now apply the v25 fold to the SAME corpus (Completed/Complete -> Done,
+  # InProgress -> In Progress) and re-measure. C3 must be byte-identical.
+  sqlite3 "$FIXTURE_DB" \
+    "UPDATE brief_status SET status='Done' WHERE LOWER(TRIM(status)) IN ('completed','complete');
+     UPDATE brief_status SET status='In Progress' WHERE LOWER(TRIM(status))='inprogress';"
+  run_validator
+  assert_failure
+  local c3_folded
+  c3_folded="$(printf '%s\n' "$output" | grep -c 'CONTRADICTION C3' || true)"
+  [ "$c3_folded" -eq "$c3_after" ] || {
+    echo "C3 MOVED across the fold: $c3_after -> $c3_folded"; return 1;
+  }
+}
+
+@test "TD-333: the retained synonyms are still in the source (do NOT clean them up)" {
+  # After v25 `completed`/`complete` match zero rows locally. They stay as
+  # defense in depth for igris import (a deliberate non-consumer of the ingress
+  # fold) and for any writer outside the fold table. Deleting them silently
+  # re-opens the exemption.
+  grep -q 'done|archived|completed|complete)' "$VALIDATOR" || return 1
+  grep -q 'RETAINED SYNONYMS' "$VALIDATOR" || return 1
+  # ...and the C3 arm was NOT widened with a third state.
+  grep -q '^    ready|draft)$' "$VALIDATOR" || return 1
+}
