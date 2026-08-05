@@ -14,7 +14,7 @@
  *
  * PATH SAFETY — TWO INDEPENDENT PROPERTIES
  * ----------------------------------------
- *  1. The SLUG is validated against `listProjects()`. It is never joined into a
+ *  1. The SLUG is validated against `listProjectsReadonly()`. It is never joined into a
  *     path before that check, so `?project=../../etc` cannot reach the
  *     filesystem: it is not a registered slug, so the request is refused before
  *     `projectContextDir` is called.
@@ -35,7 +35,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { brainDbPath, projectContextDir } from "../paths.js";
-import { listProjects } from "../registry.js";
+import { listProjectsReadonly } from "../registry.js";
 import { buildContextDocsInventoryDigest } from "../../verbs/context-docs.js";
 import type { ContextDocsInventoryDigest } from "../../types.js";
 
@@ -72,15 +72,24 @@ export type DocResult =
  * feeds is a browser with no auth. Membership in the registry is the narrower
  * and more honest predicate.
  *
- * THE `existsSync` PREFLIGHT IS LOAD-BEARING, NOT DEFENSIVE. `registry.ts`
- * OWNS its `projects` table and therefore CREATES the brain database when it is
- * absent — correct for `igris register`, and a WRITE for a read-only lens. AC #7
- * says nothing in this brief mutates the brain, and materialising a 20 KB
- * SQLite file where the operator had none is a mutation, so the file's absence
- * is answered here rather than by opening a connection. Caught by
- * `dashboard-layers-endpoint.test.ts` T1, where a `/api/context-docs` request
- * conjured the brain and made every later endpoint report
- * "no such table: brief_status" instead of "brain database not found".
+ * SINCE TD-319 THIS READS THROUGH `registry.ts#listProjectsReadonly`, NOT
+ * `listProjects`. The distinction is the whole point of that brief:
+ * `listProjects` goes through `registry.ts#getDb()`, which opens read-WRITE,
+ * sets `journal_mode = WAL` and runs `CREATE TABLE IF NOT EXISTS projects` —
+ * correct for `igris register`, a WRITE for a read-only lens. The read-only
+ * door opens `{readonly: true}` with `query_only = ON` and PREFLIGHTS the
+ * table instead.
+ *
+ * THE `existsSync` PREFLIGHT SURVIVES THAT, AND IS NOW BELT RATHER THAN
+ * BRACES. It used to be the ONLY thing standing between a `/api/context-docs`
+ * request and a materialised 20 KB SQLite file where the operator had none —
+ * caught by `dashboard-layers-endpoint.test.ts` T1, where such a request
+ * conjured the brain and made every later endpoint report "no such table:
+ * brief_status" instead of "brain database not found". `openBrainReadonly`'s
+ * `fileMustExist: true` now enforces the same thing at the connection, so the
+ * two fences are independent: this one keeps the check legible at the call
+ * site, and it is what still answers `false` (rather than `[]`) if the reader
+ * below is ever swapped back.
  *
  * Returns false (never throws) when the registry itself is unreadable; the
  * caller turns that into a degraded response.
@@ -89,7 +98,7 @@ export function isKnownProject(slug: string): boolean {
   if (slug.length === 0) return false;
   if (!existsSync(brainDbPath())) return false;
   try {
-    return listProjects().some((p) => p.slug === slug);
+    return listProjectsReadonly().some((p) => p.slug === slug);
   } catch {
     return false;
   }

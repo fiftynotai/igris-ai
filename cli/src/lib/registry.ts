@@ -8,11 +8,31 @@
  * call `closeDb()` between test cases to swap in a different IGRIS_BRAIN_DIR).
  *
  * `IGRIS_BRAIN_DIR` env override is honored via `paths.brainDbPath()`.
+ *
+ * TWO DOORS SINCE TD-319 — AND `getDb()` IS STILL THE WRITER'S
+ * ---------------------------------------------------------------
+ * `getDb()` opens read-WRITE, sets `journal_mode = WAL` and runs
+ * `CREATE TABLE IF NOT EXISTS projects`. That is CORRECT for this module's
+ * owner role: `igris register` (`upsertProject`), `igris doctor
+ * --remove-orphans` (`deleteProjectRow`) and `igris init`
+ * (`verbs/init.ts#ensureDbOpen`, which calls `listProjects()` PURELY for the
+ * schema side effect) all depend on it. It is left exactly as it was.
+ *
+ * What TD-319 adds is a SECOND door for pure readers:
+ * {@link listProjectsReadonly}, which opens through
+ * `brain-bridge.ts#openBrainReadonly` (`{readonly: true}` + `query_only = ON`)
+ * and preflights the table instead of creating it. The dashboard tier uses it
+ * so a GET can no longer flip an operator's `journal_mode` or run DDL.
+ *
+ * PICKING THE WRONG ONE IS A REAL MISTAKE IN BOTH DIRECTIONS: a writer on the
+ * read door gets `SQLITE_READONLY`; a read on the write door silently
+ * re-writes the `.db` header of a `delete`-mode brain.
  */
 
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { openBrainReadonly } from "./brain-bridge.js";
 import { brainDbPath } from "./paths.js";
 import type { RegistryRow } from "../types.js";
 
@@ -70,15 +90,85 @@ export function closeDb(): void {
   }
 }
 
-/** List every row in the `projects` table, in slug order. */
+/**
+ * The `projects` projection, defined ONCE.
+ *
+ * Both doors run this exact statement, so the read-only path cannot drift into
+ * answering a different question from the writer's path — the failure mode a
+ * hand-copied second SELECT would have.
+ */
+const PROJECTS_SELECT =
+  "SELECT slug, name, path, COALESCE(tech_stack, '') AS tech_stack, COALESCE(igris_version, '') AS igris_version, COALESCE(status, 'active') AS status, COALESCE(registered_at, '') AS registered_at, COALESCE(last_session_at, '') AS last_session_at FROM projects ORDER BY slug";
+
+function selectProjects(handle: Database.Database): RegistryRow[] {
+  return handle.prepare(PROJECTS_SELECT).all() as RegistryRow[];
+}
+
+/**
+ * True when the named table exists. Used ONLY by the read-only door, which must
+ * not create what it cannot find (the L-133 preflight `brain-db.ts` already
+ * uses); `getDb()` keeps its `CREATE TABLE IF NOT EXISTS`.
+ */
+function tableExists(handle: Database.Database, name: string): boolean {
+  const row = handle
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(name) as { name: string } | undefined;
+  return row !== undefined;
+}
+
+/**
+ * List every row in the `projects` table, in slug order.
+ *
+ * THE WRITE DOOR. Opens read-WRITE via {@link getDb} and therefore also sets
+ * `journal_mode = WAL` and creates the table when absent. `verbs/init.ts`
+ * depends on exactly that side effect. A pure reader wants
+ * {@link listProjectsReadonly} instead.
+ */
 export function listProjects(): RegistryRow[] {
-  const handle = getDb();
-  const rows = handle
-    .prepare(
-      "SELECT slug, name, path, COALESCE(tech_stack, '') AS tech_stack, COALESCE(igris_version, '') AS igris_version, COALESCE(status, 'active') AS status, COALESCE(registered_at, '') AS registered_at, COALESCE(last_session_at, '') AS last_session_at FROM projects ORDER BY slug",
-    )
-    .all();
-  return rows as RegistryRow[];
+  return selectProjects(getDb());
+}
+
+/**
+ * List every row in the `projects` table through a READ-ONLY connection.
+ *
+ * TD-319. Same projection, same order, same rows — a different DOOR:
+ *
+ *  - the handle comes from `brain-bridge.ts#openBrainReadonly`, which opens
+ *    `{readonly: true, fileMustExist: true}` and arms `query_only = ON` (and
+ *    arms it again on its R4 read-write fallback), so a write reaching this
+ *    connection throws instead of landing;
+ *  - the `projects` table is PREFLIGHTED, never created. A brain that predates
+ *    the table reads as an empty registry, which is the same answer the write
+ *    door produced — it just no longer runs `CREATE TABLE` to get there;
+ *  - an absent brain file yields `[]` rather than a materialised 20 KB SQLite
+ *    database (`openBrainReadonly` returns null; `fileMustExist` is what makes
+ *    that structural rather than a check this function could forget);
+ *  - the handle is opened and closed PER CALL, so nothing is cached across a
+ *    `closeDb()` boundary and a concurrent `/hunt` write is visible on the next
+ *    read.
+ *
+ * WHAT THE PRAGMA DOES AND DOES NOT BUY, MEASURED (better-sqlite3 11 / darwin):
+ * on the `{readonly: true}` branch both `PRAGMA journal_mode = WAL` and a
+ * `CREATE TABLE` throw `attempt to write a readonly database`. On the R4
+ * read-write fallback `query_only = ON` still refuses the DDL and every row
+ * write, but it does NOT refuse a journal-mode change — so "this path leaves
+ * `journal_mode` alone" rests on the pragma there and on this path never
+ * ISSUING that statement. Both halves are pinned by
+ * `dashboard-readonly.test.ts` G-RO-5.
+ */
+export function listProjectsReadonly(): RegistryRow[] {
+  const handle = openBrainReadonly();
+  if (handle === null) return [];
+  try {
+    if (!tableExists(handle, "projects")) return [];
+    return selectProjects(handle);
+  } finally {
+    try {
+      handle.close();
+    } catch {
+      /* already closed — nothing to do */
+    }
+  }
 }
 
 /** Insert or update a row. Mirrors the SQL in igris_install.sh:441-459. */

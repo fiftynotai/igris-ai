@@ -79,8 +79,8 @@ changes a row.
 | Method | Path | Response | Backed by |
 |---|---|---|---|
 | `GET` | `/api/health` | `{ok, cli_version, brain:{present,path}, bridge:{available,reason}, generated_at, degraded}` | `paths.ts#brainDbPath` + `brain-bridge.ts#probe` |
-| `GET` | `/api/projects` | `{projects:[{slug,name,path,status,last_session_at}], default_project, generated_at, degraded}` | `registry.ts#listProjects` + `dashboard/default-project.ts` |
-| `GET` | `/api/summary[?project=<slug>]` | `{project, briefs:{total,by_status,by_priority}, instances:{active}, generated_at, degraded}` | `brain-db.ts#briefStatusSummary` + `#listInstances` |
+| `GET` | `/api/projects` | `{projects:[{slug,name,path,status,last_session_at}], default_project, generated_at, degraded}` | `registry.ts#listProjectsReadonly` + `dashboard/default-project.ts` |
+| `GET` | `/api/summary[?project=<slug>]` | `{project, briefs:{total,by_status,by_priority}, instances:{active}, generated_at, degraded}` | `brain-db.ts#briefStatusSummaryReadonly` + `#listInstancesReadonly` |
 | `GET` | `/api/graph/stats?project=<slug>` | `{project, stats, edge_resolution, truncated, truncation_reason, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` |
 | `GET` | `/api/graph?project=<slug>` | `{project, nodes, edges, stats, truncated, truncation_reason, query, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` + `dashboard/graph-query.ts` |
 | `GET` | `/api/briefs` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `brain-bridge.ts#loadLayerReaders` → `briefs-read.ts#listBriefs` |
@@ -210,7 +210,8 @@ the reason the write-path section below gives.
 **Context docs need no brain data.** `/api/context-docs` forwards the
 `igris context-docs inventory` digest; `applies_when` is evaluated by that verb
 and is deliberately **not** re-derived server-side. Path safety comes from two
-properties rather than a filter: the slug is validated against `listProjects()`,
+properties rather than a filter: the slug is validated against
+`listProjectsReadonly()`,
 and the doc's filename is taken from the digest ROW — there is no code path that
 joins a caller-supplied filename, so a traversal `type` is refused as an unknown
 type. A `realpath` check backs both, because `~/.igris/projects/**` is a
@@ -474,21 +475,26 @@ realpath+commonpath guard — apply unchanged.
 ### Two doors, and read-only is a property of the connection
 
 **Since FR-241 this tier is not read-only as a whole, and it is not read-write as
-a whole either.** It has two doors plus one inherited residual, and which one an
-endpoint uses is the only honest way to state the posture — an undisclosed
-exception to a structural claim is how the claim stops meaning anything.
+a whole either.** It has two doors, and which one an endpoint uses is the only
+honest way to state the posture — an undisclosed exception to a structural claim
+is how the claim stops meaning anything.
+
+**Since TD-319 the read door has no exception.** *Every* GET on this surface
+reads through a `{readonly: true}` connection with `query_only = ON`. From FR-238
+to FR-246 four paths did not, and this section carried the disclosure; the
+paragraph that used to sit here is now history rather than a caveat, kept at the
+bottom because knowing what the fix was for is what stops it being undone.
 
 | Door | Endpoints | Connection |
 |---|---|---|
-| **Read** | the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, and both graph endpoints | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
 | **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
-| *Residual (FR-238-era)* | `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | a plain `new Database(path)` with **no** `readonly` flag that sets `journal_mode = WAL` — disclosed below, deferred, not FR-241's to fix |
 | *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
 
-**Every GET on this surface changes no row.** The layer readers enforce that
-structurally; the two inherited accessors do not; and the write door is a
-different module returning a different connection, which is exactly why FR-240's
-read-only pins stay green rather than being re-argued.
+**Every GET on this surface changes no row, and no byte.** The read door enforces
+that structurally; the write door is a different module returning a different
+connection, which is exactly why FR-240's read-only pins stay green rather than
+being re-argued.
 
 **The layer readers (FR-240) — structurally read-only:**
 
@@ -498,8 +504,13 @@ read-only pins stay green rather than being re-argued.
   from `brain-bridge.ts#openBrainReadonly()` or `#openBrainReadonlyWithVec()`,
   and **both** set `db.pragma('query_only = ON')` on **both** of
   `openBrainReadonly`'s branches — including the R4 fallback that re-opens
-  read-**write** when a WAL brain has no `-shm`. An accidental write anywhere
-  downstream throws `SQLITE_READONLY` instead of landing.
+  read-**write** when a WAL brain has no `-shm`. An accidental row write or DDL
+  anywhere downstream throws instead of landing. **One measured exception:** on
+  that R4 fallback `query_only = ON` does NOT refuse a `PRAGMA journal_mode`
+  change, so "a GET cannot flip the journal mode" rests on the pragma *and* on
+  no read path ever issuing that statement — the only two are inside the two
+  `getDb()`s, which the dashboard tier no longer reaches. Stated rather than
+  rounded up, because nothing machine-enforces the second half.
 - The tier **never calls an MCP handler**. Every brain read handler runs
   `getDb()`, which opens the brain read-write and runs `migrateSchema`; and
   `handleMemoryGet` / `handleMemoryRecall` both
@@ -508,43 +519,61 @@ read-only pins stay green rather than being re-argued.
   telemetry) and *wrong* for a page view, so it stays wrapper-side and the
   dashboard uses the non-bumping `memory-read.ts#getLearning`.
 
-**The FR-238-era accessors — read-write handles, a residual:**
+**The FR-238-era accessors (TD-319) — a second door on the same modules:**
 
-- `/api/projects` (and, since FR-240, **both** `/api/context-docs` and
-  `/api/context-doc`, each via `context-docs-read.ts#readInventory`, which calls
-  `isKnownProject`) reaches `registry.ts#listProjects`, and
-  `/api/summary` reaches `brain-db.ts#briefStatusSummary` / `#listInstances`.
-  Both modules open with `new Database(path)` — **no `readonly`** — and both run
-  `pragma('journal_mode = WAL')` (`registry.ts:41-47`, `brain-db.ts:86-88`).
-  `registry.ts` additionally runs `CREATE TABLE IF NOT EXISTS projects`.
-- Concretely: on a brain in `journal_mode = delete` a GET **rewrites the `.db`
-  header**, and on a brain with no `projects` table a GET **runs DDL**. Neither
-  changes a row of brain content, and on an operator brain that is already `wal`
-  and has a `projects` table the observable effect is nil — which is why FR-240
-  did not touch it. It is nonetheless a write, and it is **deferred, not fixed**:
-  the read-only `listProjects` path is its own brief.
-- `/api/context-docs` opens no brain of its own, and its
-  `existsSync(brainDbPath())` preflight is load-bearing rather than defensive:
-  `registry.ts` **creates** the brain database when absent, so reaching
-  `listProjects()` unguarded would materialise one on a machine that had none.
+- `/api/projects` (and **both** `/api/context-docs` and `/api/context-doc`, each
+  via `context-docs-read.ts#isKnownProject`) reaches
+  `registry.ts#listProjectsReadonly`; `/api/summary` reaches
+  `brain-db.ts#briefStatusSummaryReadonly` / `#listInstancesReadonly`; and the
+  two context-doc paths ALSO reach `brain-db.ts#readProjectProfile` through
+  `verbs/context-docs.ts#buildContextDocsInventoryDigest`. That last one is worth
+  naming: it is a **second** brain door on the same request, and a fix confined
+  to the slug allowlist would have left it opening read-write.
+- Each of those opens through `openBrainReadonly()` — the same handle the layer
+  readers use, opened and closed per call — and **preflights** its table instead
+  of creating it. `listInstancesReadonly` additionally skips the TD-277
+  activity-column `ALTER TABLE … RENAME COLUMN` its read-write twin performs: an
+  un-upgraded brain is *projected*, not migrated, because a GET must not run DDL.
+- **The read-write doors still exist, and are still correct.**
+  `registry.ts#listProjects` / `#upsertProject` / `#deleteProjectRow` and
+  `brain-db.ts#briefStatusSummary` / `#listInstances` go through their modules'
+  `getDb()`, which sets `journal_mode = WAL` and, in `registry.ts`, runs
+  `CREATE TABLE IF NOT EXISTS projects`. `igris register`,
+  `igris doctor --remove-orphans` and `igris init` need exactly that — indeed
+  `verbs/init.ts#ensureDbOpen` calls `listProjects()` *purely* for the create
+  side effect and discards the rows, so flipping the shared handle read-only
+  instead of adding a door would have broken registration **silently**. What
+  changed is reachability: no HTTP GET can get to them.
+- `/api/context-docs`'s `existsSync(brainDbPath())` preflight survives as belt
+  rather than braces. It used to be the only thing stopping `registry.ts` from
+  **creating** a brain database on a machine that had none; `openBrainReadonly`'s
+  `fileMustExist: true` now enforces that at the connection.
 
 `cli/src/__tests__/dashboard-readonly.test.ts` crawls every endpoint twice
 against a seeded snapshot and compares a full logical dump plus the file digest,
 with a deliberate-writer negative control proving the comparison can actually
 report a mutation. **What that crawl cannot see:** its fixture seeds
-`journal_mode = WAL`, so the digest comparison can never exercise the flip
-described above. **G-RO-5** in the same file closes that gap explicitly — it
-converts the fixture to `delete` mode, asserts the layer endpoints leave it
-alone, and pins the three accessor paths that flip it plus the `CREATE TABLE`.
-Those pins fail if the residual is ever fixed, which is what will bring an editor
-back to this section.
+`journal_mode = WAL`, so the digest comparison can never exercise a journal-mode
+flip. **G-RO-5** in the same file closes that gap explicitly — it converts the
+fixture to `delete` mode and drives the **whole** tier against it, asserting no
+flip, no `-wal` sidecar, no `.db` rewrite and no DDL, with a
+payloads-are-real companion so the stillness cannot be satisfied by a reader
+that returned nothing, and a self-negative-control proving the `delete`-mode
+conversion really happened. `cli/src/__tests__/registry.test.ts` pins the other
+direction: the write door still creates the table and still sets WAL.
 
-**What the write door adds to that residual, stated rather than folded in:**
-booting the write engine ALSO puts the brain in WAL, because
-`createSqliteAdapter` sets `journal_mode = WAL` on the connection it opens. That
-is the same file-level flip the three FR-238-era accessors already cause and the
-same territory TD-319 already owns — it is additional coverage of a disclosed
-residual, not a new one. It is also why the write engine must stay **lazy**:
+**What TD-319 actually fixed, and what it did not.** On a brain in
+`journal_mode = delete` those four GETs **rewrote the `.db` header**, and on a
+brain with no `projects` table a GET **ran DDL**. Neither ever changed a row of
+brain content, and on an operator brain already `wal` with that table the
+observable effect was nil — which is why FR-240 deferred it rather than
+hot-fixing it. "Nil today" is not "correct", and it was the disclosed exception
+that made the tier's read-only claim unquotable.
+
+**What the write door still does, stated rather than folded in:** booting the
+write engine puts the brain in WAL, because `createSqliteAdapter` sets
+`journal_mode = WAL` on the connection it opens. That flip is now the **only**
+one this surface can cause, and it is why the write engine must stay **lazy**:
 G-RO-5's fixture is a `journal_mode = delete` brain, and a write engine booted on
 a browsing session would flip it.
 
@@ -748,8 +777,9 @@ the parity gate runs in two processes.
 
 **A boot creates zero rows.** Measured against a `VACUUM INTO` snapshot of the
 real brain by diffing all 66 plain tables: no schema objects added or removed and
-no row created. Its single side effect is the `journal_mode` flip described
-above.
+no row created. Its single side effect is the `journal_mode` flip described in
+"Two doors" above — which, since TD-319 closed the four FR-238-era GET paths, is
+the **only** way this surface can still cause one.
 
 #### Reject is a three-tier outcome, and the confirmation says which
 
@@ -944,8 +974,8 @@ a true statement about the brain, and quietly swapping it for a busier project
 would make the dashboard lie about where you are.
 
 The ladder is a pure function (`dashboard/default-project.ts`) over the rows
-`listProjects` already returned — no second query, and no selection logic in
-`routes.ts`.
+`listProjectsReadonly` already returned — no second query, and no selection
+logic in `routes.ts`.
 
 **`/api/graph/stats` strips `nodes` and `edges` at the route layer.** That is a
 structural fence, not a convention: the shell physically cannot render a graph
@@ -981,8 +1011,8 @@ igris dashboard (verb)
        ├─ static.ts   dist/dashboard/** + SPA fallback
        └─ routes.ts   the seventeen endpoints (16 GET + 1 POST) — CONTAINS ZERO SQL
             ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
-            ├─ registry.ts#listProjects
-            ├─ brain-db.ts#briefStatusSummary / #listInstances
+            ├─ registry.ts#listProjectsReadonly       (TD-319 read door)
+            ├─ brain-db.ts#briefStatusSummaryReadonly / #listInstancesReadonly
             ├─ context-docs-read.ts  digest + guarded disk read (no brain)
             ├─ brain-bridge.ts ──runtime import()──▶ vendored pure READ modules
             │                                        ├─ FR-237 buildBrainGraph
@@ -1552,7 +1582,7 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-learnings-search.test.ts` | FR-240 AC #2 — recall semantics (hybrid / `bm25_only` / `vector_only` / `none`), the `retrieval` block field by field, and the hermetic-by-construction guard that asserts **itself** armed |
 | `cli/src/__tests__/dashboard-learnings-search-params.test.ts` | BR-085 — what the handler FORWARDS, asserted at the seam with a recording reader: the whole key set of the options object, the derived rule that every allow-listed filter is forwarded OR named, and the version-skew case where an older vendored reader has no review axis and the payload must refuse to claim the scope. The endpoint suites cannot see this class: a dropped filter returns a plausible list |
 | `cli/src/__tests__/dashboard-context-docs.test.ts` | FR-240 D8 — the inventory is forwarded not recomputed; traversal slug, traversal `type`, unregistered slug and a planted symlink are all refused; the lens does not CREATE the brain |
-| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness |
+| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness. **TD-319 rewrote G-RO-5**: it converts the fixture to `journal_mode = delete` and drives the WHOLE tier — layer readers and the four FR-238-era paths alike — asserting no journal flip, no `-wal` sidecar, no `.db` rewrite and no DDL. Its four predecessor pins recorded the OPPOSITE (they characterised the residual so it could not drift into an unqualified doc claim) and carried their own delete-me instruction; landing the fix executed it. The payloads-are-real companion is what stops the stillness being satisfied by a reader that returned nothing |
 | `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text. **G-TR-7 (TD-326)** bulk-dismisses the project-less cohort and asserts BOTH directions of non-interference — the projects are unmoved by a brain-level bulk, and the brain-level rows are unmoved by a project bulk **FR-247 adds G-TR-8..G-TR-14**: the forbidden build-state fields refused at the door and the `ids` versus `refs` exclusivity refused by name (G-TR-8); the built argument key SET with the parser BYPASSED, including `attach_goal` dropping the ref's project (G-TR-9); the args the resolved `handleBriefUpdate` actually RECEIVED, by call trace, plus the row read back field by field (G-TR-10); **AC-4 RED-FIRST against the SHIPPED handler** — the `brief_files`-only brief is dispatched unguarded and the invented `status='Ready'` and blanked `title` are OBSERVED, then the same write through the endpoint is refused and the damage is absent, with the `igris_brief_sync` contrast and the live NOT NULL constraint the guard's predicate depends on (G-TR-11); a bulk over 12 of 17 briefs with the other 5 asserted byte-identical and an empty `refs` refused with a 400 (G-TR-12); **the auto-push egress fence PROVEN in both arms** — zero blocked requests with no config, and an observed blocked POST to a fictional remote when auto-push is on (G-TR-13); and the degraded surface with its negative control (G-TR-14) |
 | `cli/src/__tests__/auto-push-fence.ts` | FR-247 — the R4 egress fence every mutating suite arms. TWO independent layers, both read back before a single write: `HOME` is pointed at the sandbox so `loadAutoPushConfig` reads a config the test owns, and `globalThis.fetch` is replaced by a RECORDING THROWER so even a config that said `auto_push: true` cannot reach the network. It is PROVEN rather than asserted by G-TR-13's second arm — a fence over a machine where auto-push is already off proves nothing, since zero requests is equally what a broken fence and an unwired listener produce |
 | `cli/src/__tests__/dashboard-triage-parity.test.ts` (FR-247) | **G-EP-4 is this family's first genuinely NON-EMPTY parity control.** FR-241's differ compared `[]` with `[]` for four of five actions; `brief.synced` is in `EVENT_COMPONENT_MAP` and monitoring subscribes it, so a priority write through MCP and through the dashboard each produce exactly one identical `event_log` row — asserted as literals (`brief.synced` / `briefs` / the project slug / the payload), not assumed. **G-EP-5** is the declared-EMPTY complement: `edge.created` is in neither the map nor the listen list, so an attach is event-silent BY CONSTRUCTION and `entity_edges` carries the something-happened half. **G-EP-6** flips four ways against G-EP-4's non-empty rows, including a `brief_status`-ONLY difference with `event_log` still matching — the failure an event-only differ cannot see, and the reason `brief_status` joined the domain set |

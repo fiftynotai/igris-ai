@@ -626,11 +626,14 @@ get_json() {
     [ "$status" -eq 0 ]
   done
 
-  # A GET must not CREATE the brain it could not find. `registry.ts`
-  # creates the database when absent, so an unguarded `listProjects()` anywhere
-  # in this tier would materialise one — which is a write, on the operator's
-  # machine, from a GET whose contract is that every GET changes no row.
-  # (Not "this surface never writes" — since FR-241 POST /api/triage does.)
+  # A GET must not CREATE the brain it could not find. `registry.ts`'s WRITE
+  # door (`getDb()` / `listProjects()`) creates the database when absent, so
+  # reaching it from this tier would materialise one — a write, on the
+  # operator's machine, from a GET whose contract is that every GET changes no
+  # row. (Not "this surface never writes" — since FR-241 POST /api/triage does.)
+  # Since TD-319 the tier reaches `listProjectsReadonly()` instead, whose handle
+  # is opened `fileMustExist: true`; this stays as the black-box half of that
+  # claim, asserted over the wire rather than from inside the process.
   [ ! -f "$IGRIS_BRAIN_DIR/memory/knowledge.db" ]
 
   kill -TERM "$DASH_PID"

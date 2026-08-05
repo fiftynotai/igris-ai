@@ -12,9 +12,12 @@
  *   - the FR-237 PURE builder, via `brain-bridge.ts` (MAINTAINING row 105);
  *   - the FR-240 PURE READ LAYER, via `brain-bridge.ts#loadLayerReaders` — the
  *     b2 option `routes.ts` reserved for FR-240 (see the note below);
- *   - the EXISTING MAINTAINING-pinned CLI accessors `registry.ts#listProjects`,
- *     `brain-db.ts#briefStatusSummary`, `brain-db.ts#listInstances` (D3-b1) and
- *     `verbs/context-docs.ts#buildContextDocsInventoryDigest` (FR-240 D8).
+ *   - the EXISTING MAINTAINING-pinned CLI accessors — since TD-319 their
+ *     READ-ONLY doors: `registry.ts#listProjectsReadonly`,
+ *     `brain-db.ts#briefStatusSummaryReadonly`,
+ *     `brain-db.ts#listInstancesReadonly` (D3-b1) and
+ *     `verbs/context-docs.ts#buildContextDocsInventoryDigest` (FR-240 D8),
+ *     whose `readProjectProfile` also opens read-only now.
  *
  * D3-b1 was a deliberate, operator-assented reading of scope item 2 as "no new
  * raw SQL in the server layer" rather than "only brain handlers": those
@@ -24,12 +27,34 @@
  * the layer views reach the SAME queries the MCP tools run, with a read-only
  * handle, and there stays exactly ONE definition per query.
  *
- * READ-ONLY IS STRUCTURAL, NOT PROMISED (AC #7 / D2). Every brain handle in
- * this file comes from `bridge.openBrainReadonly()` or
- * `bridge.openBrainReadonlyWithVec()`, both of which set `query_only = ON`.
- * A write anywhere downstream throws `SQLITE_READONLY` instead of mutating the
- * operator's brain. Nothing here calls an MCP handler — those run `getDb()`,
- * which opens read-WRITE and migrates, and two of them bump `access_count`.
+ * READ-ONLY IS STRUCTURAL, NOT PROMISED (AC #7 / D2), AND SINCE TD-319 THAT
+ * HOLDS WITH NO EXCEPTION. Every brain handle reachable from this file comes
+ * from `bridge.openBrainReadonly()` or `bridge.openBrainReadonlyWithVec()`,
+ * both of which set `query_only = ON`. A row write or DDL anywhere downstream
+ * throws instead of mutating the operator's brain. Nothing here calls an MCP
+ * handler — those run `getDb()`, which opens read-WRITE and migrates, and two
+ * of them bump `access_count`.
+ *
+ * ONE MEASURED EXCEPTION, STATED RATHER THAN ROUNDED AWAY: on
+ * `openBrainReadonly`'s R4 read-WRITE fallback (a WAL brain with no `-shm`),
+ * `query_only = ON` refuses DDL and every row write but does NOT refuse a
+ * `PRAGMA journal_mode` change. So "a GET cannot flip the journal mode" rests
+ * on that pragma AND on no path here ever ISSUING that statement — the only
+ * two `journal_mode` statements under `cli/src/lib` are inside the two
+ * `getDb()`s, which are unreachable from this file. Measured on
+ * better-sqlite3 11; the full matrix is in `registry.ts`'s
+ * `listProjectsReadonly` docblock. Nothing machine-enforces the second half,
+ * so do not add a `journal_mode` statement to a read path.
+ *
+ * FR-238 → FR-246 carried a disclosed EXCEPTION here: `/api/projects`,
+ * `/api/summary`, `/api/context-docs` and `/api/context-doc` reached accessors
+ * that opened read-WRITE, set `journal_mode = WAL` and, in `registry.ts`, ran
+ * `CREATE TABLE IF NOT EXISTS projects`. TD-319 gave those accessors a second,
+ * read-only door and pointed this file at it. The WRITE doors still exist and
+ * are still correct for `igris register` / `igris doctor` / `igris init` — they
+ * are simply no longer reachable from an HTTP GET.
+ *
+ * `POST /api/triage` remains the one and only write door on this surface.
  *
  * DEGRADED CONTRACT — every endpoint returns HTTP **200** with a
  * `degraded: {reason}` field and empty data. Never a 500, never a stack trace.
@@ -37,8 +62,11 @@
  */
 
 import { existsSync } from "node:fs";
-import { briefStatusSummary, listInstances } from "../brain-db.js";
-import { listProjects } from "../registry.js";
+import {
+  briefStatusSummaryReadonly,
+  listInstancesReadonly,
+} from "../brain-db.js";
+import { listProjectsReadonly } from "../registry.js";
 import { brainDbPath } from "../paths.js";
 import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
@@ -126,7 +154,10 @@ export async function health(cliVersion: string): Promise<HealthPayload> {
 }
 
 /**
- * `GET /api/projects` — via `registry.ts#listProjects()`.
+ * `GET /api/projects` — via `registry.ts#listProjectsReadonly()`.
+ *
+ * The READ-ONLY door (TD-319), not `listProjects()`. Same projection, same
+ * order; it just cannot flip the journal mode or CREATE the `projects` table.
  *
  * `default_project` is resolved SERVER-side because the top rung of the ladder
  * is the directory the CLI was invoked from, which the browser cannot know.
@@ -146,7 +177,7 @@ export function projects(cwd: string = process.cwd()): ProjectsPayload {
     };
   }
   try {
-    const rows: DashboardProject[] = listProjects().map((r) => ({
+    const rows: DashboardProject[] = listProjectsReadonly().map((r) => ({
       slug: r.slug,
       name: r.name,
       path: r.path,
@@ -172,10 +203,14 @@ export function projects(cwd: string = process.cwd()): ProjectsPayload {
 /**
  * `GET /api/summary[?project=<slug>]` — brief counts + the active-instance count.
  *
- * `briefStatusSummary` and `listInstances` both carry their own L-133 table
- * preflight, so a brain missing the migration yields empty counts rather than a
- * throw. The try/catch below is the belt for anything below that (a corrupt
- * file, a locked DB).
+ * `briefStatusSummaryReadonly` and `listInstancesReadonly` — the TD-319
+ * READ-ONLY doors — both carry their own L-133 table preflight, so a brain
+ * missing the migration yields empty counts rather than a throw. The try/catch
+ * below is the belt for anything below that (a corrupt file, a locked DB).
+ *
+ * `listInstancesReadonly` also skips the TD-277 `ALTER TABLE … RENAME COLUMN`
+ * its read-write twin performs; an un-upgraded brain is projected, not
+ * migrated, because a GET must not run DDL.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * OMITTING `project` IS A REQUEST, NOT A MISTAKE (BR-082)
@@ -224,8 +259,8 @@ export function summary(project: string | null): SummaryPayload {
     };
   }
   try {
-    const briefs = briefStatusSummary(project);
-    const instances = listInstances(
+    const briefs = briefStatusSummaryReadonly(project);
+    const instances = listInstancesReadonly(
       project === null ? { status: "active" } : { project, status: "active" },
     );
     return {
@@ -1105,15 +1140,31 @@ export async function learning(search: URLSearchParams): Promise<LearningDetailP
 /**
  * `GET /api/context-docs?project=<slug>` — the inventory digest.
  *
- * D8: NO brain work at all. This forwards
+ * D8: NO SQL and no query of its own. This forwards
  * `verbs/context-docs.ts#buildContextDocsInventoryDigest`, which already
  * computes exists / applies / missing_applicable / remediation. `applies_when`
  * is NOT re-derived here — a second evaluator would diverge from the catalog's
  * the first time either changed.
  *
- * Note this endpoint never opens the brain, so it works on a machine with no
- * brain database at all. The `degraded` field still exists, because an
- * unregistered slug and an unreadable catalog are both real failures.
+ * THIS ENDPOINT DOES OPEN THE BRAIN, AND IT OPENS IT TWICE. An earlier version
+ * of this block said "NO brain work at all" and "never opens the brain, so it
+ * works on a machine with no brain database at all". Both were false when
+ * written, and the second is provably false by a test in this repo:
+ * `context-docs-read.ts#readInventory` returns `ok: false, "brain database not
+ * found"` on exactly that machine, and `dashboard-context-docs.test.ts` pins
+ * it. The two doors are `context-docs-read.ts#isKnownProject` (the slug
+ * allowlist) and `brain-db.ts#readProjectProfile` (the profile row) — since
+ * TD-319 both go through `openBrainReadonly`, and both are driven by G-RO-5's
+ * delete-mode loop.
+ *
+ * That correction matters beyond accuracy: "this endpoint doesn't touch the
+ * brain" is exactly the licence someone would need to undo TD-319 and put a
+ * read-write handle back on this path. It is also why a fix confined to the
+ * slug allowlist would have failed this brief's AC #1 — reverting only
+ * `readProjectProfile` still flips a delete-mode brain's journal mode.
+ *
+ * The `degraded` field carries an unregistered slug, an unreadable catalog and
+ * an absent brain alike.
  */
 export function contextDocs(search: URLSearchParams): ContextDocsPayload {
   const project = search.get("project");

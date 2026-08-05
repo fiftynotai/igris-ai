@@ -7,7 +7,14 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -246,6 +253,148 @@ describe("registry — better-sqlite3 direct (D-4)", () => {
     });
     const rows = reg.listProjects();
     expect(rows.map((r) => r.slug)).toEqual(["alpha", "mike", "zebra"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-319 — TWO DOORS, and each still does its own job
+//
+// The brief's third acceptance criterion is "CLI write paths are unaffected —
+// verified, not assumed", and the temptation it names is real: the cheapest way
+// to stop `/api/projects` writing would have been to flip `getDb()` to
+// `{readonly:true}`, which passes every read test in this file and breaks
+// `igris register` and `igris init` silently — `ensureDbOpen` calls
+// `listProjects()` PURELY for the `CREATE TABLE` side effect and discards the
+// rows, so a reader that stopped creating would produce no error there at all.
+//
+// So both doors are pinned, in the same reading, on the same brain: the write
+// door still creates the table and sets WAL; the read door does NEITHER and
+// still returns the SAME rows. Either half alone is satisfiable by a mistake.
+// ---------------------------------------------------------------------------
+
+describe("TD-319: listProjects (write door) vs listProjectsReadonly (read door)", () => {
+  const dbPath = (): string => join(tmpRoot, "memory", "knowledge.db");
+
+  // Return type INFERRED on purpose: `better-sqlite3` is an `export =` module,
+  // so a hand-written annotation for its default binding is the thing that
+  // breaks under `esModuleInterop` rather than the code it describes.
+  const sqlite = async () => (await import("better-sqlite3")).default;
+
+  /** Read `journal_mode` without becoming a writer ourselves. */
+  async function journalMode(): Promise<string> {
+    const Database = await sqlite();
+    const db = new Database(dbPath(), { readonly: true });
+    try {
+      return String(db.pragma("journal_mode", { simple: true }));
+    } finally {
+      db.close();
+    }
+  }
+
+  async function tables(): Promise<string[]> {
+    const Database = await sqlite();
+    const db = new Database(dbPath(), { readonly: true });
+    try {
+      return (
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name",
+          )
+          .all() as { name: string }[]
+      ).map((t) => t.name);
+    } finally {
+      db.close();
+    }
+  }
+
+  it("the READ door creates nothing — not the file, not the table", async () => {
+    const reg = await getRegistryModule();
+    // A brand-new sandbox: there is no brain database at all.
+    expect(existsSync(dbPath())).toBe(false);
+
+    expect(reg.listProjectsReadonly()).toEqual([]);
+    expect(
+      existsSync(dbPath()),
+      "a read materialised a brain database",
+    ).toBe(false);
+
+    // Now a brain that exists but predates the `projects` table, in SQLite's
+    // default journal mode.
+    const Database = await sqlite();
+    mkdirSync(join(tmpRoot, "memory"), { recursive: true });
+    const seed = new Database(dbPath());
+    seed.pragma("journal_mode = delete");
+    seed.exec("CREATE TABLE unrelated (a INT)");
+    seed.close();
+
+    expect(reg.listProjectsReadonly()).toEqual([]);
+    expect(await tables(), "a read ran DDL").toEqual(["unrelated"]);
+    expect(await journalMode(), "a read flipped the journal mode").toBe("delete");
+    expect(existsSync(`${dbPath()}-wal`)).toBe(false);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the WRITE door on the SAME brain does all three", async () => {
+    // Same sandbox shape, same call arguments, same empty result — the ONLY
+    // variable is which door. Without this the test above is also what a
+    // `listProjectsReadonly` that never ran would produce, and it is the half
+    // that proves `igris register` / `igris init` still have what they need.
+    const reg = await getRegistryModule();
+    const Database = await sqlite();
+    mkdirSync(join(tmpRoot, "memory"), { recursive: true });
+    const seed = new Database(dbPath());
+    seed.pragma("journal_mode = delete");
+    seed.exec("CREATE TABLE unrelated (a INT)");
+    seed.close();
+
+    expect(reg.listProjects()).toEqual([]);
+    reg.closeDb();
+
+    expect(await tables(), "the write door stopped CREATEing `projects`").toEqual(
+      ["projects", "unrelated"],
+    );
+    expect(await journalMode()).toBe("wal");
+  });
+
+  it("both doors return the SAME rows for the same brain", async () => {
+    const reg = await getRegistryModule();
+    for (const slug of ["zebra", "alpha", "mike"]) {
+      reg.upsertProject({
+        slug,
+        name: slug,
+        path: `/tmp/${slug}`,
+        tech_stack: "typescript/javascript",
+        igris_version: "7.0.0",
+      });
+    }
+    const written = reg.listProjects();
+    reg.closeDb();
+
+    const read = reg.listProjectsReadonly();
+    // Deep equality over the WHOLE row, not just the slugs: the two doors run
+    // one shared statement, and a divergence in the COALESCE projection is
+    // exactly what a hand-copied second SELECT would introduce.
+    expect(read).toEqual(written);
+    expect(read.map((r) => r.slug)).toEqual(["alpha", "mike", "zebra"]);
+    expect(read[0].tech_stack).toBe("typescript/javascript");
+  });
+
+  it("`igris register`'s write survives on a brain the read door just touched", async () => {
+    // The ordering that would break if the read door left a lock, a stale
+    // cached handle, or a `query_only` connection behind for the writer to
+    // inherit. `closeDb()` is deliberately NOT called between them.
+    const reg = await getRegistryModule();
+    expect(reg.listProjectsReadonly()).toEqual([]);
+    reg.upsertProject({
+      slug: "after-read",
+      name: "after-read",
+      path: "/tmp/after-read",
+      tech_stack: "",
+      igris_version: "7.0.0",
+    });
+    expect(reg.listProjectsReadonly().map((r) => r.slug)).toEqual([
+      "after-read",
+    ]);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["after-read"]);
   });
 });
 

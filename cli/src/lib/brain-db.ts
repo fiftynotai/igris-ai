@@ -30,6 +30,18 @@
  * Lazy-handle shape, WAL, busy_timeout, and the IGRIS_BRAIN_DIR sandbox seam
  * all mirror `registry.ts` (#11) — tests call `closeDb()` between cases to
  * swap in a different sandboxed DB.
+ *
+ * TWO DOORS SINCE TD-319. `getDb()` below still opens read-WRITE and sets
+ * `journal_mode = WAL`, because the writers in this module (the instance-state
+ * upsert, the session-file upsert, boot-sync's pull merge) need it. The PURE
+ * readers behind the dashboard tier go through a second door instead —
+ * {@link readProjectProfile} (converted IN PLACE — it is a pure read with no
+ * write caller, so it got no twin), {@link briefStatusSummaryReadonly},
+ * {@link listInstancesReadonly} — which open via
+ * `brain-bridge.ts#openBrainReadonly` (`{readonly: true}` + `query_only = ON`)
+ * and therefore never flip an operator's journal mode. Each read-only variant
+ * shares the SELECT with its read-write twin, so there is still exactly one
+ * definition of every query.
  */
 
 import Database from "better-sqlite3";
@@ -37,6 +49,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, sep } from "node:path";
+import { openBrainReadonly } from "./brain-bridge.js";
 import { brainDbPath } from "./paths.js";
 // TD-338: the GENERATED mirror of the brain's write-boundary normalizers. Never
 // hand-edited — `npm run gen:brief-normalize-mirror` in brain-mcp-server/ writes
@@ -156,20 +169,78 @@ function optionalProjection(
 }
 
 /**
- * Read the local project profile row used by `context-docs inventory`.
+ * How to project and order by the instances activity timestamp, given the
+ * columns THIS brain actually has.
  *
- * Read-only and create-never: an absent DB, absent `projects` table, absent
- * row, or older schema with missing columns all degrade into a partial/null
- * profile rather than throwing or running DDL. Unlike most accessors in this
- * module, this checks the DB file before opening it so a fresh sandbox does
- * not get a newly-created empty DB just because inventory ran.
+ * TD-319 needed this because {@link ensureInstancesActivityColumn} is DDL — an
+ * `ALTER TABLE … RENAME COLUMN` — and the read-only door cannot run it (nor
+ * should a GET). So the read path RESOLVES the column instead of renaming it:
+ * an un-upgraded brain still sorts and reports correctly, it just keeps its
+ * retired column name on disk until a writer comes along.
+ *
+ * The read-WRITE path calls `ensureInstancesActivityColumn` first, so it always
+ * lands on the first branch and emits the SAME SQL it emitted before TD-319 —
+ * the bare column name, not an alias. That is deliberate: the SQL is a verbatim
+ * mirror of `handleInstanceList` and a gratuitous alias would make the mirror
+ * harder to diff against its source.
  */
-export function readProjectProfile(slug: string): ProjectProfileResult {
-  if (!existsSync(brainDbPath())) {
-    return { degraded: true, profile: null };
+function activityProjection(columns: ReadonlySet<string>): {
+  select: string;
+  order: string;
+} {
+  if (columns.has("last_activity_at")) {
+    return {
+      select: "last_activity_at",
+      order: "ORDER BY last_activity_at DESC",
+    };
   }
+  if (columns.has("last_heartbeat_at")) {
+    return {
+      select: "last_heartbeat_at AS last_activity_at",
+      order: "ORDER BY last_heartbeat_at DESC",
+    };
+  }
+  // Neither column exists (a shape no migration produces, but a SELECT naming a
+  // missing column would throw where the rest of this module degrades).
+  return { select: "NULL AS last_activity_at", order: "" };
+}
 
-  const handle = getDb();
+/**
+ * Open the READ-ONLY door and run `fn`, closing the handle afterwards.
+ *
+ * TD-319. The single place this module reaches
+ * `brain-bridge.ts#openBrainReadonly` — `{readonly: true, fileMustExist: true}`
+ * with `query_only = ON` armed on both of its branches. `absent` is the value
+ * returned when there is no readable brain file at all, which is deliberately
+ * the SAME shape each caller returns for "the table is missing": a read-only
+ * lens has no business distinguishing an unmigrated brain from an absent one by
+ * creating something.
+ *
+ * Per-call open/close rather than a cached handle, matching the dashboard's
+ * layer readers: a `/hunt` writing to the brain is visible on the next read.
+ */
+function withReadonlyBrain<T>(
+  absent: T,
+  fn: (handle: Database.Database) => T,
+): T {
+  const handle = openBrainReadonly();
+  if (handle === null) return absent;
+  try {
+    return fn(handle);
+  } finally {
+    try {
+      handle.close();
+    } catch {
+      /* already closed — nothing to do */
+    }
+  }
+}
+
+/** The `projects`-profile projection, shared by both doors. */
+function selectProjectProfile(
+  handle: Database.Database,
+  slug: string,
+): ProjectProfileResult {
   if (!tableExists(handle, "projects")) {
     return { degraded: true, profile: null };
   }
@@ -212,6 +283,32 @@ export function readProjectProfile(slug: string): ProjectProfileResult {
       !columns.has("tech_stack"),
     profile,
   };
+}
+
+/**
+ * Read the local project profile row used by `context-docs inventory`.
+ *
+ * Read-only and create-never: an absent DB, absent `projects` table, absent
+ * row, or older schema with missing columns all degrade into a partial/null
+ * profile rather than throwing or running DDL.
+ *
+ * TD-319 MADE THAT STRUCTURAL. The docstring above already claimed "read-only",
+ * but the handle came from `getDb()` — read-WRITE, and `journal_mode = WAL` on
+ * open. So a `GET /api/context-docs` (which reaches here through
+ * `verbs/context-docs.ts#buildContextDocsInventoryDigest`) rewrote the `.db`
+ * header of a `delete`-mode brain, as did the plain
+ * `igris context-docs inventory` verb. This now opens through the READ-ONLY
+ * door instead. Both callers are pure reads and neither depended on the WAL
+ * flip or on the file being materialised; the OLD `existsSync(brainDbPath())`
+ * preflight is gone because `openBrainReadonly`'s `fileMustExist: true` is the
+ * same guarantee enforced by the connection rather than by a check upstream of
+ * it.
+ */
+export function readProjectProfile(slug: string): ProjectProfileResult {
+  return withReadonlyBrain<ProjectProfileResult>(
+    { degraded: true, profile: null },
+    (handle) => selectProjectProfile(handle, slug),
+  );
 }
 
 /**
@@ -318,7 +415,36 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   if (!tableExists(handle, "instances")) {
     return [];
   }
-  const columns = ensureInstancesActivityColumn(handle);
+  // The read-WRITE door still performs the TD-277 rename before reading, so the
+  // retired column name is repaired the first time a writer's process lists.
+  return selectInstances(handle, ensureInstancesActivityColumn(handle), args);
+}
+
+/**
+ * {@link listInstances} through the READ-ONLY door (TD-319).
+ *
+ * Same rows, same filters, same order. The differences are exactly the two
+ * things a GET had no business doing: it does not set `journal_mode = WAL`, and
+ * it does not run the TD-277 `ALTER TABLE … RENAME COLUMN` — an un-upgraded
+ * brain is READ through {@link activityProjection} instead of being migrated by
+ * a page view. `/api/summary` is the caller.
+ */
+export function listInstancesReadonly(
+  args: ListInstancesArgs = {},
+): InstanceRow[] {
+  return withReadonlyBrain<InstanceRow[]>([], (handle) => {
+    if (!tableExists(handle, "instances")) return [];
+    return selectInstances(handle, tableColumns(handle, "instances"), args);
+  });
+}
+
+/** The `instances` query, defined ONCE and run by both doors. */
+function selectInstances(
+  handle: Database.Database,
+  columns: ReadonlySet<string>,
+  args: ListInstancesArgs,
+): InstanceRow[] {
+  const activity = activityProjection(columns);
 
   // Dynamic WHERE — verbatim shape from handleInstanceList:140-157.
   const conditions: string[] = [];
@@ -344,7 +470,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
     .prepare(
       `
       SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-             current_phase, current_task, status, last_activity_at,
+             current_phase, current_task, status, ${activity.select},
              ${optionalProjection(columns, "harness")},
              ${optionalProjection(columns, "harness_session_id")},
              ${optionalProjection(columns, "owner_pid")},
@@ -356,7 +482,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
              ${optionalProjection(columns, "state_updated_at")}
       FROM instances
       ${whereClause}
-      ORDER BY last_activity_at DESC
+      ${activity.order}
     `,
     )
     .all(...params) as InstanceRow[];
@@ -723,8 +849,29 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
  * `dashboard/routes.ts#summary` and `pages/Overview.tsx`.
  */
 export function briefStatusSummary(slug: string | null): AssessBriefs {
-  const handle = getDb();
+  return selectBriefStatusSummary(getDb(), slug);
+}
 
+/**
+ * {@link briefStatusSummary} through the READ-ONLY door (TD-319).
+ *
+ * Identical counts from an identical query on a `query_only = ON` connection,
+ * so `GET /api/summary` no longer sets `journal_mode = WAL` on the operator's
+ * brain. An absent brain file reads as the same empty summary the missing-table
+ * preflight already produced.
+ */
+export function briefStatusSummaryReadonly(slug: string | null): AssessBriefs {
+  return withReadonlyBrain<AssessBriefs>(
+    { total: 0, by_status: {}, by_priority: {} },
+    (handle) => selectBriefStatusSummary(handle, slug),
+  );
+}
+
+/** The two GROUP-BY counts, defined ONCE and run by both doors. */
+function selectBriefStatusSummary(
+  handle: Database.Database,
+  slug: string | null,
+): AssessBriefs {
   if (!tableExists(handle, "brief_status")) {
     return { total: 0, by_status: {}, by_priority: {} };
   }

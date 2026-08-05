@@ -14,7 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -443,6 +443,161 @@ describe("brain-db — listInstances", () => {
     expect(sf.state).toBe("live");
     expect(sf.content_hash).toBe("hash-sf");
     expect(sf.updated_at).toBe("2026-06-01 00:00:00");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-319 — the READ-ONLY door, and the DDL its read-write twin runs
+//
+// `listInstances` calls `ensureInstancesActivityColumn`, which is an
+// `ALTER TABLE … RENAME COLUMN` on a pre-TD-277 brain. That is DDL, and a
+// `GET /api/summary` must not run it — so `listInstancesReadonly` RESOLVES the
+// column instead (`activityProjection`) and leaves the schema alone.
+//
+// A brain whose only activity column is the retired one is the ONLY input that
+// can tell the two apart; on a migrated brain both doors emit the same SQL.
+// ---------------------------------------------------------------------------
+
+describe("brain-db — listInstancesReadonly (TD-319)", () => {
+  /** Column names + journal mode, read without becoming a writer. */
+  function schemaProbe(): { columns: string[]; journal: string } {
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"), {
+      readonly: true,
+    });
+    try {
+      return {
+        columns: (
+          check.prepare("PRAGMA table_info(instances)").all() as {
+            name: string;
+          }[]
+        ).map((c) => c.name),
+        journal: String(check.pragma("journal_mode", { simple: true })),
+      };
+    } finally {
+      check.close();
+    }
+  }
+
+  /** Put the seeded brain into SQLite's default rollback-journal mode. */
+  function toDeleteMode(): void {
+    const db = new Database(join(tmpRoot, "memory", "knowledge.db"));
+    try {
+      db.pragma("journal_mode = delete");
+    } finally {
+      db.close();
+    }
+  }
+
+  it("reads a LEGACY-column brain without renaming it or flipping the mode", async () => {
+    seedBrain((db) => {
+      db.exec(LEGACY_INSTANCES_DDL);
+      db.prepare(
+        `INSERT INTO instances (id, machine_hostname, project_slug, status, last_heartbeat_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run("i-legacy", "host-legacy", "demo", "active", "2026-06-01 00:00:00");
+    });
+    toDeleteMode();
+    // ASSERT-THEN-DIFF: establish the precondition the claim depends on. A
+    // brain that was ALREADY migrated (or already `wal`) would make every
+    // assertion below vacuous.
+    const before = schemaProbe();
+    expect(before.columns).toContain("last_heartbeat_at");
+    expect(before.columns).not.toContain("last_activity_at");
+    expect(before.journal).toBe("delete");
+
+    const m = await getModule();
+    const rows = m.listInstancesReadonly({ project: "demo", status: "active" });
+
+    // The read is REAL — the projection aliases the retired column, so callers
+    // still see the declared field. Without this the stillness below is also
+    // what a reader that threw and returned nothing would leave behind.
+    expect(rows.map((r) => r.id)).toEqual(["i-legacy"]);
+    expect(rows[0].last_activity_at).toBe("2026-06-01 00:00:00");
+
+    const after = schemaProbe();
+    expect(after.columns, "a read renamed a column").toEqual(before.columns);
+    expect(after.journal, "a read flipped the journal mode").toBe("delete");
+    expect(
+      existsSync(join(tmpRoot, "memory", "knowledge.db-wal")),
+      "a read created a -wal sidecar",
+    ).toBe(false);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the read-WRITE twin DOES rename it", async () => {
+    // Same brain, same arguments, same rows out. The only variable is the door,
+    // and it is what proves the assertions above are about `Readonly` rather
+    // than about a legacy brain that nothing would have migrated anyway.
+    seedBrain((db) => {
+      db.exec(LEGACY_INSTANCES_DDL);
+      db.prepare(
+        `INSERT INTO instances (id, machine_hostname, project_slug, status, last_heartbeat_at)
+         VALUES (?, ?, ?, ?, ?)`,
+      ).run("i-legacy", "host-legacy", "demo", "active", "2026-06-01 00:00:00");
+    });
+    toDeleteMode();
+    expect(schemaProbe().columns).toContain("last_heartbeat_at");
+
+    const m = await getModule();
+    const rows = m.listInstances({ project: "demo", status: "active" });
+    m.closeDb();
+
+    expect(rows.map((r) => r.id)).toEqual(["i-legacy"]);
+    expect(rows[0].last_activity_at).toBe("2026-06-01 00:00:00");
+
+    const after = schemaProbe();
+    expect(after.columns).toContain("last_activity_at");
+    expect(after.columns).not.toContain("last_heartbeat_at");
+    expect(after.journal).toBe("wal");
+  });
+
+  it("both doors agree on a MIGRATED brain, filters and all", async () => {
+    seedBrain((db) => {
+      db.exec(INSTANCES_DDL);
+      insertInstance(db, { id: "i-a", project_slug: "demo", status: "active" });
+      insertInstance(db, { id: "i-b", project_slug: "demo", status: "stale" });
+      insertInstance(db, { id: "i-c", project_slug: "other", status: "active" });
+    });
+    const m = await getModule();
+    for (const args of [
+      { project: "demo", status: "active" },
+      { project: "demo" },
+      { status: "active" },
+      { includeStale: true },
+      {},
+    ]) {
+      expect(m.listInstancesReadonly(args), JSON.stringify(args)).toEqual(
+        m.listInstances(args),
+      );
+    }
+    m.closeDb();
+    // Discriminating: at least one of those filter sets must have excluded a
+    // row, or "the two agree" would be a statement about two empty lists.
+    expect(m.listInstancesReadonly({ project: "demo", status: "active" })).toHaveLength(1);
+    expect(m.listInstancesReadonly({ includeStale: true })).toHaveLength(3);
+  });
+
+  it("briefStatusSummaryReadonly agrees with its read-write twin", async () => {
+    seedBrain((db) => {
+      db.exec(BRIEF_STATUS_DDL);
+      db.prepare(
+        "INSERT INTO brief_status (project, brief_id, title, status, priority) VALUES (?, ?, ?, ?, ?)",
+      ).run("demo", "TD-319", "read-only door", "Open", "P2-Medium");
+      db.prepare(
+        "INSERT INTO brief_status (project, brief_id, title, status, priority) VALUES (?, ?, ?, ?, ?)",
+      ).run("other", "BR-001", "elsewhere", "Done", "P1-High");
+    });
+    const m = await getModule();
+    expect(m.briefStatusSummaryReadonly("demo")).toEqual(
+      m.briefStatusSummary("demo"),
+    );
+    expect(m.briefStatusSummaryReadonly(null)).toEqual(
+      m.briefStatusSummary(null),
+    );
+    m.closeDb();
+    // Scoped and unscoped must DIFFER, or the equality above holds over one
+    // answer given twice.
+    expect(m.briefStatusSummaryReadonly("demo").total).toBe(1);
+    expect(m.briefStatusSummaryReadonly(null).total).toBe(2);
   });
 });
 

@@ -367,9 +367,13 @@ describe("the read-only lens does not CREATE the brain (AC #7)", () => {
     // "expected 'no such table: projects' to contain 'brain database not
     // found'" — a wording complaint about the true defect one line down.
     // `registry.ts` OWNS + CREATES its `projects` table, so reaching
-    // `listProjects()` unguarded materialises a brain file. That is a WRITE, and
-    // AC #7 says nothing in this brief mutates the brain. Regression pin for the
-    // defect `dashboard-layers-endpoint.test.ts` T1 exposed.
+    // `listProjects()` — the WRITE door — unguarded materialises a brain file.
+    // That is a WRITE, and AC #7 says nothing in this brief mutates the brain.
+    // Regression pin for the defect `dashboard-layers-endpoint.test.ts` T1
+    // exposed. TD-319 added a SECOND fence rather than replacing this one: the
+    // endpoint now reads `listProjectsReadonly()`, whose handle is opened
+    // `fileMustExist: true`. This test stays because two independent fences
+    // means either can be removed without the other silently going with it.
     expect(
       existsSync(dbPath),
       "a read-only endpoint conjured a brain database",

@@ -231,13 +231,16 @@ export const FIXTURE = {
  * crawl's `after.db_sha === before.db_sha` assertion can NEVER exercise a
  * journal-mode FLIP: the brain is already in the mode every writer that touches
  * it would set it to. On a `journal_mode = delete` brain — SQLite's default, and
- * the state of any brain no WAL-setting writer has opened — `registry.ts` and
- * `brain-db.ts` both `pragma("journal_mode = WAL")` on open, which rewrites the
- * `.db` header, and `registry.ts` also runs `CREATE TABLE IF NOT EXISTS
- * projects`. That gap is covered by **G-RO-5 in `dashboard-readonly.test.ts`**,
- * which converts this fixture to `delete` mode and pins both behaviours. Do not
- * change the mode here to close it — the WAL crawl and the `delete`-mode pins
- * cover different things and the suite needs both.
+ * the state of any brain no WAL-setting writer has opened — that flip is a real
+ * write, and until TD-319 four GET paths performed it (`registry.ts` and
+ * `brain-db.ts` both `pragma("journal_mode = WAL")` on their read-WRITE `getDb()`
+ * handles, and `registry.ts` also runs `CREATE TABLE IF NOT EXISTS projects`).
+ * Those doors still exist for the CLI writers; they are simply no longer
+ * reachable from an endpoint. The gap is covered by **G-RO-5 in
+ * `dashboard-readonly.test.ts`**, which converts this fixture to `delete` mode
+ * and asserts the whole tier leaves it alone. Do not change the mode here to
+ * close it — the WAL crawl and the `delete`-mode gates cover different things
+ * and the suite needs both.
  */
 export function seedLayerBrain(dbPath: string): void {
   mkdirSync(dirname(dbPath), { recursive: true });

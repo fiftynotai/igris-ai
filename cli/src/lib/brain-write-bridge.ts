@@ -85,9 +85,11 @@
  *   and running `SELECT * FROM main.T EXCEPT SELECT * FROM pre.T` over all 66
  *   plain tables (fts5/vec shadow tables excluded). **The single side effect of
  *   a boot on an already-migrated brain is `journal_mode: delete -> wal`.**
- *   That is a FILE-level change with no row delta, and it is the residual
- *   TD-319 already owns; G-RO-5's fixture is a `delete`-mode brain, which is
- *   exactly why the write engine must stay LAZY.
+ *   That is a FILE-level change with no row delta. It used to be one of several
+ *   ways this surface could flip the mode — TD-319 closed the other four (the
+ *   FR-238-era GET accessors), so a write-engine boot is now the ONLY one left,
+ *   which is exactly why the write engine must stay LAZY: G-RO-5's fixture is a
+ *   `delete`-mode brain and it now asserts that EVERY GET leaves it that way.
  *
  * STEP 4 — THE D1a EDGE CASE. The `schedules` TABLE is present (the component
  *   being disabled does not drop it) and carries the three bootstrap rows:

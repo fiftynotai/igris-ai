@@ -36,8 +36,14 @@
  *          `brain-mcp-server/src/tools/__tests__/pure-read-purity.test.ts`.
  *          Named so this file's coverage claim is honest about its boundary.
  *
- *  G-RO-5  RESIDUAL. The FR-238-era accessors are NOT read-only, and this pins
- *          exactly what they do. See the block comment above that describe().
+ *  G-RO-5  THE `delete`-MODE BRAIN. Every endpoint on the tier — the layer
+ *          readers AND the FR-238-era accessors — driven against a brain in
+ *          SQLite's default rollback-journal mode.
+ *          Proves: no GET flips `journal_mode`, creates a `-wal` sidecar,
+ *          rewrites the `.db` header, or runs DDL.
+ *          Does NOT prove: that the read-write doors in `registry.ts` /
+ *          `brain-db.ts` are gone — they are not, and `igris register` needs
+ *          them. See the block comment above that describe().
  *
  * WHAT G-RO-1 CANNOT SEE, AND WHY (learning 1095)
  * ----------------------------------------------
@@ -49,12 +55,12 @@
  * because the brain is already in the mode every writer here would set it to.
  *
  * On a brain in `journal_mode = delete` — the SQLite default, and the state of
- * any brain that has never been opened by a WAL-setting writer — `registry.ts`
- * and `brain-db.ts` both `pragma("journal_mode = WAL")` on open, which REWRITES
- * the `.db` header. `registry.ts` additionally runs
- * `CREATE TABLE IF NOT EXISTS projects`. G-RO-5 below drives both of those
- * against a `delete`-mode brain and pins them, so the residual is a measured,
- * mechanically-enforced statement rather than a paragraph in a doc.
+ * any brain that has never been opened by a WAL-setting writer — that flip is
+ * a real, observable write, and until TD-319 four endpoints performed it (plus,
+ * in `registry.ts`, a `CREATE TABLE IF NOT EXISTS projects`). G-RO-5 below
+ * converts the fixture to `delete` mode and drives the whole tier against it,
+ * so the read-only claim is a measured, mechanically-enforced statement rather
+ * than a paragraph in a doc.
  *
  * @module __tests__/dashboard-readonly.test
  */
@@ -63,7 +69,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { createHash } from "node:crypto";
 import { get as httpGet, request as httpRequest } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { closeDb as closeBrainDb } from "../lib/brain-db.js";
@@ -547,39 +561,49 @@ describe("G-RO-3 — query_only is armed on the bridge handle", () => {
 });
 
 // ---------------------------------------------------------------------------
-// G-RO-5 — the RESIDUAL: the FR-238-era accessors are not read-only
+// G-RO-5 — EVERY endpoint on this tier leaves a `delete`-mode brain alone
 //
-// SCOPE. `routes.ts` reaches the brain through TWO different doors, and only one
-// of them is the read-only tier FR-240 built:
+// SCOPE, AND WHAT TD-319 CHANGED. `routes.ts` reaches the brain through two
+// doors, and BOTH are now read-only:
 //
-//   the LAYER readers   `brain-bridge.ts#openBrainReadonly` /
-//                       `#openBrainReadonlyWithVec` — `{readonly:true}` plus
-//                       `query_only = ON` on both branches. Structurally
-//                       read-only, asserted by G-RO-3.
+//   the LAYER readers    `brain-bridge.ts#openBrainReadonly` /
+//                        `#openBrainReadonlyWithVec` — `{readonly:true}` plus
+//                        `query_only = ON` on both branches. Structurally
+//                        read-only since FR-240, asserted by G-RO-3.
 //
-//   the FR-238 accessors `registry.ts#listProjects` (behind `/api/projects` and,
-//                       via `isKnownProject`, `/api/context-docs`) and
-//                       `brain-db.ts#briefStatusSummary` / `#listInstances`
-//                       (behind `/api/summary`). Both `new Database(path)` with
-//                       no `readonly`, both `pragma("journal_mode = WAL")`, and
-//                       `registry.ts` additionally runs
-//                       `CREATE TABLE IF NOT EXISTS projects`.
+//   the FR-238 accessors `registry.ts#listProjectsReadonly` (behind
+//                        `/api/projects` and, via `isKnownProject`,
+//                        `/api/context-docs`), `brain-db.ts`'s
+//                        `#briefStatusSummaryReadonly` / `#listInstancesReadonly`
+//                        (behind `/api/summary`) and `#readProjectProfile`
+//                        (behind `/api/context-docs`, via the inventory digest).
+//                        Until TD-319 each of these opened `new Database(path)`
+//                        with no `readonly`, set `journal_mode = WAL`, and — in
+//                        `registry.ts` — ran `CREATE TABLE IF NOT EXISTS
+//                        projects`. Each now has a SECOND door that opens
+//                        through `openBrainReadonly` and preflights the table
+//                        instead of creating it.
 //
-// So "every brain handle in this tier is read-only" was FALSE as written, in
-// MAINTAINING row 108 and in `docs/dashboard.md`. Both now say what is true,
-// and these tests are what keeps that statement honest: if someone makes the
-// accessors read-only, THESE tests fail and the docs get swept with them.
+// So "every brain handle in this tier is read-only" was FALSE as written from
+// FR-238 through FR-246, and MAINTAINING row 108 + `docs/dashboard.md` carried
+// the qualified version. TD-319 makes the UNQUALIFIED claim true and these
+// tests are what keeps it honest.
 //
-// THIS IS A CHARACTERISATION PIN, NOT AN ENDORSEMENT. The behaviour is
-// inherited FR-238 surface; FR-240 deliberately does not change it (a read-only
-// `listProjects` path is a different brief, named in the docs). The live impact
-// is nil on an operator brain that is already `wal`, which is why it is
-// deferred rather than hot-fixed — but "nil today" is not "correct", and an
-// undisclosed exception to a structural claim is how the claim stops meaning
-// anything.
+// THE PINS BELOW ARE THE INVERSE OF THE ONES THEY REPLACE. FR-240 pinned the
+// defect (`journal_mode` flips to `wal`; a GET runs DDL) so the residual could
+// not silently drift back into an unqualified doc claim; those four
+// characterisation pins carried their own delete-me instruction and TD-319
+// executed it. What stands here now asserts the fix — same three endpoints,
+// same `delete`-mode fixture, opposite expectation.
+//
+// WHAT THE WRITE DOORS STILL DO, and why that is not a gap: `listProjects`,
+// `briefStatusSummary` and `listInstances` are UNCHANGED and still open
+// read-write. `igris register`, `igris doctor --remove-orphans` and
+// `igris init` need exactly that. The claim this block makes is about what an
+// HTTP GET can reach, not about the module.
 // ---------------------------------------------------------------------------
 
-describe("G-RO-5 — the FR-238-era accessors open read-WRITE (residual, deferred)", () => {
+describe("G-RO-5 — no endpoint on this tier writes to a `delete`-mode brain", () => {
   /** Read `journal_mode` without becoming a writer ourselves. */
   const journalMode = (path: string): string =>
     String(
@@ -641,48 +665,135 @@ describe("G-RO-5 — the FR-238-era accessors open read-WRITE (residual, deferre
     expect(existsSync(`${dbPath()}-wal`)).toBe(false);
   });
 
-  it("REGRESSION PIN — /api/projects flips journal_mode to wal and rewrites the .db header", async () => {
+  /**
+   * TD-319 — the three endpoints that used to flip it, all in one reading.
+   *
+   * ONE test rather than three because the load-bearing claim is about the SET:
+   * "no GET on this tier writes" is falsified by any single member, and a
+   * per-endpoint split invites a future endpoint to be added to `routes.ts` and
+   * to nothing here. The per-endpoint attribution is preserved in the assertion
+   * messages, so a failure still names which path moved.
+   *
+   * `/api/summary` is driven in BOTH of its reachable states (scoped and
+   * unscoped): they take different branches inside `briefStatusSummaryReadonly`
+   * and `listInstancesReadonly`, and the unscoped one is where the Overview
+   * sits by default when the operator clears scope.
+   */
+  it("the FR-238-era endpoints leave a `delete`-mode brain byte-identical", async () => {
     toDeleteMode();
+    // ASSERT-THEN-DIFF (learning 1093): establish the precondition before the
+    // claim that depends on it. Without this line a `toDeleteMode` that silently
+    // did nothing would make every assertion below vacuously green — which is
+    // precisely what the self-negative-control at the bottom guards a second time.
     expect(journalMode(dbPath())).toBe("delete");
-    const before = sha256(dbPath());
+    const before = snapshot(dbPath());
 
     await start();
-    expect((await req("/api/projects")).status).toBe(200);
+    for (const p of [
+      "/api/projects",
+      "/api/summary?project=demo",
+      "/api/summary",
+      "/api/context-docs?project=demo",
+      // TD-319: the singular path is named in MAINTAINING and docs/dashboard.md
+      // as one of the closed paths, and it shares `readProjectProfile` with the
+      // plural — so leaving it out of this loop meant the claim was asserted in
+      // prose and enforced nowhere. One string is the difference.
+      "/api/context-doc?project=demo&type=coding_guidelines",
+    ]) {
+      expect((await req(p)).status, p).toBe(200);
+      expect(journalMode(dbPath()), `${p} flipped the journal mode`).toBe(
+        "delete",
+      );
+      expect(existsSync(`${dbPath()}-wal`), `${p} created a -wal sidecar`).toBe(
+        false,
+      );
+      expect(sha256(dbPath()), `${p} rewrote the .db file`).toBe(before.db_sha);
+    }
 
-    // ASSERT-THEN-DIFF (learning 1093): the flip is the load-bearing claim, so
-    // it is asserted before the digest, whose change is its consequence.
-    expect(
-      journalMode(dbPath()),
-      "registry.ts no longer sets journal_mode = WAL — if this is deliberate, DELETE this test and sweep MAINTAINING row 108 + docs/dashboard.md with it",
-    ).toBe("wal");
-    expect(sha256(dbPath())).not.toBe(before);
+    // The logical dump too: a `-wal`-staged row change would not move the file
+    // digest, and this file's own G-RO-2 demonstrates that blind spot.
+    expect(snapshot(dbPath()).dump).toBe(before.dump);
   });
 
-  it("REGRESSION PIN — /api/context-docs reaches the same accessor via isKnownProject", async () => {
-    // The path FR-240 itself added to the set. `/api/projects` and `/api/summary`
-    // were already there; this one arrived with the context-docs layer.
+  it("the payloads are REAL — the read-only door still answers with rows", async () => {
+    // Without this, the stillness above is also what a reader returning `[]`
+    // for everything would produce, and TD-319 swapped the DOOR all three
+    // endpoints read through. A gate that cannot tell "did not write" from
+    // "did not read" is the vacuous shape this backlog is about.
+    //
+    // The catalog is seeded because this suite's sandbox has none, and an
+    // absent catalog degrades the inventory to zero rows regardless of the
+    // brain — which would make the context-docs half of this test unable to
+    // fail for the reason it is here to check. Two entries, so "every row" and
+    // "one row" are distinguishable.
+    const catalogDir = join(sandbox, "core", "context-doc-types");
+    mkdirSync(catalogDir, { recursive: true });
+    for (const type of ["coding_guidelines", "architecture_map"]) {
+      writeFileSync(
+        join(catalogDir, `${type}.md`),
+        [
+          "---",
+          `type: ${type}`,
+          `target: ${type}.md`,
+          "applies_when: always",
+          "optional: false",
+          `summary: seeded for the TD-319 read-only gate (${type})`,
+          "---",
+          "",
+          "Body.",
+        ].join("\n"),
+      );
+    }
+
     toDeleteMode();
     await start();
-    expect((await req("/api/context-docs?project=demo")).status).toBe(200);
-    expect(
-      journalMode(dbPath()),
-      "if this is deliberate, DELETE this test and sweep MAINTAINING row 108 + docs/dashboard.md with it.",
-    ).toBe("wal");
+
+    const projects = JSON.parse((await req("/api/projects")).body) as {
+      projects: { slug: string }[];
+      degraded: unknown;
+    };
+    expect(projects.degraded).toBeNull();
+    expect(projects.projects.map((p) => p.slug)).toContain("demo");
+
+    const scoped = JSON.parse((await req("/api/summary?project=demo")).body) as {
+      briefs: { total: number };
+      instances: { active: number };
+      degraded: unknown;
+    };
+    expect(scoped.degraded).toBeNull();
+    expect(scoped.briefs.total).toBeGreaterThan(0);
+    // `listInstancesReadonly` is the accessor with the most to go wrong: it is
+    // the one whose read-write twin runs an `ALTER TABLE` this door skips.
+    expect(scoped.instances.active).toBeGreaterThan(0);
+
+    const docs = JSON.parse((await req("/api/context-docs?project=demo")).body) as {
+      archetype: string | null;
+      inventory_degraded: boolean;
+      docs: unknown[];
+      degraded: { reason: string } | null;
+    };
+    // `unknown project: demo` is exactly what an empty `listProjectsReadonly()`
+    // would produce here, and it is the specific failure this excludes.
+    expect(docs.degraded).toBeNull();
+    expect(docs.inventory_degraded).toBe(false);
+    expect(docs.docs.length).toBe(2);
+    // From `brain-db.ts#readProjectProfile` — the SECOND read-only accessor on
+    // this path, and the one a fix limited to `isKnownProject` would have left
+    // opening read-WRITE.
+    expect(docs.archetype).toBe("unclassified");
+
+    // Still `delete` after all of that — the reads were real AND still-handed.
+    expect(journalMode(dbPath())).toBe("delete");
+    expect(existsSync(`${dbPath()}-wal`)).toBe(false);
   });
 
-  it("REGRESSION PIN — /api/summary flips it too, via brain-db.ts", async () => {
-    toDeleteMode();
-    await start();
-    expect((await req("/api/summary?project=demo")).status).toBe(200);
-    expect(
-      journalMode(dbPath()),
-      "if this is deliberate, DELETE this test and sweep MAINTAINING row 108 + docs/dashboard.md with it.",
-    ).toBe("wal");
-  });
-
-  it("REGRESSION PIN — registry.ts runs DDL on a brain with no `projects` table", async () => {
-    // The second half of the residual, and the one with real consequences: a
-    // brain that predates the `projects` table gets one CREATEd by a GET.
+  it("no endpoint runs DDL on a brain with no `projects` table", async () => {
+    // The half with real consequences: before TD-319 a brain that predates the
+    // `projects` table got one CREATEd by a GET. All three endpoints are driven,
+    // because `registry.ts` was not the only accessor reaching for that table —
+    // `brain-db.ts#readProjectProfile` (behind `/api/context-docs`) preflights it
+    // too, and a preflight that ran on a read-WRITE handle was one edit away
+    // from becoming a create.
     const bare = join(sandbox, "memory", "knowledge.db");
     rmSync(bare, { force: true });
     rmSync(`${bare}-wal`, { force: true });
@@ -707,14 +818,26 @@ describe("G-RO-5 — the FR-238-era accessors open read-WRITE (residual, deferre
       }
     };
     expect(tables()).toEqual(["brief_status"]);
+    const before = sha256(bare);
 
     await start();
-    expect((await req("/api/projects")).status).toBe(200);
+    for (const p of [
+      "/api/projects",
+      "/api/summary?project=demo",
+      "/api/summary",
+      "/api/context-docs?project=demo",
+      // TD-319: the singular path is named in MAINTAINING and docs/dashboard.md
+      // as one of the closed paths, and it shares `readProjectProfile` with the
+      // plural — so leaving it out of this loop meant the claim was asserted in
+      // prose and enforced nowhere. One string is the difference.
+      "/api/context-doc?project=demo&type=coding_guidelines",
+    ]) {
+      expect((await req(p)).status, p).toBe(200);
+    }
 
-    expect(
-      tables(),
-      "registry.ts no longer CREATEs `projects` — if this is deliberate, DELETE this test and sweep the docs",
-    ).toContain("projects");
+    expect(tables(), "a GET created a table").toEqual(["brief_status"]);
+    expect(journalMode(bare)).toBe("delete");
+    expect(sha256(bare)).toBe(before);
   });
 
   it("SELF-NEGATIVE-CONTROL — `toDeleteMode` really produces a `delete`-mode brain", () => {
