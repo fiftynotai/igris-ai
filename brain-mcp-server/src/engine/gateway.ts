@@ -115,7 +115,9 @@ export function createGateway() {
    * Dispatch a tool call to its handler.
    *
    * @param name - The tool name
-   * @param args - The parsed arguments
+   * @param args - The parsed arguments. An omitted (or null) MCP
+   *   `params.arguments` is normalised to `{}` before any read (TD-321), so
+   *   every walk and the handler itself see an object.
    * @returns The tool result (MCP response format)
    * @throws Error if tool is not found, if a declared `required` key is absent
    *   (BR-080), or (when REJECT_EXTRAS) if a strict tool receives an unknown
@@ -143,12 +145,26 @@ export function createGateway() {
     // here would put a live secret into a JSON-RPC error envelope, a log line,
     // and any transcript the caller keeps. Do not add one.
     //
-    // An MCP client may omit `params.arguments` entirely, in which case `args`
-    // arrives as undefined. Reading `key in undefined` would throw a TypeError
-    // — the exact symptom class this guard exists to replace — so the required
-    // check reads through a local no-args stand-in. Note this stand-in is NOT
-    // forwarded: the handler and the extras walk below still see the original
-    // `args`, so nothing else about the undefined-args path changes here.
+    // TD-321: the omitted-`arguments` normalisation, applied ONCE for every
+    // read below.
+    //
+    // `params.arguments` is OPTIONAL in the MCP spec and neither entrypoint in
+    // `src/index.ts` defaults it, so `args` genuinely arrives as `undefined`
+    // (or `null`) from a real client. Every read that follows — the required
+    // walk, the TD-128 extras walk, and the handler call — goes through this
+    // stand-in, which makes an absent argument map exactly equivalent to `{}`
+    // for all 112 registered tools.
+    //
+    // BR-080 introduced this stand-in for the required walk only and did not
+    // forward it, which left a residual: the extras walk still ran
+    // `Object.keys(args)` on the original, so the 75 tools that declare
+    // `required` were saved by the throw above while the other 37 fell into
+    // `TypeError: Cannot convert undefined or null to object` — the exact
+    // symptom class this guard exists to replace. Forwarding closes it.
+    //
+    // `??` and not a spread, on purpose: a supplied args object must reach the
+    // handler by IDENTITY. Copying here would silently change what a handler
+    // that mutates or compares by reference observes.
     const suppliedArgs = (args ?? {}) as Record<string, unknown>;
     for (const key of tool._required) {
       if (!(key in suppliedArgs)) {
@@ -160,7 +176,7 @@ export function createGateway() {
     // TD-128: strict-input contract. Reject-mode active (M4) — any extra arg
     // on a tool whose schema declares `additionalProperties: false` throws.
     if (tool._strict) {
-      for (const key of Object.keys(args)) {
+      for (const key of Object.keys(suppliedArgs)) {
         if (!tool._allowedKeys.has(key)) {
           if (REJECT_EXTRAS) {
             throw new Error(
@@ -177,7 +193,7 @@ export function createGateway() {
         }
       }
     }
-    return tool.handler(args);
+    return tool.handler(suppliedArgs);
   }
 
   /**

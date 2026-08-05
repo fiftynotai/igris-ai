@@ -20,9 +20,15 @@
  * `bootEngine` minus the bus (so `handlePerceptionApprove`'s
  * `bus.emit('perception.candidate_approved')` would behave differently from the
  * MCP path) and minus the GATEWAY, which is where validation actually lives:
- * the BR-080 `required` walk (`gateway.ts:153-159`) and the TD-128
- * `additionalProperties:false` extras walk (`gateway.ts:162-176`). Importing a
- * handler directly silently drops both.
+ * the BR-080 `required` walk and the TD-128 `additionalProperties:false`
+ * extras walk, both inside `gateway.ts`'s `dispatch`. Importing a handler
+ * directly silently drops both.
+ *
+ * Cited by SYMBOL, not line: TD-321 shifted both walks by 16 lines and broke
+ * the previous `gateway.ts:153-159` / `:162-176` form. Note the checker could
+ * never have caught that — `check_contract_consumers.sh` reads MAINTAINING's
+ * consumer column only, so a citation living in a code comment like this one
+ * is structurally invisible to it. Keep these symbolic.
  *
  * So the dashboard's write path is not *like* the MCP path. It **is** the MCP
  * path with the JSON-RPC framing removed: `createBrainServer()`'s
@@ -298,7 +304,7 @@ export interface ToolResult {
   isError?: boolean;
 }
 
-/** engine/gateway.ts:124 — `dispatch`. THROWS on validation failure (BR-080/TD-128). */
+/** `dispatch` in `engine/gateway.ts` — THROWS on validation failure (BR-080/TD-128). */
 type DispatchFn = (
   name: string,
   args: Record<string, unknown>,
@@ -308,9 +314,9 @@ type DispatchFn = (
 interface EngineHandle {
   gateway: {
     dispatch: DispatchFn;
-    /** gateway.ts:193 */
+    /** `hasTool` in `engine/gateway.ts` */
     hasTool: (name: string) => boolean;
-    /** gateway.ts:186 */
+    /** `toolCount` in `engine/gateway.ts` */
     toolCount: () => number;
   };
   /** engine/index.ts:136 */

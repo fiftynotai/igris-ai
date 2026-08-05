@@ -247,6 +247,17 @@ describe('TD-128 strict-input contract — every registered tool (M2)', () => {
 //     `src/tools/__tests__/sync-queue-drain-contract.test.ts` (the BR-080 R1
 //     regression, which additionally asserts the message is NOT the old
 //     TypeError).
+//
+// PREVIOUSLY NOT PROVEN, CLOSED BY TD-321 — recorded here because an omission
+// from this ledger reads as "no residual here":
+//   - the omitted-`params.arguments` case for the 37 registered tools that
+//     declare NO `required` list. BR-080 read only the required walk through a
+//     no-args stand-in, so those 37 still died in the TD-128 extras walk on
+//     `TypeError: Cannot convert undefined or null to object`. Every
+//     missing-required case in THIS block registers a fixture that declares
+//     `required`, so none of them could ever have seen it. TD-321 normalised
+//     the omitted-arguments case once at the top of `dispatch()` and proves the
+//     other half of the corpus in the TD-321 block at the bottom of this file.
 
 describe('BR-080 gateway missing-required contract', () => {
   it('rejects when a declared required key is absent, naming the key and the full list', async () => {
@@ -355,10 +366,16 @@ describe('BR-080 gateway missing-required contract', () => {
     expect(result).toEqual(makeOkResult('falsy-ok'));
   });
 
-  it('an MCP call that omits params.arguments entirely still gets the clear message, not a TypeError', async () => {
+  it('a REQUIRED-declaring tool whose call omits params.arguments names the missing key, not a TypeError', async () => {
     // Some MCP clients send `tools/call` with no `arguments` key at all, so the
     // gateway receives `undefined`. `key in undefined` would throw the very
     // TypeError class BR-080 exists to eliminate.
+    //
+    // SCOPE (TD-321): the fixture below DECLARES `required`, so this case can
+    // only ever prove the required-declaring half of the corpus — 75 of the 112
+    // registered tools. The title said "an MCP call that omits
+    // params.arguments" and read as a system-wide property; it was not one. The
+    // other 37 tools are covered by the TD-321 block at the bottom of this file.
     const gateway = createGateway();
     gateway.register([
       {
@@ -478,9 +495,21 @@ describe('BR-080 missing-required contract — every registered tool that declar
   // silently emptied this list would turn the sweep below into a no-op that
   // still shows green. The floor is the assert-then-diff guard one level up.
   //
-  // Measured at BR-080 build time: 80 `required: [...]` literals across the 16
-  // component files. The floor sits deliberately BELOW that so a legitimate
-  // tool removal does not false-fail; it is a non-vacuity check, not a pin.
+  // WHAT THE FLOOR IS COMPARED AGAINST (TD-321 corrected the referent): the
+  // floor guards `requiring.length` — the number of REGISTERED tools whose
+  // `listTools()` schema carries a non-empty `required` list. Re-measured at
+  // TD-321: 75, out of 112 registered tools.
+  //
+  // The BR-080 comment here named a different population: the 80
+  // `required: [...]` source literals across the 16 component files that carry
+  // one. Both numbers are right in isolation, and the two do not reconcile 1:1
+  // — 4 of the 80 are `required: []` and 1 is a NESTED schema (the edge-spec
+  // array item in `components/memory/index.ts`), which is why 80 - 5 = 75. The
+  // floor clears both counts, so this was a wrong-referent sentence and never a
+  // wrong gate.
+  //
+  // The floor sits deliberately BELOW the measured 75 so a legitimate tool
+  // removal does not false-fail; it is a non-vacuity check, not a pin.
   it('the swept corpus is non-empty and at least 60 tools deep', () => {
     expect(requiring.length).toBeGreaterThanOrEqual(60);
   });
@@ -493,6 +522,234 @@ describe('BR-080 missing-required contract — every registered tool that declar
           `^${name}: missing required argument '${required[0]}'\\. Required: `,
         ),
       );
+    },
+  );
+});
+
+// ---------------------------------------------------------------------------
+// TD-321 omitted-`params.arguments` normalisation — the other 37 tools.
+// ---------------------------------------------------------------------------
+//
+// The MCP spec makes `params.arguments` OPTIONAL, and both brain entrypoints
+// (`src/index.ts` stdio `CallToolRequestSchema` handler and the HTTP
+// direct-dispatch fallback) forward `request.params.arguments` to
+// `gateway.dispatch` without defaulting it. So `args` really does arrive as
+// `undefined` in production.
+//
+// BR-080 read the required walk through a no-args stand-in but deliberately
+// did not forward it: the TD-128 extras walk still ran `Object.keys(args)` on
+// the original. For the 75 tools that declare `required` the guard threw first
+// and the walk was never reached — but for the other 37 the call fell straight
+// into `Object.keys(undefined)`:
+//
+//     TypeError: Cannot convert undefined or null to object
+//
+// which is the exact symptom class BR-080 exists to eliminate. TD-321
+// normalises the omitted-arguments case ONCE at the top of `dispatch()`, so an
+// absent `arguments` is exactly equivalent to `{}` for all 112 tools.
+//
+// WHAT THIS BLOCK PROVES:
+//   - `undefined` AND `null` args normalise, on both schema shapes that produce
+//     an empty `_required` (`required: []` and no `required` field at all);
+//   - the handler receives `{}` — not `undefined`, and not a value that merely
+//     survived the gateway's own walks;
+//   - the property holds for every REAL registered schema in the 37-tool half
+//     of the corpus, not just a hand-written fixture (the parameterized sweep);
+//   - normalisation did not disarm the two walks it feeds: an extra key on an
+//     omitted-args-normalised call still throws TD-128, and a supplied args
+//     object still reaches the handler as the SAME object (identity control —
+//     a normalisation that copied would silently break handlers that mutate or
+//     compare by reference).
+//
+// WHAT THIS BLOCK DOES NOT PROVE:
+//   - that any of the 37 handlers is SEMANTICALLY happy with `{}`. The sweep
+//     registers each real schema with a STUB handler on purpose: the real
+//     handlers open the operator's live brain DB at `~/.igris/memory/`, which a
+//     unit test must never touch. What the schema says is the contract — a tool
+//     that declares no `required` key is advertising that `{}` is a legal call,
+//     and if that advertisement is wrong the defect is in the schema, which is
+//     the same residual the BR-080 ledger above already records.
+//   - anything about the 75 required-declaring tools; that half is the BR-080
+//     sweep above.
+
+describe('TD-321 omitted-arguments normalisation — fixtures', () => {
+  it.each([
+    ['required: [] declared', 'igris_test_td321_empty_array', [] as string[]],
+    ['no required field', 'igris_test_td321_no_field', undefined],
+  ])(
+    'a tool with %s dispatches on omitted args and its handler receives {}',
+    async (_shape, name, required) => {
+      const gateway = createGateway();
+      const handler = vi.fn(async (_args: Record<string, unknown>) =>
+        makeOkResult('td321-ran'),
+      );
+      gateway.register([
+        {
+          name,
+          description: 'TD-321 fixture (no required list)',
+          inputSchema: {
+            type: 'object',
+            properties: { optional: {} },
+            ...(required ? { required } : {}),
+            additionalProperties: false,
+          },
+          handler,
+        },
+      ]);
+
+      await expect(
+        gateway.dispatch(name, undefined as unknown as Record<string, unknown>),
+      ).resolves.toEqual(makeOkResult('td321-ran'));
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith({});
+    },
+  );
+
+  it('a null args object normalises the same way as an omitted one', async () => {
+    // `Object.keys(null)` throws the identical TypeError, and a JSON-RPC client
+    // that serialises an absent argument map as `null` is as plausible as one
+    // that omits the key.
+    const gateway = createGateway();
+    const handler = vi.fn(async (_args: Record<string, unknown>) =>
+      makeOkResult('td321-null-ran'),
+    );
+    gateway.register([
+      {
+        name: 'igris_test_td321_null',
+        description: 'TD-321 fixture (null args)',
+        inputSchema: {
+          type: 'object',
+          properties: { optional: {} },
+          additionalProperties: false,
+        },
+        handler,
+      },
+    ]);
+
+    await expect(
+      gateway.dispatch('igris_test_td321_null', null as unknown as Record<string, unknown>),
+    ).resolves.toEqual(makeOkResult('td321-null-ran'));
+    expect(handler).toHaveBeenCalledWith({});
+  });
+
+  it('the old TypeError is gone: the failure mode is not "Cannot convert undefined or null to object"', async () => {
+    // Red-first anchor. Before TD-321 this dispatch rejected with exactly that
+    // message, thrown by `Object.keys(args)` in the TD-128 extras walk.
+    const gateway = createGateway();
+    gateway.register([
+      {
+        name: 'igris_test_td321_typeerror',
+        description: 'TD-321 fixture (old TypeError anchor)',
+        inputSchema: {
+          type: 'object',
+          properties: { optional: {} },
+          additionalProperties: false,
+        },
+        handler: async () => makeOkResult('reached-handler'),
+      },
+    ]);
+
+    const outcome = await gateway
+      .dispatch(
+        'igris_test_td321_typeerror',
+        undefined as unknown as Record<string, unknown>,
+      )
+      .then(
+        (r) => ({ ok: true as const, text: JSON.stringify(r) }),
+        (e: unknown) => ({
+          ok: false as const,
+          text: e instanceof Error ? e.message : String(e),
+        }),
+      );
+
+    expect(outcome.text).not.toMatch(/Cannot convert undefined or null to object/);
+    expect(outcome.ok).toBe(true);
+    expect(outcome.text).toContain('reached-handler');
+  });
+
+  // CONTROL — normalisation is not a bypass. The TD-128 extras walk now reads
+  // the normalised object, so it must still reject an unknown key.
+  it('control: normalisation does not disarm the TD-128 extras walk', async () => {
+    const gateway = createGateway();
+    const handler = vi.fn(async (_args: Record<string, unknown>) => makeOkResult());
+    gateway.register([
+      {
+        name: 'igris_test_td321_extras_still_reject',
+        description: 'TD-321 control (extras walk still armed)',
+        inputSchema: {
+          type: 'object',
+          properties: { optional: {} },
+          additionalProperties: false,
+        },
+        handler,
+      },
+    ]);
+
+    await expect(
+      gateway.dispatch('igris_test_td321_extras_still_reject', { bogus: 1 }),
+    ).rejects.toThrowError(/unknown argument 'bogus'/);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  // CONTROL — identity. A supplied args object must reach the handler as the
+  // SAME reference; `args ?? {}` preserves that, a spread or clone would not.
+  it('control: a supplied args object reaches the handler by identity, not by copy', async () => {
+    const gateway = createGateway();
+    const handler = vi.fn(async (_args: Record<string, unknown>) => makeOkResult());
+    gateway.register([
+      {
+        name: 'igris_test_td321_identity',
+        description: 'TD-321 control (no copy on the supplied path)',
+        inputSchema: {
+          type: 'object',
+          properties: { optional: {} },
+          additionalProperties: false,
+        },
+        handler,
+      },
+    ]);
+
+    const supplied = { optional: 'value' };
+    await gateway.dispatch('igris_test_td321_identity', supplied);
+
+    expect(handler).toHaveBeenCalledTimes(1);
+    expect(handler.mock.calls[0]?.[0]).toBe(supplied);
+  });
+});
+
+describe('TD-321 omitted-arguments normalisation — every registered tool that declares no required', () => {
+  // Real registered schemas, STUB handlers (see the block ledger above: the
+  // real ones open the operator's brain DB). The schema — `properties`,
+  // `additionalProperties`, `required` — is what both gateway walks read, and
+  // it is carried over verbatim.
+  const nonRequiring = collectAllTools().filter(
+    (t) => (t.inputSchema.required ?? []).length === 0,
+  );
+
+  // CORPUS FLOOR. Same non-vacuity guard as the BR-080 sweep: `it.each` over an
+  // empty array passes while reporting zero cases. The floor guards
+  // `nonRequiring.length` — registered tools whose `required` list is absent or
+  // empty. Measured at TD-321: 37, the complement of BR-080's 75, summing to
+  // the 112 registered tools that `gateway-tool-count.test.ts` pins. The floor
+  // sits below 37 so a legitimate tool removal (or a tool GAINING a required
+  // key, which moves it into the other sweep) does not false-fail.
+  it('the swept corpus is non-empty and at least 25 tools deep', () => {
+    expect(nonRequiring.length).toBeGreaterThanOrEqual(25);
+  });
+
+  it.each(nonRequiring.map((t) => [t.name, t] as const))(
+    '%s dispatches on an omitted args object instead of throwing a TypeError (TD-321)',
+    async (name, tool) => {
+      const gateway = createGateway();
+      const handler = vi.fn(async (_args: Record<string, unknown>) =>
+        makeOkResult('swept-stub-ran'),
+      );
+      gateway.register([{ ...tool, handler }]);
+
+      await expect(
+        gateway.dispatch(name, undefined as unknown as Record<string, unknown>),
+      ).resolves.toEqual(makeOkResult('swept-stub-ran'));
+      expect(handler).toHaveBeenCalledWith({});
     },
   );
 });

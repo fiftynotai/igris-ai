@@ -81,7 +81,16 @@ describe("sync data — runSyncData", () => {
     expect(code).toBe(1);
   });
 
-  it("empty local queue: still calls remote drain (returns 0 on HTTP 200)", async () => {
+  it("empty local queue: still calls remote drain, with drain-only args (exit 0 via the INDETERMINATE tier)", async () => {
+    // TD-321 title correction. The subject here is the drain CALL SHAPE on an
+    // empty queue — one call, JSON-RPC envelope, no `local_entries`. The
+    // `{drained: 0}` body is deliberately NOT a success envelope: since BR-080
+    // it classifies INDETERMINATE, which `callRemoteDrain` also exits 0 on
+    // (the brain-side table is idempotent and re-drained next run). The old
+    // title's "returns 0 on HTTP 200" stayed literally true but implied this
+    // exercised the success tier, which it stopped doing. Success is covered
+    // deliberately by "case 2" in the classifier block below; this fixture is
+    // one of the ~8 legacy non-envelope bodies "case 3" exists to protect.
     const lb = makeLoopback(() => ({
       status: 200,
       body: JSON.stringify({ drained: 0 }),
