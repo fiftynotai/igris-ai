@@ -629,7 +629,19 @@ describe("G-RO-5 — no endpoint on this tier writes to a `delete`-mode brain", 
     rmSync(`${dbPath()}-shm`, { force: true });
   }
 
-  it("the LAYER endpoints leave a `delete`-mode brain untouched", async () => {
+  /*
+   * TD-320 #2 — THE TITLE SAYS "SERVED PURELY BY THE READ-ONLY BRIDGE", NOT
+   * "THE LAYER ENDPOINTS".
+   *
+   * It used to say the latter, and that claim exceeded what the test asserts:
+   * `LAYER_PATHS` covers 23 URLs across 10 endpoints INCLUDING
+   * `/api/context-docs`, while this list is the subset served purely by the
+   * read-only bridge. There is no coverage gap — `/api/context-docs` is driven
+   * by the very next test, from the opposite direction — but a title that names
+   * a superset is the failure class this backlog exists to close: a guard whose
+   * stated claim is wider than its assertion.
+   */
+  it("the layer endpoints served purely by the read-only bridge leave a `delete`-mode brain untouched", async () => {
     // The half that IS structurally read-only. Asserted FIRST so the pin below
     // reads as a statement about the OTHER door rather than about the server.
     toDeleteMode();
@@ -847,6 +859,99 @@ describe("G-RO-5 — no endpoint on this tier writes to a `delete`-mode brain", 
     expect(journalMode(dbPath())).toBe("wal");
     toDeleteMode();
     expect(journalMode(dbPath())).toBe("delete");
+  });
+
+  /**
+   * TD-320 #6 — SELF-NEGATIVE-CONTROL FOR THE FILE-LEVEL HALF OF `readonly`.
+   *
+   * WHY THIS IS NOT COVERED BY THE `query_only` TESTS ABOVE, and why FR-240's
+   * review flagged its absence. `openBrainReadonly` arms TWO carriers:
+   * `{readonly: true}` on the connection and `query_only = ON` as a pragma. They
+   * do not carry the same properties:
+   *
+   *   both       refuse INSERT / UPDATE / DELETE / DDL
+   *   `readonly` ALSO: no `-wal`/`-shm` sidecar creation, no `journal_mode`
+   *              change, and no database CREATION on a missing path
+   *
+   * So flipping `readonly: true -> false` alone is CORRECTLY uncaught by a write
+   * test — `query_only` still carries that half, and the R4 fallback branch
+   * deliberately opens read-write for exactly that reason. What has no named
+   * guard is the SECOND column: the file-level effects, which G-RO-5's tests
+   * above cover only INCIDENTALLY (they assert the effects are absent, but a
+   * reader cannot tell whether that is because the carriers work or because
+   * nothing on the path would have produced them anyway).
+   *
+   * THIS CONTROL ESTABLISHES LESS THAN AN EARLIER DRAFT CLAIMED, and the
+   * difference matters enough to state.
+   *
+   * It opens the RAW driver (`new Database(...)`) — it does not call
+   * `openBrainReadonly` with its carriers stripped. So what it proves is that
+   * the MEDIUM can exhibit these effects: a `delete`-mode fixture really will
+   * flip its journal mode, really will grow a `-wal`, and really will be
+   * created on a missing path, so G-RO-5's assertions are not vacuous against
+   * an inert fixture.
+   *
+   * What it does NOT prove is that the product's DOOR is what suppresses them.
+   * The draft closed with: *"If they do not, G-RO-5's silence above means
+   * nothing — it would be the silence of a path that never writes, not the
+   * silence of a door that is shut."* That inference does not follow from this
+   * body: G-RO-5's silence could still be the silence of a path that never
+   * issues `journal_mode = wal`, and this control cannot discriminate the two.
+   *
+   * The door-level probe FR-240's residual actually asked for — strip
+   * `readonly` and `fileMustExist` from `openBrainReadonly` itself and re-run
+   * the layer crawl — is NOT built here. TD-320 item #6 is therefore
+   * RELABELLED, not closed, and **TD-349 owns closing it.** Do not read this
+   * test as covering it.
+   *
+   * TD-349 also carries the sharper half: dropping `readonly: true` ALONE is
+   * currently caught by nothing. `query_only` does not refuse a journal-mode
+   * pragma (TD-319 measured that asymmetry on the R4 fallback branch), so a
+   * refactor that lost that one carrier would leave every test here green.
+   *
+   * KEEP THIS TEST when TD-349 lands. It covers the inert-fixture case — that
+   * the medium can move at all — which a door-level probe does not.
+   */
+  it("SELF-NEGATIVE-CONTROL — a connection opened WITHOUT the carriers shows the file-level effects are reachable", () => {
+    toDeleteMode();
+    expect(journalMode(dbPath()), "precondition").toBe("delete");
+    expect(existsSync(`${dbPath()}-wal`), "precondition").toBe(false);
+    const before = sha256(dbPath());
+
+    // (1) THE JOURNAL-MODE FLIP AND THE `-wal` SIDECAR. `readonly: true` would
+    //     refuse this pragma; `query_only = ON` would NOT (it gates statements,
+    //     not connection-level file management). One open with neither carrier
+    //     is what produces both effects.
+    const rw = new Database(dbPath(), { fileMustExist: true });
+    try {
+      rw.pragma("journal_mode = wal");
+      rw.prepare("SELECT count(*) AS n FROM goals").get();
+    } finally {
+      rw.close();
+    }
+    expect(journalMode(dbPath()), "a read-write open did NOT flip the journal mode").toBe(
+      "wal",
+    );
+    expect(sha256(dbPath()), "a journal-mode flip did NOT rewrite the .db header").not.toBe(
+      before,
+    );
+
+    // (2) DATABASE CREATION ON A MISSING PATH. `fileMustExist` is the carrier
+    //     `openBrainReadonly` pairs with `readonly`; without it a bare open
+    //     CREATES the file. This is the property `openBrainReadonly()` returning
+    //     `null` for an absent brain exists to preserve, and G-RO-4's
+    //     "returns null (never a live handle) when the brain file is absent" is
+    //     the arm this is the control for.
+    const ghost = join(sandbox, "memory", "not-a-brain.db");
+    expect(existsSync(ghost), "precondition").toBe(false);
+    const created = new Database(ghost);
+    created.close();
+    expect(existsSync(ghost), "a bare open did NOT create the database").toBe(true);
+
+    // Leave the fixture as this describe's other tests expect to find it.
+    rmSync(ghost, { force: true });
+    rmSync(`${ghost}-wal`, { force: true });
+    rmSync(`${ghost}-shm`, { force: true });
   });
 });
 

@@ -170,8 +170,12 @@ import.
 ### Layer views (FR-240) — the browse/detail surface
 
 Nine endpoints across four layers: briefs, learnings, context docs, goals. They
-are **read-only throughout**, and that is a structural property rather than a
-promise — see "Two doors" below, which states which endpoint uses which handle.
+are **read-only throughout (with one disclosed exception)**, and that is a
+structural property rather than a promise — see "Two doors" below, which states
+which endpoint uses which handle, and which is where the exception
+(`/api/context-docs`, whose reader reaches the brain through a different door)
+is qualified. The summary line must not stand alone: TD-320 found it being read
+as a claim about all nine when it is precise about the layer readers only.
 FR-241 added a write endpoint to this surface but changed none of these nine.
 
 **Shared list envelope.** Every list endpoint returns
@@ -1484,13 +1488,21 @@ WORLD units, so the field and the nodes in it scale down together as one
 photograph and every gap survives. `K_FLOOR = 0.11` is the measured value — the
 last zoom at which the picture still held its structure (0.10533), rounded up.
 
-**What it does NOT fix, and why that is not a size-law problem.** Separability
-*at FIT*: 358 components for 710 nodes, and the deficit is exactly the 352
-seeded edges. Every LINKED pair sits closer than its own size and fuses. That is
-genuine at-rest adjacency, and the absence of a collision force is a real
-contributing cause — but no uniform force change can reach it, because at FIT
-the picture depends only on the layout's SHAPE: anything that spreads the layout
-is undone by `zoomToFit()` zooming out to match. The lever that would work is
+**What it does NOT fix — and a claim TD-337 falsified.** This paragraph used to
+read: *"Separability at FIT: 358 components for 710 nodes, and the deficit is
+exactly the 352 seeded edges… no uniform force change can reach it, because at
+FIT the picture depends only on the layout's SHAPE: anything that spreads the
+layout is undone by `zoomToFit()` zooming out to match."*
+
+**Both halves are false as of FR-250.** Doubling the canvas moved the FIT
+reading **358 -> 710 of 710** on a byte-identical bundle and an identical
+payload. So the FIT picture is a function of the canvas BOX, not only of the
+layout's shape — the invariance the old argument asserted is exactly what
+FR-250 refuted, and the 352-pair fusion it described does not manifest at FIT on
+the shipped box.
+
+That is why TD-337 re-anchored `11a` away from FIT entirely: a denominator that
+moves when the layout does cannot calibrate anything. The lever that would work is
 the RATIO of link distance to layout extent, which is a layout-tuning change
 that moves `G-BR-7`'s `7d` ink-spread reading. FR-244 measured it and left it;
 it belongs with rung 6 below.
@@ -1526,7 +1538,7 @@ zoom-out half of "past the legible floor" is now handled by the size law above:
 zooming out no longer collapses the field, so the operator can pull back and
 still see structure. What remains for rung 6 is the half a size law provably
 cannot reach — nodes that overlap *at fit*, because they are genuinely that
-close in the layout. That is the 352-pair fusion measured above. Rung 6, or a
+close in the layout. That WAS the 352-pair fusion measured above — see the correction there: it does not manifest at FIT on the post-FR-250 box, so rung 6 is aimed at a reading that has since moved. Rung 6, or a
 collision force, or a link-distance change: all three are layout work, all three
 move `G-BR-7`'s `7d` reading, and all three want their own brief.
 
@@ -1696,12 +1708,12 @@ the gate prints the exact command.
 | **G-BR-4** | zero `requestAnimationFrame` callbacks and zero canvas clears across a 3-second rest on each of the four views, measured by instruments installed BEFORE the bundle and opened only once the surface has REACHED rest (a surface that never does fails with its observed rate, which is why the precondition cannot mask a loop); the four palettes resolving to four distinct `.record-*` colours; and the whole FR-239 stillness checkpoint re-run after the `graphCache` hoist, pointer liveness and node-click included | that DOM mutations are zero — they are not, by design (the 5-second `live.tick`), so the mutation count is MEASURED and printed rather than asserted |
 | **G-BR-5** | ACCESS, not bytes: a brief's body, a learning's content and a context doc's text are READABLE in the live DOM, and two different records render two different bodies | markdown fidelity or XSS safety — `markdown/__tests__/` own both |
 | **G-BR-6** | `prefers-reduced-motion` really collapses animation in the page, with the un-emulated reading as the paired control | that each animation is gated in JS — `motion.test.ts` T17 and `Cursor.tsx` own that |
-| **G-BR-7** | the hoisted scope cache is real in the browser: a drill issues exactly one new `/api/graph`, backing out issues **zero** and restores the whole-brain readout, and a REFRESH on the same surface issues one — so the zero is a measured zero. Plus, in pixels, that the back-out OPENS at its settled layout extent while a cold REFRESH opens as a clump at the origin and expands out of it | that the restored coordinates equal the pre-drill ones. Nothing in the page exposes coordinates, and a settled-frame comparison cannot discriminate: d3-force's cold layout for a fixed node array is deterministic, so a restored layout and a cold one converge to the same picture. The seed is applied but NOT pinned (`instance.ts` sets `x`/`y`, not `fx`/`fy`), so a back-out is a short re-relaxation rather than a freeze-frame — measured at ~85% of settled extent versus ~61% cold. The cache MECHANICS are the sibling: `cli/dashboard/src/lib/__tests__/graphCache.test.ts` |
+| **G-BR-7** | the hoisted scope cache is real in the browser: a drill issues exactly one new `/api/graph`, backing out issues **zero** and restores the whole-brain readout, and a REFRESH on the same surface issues one — so the zero is a measured zero. Plus, in pixels, that the back-out OPENS at its settled layout extent while a cold REFRESH opens as a clump at the origin and expands out of it | that the restored coordinates equal the pre-drill ones. Nothing in the page exposes coordinates, and a settled-frame comparison cannot discriminate: d3-force's cold layout for a fixed node array is deterministic, so a restored layout and a cold one converge to the same picture. The seed is applied but NOT pinned (`instance.ts` sets `x`/`y`, not `fx`/`fy`), so a back-out is a short re-relaxation rather than a freeze-frame — measured at 72.0-74.1% of settled extent versus 56.2-59.5% cold (TD-332, 7 runs, 2026-08-05, at the now-explicit 1440×900 viewport; the older ~85%/~61% figures were taken on the pre-FR-244 canvas). **`7d` SHIPS RED and TD-332 owns it** — see the KNOWN_RED ledger below. The cache MECHANICS are the sibling: `cli/dashboard/src/lib/__tests__/graphCache.test.ts` |
 | **G-BR-8** (FR-241) | the triage write path end to end in a browser: the scoped queue agrees with the endpoint, the row badges distinguish a permanent reject from a recurring one, CANCEL issues **zero** POSTs (an independent in-page counter), a mixed selection's confirm dialog names the tier-3 subset rather than the selection size, a tier-3 bulk demands the count typed, and a world with the write surface down renders the affordances *disabled* rather than broken | that the brain applied the right mutation — `dashboard-triage-endpoint.test.ts` and `dashboard-triage-parity.test.ts` own that. The gate reads rows leaving a list, not rows changing in a table |
 | **G-BR-9** (BR-082) | the Overview opens scoped to `default_project`, re-clicking the checked chip **clears** the scope, every card widens to the value its UNSCOPED endpoint reports, and that widened state is still on screen after the page has issued ≥2 further `/api/health` polls **and** ≥2 further `/api/summary` reads across ≥10 s — so the clear survived the beat that used to undo it | that the hook's `undefined`-vs-`null` distinction is the MECHANISM. This reads a page, not a state machine, and would pass for any implementation that keeps the clear. The mechanism's siblings are `dashboard-layers-source.test.ts` (exactly one scope implementation, and Overview consumes it) and `useProjectScope.ts`'s docblock. Nor that the NUMBERS are right — it asserts DOM-vs-endpoint agreement, and `dashboard-server.test.ts` owns what the endpoint should say |
 | **G-BR-10** (TD-326) | the three populations are DISTINCT and none is empty (6 scoped + 4 brain-level + 2 other = 12 everything, asserted as arithmetic); a project-scoped page banners the brain-level count and not the all-projects total; the `(brain-level)` chip sits in the ONE `Project scope` radiogroup and selecting it lists exactly the project-less rows; that selection survives ≥2 further `/api/projects` polls across ≥10 s — the ladder's OWN request, so the witness is direct rather than inferred; SELECT PAGE + DISMISS empties the brain-level queue and leaves the project's queue at 6; and the Candidates tab under that scope states its schema reason instead of fetching | that the endpoint's answers are correct — `dashboard-layers-endpoint.test.ts` G-EP-4 (the reads, the param handling, the drop-and-report) and `dashboard-triage-endpoint.test.ts` G-TR-7 (the mutation, and the symmetric "a project bulk leaves brain-level alone") own that. Nor that no OTHER affordance exists; it asserts the DOM agrees with the endpoint for the scope it selected |
 
-| **G-BR-11** (FR-244) | in the `dense` (Tier C) world: the canvas is driven with REAL wheel events down a zoom sweep, and at a MEASURED low zoom the picture still resolves ~98% of the connected components it resolves at `zoomToFit`, with no component owning more than a fraction of the ink (`11a`); the same metric REPORTS the merge that is genuinely present at fit — 710 nodes render as 358 components, a deficit equal to the 352 seeded edges (`11b`); and at 1440×900 the canvas owns the vertical column with no page scroll and the query twin inside the layout row (`11c`), while a 1600px-tall viewport puts 1210px of canvas on screen, above the retired 900px clamp (`11c-tall`) | that the picture is BEAUTIFUL, or that a node is nameable at that zoom. Component count is a legibility FLOOR, not a ceiling. It makes no claim about the shape vocabulary — FR-244's sign-off left `tracePath` untouched. The size law's ARITHMETIC at every `k` (the two regimes, the continuity at `K_FLOOR`, and the agreement of all four geometry consumers) is `graph/__tests__/shapes.test.ts`; the ban on a fifth open-coded site is `dashboard-graph-source.test.ts`. Do not weaken any of the three on the assumption another has it covered |
+| **G-BR-11** (FR-244, re-anchored by TD-337) | in the `dense` (Tier C) world, with every separability check anchored to **`K_FLOOR`** (the source constant `NODE_SIZE_ZOOM_FLOOR = 0.11`) and to nothing else: the canvas is driven with REAL wheel events down a sweep of ABSOLUTE zooms, and **below the clamp the picture freezes** — the component count at `K_FLOOR/2` holds ≥ 95% of the count AT `K_FLOOR`, with no component owning more than a fraction of the ink (`11a`); the same metric REPORTS the merge that is genuinely present at that anchor — 710 nodes render as 354 components, a deficit of 356 against the 352 seeded edges, which is the very reading `11a` divides by (`11b`); `k_fit` sits above every anchor so each is reachable by zooming OUT from FIT (`11-range`); the ACHIEVED zoom is within 5% of the REQUESTED one at every anchor (`11-anchor`); the anchored reading is **INVARIANT to the canvas box**, measured by setting `--graph-column-scale` in the page and moving `k_fit` 2.58× while the reading moves ≤ 0.56pp (`11e`); and at 1440×900 the canvas owns the vertical column with the document/viewport ratio tracking `--graph-column-scale` and the query twin inside the layout row (`11c`), while a 1600px-tall viewport puts 2658px of canvas on screen, above the retired 900px clamp (`11c-tall`) | that the picture is BEAUTIFUL, or that a node is nameable at that zoom. Component count is a legibility FLOOR, not a ceiling. It makes no claim about the shape vocabulary — FR-244's sign-off left `tracePath` untouched. **Nor does it prove anything ABOVE `K_FLOOR`**: the size law makes no claim there, so the gate asserts nothing there either. The size law's ARITHMETIC at every `k` (the two regimes, the continuity at `K_FLOOR`, and the agreement of all four geometry consumers) is `graph/__tests__/shapes.test.ts`; the ban on a fifth open-coded site is `dashboard-graph-source.test.ts`; the `K_FLOOR` mirror is pinned by `dashboard-graph-source.test.ts` and mapped in `MAINTAINING.md`. Do not weaken any of the three on the assumption another has it covered |
 
 | **G-BR-12** (FR-245) | the briefs BOARD on the `seeded` world, on its own tab: the rendered column set equals the union of `/api/summary`'s `briefs.by_status` keys with the six documented lifecycle statuses — computed in the gate from the DOC, not from the client's constant (`12a`); `Σ column.total` equals `/api/summary`'s `briefs.total`, each side fetched independently, so a column set can only pass by being COMPLETE (`12b`); a 66-character status is truncated in the header while `title` and `data-status` carry it whole and the label does not overflow its column, MEASURED as `scrollWidth ≤ clientWidth` (`12c`); the toggle survives a route change and a reload but a NEW browsing context opens on the list (`12d`); `priority=P1-High` reaches every column's query, checked column by column against the endpoint's own total for that `(status, priority)` pair at the same project scope (`12e`); `OPEN IN LIST` on a non-empty column flips to the list with THAT status filtered and the row count equal to the column's own total, against a fixture whose filtered and unfiltered counts disagree (`12g`); and across a full session — toggle, filter, hover, a REAL mouse drag across columns, refresh — the page issues **zero** non-GET requests with `GET > 0` in the same reading, no element carries a drag affordance, and no card moved (`12f`) | that the endpoint's answers are right (`dashboard-layers-endpoint.test.ts`), nor WHICH columns a given brain should have — it asserts the union, not the vocabulary. The FOLD case (`Done`/`Completed`/`Complete` as three columns) is **not** observable on this fixture, which holds no synonym pair; `dashboard/src/layers/__tests__/board.test.ts` B6 pins it offline against the real 15-value distribution |
 
@@ -1717,6 +1729,23 @@ one. Confirmation dates by family: FR-240's eight on 2026-07-30, FR-241's four
 (`10a`, `10c`, `10d`), FR-244's three (`br11-*`) on 2026-08-02, and FR-245's
 **eight** (`br12-*`) on 2026-08-02 — each confirmed caught by its predicted
 check (`12a`, `12c`, `12d-nav`, `12d-session`, `12e`, `12g`, and `12f` twice).
+
+**The BATCH-A batch (TD-332 · TD-337 · TD-320) added five**, all confirmed
+2026-08-05 against their predicted checks: `br3-hermetic-one-world-unarmed`
+(`3-hermetic`, naming the unarmed world), `br11-measure-above-the-clamp` (`11a`),
+`br11-range-on-a-short-canvas` (`11-range`), `br11-anchor-not-reached`
+(`11-anchor`), `br11-anchor-to-k-fit` (`11e`), plus `br7-crumb-forces-refetch`
+— the product-faithful `7d` defect, which reddens `7b` too because the real
+defect breaks both. **Two of them did not bite on their first design and both
+failures are recorded in the mutation's own `how` string rather than quietly
+fixed**, because "the mutation went red for a different reason" and "the mutation
+did not go red at all" are findings about the check, not paperwork:
+`br11-measure-above-the-clamp` read 98.9% at a 2× → 1× `K_FLOOR` pair (the
+unprotected regime has not begun fusing there at this density) and was
+re-derived at 2.5× → 1.25×; `br11-range-on-a-short-canvas` aborted the whole gate
+on an off-screen FIT button as a 400×700 viewport, then stalled at
+`k_fit = 0.131` when driven by `--graph-column-scale` alone, because
+`.graph-layout` carries a 420px `min-height` the scale cannot reach past.
 
 **Two of those eight exist because a check had no failing counterpart of its
 own, which is a distinct gap from a check that is wrong.** `12d-session`
@@ -1819,6 +1848,206 @@ app must not enter `rootDir: ./src`), so the `tsc` in `npm run build` never sees
 the app either. `npm run typecheck:dashboard` (`tsc --noEmit -p dashboard`) is
 the only thing that does, which is why it is a CI step and not just a
 convenience script.
+
+#### `KNOWN_RED` — checks that ship failing, by decision (TD-332 / TD-337)
+
+**Read every check BY NAME. Never read the overall verdict.** A check can ship
+RED because an operator decided it should: the calibration is wrong, the
+disposition is argued and owned by a brief, and hiding it would be worse than
+carrying it. Before TD-332 that decision lived in a prose `note()` hundreds of
+lines into a transcript, ending in a sentence nobody could execute — *"if this
+goes green and you did not fix it, that is the surprising result."*
+
+It is machinery now. `browser-gate.mjs` carries a `KNOWN_RED` map from check id
+to owning brief, and the verdict block:
+
+- **names** every known-red failure with its brief, so the summary reads
+  `VERDICT: FAIL — 1 known-red (TD-332)` rather than showing an anonymous red
+  line the next reader learns to scroll past;
+- prints **`SURPRISE <id> is GREEN but is listed KNOWN_RED under <brief>`** when
+  one comes back green, and **on an unmutated run exits non-zero for it** —
+  because that is the alarming outcome, not the reassuring one. Either the brief
+  landed and its row was not removed, or nobody fixed it and something moved the
+  world back under it. **The exit is deliberately qualified under `--mutate`**,
+  where an injected defect can legitimately move a check: measured,
+  `--mutate=br7-refetch-backout` flips `7d` green and prints the SURPRISE line
+  while exiting 0. An earlier draft of this paragraph promised the non-zero exit
+  unconditionally, which the gate's own inline caveat already contradicted;
+- prints an **`UNINFORMATIVE VERDICT`** line on any `--mutate` run whose
+  predicted victim is known-red. Mutation mode inverts by asking whether the
+  predicted id appears in `failed`; when that id fails *without* the mutation,
+  the run prints `PASS (mutation caught)` for a reason unrelated to the injected
+  defect. Judge such a run by its NUMBERS.
+
+**A row must be deleted in the same commit that makes its check green.** That is
+the forcing function: the SURPRISE line makes a half-done sweep loud, so the
+disposition note beside the check cannot be left claiming a red that no longer
+exists. TD-337's rows for `11a` and `11b` were removed exactly that way.
+
+| Check | Owner | Why it is red |
+|---|---|---|
+| `7d` | **TD-332** | The back-out-versus-cold-entrance ink reading does not separate with margin on an **11-node** canvas. Conditions are now fixed and documented; the metric is the residual. See the baseline below. |
+
+#### `7d`'s baseline, its spread, and the rule that was applied (TD-332)
+
+Conditions, which are the quantity this calibration is COUPLED to: viewport
+**1440×900** set explicitly with `Emulation.setDeviceMetricsOverride` at gate
+entry (not inherited from `--window-size`, inside which headless Chrome counts
+its own browser chrome, leaving a ~1058×813 content box), canvas **1058×1258**,
+`--graph-column-scale: 2`. Measured 2026-08-05.
+
+| population | back-out collapse | cold collapse | separation |
+|---|---|---|---|
+| **healthy**, n=7 | 72.0–74.1% (spread **2.1pp**) | 56.2–59.5% (spread 3.3pp) | 13.8–17.9pp (spread **4.1pp**) |
+| `br7-backout-re-entrances` | 56.2% | 56.2% | 0.0pp |
+| `br7-crumb-forces-refetch` | 55.0% | 58.6% | −3.6pp, **and +1 `/api/graph`** |
+
+Bounds are `BACKOUT_COLLAPSE_FLOOR = 0.75` and
+`BACKOUT_COLD_SEPARATION_FLOOR = 0.15` — **named by TD-332, values UNCHANGED.**
+A decision rule was written *before* the measurement so the measurement could not
+be read to suit it, and it lands on **replace the surface**, not re-derive the
+numbers:
+
+- the **absolute** arm would re-derive cleanly — healthy min 72.0% against a
+  defect max of 56.2% is a 15.8pp gap, 7.5× the 2.1pp healthy spread;
+- the **separation** arm would not. Healthy min 13.8pp against a defect of 0.0pp
+  is a 13.8pp gap, but the healthy spread is 4.1pp, so any floor between the two
+  populations sits ~1.66 spreads from the healthy line. That is a marginal green,
+  and the rule forbids shipping one;
+- so the surface is what is wrong. `d3-force` initialises unplaced nodes on a
+  phyllotaxis spiral of radius `10·√i`; for **eleven** nodes that opening clump is
+  already fairly spread relative to the settled extent, which is why the cold arm
+  reads ~57% rather than ~10% and why the separation is both small and noisy. At
+  710 nodes the opening clump is proportionally far tighter, so the SIGNAL grows
+  rather than the noise merely averaging out. **TD-332 is re-scoped to relocating
+  `7d`'s reading to the `dense` world as its whole remaining content.**
+
+What TD-332 DID close, independently of any verdict: the gate now measures at the
+viewport it documents, cleared in a `finally` so it cannot leak into `G-BR-9` or
+`G-BR-13`, with the box printed at every stage. That alone tightened the cold arm
+from ~63% to ~57% and moved the worst-case separation from 9.6pp to 13.8pp.
+
+#### `G-BR-11`'s anchors are ABSOLUTE now, and `11e` is why you can believe it (TD-337)
+
+`11a`'s floor used to be calibrated against `k_fit` — `zoomToFit()`'s scale,
+i.e. the layout extent fitted into the **canvas box**. The box is a layout
+property, so it moves, and FR-250 moved it as a controlled experiment nobody
+designed as one: `--graph-column-scale: 1 → 2` took `k_fit` from 0.13275 to
+0.34271 on a byte-identical bundle and an identical 710-node/352-edge payload.
+`11a`'s sample point was `k_fit/2`, which crossed `K_FLOOR` on the way — out of
+the protected regime whose property it was asserting — and read 50.4% against a
+60% floor. **The gate did not break; its subject moved out from under it.**
+
+**The obvious re-anchor is wrong, and it is worth saying out loud.**
+`nodeWorldSize(px, k) = px / max(k, K_FLOOR)`, so a node's screen size is
+`px · min(1, k/K_FLOOR)`. At `k = K_FLOOR` the clamp sits exactly on its own
+boundary — `max(k, K_FLOOR)` is `k` either way — so **the pre-FR-244 defect
+passes a reading taken at `K_FLOOR`.** A gate anchored there is a gate the bug
+walks through. The property lives strictly *below*, which is why the sample is at
+`K_FLOOR/2` and the **denominator** is the reading at `K_FLOOR` (the old
+denominator, blobs-at-FIT, moved 358 → 710 across FR-250 and was a second,
+easily-missed coupling).
+
+`FROZEN_PRESERVATION_FLOOR = 0.95`, measured 2026-08-05:
+
+| population | reading | mechanism |
+|---|---|---|
+| **healthy**, 5 runs × 2 column scales | 98.6–99.7% (spread **1.1pp**) | the picture freezes; the residual loss is pixel quantisation |
+| `br11-measure-above-the-clamp`, 3 runs | **86.9%, 92.3%, 92.3%** | the same 2× zoom-out one octave higher (2.5× → 1.25× `K_FLOOR`), entirely in the regime where node size is pinned and gaps shrink — the pre-FR-244 behaviour. Noisier than the healthy population because its denominator sits high on the sweep, where the component count is still climbing steeply with `k` — which is precisely why the healthy pair is taken *below* the clamp, where it is not |
+| `br11-measure-at-blob-zoom` | **81.1%** | numerator dragged to the extreme end, where the field is 86px and quantisation, not fusion, removes components |
+
+The two populations meet at **92.3%** (worst defect) and **98.6%** (worst
+healthy) — a 6.3pp corridor with its midpoint at 95.45%. The floor is the round
+number just *below* that midpoint, which deliberately gives the larger share
+(3.6pp, or 3.3× the healthy spread) to the healthy side and 2.7pp to the defect
+side: the healthy spread is the one that causes flakes. **What it would mean if
+it fired:** more than one component in twenty lost over a single octave *below*
+the clamp — i.e. the picture is no longer freezing. Tighter (0.98) would put half
+the healthy population within one spread of the line; looser (0.90) would let
+92.3% of the above-the-clamp population pass, and that is the population that
+matters.
+
+**A first draft of `br11-measure-above-the-clamp` used a 2× → 1× pair and read
+98.9% — it did not bite**, because at this density the unprotected regime has not
+begun fusing by 2·`K_FLOOR`. It was re-derived at 2.5× → 1.25× rather than
+accepted. A mutation that cannot bite is a decoration.
+
+**What no mutation can reach, stated as a limit rather than left as a gap:**
+restoring the pre-FR-244 *size law*. `useGraph.ts` exposes
+`__igrisGraphStillness` as a read-only diagnostic on purpose, and the defect
+state is not reachable by choosing a zoom either — under the fixed law the
+node-size-to-field ratio is CONSTANT for every `k ≤ K_FLOOR`, so the old law's
+picture at `K_FLOOR/2` is twice as dense as anything the fixed law can produce at
+any zoom. That is not a hole in the harness; it is what the fix MEANS.
+`graph/__tests__/shapes.test.ts` pins the arithmetic; this gate pins the picture.
+
+**`11e` — the check that would have caught TD-337 before it shipped.** The
+re-anchoring rests on an argument: *a reading at a fixed ABSOLUTE `k` does not
+depend on the canvas box.* An argument is not a check. `11e` makes it one by
+setting `--graph-column-scale` on `document.documentElement.style` **in the
+page** — no source edit, no rebuild, dies with the tab — and re-running the whole
+anchored pass. Measured: `k_fit` moves **2.58×** and the canvas goes 1058×1084 →
+1058×423 while the anchored reading moves **0.28–0.56pp** (tolerance 2pp), and
+the ink threshold derived at the anchor comes out **identical (119.17) on both
+boxes**. `--mutate=br11-anchor-to-k-fit` puts both endpoints back on
+`k_fit`-relative points and **reproduces TD-337 on demand** — one run printing
+**50.4%** at scale 2 beside **98.6%** at scale 1.
+
+The 50.4% is TD-337's recorded figure exactly. The scale-1 reading is **98.6%,
+not FR-244's 98.3%** — one blob's difference, and an earlier draft of this
+sentence claimed the pair were "exactly the two historical figures", which is
+one component out and was a coincidence of a single run rather than a
+reproducible property. The reproducible claim is the one worth making: the
+mutation puts both endpoints back on `k_fit` and the two boxes disagree by
+**48.18pp** against a 2pp tolerance, which is TD-337, on demand, from one run.
+
+**FR-244's recorded 98.3% is annotated, not restated** (TD-337 AC-3). It was
+taken at `k_fit = 0.13275`, so its sample point `k_fit/2 = 0.066` sat BELOW
+`K_FLOOR = 0.11` — *inside* the protected regime. The figure was not wrong; it
+was under-specified. It measured the fix working, in the regime the fix acts in,
+at a `k_fit` nobody knew was transient.
+
+**Two new checks come with absolute anchoring**, because it introduces two new
+ways to measure nothing:
+
+- **`11-range`** — `k_fit` must sit above every anchor, since each is reached by
+  zooming OUT from FIT. Without it a short canvas silently reports the FIT
+  picture at every level. Armed by `br11-range-on-a-short-canvas`, which shrinks
+  the canvas in the page to `k_fit ≈ 0.059`; on that run `11-range` and
+  `11-anchor` go red **and `11a` goes GREEN at 101.4%**, because both of its
+  endpoints collapse onto the same unreachable reading. That is the argument for
+  the check in one line: *an instrument that stopped measuring reports the
+  reassuring answer.* Two earlier drafts of this mutation did not bite, and both
+  are recorded in its `how` string — a 400×700 viewport aborted the gate on an
+  off-screen FIT button before the check ran, and `--graph-column-scale` alone
+  stopped at `k_fit = 0.131` because `.graph-layout` carries a 420px
+  `min-height` the scale cannot reach past.
+- **`11-anchor`** — the ACHIEVED `k` must be within 5% of the REQUESTED one
+  (worst observed miss 1.56%). With a `k_fit`-relative divisor a miss was a
+  proportional error in a ratio; with an absolute anchor a big enough miss puts
+  the sample on the wrong side of the clamp. Armed by `br11-anchor-not-reached`
+  (tick budget capped at 1), which inverts the FR-250 failure mode directly.
+
+Every anchor in the standing sweep is at or below `K_FLOOR`, and that is a
+measurement rather than a preference: `11e` re-runs the sweep at
+`--graph-column-scale: 1`, where `k_fit` is only **1.21 · K_FLOOR**. An anchor at
+`1.25 · K_FLOOR` was tried and is not reachable there.
+
+#### `3-hermetic` covers every world, and the harness refuses to start otherwise (TD-320)
+
+`3-hermetic` asserted the `vec` world's receipt alone while printing all six. The
+preload body is world-invariant so the practical risk was low, but "low" is not
+the property a hermetic claim needs — every measurement in this file is only
+trustworthy if no server could have paid for an embedding with a ~90 MB network
+fetch. It now asserts every world and **names the unarmed ones and their
+reasons**, because a red that gives no diagnosis is half a check.
+
+A **harness-level fail-fast** backs it up immediately after the banner, and that
+is the half that matters for calibration work: a `--gates=7,11` run never reaches
+`G-BR-3`, so the runs whose numbers become thresholds are exactly the runs the
+ledger check cannot protect. Under `--mutate` it warns instead of exiting, so
+`br3-hermetic-one-world-unarmed` — which points the `empty` world's preload at an
+entry that does not exist — can still reach the check it exists to redden.
 
 ### Manual checkpoint (operator)
 

@@ -393,6 +393,56 @@ describe("FR-244 — every node geometry goes through nodeWorldSize", () => {
     }
   });
 
+  /**
+   * TD-337 — `browser-gate.mjs` MIRRORS `NODE_SIZE_ZOOM_FLOOR`, and this is the
+   * pin that pays for the mirror.
+   *
+   * WHY THERE IS A MIRROR AT ALL. `G-BR-11`'s `11a` / `11b` / `11e` / `11-range`
+   * are anchored to this constant — it is the boundary the size law is defined
+   * by, and the only anchor that is absolute (`k_fit`, the previous anchor, is
+   * `zoomToFit()`'s scale and therefore a function of the canvas box, which
+   * moves). The gate could have read the value out of the page the way FR-250's
+   * `11c` reads `--graph-column-scale`, but that token was already a CSS custom
+   * property in the DOM at zero cost, whereas exposing a JS constant to `window`
+   * is app-chunk surface — and the chunk has 484 B of slack with TD-347's
+   * route-level split queued behind it. So the gate mirrors, and pays
+   * mechanically: THIS test, plus a `MAINTAINING.md` contract row whose change
+   * procedure names the re-derivation the gate owes when the constant moves.
+   *
+   * The two literals are read out of the two files and compared as NUMBERS, so
+   * `0.11` and `0.110` would agree and a re-based `0.09` would not.
+   */
+  it("browser-gate.mjs's K_FLOOR mirror equals shapes.ts's NODE_SIZE_ZOOM_FLOOR", () => {
+    const shapes = readFileSync(join(GRAPH_DIR, "shapes.ts"), "utf-8");
+    const owner = /export const NODE_SIZE_ZOOM_FLOOR\s*=\s*([0-9.]+)\s*;/.exec(shapes);
+    expect(owner, "NODE_SIZE_ZOOM_FLOOR is no longer declared in shapes.ts").not.toBeNull();
+
+    const gatePath = join(CLI_ROOT, "scripts", "browser-gate.mjs");
+    const gate = readFileSync(gatePath, "utf-8");
+    const mirror = /^const K_FLOOR\s*=\s*([0-9.]+)\s*;/m.exec(gate);
+    expect(
+      mirror,
+      "browser-gate.mjs no longer declares `const K_FLOOR = <number>;` — if the gate now reads the value from the page instead, delete this test AND the MAINTAINING row it pays for",
+    ).not.toBeNull();
+
+    expect(
+      Number(mirror![1]),
+      "the browser gate's K_FLOOR mirror has drifted from shapes.ts#NODE_SIZE_ZOOM_FLOOR. Moving this constant RE-BASES G-BR-11's 11a / 11b / 11e / 11-range: re-run the invariance probe and re-derive FROZEN_PRESERVATION_FLOOR before shipping the move (MAINTAINING.md)",
+    ).toBe(Number(owner![1]));
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the mirror detector rejects a drifted literal", () => {
+    // Without this, a regex that matched nothing would make the pin above pass
+    // by comparing `undefined` with `undefined`… except it would throw on the
+    // non-null assertion, which is why the two `expect(...).not.toBeNull()`
+    // lines exist. What this adds is proof the COMPARISON discriminates: two
+    // different literals must not be read as equal.
+    const drifted = "const K_FLOOR = 0.09;\n";
+    const m = /^const K_FLOOR\s*=\s*([0-9.]+)\s*;/m.exec(drifted);
+    expect(m).not.toBeNull();
+    expect(Number(m![1])).not.toBe(0.11);
+  });
+
   it("the law itself is exported from shapes.ts and used by both files", () => {
     // The scan above is satisfied by DELETING every consumer, so this is the
     // half that says the consumers exist and reach the one law.

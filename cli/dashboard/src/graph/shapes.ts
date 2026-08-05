@@ -275,6 +275,23 @@ export function isDashed(shape: ShapeKind): boolean {
  * but if it is ever measured to look wrong, THIS is the mechanism.
  *
  * ─────────────────────────────────────────────────────────────────────────
+ * THIS CONSTANT HAS A CROSS-PACKAGE CONSUMER — TD-337. MOVING IT MOVES A GATE.
+ * ─────────────────────────────────────────────────────────────────────────
+ * `cli/scripts/browser-gate.mjs` MIRRORS this value as `K_FLOOR` and anchors
+ * four checks to it: `11a` (separability at `K_FLOOR/2` against `K_FLOOR`),
+ * `11b` (the merge control at the `K_FLOOR` anchor), `11e` (box-invariance) and
+ * `11-range` (the working range is non-empty). It mirrors rather than reading
+ * the value from the page because exposing a JS constant to `window` costs
+ * app-chunk bytes against a 484 B budget; the mirror is pinned by
+ * `dashboard-graph-source.test.ts` and mapped in `MAINTAINING.md`.
+ *
+ * So: **moving `NODE_SIZE_ZOOM_FLOOR` re-bases those four checks.** Re-run the
+ * gate's invariance probe and re-derive `FROZEN_PRESERVATION_FLOOR` in the same
+ * change. And note the constant is a LEGIBILITY decision wearing a number —
+ * the derivation above is a design argument, so the sweep also belongs wherever
+ * the design tokens are eventually written down (TD-335).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
  * WHAT IS BEING TRADED, STATED PLAINLY. Above `K_FLOOR` nothing changes: the
  * `--s-1` legibility floor is honoured over the whole working range, exactly
  * as before. Below it the node is frozen at `sizePx / K_FLOOR` WORLD units, so
@@ -307,13 +324,26 @@ export function isDashed(shape: ShapeKind): boolean {
  * while `nodeWorldSize`'s own tests pin what the zoom does to it.
  *
  * WHAT THIS DOES NOT FIX, so the next reader does not have to rediscover it:
- * separability AT FIT. The FIT reading is 358 components for 710 nodes, and
- * the shortfall is exactly the 352 seeded edges — every LINKED pair sits
- * closer than its own size and fuses. That is genuine at-rest adjacency and no
- * size law can reach it, because at FIT the picture depends only on the
- * layout's SHAPE: any uniform force change that spreads the layout is undone
- * by `zoomToFit()` zooming out to match. See `docs/dashboard.md`'s rung-6
- * section for where that goes next.
+ * separability AT FIT — with a correction TD-337 measured and this comment
+ * used to get wrong.
+ *
+ * It used to read: "the FIT reading is 358 components for 710 nodes, and the
+ * shortfall is exactly the 352 seeded edges… because at FIT the picture
+ * depends only on the layout's SHAPE: any uniform force change that spreads
+ * the layout is undone by `zoomToFit()` zooming out to match."
+ *
+ * BOTH HALVES ARE NOW FALSE. FR-250 doubled the canvas and the FIT reading
+ * moved **358 -> 710 of 710** on a byte-identical bundle and an identical
+ * payload. So the FIT picture is NOT box-invariant — it is a function of the
+ * canvas box, which is exactly what the "depends only on SHAPE" argument
+ * denied. The 352-pair fusion it described does not manifest at FIT on the
+ * shipped box at all.
+ *
+ * That is precisely why TD-337 re-anchored `11a`: a reading whose denominator
+ * moves when the layout does cannot calibrate anything. The gate now measures
+ * at `K_FLOOR` and `K_FLOOR/2`, both absolute. See `docs/dashboard.md`'s
+ * rung-6 section, and note that rung 6 was aimed at a problem this
+ * measurement shows no longer manifests where it was aimed.
  */
 export const NODE_SIZE_ZOOM_FLOOR = 0.11;
 

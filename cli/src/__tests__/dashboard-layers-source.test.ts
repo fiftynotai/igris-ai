@@ -1094,10 +1094,61 @@ describe("the graphCache hoist did not change the graph page's logic", () => {
     expect(cache).toContain("rememberPositions");
   });
 
+  /**
+   * TD-320 #4 — THE ROUTING ASSERTION HAS ITS OWN TEST NOW.
+   *
+   * `expect(graph).toContain("fetchScope")` used to live inside the
+   * self-negative-control below, under a title that says only "Graph.tsx was
+   * really read". Right assertion, wrong home: a reader scanning titles for
+   * "does the graph page route through the shared cache?" found nothing, and a
+   * future edit deleting the control would have taken a real claim with it.
+   *
+   * `graphCache.test.ts` states in its own header that it does NOT prove either
+   * consumer routes through the module, and names both files. Only ONE of them
+   * was pinned. The regression a missing pin allows is not a correctness bug —
+   * a private fetch in `useNeighbours` returns the right neighbours — it is a
+   * DUPLICATE `/api/graph` read, which is precisely the cost the hoist exists to
+   * remove and which no unit test can see.
+   */
+  it("both consumers route through the SHARED cache, not their own fetch", () => {
+    expect(graph, "pages/Graph.tsx no longer reaches lib/graphCache").toContain(
+      "fetchScope",
+    );
+    const neighbours = code(join(DASH_SRC, "layers", "useNeighbours.ts"));
+    expect(
+      neighbours,
+      "layers/useNeighbours.ts no longer imports from lib/graphCache — a private fetch here is a DUPLICATE /api/graph read, which is the cost the FR-240 hoist exists to remove",
+    ).toContain("from \"../lib/graphCache\"");
+    expect(neighbours).toContain("fetchScope");
+  });
+
   it("the self-negative-control: Graph.tsx was really read", () => {
     expect(graph.length).toBeGreaterThan(4000);
     expect(graph).toContain("export function Graph");
-    expect(graph).toContain("fetchScope");
+  });
+
+  /**
+   * TD-320 #4 — THE SCAN'S OWN SELF-NEGATIVE-CONTROL.
+   *
+   * The control above proves the FILE was read. This proves the DETECTOR can
+   * say no: a body that lacks the token must not satisfy it. Without this, a
+   * `toContain` whose needle had been mistyped into something every file
+   * contains would pass forever, which is §12's "a guard whose only observed
+   * outcome is pass is indistinguishable from a broken one" applied to a scan
+   * rather than to a runtime guard.
+   */
+  it("SELF-NEGATIVE-CONTROL — the routing detector fires on a body that lacks the token", () => {
+    const withoutRouting = [
+      'import { api } from "../lib/api";',
+      "export function useNeighbours(id: string) {",
+      "  return api.graph({ scope: id });",
+      "}",
+    ].join("\n");
+    expect(withoutRouting).not.toContain("from \"../lib/graphCache\"");
+    expect(withoutRouting).not.toContain("fetchScope");
+    // …and the real file is not that body, which is what makes the pair a
+    // measurement rather than two independent assertions.
+    expect(code(join(DASH_SRC, "layers", "useNeighbours.ts"))).not.toBe(withoutRouting);
   });
 });
 

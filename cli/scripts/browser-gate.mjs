@@ -103,6 +103,10 @@ const MUTATIONS = {
     gate: "G-BR-3a",
     how: "look for the degraded empty-state in the SEEDED world, where there is data",
   },
+  "br3-hermetic-one-world-unarmed": {
+    gate: "G-BR-3-hermetic",
+    how: "point the `empty` world's hermetic preload at a transformers entry that does NOT exist, so its `await import()` throws and its receipt records `armed:false` — ONE world of six un-armed, which is precisely the state TD-320 #1 found unassertable while the check read `worlds.vec` alone. The failure must NAME `empty` and its reason. The harness-level fail-fast WARNS instead of exiting under `--mutate`, so the ledger check is the thing that reddens",
+  },
   "br4-same-palette": {
     gate: "G-BR-4d",
     how: "read the `blood` palette four times and assert the four readings differ",
@@ -164,12 +168,32 @@ const MUTATIONS = {
   },
   "br7-backout-re-entrances": {
     gate: "G-BR-7d",
-    how: "take the BACK-OUT arm's ink reading from the cold REFRESH transition — a real, measured re-entrance on the same canvas in the same run, which is exactly what a back-out that lost its position seed would look like",
+    how: "take the BACK-OUT arm's ink reading from the cold REFRESH transition — a real, measured re-entrance on the same canvas in the same run, which is exactly what a back-out that lost its position seed would look like. It costs no extra /api/graph, so 7a/7b/7c stay green and 7d is the ONLY thing that moves — which is what makes it a clean ISOLATING control, and why it is kept alongside the faithful one below rather than replaced by it",
+  },
+  "br7-crumb-forces-refetch": {
+    gate: "G-BR-7d",
+    how: "force the crumb path to `fetchScope(scope, {force: true})` — REFRESH clicked INSIDE the back-out's ink window, so the payload is paid for twice AND `putScope` resets `positions = {}`, producing a COLD ENTRANCE where a page transition belongs. THE PRODUCT-FAITHFUL DEFECT, injected through shipping product code rather than by re-pointing the instrument (TD-320 #5). It reddens 7b as well as 7d, and that is honest rather than untidy: the real defect breaks both",
   },
   // --- FR-244 -------------------------------------------------------------
   "br11-measure-at-blob-zoom": {
     gate: "G-BR-11a",
-    how: "take the separability reading at the EXTREME zoom-out instead of at the measured operator zoom — a `k` at which the layout spans ~32px and the component count falls to ~45% of its FIT value, well under 11a's 60% floor. The mirror of br4-measure-motion. (It bites on the RATIO, not on total fusion: 11b's note records that the fixed size law still resolves 162 components down there, which is why this `how` no longer claims nothing can be separable.)",
+    how: "take the separability reading at the EXTREME end of the sweep instead of at the `K_FLOOR/2` anchor — a `k` at which the layout spans a few dozen px and the field has shrunk far past the point the size law claims anything about. The mirror of br4-measure-motion. It bites on field SHRINKAGE rather than on fusion, which is a DIFFERENT mechanism from br11-measure-above-the-clamp — that is why both exist rather than one standing in for the other",
+  },
+  "br11-measure-above-the-clamp": {
+    gate: "G-BR-11a",
+    how: "take the same-shaped reading in the UNPROTECTED regime — numerator at 1.25x K_FLOOR, denominator at 2.5x K_FLOOR, BOTH strictly above the clamp, where node screen size is PINNED at `px` while gaps scale with `k` so a zoom-out FUSES. This is the pre-FR-244 behaviour, and it is the defect population 11a's floor has to sit above. FIRST DRAFT DID NOT BITE, recorded here rather than quietly fixed: it used a 2x -> 1x pair and read 98.9%, because at 1x the numerator sits ON the clamp boundary (where the two size laws are algebraically identical) and the unprotected regime has not begun fusing at this density. Both endpoints therefore had to move strictly above 1x. Note 1x K_FLOOR is NOT above the clamp — it IS the clamp, which is the whole reason 11a samples at 0.5x. TD-337's own evidence measured the shipped box at 50.4% before the re-anchoring",
+  },
+  "br11-range-on-a-short-canvas": {
+    gate: "G-BR-11-range",
+    how: "shrink the canvas IN THE PAGE by setting `--graph-column-scale: 0.25` AND `--graph-row-min-h: 200px`, which puts `k_fit` around 0.06 — BELOW K_FLOOR — so the working range is empty and no anchor is reachable by zooming OUT from FIT. `11-range` must go RED rather than the sweep silently reporting the FIT picture at every level, which is the FR-250 failure mode inverted. WHAT THE MEASURED RUN SHOWS, and it is the argument for this check existing: `11-anchor` and `11e` redden as honest collateral, while **`11a` goes GREEN at 101.4%** — because both of its endpoints collapse onto the same unreachable reading. An instrument that stopped measuring reports the REASSURING answer, and `11-range` is the only thing standing between that and a clean-looking pass. TWO EARLIER DRAFTS DID NOT BITE AND BOTH ARE RECORDED because each was wrong in a way worth knowing: a 400x700 VIEWPORT (the plan's suggestion, and 11d's viewport) ABORTED the gate with `button FIT is outside the viewport` before reaching the check at all; and the column scale ALONE stopped at a 1058x418 canvas with k_fit=0.131, still above the clamp, because `.graph-layout` carries a 420px min-height that the scale cannot reach past",
+  },
+  "br11-anchor-not-reached": {
+    gate: "G-BR-11-anchor",
+    how: "cap `wheelZoomTo`'s tick budget at 1, so no anchor is reached and every reading is taken at a `k` the gate did not ask for. Directly inverts the FR-250 failure mode: there, a wheel that could not reach the canvas left 11a reading 100% separable for a canvas that was never zoomed",
+  },
+  "br11-anchor-to-k-fit": {
+    gate: "G-BR-11e",
+    how: "put BOTH of 11e's endpoints back on `k_fit`-relative points (`k_fit/2` over `k_fit`) — the pre-TD-337 instrument, reproduced exactly. The two column scales then disagree because `k_fit` moves ~2.6x between them while the absolute anchors do not. THIS IS THE MUTATION THAT REPRODUCES TD-337 ON DEMAND. MEASURED PAIR, recorded here so the figure is not single-sourced in a doc: one run prints 50.4% at --graph-column-scale 2 beside 98.6% at scale 1, a 48.18pp disagreement against the 2pp tolerance. The 50.4% is TD-337's own recorded figure; the 98.6% is ONE COMPONENT off FR-244's recorded 98.3%, so the two are near-historical rather than identical — an earlier draft called them 'exactly the two historical figures', which was a coincidence of a single run. A figure that lives in exactly one place is how that draft survived review, which is why this copy exists",
   },
   "br11-control-at-extreme-zoom": {
     gate: "G-BR-11b",
@@ -303,6 +327,64 @@ const gateEnabled = (id) => ONLY_GATES === null || ONLY_GATES.has(id.replace(/^G
 
 const results = [];
 let currentGate = "";
+
+/**
+ * CHECKS THAT SHIP RED BY OPERATOR DECISION — gate check id -> the brief that
+ * owns the red.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A MAP AND NOT A PARAGRAPH
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Before this existed, a knowingly-red check carried its disposition in a prose
+ * `note()` at the bottom of its gate — hundreds of lines into a transcript,
+ * after the verdict a reader actually looks at. The note ended with the sentence
+ * *"if this goes green and you did not fix it, that is the surprising result"*,
+ * which is a warning nobody can execute: it asks a human to notice an ABSENCE of
+ * failure in a ladder that prints dozens of PASS lines.
+ *
+ * So the warning is machinery now. Three consequences, all deliberate:
+ *
+ *  1. The verdict block NAMES every known-red failure with its owning brief, so
+ *     `VERDICT: FAIL` reads as *"3 known-red (TD-332, TD-337)"* rather than as
+ *     an anonymous red line the next reader learns to scroll past.
+ *  2. A `KNOWN_RED` check that comes back GREEN is reported as a **SURPRISE**,
+ *     loudly, at the bottom of the run. That is the reassuring-looking outcome
+ *     that is actually the alarming one: it means something moved the world
+ *     (a canvas box, a viewport, a payload) rather than that anyone fixed the
+ *     calibration.
+ *  3. **A row must be deleted in the same commit that makes its check green.**
+ *     That is not etiquette — it is the mechanism that forces the disposition
+ *     `note()` beside the check to be rewritten at the same time, which is the
+ *     sweep that otherwise gets forgotten and leaves the file lying about
+ *     itself. The SURPRISE line is what makes a half-done sweep loud.
+ *
+ * A green run with an empty `KNOWN_RED` is the end state. Nothing here is
+ * PLANNED to stay red; each row is a named, argued, owned exception with a
+ * measured baseline recorded beside the check it belongs to.
+ */
+const KNOWN_RED = {
+  // TD-332 — `7d`'s populations do not separate with margin on the 11-node
+  // `seeded` world. Conditions repaired (the gate now measures at the viewport
+  // it documents); the metric is the residual. Baseline + spread in `gBr7`.
+  // Re-measured 2026-08-05 at the now-documented viewport: 7 healthy runs give
+  // back-out 72.0-74.1 % (spread 2.1pp) against a 0.75 floor and separation
+  // 13.8-17.9pp (spread 4.1pp) against a 15pp floor. The pre-registered rule
+  // lands on R4 — REPLACE THE SURFACE (an 11-node ink distribution does not
+  // separate with margin), not re-derive the numbers. See `gBr7`'s notes.
+  "7d": "TD-332",
+  // TD-337's rows for `11a` and `11b` were REMOVED here, in the same commit that
+  // re-anchored both to `K_FLOOR` and measured them green — which is the
+  // removal-on-fix coupling this map exists to enforce. Their disposition notes
+  // in `gBr11` were rewritten in the same pass. Kept as a comment because the
+  // discipline is easier to copy than to describe.
+};
+
+/** `{ id, brief }` for every KNOWN_RED check that PASSED — i.e. every surprise. */
+function knownRedSurprises() {
+  return results
+    .filter((r) => r.ok === true && KNOWN_RED[r.id] !== undefined)
+    .map((r) => ({ gate: r.gate, id: r.id, brief: KNOWN_RED[r.id] }));
+}
 
 function gate(id, title) {
   currentGate = id;
@@ -477,9 +559,30 @@ const TRANSFORMERS_ENTRY = join(
   "transformers.node.mjs",
 );
 
-function writeHermeticPreload(brain) {
+/**
+ * Write one world's hermetic preload, and record which world it belongs to.
+ *
+ * TD-320 #1 — the `kind` parameter exists for the MUTATION. `3-hermetic` used to
+ * assert one world of six, so an unarmed world was a state the ledger could not
+ * reach; the mutation that proves the widened assertion bites has to be able to
+ * un-arm exactly ONE world, and it picks `empty` (a non-`vec` world, so the
+ * mutation cannot be confused with the check's old single-world subject).
+ */
+function writeHermeticPreload(brain, kind) {
   const receipt = join(brain, "hermetic.json");
   const file = join(brain, "no-remote-models.mjs");
+  /*
+   * THE INJECTED DEFECT: one world's preload points at an entry that does not
+   * exist, so its `await import()` throws and the receipt is written
+   * `armed:false` with the resolver's own reason. That is the REAL shape of the
+   * failure the widened check exists to catch — FR-240's first draft of this
+   * hook did a DIRECTORY import and `ERR_UNSUPPORTED_DIR_IMPORT` was swallowed
+   * by the same `catch`. Nothing here fakes the receipt.
+   */
+  const entry =
+    mut("br3-hermetic-one-world-unarmed") && kind === "empty"
+      ? join(brain, "no-such-transformers-entry.mjs")
+      : TRANSFORMERS_ENTRY;
   writeFileSync(
     file,
     [
@@ -488,7 +591,7 @@ function writeHermeticPreload(brain) {
       "let armed = false;",
       'let reason = "not attempted";',
       "try {",
-      `  const mod = await import(${JSON.stringify(pathToFileURL(TRANSFORMERS_ENTRY).href)});`,
+      `  const mod = await import(${JSON.stringify(pathToFileURL(entry).href)});`,
       "  if (mod.env === undefined) reason = 'transformers module exposes no `env`';",
       "  else {",
       "    mod.env.allowRemoteModels = false;",
@@ -515,6 +618,34 @@ function hermeticState(world) {
   } catch (err) {
     return { armed: false, reason: `unreadable receipt: ${err.message}` };
   }
+}
+
+/**
+ * EVERY world's hermetic state, in one reading — TD-320 #1.
+ *
+ * The check this feeds used to read `worlds.vec` alone (`3-hermetic`), which is
+ * the shape §12's "a test-harness safety guard MUST assert that it is ARMED"
+ * rule exists to reject one level up: the guard was asserted, but only on one of
+ * the six places it is installed. The preload body is world-invariant, so the
+ * practical risk was low — but "low" is not the property a hermetic claim needs,
+ * and every measurement in this file is only trustworthy if no server could have
+ * fetched a 90 MB model over the network mid-run.
+ *
+ * It returns the UNARMED worlds AND their reasons rather than a boolean, because
+ * a red that gives no diagnosis is half a check.
+ */
+function hermeticSurvey(worlds) {
+  const rows = Object.keys(worlds).map((k) => ({ kind: k, ...hermeticState(worlds[k]) }));
+  const unarmed = rows.filter((r) => r.armed !== true);
+  return {
+    rows,
+    unarmed,
+    armed: unarmed.length === 0,
+    /** One line naming every world and, for the unarmed ones, why. */
+    line: rows
+      .map((r) => (r.armed === true ? `${r.kind}=armed` : `${r.kind}=NOT ARMED (${r.reason})`))
+      .join(" · "),
+  };
 }
 
 /**
@@ -668,7 +799,7 @@ function makeWorld(kind) {
       { GATE_DB: db, GATE_DENSE_N: String(DENSE_EXTRA_LEARNINGS) },
     );
     seedCatalog(brain);
-    return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+    return { kind, brain, db, hermetic: writeHermeticPreload(brain, kind) };
   }
 
   if (kind === "triage") {
@@ -677,7 +808,7 @@ function makeWorld(kind) {
     const ctx = join(brain, "projects", "demo", "context");
     mkdirSync(ctx, { recursive: true });
     writeFileSync(join(ctx, "coding_guidelines.md"), DOC_BODY);
-    return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+    return { kind, brain, db, hermetic: writeHermeticPreload(brain, kind) };
   }
 
   if (kind !== "missing") {
@@ -752,7 +883,7 @@ function makeWorld(kind) {
     mkdirSync(ctx, { recursive: true });
     writeFileSync(join(ctx, "coding_guidelines.md"), DOC_BODY);
   }
-  return { kind, brain, db, hermetic: writeHermeticPreload(brain) };
+  return { kind, brain, db, hermetic: writeHermeticPreload(brain, kind) };
 }
 
 // ---------------------------------------------------------------------------
@@ -828,6 +959,17 @@ async function startChrome() {
       "--no-first-run",
       "--no-default-browser-check",
       "--disable-gpu",
+      /*
+       * THIS IS NOT THE VIEWPORT ANY GATE MEASURES AT, AND SAYING SO HERE IS
+       * TD-332's first finding. Headless Chrome counts its own browser chrome
+       * INSIDE `--window-size`, so the content box is ~1058x813, not 1440x900 —
+       * and how much chrome that is depends on the host. Any gate whose reading
+       * depends on the box therefore sets its own with
+       * `Emulation.setDeviceMetricsOverride` (which also pins
+       * `deviceScaleFactor: 1`) and prints what it measured: G-BR-7 at gate
+       * entry, G-BR-11's 11c / 11c-tall / 11d per check. This argument is only
+       * the DEFAULT for the gates that do not care.
+       */
       "--window-size=1440,900",
       "about:blank",
     ],
@@ -1740,8 +1882,11 @@ async function clickButton(tab, label, opts = {}) {
  * over time collapses toward zero in one case and never does in the other.
  *
  * Deliberately NOT a frame-to-frame image difference: the ink is a dozen small
- * blobs on a canvas of ~1058x423 (see below — NOT 1440x900; that is the
- * `--window-size` passed to Chrome, and headless chrome is counted inside it),
+ * blobs on a canvas of order a thousand pixels on a side (TD-332 pins the box —
+ * `gBr7` now sets an explicit 1440x900 viewport at gate entry and PRINTS the
+ * resulting canvas, so the figure lives in the transcript rather than in this
+ * comment, where it went stale twice: FR-244 recorded 1058x423 and FR-250's
+ * column doubling took it to 1058x1084 without anyone updating this line),
  * so any motion at all moves a blob across a cell
  * boundary and an L1 image distance saturates near 100% for both cases. Measured
  * during FR-240's warden pass — back-out 105.8% vs cold 146.0%, a 1.4x
@@ -1840,6 +1985,13 @@ function inkSpread(cells, cell = { cw: 1, ch: 1 }, G = 24) {
   return Math.sqrt(m2 / total);
 }
 
+/** L1 distance between two ink frames. Zero means BYTE-IDENTICAL cell sums. */
+function l1(a, b) {
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  return d;
+}
+
 /**
  * How far the layout COLLAPSED at any point during the transition, as a fraction
  * of the extent it eventually SETTLED at.
@@ -1863,12 +2015,6 @@ function inkSpread(cells, cell = { cw: 1, ch: 1 }, G = 24) {
  *     back-out they were contributing the minimum, which measured the demo
  *     subgraph's size instead of the whole brain's entrance.
  */
-function l1(a, b) {
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
-  return d;
-}
-
 function inkCollapse(samples, settledSpread, cell) {
   if (!Array.isArray(samples) || samples.length < 3) return null;
   if (typeof settledSpread !== "number" || settledSpread <= 0) return null;
@@ -1900,6 +2046,36 @@ function inkCollapse(samples, settledSpread, cell) {
 }
 
 const pct = (x) => (x === null || x === undefined ? "n/a" : `${(x * 100).toFixed(1)}%`);
+
+/**
+ * `7d`'s two bounds. NAMED by TD-332 — they were inline literals in the
+ * `check()` call, the only unnamed thresholds in a file whose whole discipline
+ * is that a threshold is named, derived, and printed beside the reading it
+ * governs. **The VALUES are unchanged**; naming them is not a calibration, and
+ * the separation of the two moves is deliberate so that neither can be mistaken
+ * for the other.
+ *
+ * ┌────────────────────────────────────────────────────────────────────────────┐
+ * │ CALIBRATION — RE-MEASURED 2026-08-05, AND THE CHECK IS STILL RED           │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ * COUPLED TO: **the canvas box** — i.e. the viewport AND `--graph-column-scale`
+ * — and that coupling is IRREDUCIBLE, which is the finding TD-332 did not name.
+ * FR-244 made `inkSpread` aspect-invariant (moments weighted by cell pixel
+ * size), but `7d` normalises each arm by its OWN settled spread, and that
+ * cancels a UNIFORM rescale while it CANNOT cancel an anisotropic one: the two
+ * arms differ in SHAPE at the moments compared (the cold arm opens as an
+ * isotropic clump and settles wide; the back-out arm opens wide already). So a
+ * box whose ASPECT moves still moves `7d`. Unlike `11a` there is no absolute
+ * anchor to retreat to — `7d`'s subject IS the shape of an opening layout
+ * relative to its own settled form, on whatever box the page has. The only
+ * durable answer is therefore to FIX the box and NAME it, which is what the
+ * `setViewport(1440, 900)` at gate entry does and what this block records.
+ *
+ * See `gBr7`'s closing disposition `note()` for the measured populations, the
+ * run-to-run spread, and why the numbers were left where they are.
+ */
+const BACKOUT_COLLAPSE_FLOOR = 0.75;
+const BACKOUT_COLD_SEPARATION_FLOOR = 0.15;
 
 // ---------------------------------------------------------------------------
 // The gates
@@ -2278,14 +2454,25 @@ async function gBr3(tabs, worlds) {
     `no learnings_vec -> endpoint mode=${bm25Api.retrieval.mode} · DOM banner=${JSON.stringify(loud === null ? seededBanners : loud.slice(0, 110))}`,
   );
 
-  // 3-hermetic — the network guard is ARMED, asserted rather than assumed.
-  // Without this, everything below could be passing because the server quietly
-  // downloaded a 90 MB model, which is a side effect no gate declared.
-  const herm = hermeticState(worlds.vec);
+  // 3-hermetic — the network guard is ARMED IN EVERY WORLD, asserted rather
+  // than assumed. Without this, everything below could be passing because a
+  // server quietly downloaded a 90 MB model, which is a side effect no gate
+  // declared. TD-320 #1 widened it from `worlds.vec` alone: the preload body is
+  // world-invariant, so one world's receipt was being read as six worlds'
+  // evidence.
+  const herm = hermeticSurvey(worlds);
   check(
     "3-hermetic",
     herm.armed === true,
-    `vec server \`env.allowRemoteModels = false\` armed=${herm.armed} reason=${JSON.stringify(herm.reason)} — the HF Hub is unreachable from this run, so a warm LOCAL cache is the only way an embedding can be produced`,
+    herm.armed === true
+      ? `\`env.allowRemoteModels = false\` armed in ALL ${herm.rows.length} servers (${herm.line}) — the HF Hub is unreachable from this run, so a warm LOCAL cache is the only way an embedding can be produced`
+      : `${herm.unarmed.length} of ${herm.rows.length} servers are NOT hermetic: ${herm.unarmed
+          .map((r) => `${r.kind} (${r.reason})`)
+          .join(" · ")} — those servers COULD have fetched a ~90 MB model over the network, so every reading taken in them is untrusted${
+          mut("br3-hermetic-one-world-unarmed")
+            ? "  [MUTATED: the `empty` world's preload points at an entry that does not exist]"
+            : ""
+        }`,
   );
 
   // …and the vec world, where `vector_available` is TRUE. Which mode it reports
@@ -2762,6 +2949,35 @@ async function gBr6(tab) {
 async function gBr7(tab) {
   gate("G-BR-7", "drill in / back out — the hoisted scope cache, in a real browser");
 
+  /*
+   * TD-332 AC-1 — THE GATE NOW MEASURES AT THE VIEWPORT IT DOCUMENTS.
+   *
+   * The harness launches Chrome with `--window-size=1440,900`, and **headless
+   * Chrome counts its own browser chrome INSIDE that number**, so the content
+   * box is ~1058x813 and the file header's "1440x900" was describing an argument
+   * rather than a condition. `7d` reads ink spread on a 24x24 grid over the
+   * canvas, so the canvas box is a condition of the measurement, not a detail —
+   * and `--window-size` is not a stable one: it is whatever the chrome height
+   * happens to be on the host.
+   *
+   * `Emulation.setDeviceMetricsOverride` is. `setViewport` pins
+   * `deviceScaleFactor: 1` explicitly, so the canvas backing store is in CSS
+   * pixels and a host with a different DPR reads the same numbers.
+   *
+   * THE ORDER MATTERS AND IT IS WHY THIS IS AT GATE ENTRY, BEFORE THE RELOAD:
+   * a resize part-way through would put the opening frames and the settled
+   * reference on different boxes, which is `7d` reading its own instrument
+   * rather than the layout.
+   *
+   * IT IS CLEARED IN A `finally` (see the bottom of this function). G-BR-7 runs
+   * mid-ladder and G-BR-9/G-BR-13 read the SAME tab afterwards; leaving an
+   * override applied would silently change their conditions, which is the same
+   * class of defect this block exists to close.
+   */
+  await tab.setViewport(1440, 900);
+  await tab.settle(400);
+  try {
+
   const stillnessReady = "return window.__igrisGraphStillness !== undefined ? 1 : 0;";
   const isStill = "return window.__igrisGraphStillness.state() === 'still' ? 1 : 0;";
   const settleGraph = async (label) => {
@@ -2827,6 +3043,31 @@ async function gBr7(tab) {
   // ZERO new reads. The ink recorder runs across the transition for 7d.
   await tab.startInk();
   await tab.click(".graph-crumb", { settle: false });
+  /*
+   * TD-320 #5 / TD-332 — `br7-crumb-forces-refetch`: THE PRODUCT-FAITHFUL
+   * DEFECT, injected INSIDE the ink window.
+   *
+   * `br7-refetch-backout` (below) clicks REFRESH *after* `stopInk()`, so it
+   * reddens `7b`'s fetch count and says nothing about the pixel reading — which
+   * is why `7d` had no faithful control. The defect `7d` exists to catch is the
+   * crumb path taking `fetchScope(scope, {force: true})`: that pays for the
+   * payload again AND runs `putScope`, which resets `positions = {}`. Both
+   * halves are observable from outside as one thing — an extra `/api/graph` and
+   * a COLD ENTRANCE in the same transition.
+   *
+   * Clicking REFRESH immediately after the crumb, before the sampler stops,
+   * produces exactly that state through SHIPPING PRODUCT CODE rather than by
+   * re-pointing the instrument. It is a strictly stronger control than
+   * `br7-backout-re-entrances`, which takes the back arm's ink from a different
+   * transition — both are kept, because the weaker one isolates `7d` (it costs
+   * no extra fetch, so `7a`/`7b`/`7c` stay green and `7d` is the only thing that
+   * moves) while this one is faithful. PREDICTED VICTIMS: `7d` and, honestly and
+   * unavoidably, `7b` — the real defect breaks both, and a mutation that hid one
+   * of them to look tidy would be describing a defect that does not exist.
+   */
+  if (mut("br7-crumb-forces-refetch")) {
+    await clickButton(tab, "REFRESH", { settle: false });
+  }
   await sleep(1600);
   const backSamples = await tab.stopInk();
   if (mut("br7-refetch-backout")) {
@@ -2853,6 +3094,10 @@ async function gBr7(tab) {
     gBack - gDemo === 0 && backReadout === wholeReadout,
     `back out -> +${gBack - gDemo} /api/graph (the shared cache answered) · readout back to ${JSON.stringify(backReadout)}${
       mut("br7-refetch-backout") ? "  [MUTATED: REFRESH clicked during the back-out]" : ""
+    }${
+      mut("br7-crumb-forces-refetch")
+        ? "  [MUTATED: the crumb path forced a refetch — REFRESH clicked INSIDE the ink window, so the payload is paid for twice AND the positions are reset. 7b and 7d are both real victims of this one defect]"
+        : ""
     }`,
   );
 
@@ -2871,6 +3116,30 @@ async function gBr7(tab) {
     `NEGATIVE CONTROL — REFRESH on the SAME surface -> +${gRefresh - gBack} /api/graph, so 7b's zero is a measured zero`,
   );
 
+  /*
+   * TD-332 AC-4 — THE COUPLED QUANTITIES, READ AND PRINTED AT EVERY READING.
+   * `7d`'s calibration is coupled to the canvas box and that coupling cannot be
+   * removed (see `BACKOUT_COLLAPSE_FLOOR`'s block). A calibration must name what
+   * it is coupled to, so the two things that determine the box — the viewport
+   * and `--graph-column-scale` — are read from the page and quoted in the check
+   * itself, not merely in a comment a reader has to go looking for.
+   */
+  const viewportNow = await tab.eval(
+    "return { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio };",
+  );
+  const columnScaleNow = await tab.eval(`
+    return Number(getComputedStyle(document.documentElement)
+      .getPropertyValue('--graph-column-scale').trim() || 1);
+  `);
+
+  note(
+    `MEASUREMENT CONDITIONS (TD-332): viewport ${viewportNow.w}x${viewportNow.h} @dpr ${viewportNow.dpr}, ` +
+      `set explicitly with Emulation.setDeviceMetricsOverride at gate entry rather than inherited from ` +
+      `--window-size=1440,900 (headless Chrome counts its own chrome inside that, giving a ~1058x813 ` +
+      `content box — the condition this file's header used to claim was 1440x900). ` +
+      `--graph-column-scale ${columnScaleNow}. These two determine the canvas box, and the canvas box is ` +
+      `the quantity 7d's thresholds are coupled to.`,
+  );
   note(
     `canvas backing store across the transition: whole-brain ${boxWhole} · drilled ${boxDemo} · ` +
       `backed-out ${boxBack} · after refresh ${await canvasBox()}. 7d's grid is 24x24 over THIS box ` +
@@ -2900,11 +3169,17 @@ async function gBr7(tab) {
    * only thing that moves — which is what makes it a clean control.
    *
    * WHAT IT PROVES, precisely: that `7d`'s ABSOLUTE bound bites. The back arm
-   * reads its real cold value (~62%) against the 0.75 floor. WHAT IT DOES NOT
-   * PROVE: the separation bound in a non-trivial way — with both arms drawn
-   * from one sample set the separation is identically 0, so that half fails
-   * arithmetically rather than by measurement. The absolute half is the
-   * load-bearing one here, and it is a genuine reading.
+   * reads its real cold value (56.2% at the TD-332 viewport) against the 0.75
+   * floor. WHAT IT DOES NOT PROVE: the separation bound in a non-trivial way —
+   * with both arms drawn from one sample set the separation is identically 0, so
+   * that half fails arithmetically rather than by measurement. The absolute half
+   * is the load-bearing one here, and it is a genuine reading.
+   *
+   * `br7-crumb-forces-refetch` (TD-320 #5) is the PRODUCT-FAITHFUL companion,
+   * injected above at the crumb click. It is strictly stronger — the defect
+   * arrives through shipping product code — and correspondingly less isolated,
+   * because the real defect reddens `7b` as well. Both are kept: one isolates,
+   * one is faithful, and a reader can tell which by what else went red.
    */
   const reEntranced = mut("br7-backout-re-entrances");
   const backInk = reEntranced ? refreshSamples : backSamples;
@@ -2922,8 +3197,9 @@ async function gBr7(tab) {
   } else {
     check(
       "7d",
-      back.collapse > 0.75 && back.collapse - cold.collapse > 0.15,
-      `${reEntranced ? "[MUTATED: the back-out arm's ink was taken from the COLD REFRESH — a real re-entrance] " : ""}opening layout extent vs settled — BACK-OUT ${pct(back.collapse)} (opening mean ${back.early} over ${back.opening} frames, min ${back.min}, settled ${back.settled}), COLD REFRESH ${pct(cold.collapse)} (opening mean ${cold.early} over ${cold.opening}, min ${cold.min}, settled ${cold.settled}). The back-out opens NEAR its settled extent; the cold refresh opens as a clump at the origin and expands out of it.`,
+      back.collapse > BACKOUT_COLLAPSE_FLOOR &&
+        back.collapse - cold.collapse > BACKOUT_COLD_SEPARATION_FLOOR,
+      `${reEntranced ? "[MUTATED: the back-out arm's ink was taken from the COLD REFRESH — a real re-entrance] " : ""}opening layout extent vs settled — BACK-OUT ${pct(back.collapse)} (opening mean ${back.early} over ${back.opening} frames, min ${back.min}, settled ${back.settled}, floor ${pct(BACKOUT_COLLAPSE_FLOOR)}), COLD REFRESH ${pct(cold.collapse)} (opening mean ${cold.early} over ${cold.opening}, min ${cold.min}, settled ${cold.settled}), separation ${((back.collapse - cold.collapse) * 100).toFixed(1)}pp (floor ${pct(BACKOUT_COLD_SEPARATION_FLOOR)}). The back-out opens NEAR its settled extent; the cold refresh opens as a clump at the origin and expands out of it. COUPLED TO the canvas box: viewport ${viewportNow === null ? "n/a" : `${viewportNow.w}x${viewportNow.h}`}, --graph-column-scale ${columnScaleNow}, canvas ${boxBack}.`,
     );
   }
   note(
@@ -2934,82 +3210,97 @@ async function gBr7(tab) {
       "— that is the mechanical reason this metric is stable.",
   );
   note(
-    "FR-244 RE-BASELINE, 2026-08-02, WITH THE ASPECT-CORRECTED METRIC — AND IT STILL DOES NOT " +
-      "HOLD. READ THIS BEFORE TOUCHING THE THRESHOLDS. Five full runs after the FR-244 layout " +
-      "reflow AND the `inkSpread` pixel-weighting repair: back-out 72.0-75.0% (72.0, 74.5 x2, " +
-      "75.0 x2), cold 59.2-62.5%, separation 9.5-15.8pp. Worst case still violates both bounds — " +
-      "72.0% against the 0.75 floor and 9.5pp against the 15pp separation. For comparison, the " +
-      "FR-240 figures this replaces were back-out 84.3-85.3%, cold 61.2-61.9%, worst-case " +
-      "separation 22.4pp, taken with the aspect-COUPLED metric on the pre-reflow canvas.",
+    "TD-332 RE-BASELINE, 2026-08-05, AT THE DOCUMENTED VIEWPORT — 7 HEALTHY RUNS AND 3 MUTATED. " +
+      "READ THIS BEFORE TOUCHING THE THRESHOLDS. Conditions: viewport 1440x900 set explicitly, " +
+      "canvas 1058x1258, --graph-column-scale 2. " +
+      "HEALTHY (n=7): back-out 72.0-74.1% (72.0, 73.3, 73.8 x2, 74.1 x3), spread 2.1pp; cold " +
+      "56.2-59.5%, spread 3.3pp; SEPARATION 13.8-17.9pp, spread 4.1pp. " +
+      "DEFECT (n=3, two distinct injected defects): br7-backout-re-entrances back-out 56.2%, " +
+      "separation 0.0pp; br7-crumb-forces-refetch (the PRODUCT-FAITHFUL one) back-out 55.0%, " +
+      "separation -3.6pp AND +1 /api/graph; br7-refetch-backout reddens 7b as it must and leaves " +
+      "7d green, which is its documented shape (it clicks REFRESH after stopInk). " +
+      "BOTH BOUNDS FAIL ON THE HEALTHY POPULATION: 74.1% worst case against the 0.75 floor (0/7 " +
+      "runs clear it) and 13.8pp worst case against the 15pp separation (6/7 clear it). " +
+      "FOR COMPARISON the FR-240 figures were back-out 84.3-85.3%, cold 61.2-61.9%, worst-case " +
+      "separation 22.4pp with a 0.7-1.0pp spread, on the pre-reflow canvas with the " +
+      "aspect-COUPLED metric.",
   );
   note(
-    "WHAT WAS FIXED AND WHAT IT BOUGHT. `inkSpread` accumulated its moments in grid-cell INDEX " +
-      "units, treating every cell as a unit square, so it was silently coupled to the canvas " +
-      "ASPECT — see the function header for the mechanism. That is repaired (moments weighted by " +
-      "cell pixel size), and the repair was validated the only way a metric change can honestly " +
-      "be validated: `--mutate=br7-backout-re-entrances` was built FIRST, proven RED against the " +
-      "OLD metric at the OLD layout where 7d was green (83.7% -> 57.5%), and proven still RED " +
-      "after the repair (58.2%). The repair moved the worst-case separation from 6.5pp to 9.5pp " +
-      "and, at a matched canvas box, restored the reading to its historical band — but it did not " +
-      "clear the thresholds.",
+    "THE PRE-REGISTERED DECISION RULE, APPLIED — AND IT LANDS ON 'REPLACE THE SURFACE'. The rule " +
+      "was written BEFORE the measurement so the measurement could not be read to suit. " +
+      "R1 (both bounds clear with >=25% margin): NO — neither clears. " +
+      "R2 (bounds clear but marginal): its precondition is not met. " +
+      "R3 (bounds do not clear, populations cleanly separated -> RE-DERIVE both constants between " +
+      "them): the ABSOLUTE arm qualifies handsomely — healthy min 72.0% against a defect max of " +
+      "56.2%, a 15.8pp gap that is 7.5x the 2.1pp healthy spread. The SEPARATION arm does NOT: " +
+      "healthy min 13.8pp against a defect of 0.0pp is a 13.8pp gap, but the healthy spread is " +
+      "4.1pp, so any floor placed between the populations sits about 1.66 spreads from the healthy " +
+      "line. THAT IS A MARGINAL GREEN, AND R2 FORBIDS SHIPPING ONE. " +
+      "R4 THEREFORE APPLIES: the populations do not separate with margin on BOTH arms, so the " +
+      "answer is to replace the SURFACE rather than the numbers. " +
+      "WHY THE SURFACE IS THE PROBLEM, mechanically: d3-force initialises unplaced nodes on a " +
+      "phyllotaxis spiral of radius 10*sqrt(i). For ELEVEN nodes that opening clump is already " +
+      "fairly spread relative to the settled extent, which is why the cold arm reads ~57% rather " +
+      "than ~10% and why the separation is both small and noisy. At 710 nodes the opening clump is " +
+      "proportionally far tighter, so the SIGNAL grows rather than the noise merely averaging out. " +
+      "The `dense` world already exists with a drillable `demo` scope. " +
+      "THAT RELOCATION IS NOT IN THIS PASS, and saying so is the point of writing the rule down: " +
+      "it is a new sub-gate with its own calibration, and TD-332 is re-scoped to 'replace 7d's " +
+      "surface' as its whole remaining content.",
   );
   note(
-    "THE RESIDUAL, MEASURED, because the next reader will want to know whether the metric or the " +
-      "surface is at fault. (1) The SIZE LAW is innocent: with the layout reverted and " +
-      "`nodeWorldSize` kept, 7d reads 84.1%/56.4% and 81.5%/57.9% on the old metric and 80.8%/57.8% " +
-      "on the corrected one — green either way. The brief predicted the radius change would move " +
-      "7d; the experiment says it does not. (2) THIS GATE DOES NOT RUN AT 1440x900, despite the " +
-      "window size the harness passes Chrome: headless chrome is included in that figure, so the " +
-      "CONTENT box is ~1058x813 and the canvas here is 1058x423. Under an explicit " +
-      "`setViewport(1440, 900)` the canvas is 1058x510 — within 8px of the pre-FR-244 1058x502 — " +
-      "and 7d read 81.3%/59.2% (22.1pp, PASS) and 77.6%/62.7% (14.9pp, FAIL) on two runs. So at " +
-      "the viewport this file's header claims, the reflow barely moves the canvas at all. (3) What " +
-      "those numbers also show is that 7d's separation now has a ~7pp run-to-run spread on this " +
-      "world against a 15pp threshold, where FR-240 recorded 0.7-1.0pp. The metric has become " +
-      "marginal here, and a threshold is not the thing to change about that.",
+    "WHAT WAS FIXED HERE, AND IT IS INDEPENDENT OF ANY VERDICT (TD-332 AC-1). THE GATE NOW " +
+      "MEASURES AT THE VIEWPORT IT DOCUMENTS. It used to inherit whatever content box " +
+      "`--window-size=1440,900` left after headless Chrome took its own chrome out of it — " +
+      "~1058x813, so the canvas was 1058x423 at FR-244 and 1058x1084 after FR-250 doubled the " +
+      "column, and the file header said 1440x900 throughout. Two gates in one file measured under " +
+      "different conditions and one of them was not the condition either documented. That is an " +
+      "instrument defect whether or not 7d is red, and it is closed: `setViewport(1440, 900)` at " +
+      "gate entry (with deviceScaleFactor pinned to 1), cleared in a `finally` so it cannot leak " +
+      "into G-BR-9 or G-BR-13, and the box PRINTED at every stage. " +
+      "IT ALSO IMPROVED THE READING, which is worth recording because it was not the goal: the " +
+      "cold arm tightened from ~63% to ~57% and the worst-case separation went 9.6pp -> 13.8pp.",
   );
   note(
-    "WHAT WAS DELIBERATELY NOT DONE, TWICE OVER. The thresholds are UNTOUCHED at 0.75/0.15 — " +
-      "widening them would destroy the only pixel-level gate on the FR-240 scope-cache behaviour. " +
-      "And G-BR-7 was NOT moved to an emulated 1440x900 viewport, even though the reading above " +
-      "says that would very likely clear it: changing the CONDITIONS a gate measures under, in the " +
-      "same breath as discovering it is red, is the same move as widening the threshold wearing a " +
-      "different hat. It is reported for an operator to decide, not taken. NOTE WHAT IS STILL " +
-      "GREEN AND CARRIES THE ACTUAL BEHAVIOUR: 7b (the back-out issues ZERO new /api/graph) and 7c " +
-      "(its measured control) both pass, and `--mutate=br7-refetch-backout` still fails 7b on " +
-      "purpose. The scope cache works. What is in question is whether this pixel proxy still " +
-      "discriminates on a canvas of this size.",
+    "WHAT WAS DELIBERATELY NOT DONE, THREE TIMES OVER NOW. The thresholds are UNTOUCHED at " +
+      "0.75/0.15 — TD-332's AC says neither may be widened, FR-244 refused twice, and R3's " +
+      "re-derivation is available for the ABSOLUTE arm but would leave the SEPARATION arm a " +
+      "marginal green. Moving one threshold while the check stays red is churn with no benefit. " +
+      "NOTE WHAT IS STILL GREEN AND CARRIES THE ACTUAL BEHAVIOUR: 7b (the back-out issues ZERO new " +
+      "/api/graph) and 7c (its measured control) both pass, `--mutate=br7-refetch-backout` still " +
+      "fails 7b on purpose UNDER THE NEW VIEWPORT (TD-332's named safeguard, re-run and confirmed " +
+      "2026-08-05), and the new product-faithful `--mutate=br7-crumb-forces-refetch` fails both 7b " +
+      "and 7d. THE SCOPE CACHE WORKS. What is in question is whether this pixel proxy still " +
+      "discriminates on an ELEVEN-NODE canvas, and the measured answer is: not with margin.",
   );
   note(
-    "OPERATOR DISPOSITION, 2026-08-02: 7d SHIPS RED, KNOWINGLY, AND TD-332 OWNS IT. This is not " +
-      "an unnoticed regression and it is not an oversight — it was put to the operator with four " +
-      "options (fix the viewport, ship red, downgrade 7d to advisory, revert the layout) and they " +
-      "chose to ship red rather than let anything about the measurement move while it was failing. " +
-      "One instrument repair had already been made in this same brief, and a second — on the " +
-      "conditions rather than the metric — was judged one repair too many to trust in a single " +
-      "pass. IF YOU ARE READING THIS BECAUSE 7d IS RED: that is the expected state; see TD-332 " +
-      "before diagnosing. IF 7d IS GREEN AND YOU DID NOT FIX IT: that is the surprising state — " +
-      "something changed the canvas box or the world, and TD-332's measurements are the baseline " +
-      "to compare against. This gate is MANUAL-ONLY (verified 2026-08-02: no pre-commit hook and " +
+    "OPERATOR DISPOSITION, 2026-08-02, STILL IN FORCE AND RE-CONFIRMED BY MEASUREMENT 2026-08-05: " +
+      "7d SHIPS RED, KNOWINGLY, AND TD-332 OWNS IT. It is listed in this harness's KNOWN_RED " +
+      "ledger, so the verdict block names it and its brief rather than leaving a red line to be " +
+      "scrolled past — and the harness reports a SURPRISE if it ever comes back green. " +
+      "IF YOU ARE READING THIS BECAUSE 7d IS RED: that is the expected state; see TD-332 before " +
+      "diagnosing. IF 7d IS GREEN AND NOBODY RELOCATED ITS SURFACE: that is the surprising state — " +
+      "something changed the canvas box or the world, and the 7-run baseline above is what to " +
+      "compare against. This gate is MANUAL-ONLY (re-verified 2026-08-05: no pre-commit hook and " +
       "no CI workflow invokes browser-gate.mjs), so a red 7d blocks no commit and no pipeline — " +
-      "which is precisely why it needs a brief attached rather than a red line everyone learns to " +
-      "scroll past.",
+      "which is precisely why it needs a brief attached.",
   );
   note(
-    "A CONSEQUENCE OF SHIPPING 7d RED, found by sentinel 2026-08-02 and owned by TD-332: " +
-      "`--mutate=br7-backout-re-entrances`'s HARNESS VERDICT is now structurally uninformative. " +
-      "The harness inverts a mutation run by checking whether the predicted gate id appears in " +
-      "`failed`; it does not diff against an unmutated baseline. Because 7d fails WITHOUT the " +
-      "mutation, the run prints 'PASS (mutation caught)' for a reason that has nothing to do with " +
-      "the injected defect — it would print that even if the mutation did nothing at all. This is " +
-      "the vacuity class of learning 1094 raised one level: not a check that cannot fail, but a " +
-      "CONTROL that cannot distinguish. The mutation itself is sound and was verified by its " +
-      "NUMBERS, not its verdict — back-out 74.1% -> 59.2%, both arms collapsing to identical " +
-      "readings (105.017 / 177.368). Judge it that way until TD-332 makes 7d green again, and if " +
-      "you add a baseline-diff to the mutation harness, do it there rather than here.",
+    "A CONSEQUENCE OF SHIPPING 7d RED, found by sentinel 2026-08-02 and owned by TD-332 — NOW " +
+      "PRINTED BY THE HARNESS ITSELF rather than left in this note. Mutation mode inverts the " +
+      "verdict by asking whether the predicted gate id appears in `failed`; it does not diff " +
+      "against an unmutated baseline. Because 7d fails WITHOUT the mutation, a " +
+      "`--mutate=br7-backout-re-entrances` run prints 'PASS (mutation caught)' for a reason " +
+      "unrelated to the injected defect. That is the learning-1094 vacuity class one level up: not " +
+      "a check that cannot fail, but a CONTROL that cannot distinguish. TD-332 turned the warning " +
+      "into machinery — the KNOWN_RED ledger makes the harness emit an UNINFORMATIVE VERDICT line " +
+      "naming the gate and its brief on any mutation run whose predicted victim is known-red. " +
+      "JUDGE SUCH A RUN BY ITS NUMBERS: measured 2026-08-05, back-out 74.1% -> 56.2% with both " +
+      "arms collapsing to identical readings (107.169 / 190.755). The line disappears when the " +
+      "KNOWN_RED row does.",
   );
   note(
-    "STATED LIMIT (learning 1095). The back-out reads ~85%, NOT ~100%, and that is " +
+    "STATED LIMIT (learning 1095). The back-out reads ~72-74%, NOT ~100%, and that is " +
       "the real behaviour rather than a tolerance: `instance.ts` seeds coordinates " +
       "but does not FIX them (no `fx`/`fy`), so the simulation restarts at alpha=1 " +
       "from the seeded configuration and relaxes further — the settled extent itself " +
@@ -3021,6 +3312,15 @@ async function gBr7(tab) {
       "The cache MECHANICS are the sibling: " +
       "`cli/dashboard/src/lib/__tests__/graphCache.test.ts`.",
   );
+  } finally {
+    // TD-332 — the override must not outlive this gate. G-BR-9 and G-BR-13 read
+    // this same tab afterwards, and a gate that silently changed a later gate's
+    // conditions is the defect class this whole batch is about. `finally`, not a
+    // trailing statement: a throw anywhere above must still hand the tab back in
+    // the state it was borrowed in.
+    await tab.clearViewport();
+    await tab.settle(300);
+  }
 }
 
 /**
@@ -4066,45 +4366,278 @@ async function gBr10(tab, world) {
  */
 
 /**
- * 11a — the component count at the measured low zoom, as a fraction of the
- * count at FIT.
+ * `NODE_SIZE_ZOOM_FLOOR` — MIRRORED from `cli/dashboard/src/graph/shapes.ts`#NODE_SIZE_ZOOM_FLOOR.
  *
- * Not 100%: nothing claims a zoom-out is free. Two nodes whose world distance
- * is genuinely below the size floor's reach merge at ANY constant size, and the
- * clamped divisor freezes the picture rather than improving it. What the floor
- * asserts is that the great majority of distinct things stay distinct — which
- * is exactly the property that failed before the fix.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS GATE IS ANCHORED HERE AND NOWHERE ELSE (TD-337)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `nodeWorldSize(px, k) = px / max(k, K_FLOOR)`, so a node's SCREEN size is
+ * `px · min(1, k / K_FLOOR)`. That splits the zoom axis in two:
+ *
+ *   ABOVE K_FLOOR — node screen size is constant at `px` while gaps scale with
+ *     `k`. Zooming out therefore FUSES. This is the unprotected regime, and it
+ *     is the pre-FR-244 behaviour at every zoom.
+ *   BELOW K_FLOOR — nodes and gaps both scale with `k`. The picture freezes as
+ *     one photograph and separability is PRESERVED. **This is the entire content
+ *     of the FR-244 fix.**
+ *
+ * **So sampling AT `K_FLOOR` would be wrong, and it is the obvious mistake.** At
+ * `k = K_FLOOR` the clamp sits exactly on its own boundary — `max(k, K_FLOOR)`
+ * is `k` either way — so the pre-FR-244 defect PASSES a reading taken there. A
+ * gate anchored at `K_FLOOR` is a gate the bug walks through. The property `11a`
+ * exists to guard lives strictly BELOW it, which is why the sample is at
+ * `K_FLOOR · LOW_ANCHOR` and the denominator is the reading AT `K_FLOOR`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHY THIS IS A MIRRORED LITERAL AND NOT READ OUT OF THE PAGE
+ * ─────────────────────────────────────────────────────────────────────────────
+ * FR-250's `11c` reads `--graph-column-scale` out of the page, on the stated
+ * principle that *"the gate and the layout cannot then disagree"*. That
+ * precedent is deliberately NOT followed here, and the reason is bytes.
+ * `--graph-column-scale` was already a CSS custom property in the DOM at zero
+ * cost. Exposing a JS constant to `window` is app-chunk surface, and the chunk
+ * has 484 B of slack against its ceiling with TD-347's route-level split queued
+ * behind it. So the gate mirrors the constant and pays for the mirror
+ * mechanically instead:
+ *
+ *   - `dashboard-graph-source.test.ts` scans BOTH files and asserts the two
+ *     literals are equal, so a drift is a red test rather than a silent
+ *     re-calibration;
+ *   - `MAINTAINING.md` carries the contract row, whose change procedure names
+ *     the re-derivation this gate owes when the constant moves.
+ *
+ * Do not "fix" this by reading it from the page without re-costing the chunk.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * AND `K_FLOOR` IS A DESIGN DECISION WEARING A NUMBER (TD-335)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Its derivation in `shapes.ts` is a LEGIBILITY argument — the last measured
+ * zoom at which the picture held its structure, `0.10533` measured and `0.11`
+ * taken for margin. It trades the `--s-1` 8 px legibility floor below itself and
+ * the Rule-2.4 44 px tap target down to `44 · k / K_FLOOR`. By anchoring here,
+ * three checks in this file became downstream of a design token. TD-335
+ * (`/ground design_system.md`) is where that relationship gets written down.
  */
-const SEPARABLE_BLOB_RATIO = 0.6;
+const K_FLOOR = 0.11;
 
 /**
- * The zoom levels the sweep visits, as divisors of the MEASURED `k_fit`.
+ * Where `11a` takes its reading, as a multiple of `K_FLOOR`.
  *
- * Relative to `k_fit` rather than absolute because `k_fit` is a property of the
- * payload and the canvas box, and both move (the FR-244 layout reflow moves the
- * box on purpose). What is being measured is how the picture degrades as the
- * operator zooms OUT FROM THE VIEW THEY WERE GIVEN, which is a ratio.
- *
- * The dense end is fine-grained because the merge onset lives there: the first
- * exploratory run put the whole picture at ONE component by k_fit/3.8, so a
- * coarse sweep would have stepped straight over the transition it exists to
- * find.
+ * `0.5` — i.e. `k = 0.055`, one octave INSIDE the protected regime. Half is the
+ * smallest multiple that is unambiguously below the clamp boundary while still
+ * leaving the field ~160-185 px wide on either column scale, so the reading is
+ * never taken on a clipped or a sub-pixel picture.
  */
-const SWEEP_DIVISORS = [1.5, 2, 3, 4, 8, 16];
+const LOW_ANCHOR = 0.5;
 
-/** Which sweep step 11a asserts at. `k_fit/2` is one comfortable zoom-out. */
-const LOW_ZOOM_DIVISOR = 2;
+/**
+ * The zoom levels the sweep visits, as multiples of `K_FLOOR` — **absolute**,
+ * because `K_FLOOR` is.
+ *
+ * WHAT THIS REPLACED AND WHY (TD-337). These used to be divisors of the MEASURED
+ * `k_fit`, on the reasoning that what matters is how the picture degrades as the
+ * operator zooms out from the view they were given. That reasoning is fine; the
+ * INSTRUMENT built on it is not, because `k_fit` is `zoomToFit()`'s scale —
+ * layout extent fitted into the canvas box — and **the canvas box is a layout
+ * property, so it moves.** FR-250 proved it as a controlled experiment nobody
+ * designed as one: `--graph-column-scale: 1 -> 2` moved `k_fit` 0.13275 ->
+ * 0.34271 on a byte-identical bundle and an identical 710-node/352-edge payload.
+ * `k_fit/2` crossed `K_FLOOR` on the way, so the sample point wandered out of
+ * the regime whose property it was asserting. The gate did not break; its
+ * subject moved out from under it.
+ *
+ * EVERY STANDING ANCHOR IS AT OR BELOW `K_FLOOR`, and that is a measurement,
+ * not a preference. Every anchor has to be REACHABLE by zooming OUT from FIT
+ * (`11-range`), and `11e` re-runs the whole sweep at `--graph-column-scale: 1`,
+ * where `k_fit` is only **1.21 · K_FLOOR** (measured 0.133 on this tree,
+ * 2026-08-05). An anchor at `1.25 · K_FLOOR` was tried and is NOT reachable
+ * there — it would have made `11-range` red at a column scale the operator can
+ * legitimately choose. So the protected regime, which is `11a`'s entire subject,
+ * is what the standing sweep samples; the UNPROTECTED regime is reached only by
+ * `--mutate=br11-measure-above-the-clamp`, which extends this list upward for
+ * exactly that purpose.
+ *
+ * The dense end is fine-grained because the merge onset lives there.
+ */
+const SWEEP_ANCHORS = [1, 0.75, 0.5, 0.25];
 
-/** 11a — no single component may own this much of the field's ink. */
+/**
+ * `11-anchor` — how far the ACHIEVED `k` may sit from the REQUESTED one, as a
+ * fraction.
+ *
+ * NEW REQUIREMENT INTRODUCED BY ABSOLUTE ANCHORING, and it has to exist. With
+ * `k_fit`-relative divisors a miss was a proportional error in a ratio; with an
+ * absolute anchor a miss can put the sample on the WRONG SIDE OF THE CLAMP,
+ * which changes what is being measured rather than how precisely.
+ *
+ * MEASURED, this tree, 2026-08-05, five runs at `--graph-column-scale: 2`:
+ * `wheelZoomTo`'s adaptive step landed every anchor within 0.4-1.6 % of the
+ * request (worst observed 1.6 % at the k_fit/16-equivalent step; typical 0.5 %).
+ * `0.05` is ~3x the worst observed miss — enough that a normal run never
+ * approaches it, tight enough that the `K_FLOOR/2` sample (0.055) can never
+ * drift as far as `K_FLOOR` (0.11, a 100 % miss) or the `K_FLOOR` denominator
+ * down past `0.75 · K_FLOOR`. IF THIS FIRES it means the wheel could not reach
+ * the requested zoom — the library's scale extent, a host point outside the
+ * viewport, or a tick budget — and every reading in the sweep is then a reading
+ * of a level nobody measured. That is the FR-250 failure mode exactly: an
+ * instrument that stops measuring reports the reassuring answer.
+ * Armed by `--mutate=br11-anchor-not-reached`.
+ */
+const ANCHOR_TOLERANCE = 0.05;
+
+/**
+ * `11a` — the component count at `K_FLOOR · LOW_ANCHOR`, as a fraction of the
+ * count AT `K_FLOOR`.
+ *
+ * THE CLAIM THIS NUMBER ENCODES: *below the clamp the picture freezes* — halving
+ * the zoom halves the nodes AND the gaps together, so what was separate stays
+ * separate. Not 100 %: the canvas is a discrete pixel grid, so a gap that is
+ * 1.5 px at `K_FLOOR` is 0.75 px at `K_FLOOR/2` and the two blobs share a pixel.
+ * That loss is quantisation, not fusion, and it is bounded — which is what the
+ * floor is for.
+ *
+ * MEASURED — see `FROZEN_PRESERVATION_FLOOR`'s calibration block below, which is
+ * where the two populations and the margins live.
+ */
+
+/**
+ * `11a` — no single component may own this much of the field's ink.
+ *
+ * The SECOND half of `11a`, and it guards a different failure from the ratio:
+ * a picture that fused into one mass would still hold its component count if the
+ * counter were broken, but it could not hold a small largest-share. MEASURED
+ * 2026-08-05 across 5 runs x 2 column scales: 0.4-0.9 % at the `K_FLOOR/2`
+ * anchor, i.e. the ceiling has ~28x headroom. It is deliberately NOT tightened
+ * to the measurement — its job is to reject a BLOB (share -> 1), not to pin the
+ * layout's largest connected pair, and a 1 % ceiling would fire the first time
+ * two adjacent linked pairs touched.
+ */
 const SEPARABLE_LARGEST_SHARE = 0.25;
 
 /**
- * 11b — how far the MEASURED component deficit at FIT may sit from the seeded
- * edge count. The two agreed exactly (710 - 352 = 358 components) on every run
- * recorded, so the tolerance is headroom for a layout that nudges one pair
- * apart, not slack the assertion needs.
+ * `11b` — how far the MEASURED component deficit at the `K_FLOOR` anchor may sit
+ * from the seeded edge count.
+ *
+ * WHY THE ANCHOR MOVED FROM FIT (TD-337). `11b` is the in-run proof that the
+ * component counter can report a merge AT ALL, against a number this gate did
+ * not choose: `nodes - blobs` should equal the seeded edge count, because
+ * `d3-force`'s link force pulls every linked pair closer than its own size. On
+ * the pre-FR-250 box that held exactly at FIT (710 - 352 = 358) — but at
+ * `k_fit ≈ 1.2 · K_FLOOR`, i.e. the fusion was a property of the ZOOM, not of
+ * FIT. Post-FR-250 the taller canvas puts FIT at `k ≈ 3.7 · K_FLOOR`, nodes are
+ * relatively smaller, and 710 of 710 resolve: the control cannot observe the
+ * thing it exists to detect. There is no threshold to move here — FIT is simply
+ * the wrong place. Taking the control at the `K_FLOOR` anchor puts it back where
+ * the fusion lives, and makes it VALIDATE `11a`'s denominator: the number `11a`
+ * divides by is the number `11b` checks against an independent prediction.
+ *
+ * The tolerance is unchanged at 0.1 — it was headroom for a layout that nudges
+ * one pair apart, not slack the assertion needed, and re-anchoring does not
+ * change what it is headroom FOR. **If the fusion turns out NOT to be present at
+ * this anchor, `11b` stays RED.** Sweeping for a `k` at which the control
+ * happens to pass is threshold-tuning wearing a different hat.
  */
 const MERGE_DEFICIT_TOLERANCE = 0.1;
+
+/**
+ * `11a`'s floor — the fraction of the `K_FLOOR` component count that must
+ * survive the octave down to `K_FLOOR · LOW_ANCHOR`.
+ *
+ * `null` means UNCALIBRATED, and `11a` then FAILS with that word rather than
+ * passing. That is deliberate and it is the shape this whole batch is about: a
+ * floor is a claim about two measured populations, and shipping a number nobody
+ * measured is the failure mode both TD-332 and TD-337 exist because of. An
+ * uncalibrated instrument must be RED, never quietly permissive.
+ *
+ * ┌────────────────────────────────────────────────────────────────────────────┐
+ * │ CALIBRATION — MEASURED 2026-08-05 ON THIS TREE (post-FR-250)               │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ * HEALTHY POPULATION — 5 unmutated runs x 2 column scales = 10 readings:
+ *   `--graph-column-scale: 2`  98.9 %, 99.7 %, 98.9 %, 99.7 %, 98.9 %
+ *   `--graph-column-scale: 1`  98.6 %, 99.2 %, 98.6 %, 99.2 %, 98.6 %
+ *   full observed range 98.6 - 99.7 %, i.e. a **1.1 pp** run-to-run spread.
+ *
+ * DEFECT POPULATION — two mutations, two different mechanisms:
+ *   `br11-measure-above-the-clamp`  **86.9 %, 92.3 %, 92.3 %** (3 runs) — the
+ *      SAME 2x zoom-out taken one octave higher (2.5x -> 1.25x K_FLOOR),
+ *      entirely in the regime where node screen size is pinned and the gaps
+ *      shrink. That is the pre-FR-244 behaviour, and it is the population this
+ *      floor exists to sit above. It is NOISIER than the healthy population
+ *      (5.4 pp range) because its denominator sits high on the sweep, where the
+ *      component count is still climbing steeply with `k` — which is exactly
+ *      why the healthy pair is taken below the clamp, where it is not.
+ *   `br11-measure-at-blob-zoom`     **81.1 %** — the numerator dragged to the
+ *      extreme end of the sweep, where the field is 86 px and pixel
+ *      quantisation removes components. A different mechanism, so it is a
+ *      second independent control rather than a duplicate.
+ *
+ * THE NUMBER: **0.95**, and it is placed rather than picked. The two populations
+ * meet at 92.3 % (worst defect) and 98.6 % (worst healthy) — a 6.3 pp corridor,
+ * whose midpoint is 95.45 %. The floor is taken at the round number just BELOW
+ * that midpoint, deliberately giving the larger share (3.6 pp) to the healthy
+ * side and 2.7 pp to the defect side: the healthy spread is the one that causes
+ * FLAKES, and 3.6 pp is 3.3x it, so a healthy run is not merely passing, it is
+ * passing with room. That is the `PACK_TIMEOUT_MS` discipline applied to a floor
+ * — measure PROXIMITY, not just crossing.
+ * WHAT IT WOULD MEAN IF IT FIRED: more than one component in twenty is lost over
+ * a single octave BELOW the clamp — i.e. the picture is no longer freezing,
+ * which is the property FR-244 shipped.
+ *
+ * WHY NOT TIGHTER (0.98, just under the worst healthy run): the margin would be
+ * 0.6 pp against a 1.1 pp spread, so half the healthy population would sit
+ * inside one spread of the line. A check that near its threshold is not fine; it
+ * is pre-failing.
+ * WHY NOT LOOSER (0.90): 92.3 % of the above-the-clamp population would then
+ * PASS, and that population is the one that matters — it is the shape a size-law
+ * regression takes.
+ *
+ * COUPLED TO: `K_FLOOR`, and to nothing else. Not the canvas box, not `k_fit`,
+ * not `--graph-column-scale` — that independence is what `11e` asserts, and
+ * `--mutate=br11-anchor-to-k-fit` is what proves the assertion can fail.
+ */
+const FROZEN_PRESERVATION_FLOOR = 0.95;
+
+/**
+ * `11e` — how far the anchored ratio may differ between two column scales.
+ *
+ * `11e` IS THE BATCH'S MOST VALUABLE ARTEFACT AND IT IS FREE. TD-337's whole
+ * defect was that a gate's sample point silently followed the canvas box. The
+ * structural claim that replaces it — *"a reading at a fixed ABSOLUTE `k` does
+ * not depend on the box"* — was an argument, and an argument is not a check. It
+ * becomes one here because `--graph-column-scale` can be set on
+ * `document.documentElement.style` IN THE PAGE: no source edit, no rebuild,
+ * fully reversible, and it dies with the tab. So the falsifier costs one extra
+ * FIT and two extra anchored readings, and it is the check that would have
+ * caught TD-337 before it shipped.
+ *
+ * WHY THE TOLERANCE IS NOT ZERO: the two boxes dice the SAME picture onto
+ * different pixel grids and `zoomToFit` re-centres it, so a blob that straddles
+ * a pixel boundary on one box may not on the other. That is sub-pixel noise on
+ * a ~700-blob count, not a difference in the picture.
+ *
+ * ┌────────────────────────────────────────────────────────────────────────────┐
+ * │ CALIBRATION — MEASURED 2026-08-05 ON THIS TREE                             │
+ * └────────────────────────────────────────────────────────────────────────────┘
+ * HEALTHY, 5 runs: the anchored reading moved **0.28, 0.56, 0.28, 0.56, 0.28 pp**
+ * while `k_fit` moved **2.58x** (0.34271-0.34336 at scale 2 against
+ * 0.13275-0.133 at scale 1) and the canvas went 1058x1084 -> 1058x423. The
+ * ink threshold derived at the `K_FLOOR` anchor came out IDENTICAL on both
+ * boxes (119.17) on every run, which is the invariance argument showing up in a
+ * second, independent quantity.
+ *
+ * DEFECT: `br11-anchor-to-k-fit` — see the run recorded in the gate's closing
+ * note. It puts both endpoints back on `k_fit`-relative points, and the two
+ * scales then disagree by far more than this bound.
+ *
+ * THE NUMBER: **0.02** (2 pp) — 3.6x the worst healthy drift of 0.56 pp. WHAT IT
+ * WOULD MEAN IF IT FIRED: a reading taken at a fixed ABSOLUTE `k` depends on the
+ * canvas box after all, which falsifies the argument this whole re-anchoring
+ * rests on. That is not a threshold to widen; it is a result to re-scope TD-337
+ * around.
+ *
+ * `null` would mean UNCALIBRATED — same rule as the floor above.
+ */
+const INVARIANCE_TOLERANCE = 0.02;
 
 /** 11c — how much of the space below its own top edge the canvas must own. */
 const COLUMN_FILL_FRACTION = 0.9;
@@ -4229,11 +4762,20 @@ const readSeparability = (absoluteThreshold) => `
  * would be asserting its own intention.
  */
 async function wheelZoomTo(tab, host, targetK, { maxTicks = 400 } = {}) {
+  /*
+   * TD-337 — `br11-anchor-not-reached` caps the budget at ONE tick, so no anchor
+   * is reached and every reading in the sweep is taken at a `k` the gate did not
+   * ask for. It inverts the FR-250 failure mode directly: there, a wheel that
+   * could not reach the canvas left the sweep silently reporting the FIT picture
+   * at every level, and `11a` would have read 100 % separable — a PASS for a
+   * canvas that was never zoomed. `11-anchor` is what makes that state loud.
+   */
+  const budget = mut("br11-anchor-not-reached") ? 1 : maxTicks;
   const readK = "return window.__igrisGraphStillness.zoom();";
   let k = await tab.eval(readK);
   let ticks = 0;
   let stalled = 0;
-  while (k > targetK && ticks < maxTicks) {
+  while (k > targetK && ticks < budget) {
     // ADAPTIVE STEP, and it is not a nicety. d3-zoom scales by
     // `2 ** (-deltaY * 0.002)`, so a 120-unit tick multiplies `k` by ~0.85 —
     // coarse enough that a fixed step overshot the requested zoom by 2x on the
@@ -4282,17 +4824,39 @@ async function wheelZoomTo(tab, host, targetK, { maxTicks = 400 } = {}) {
  * G-BR-7 so it cannot disturb that gate's `/api/graph` counters, and it never
  * touches the `seeded` world whose row counts three earlier gates assert on.
  *
+ * WHAT THIS GATE IS ANCHORED TO, SAID IN THE GATE (TD-337 AC-4)
+ * ------------------------------------------------------------
+ * `11-range` / `11-anchor` / `11a` / `11b` / `11e` are anchored to **`K_FLOOR`**
+ * and to NOTHING ELSE. `k_fit` is still read and printed at every reading, but
+ * only as a DIAGNOSTIC — no threshold is derived from it. `11c` remains coupled
+ * to `--graph-column-scale`, which it reads out of the page rather than
+ * mirroring, so the gate and the layout cannot disagree.
+ *
  * PROVES
- *   11a  At a MEASURED low zoom the picture is still made of distinct connected
- *        regions: the component count holds a stated fraction of its count at
- *        FIT, and no single component owns the field.
- *   11b  NEGATIVE CONTROL FOR THE INSTRUMENT. At an extreme zoom-out — outside
- *        any range this brief claims — the same metric reports MERGED. So 11a's
- *        pass is a measured pass rather than a counter that cannot move, which
- *        is what 4b is to 4a.
- *   11c  The canvas owns the vertical column at 1440x900: the page does not
- *        scroll, the host fills the space below it, and the query twin sits
- *        INSIDE the layout row rather than under it.
+ *   11-range   The working range is NON-EMPTY on this box: `k_fit` sits above
+ *              every anchor, so each one is reachable by zooming OUT from FIT.
+ *              Without it a short canvas silently reports the FIT picture at
+ *              every level and `11a` reads a flattering 100 %.
+ *   11-anchor  The ACHIEVED `k` is within tolerance of the REQUESTED absolute
+ *              `k` at every anchor. New with absolute anchoring: a big enough
+ *              miss puts the sample on the wrong side of the clamp.
+ *   11a        BELOW THE CLAMP THE PICTURE FREEZES. The component count at
+ *              `K_FLOOR · LOW_ANCHOR` holds a measured fraction of the count AT
+ *              `K_FLOOR`, and no single component owns the field.
+ *   11b        NEGATIVE CONTROL FOR THE INSTRUMENT, at the `K_FLOOR` anchor —
+ *              i.e. against the very reading `11a` divides by. `nodes - blobs`
+ *              must equal the seeded edge count, a number this gate did not
+ *              choose. So `11a`'s pass is a measured pass rather than a counter
+ *              that cannot move, which is what 4b is to 4a.
+ *   11c        The canvas owns the vertical column at 1440x900: the host fills
+ *              the space below it, the document/viewport ratio tracks
+ *              `--graph-column-scale`, and the query twin sits INSIDE the layout
+ *              row rather than under it.
+ *   11e        BOX-INVARIANCE. The anchored reading agrees across a 2.6x change
+ *              in `k_fit`, driven by setting `--graph-column-scale` IN THE PAGE.
+ *              This is the check that would have caught TD-337 before it
+ *              shipped, and it is the falsifier for the whole anchoring
+ *              argument: if the two readings disagree, the argument is wrong.
  *
  * DOES NOT PROVE
  *   That the picture is BEAUTIFUL, or that a reader can name a node at that
@@ -4303,6 +4867,9 @@ async function wheelZoomTo(tab, host, targetK, { maxTicks = 400 } = {}) {
  *   **Sibling:** `shapes.test.ts` pins the vocabulary; `nodeWorldSize`'s unit
  *   tests in the same file pin the size law's arithmetic at every `k`, which is
  *   the half this gate cannot see.
+ *   NOR does it prove anything about behaviour ABOVE `K_FLOOR`. The `1.25`
+ *   anchor is printed as a diagnostic of the unprotected regime; nothing is
+ *   asserted there, because the size law makes no claim there.
  */
 async function gBr11(tab) {
   gate("G-BR-11", "FR-244: density measured at a real zoom, and the vertical column");
@@ -4326,6 +4893,36 @@ async function gBr11(tab) {
   await tab.until(isStill, { timeout: 30_000, label: "settles after the deselect" });
   await tab.settle(400);
 
+  /*
+   * `br11-range-on-a-short-canvas` — SHRINK THE CANVAS, not the window.
+   *
+   * `11-range`'s subject is a box small enough that `k_fit` falls below
+   * `K_FLOOR`, leaving no working range at all. The obvious injection is a tiny
+   * VIEWPORT (11d uses 400x700 for the banner), and it was tried: it aborts the
+   * gate with `button "FIT" is outside the viewport` before `11-range` is ever
+   * evaluated — a red for a reason unrelated to the injected defect, which is
+   * the failure mode this file's mutation table exists to catch in itself.
+   *
+   * Shrinking the canvas through the page's own CSS custom properties does the
+   * same job without moving a control. TWO of them, and the second was found by
+   * measuring rather than by reading the stylesheet: `--graph-column-scale: 0.5`
+   * alone lands the canvas at 1058x418 and `k_fit` at 0.131 — still ABOVE
+   * `K_FLOOR`, because `.graph-layout` carries `min-height:
+   * var(--graph-row-min-h)` and that token is 420px, so the column stops
+   * shrinking there. Lowering the floor as well takes the canvas to ~200px and
+   * `k_fit` to ~0.06, which is the state `11-range` exists to reject.
+   * Both are cleared where `11e` restores the column-scale property.
+   */
+  if (mut("br11-range-on-a-short-canvas")) {
+    await tab.eval(
+      "document.documentElement.style.setProperty('--graph-row-min-h', '200px');" +
+        "document.documentElement.style.setProperty('--graph-column-scale', '0.25');" +
+        "return 1;",
+    );
+    await tab.settle(1200);
+    await tab.until(isStill, { timeout: 60_000, label: "settles on the shortened canvas" });
+  }
+
   /* FR-250 — the interaction point is the centre of the host's VISIBLE part,
      not of the host. Doubling the column made the host TALLER THAN THE
      VIEWPORT (measured 1258px in a 900px window), so its geometric centre sits
@@ -4337,7 +4934,7 @@ async function gBr11(tab) {
      reports the reassuring answer, not an error.
      Clamping to the visible intersection is right independent of FR-250 — a
      point outside the viewport was never a valid place to dispatch. */
-  const host = await tab.eval(`
+  const READ_HOST_POINT = `
     const el = document.querySelector('.graph-canvas-host');
     if (el === null) return null;
     const r = el.getBoundingClientRect();
@@ -4353,68 +4950,245 @@ async function gBr11(tab) {
       visibleH: Math.max(0, bottom - top),
       clamped: bottom < r.bottom || top > r.top,
     };
-  `);
+  `;
+  /*
+   * `br11-measure-above-the-clamp` extends the sweep UPWARD by one octave, so
+   * `11a` can take a reading of the SAME SHAPE (a 2x zoom-out) entirely in the
+   * UNPROTECTED regime: over `[K_FLOOR, 2·K_FLOOR]` a node's screen size is
+   * pinned at `px` while the gaps scale with `k`, which is the pre-FR-244
+   * behaviour at every zoom. The extra anchor exists only under this mutation
+   * because `11-range` would otherwise have to guarantee `2·K_FLOOR` is
+   * reachable at `--graph-column-scale: 1`, where `k_fit` is `1.21 · K_FLOOR`.
+   */
+  const ANCHORS = mut("br11-measure-above-the-clamp")
+    ? [2.5, 1.25, ...SWEEP_ANCHORS]
+    : SWEEP_ANCHORS;
 
-  // FIT — every node on screen, which is the reference the sweep is paired
-  // against. `graph.refit` -> `zoomToFit()`, driven through the real button.
-  await clickButton(tab, "FIT");
-  await tab.until(isStill, { timeout: 30_000, label: "settles after FIT" });
-  await tab.settle(300);
+  /* RE-READ PER PASS, not captured once — TD-337. `11e` changes
+     `--graph-column-scale` in the page, which changes the host's HEIGHT, so a
+     point computed under the other scale can land outside the host. Getting that
+     wrong reproduces the FR-250 defect the comment above describes, in the very
+     check that exists to prove the anchoring is box-independent. */
 
-  // Calibrate the instrument ONCE, at FIT, then hold it absolute for the sweep.
-  const calib = await tab.eval(readSeparability(null));
-  if (calib === null) {
+  /**
+   * ONE ANCHORED PASS: re-FIT, calibrate the ink threshold AT `K_FLOOR`, then
+   * descend through the absolute anchors reading with that one threshold.
+   *
+   * WHY THE THRESHOLD IS CALIBRATED AT `K_FLOOR` AND NOT AT FIT. Calibrating
+   * once and holding it absolute across the readings being compared is the
+   * load-bearing part (a per-frame self-calibration would re-normalise a picture
+   * that got dimmer back into looking unchanged) — but WHICH `k` it is
+   * calibrated at is a second choice, and FIT is the wrong one now. FIT is a
+   * function of the canvas box, so a FIT-calibrated threshold carries the box
+   * into every reading in the sweep, which is the exact coupling TD-337 exists
+   * to remove. `K_FLOOR` is absolute, so the threshold derived there is too —
+   * and `11e` is the check that says so out loud.
+   *
+   * The FIT reading is still taken and printed, as a DIAGNOSTIC beside `k_fit`.
+   */
+  const anchoredPass = async (label) => {
+    const host = await tab.eval(READ_HOST_POINT);
+    if (host === null) return null;
+    await clickButton(tab, "FIT");
+    await tab.until(isStill, { timeout: 30_000, label: `${label}: settles after FIT` });
+    await tab.settle(300);
+    const kFit = await tab.eval("return Number(window.__igrisGraphStillness.zoom().toFixed(5));");
+
+    // Calibrate AT the `K_FLOOR` anchor, then re-FIT so the sweep starts from
+    // the top. Two descents, and the extra one buys an absolute calibration.
+    await wheelZoomTo(tab, host, K_FLOOR);
+    const calib = await tab.eval(readSeparability(null));
+    if (calib === null) return null;
+    const T = calib.threshold;
+
+    await clickButton(tab, "FIT");
+    await tab.until(isStill, { timeout: 30_000, label: `${label}: re-FIT after calibration` });
+    await tab.settle(300);
+    const atFit = await tab.eval(readSeparability(T));
+
+    // THE SWEEP. Real wheel events, so this also drives the C1 wake path
+    // (learning 1097) — a canvas that is halted-and-dead does not repaint on a
+    // wheel and would read as a frozen picture at every level below.
+    const sweep = [];
+    for (const anchor of ANCHORS) {
+      const target = K_FLOOR * anchor;
+      const moved = await wheelZoomTo(tab, host, target);
+      const s = await tab.eval(readSeparability(T));
+      sweep.push({
+        anchor,
+        target: Number(target.toFixed(5)),
+        miss: Math.abs(moved.k - target) / target,
+        ...moved,
+        sep: s,
+      });
+    }
+
+    /*
+     * `br11-anchor-to-k-fit` needs REAL readings at `k_fit` and `k_fit/2`, not
+     * the nearest absolute anchor — the whole point of the mutation is that
+     * those points are somewhere ELSE on each box, and reusing an absolute
+     * anchor for them would make the mutation agree with the check by
+     * construction. (That was the first draft, and it read 100 % / 99.2 %: both
+     * endpoints collapsed onto the same sampled anchor. A mutation that cannot
+     * bite is a mutation that proves nothing, so it is taken as its own descent.)
+     */
+    const kFitPair = {};
+    if (mut("br11-anchor-to-k-fit")) {
+      await clickButton(tab, "FIT");
+      await tab.until(isStill, { timeout: 30_000, label: `${label}: re-FIT for the k_fit pair` });
+      await tab.settle(300);
+      const den = await wheelZoomTo(tab, host, kFit);
+      kFitPair.den = { k: den.k, sep: await tab.eval(readSeparability(T)) };
+      const num = await wheelZoomTo(tab, host, kFit / 2);
+      kFitPair.num = { k: num.k, sep: await tab.eval(readSeparability(T)) };
+    }
+
+    return { label, kFit, T, peak: calib.max, atFit, sweep, kFitPair };
+  };
+
+  const at = (pass, anchor) => pass.sweep.find((s) => s.anchor === anchor);
+
+  const shipped = await anchoredPass("shipped scale");
+  if (shipped === null) {
     check("11-instrument", false, "no canvas to read — the dense graph never painted");
     return;
   }
-  const T = calib.threshold;
-  const atFit = await tab.eval(readSeparability(T));
+  const { kFit, T, atFit } = shipped;
+  const columnScale = await tab.eval(`
+    return Number(getComputedStyle(document.documentElement)
+      .getPropertyValue('--graph-column-scale').trim() || 1);
+  `);
+
   check(
     "11-instrument",
     atFit.blobs > 1 && atFit.masked > 0 && atFit.largestShare < 0.5,
-    `CALIBRATION at FIT (${readout}) k=${atFit.zoom} canvas ${atFit.w}x${atFit.h}: ` +
-      `peak ink ${calib.max}, threshold ${T} (half the peak — node ink is an opaque bone fill, ` +
-      `resting edge ink is muted at 38% alpha and lands below it) · ` +
+    `CALIBRATION at k=K_FLOOR=${K_FLOOR} (${readout}) canvas ${atFit.w}x${atFit.h}, --graph-column-scale ${columnScale}: ` +
+      `peak ink ${shipped.peak}, threshold ${T} (half the peak — node ink is an opaque bone fill, ` +
+      `resting edge ink is muted at 38% alpha and lands below it). ` +
+      `DIAGNOSTIC, asserted by nothing: at FIT k_fit=${kFit} (${(kFit / K_FLOOR).toFixed(2)}x K_FLOOR) · ` +
       `masked ${atFit.masked}px · blobs ${atFit.blobs} · largest blob ${atFit.largest}px ` +
       `(${pct(atFit.largestShare)} of the ink) · field spans ${atFit.extentPx}px`,
   );
 
-  // THE SWEEP. Real wheel events, so this also drives the C1 wake path
-  // (learning 1097) — a canvas that is halted-and-dead does not repaint on a
-  // wheel and would read as a frozen picture at every level below.
-  const sweep = [];
-  for (const divisor of SWEEP_DIVISORS) {
-    const target = atFit.zoom / divisor;
-    const moved = await wheelZoomTo(tab, host, target);
-    const s = await tab.eval(readSeparability(T));
-    sweep.push({ divisor, target: Number(target.toFixed(5)), ...moved, sep: s });
+  for (const s of shipped.sweep) {
     note(
-      `sweep k_fit/${String(divisor).padEnd(2)} -> requested k=${target.toFixed(5)} reached k=${moved.k.toFixed(5)} ` +
-        `in ${moved.ticks} wheel ticks${moved.hitExtent ? " [library scale extent reached]" : ""} · ` +
-        `blobs ${s.blobs} (${((s.blobs / atFit.blobs) * 100).toFixed(1)}% of FIT's ${atFit.blobs}) · ` +
-        `masked ${s.masked}px · largest ${pct(s.largestShare)} · field ${s.extentPx}px`,
+      `sweep ${String(s.anchor).padEnd(4)}x K_FLOOR -> requested k=${s.target.toFixed(5)} reached k=${s.k.toFixed(5)} ` +
+        `(miss ${(s.miss * 100).toFixed(2)}%) in ${s.ticks} wheel ticks${s.hitExtent ? " [library scale extent reached]" : ""} · ` +
+        `blobs ${s.sep.blobs} · masked ${s.sep.masked}px · largest ${pct(s.sep.largestShare)} · field ${s.sep.extentPx}px` +
+        `${s.anchor > 1 ? "  [ABOVE the clamp — the UNPROTECTED regime, diagnostic only]" : ""}`,
     );
   }
 
-  const low = sweep.find((s) => s.divisor === LOW_ZOOM_DIVISOR);
-  const extreme = sweep[sweep.length - 1];
+  /*
+   * 11-range — THE WORKING RANGE IS NON-EMPTY ON THIS BOX.
+   *
+   * Every anchor is reached by zooming OUT from FIT, so an anchor above `k_fit`
+   * is not reachable at all — `wheelZoomTo` would return immediately and the
+   * reading would be the FIT picture wearing an anchor's name. That is the
+   * FR-250 failure mode restated: an instrument that stops measuring reports the
+   * reassuring answer. This is also what makes the operator-facing claim honest:
+   * given `k_fit > K_FLOOR`, "zoom out from FIT until the picture freezes" is
+   * the ENTIRE span an operator can traverse, and a reading at `K_FLOOR/2` is
+   * the worst case over all of it.
+   */
+  const topAnchor = Math.max(...ANCHORS);
+  check(
+    "11-range",
+    kFit > K_FLOOR * topAnchor,
+    `WORKING RANGE: k_fit=${kFit} vs the highest anchor ${topAnchor}x K_FLOOR = ${(K_FLOOR * topAnchor).toFixed(5)} ` +
+      `(and K_FLOOR itself = ${K_FLOOR}, i.e. FIT is ${(kFit / K_FLOOR).toFixed(2)}x the clamp). Every anchor is ` +
+      `reachable by zooming OUT from FIT, so no reading below is the FIT picture wearing an anchor's name` +
+      (mut("br11-range-on-a-short-canvas")
+        ? "  [MUTATED: the canvas was shrunk IN THE PAGE (--graph-row-min-h: 200px + --graph-column-scale: 0.25), putting k_fit BELOW K_FLOOR so the working range is empty. NOT the 400x700 viewport draft — that aborted the gate on an off-screen FIT button before this check ran]"
+        : ""),
+  );
 
-  // 11a — the assertion, at the MEASURED zoom. The mutation points it at the
-  // extreme instead, which is a zoom known to merge: the mirror of
-  // br4-measure-motion pointing 4a at a surface known to move.
-  const measured = mut("br11-measure-at-blob-zoom") ? extreme : low;
-  const ratio = measured.sep.blobs / atFit.blobs;
+  /*
+   * 11-anchor — THE ACHIEVED `k` IS THE REQUESTED `k`.
+   *
+   * With `k_fit`-relative divisors a miss was a proportional error in a ratio.
+   * With an ABSOLUTE anchor a miss can move the sample across the clamp, which
+   * changes the subject rather than the precision. So the miss is asserted, not
+   * merely printed.
+   */
+  const worstMiss = shipped.sweep.reduce((a, s) => (s.miss > a.miss ? s : a), shipped.sweep[0]);
+  check(
+    "11-anchor",
+    shipped.sweep.every((s) => s.miss <= ANCHOR_TOLERANCE),
+    `ANCHORS REACHED: worst miss ${(worstMiss.miss * 100).toFixed(2)}% at ${worstMiss.anchor}x K_FLOOR ` +
+      `(requested k=${worstMiss.target.toFixed(5)}, reached k=${worstMiss.k.toFixed(5)} in ${worstMiss.ticks} ticks); ` +
+      `tolerance ${pct(ANCHOR_TOLERANCE)}. Every reading below is quoted at the k it was REACHED at, and this ` +
+      `is the check that says those two are the same thing` +
+      (mut("br11-anchor-not-reached")
+        ? "  [MUTATED: wheelZoomTo's tick budget capped at 1, so no anchor is reached]"
+        : ""),
+  );
+
+  /*
+   * 11a — BELOW THE CLAMP THE PICTURE FREEZES.
+   *
+   * The pair is `K_FLOOR · LOW_ANCHOR` over `K_FLOOR`, both absolute. Read the
+   * mechanism in `K_FLOOR`'s own docblock: below the clamp, node screen size and
+   * gap scale together, so halving `k` halves the whole photograph and what was
+   * separate stays separate. Above it, node screen size is pinned while gaps
+   * shrink, so a zoom-out FUSES — which is the pre-FR-244 behaviour and the
+   * defect population `br11-measure-above-the-clamp` draws from.
+   *
+   * THE MUTATIONS, and why there are two — plus the one that is NOT available
+   * and the reason, because that absence is the honest limit of this check.
+   *
+   *  - `br11-measure-above-the-clamp` takes the SAME-SHAPED reading (a 2x
+   *    zoom-out) one octave higher, over `[K_FLOOR, 2·K_FLOOR]`, which is
+   *    entirely in the UNPROTECTED regime. That is the pre-FR-244 law's own
+   *    behaviour, sampled where the current law still exhibits it.
+   *  - `br11-measure-at-blob-zoom` (existing, FR-244) points the NUMERATOR at
+   *    the extreme end of the sweep. It bites on field SHRINKAGE and pixel
+   *    quantisation rather than on fusion — a DIFFERENT mechanism — so it is
+   *    kept as a second, independent control rather than replaced.
+   *
+   *  - NOT AVAILABLE: a mutation that restores the pre-FR-244 SIZE LAW. It
+   *    would be the strongest control, and it cannot be built from here. The law
+   *    lives in the bundle, and `useGraph.ts` deliberately exposes
+   *    `__igrisGraphStillness` as a READ-ONLY diagnostic — *"a setter would make
+   *    the diagnostic a control surface, and a control surface is exactly the
+   *    thing the rule forbids acquiring"*. Nor can the defect state be reached by
+   *    choosing a zoom: under the fixed law the node-size-to-field ratio is
+   *    CONSTANT for every `k <= K_FLOOR` and only falls above it, so the old
+   *    law's picture at `K_FLOOR/2` is twice as dense as anything the fixed law
+   *    can produce at any zoom. That is not a gap in the harness — it is what
+   *    the fix MEANS, restated. The size law's arithmetic at every `k`,
+   *    including the continuity at `K_FLOOR`, is pinned by
+   *    `cli/dashboard/src/graph/__tests__/shapes.test.ts`; this gate pins the
+   *    PICTURE that arithmetic produces. Neither covers the other.
+   */
+  const floorRead = at(shipped, LOW_ANCHOR);
+  const clampRead = at(shipped, 1);
+  const extreme = shipped.sweep[shipped.sweep.length - 1];
+
+  const measured = mut("br11-measure-at-blob-zoom")
+    ? { num: extreme, den: clampRead, why: "measured at the EXTREME zoom-out, where the whole layout spans a few dozen pixels and pixel quantisation, not fusion, is what removes components" }
+    : mut("br11-measure-above-the-clamp")
+      ? { num: at(shipped, 1.25), den: at(shipped, 2.5), why: "measured ABOVE the clamp — the SAME 2x zoom-out, from 2.5x K_FLOOR down to 1.25x, entirely in the regime where node screen size is PINNED at px while the gaps scale with k. That is the pre-FR-244 behaviour at every zoom, sampled where the current law still exhibits it" }
+      : { num: floorRead, den: clampRead, why: null };
+  const ratio = measured.num.sep.blobs / Math.max(1, measured.den.sep.blobs);
   check(
     "11a",
-    ratio >= SEPARABLE_BLOB_RATIO && measured.sep.largestShare <= SEPARABLE_LARGEST_SHARE,
-    `SEPARABLE AT A MEASURED LOW ZOOM: k=${measured.k.toFixed(5)} (FIT was k=${atFit.zoom}, ` +
-      `so ${(atFit.zoom / measured.k).toFixed(1)}x further out, reached in ${measured.ticks} real wheel ticks) · ` +
-      `blobs ${measured.sep.blobs} vs ${atFit.blobs} at FIT = ${pct(ratio)} (floor ${pct(SEPARABLE_BLOB_RATIO)}) · ` +
-      `largest blob ${pct(measured.sep.largestShare)} of the ink (ceiling ${pct(SEPARABLE_LARGEST_SHARE)}) · ` +
-      `masked ${measured.sep.masked}px, so the ink is still THERE rather than gone` +
-      (mut("br11-measure-at-blob-zoom")
-        ? "  [MUTATED: measured at the EXTREME zoom-out, a k at which the whole layout spans a few pixels]"
-        : ""),
+    FROZEN_PRESERVATION_FLOOR !== null &&
+      ratio >= FROZEN_PRESERVATION_FLOOR &&
+      measured.num.sep.largestShare <= SEPARABLE_LARGEST_SHARE,
+    (FROZEN_PRESERVATION_FLOOR === null
+      ? "UNCALIBRATED — FROZEN_PRESERVATION_FLOOR is null, so this check asserts nothing and says so rather than passing. Set it from a measurement (see its docblock). "
+      : "") +
+      `BELOW THE CLAMP THE PICTURE FREEZES: k=${measured.num.k.toFixed(5)} (${(measured.num.k / K_FLOOR).toFixed(2)}x K_FLOOR) ` +
+      `against the denominator at k=${measured.den.k.toFixed(5)} (${(measured.den.k / K_FLOOR).toFixed(2)}x K_FLOOR) — ` +
+      `blobs ${measured.num.sep.blobs} vs ${measured.den.sep.blobs} = ${pct(ratio)} ` +
+      `(floor ${FROZEN_PRESERVATION_FLOOR === null ? "UNSET" : pct(FROZEN_PRESERVATION_FLOOR)}) · ` +
+      `largest blob ${pct(measured.num.sep.largestShare)} of the ink (ceiling ${pct(SEPARABLE_LARGEST_SHARE)}) · ` +
+      `masked ${measured.num.sep.masked}px vs ${measured.den.sep.masked}px, so the ink is still THERE rather than gone · ` +
+      `field ${measured.num.sep.extentPx}px vs ${measured.den.sep.extentPx}px ` +
+      `(${measured.why === null ? "the photograph halved, as it must" : "the two ends of the MUTATED pair"}) · ` +
+      `DIAGNOSTIC: k_fit=${kFit}, coupled to nothing here` +
+      (measured.why === null ? "" : `  [MUTATED: ${measured.why}]`),
   );
 
   /*
@@ -4422,23 +5196,25 @@ async function gBr11(tab) {
    * was first written with. That draft asserted the field reads as ONE blob at
    * an extreme zoom-out, on the reasoning that the layout's own on-screen
    * extent shrinks to a few pixels there whatever the size law does. The FIRST
-   * POST-FIX RUN REFUTED IT: at k_fit/16 the fixed law still resolved 162
+   * POST-FIX RUN REFUTED IT: at the extreme end the fixed law still resolved 162
    * components in a 32px field. The control was wrong, and it was wrong in the
    * most dangerous direction — it would have gone red for the RIGHT behaviour.
    *
    * So the control is taken from a merge that is real, measured, and caused by
-   * something the size law cannot reach: AT FIT, EVERY LINKED PAIR IS ALREADY
-   * FUSED. The dense world seeds a known number of edges, each joining two
-   * learnings, and d3-force's link force pulls those pairs closer than their
-   * own size. The component deficit is therefore PREDICTED INDEPENDENTLY of
-   * this instrument — it should equal the seeded edge count — and measured:
-   * 710 nodes, 352 edges, 358 components. 710 - 352 = 358, exactly.
+   * something the size law cannot reach: EVERY LINKED PAIR IS FUSED. The dense
+   * world seeds a known number of edges, each joining two learnings, and
+   * d3-force's link force pulls those pairs closer than their own size. The
+   * component deficit is therefore PREDICTED INDEPENDENTLY of this instrument —
+   * it should equal the seeded edge count.
    *
-   * That makes it a real negative control in the learning-1092 sense: it
-   * travels the SAME path (the same canvas, the same render, the same reader),
-   * and it proves the counter reports fusion WHEN FUSION OCCURS — against a
-   * number this gate did not choose. A counter stuck at "everything is
-   * separate" fails here.
+   * TD-337 MOVED THE ANCHOR FROM FIT TO `K_FLOOR`, and the move is not cosmetic.
+   * On the pre-FR-250 box the prediction held EXACTLY at FIT (710 - 352 = 358) —
+   * but FIT was then `k ≈ 1.2 · K_FLOOR`, so the fusion was a property of the
+   * ZOOM, not of FIT. The taller canvas puts FIT at `k ≈ 3.7 · K_FLOOR`, nodes
+   * are relatively smaller, and 710 of 710 resolve: the control cannot see what
+   * it exists to detect. Taking it at the `K_FLOOR` anchor puts it back where
+   * the fusion lives — AND makes it validate `11a`'s denominator, because that
+   * is now the same reading.
    *
    * It also records FR-244's second measured finding: the absence of a collide
    * force IS a contributing cause of at-rest fusion. What it does NOT license
@@ -4446,8 +5222,8 @@ async function gBr11(tab) {
    * scale-free and therefore out of a size law's reach.
    */
   const control = mut("br11-control-at-extreme-zoom")
-    ? { k: extreme.k, sep: extreme.sep }
-    : { k: atFit.zoom, sep: atFit };
+    ? { k: extreme.k, sep: extreme.sep, where: "the EXTREME zoom-out" }
+    : { k: clampRead.k, sep: clampRead.sep, where: "the K_FLOOR anchor" };
   const counts = /(\d+)\s+NODES\s*·\s*(\d+)\s+EDGES/.exec(readout ?? "");
   const nodeCount = counts === null ? 0 : Number(counts[1]);
   const edgeCount = counts === null ? 0 : Number(counts[2]);
@@ -4458,15 +5234,91 @@ async function gBr11(tab) {
       control.sep.blobs < nodeCount &&
       deficit >= edgeCount * (1 - MERGE_DEFICIT_TOLERANCE) &&
       deficit <= edgeCount * (1 + MERGE_DEFICIT_TOLERANCE),
-    `NEGATIVE CONTROL — the metric REPORTS a merge when one is there. At k=${control.k.toFixed(5)}: ` +
-      `${nodeCount} nodes render as ${control.sep.blobs} components, a deficit of ${deficit} ` +
+    `NEGATIVE CONTROL — the metric REPORTS a merge when one is there, taken at ${control.where} ` +
+      `k=${control.k.toFixed(5)} (${(control.k / K_FLOOR).toFixed(2)}x K_FLOOR), which is the SAME reading 11a ` +
+      `divides by: ${nodeCount} nodes render as ${control.sep.blobs} components, a deficit of ${deficit} ` +
       `against ${edgeCount} seeded edges (${pct(edgeCount === 0 ? 0 : deficit / edgeCount)} of them, ` +
       `tolerance +/-${pct(MERGE_DEFICIT_TOLERANCE)}) — every LINKED pair sits closer than its own size ` +
-      `and fuses, which is a number this gate did not choose. So 11a's separability is a MEASURED pass` +
+      `and fuses, which is a number this gate did not choose. So 11a's denominator is a MEASURED number` +
       (mut("br11-control-at-extreme-zoom")
         ? "  [MUTATED: the control's reading was taken at the extreme zoom-out, where the size law has PRESERVED the separation, so the known fusion is no longer there to detect]"
         : ""),
   );
+
+  /*
+   * 11e — BOX-INVARIANCE, PROMOTED FROM AN ARGUMENT TO A CHECK.
+   *
+   * THE ARGUMENT: at a FIXED ABSOLUTE `k` the on-screen picture is determined by
+   * the world layout (deterministic, fixture-fixed) and the node screen size
+   * (`px · min(1, k/K_FLOOR)`, a function of `k` alone). The canvas box changes
+   * only (i) which `k` the operator STARTS at and (ii) whether the field is
+   * clipped. The anchored field spans ~160-185px on either box, so it is not
+   * clipped, and a bigger box merely adds empty margin.
+   *
+   * THE CHECK: set `--graph-column-scale` on `document.documentElement.style` IN
+   * THE PAGE — no source edit, no rebuild, dies with the tab — and re-run the
+   * anchored pass. `k_fit` moves by ~2.6x; the anchored ratio must not.
+   *
+   * `--mutate=br11-anchor-to-k-fit` puts the sample point back on `k_fit/2` over
+   * `k_fit`. The two scales then disagree and this check goes red. THAT MUTATION
+   * REPRODUCES TD-337 ON DEMAND, which is the strongest statement this gate can
+   * make about why the anchoring changed.
+   */
+  const otherScale = columnScale === 1 ? 2 : 1;
+  await tab.eval(
+    `document.documentElement.style.setProperty('--graph-column-scale', '${otherScale}'); return 1;`,
+  );
+  await tab.settle(1200);
+  await tab.until(isStill, { timeout: 60_000, label: `settles at --graph-column-scale ${otherScale}` });
+  const other = await anchoredPass(`--graph-column-scale ${otherScale}`);
+  await tab.eval(
+    "document.documentElement.style.removeProperty('--graph-column-scale');" +
+      "document.documentElement.style.removeProperty('--graph-row-min-h');" +
+      "return 1;",
+  );
+  await tab.settle(900);
+
+  if (other === null) {
+    check("11e", false, `no canvas to read at --graph-column-scale ${otherScale}`);
+  } else {
+    /* The mutation swaps BOTH readings back onto `k_fit`-relative points — the
+       pre-TD-337 instrument, reproduced exactly. */
+    const anchoredRatio = (pass) => {
+      if (!mut("br11-anchor-to-k-fit")) {
+        return {
+          value: at(pass, LOW_ANCHOR).sep.blobs / Math.max(1, at(pass, 1).sep.blobs),
+          how: `blobs(${LOW_ANCHOR}x K_FLOOR)/blobs(1x K_FLOOR) = ${at(pass, LOW_ANCHOR).sep.blobs}/${at(pass, 1).sep.blobs}`,
+        };
+      }
+      // `k_fit/2` over `k_fit` — the sample points TD-337 removed, taken as
+      // their OWN descent (see `anchoredPass`) so the mutation really stands
+      // where the old instrument stood.
+      const { num, den } = pass.kFitPair;
+      return {
+        value: num.sep.blobs / Math.max(1, den.sep.blobs),
+        how: `blobs(k_fit/2, requested ${(pass.kFit / 2).toFixed(5)}, reached k=${num.k.toFixed(5)})/blobs(k_fit, reached k=${den.k.toFixed(5)}) = ${num.sep.blobs}/${den.sep.blobs}`,
+      };
+    };
+    const a = anchoredRatio(shipped);
+    const b = anchoredRatio(other);
+    const drift = Math.abs(a.value - b.value);
+    check(
+      "11e",
+      INVARIANCE_TOLERANCE !== null && drift <= INVARIANCE_TOLERANCE,
+      (INVARIANCE_TOLERANCE === null
+        ? "UNCALIBRATED — INVARIANCE_TOLERANCE is null, so this check asserts nothing and says so rather than passing. "
+        : "") +
+        `BOX-INVARIANCE: at --graph-column-scale ${columnScale} the reading is ${pct(a.value)} (${a.how}, ` +
+        `canvas ${shipped.atFit.w}x${shipped.atFit.h}, k_fit=${kFit}, ink threshold ${T}); at ${otherScale} it is ` +
+        `${pct(b.value)} (${b.how}, canvas ${other.atFit.w}x${other.atFit.h}, k_fit=${other.kFit}, ink threshold ` +
+        `${other.T}). k_fit moved ${(Math.max(kFit, other.kFit) / Math.min(kFit, other.kFit)).toFixed(2)}x; ` +
+        `the reading moved ${(drift * 100).toFixed(2)}pp against a ` +
+        `${INVARIANCE_TOLERANCE === null ? "UNSET" : `${(INVARIANCE_TOLERANCE * 100).toFixed(1)}pp`} tolerance` +
+        (mut("br11-anchor-to-k-fit")
+          ? "  [MUTATED: both endpoints put back on k_fit-relative points — the pre-TD-337 instrument, which is exactly what TD-337 reports]"
+          : ""),
+    );
+  }
 
   // 11c — the vertical column. Its own concern; measured after the zoom sweep
   // so the sweep never sees a mid-flight layout.
@@ -4647,30 +5499,72 @@ async function gBr11(tab) {
 
   await tab.clearViewport();
 
-    note(
-    "FR-250 DISPOSITION, 2026-08-03: 11a AND 11b SHIP RED, KNOWINGLY, AND TD-337 OWNS THEM. " +
-      "Doubling the graph column (--graph-column-scale: 2) moved k_fit 0.13275 -> 0.34271, a 2.6x " +
-      "change on a BYTE-IDENTICAL bundle and an identical 710-node/352-edge payload — because " +
-      "k_fit is a function of the CANVAS BOX. Both of this gate's calibrations were derived at the " +
-      "old k_fit and now measure a different regime: 11a samples at k_fit/2, which WAS 0.066 (BELOW " +
-      "K_FLOOR = 0.11, so nodes sat clamped at their floor size) and is now 0.171 (ABOVE it, so " +
-      "they scale normally) — 50.4% against a 60% floor. 11b is the negative control asserting a " +
-      "merge is DETECTABLE at FIT; with nodes relatively smaller nothing fuses at FIT, so the " +
-      "control cannot observe the thing it exists to prove. " +
-      "NEITHER THRESHOLD WAS TOUCHED, and neither should be: a floor re-derived against an input " +
-      "that moves with the canvas will move again. TD-337's fix is to anchor the measurement to " +
-      "K_FLOOR rather than to k_fit. " +
-      "READ THIS BEFORE DIAGNOSING: the PICTURE IMPROVED. At FIT the taller canvas resolves 710 of " +
-      "710 nodes with a largest blob of 0.1% of the ink, where the pre-FR-250 canvas resolved 358. " +
-      "What is red is the instrument's calibration, not the graph. If 11a/11b go GREEN and nobody " +
-      "fixed TD-337, that is the surprising result — something moved the canvas box back.",
+  note(
+    "TD-337 RESOLVED, 2026-08-05 — WHAT 11a AND 11b ARE NOW ANCHORED TO, AND THE BASELINE WITH ITS " +
+      "SPREAD. Both were previously calibrated against k_fit, which is zoomToFit()'s scale: the " +
+      "layout extent fitted into the CANVAS BOX. The box is a layout property, so it moves — FR-250 " +
+      "proved it as a controlled experiment nobody designed as one, taking k_fit 0.13275 -> 0.34271 " +
+      "on a BYTE-IDENTICAL bundle and an identical 710-node/352-edge payload just by doubling " +
+      "--graph-column-scale. 11a's sample point (k_fit/2) crossed K_FLOOR on the way, out of the " +
+      "protected regime whose property it was asserting, and read 50.4% against a 60% floor. " +
+      "THE GATE DID NOT BREAK; ITS SUBJECT MOVED OUT FROM UNDER IT. " +
+      "BOTH ARE NOW ANCHORED TO K_FLOOR, WHICH IS A SOURCE CONSTANT: 11a reads " +
+      "blobs(K_FLOOR/2)/blobs(K_FLOOR), 11b takes its deficit control at the K_FLOOR anchor (the " +
+      "same reading 11a divides by), and the ink threshold is calibrated there too. " +
+      "BASELINE, 5 unmutated runs x 2 column scales on this tree: 11a 98.6-99.7% (spread 1.1pp) " +
+      "against a 0.95 floor; largest blob 0.4-0.9% against a 25% ceiling; 11b's deficit 356 against " +
+      "352 seeded edges (101.1%) on every run, tolerance +/-10%. " +
+      "THE SAMPLE IS BELOW K_FLOOR AND THAT IS THE WHOLE POINT: at k = K_FLOOR the clamp sits on " +
+      "its own boundary, so the PRE-FR-244 DEFECT PASSES A READING TAKEN THERE. A gate anchored AT " +
+      "K_FLOOR is a gate the bug walks through. " +
+      "IF 11a OR 11b GOES RED AND NOBODY TOUCHED THE GRAPH: read 11e first. If 11e is green the box " +
+      "is not the cause, and the picture itself changed.",
   );
-note(
+  note(
+    "WHAT 11e BUYS, because it is the artefact rather than a checkbox. TD-337's defect was that a " +
+      "gate's sample point silently followed the canvas box, and the replacement rests on an " +
+      "ARGUMENT — that a reading at a fixed absolute k does not depend on the box. 11e turns that " +
+      "argument into a check by setting --graph-column-scale on document.documentElement.style IN " +
+      "THE PAGE (no source edit, no rebuild, dies with the tab) and re-running the whole anchored " +
+      "pass. MEASURED: k_fit moves 2.58x and the canvas goes 1058x1084 -> 1058x423 while the " +
+      "anchored reading moves 0.28-0.56pp and the ink threshold derived at the anchor comes out " +
+      "IDENTICAL (119.17) on both boxes. `--mutate=br11-anchor-to-k-fit` puts both endpoints back " +
+      "on k_fit-relative points and REPRODUCES TD-337 ON DEMAND. This is the check that would have " +
+      "caught TD-337 before it shipped.",
+  );
+  note(
     "11a/11b are a PAIRED reading in the 7d spirit, not a tolerance: the SAME node set, the SAME " +
       "colours and ONE calibrated ink threshold, with only the zoom differing. The threshold is " +
-      "calibrated once at FIT and held absolute, because a per-frame self-calibration would " +
-      "re-normalise a picture that got dimmer back into looking unchanged. `masked` is printed at " +
-      "every level so 'separable' can be told apart from 'the nodes disappeared'.",
+      "calibrated once AT THE K_FLOOR ANCHOR and held absolute — once, because a per-frame " +
+      "self-calibration would re-normalise a picture that got dimmer back into looking unchanged; " +
+      "at K_FLOOR rather than at FIT (TD-337) because FIT is a function of the canvas box, so a " +
+      "FIT-calibrated threshold would carry the box into every reading in the sweep. `masked` is " +
+      "printed at every level so 'separable' can be told apart from 'the nodes disappeared'.",
+  );
+  note(
+    "WHAT 11a's CONTROLS CAN AND CANNOT REACH, stated because the gap is real. Two mutations bite " +
+      "it, by two different mechanisms: br11-measure-above-the-clamp (86.9%) takes the SAME 2x " +
+      "zoom-out one octave higher, entirely in the regime where node screen size is pinned and the " +
+      "gaps shrink — the pre-FR-244 behaviour, sampled where the current law still exhibits it; " +
+      "br11-measure-at-blob-zoom (81.1%) drags the numerator to the extreme end, where pixel " +
+      "quantisation rather than fusion removes components. NOT AVAILABLE FROM THE HARNESS is a " +
+      "mutation that restores the pre-FR-244 SIZE LAW — but the population WAS reached " +
+      "out-of-band during TD-337 validation, by rebuilding the product with `sizePx / globalScale` " +
+      "and re-running this gate: it reads 0.3% at K_FLOOR/2 (one blob holding 100% of the ink) " +
+      "against the 95% floor, while 11b at K_FLOOR stayed GREEN with a component count identical " +
+      "to the healthy build. That is the real defect population, two orders of magnitude below " +
+      "the harness proxies above, and it is the measured proof that a gate anchored AT K_FLOOR " +
+      "passes the original bug. The harness limit is not an oversight: useGraph.ts exposes " +
+      "__igrisGraphStillness as a READ-ONLY diagnostic on purpose, and the defect state cannot be " +
+      "reached by choosing a zoom either — under the fixed law the node-size-to-field ratio is " +
+      "CONSTANT for every k <= K_FLOOR, so the old law's picture at K_FLOOR/2 is twice as dense as " +
+      "anything the fixed law can produce at any zoom. That is not a hole in the harness; it is " +
+      "what the fix MEANS. The law's arithmetic is pinned by shapes.test.ts; this gate pins the " +
+      "picture that arithmetic produces. FOR THE RECORD, A FIRST DRAFT OF " +
+      "br11-measure-above-the-clamp USED A 2x -> 1x K_FLOOR PAIR AND READ 98.9% — IT DID NOT BITE, " +
+      "because at that density the unprotected regime has not begun fusing yet. It was re-derived " +
+      "at 2.5x -> 1.25x rather than accepted, which is the difference between a control and a " +
+      "decoration.",
   );
   note(
     "STATED LIMIT (learning 1095). This gate measures COMPONENT COUNT — 'are these still distinct " +
@@ -5613,14 +6507,40 @@ async function main() {
     for (const kind of Object.keys(worlds)) {
       process.stdout.write(`${`${kind} brain`.padEnd(12)}${worlds[kind].brain}  ->  ${worlds[kind].url}\n`);
     }
-    process.stdout.write(
-      `hermetic    allowRemoteModels=false in every server: ${Object.keys(worlds)
-        .map((k) => `${k}=${hermeticState(worlds[k]).armed ? "armed" : `NOT ARMED (${hermeticState(worlds[k]).reason})`}`)
-        .join(" · ")}\n`,
-    );
+    const herm = hermeticSurvey(worlds);
+    process.stdout.write(`hermetic    allowRemoteModels=false in every server: ${herm.line}\n`);
     process.stdout.write(
       `mutation    ${MUTATE === null ? "none — every gate must PASS" : `${MUTATE} (${MUTATIONS[MUTATE].gate}): ${MUTATIONS[MUTATE].how}`}\n`,
     );
+
+    /*
+     * TD-320 #1 — THE FAIL-FAST. Assert what the banner just printed.
+     *
+     * `G-BR-3`'s `3-hermetic` is the ledger entry, but a `--gates=7,11` run —
+     * which is how every calibration in this file is iterated — never reaches
+     * G-BR-3 at all. So the runs whose numbers become thresholds are exactly the
+     * runs the ledger check cannot protect. This refuses to start instead.
+     *
+     * Under `--mutate` it WARNS rather than exits, because
+     * `br3-hermetic-one-world-unarmed` has to reach `3-hermetic` to redden it —
+     * a fail-fast that exited first would make that mutation unrunnable and
+     * leave the widened check with no demonstrated failing counterpart.
+     */
+    if (!herm.armed) {
+      const diag = herm.unarmed.map((r) => `  ${r.kind}: ${r.reason}`).join("\n");
+      if (MUTATE === null) {
+        process.stderr.write(
+          `\nREFUSING TO RUN — ${herm.unarmed.length} of ${herm.rows.length} servers are NOT hermetic:\n${diag}\n` +
+            `Those servers can reach the HF Hub, so any reading taken in this run may have been paid for with a ~90 MB network fetch. ` +
+            `Fix the preload (see TRANSFORMERS_ENTRY) rather than re-running.\n`,
+        );
+        process.exitCode = 2;
+        return;
+      }
+      process.stdout.write(
+        `hermetic    WARNING — not armed everywhere, continuing because a mutation is active (${MUTATE}):\n${diag}\n`,
+      );
+    }
 
     for (const kind of Object.keys(worlds)) {
       tabs[kind] = await openTab(chrome.port, `${worlds[kind].url}/#/overview`);
@@ -5703,10 +6623,62 @@ async function main() {
       : ` [FILTERED — ${notRun.length} gate(s) did NOT run: ${notRun.join(", ")}; this is NOT a full-gate run]`;
   if (filtered !== "") process.stdout.write(`${filtered.trim()}\n`);
 
+  /*
+   * THE KNOWN_RED LEDGER, READ OUT. Two halves, and the SECOND is the one worth
+   * building: a failure that is already owned is boring, and a KNOWN_RED check
+   * that has quietly gone GREEN is the interesting event this file could not
+   * report before.
+   */
+  const knownRedFailures = failed.filter((f) => KNOWN_RED[f.id] !== undefined);
+  const surprises = knownRedSurprises();
+  let ledger = "";
+  if (knownRedFailures.length > 0) {
+    const briefs = [...new Set(knownRedFailures.map((f) => KNOWN_RED[f.id]))].sort();
+    ledger = ` — ${knownRedFailures.length} known-red (${briefs.join(", ")})`;
+    for (const f of knownRedFailures) {
+      process.stdout.write(
+        `KNOWN-RED ${f.gate} ${f.id} — ships red by operator decision, owned by ${KNOWN_RED[f.id]}. See the disposition note beside the check for its measured baseline and spread.\n`,
+      );
+    }
+  }
+  for (const s of surprises) {
+    process.stdout.write(
+      `SURPRISE ${s.gate} ${s.id} is GREEN but is listed KNOWN_RED under ${s.brief}. ` +
+        `THIS IS THE ALARMING OUTCOME, NOT THE REASSURING ONE: either ${s.brief} was fixed and its ` +
+        `KNOWN_RED row + disposition note were not removed in the same commit, or nobody fixed it and ` +
+        `something moved the world it measures (a canvas box, a viewport, a payload) back under it. ` +
+        `Compare against the baseline recorded beside the check before believing the green.` +
+        (MUTATE === null
+          ? ""
+          : ` NOTE: a MUTATION is active (${MUTATE}), and an injected defect can legitimately move a ` +
+            `check in either direction — re-read this on an UNMUTATED run before treating it as a finding.`) +
+        "\n",
+    );
+  }
+  const surprise =
+    surprises.length === 0
+      ? ""
+      : ` — ${surprises.length} SURPRISE(S): ${surprises.map((s) => `${s.id}/${s.brief}`).join(", ")}`;
+
   if (MUTATE === null) {
     if (failed.length > 0) {
-      for (const f of failed) process.stdout.write(`FAILED  ${f.gate} ${f.id}\n`);
-      process.stdout.write(`VERDICT: FAIL${filtered}\n`);
+      for (const f of failed) {
+        process.stdout.write(
+          `FAILED  ${f.gate} ${f.id}${KNOWN_RED[f.id] === undefined ? "" : `  [KNOWN RED — ${KNOWN_RED[f.id]}]`}\n`,
+        );
+      }
+      process.stdout.write(`VERDICT: FAIL${ledger}${surprise}${filtered}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    // A surprise is NOT a green run. Exiting non-zero here is what forces the
+    // ledger row and its disposition note to be removed in the same commit that
+    // makes the check pass — the coupling that keeps this file from lying about
+    // itself once a red is finally fixed.
+    if (surprises.length > 0) {
+      process.stdout.write(
+        `VERDICT: FAIL — every CHECK passed, but ${surprises.length} of them is listed KNOWN_RED and its row was not removed${surprise}${filtered}\n`,
+      );
       process.exitCode = 1;
       return;
     }
@@ -5731,6 +6703,26 @@ async function main() {
   process.stdout.write(
     `\nexpected the mutation to break ${expected}; failures observed: ${failed.map((f) => `${f.gate}/${f.id}`).join(", ") || "NONE"}\n`,
   );
+  /*
+   * THE MUTATION HARNESS CANNOT JUDGE A KNOWN_RED GATE, and it says so.
+   *
+   * Inversion works by asking whether the predicted gate id appears in `failed`.
+   * When that id ALSO fails without the mutation, the answer is yes for a reason
+   * that has nothing to do with the injected defect — the run would print
+   * "PASS (mutation caught)" even if the mutation did nothing at all. Sentinel
+   * found this on 2026-08-02 against `br7-backout-re-entrances`. It is the
+   * learning-1094 vacuity class one level up: not a check that cannot fail, but
+   * a CONTROL that cannot distinguish. Judge such a run by its NUMBERS.
+   */
+  if (KNOWN_RED[want] !== undefined) {
+    process.stdout.write(
+      `UNINFORMATIVE VERDICT — ${expected} is listed KNOWN_RED under ${KNOWN_RED[want]}, so it fails WITHOUT this ` +
+        `mutation too. The inversion below is therefore satisfied for a reason unrelated to the injected defect, ` +
+        `and it would be satisfied even if the mutation did nothing. Judge this run by the NUMBERS the check ` +
+        `printed, against the ones the unmutated baseline prints. This line disappears when ${KNOWN_RED[want]} ` +
+        `lands and the KNOWN_RED row goes with it.\n`,
+    );
+  }
   if (failed.length === 0) {
     process.stdout.write(
       `VERDICT: VACUOUS — the injected defect did NOT fail any check. The gate proves nothing.${filtered}\n`,
@@ -5739,7 +6731,9 @@ async function main() {
     return;
   }
   process.stdout.write(
-    `VERDICT: PASS (mutation caught${hit ? "" : " — note: by a different check than predicted, listed above"})${filtered}\n`,
+    `VERDICT: PASS (mutation caught${hit ? "" : " — note: by a different check than predicted, listed above"})${
+      KNOWN_RED[want] === undefined ? "" : ` — BUT SEE THE UNINFORMATIVE-VERDICT LINE: ${want} is KNOWN_RED`
+    }${ledger}${surprise}${filtered}\n`,
   );
 }
 

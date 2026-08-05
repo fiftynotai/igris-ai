@@ -39,10 +39,13 @@
  *   That `pages/Graph.tsx` and `layers/useNeighbours.ts` actually route through
  *   this module, nor that the seed reaches the canvas. Those are source and
  *   browser claims respectively.
- *   **Siblings:** `cli/src/__tests__/dashboard-layers-source.test.ts` (the
- *   graphCache-hoist source scan) and `cli/scripts/browser-gate.mjs` **G-BR-7**
- *   (drill in, back out: zero refetch and a layout that is restored rather than
- *   re-entranced, with a REFRESH as the paired control).
+ *   **Siblings:** `cli/src/__tests__/dashboard-layers-source.test.ts` — since
+ *   TD-320 its *"both consumers route through the SHARED cache, not their own
+ *   fetch"* test pins **both** files named above (it pinned only `Graph.tsx`
+ *   before, so half this disclaimer was load-bearing and half was a gap) —
+ *   and `cli/scripts/browser-gate.mjs` **G-BR-7** (drill in, back out: zero
+ *   refetch and a layout that is restored rather than re-entranced, with a
+ *   REFRESH as the paired control).
  *
  * HOW `api.graph` IS STUBBED, AND WHY NOT `vi.mock`
  * ------------------------------------------------
