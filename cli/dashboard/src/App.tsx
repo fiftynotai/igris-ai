@@ -6,18 +6,64 @@
  * beat), routing, and the degraded/empty/loading states. It owns no domain
  * rendering beyond the Overview counters.
  */
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { Grain } from "./components/chrome/Grain";
 import { Cursor } from "./components/chrome/Cursor";
 import { Nav } from "./components/chrome/Nav";
 import { StatePage } from "./components/ui/StatePage";
 import { Overview } from "./pages/Overview";
-import { Graph } from "./pages/Graph";
-import { Layers } from "./pages/Layers";
-import { Triage } from "./pages/Triage";
 import { useLive } from "./lib/useLive";
 import { usePalette } from "./lib/usePalette";
 import { PENDING_ROUTES, ROUTE_LABELS, useRoute } from "./router";
+
+/**
+ * ─────────────────────────────────────────────────────────────────────────────
+ * TD-347 — THE ROUTE SPLIT. THREE LAZY, ONE EAGER, AND THE EAGER ONE IS ARGUED.
+ * ─────────────────────────────────────────────────────────────────────────────
+ * These three `lazy()` calls ARE the definition of the bundle's initial-load
+ * set. `cli/src/__tests__/dashboard-chunks.test.ts` asserts that set's size and
+ * `cli/scripts/browser-gate.mjs` G-BR-15 asserts its behaviour (which chunk is
+ * fetched on which route). Making a route eager or lazy is therefore a
+ * cross-subsystem change: re-measure both ceilings and re-run the browser gate
+ * unfiltered, in the same commit. MAINTAINING.md carries the row.
+ *
+ * WHY THESE THREE:
+ *  - `Graph` exclusively owns `graph/**` and, through
+ *    `useGraph.ts -> instance-factory.ts`, the ENTIRE force-graph + d3 family.
+ *    Measured at TD-347's Phase 0 against the pre-split chunk: that family was
+ *    323_511 B of 1_181_077 B rendered (27.4%), 359_106 B with `src/graph`
+ *    (30.4%). It is most of the win.
+ *  - `Layers` exclusively owns the four layer views, the record family and the
+ *    in-repo markdown renderer.
+ *  - `Triage` exclusively owns `triage/**` and `components/triage/**`.
+ *
+ * WHY `Overview` STAYS EAGER — measured, not reflexive. It is the fallback for
+ * `#/` and for every unparseable hash (`router.tsx#parse`), so it is the landing
+ * view of a cold open; and its EXCLUSIVE weight is 8_005 B rendered (Phase 0's
+ * per-module report), because every import it has is already in the shell or
+ * shared with another route EXCEPT `components/ui/Card.tsx` (~1 KB of source),
+ * which only `Overview` uses. Lazying it would trade a round trip on the
+ * commonest first paint for a chunk of a few KB. The plan's own reversal
+ * threshold was ~10 KB and the measurement came in under it.
+ *
+ * WHY `gsap` IS NOT PART OF THIS WIN, said out loud so nobody claims it:
+ * `components/chrome/Cursor.tsx` is a SHELL component and imports it, so its
+ * 153_264 rendered bytes are eager whatever happens to the routes. It is the
+ * largest non-React eager item and the next planner's candidate. Out of scope
+ * here — removing it is a behaviour change, not a delivery change.
+ *
+ * Rollup hoists modules shared between two ASYNC chunks (e.g.
+ * `components/record/**` between Layers and Triage) into their own async chunk,
+ * fetched in PARALLEL with the route chunk via Vite's `__vitePreload`. Not a
+ * waterfall. Anything shared between an eager and a lazy module stays in the
+ * entry, which is correct.
+ *
+ * The `.then(m => ({ default: m.X }))` shape is because these are NAMED exports;
+ * `React.lazy` requires a module whose `default` is the component.
+ */
+const Graph = lazy(() => import("./pages/Graph").then((m) => ({ default: m.Graph })));
+const Layers = lazy(() => import("./pages/Layers").then((m) => ({ default: m.Layers })));
+const Triage = lazy(() => import("./pages/Triage").then((m) => ({ default: m.Triage })));
 
 export function App() {
   const [palette, setPalette] = usePalette();
@@ -54,8 +100,25 @@ export function App() {
         search={search}
         onSearch={setSearch}
       />
-      <main id="main" className="shell-main">
+      {/*
+        `data-route` and the fallback's `data-route-loading` are the ROUTE
+        READINESS CONTRACT (TD-347). They are product-visible on purpose:
+        `browser-gate.mjs#Tab.routeReady` waits on them from `hash()` and
+        `goto()`, which is EVERY gate in that file. Before TD-347 those two
+        methods waited for `#main` to exist and then slept 400 ms — fine while
+        the app was one chunk, and a race the moment a route's code arrives over
+        the wire, because `#main` is mounted while the Suspense fallback is up.
+        A readiness marker a test can WAIT on beats a sleep that has to be
+        widened. Renaming either attribute silently returns all fifteen gates to
+        sleep-based synchronisation; MAINTAINING.md carries the row.
+      */}
+      <main id="main" className="shell-main" data-route={route}>
         {pendingBrief ? (
+          /*
+           * OUTSIDE the Suspense boundary, deliberately: this branch renders
+           * with no page module at all, so a reserved-but-unbuilt route must
+           * never be able to suspend.
+           */
           <StatePage
             inset
             variant="empty"
@@ -67,22 +130,49 @@ export function App() {
             message={`${ROUTE_LABELS[route]} ships with ${pendingBrief}. The shell is ready for it.`}
             meta={`${pendingBrief} · pending`}
           />
-        ) : route === "graph" ? (
-          <Graph search={search} focus={focus} />
-        ) : route === "layers" ? (
-          <Layers live={live} search={search} layer={layer} address={address} />
-        ) : route === "triage" ? (
-          /*
-           * FR-241. The write affordances inside gate themselves on
-           * `live.health.write.available` (see `pages/Triage.tsx#writeState`)
-           * rather than being gated here: the READ half of this page is useful
-           * on a machine whose write door is unavailable, and hiding the whole
-           * tab would turn "the write surface is down" into "the queue does not
-           * exist". *Disabled, not broken.*
-           */
-          <Triage live={live} search={search} />
         ) : (
-          <Overview live={live} />
+          /*
+           * ONE boundary for all four routes, inside `<main>` — so the chrome,
+           * the nav and the search box never unmount while a route's chunk is
+           * in flight. The fallback reuses `StatePage variant="loading"`, which
+           * already has the spinner and already spreads `...props` onto its
+           * `<section>` (`components/ui/StatePage.tsx`), so the one new visual
+           * surface this brief adds invents nothing.
+           */
+          <Suspense
+            fallback={
+              <StatePage
+                inset
+                variant="loading"
+                data-route-loading=""
+                headline={
+                  <>
+                    <em>{ROUTE_LABELS[route].toLowerCase()}</em> incoming.
+                  </>
+                }
+                message="Deferred route — its code is arriving from the local server."
+                meta={`${route} · chunk`}
+              />
+            }
+          >
+            {route === "graph" ? (
+              <Graph search={search} focus={focus} />
+            ) : route === "layers" ? (
+              <Layers live={live} search={search} layer={layer} address={address} />
+            ) : route === "triage" ? (
+              /*
+               * FR-241. The write affordances inside gate themselves on
+               * `live.health.write.available` (see `pages/Triage.tsx#writeState`)
+               * rather than being gated here: the READ half of this page is useful
+               * on a machine whose write door is unavailable, and hiding the whole
+               * tab would turn "the write surface is down" into "the queue does not
+               * exist". *Disabled, not broken.*
+               */
+              <Triage live={live} search={search} />
+            ) : (
+              <Overview live={live} />
+            )}
+          </Suspense>
         )}
       </main>
     </div>

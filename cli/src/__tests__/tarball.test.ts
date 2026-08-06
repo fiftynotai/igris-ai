@@ -730,6 +730,12 @@ interface PackReport {
  *   `cli/CHANGELOG.md`, which ships. **`brain-mcp-server/**` was not touched at
  *   all**, and that zero is the single largest reason this row is small.
  *
+ *   **SUPERSEDED BY TD-347 — DO NOT ACT ON THE PARAGRAPH BELOW.** It correctly
+ *   told the next planner to split the chunk as their first step; TD-347 DID
+ *   THAT, so the instruction is discharged, not pending. The current numbers are
+ *   in the TD-347 block further down (initial set 285_390 B against a 309_390 B
+ *   ceiling). Kept as the provenance of the 616 B figure, not as advice.
+ *
  *   THE CHUNK IS NOW THE BINDING CEILING BY A WIDE MARGIN, and the next
  *   dashboard brief has to plan around it rather than budget against it:
  *   **616 B**, against this gate's 104.9 KB. That is not headroom. A brief that
@@ -737,7 +743,8 @@ interface PackReport {
  *   dynamic import for the layers or the graph) as its first step, not as a
  *   cut-ladder rung. **Raise NEITHER limit** — TD-329 raised the packed one
  *   ONCE, before the work, as a recorded operator decision, and that is not a
- *   precedent.
+ *   precedent. *(The "raise neither" rule is the one line here that is NOT
+ *   superseded — TD-347 inherits it verbatim for both of its ceilings.)*
  *
  *   THE CUT LADDER WAS DECLARED BEFORE THE WORK AND WAS NOT INVOKED. Rung by
  *   rung, with what each was measured to be worth:
@@ -836,6 +843,12 @@ interface PackReport {
  *   by a wider margin than FR-245 faced. FR-246 declared a cut ladder before
  *   writing anything and did not need it (3_654 B against 10_169 B); the next
  *   brief has 6_515 B and should declare one too. **Raise NEITHER limit.**
+ *   *(SUPERSEDED BY TD-347 — DO NOT ACT ON THE CUT-LADDER INSTRUCTION ABOVE.
+ *   The split shipped; there is no single app chunk to declare a ladder
+ *   against. Bracketed DIRECTLY here rather than left to a two-hop chain via
+ *   FR-247's row, and note this paragraph sits ABOVE the TD-347 block's
+ *   'everything below is HISTORY' marker, so the marker does not cover it.
+ *   'Raise NEITHER limit' is the one clause that survives verbatim.)*
  *
  * FR-244 IS THE CHEAPEST ROW IN THIS LEDGER, and it is the CONVERSE of TD-328's
  * lesson rather than a contradiction of it. TD-328 spent 24.3 KB writing only
@@ -935,14 +948,108 @@ interface PackReport {
  * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~104.9 KB is what is left (the
  * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
- * superseded). **BUT THE PACKED FIGURE IS NO LONGER THE ONE THAT BINDS.** The
- * app chunk has **484 B** of slack against `vite.config.ts`'s
- * `chunkSizeWarningLimit` (559_516 B of 560_000). A brief adding ANY UI to this
- * bundle should plan a route-level code split as its FIRST step, not as a
- * cut-ladder rung — there is no longer a budget to cut from.
+ * superseded).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TD-347 (2026-08-06) — THE SINGLE-CHUNK ERA IS OVER. READ THIS FIRST.
+ * ─────────────────────────────────────────────────────────────────────────
+ * Everything below about "the app chunk" and its `chunkSizeWarningLimit` slack
+ * is HISTORY. There is no longer one chunk, and the binding budget is no longer
+ * a Vite warning — it is two EXECUTABLE ceilings in
+ * `cli/src/__tests__/dashboard-chunks.test.ts`, which is now authoritative for
+ * every browser-bundle number. Read the constants from there, never from here.
+ *
+ * THE NEW COMPOSITION, measured via `bash cli/scripts/build-dashboard.sh`:
+ *
+ *   INITIAL SET   285_390 B  over 1 file   (ceiling 309_390 B, 24_000 B slack)
+ *   TOTAL JS      562_923 B  over 7 chunks (ceiling 586_923 B, 24_000 B slack)
+ *   DEFERRED      277_533 B  over 6 chunks, off the critical path
+ *
+ *     Graph       206_455 B   <- the vendored force-graph family lives here
+ *     Layers       45_539 B
+ *     Triage       12_675 B
+ *     useQFilter   11_448 B
+ *     neighbours    1_036 B
+ *     Button          380 B
+ *
+ * The initial set fell 559_516 -> 285_390 B, a **274_126 B (49.0%) reduction**.
+ * Re-derived from the two operands beside it: 559_516 - 285_390 = 274_126;
+ * 274_126 / 559_516 = 49.0%. TOTAL JS went 559_516 -> 562_923 = **+3_407 B**,
+ * which is the chunking overhead and is the honest cost of the split.
+ *
+ * WHICH CEILING YOUR CHANGE IS CHARGED AGAINST — this is the AC #6 answer, and
+ * the reason the table above is spelled out rather than summarised:
+ *   * EAGER, charged to INITIAL_JS_CEILING: `App.tsx`, `router.tsx`,
+ *     `layers/model.ts`, `components/chrome/**`, most of `components/ui/**`,
+ *     `lib/**`, and `pages/Overview.tsx` (eager because `router.tsx#parse` falls
+ *     back to it for `#/` and every unknown hash, AND because its exclusive
+ *     weight is 8_005 B — every import it has is already shared EXCEPT
+ *     `ui/Card.tsx` (~1 KB), so lazying it would buy little and cost a round
+ *     trip on the commonest first paint).
+ *     NOT wholesale `components/ui/**`: `ui/Button.tsx` is used by three LAZY
+ *     routes and no eager one, so it is hoisted into its own DEFERRED
+ *     `Button-<hash>` chunk and charged to TOTAL_JS_CEILING only.
+ *   * DEFERRED, charged to TOTAL_JS_CEILING only: `pages/Graph.tsx` + `graph/**`,
+ *     `pages/Layers.tsx` + `pages/layers/**` + `components/record/**` +
+ *     `markdown/**`, and `pages/Triage.tsx` + `triage/**`.
+ *   * `gsap` stays EAGER regardless of the split — `components/chrome/Cursor.tsx`
+ *     anchors it. It is the largest non-React eager item and the next planner's
+ *     candidate; removing it is a behaviour change and was out of TD-347's scope.
+ *
+ * BOTH CEILINGS ARE `measured + 24_000 B`. The 24_000 B is four briefs at
+ * FR-247's 5_899 B, the largest single-brief chunk spend in this ledger
+ * (FR-246 spent 3_654 B; BR-085 spent 132 B). Re-derive it; do not round it.
+ * **Neither is ever raised to make room** — TD-329's discipline applies to both.
+ *
+ * SCOPE THE SUPERLATIVE. This ledger only starts recording CHUNK deltas at
+ * FR-246, and there is a bigger out-of-ledger case: `vite.config.ts`'s comment
+ * history puts the chunk at ~477 KB after FR-239 and 524.69 KB after FR-240,
+ * i.e. **~+47_700 B in one brief, ~8x FR-247's figure**. One FR-240-shaped brief
+ * busts either ceiling outright. That is NOT a reason to widen the headroom: the
+ * error runs the safe way (a red test and a forced conversation), and a headroom
+ * sized for the worst brief on record would absorb that brief silently. Stated
+ * so the next planner meets the number with the counterexample already in hand.
+ *
+ * WHY THERE ARE TWO AND NOT ONE, demonstrated rather than argued. Three plants,
+ * each built and run:
+ *   * PLANT A — 40 KB imported eagerly from `App.tsx`: INITIAL **RED** by
+ *     16_023 B (325_413 vs 309_390), TOTAL **RED** by the same.
+ *   * PLANT B — the same 40 KB imported ONLY from the lazy `pages/Graph.tsx`:
+ *     INITIAL **GREEN**, unchanged at 285_390; TOTAL **RED** by 16_017 B
+ *     (602_940 vs 586_923). **This is the whole reason the total ceiling
+ *     exists**: without it, `React.lazy` is an unbounded way to spend bytes
+ *     behind a boundary the initial ceiling cannot see — the "it moved
+ *     elsewhere" defect class this repo keeps filing.
+ *   * PLANT C — no bulk; a temporary vendor `manualChunks` pulling React out:
+ *     the entry FILE fell 285_390 -> 95_394 B (−189_996 B) while the INITIAL SET
+ *     moved only 285_390 -> 285_047 B (−343 B, now over two files) and the gate
+ *     stayed green — correctly. This is why `initialSet()` reads the entry
+ *     `<script>` PLUS its `<link rel="modulepreload">` closure: the metric is
+ *     the initial LOAD, not the initial FILE, and a vendor split cannot game it.
+ *
+ * A PLANT-CONSTRUCTION TRAP, recorded because it cost a false reading. The first
+ * draft referenced the bulk as `window.__bulk = BULK.length`. `BULK.length`
+ * constant-folds to a number, `BULK` becomes unused, and the 40 KB literal is
+ * tree-shaken — the build came back +18 B and the gate went green, which reads
+ * exactly like "the ceiling does not catch this". Verified by grepping the built
+ * chunks for the literal: absent. A plant must reference the WHOLE value
+ * (`window.__bulk = BULK`). **A demonstration that silently plants nothing is
+ * worse than no demonstration**, because it produces a confident green.
+ * (An earlier draft was worse still: `"x".repeat(40000)` is 20 characters of
+ * source, so it added 43 B. Use a real literal.)
+ *
+ * `chunkSizeWarningLimit` SURVIVES BUT IS DEMOTED, 560 -> 300. At 560 the
+ * largest chunk (285.39 kB) sat 274.61 kB below it, so it would effectively
+ * never fire again and would measure nothing — the exact defect scope item 4
+ * named. At 300 it is capable of firing, and deliberately TIGHTER than this
+ * gate's 309_390 B so the build warns before the test reddens. It is re-aimed just above the largest chunk and is
+ * now a build-time surprise detector, NOT the gate. The gate is the vitest file.
+ *
+ * HISTORY BELOW THIS LINE, kept as provenance:
  *
  * BR-085 measured 2026-08-04: **559_384 -> 559_516 B, +132 B**, spending 21% of
- * the 616 B FR-247 left.
+ * the 616 B FR-247 left. Superseded by TD-347 — that 484 B of slack no longer
+ * exists as a concept.
  *
  * CHUNK figure is SOLID; the PACKED figure below is a FLOOR, not a reading.
  * `npm pack` packs `dist/`, and on this machine `npm run build` in `cli/` is a
@@ -959,9 +1066,20 @@ interface PackReport {
  * The 132 B
  * are the client-side review-scope plumbing (the `review_status` field on the
  * search row type, the banner's scope source, and the search-params render) —
- * a genuinely small UI change, which is the point: **at 484 B, "small" is no
- * longer automatically affordable.** FR-248 and FR-249 both add UI and cannot
- * both fit; whichever runs first owns the route-level split.
+ * a genuinely small UI change, which was the point: at 484 B, "small" was no
+ * longer automatically affordable. **RESOLVED BY TD-347** — the split shipped
+ * separately (the operator's choice over folding it into whichever UI brief ran
+ * first), so FR-248 and FR-249 are both unblocked and neither owns it. They now
+ * plan against `INITIAL_JS_CEILING`, with 24_000 B of initial slack and the
+ * composition table above naming which chunk each change is charged to.
+ *
+ * TD-347's OWN PACKED READING, in BR-085's own terms: **unchanged-because-not-
+ * rebuilt, NOT free.** Nothing TD-347 touched is a packed surface —
+ * `dashboard-chunks.test.ts` is under `src/__tests__` (excluded from `dist`),
+ * `browser-gate.mjs` is not packed, and `MAINTAINING.md` / `docs/` are outside
+ * the package. The exception is `cli/CHANGELOG.md`, which IS in `package.json`
+ * `files` and ships, so the next real build moves the packed figure by roughly
+ * that entry's length. Do not record a `+0 B` delta here as a measurement.
  *
  * The "five GL-006 briefs remain" this sentence used to carry was not
  * re-derivable, so it is read off the goal's own edges instead. Re-derived
@@ -1048,6 +1166,11 @@ interface PackReport {
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
  * superseded). **And the OTHER ceiling is not merely binding now, it is
  * effectively spent**: **616 B** of chunk slack against this gate's 104.9 KB.
+ * *(THAT CHUNK CLAUSE IS SUPERSEDED BY TD-347 — there is no single chunk any
+ * more, and the browser-bundle budget is now two executable ceilings in
+ * `dashboard-chunks.test.ts`. The PACKED half of this paragraph still stands.
+ * This copy sits below the HISTORY marker but opens with an instruction, so it
+ * is labelled in place rather than left to be read as current.)*
  * FR-246 estimated against the chunk alone and was right about it (+3_654 B)
  * while spending +27_055 B here; FR-247 estimated BOTH and inverted the error —
  * +5_899 B of chunk against a 2.5-4.6 KB estimate, +11_132 B packed against a

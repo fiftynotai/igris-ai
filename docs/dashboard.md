@@ -1567,6 +1567,28 @@ stale bundle ships. It prints measured byte sizes on every run, and
 `dashboard-artifact.test.ts` additionally fails if any source under
 `cli/dashboard/{src,public}` is newer than the built `index.html`.
 
+Since **TD-347** the script also prints the two figures the byte gate asserts,
+so the safe build states them directly:
+
+```
+build-dashboard: INITIAL SET 285390 bytes over 1 file(s) -- assets/index-BDfgS0f4.js
+build-dashboard: TOTAL JS    562923 bytes over 7 chunk(s), 6 deferred (277533 bytes off the critical path)
+```
+
+**INITIAL SET is a LOAD, not a file** — the entry `<script type="module">` plus
+every `<link rel="modulepreload">` in `index.html`, i.e. everything the browser
+downloads before it can paint. Three of the four route pages are `React.lazy`, so
+`Graph` (which exclusively owns the vendored `force-graph`), `Layers` and
+`Triage` arrive on navigation; `Overview` stays eager because it is the router's
+fallback for `#/` and every unknown hash.
+
+**ON THIS MACHINE `npm run build` IN `cli/` IS A LIVE DEPLOY** — the operator's
+MCP runs the brain server out of `cli/dist`, so a build ships to a running
+brain. Use `bash cli/scripts/build-dashboard.sh` for any dashboard measurement:
+it writes only the gitignored `cli/dist/dashboard`. This is also why the PACKED
+figure cannot be re-measured mid-brief, and why a `+0 B` packed delta means
+*not rebuilt*, never *free*.
+
 `cli/package.json` `files` already lists `"dist"`, so `dist/dashboard/**` ships
 with no manifest change. `tarball.test.ts` asserts that it actually does, and
 that the packed size stays under the packed-size ceiling (introduced by FR-238, raised to +550 KB by TD-329).
@@ -1585,8 +1607,9 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-lock.test.ts` | lock write/read/atomicity, **0600 mode (including the stale-tmp rewrite path)**, liveness classification, pid reuse, stale reclaim, ownership-checked release |
 | `cli/src/__tests__/brain-bridge.test.ts` | module resolution in a built tree, memoisation, read-only handle, every degradation path |
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
+| `cli/src/__tests__/dashboard-chunks.test.ts` | **TD-347 — the bundle's two byte ceilings.** `INITIAL_JS_CEILING` over the initial LOAD (the entry `<script>` plus its `<link rel="modulepreload">` closure, NOT the entry file), `TOTAL_JS_CEILING` over every `assets/*.js`, and an assertion that at least one chunk is non-initial so the app cannot quietly un-split. Both are `measured + 24_000 B`; **neither is ever raised to make room.** Demonstrated red three ways — eager bulk (both red), lazy-only bulk (initial green, total red — the reason the total half exists), and a vendor `manualChunks` split (entry file −189,996 B, initial set −343 B, green and correct). |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246) → **+445.1 KB** (FR-247) → **+445.1 KB** (FR-250, +1_471 B — CSS lands in the stylesheet asset, so the app CHUNK is byte-identical and its 616 B of slack is untouched), leaving **104.9 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit — since FR-247 it is not merely the binding one, it is effectively SPENT: the single app chunk is now **559.38 kB** (559,384 B) against a 560 kB `chunkSizeWarningLimit` — **616 B of slack**, against this gate's 104.9 KB. A brief adding any UI to this bundle should plan a route-level code SPLIT as its first step rather than budget against a cut ladder. FR-247 spent **+11,104 B** here against a 17-32 KB estimate and **+5,899 B** of chunk against a 2.5-4.6 KB one — two errors in opposite directions across two briefs, which is why both surfaces must be estimated AND measured. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+550 KB** over baseline since TD-329 (2026-08-02), a recorded operator decision raising it from the original +400 KB *before* the work that needed it. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246) → **+445.1 KB** (FR-247) → **+445.1 KB** (FR-250, +1_471 B — CSS lands in the stylesheet asset, so the app CHUNK is byte-identical and its 616 B of slack is untouched), leaving **104.9 KB** under the new ceiling. FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit — it was effectively SPENT from FR-247 (616 B) through BR-085 (484 B), and **TD-347 RETIRED THE PREMISE**: there is no single app chunk any more. The dashboard now ships an eager INITIAL SET of **285,390 B** plus six deferred chunks holding **277,533 B** off the critical path, and the binding budget is two EXECUTABLE ceilings in `cli/src/__tests__/dashboard-chunks.test.ts` (`INITIAL_JS_CEILING` 309,390 B and `TOTAL_JS_CEILING` 586,923 B), not a Vite warning. `chunkSizeWarningLimit` is re-aimed just above the largest chunk and demoted to a build-time surprise detector. A brief adding UI now plans against the INITIAL ceiling and reads the composition table in `tarball.test.ts` to see which chunk it is charged to. FR-247 spent **+11,132 B** here against a 17-32 KB estimate and **+5,899 B** of chunk against a 2.5-4.6 KB one — two errors in opposite directions across two briefs, which is why both surfaces must be estimated AND measured. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
@@ -2101,6 +2124,56 @@ And on `#/layers`, the two things the automated gate cannot judge:
   search after a fresh install, where the ~90 MB MiniLM model is not cached: the
   request must still answer, and it must say so. If it silently returns plausible
   rows with no banner, that is the exact AC-#2 failure D3 exists to prevent.
+
+---
+
+### G-BR-15 — TD-347: every route reaches its data from cold (and only the routes that need them fetch their chunks)
+
+Added by **TD-347** when three of the four route pages became `React.lazy` (`Overview` stays eager — it is the router's fallback for `#/` and every unknown hash). It runs
+**FIRST** in `main()`, immediately after the tabs open — every later gate visits
+`#/graph` and warms that chunk's immutable HTTP cache, so first position is the
+only place `15d` and `15e` get a genuinely cold origin.
+
+| Check | Asserts |
+|---|---|
+| `15a` | all 8 route addresses reach a **data-bearing** selector from a cold document — not `#main`, the data |
+| `15b` | the same 8 through in-session navigation, which is the path that actually exercises Suspense |
+| `15c` | zero `window.onerror` / `unhandledrejection` across every navigation — *"Failed to fetch dynamically imported module"* is the signature failure of a botched split and it does not fail a build |
+| `15d` | **the deferral is real** — a cold `#/overview` fetches only the initial set; a cold `#/graph` fetches exactly `Graph`, `Button`, `neighbours` and *not* `Layers`, `Triage`, `useQFilter`. Enumerated, not hand-waved. |
+| `15e` | the cold cost is **recorded, not thresholded** — 20 readings with the cache disabled, min/median/max printed. A wall-clock threshold in this harness is a flake factory. |
+
+Its mutations: `td347-read-before-ready` (skip the readiness wait),
+`td347-chunk-404` (block a route's chunk), `td347-preload-the-lazy-chunk` (the
+well-meaning "make navigation instant" change that silently re-charges the
+initial load), `td347-warm-cold-reading` (take the cold reading on a warm
+document). All four invert. `td347-chunk-404` is caught by the gate **throwing**
+rather than by the predicted `15a` assertion — recorded as-is rather than tidied,
+because the honest statement is *it is caught*, not *it is caught the way we
+guessed*.
+
+**THE SYNCHRONISATION CONTRACT, and why it is product-visible.** Before the
+split, `Tab.hash()` and `Tab.goto()` waited for `#main` and then slept 400 ms.
+After it, `#main` exists **while a Suspense fallback is mounted and the chunk is
+still in flight**, so all fourteen existing gates would have been racing a fetch.
+The fix is deterministic, not a longer sleep: `App.tsx` emits
+`#main[data-route="<route>"]` and the fallback emits `[data-route-loading]`, and
+`Tab.routeReady()` waits on both before the settle. **Renaming either attribute
+silently returns all fifteen gates to sleep-based synchronisation** — which is
+why it is a mapped contract in `MAINTAINING.md` rather than a private detail.
+
+**`15a` WAS THE QUIET ONE, and it is the lesson worth keeping.** The first draft
+took its "cold" loads with `Page.navigate` to a URL differing only in the
+fragment — which is a *same-document* navigation: the document, its module
+registry, its `performance` timeline and the gate's own recorder all survive. So
+`15a` **passed**, while testing exactly the in-session path `15b` tests. It was
+caught only because three sibling checks disagreed with it: `15d` reported a cold
+`#/overview` fetching all six deferred chunks (residue from a document that never
+went away), `15e` reported min == median == max to one decimal on all four routes
+(one document, not five loads), and `15e`'s own armed-check reported
+`transferSize === 0` on every pass. Going via `about:blank` forces a real
+teardown. *A cold-load check that is silently a hash change is precisely the
+vacuity this harness exists to prevent, and the check that passed was the broken
+one.*
 
 ---
 

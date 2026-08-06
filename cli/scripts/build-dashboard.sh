@@ -65,3 +65,53 @@ file_count=$(find "$OUT_DIR" -type f | wc -l | tr -d ' ')
 echo "build-dashboard: $file_count files, $total_bytes bytes unpacked"
 find "$OUT_DIR" -type f \( -name '*.js' -o -name '*.css' -o -name '*.woff2' -o -name '*.html' \) \
   -exec sh -c 'printf "  %8d  %s\n" "$(wc -c < "$1")" "${1#'"$OUT_DIR"'/}"' _ {} \; | sort -rn
+
+# --- TD-347: the two figures the chunk GATE asserts -------------------------
+#
+# `cli/src/__tests__/dashboard-chunks.test.ts` is the authoritative gate and can
+# go RED; these are the same two numbers, printed here so the safe build states
+# them on every run rather than leaving them to be re-derived by hand.
+#
+# The INITIAL SET is index.html's module `<script>` PLUS every
+# `<link rel="modulepreload">` — i.e. what the browser must download before it
+# can paint. NOT the entry file alone: a vendor `manualChunks` split shrinks the
+# entry FILE by ~190 KB while moving the initial LOAD by 343 B. Measured at
+# TD-347 (plant C): entry file 285_390 -> 95_394, initial set 285_390 -> 285_047.
+#
+# Node rather than a grep pipeline on purpose. This walks whole tags and reads
+# their attributes individually, so an attribute-order change in a future Vite
+# does not silently report an EMPTY initial set — and there is no pipe whose
+# exit status could turn a match into a no-match.
+node -e '
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const out = process.argv[1];
+  const html = fs.readFileSync(path.join(out, "index.html"), "utf-8");
+  const rels = [];
+  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
+    if (!/\btype\s*=\s*"module"/i.test(m[0])) continue;
+    const s = m[0].match(/\bsrc\s*=\s*"([^"]+)"/i);
+    if (s !== null) rels.push(s[1]);
+  }
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    if (!/\brel\s*=\s*"modulepreload"/i.test(m[0])) continue;
+    const h = m[0].match(/\bhref\s*=\s*"([^"]+)"/i);
+    if (h !== null) rels.push(h[1]);
+  }
+  const initial = [...new Set(rels.map((r) => r.replace(/^\.?\//, "")))];
+  const size = (f) => fs.statSync(path.join(out, f)).size;
+  const assets = fs
+    .readdirSync(path.join(out, "assets"))
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => "assets/" + f);
+  const initialBytes = initial.reduce((n, f) => n + size(f), 0);
+  const totalBytes = assets.reduce((n, f) => n + size(f), 0);
+  const deferred = assets.filter((f) => !initial.includes(f));
+  process.stdout.write(
+    "build-dashboard: INITIAL SET " + initialBytes + " bytes over " +
+      initial.length + " file(s) -- " + initial.join(", ") + "\n" +
+    "build-dashboard: TOTAL JS    " + totalBytes + " bytes over " +
+      assets.length + " chunk(s), " + deferred.length + " deferred (" +
+      deferred.reduce((n, f) => n + size(f), 0) + " bytes off the critical path)\n",
+  );
+' "$OUT_DIR"

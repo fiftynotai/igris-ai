@@ -68,7 +68,15 @@
 import { spawn } from "node:child_process";
 import { execFileSync } from "node:child_process";
 import { createServer } from "node:net";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -269,6 +277,23 @@ const MUTATIONS = {
   "br14-write-affordance-when-down": {
     gate: "G-BR-14d",
     how: "assert the brief write controls are PRESENT in the world whose write surface is unavailable — AC-7 inverted, the `br8-write-affordance-when-down` shape on the briefs surface",
+  },
+  // --- TD-347 ---------------------------------------------------------------
+  "td347-read-before-ready": {
+    gate: "G-BR-15b",
+    how: "read the data selector IMMEDIATELY after setting `location.hash`, skipping `Tab.routeReady` and the settle — i.e. the pre-TD-347 synchronisation, reproduced exactly. Before the route split `#main` existed and the page was rendered in the same commit, so a bare sleep was adequate; after it, `#main` exists while a Suspense FALLBACK is mounted and the route's chunk is still in flight. This is the mutation that proves the readiness wait is load-bearing rather than decorative, and that 15b can see a fallback",
+  },
+  "td347-chunk-404": {
+    gate: "G-BR-15a",
+    how: "`Network.setBlockedURLs` on the GRAPH route's chunk, so its dynamic import cannot be fetched. THE AC #2 PROOF: `vite build` is perfectly happy to emit a chunk the browser cannot load, and `dashboard-artifact.test.ts` only reads bytes — a route whose shell mounts but whose code never arrives passes every offline check in this repo. OBSERVED, not predicted: the run is caught by G-BR-15 THROWING rather than by a clean 15a/15c assertion — the route never reaches a readable state, so `routeReady` times out and aborts the gate before the data selector is read. That still inverts the verdict (the defect IS caught), and it is recorded as observed rather than tidied into the prediction, because 'caught' and 'caught the way we guessed' are different facts. A cleaner failure would need `goto` to give up early on a dead route and let 15a report; that is a harness improvement, not a correctness gap",
+  },
+  "td347-preload-the-lazy-chunk": {
+    gate: "G-BR-15d",
+    how: "a document-start script appending `<link rel=\"modulepreload\" href=\"./assets/Graph-<hash>.js\">` to every document — the well-meaning 'make navigation instant' change that silently re-charges the initial load. The BYTE gate cannot see it (`dashboard-chunks.test.ts` reads `index.html`, which Vite still emits without the link), so `15d`'s behavioural claim — the routes that do NOT need a chunk do not fetch one — is the only thing standing between that change and a green run",
+  },
+  "td347-warm-cold-reading": {
+    gate: "G-BR-15e",
+    how: "take the 'cold' navigation readings on a WARM document: skip `Network.setCacheDisabled` and pre-load every chunk first. The timings still look plausible — faster, in fact, which is the trap — and only `15e`'s `transferSize > 0` self-check can tell that the number recorded as a cold cost was paid from cache. The `coding_guidelines.md` §12 rule that a test-harness safety guard must assert it is ARMED, applied to a measurement rather than to a fence",
   },
   "br13-silent-empty-search": {
     gate: "G-BR-13d",
@@ -1086,6 +1111,65 @@ const INSTRUMENT = `
 })();
 `;
 
+/**
+ * TD-347 — the route `router.tsx#parse` will choose for a hash or a full URL.
+ *
+ * A MIRROR of that function's rule (first segment; fall back to `overview` for
+ * `#/` and for anything unrecognised), deliberately NOT an import of it. The
+ * client agreeing with its own copy of the rule would prove nothing about the
+ * route the shell actually committed to — which is why `routeReady` then reads
+ * `#main[data-route]` out of the DOM rather than trusting this.
+ */
+const APP_ROUTES = ["overview", "graph", "layers", "triage"];
+function routeOf(hashOrUrl) {
+  const i = hashOrUrl.indexOf("#");
+  const hash = i === -1 ? "" : hashOrUrl.slice(i);
+  const path = hash.replace(/^#\/?/, "").split("?")[0] ?? "";
+  const head = path.split("/")[0] ?? "";
+  return APP_ROUTES.includes(head) ? head : "overview";
+}
+
+/** The built bundle the CLI server serves (`lib/dashboard/static.ts#bundleRoot`). */
+const BUNDLE_DIR = join(CLI_ROOT, "dist", "dashboard");
+
+/**
+ * TD-347 — the INITIAL SET and the deferred chunks, read off the built artifact.
+ *
+ * The SAME definition `cli/src/__tests__/dashboard-chunks.test.ts` asserts on:
+ * `index.html`'s module `<script>` plus every `<link rel="modulepreload">`.
+ * Read from disk rather than over HTTP because it is the same bytes the server
+ * serves and because G-BR-15 needs the DEFERRED file names too, which the
+ * document does not carry.
+ *
+ * `name` is the chunk's Rollup name with the content hash stripped — the only
+ * stable handle, since every build re-hashes.
+ */
+function bundleAssets() {
+  const html = readFileSync(join(BUNDLE_DIR, "index.html"), "utf-8");
+  const rels = [];
+  for (const m of html.matchAll(/<script\b[^>]*>/gi)) {
+    if (!/\btype\s*=\s*"module"/i.test(m[0])) continue;
+    const s = m[0].match(/\bsrc\s*=\s*"([^"]+)"/i);
+    if (s !== null) rels.push(s[1]);
+  }
+  for (const m of html.matchAll(/<link\b[^>]*>/gi)) {
+    if (!/\brel\s*=\s*"modulepreload"/i.test(m[0])) continue;
+    const h = m[0].match(/\bhref\s*=\s*"([^"]+)"/i);
+    if (h !== null) rels.push(h[1]);
+  }
+  const initial = [...new Set(rels.map((r) => r.replace(/^\.?\//, "")))];
+  const all = readdirSync(join(BUNDLE_DIR, "assets"))
+    .filter((f) => f.endsWith(".js"))
+    .map((f) => `assets/${f}`);
+  const chunkName = (rel) => rel.replace(/^assets\//, "").replace(/-[A-Za-z0-9_-]+\.js$/, "");
+  return {
+    initial,
+    all,
+    deferred: all.filter((f) => !initial.includes(f)),
+    chunkName,
+  };
+}
+
 class Tab {
   constructor(ws) {
     this.ws = ws;
@@ -1155,13 +1239,71 @@ class Tab {
     await this.send("Page.bringToFront");
   }
 
-  /** Navigate to a hash route and wait for the shell to have re-rendered. */
-  async goto(url) {
+  /**
+   * TD-347 — wait until the ROUTE is on screen, not merely the shell.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * THIS REPLACED A RACE, AND THE RACE WAS INVISIBLE UNTIL THE BUNDLE SPLIT
+   * ─────────────────────────────────────────────────────────────────────────
+   * `hash()` and `goto()` used to wait for `#main` to exist and then sleep
+   * 400 ms. That was adequate while the whole app was ONE chunk: by the time
+   * `#main` was in the DOM, every route component had already been evaluated
+   * and React rendered it in the same commit.
+   *
+   * After TD-347's route split, `#main` is mounted while a Suspense FALLBACK
+   * is up and the route's chunk is still arriving over the loopback socket. A
+   * 400 ms sleep would have been a coin toss on a cold route, on every one of
+   * the fifteen gates — and the wrong fix is to widen the sleep, because a
+   * sleep that is long enough today is a flake generator the day the fixture
+   * grows.
+   *
+   * So the app publishes a readiness contract instead:
+   *   `#main[data-route="<route>"]` — the route the shell has COMMITTED to
+   *   `[data-route-loading]`        — present iff a Suspense fallback is up
+   * (produced by `dashboard/src/App.tsx`; MAINTAINING.md carries the row).
+   *
+   * BOTH HALVES ARE NECESSARY. The `data-route` half alone would pass on the
+   * OLD route's DOM for the window between `location.hash = ...` and React
+   * processing the `hashchange`. The `data-route-loading` half alone would
+   * pass in that same window, because no fallback is up yet either.
+   *
+   * On an already-loaded route the predicate is true on the first poll, so
+   * gates 1-14 see no behavioural change — the 400 ms settle after it is React
+   * EFFECT slack, which is a different thing from chunk-load slack and is
+   * deliberately kept.
+   */
+  async routeReady(route, { timeout = 45_000 } = {}) {
+    const sel = `#main[data-route="${route}"]`;
+    return this.until(
+      `return document.querySelector(${JSON.stringify(sel)}) !== null &&
+              document.querySelector('[data-route-loading]') === null ? 1 : 0;`,
+      { timeout, label: `route "${route}" ready (chunk evaluated, no Suspense fallback)` },
+    );
+  }
+
+  /**
+   * Navigate to a hash route and wait for the ROUTE to be on screen.
+   *
+   * `tolerant` is for G-BR-15 alone: its cold-load checks must REPORT a route
+   * that never arrives (the `td347-chunk-404` case) rather than abort the gate
+   * with a bare `threw`, which names no check and prints no reading. Every
+   * other caller keeps the throwing default, because for them a route that
+   * never becomes ready is not a measurement, it is a broken run.
+   */
+  async goto(url, { readyTimeout = 45_000, tolerant = false } = {}) {
     await this.send("Page.navigate", { url });
     await this.until("return document.querySelector('#main') !== null ? 1 : 0", {
       label: `shell mount at ${url}`,
     });
-    return this.settle();
+    const ready = await this.routeReady(routeOf(url), { timeout: readyTimeout }).then(
+      () => true,
+      (err) => {
+        if (!tolerant) throw err;
+        return false;
+      },
+    );
+    await this.settle();
+    return ready;
   }
 
   /**
@@ -1177,18 +1319,39 @@ class Tab {
    */
   async reload() {
     await this.focus();
+    // Read the hash BEFORE the reload: a reload re-evaluates every route chunk
+    // in a fresh document, so it has exactly the same Suspense race `goto` has
+    // and needs the same readiness wait. (The plan named `hash()` and `goto()`;
+    // this is the third navigation path with the identical hazard, and G-BR-7
+    // and G-BR-12 both use it.)
+    const h = await this.eval("return location.hash;");
     await this.send("Page.reload", { ignoreCache: false });
     await this.until("return document.querySelector('#main') !== null ? 1 : 0", {
       label: "shell mount after reload",
     });
+    await this.routeReady(routeOf(h));
     await this.settle();
   }
 
-  /** Set `location.hash` (a same-document navigation) and wait for the route. */
-  async hash(h) {
+  /**
+   * Set `location.hash` (a same-document navigation) and wait for the route.
+   *
+   * This is the path that exercises SUSPENSE: the document already exists, so a
+   * route change here is a `React.lazy` boundary suspending on a chunk that has
+   * never been evaluated in this document.
+   */
+  async hash(h, { readyTimeout = 45_000, tolerant = false } = {}) {
     await this.focus();
     await this.eval(`location.hash = ${JSON.stringify(h)}; return 1;`);
+    const ready = await this.routeReady(routeOf(h), { timeout: readyTimeout }).then(
+      () => true,
+      (err) => {
+        if (!tolerant) throw err;
+        return false;
+      },
+    );
     await this.settle();
+    return ready;
   }
 
   /**
@@ -4393,12 +4556,32 @@ async function gBr10(tab, world) {
  * ─────────────────────────────────────────────────────────────────────────────
  * FR-250's `11c` reads `--graph-column-scale` out of the page, on the stated
  * principle that *"the gate and the layout cannot then disagree"*. That
- * precedent is deliberately NOT followed here, and the reason is bytes.
- * `--graph-column-scale` was already a CSS custom property in the DOM at zero
- * cost. Exposing a JS constant to `window` is app-chunk surface, and the chunk
- * has 484 B of slack against its ceiling with TD-347's route-level split queued
- * behind it. So the gate mirrors the constant and pays for the mirror
- * mechanically instead:
+ * precedent is deliberately NOT followed here, and the reason is DRIFT
+ * DETECTION — not bytes. (It used to be bytes; TD-347 falsified that, see below.)
+ *
+ * THE RULE, because the two cases look alike and are not: **mirror what DEFINES
+ * the property under test; read what merely PARAMETERISES the measurement.**
+ * `11a` / `11b` / `11e` / `11-range` are ANCHORED TO `K_FLOOR` — it is the
+ * boundary the property is defined by, so if it moves the checks silently
+ * re-base and keep passing while measuring something else. `11c` is only
+ * PARAMETERISED BY `--graph-column-scale`: it wants to measure at whatever
+ * scale the page is using, so reading it from the page is correct there and
+ * would be wrong here. Without this distinction the drift argument below would
+ * condemn `11c` too, and `11c` is right.
+ *
+ * THE BYTE ARGUMENT, AND WHY IT IS RETIRED. `--graph-column-scale` was already
+ * a CSS custom property in the DOM at zero cost. Exposing a JS constant to
+ * `window` costs bundle surface — and since
+ * TD-347 that surface is the DEFERRED `Graph-<hash>` chunk, because `shapes.ts`
+ * is reached only from `pages/Graph.tsx`. It is charged against
+ * `TOTAL_JS_CEILING`, never the initial set, so the BYTE argument is much
+ * weaker post-split than the pre-split "484 B of slack" version of this
+ * sentence claimed. The argument that still carries the decision is DRIFT
+ * DETECTION: a gate that reads the value out of the page agrees with the page
+ * by construction and can never see the constant move; a mirror plus its pin
+ * turns a move into a red test.
+ * So the gate mirrors the constant and pays for the mirror mechanically
+ * instead:
  *
  *   - `dashboard-graph-source.test.ts` scans BOTH files and asserts the two
  *     literals are equal, so a drift is a red test rather than a silent
@@ -4406,7 +4589,18 @@ async function gBr10(tab, world) {
  *   - `MAINTAINING.md` carries the contract row, whose change procedure names
  *     the re-derivation this gate owes when the constant moves.
  *
- * Do not "fix" this by reading it from the page without re-costing the chunk.
+ * DO NOT "fix" this by reading the value from the page. **Re-costing the chunk
+ * is the WRONG analysis** and will talk you into it: `shapes.ts` is 3_189 B in
+ * a deferred chunk and a `window` export is a few bytes, so a cost check comes
+ * back "negligible, objection discharged" — and the change it green-lights
+ * destroys the drift detection this mirror exists for. The refusal is on the
+ * DRIFT ground and it does not depend on the byte figure at all: a gate that
+ * reads `K_FLOOR` from the page agrees with the page by construction, so the
+ * constant could move and all four anchored checks would silently re-base.
+ * If you do it anyway, `dashboard-graph-source.test.ts`'s pin and the
+ * `MAINTAINING.md` row become dead weight and the next reader deletes them —
+ * which is how the property stops being checked without anyone deciding to
+ * stop checking it.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * AND `K_FLOOR` IS A DESIGN DECISION WEARING A NUMBER (TD-335)
@@ -6475,6 +6669,477 @@ async function gBr12(cdpPort, seeded) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// G-BR-15 — TD-347
+// ---------------------------------------------------------------------------
+
+/**
+ * The routes G-BR-15 drives, each with the DATA-BEARING reading that proves the
+ * route reached its data rather than merely mounting its shell.
+ *
+ * `sel` is the thing the in-page timer watches (15e's stopwatch). `read` is a
+ * page expression returning a value; `ok` judges it host-side; `say` renders it
+ * into the check line so a green run still prints what it saw.
+ *
+ * EVERY SELECTOR HERE IS ONE GATES 1-14 ALREADY USE. That is the point: a
+ * fifteenth gate with its own private selectors could go green while the
+ * fourteen it is supposed to protect all broke.
+ */
+const TD347_TARGETS = [
+  {
+    hash: "#/overview",
+    sel: '[data-card="briefs"] .shell-metric',
+    read: READ_OVERVIEW,
+    ok: (v) => v !== null && v.briefs > 0 && v.graph > 0,
+    say: (v) => (v === null ? "no reading" : `briefs=${v.briefs} instances=${v.instances} graph=${v.graph}`),
+  },
+  {
+    hash: "#/graph",
+    sel: ".graph-canvas-host canvas",
+    read: `
+      const c = document.querySelector('.graph-canvas-host canvas');
+      const r = document.querySelector('.graph-readout');
+      return {
+        canvas: c === null ? null : { w: c.width, h: c.height },
+        readout: r === null ? null : r.textContent.trim().replace(/\\s+/g, ' '),
+      };`,
+    ok: (v) =>
+      v !== null &&
+      v.canvas !== null &&
+      v.canvas.w > 0 &&
+      v.canvas.h > 0 &&
+      /\b[1-9]\d*\s+NODES\b/.test(v.readout ?? ""),
+    say: (v) =>
+      v === null
+        ? "no reading"
+        : `canvas=${v.canvas === null ? "absent" : `${v.canvas.w}x${v.canvas.h}`} readout=${JSON.stringify(v.readout)}`,
+  },
+  {
+    hash: "#/layers/briefs",
+    sel: ".record-row-title",
+    read: READ.rowTitles,
+    // The fixture's OWN brief, by title — not "some rows appeared".
+    ok: (v) => Array.isArray(v) && v.includes("Dashboard layer views"),
+    say: (v) => `${Array.isArray(v) ? v.length : 0} rows, "Dashboard layer views" present=${Array.isArray(v) && v.includes("Dashboard layer views")}`,
+  },
+  {
+    hash: "#/layers/learnings",
+    sel: ".record-row-title",
+    read: READ.rowTitles,
+    ok: (v) => Array.isArray(v) && v.length > 0,
+    say: (v) => `${Array.isArray(v) ? v.length : 0} rows`,
+  },
+  {
+    hash: "#/layers/goals",
+    sel: ".record-row-title",
+    read: READ.rowTitles,
+    ok: (v) => Array.isArray(v) && v.length > 0,
+    say: (v) => `${Array.isArray(v) ? v.length : 0} rows`,
+  },
+  {
+    // `context-docs`, NOT `context_docs`. `layers/model.ts#LAYER_IDS` spells it
+    // with a hyphen and an unknown segment silently falls back to `briefs` —
+    // i.e. the wrong spelling would have PASSED this check while testing a
+    // different layer.
+    hash: "#/layers/context-docs",
+    sel: ".record-row-title",
+    read: READ.rowTitles,
+    ok: (v) => Array.isArray(v) && v.length > 0,
+    say: (v) => `${Array.isArray(v) ? v.length : 0} rows`,
+  },
+  {
+    hash: "#/layers/briefs/demo/FR-240",
+    sel: ".record-detail-title",
+    read: `
+      const t = document.querySelector('.record-detail-title');
+      const out = {};
+      for (const kv of document.querySelectorAll('.record-detail-meta .shell-kv')) {
+        const k = kv.querySelector('span'); const v = kv.querySelector('b');
+        if (k !== null && v !== null) out[k.textContent.trim()] = v.textContent.trim();
+      }
+      return { title: t === null ? null : t.textContent.trim(), meta: out };`,
+    ok: (v) =>
+      v !== null && v.title === "Dashboard layer views" && v.meta["brief id"] === "FR-240" && v.meta.project === "demo",
+    say: (v) =>
+      v === null ? "no reading" : `title=${JSON.stringify(v.title)} project=${v.meta.project} id=${v.meta["brief id"]}`,
+  },
+  {
+    hash: "#/triage",
+    sel: ".triage-bulk",
+    read: `
+      return {
+        bulk: document.querySelector('.triage-bulk') !== null,
+        rows: document.querySelectorAll('.record-list > li').length,
+      };`,
+    ok: (v) => v !== null && v.bulk === true && v.rows > 0,
+    say: (v) => (v === null ? "no reading" : `bulk bar=${v.bulk} queue rows=${v.rows}`),
+  },
+];
+
+/**
+ * A document-start script: the error recorder and the first-appearance
+ * stopwatch, installed before anything the bundle does.
+ *
+ * `performance.now()` in a fresh document is milliseconds since THAT
+ * document's navigation start, which is exactly the quantity AC #5 asks for —
+ * and it is measured IN THE PAGE, so it carries no CDP round-trip latency and
+ * no host-side polling granularity.
+ */
+const td347Watch = (sels) => `
+(() => {
+  const sels = ${JSON.stringify(sels)};
+  const st = { seen: {}, errors: [] };
+  window.__td347 = st;
+  window.addEventListener('error', (e) => {
+    st.errors.push(String((e && e.message) || e));
+  });
+  window.addEventListener('unhandledrejection', (e) => {
+    const r = e && e.reason;
+    st.errors.push(String((r && r.message) || r));
+  });
+  const tick = () => {
+    for (const s of sels) {
+      if (st.seen[s] === undefined && document.querySelector(s) !== null) {
+        st.seen[s] = performance.now();
+      }
+    }
+  };
+  const t = setInterval(tick, 5);
+  setTimeout(() => { clearInterval(t); }, 90000);
+})();
+`;
+
+/** Every `assets/*.js` this document has actually requested, bundle-relative. */
+const TD347_READ_JS = `
+  return performance.getEntriesByType('resource')
+    .filter((e) => /\\/assets\\/[^/]+\\.js(\\?|$)/.test(e.name))
+    .map((e) => ({
+      file: 'assets/' + e.name.split('/assets/')[1].split('?')[0],
+      duration: Math.round(e.duration * 10) / 10,
+      transferSize: e.transferSize,
+      encodedBodySize: e.encodedBodySize,
+    }));
+`;
+
+const median = (xs) => {
+  const s = [...xs].sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length === 0 ? null : s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
+};
+const ms = (x) => (x === null || x === undefined ? "n/a" : `${Math.round(x * 10) / 10}ms`);
+
+/**
+ * THE CHUNKS THE GRAPH ROUTE PULLS, enumerated rather than hand-waved.
+ *
+ *   Graph       its route chunk — `pages/Graph.tsx`, `graph/**`, and the whole
+ *               force-graph + d3 family.
+ *   neighbours  Rollup's hoist of `graph/neighbours.ts` + `lib/graphCache.ts`,
+ *               reached by the Graph page AND by the Layers page's
+ *               `useNeighbours`.
+ *   Button      `components/ui/Button.tsx`, reached from THREE lazy routes:
+ *               `components/graph/GraphControls.tsx`,
+ *               `components/triage/BulkBar.tsx` and `pages/layers/Briefs.tsx`.
+ *
+ * Both hoisted chunks are ASYNC siblings fetched in PARALLEL with the route
+ * chunk via Vite's `__vitePreload`, not serial hops.
+ *
+ * `Button` WAS MISSING FROM THE FIRST DRAFT OF THIS LIST, and the reason is
+ * worth keeping: it was derived from the composition report's `src/components`
+ * GROUP TOTALS, which say how many bytes of `src/components` are in a chunk and
+ * not WHICH components — so a 594 B chunk holding one shared button looked like
+ * a layers/triage concern. 15d caught it. Re-derive this list by grepping the
+ * IMPORTERS (`rg -n 'ui/Button' cli/dashboard/src`), not from the group table.
+ *
+ * The check asserts the SET, so this list is what makes it bite in BOTH
+ * directions: a new chunk appearing on this route is loud, and — the half that
+ * matters — `Layers`, `Triage` and `useQFilter` must NOT be fetched here.
+ */
+const TD347_GRAPH_ROUTE_CHUNKS = ["Graph", "neighbours", "Button"];
+
+/**
+ * G-BR-15 — TD-347.
+ *
+ * PROVES: every route reaches its DATA from a cold document and from an
+ * in-session navigation, after the bundle was split into seven chunks; no
+ * dynamic import fails; the routes that do NOT need a chunk do not fetch one;
+ * and the cold cost of a deferred route is on the record.
+ *
+ * DOES NOT PROVE: that the deferred bytes are the RIGHT ones, or that either
+ * ceiling is correct — `cli/src/__tests__/dashboard-chunks.test.ts` owns the
+ * byte question and this gate owns the behavioural one. The two are twins: a
+ * change that moves one must re-run the other.
+ *
+ * IT SEEDS AND MUTATES NOTHING. It reads the `seeded` world through its OWN
+ * tab, so no other gate's document, counters or row counts are disturbed.
+ */
+async function gBr15(cdpPort, seeded) {
+  gate(
+    "G-BR-15",
+    "TD-347: every route reaches its data from cold, and only the routes that need them fetch their chunks",
+  );
+
+  const assets = bundleAssets();
+  const graphChunk = assets.deferred.find((f) => assets.chunkName(f) === "Graph") ?? null;
+  note(
+    `bundle: ${assets.all.length} JS chunk(s) — initial ${JSON.stringify(assets.initial)} · ` +
+      `deferred ${JSON.stringify(assets.deferred.map((f) => assets.chunkName(f)))}`,
+  );
+  if (graphChunk === null) {
+    check("15-bundle", false, "no `Graph-*.js` chunk in dist/dashboard/assets — the route split is not built");
+    return;
+  }
+
+  /*
+   * `td347-preload-the-lazy-chunk`'s injection, and it has to be a
+   * DOCUMENT-START script for the same reason `br12-view-in-localstorage`'s is:
+   * the defect is a change to what the DOCUMENT declares, and by the time a
+   * normal `tab.eval` could run the browser has already decided what to fetch.
+   * Appending the link as soon as <head> exists is what an "eagerly preload the
+   * routes so navigation feels instant" commit looks like from outside.
+   */
+  const preloadBridge = mut("td347-preload-the-lazy-chunk")
+    ? `(() => {
+         const add = () => {
+           if (!document.head) return false;
+           const l = document.createElement('link');
+           l.rel = 'modulepreload';
+           l.href = './${graphChunk}';
+           document.head.appendChild(l);
+           return true;
+         };
+         if (!add()) {
+           const t = setInterval(() => { if (add()) clearInterval(t); }, 1);
+         }
+       })();`
+    : "";
+
+  const sels = [...new Set(TD347_TARGETS.map((t) => t.sel))];
+  const tab = await openTab(cdpPort, `${seeded.url}/#/overview`, `${td347Watch(sels)}\n${preloadBridge}`);
+  await tab.send("Network.enable");
+
+  /**
+   * A GENUINELY COLD DOCUMENT at `hash`.
+   *
+   * ─────────────────────────────────────────────────────────────────────────
+   * `Page.navigate` TO A URL THAT DIFFERS ONLY IN THE FRAGMENT IS NOT A LOAD.
+   * ─────────────────────────────────────────────────────────────────────────
+   * It is a same-document navigation: the document, its module registry, its
+   * `performance` resource timeline and this gate's `window.__td347` all
+   * survive. THE FIRST DRAFT OF THIS GATE GOT THAT WRONG and the run is worth
+   * recording, because every symptom pointed somewhere else:
+   *   - `15d-overview` reported that a cold `#/overview` had fetched all SIX
+   *     deferred chunks — they were the residue of the preceding in-session
+   *     sweep, still on the timeline of a document that never went away;
+   *   - `15e` reported min == median == max to one decimal place on all four
+   *     routes, because `__td347.seen[sel]` is written ONCE per document and
+   *     five "loads" were one document;
+   *   - `15e`'s armed-check then caught it from the other side: the entry chunk
+   *     reported `transferSize === 0` on every pass, because it had genuinely
+   *     only ever been fetched once.
+   * `15a` was the quiet one: it PASSED, while testing the same in-session path
+   * `15b` tests. A cold-load check that is silently a hash change is exactly
+   * the vacuity this file exists to prevent, and it was caught only because
+   * three OTHER checks in the same gate disagreed with it.
+   *
+   * Going via `about:blank` forces a real document teardown, so what follows is
+   * a first-ever evaluation of the route's chunk in that document.
+   */
+  const coldGoto = async (hash, opts = {}) => {
+    await tab.send("Page.navigate", { url: "about:blank" });
+    await tab.until("return document.readyState !== 'loading' ? 1 : 0", {
+      timeout: 10_000,
+      label: "about:blank between cold loads",
+    });
+    return tab.goto(`${seeded.url}/${hash}`, { tolerant: true, readyTimeout: 20_000, ...opts });
+  };
+
+  /** Errors accumulated across EVERY document this gate opens. */
+  const errors = [];
+  const drainErrors = async (where) => {
+    const seen = await tab.eval("return (window.__td347 && window.__td347.errors) || [];");
+    for (const e of seen) errors.push(`${where}: ${e}`);
+  };
+
+  if (mut("td347-chunk-404")) {
+    // A blocked request is what a chunk the browser cannot fetch looks like
+    // from the page: the dynamic import rejects with
+    // `Failed to fetch dynamically imported module`. Only the GRAPH chunk is
+    // blocked, so the other routes stay honest and the failure is localised.
+    await tab.send("Network.setBlockedURLs", { urls: [`*${graphChunk.replace("assets/", "")}*`] });
+  }
+
+  // --- 15a · a COLD DOCUMENT per route reaches its data ---------------------
+  //
+  // `tab.goto` is a fresh `Page.navigate`, which is the only path where the
+  // route's chunk has NEVER been evaluated in that document. `tolerant` so a
+  // route that never becomes ready is REPORTED by the data check below rather
+  // than aborting the gate with a bare `threw`.
+  const cold = [];
+  for (const t of TD347_TARGETS) {
+    const ready = await coldGoto(t.hash);
+    const value = await tab.eval(t.read).catch(() => null);
+    await drainErrors(`cold ${t.hash}`);
+    cold.push({ hash: t.hash, ready, value, ok: t.ok(value), say: t.say(value) });
+  }
+  const coldBad = cold.filter((r) => !r.ok);
+  check(
+    "15a",
+    coldBad.length === 0,
+    `${cold.length - coldBad.length}/${cold.length} routes reached their DATA from a cold document · ` +
+      cold.map((r) => `${r.hash} ${r.ok ? "OK" : "FAIL"} [${r.say}]${r.ready ? "" : " (never became ready)"}`).join(" · ") +
+      (mut("td347-chunk-404") ? `  [MUTATED: ${graphChunk} is blocked]` : ""),
+  );
+
+  // --- 15b · the SAME set via in-session navigation (the Suspense path) -----
+  //
+  // A cold document evaluates the route chunk during load; an in-session hash
+  // change suspends an ALREADY MOUNTED tree. They are different code paths in
+  // React and only this one exercises the fallback.
+  await coldGoto("#/overview");
+  const warm = [];
+  for (const t of TD347_TARGETS) {
+    let ready = true;
+    if (mut("td347-read-before-ready")) {
+      // The pre-TD-347 synchronisation: set the hash and read. No readiness
+      // wait, no settle — exactly what `hash()` did before this brief.
+      await tab.focus();
+      await tab.eval(`location.hash = ${JSON.stringify(t.hash)}; return 1;`);
+    } else {
+      ready = await tab.hash(t.hash, { tolerant: true, readyTimeout: 20_000 });
+    }
+    const value = await tab.eval(t.read).catch(() => null);
+    warm.push({ hash: t.hash, ready, value, ok: t.ok(value), say: t.say(value) });
+  }
+  await drainErrors("in-session sweep");
+  const warmBad = warm.filter((r) => !r.ok);
+  check(
+    "15b",
+    warmBad.length === 0,
+    `${warm.length - warmBad.length}/${warm.length} routes reached their DATA through in-session navigation · ` +
+      warm.map((r) => `${r.hash} ${r.ok ? "OK" : "FAIL"} [${r.say}]`).join(" · ") +
+      (mut("td347-read-before-ready") ? "  [MUTATED: read immediately after the hash set, no readiness wait]" : ""),
+  );
+
+  // --- 15c · no dynamic import failed anywhere in the sweep -----------------
+  //
+  // `Failed to fetch dynamically imported module` is the SIGNATURE failure of a
+  // botched split, and it does not fail a build, does not fail `tsc`, and does
+  // not fail any byte assertion. It only ever appears at runtime.
+  check(
+    "15c",
+    errors.length === 0,
+    errors.length === 0
+      ? `0 window errors / unhandled rejections across ${cold.length + warm.length} navigations ` +
+        `(the recorder is a document-start script, so it is armed before the bundle runs)`
+      : `${errors.length} runtime error(s): ${JSON.stringify(errors.slice(0, 6))}`,
+  );
+
+  // --- 15d · THE DEFERRAL IS REAL -------------------------------------------
+  //
+  // ENTRY PRESENCE, not `transferSize`. Hashed assets are served
+  // `max-age=31536000, immutable`, so a warm load is a REAL load that reports
+  // `transferSize === 0` — a byte-based deferral check would call a fetched
+  // chunk un-fetched.
+  await coldGoto("#/overview");
+  const overviewJs = await tab.eval(TD347_READ_JS);
+  const overviewExtra = overviewJs.map((e) => e.file).filter((f) => !assets.initial.includes(f));
+  check(
+    "15d-overview",
+    overviewExtra.length === 0,
+    `cold #/overview fetched ${overviewJs.length} JS asset(s): ${JSON.stringify(
+      overviewJs.map((e) => assets.chunkName(e.file)),
+    )} · beyond the initial set: ${JSON.stringify(overviewExtra.map((f) => assets.chunkName(f)))}` +
+      (mut("td347-preload-the-lazy-chunk") ? "  [MUTATED: a modulepreload link for the graph chunk]" : ""),
+  );
+
+  await coldGoto("#/graph");
+  const graphJs = await tab.eval(TD347_READ_JS);
+  const graphExtra = graphJs
+    .map((e) => assets.chunkName(e.file))
+    .filter((n, i, a) => a.indexOf(n) === i)
+    .filter((n) => !assets.initial.map(assets.chunkName).includes(n))
+    .sort();
+  const wantGraph = [...TD347_GRAPH_ROUTE_CHUNKS].sort();
+  check(
+    "15d-graph",
+    JSON.stringify(graphExtra) === JSON.stringify(wantGraph),
+    `cold #/graph fetched beyond the initial set: ${JSON.stringify(graphExtra)} · enumerated expectation ` +
+      `${JSON.stringify(wantGraph)} · and it did NOT fetch ${JSON.stringify(
+        assets.deferred.map(assets.chunkName).filter((n) => !graphExtra.includes(n)),
+      )}`,
+  );
+  note(
+    "15d-overview and 15d-graph are a PAIR and neither means much alone: 'no chunk was fetched' " +
+      "is also true of a page that failed to load, and 'the graph chunk was fetched' is also true " +
+      "of a bundle that fetches everything everywhere. Read beside each other they say the split " +
+      "is a split. `td347-preload-the-lazy-chunk` is the demonstrated failing counterpart, and it " +
+      "is deliberately a defect the BYTE gate cannot see.",
+  );
+
+  // --- 15e · THE COLD COST, RECORDED (AC #5) --------------------------------
+  //
+  // NO THRESHOLD, ON PURPOSE. A wall-clock bound in this harness is a flake
+  // factory, and the culture here forbids tuning one later to make a run pass.
+  // What IS asserted is that the readings are COLD: on a cache-disabled pass
+  // every JS asset the document fetched must report `transferSize > 0`. That is
+  // `coding_guidelines.md` §12's rule — a test-harness safety guard must assert
+  // that it is ARMED — applied to a measurement instead of a fence.
+  const warmReading = mut("td347-warm-cold-reading");
+  if (!warmReading) {
+    await tab.send("Network.setCacheDisabled", { cacheDisabled: true });
+  }
+  const RUNS = 5;
+  const timings = [];
+  for (const t of TD347_TARGETS.filter((x) =>
+    ["#/overview", "#/graph", "#/layers/briefs", "#/triage"].includes(x.hash),
+  )) {
+    const paints = [];
+    const chunkRows = [];
+    for (let i = 0; i < RUNS; i++) {
+      await coldGoto(t.hash);
+      const seen = await tab.eval(
+        `return (window.__td347 && window.__td347.seen[${JSON.stringify(t.sel)}]) ?? null;`,
+      );
+      if (typeof seen === "number") paints.push(seen);
+      const js = await tab.eval(TD347_READ_JS);
+      chunkRows.push(...js);
+    }
+    const zeroTransfer = chunkRows.filter((r) => !(r.transferSize > 0));
+    timings.push({ hash: t.hash, paints, chunkRows, zeroTransfer });
+    note(
+      `${t.hash.padEnd(22)} cold to data: min ${ms(Math.min(...paints))} · median ${ms(median(paints))} · ` +
+        `max ${ms(Math.max(...paints))} over ${paints.length}/${RUNS} readings · ` +
+        `JS fetched per load: ${JSON.stringify([
+          ...new Set(chunkRows.map((r) => assets.chunkName(r.file))),
+        ])} · slowest chunk ${ms(Math.max(...chunkRows.map((r) => r.duration)))}`,
+    );
+  }
+  const allZero = timings.flatMap((t) => t.zeroTransfer);
+  const allPaints = timings.flatMap((t) => t.paints);
+  check(
+    "15e",
+    allZero.length === 0 && allPaints.length === RUNS * timings.length,
+    allZero.length === 0
+      ? `${allPaints.length} cold readings taken with the cache disabled; every one of the ` +
+        `${timings.flatMap((t) => t.chunkRows).length} JS fetches reports transferSize > 0, so no reading ` +
+        `is a cache hit wearing a cold number`
+      : `${allZero.length} of ${timings.flatMap((t) => t.chunkRows).length} JS fetches reported ` +
+        `transferSize === 0 — these readings are WARM and must not be recorded as cold costs: ` +
+        `${JSON.stringify([...new Set(allZero.map((r) => assets.chunkName(r.file)))])}` +
+        (warmReading ? "  [MUTATED: cache left enabled on a pre-warmed document]" : ""),
+  );
+  note(
+    "AC #5 IS A RECORDING, NOT A BUDGET — read the numbers above BESIDE the benefit, and read the " +
+      "benefit honestly. The bundle is served by `node:http` from 127.0.0.1 " +
+      "(`lib/dashboard/server.ts#LOOPBACK_HOST`), so a deferred chunk costs a loopback round trip " +
+      "rather than a network one, and the wall-clock saving on the landing route is small. WHAT " +
+      "THE SPLIT ACTUALLY BUYS IS BUDGET: 559_516 B of initial JS became 285_390 B, and that " +
+      "274_126 B is what FR-248 and FR-249 were blocked on. If the cold cost above ever stops " +
+      "looking acceptable, the answer is a new brief with its own gate — NOT an idle prefetch, " +
+      "which would re-charge the initial load in a form 15d exists to catch.",
+  );
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -6550,6 +7215,12 @@ async function main() {
     // the run continues: an injected defect frequently makes a LATER step
     // unreachable (a chip that was never set cannot be cleared), and losing the
     // rest of the ledger to that would hide which checks the mutation reached.
+    // TD-347, FIRST — and the position is load-bearing, not tidiness. Every
+    // later gate visits `#/graph` (4, 7, 11) and warms the HTTP cache for its
+    // chunk, so first place is the ONLY place where `15d` and `15e` get a
+    // genuinely cold origin. It opens its OWN tab on the seeded world, reads
+    // that world's rows and writes nothing, so nothing downstream is disturbed.
+    await runGate("G-BR-15", () => gBr15(chrome.port, worlds.seeded));
     await runGate("G-BR-1", () => gBr1(tabs.seeded));
     await runGate("G-BR-2", () => gBr2(tabs.seeded, worlds.seeded));
     await runGate("G-BR-3", () => gBr3(tabs, worlds));

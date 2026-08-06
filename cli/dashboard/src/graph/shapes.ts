@@ -281,9 +281,15 @@ export function isDashed(shape: ShapeKind): boolean {
  * four checks to it: `11a` (separability at `K_FLOOR/2` against `K_FLOOR`),
  * `11b` (the merge control at the `K_FLOOR` anchor), `11e` (box-invariance) and
  * `11-range` (the working range is non-empty). It mirrors rather than reading
- * the value from the page because exposing a JS constant to `window` costs
- * app-chunk bytes against a 484 B budget; the mirror is pinned by
- * `dashboard-graph-source.test.ts` and mapped in `MAINTAINING.md`.
+ * the value from the page, and since TD-347 the reason is PLACEMENT, not bytes.
+ * This module is reached only from `pages/Graph.tsx` (via `graph/useGraph.ts`
+ * and `components/graph/NodeInspector.tsx`), so it ships in the DEFERRED
+ * `Graph-<hash>` chunk and is charged against `TOTAL_JS_CEILING` — not against
+ * the initial set. A `window` export here would cost deferred bytes, which is a
+ * far weaker objection than the pre-split one. What still carries the decision
+ * is that a gate reading a value out of the page cannot detect the value
+ * DRIFTING; the mirror plus its pin can. Pinned by
+ * `dashboard-graph-source.test.ts`, mapped in `MAINTAINING.md`.
  *
  * So: **moving `NODE_SIZE_ZOOM_FLOOR` re-bases those four checks.** Re-run the
  * gate's invariance probe and re-derive `FROZEN_PRESERVATION_FLOOR` in the same

@@ -404,8 +404,14 @@ describe("FR-244 — every node geometry goes through nodeWorldSize", () => {
    * moves). The gate could have read the value out of the page the way FR-250's
    * `11c` reads `--graph-column-scale`, but that token was already a CSS custom
    * property in the DOM at zero cost, whereas exposing a JS constant to `window`
-   * is app-chunk surface — and the chunk has 484 B of slack with TD-347's
-   * route-level split queued behind it. So the gate mirrors, and pays
+   * costs bundle surface. Since TD-347 that surface is the DEFERRED `Graph-<hash>`
+   * chunk — `shapes.ts` is reached only from `pages/Graph.tsx`, so it is charged
+   * against `TOTAL_JS_CEILING`, never the initial set — which makes the byte
+   * argument much weaker than it was pre-split. The argument that still carries
+   * the decision is DRIFT DETECTION: a gate reading the value out of the page
+   * agrees with whatever the page says and can never notice the constant moving,
+   * whereas a mirror plus this pin turns a move into a red test. So the gate
+   * mirrors, and pays
    * mechanically: THIS test, plus a `MAINTAINING.md` contract row whose change
    * procedure names the re-derivation the gate owes when the constant moves.
    *
