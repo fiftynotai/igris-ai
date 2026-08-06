@@ -1364,8 +1364,11 @@ function migrateSchema(db: Database.Database): void {
   //       prefix back to a type is a lossless decode of a field `/register`
   //       assigned from the very type question being asked, and it fills an
   //       ABSENCE (there is no stated value to destroy). `BR-` is deliberately
-  //       absent from the table because /register maps both `bug` and `feature`
-  //       to it — those rows stay NULL and are reported instead.
+  //       absent from the table because every NULL `BR-` row predates TD-331,
+  //       when `/register` mapped both `bug` and `feature` to that prefix — so
+  //       those rows stay NULL and are reported instead. TD-331 made the mint
+  //       map 1:1 but does NOT license adding the key here: this UPDATE has no
+  //       date gate, so it would retro-assign exactly those historical rows.
   //
   // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
   // so a second run matches zero rows; the schema_version gate also blocks

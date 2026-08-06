@@ -76,9 +76,12 @@ run_validator() {
   # SCOPE, STATED HONESTLY: this greps 12 literals out of the validator and 3
   # out of the TS file. It CANNOT detect a type added to either side, the
   # removal of the nine pre-existing members, or an order change. It is a
-  # presence spot-check, not the element-for-element parity guard that
-  # CANONICAL_PHASES has (test/validate_canonical_phase_parity.test.bash).
-  # Building that real guard is TD-330's job, not this file's.
+  # presence spot-check, not the element-for-element parity guard.
+  # THAT GUARD NOW EXISTS: TD-330 shipped
+  # test/validate_brief_type_parity.test.bash, the same shape as
+  # test/validate_canonical_phase_parity.test.bash. This file's checks remain
+  # useful as a readable per-name assertion, but the parity claim belongs to
+  # that file — do not extend this one to try to cover it.
   grep -q "CANONICAL_BRIEF_TYPES" "$VALIDATOR"
   for t in "Feature" "Bug" "Migration" "Technical Debt" "Testing" \
            "Process Improvement" "Documentation" "Acceptance" "Performance" \

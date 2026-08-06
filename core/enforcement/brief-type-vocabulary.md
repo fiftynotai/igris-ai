@@ -46,9 +46,17 @@ unchanged.
 > `CANONICAL_BRIEF_TYPES` = **the image of the `/register` brief-ID prefix map**
 > (`core/skills/register/SKILL.md` §2) **∪ {`Documentation`}**.
 
+> ⚠ **THIS TABLE IS AN UNGUARDED COPY (TD-357).** It is the fourth of six copies
+> of the mint mapping and nothing pins it — corrupting a row here leaves the
+> whole test suite green (measured). `test/validate_brief_type_parity.test.bash`
+> guards `/register` §2's table, its §Arguments bullets and
+> `BRIEF_ID_PREFIX_TYPES`; this one is on the honour system until TD-357 pins it.
+> If you change the mapping, change it here too — and check TD-357's census for
+> the other copies rather than trusting this list.
+
 | Prefix | Canonical type |
 |---|---|
-| `BR` | `Bug` **or** `Feature` — ambiguous by design |
+| `BR` | `Bug` |
 | `FR` | `Feature` |
 | `MG` | `Migration` |
 | `TD` | `Technical Debt` |
@@ -62,6 +70,24 @@ unchanged.
 **The decision rule this gives you: a value with a mint prefix is a TYPE; a
 value without one is a SPELLING.** That is what makes the fold table mechanical
 rather than a taste argument.
+
+**TD-331 (operator decision, 2026-08-06) removed the one place that rule was
+false.** Until then the `BR` row read *`Bug` **or** `Feature` — ambiguous by
+design*, and it was the ONLY prefix naming two kinds — at the oldest and largest
+prefix in the corpus. The map is now 1:1: `bug` mints `BR-`, `feature` mints
+`FR-`.
+
+The rule is therefore **tightened, not patched**. Every canonical type with a
+mint prefix has exactly ONE, and `Refactor` (below) remains the single
+documented prefix-less exception. There is no second exception.
+
+**The 20 briefs the collision cost are NOT recovered**, and that is deliberate:
+17 NULL-type `BR-` rows plus 3 rows typed literally `BR` stay ambiguous, because
+they were minted when `BR-` genuinely meant either thing and no non-guessing
+source of the distinction survives. `BRIEF_ID_PREFIX_TYPES` still omits `BR` for
+that reason — it decodes IDs that already exist, so adding the key would
+retro-assign exactly those rows. What the decision bought is that the
+unresolvable set is **capped at 20 rather than growing with every new brief**.
 
 It also removes the ORIGINAL CAUSE. `/register` minted `DU-` and `AC-` briefs
 while neither `Dependency Update` nor `Architecture` was canonical — so those
@@ -163,20 +189,28 @@ there** — keep the filter honest and fix the data instead.
    import it; there is deliberately no second hand-copied list.
 2. Mirror the canonical set into `scripts/validate_brief_type_vocabulary.sh`'s
    `CANONICAL_BRIEF_TYPES` array (no build step generates one from the other).
-   **The bats trio only spot-checks that the TD-328 additions are present on
-   both sides — it is NOT an element-for-element parity guard.** It cannot catch
-   a 13th type added to one side, a removal of one of the nine pre-existing
-   members, or an order change, so a green suite is not proof the two copies
-   agree. TD-330 owns building the real guard (the shape
-   `test/validate_canonical_phase_parity.test.bash` already has for
-   `CANONICAL_PHASES`). Until then this step is a HUMAN obligation.
-   **TD-330's scope is now THREE bash canonical arrays, not one**: TD-338 added
-   `CANONICAL_PRIORITIES` to `scripts/validate_brief_priority_vocabulary.sh` and
-   TD-333 added `CANONICAL_STATUSES` to
-   `scripts/validate_brief_status_vocabulary.sh`. Those two are small enough
-   that their bats suites check element COUNT in both directions, which IS a
-   real guard for them — this 12-member pair is the one still only
-   spot-checked, and the generic guard is what TD-330 owes.
+   **`test/validate_brief_type_vocabulary.test.bash` only spot-checks that the
+   TD-328 additions are present on both sides — it is NOT the parity guard, and
+   it never was.** On its own it cannot catch a 13th type added to one side, a
+   removal of one of the nine pre-existing members, or an order change. That
+   file is still useful as a readable per-name assertion; it is simply not the
+   thing that proves the two copies agree, and before TD-330 nothing was.
+
+   **TD-330 SHIPPED the real guard**: `test/validate_brief_type_parity.test.bash`
+   extracts both definitions and asserts element-identity IN ORDER — the shape
+   `test/validate_canonical_phase_parity.test.bash` already had for
+   `CANONICAL_PHASES`. This step is no longer a human obligation; all three of
+   the holes above were demonstrated red-then-green.
+
+   **STATE OF PLAY for the other bash canonical arrays**, so nobody re-derives
+   it: `CANONICAL_PHASES` (TD-257) and `CANONICAL_BRIEF_TYPES` (TD-330) have
+   ELEMENT-IDENTICAL guards. `CANONICAL_PRIORITIES`
+   (`scripts/validate_brief_priority_vocabulary.sh`, TD-338) and
+   `CANONICAL_STATUSES` (`scripts/validate_brief_status_vocabulary.sh`, TD-333)
+   have only element-COUNT checks in their bats suites. A count check is a real
+   guard but a weaker one — it sees an add or a delete and CANNOT see a rename
+   or a swap of two members. Upgrading those two is **TD-356**, deliberately not
+   folded into TD-330, whose scope and ACs name the brief_type pair only.
 3. Fold historical rows in a **NEW migration version** — never edit a shipped
    one.
 4. **Extending the `/register` prefix map REQUIRES adding the matching canonical
@@ -201,17 +235,29 @@ brain schema, for 16 rows.
 The validator checks both thresholds on every run and names the brief to file.
 This converts "we decided not to" into a tripwire instead of an omission.
 
-## Known ambiguity, deliberately not resolved here
+## Known ambiguity — the MINT surface is fixed, the HISTORY is not
 
-`/register` §2 maps **both `bug` and `feature` to the `BR` prefix**. So:
+**RESOLVED AT THE MINT SURFACE BY TD-331** (operator decision, 2026-08-06).
+`/register` §2 used to map **both `bug` and `feature` to the `BR` prefix**; it now
+maps `bug → BR` and `feature → FR`, 1:1. That collision was the same defect class
+as TD-328 one level up — an unconstrained mapping at the **mint** surface — and
+it is the brief this section used to say "deserves its own brief".
 
-- `BR` as a *type value* does not fold (it could be either).
-- `BR-` prefixed rows with a NULL type are **not** inferred — they stay NULL and
-  are reported. AC-4 is satisfied by explanation, not only by assignment.
+**The historical rows are NOT resolved, and that is deliberate:**
 
-That collision is the same defect class as TD-328 one level up — an
-unconstrained mapping at the **mint** surface. It deserves its own brief and is
-explicitly out of scope here.
+- `BR` as a *type value* still does not fold. The 3 rows typed literally `BR`
+  predate the fix and could be either kind.
+- `BR-` prefixed rows with a NULL type are still **not** inferred — the 17 of
+  them stay NULL and are reported. AC-4 is satisfied by explanation, not only by
+  assignment.
+- `BRIEF_ID_PREFIX_TYPES` still omits `BR`, and TD-331 does not license adding
+  it: that table decodes brief IDs that ALREADY EXIST, and every NULL `BR-` row
+  predates the decision, so the key would retro-assign exactly the rows TD-331
+  forbids touching (TD-311 — an inference that can be wrong should surface, not
+  silently write).
+
+What the fix bought is that this set is **capped at 20 rather than growing with
+every new brief**. Every `BR-` minted from 2026-08-06 is unambiguously a Bug.
 
 ## TD-311 carve-out
 

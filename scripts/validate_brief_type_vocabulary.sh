@@ -30,13 +30,17 @@ set -e
 #   validate_brief_state_reconciliation.sh pair), so do NOT hand-edit one copy
 #   without the other.
 #
-#   NOTE THE GAP (TD-330 owns closing it): the bats trio only SPOT-CHECKS that
-#   the TD-328 additions are present on both sides. It cannot catch a 13th type
-#   added to the TS array, a removal of one of the nine pre-existing members, or
-#   an order change. Do not read a green suite as proof of parity. The real
-#   element-for-element guard is the CANONICAL_PHASES one
-#   (test/validate_canonical_phase_parity.test.bash), which this pair does not
-#   yet have.
+#   THE GAP IS CLOSED (TD-330). The bats trio only SPOT-CHECKED that the TD-328
+#   additions were present on both sides — it could not catch a 13th type added
+#   to the TS array, a removal of one of the nine pre-existing members, or an
+#   order change, and all three were measured passing silently.
+#   test/validate_brief_type_parity.test.bash now extracts BOTH definitions and
+#   asserts element-identity IN ORDER, the same shape as the CANONICAL_PHASES
+#   guard (test/validate_canonical_phase_parity.test.bash). Edit one copy
+#   without the other and it goes red.
+#
+#   The array below is the OBSERVER; the TS export is the OWNER (the executable
+#   path imports it). If they disagree, this file follows.
 #
 # Usage: scripts/validate_brief_type_vocabulary.sh
 # Env overrides (test injection):
@@ -59,7 +63,14 @@ PROJECT="${PROJECT:-}"
 #
 # The defining rule: the canonical set is the image of the /register brief-ID
 # prefix map (core/skills/register/SKILL.md §2) union {Documentation}.
-#   BR -> Bug|Feature   FR -> Feature   MG -> Migration   TD -> Technical Debt
+#   UNGUARDED COPY (TD-357): this prose map is one of six copies of the mint
+#   mapping and nothing pins it — corrupting a line here leaves the suite green
+#   (measured). The CANONICAL_BRIEF_TYPES array below IS pinned
+#   (test/validate_brief_type_parity.test.bash); this comment is not.
+#
+#   BR -> Bug           FR -> Feature   MG -> Migration   TD -> Technical Debt
+#     (BR is 1:1 since TD-331; `feature` mints FR-. Rows typed literally `BR`
+#      predate that and stay ambiguous — see brief-type-vocabulary.md)
 #   TS -> Testing       PI -> Process Improvement         DU -> Dependency Update
 #   PF -> Performance   AC -> Architecture                (none) -> Documentation
 #

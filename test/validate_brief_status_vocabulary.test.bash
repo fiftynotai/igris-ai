@@ -101,8 +101,10 @@ refute_output_has() {
 @test "parity: the six canonical statuses are present on BOTH sides, and there is no seventh" {
   # The THIRD bash mirror of a TS canonical array. Small enough to check
   # EXHAUSTIVELY in both directions, like the priority pair — so this IS a real
-  # parity guard rather than the brief_type presence spot-check. TD-330 still
-  # owes the generic element-for-element guard for all three.
+  # parity guard. But it is a COUNT + membership check, which is weaker than
+  # the element-IDENTICAL guards CANONICAL_PHASES (TD-257) and
+  # CANONICAL_BRIEF_TYPES (TD-330) now have: it sees an add or a delete and
+  # CANNOT see a rename or a swap. Upgrading this pair is TD-356.
   grep -q "CANONICAL_STATUSES" "$VALIDATOR" || return 1
 
   local ts="$IGRIS_ROOT/brain-mcp-server/src/tools/brief-normalize.ts"

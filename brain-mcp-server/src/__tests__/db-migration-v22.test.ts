@@ -358,7 +358,8 @@ describe('migration v22 — brief_type vocabulary fold (TD-328)', () => {
     expect(typeOf(db, 'DU-900')).toBe('Dependency Update');
     expect(typeOf(db, 'AC-900')).toBe('Architecture');
 
-    // The load-bearing negative: /register maps BOTH bug and feature to BR-.
+    // The load-bearing negative: rows minted before TD-331 carry a `BR-` prefix
+    // that meant EITHER bug or feature, and this migration has no date gate.
     expect(typeOf(db, 'BR-900')).toBeNull();
     expect(typeOf(db, 'BR-901')).toBeNull();
     // Not a mint prefix / malformed id.

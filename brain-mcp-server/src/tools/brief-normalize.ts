@@ -68,17 +68,22 @@
  * guard (test/validate_canonical_phase_parity.test.bash) hard-fails CI if the
  * two definitions diverge. Do NOT hand-edit one copy without the other.
  *
- *   THE SAME APPLIES TO CANONICAL_BRIEF_TYPES (TD-328), with one important
- *   difference: its bash twin lives in scripts/validate_brief_type_vocabulary.sh
- *   and it has NO equivalent parity guard yet — only a presence spot-check. See
- *   the note on CANONICAL_BRIEF_TYPES below.
+ *   THE SAME APPLIES TO CANONICAL_BRIEF_TYPES (TD-328), whose bash twin lives
+ *   in scripts/validate_brief_type_vocabulary.sh. **TD-330 SHIPPED its parity
+ *   guard** — test/validate_brief_type_parity.test.bash, the same shape as the
+ *   CANONICAL_PHASES one, asserting element-identity IN ORDER. Before it, the
+ *   pair had only a presence spot-check and all three of adding a 13th type,
+ *   deleting Feature, and adding a bogus bash entry passed silently.
  *
- *   ...AND TO CANONICAL_STATUSES (TD-333), whose bash twin is in
- *   scripts/validate_brief_status_vocabulary.sh. **TD-330 now owes a parity
- *   guard for THREE bash canonical arrays, not one.** The status and priority
- *   pairs are small enough that their bats suites check element COUNT in both
- *   directions, which is a real guard; the 12-member brief_type pair is still
- *   only spot-checked. The generic guard is TD-330's.
+ *   ...AND TO CANONICAL_STATUSES (TD-333) and CANONICAL_PRIORITIES, whose bash
+ *   twins are scripts/validate_brief_status_vocabulary.sh and
+ *   scripts/validate_brief_priority_vocabulary.sh. STATE OF PLAY, so nobody
+ *   re-derives it: phases (TD-257) and brief_type (TD-330) have ELEMENT-IDENTICAL
+ *   guards; status and priority have only element-COUNT checks in their bats
+ *   suites. A count check is a real guard but a weaker one — it cannot see a
+ *   rename or a swap of two members, only an add or a delete. Upgrading those
+ *   two to element-identity is TD-356, deliberately NOT folded into TD-330
+ *   (whose scope and ACs name the brief_type pair only).
  *
  * @module tools/brief-normalize
  * @author fifty.dev
@@ -128,7 +133,8 @@ export const CANONICAL_PRIORITIES = [
  * canonical, so those briefs had no legal type to write and the operator
  * invented one.
  *
- *   BR → Bug | Feature (ambiguous by design — see BRIEF_ID_PREFIX_TYPES)
+ *   BR → Bug (1:1 since TD-331; `feature` mints FR-. Still ABSENT from
+ *        BRIEF_ID_PREFIX_TYPES — that table decodes IDs that already exist)
  *   FR → Feature          MG → Migration        TD → Technical Debt
  *   TS → Testing          PI → Process Improvement
  *   DU → Dependency Update (TD-328 addition)
@@ -158,13 +164,18 @@ export const CANONICAL_PRIORITIES = [
  *
  * ⚠ THIS ARRAY HAS A SECOND COPY. `scripts/validate_brief_type_vocabulary.sh`
  * carries a `CANONICAL_BRIEF_TYPES` bash array that MUST stay element-identical
- * to this one. There is no build step generating one from the other, and — read
- * this before trusting CI — the bats trio only SPOT-CHECKS that the TD-328
- * additions are present on both sides. It will NOT fail if you add a 13th type
- * here, remove one of the nine pre-existing members, or reorder them. So
- * editing this array is a two-file edit you have to remember; TD-330 owns
- * building the real parity guard (the shape `CANONICAL_PHASES` already has in
- * test/validate_canonical_phase_parity.test.bash).
+ * to this one. There is no build step generating one from the other — but since
+ * TD-330 the coupling is ENFORCED rather than remembered:
+ * test/validate_brief_type_parity.test.bash extracts both definitions and
+ * asserts element-identity IN ORDER, the shape `CANONICAL_PHASES` already had
+ * in test/validate_canonical_phase_parity.test.bash. Edit one copy without the
+ * other and that guard goes red.
+ *
+ * WHAT IT USED TO BE, because the gap is worth remembering: before TD-330 the
+ * bats trio only SPOT-CHECKED that the TD-328 additions were present on both
+ * sides. It did NOT fail on a 13th type added here, a removal of one of the
+ * nine pre-existing members, or a reorder — all three were planted and
+ * measured passing silently. They redden now.
  */
 export const CANONICAL_BRIEF_TYPES = [
   'Feature',
@@ -228,8 +239,11 @@ export const PRIORITY_ALIASES: Record<string, string> = {
  * mint prefix the type field was redundant with the prefix anyway.
  *
  * NOT here, deliberately:
- *   - `BR` — `/register` maps BOTH `bug` and `feature` to `BR`, so the value is
- *     ambiguous by design. Folding it would mistype an unknown number of rows.
+ *   - `BR` — a row typed literally `BR` predates TD-331, when `/register`
+ *     mapped BOTH `bug` and `feature` to that prefix, so the value is
+ *     irrecoverably ambiguous. Folding it would mistype an unknown number of
+ *     rows. TD-331 made the mint surface 1:1 (`bug` → `BR`, `feature` → `FR`),
+ *     which CAPS this set at its current 3 rows but cannot resolve them.
  *     Same reason `BR` is absent from BRIEF_ID_PREFIX_TYPES.
  *   - `Spike` / `Investigation` / `Integration` — no defensible target; folding
  *     would be INVENTING, not normalising. They surface in the D6 report every
@@ -381,18 +395,38 @@ export const BRIEF_TYPE_COMPOUND_FOLDS: Record<string, CompoundFold> = {
  * Used ONLY to fill rows where `brief_type IS NULL` — it never overwrites a
  * stated type, so there is no competing value to destroy.
  *
- * `BR` IS DELIBERATELY ABSENT AND MUST STAY ABSENT.
- *   `/register` §2 maps BOTH `bug` and `feature` to the `BR` prefix
- *   (`| bug, feature | BR |`), so a `BR-` brief may be either — and `BR-` is
- *   the oldest and largest prefix in the corpus (17 of the 68 NULL rows).
- *   Inferring `BR-` → `Bug` would silently mistype an unknown number of
+ * `BR` IS DELIBERATELY ABSENT AND MUST STAY ABSENT — INCLUDING AFTER TD-331.
+ *   Historically `/register` §2 mapped BOTH `bug` and `feature` to the `BR`
+ *   prefix (`| bug, feature | BR |`), so a `BR-` brief may be either — and
+ *   `BR-` is the oldest and largest prefix in the corpus (17 of the 68 NULL
+ *   rows). Inferring `BR-` → `Bug` would silently mistype an unknown number of
  *   features. Those rows stay NULL and are REPORTED instead (AC-4 is satisfied
  *   by explanation, not only by assignment). A test pins this absence against a
  *   well-meaning future addition.
  *
- *   The `bug, feature → BR` collision is the same defect class as TD-328 one
- *   level up — an unconstrained mapping at the MINT surface. It deserves its
- *   own brief; explicitly out of scope here.
+ *   TD-331 FIXED THE MINT SURFACE AND THAT DOES NOT LICENSE A CHANGE HERE.
+ *   Operator decision 2026-08-06: `/register` now mints `feature` as `FR-`, so
+ *   every `BR-` brief created from that date forward is unambiguously a Bug.
+ *   It is tempting to conclude that `BR: 'Bug'` is therefore safe now. IT IS
+ *   NOT, and the reason is what this table is FOR: it decodes brief IDs that
+ *   ALREADY EXIST, and the 17 NULL `BR-` rows all predate the decision. Adding
+ *   the key would retro-assign exactly the rows TD-331's scope item 2 forbids
+ *   touching — "an inference that can be wrong should surface, not silently
+ *   write" (TD-311).
+ *
+ *   The ambiguity is a property of WHEN a brief was minted, not of the prefix
+ *   going forward, and this table cannot see mint dates. What TD-331 bought is
+ *   that the unresolvable set is CAPPED at 20 (17 NULL + 3 typed literally
+ *   `BR`) instead of growing with every new brief — not that the existing 20
+ *   became decodable. They are dispositioned as permanently ambiguous by
+ *   decision, with the reason recorded in TD-331 and in `/register` §2.
+ *
+ *   (A future brief could in principle date-gate this — a NULL-type `BR-` row
+ *   minted after the decision is a Bug, because `/register` writes `brief_type`
+ *   at mint, so any NULL `BR-` row is by construction historical. That is a
+ *   real argument and it is NOT taken here: it trades a permanent, explainable
+ *   absence for a rule with a cutoff date in it, and the payoff is zero rows
+ *   today.)
  */
 export const BRIEF_ID_PREFIX_TYPES: Record<string, string> = {
   FR: 'Feature',
@@ -590,10 +624,13 @@ export function nonCanonicalPriorityNote(stored: string | null | undefined): str
  * ⚠ THIS ARRAY HAS A SECOND COPY, the same shape `CANONICAL_BRIEF_TYPES` and
  * `CANONICAL_PRIORITIES` already carry: `scripts/validate_brief_status_vocabulary.sh`
  * holds a `CANONICAL_STATUSES` bash array that MUST stay element-identical.
- * There is no build step generating one from the other and the bats trio only
- * SPOT-CHECKS presence, so editing this array is a two-file edit you have to
- * remember. TD-330 now owes a real element-for-element parity guard for THREE
- * bash canonical arrays, not one.
+ * There is no build step generating one from the other, and this pair's guard
+ * is an element-COUNT check in its bats suite — weaker than the
+ * element-IDENTICAL guards `CANONICAL_PHASES` (TD-257) and
+ * `CANONICAL_BRIEF_TYPES` (TD-330) now have. A count check sees an add or a
+ * delete and CANNOT see a rename or a swap of two members, so editing this
+ * array is still partly a two-file edit you have to remember.
+ * **Upgrading this pair and the priority pair to element-identity is TD-356.**
  */
 export const CANONICAL_STATUSES = [
   'Draft',

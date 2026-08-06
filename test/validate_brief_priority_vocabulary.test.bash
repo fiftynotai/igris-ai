@@ -85,9 +85,11 @@ assert_output_has() {
 }
 
 @test "parity: the four canonical priorities are present on BOTH sides, and there is no fifth" {
-  # Unlike the brief_type pair (12 members, spot-checked only), the priority set
-  # is small enough to check EXHAUSTIVELY in both directions — so this IS a real
-  # parity guard, not a presence spot-check.
+  # The priority set is small enough to check EXHAUSTIVELY in both directions,
+  # so this IS a real parity guard. It is nonetheless WEAKER than the
+  # element-identical guards CANONICAL_PHASES (TD-257) and CANONICAL_BRIEF_TYPES
+  # (TD-330) have — a count + membership check sees an add or a delete but
+  # cannot see a rename or a swap of two members. Upgrading this pair is TD-356.
   grep -q "CANONICAL_PRIORITIES" "$VALIDATOR"
 
   local ts="$IGRIS_ROOT/brain-mcp-server/src/tools/brief-normalize.ts"
@@ -105,7 +107,9 @@ assert_output_has() {
   done
 
   # Element COUNT parity, both directions — this is what catches an addition or
-  # a removal on either side, which the brief_type spot-check cannot do.
+  # a removal on either side. It does NOT catch a rename or a swap; the
+  # element-identical guards (TD-257's phases, TD-330's brief_type) do. TD-356
+  # tracks bringing this pair up to that standard.
   local sh_count ts_count
   sh_count="$(sed -n '/^CANONICAL_PRIORITIES=(/,/^)/p' "$VALIDATOR" | grep -c '^  "')"
   ts_count="$(sed -n '/^export const CANONICAL_PRIORITIES = \[/,/^\] as const;/p' "$ts" | grep -c "^  '")"

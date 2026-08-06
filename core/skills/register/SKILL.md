@@ -45,8 +45,12 @@ Or without type (will prompt):
 
 `$ARGUMENTS` format: `[type] "title"` or just `"title"`
 
-Types and their prefixes:
-- `bug` or `feature` → BR-XXX
+Types and their prefixes — **one kind, one prefix** (TD-331; the `bug, feature
+→ BR` collision was retired 2026-08-06). This list and §2's table below are two
+copies of one mapping and are pinned against each other by
+`test/validate_brief_type_parity.test.bash`:
+- `bug` → BR-XXX
+- `feature` → FR-XXX
 - `migration` → MG-XXX
 - `debt` → TD-XXX
 - `testing` → TS-XXX
@@ -74,7 +78,8 @@ add a prefix here, add its canonical type in
 
 | Type | Prefix | Canonical `brief_type` |
 |------|--------|------------------------|
-| bug, feature | BR | `Bug` **or** `Feature` — pick from the title; `BR` covers both |
+| bug | BR | `Bug` |
+| feature | FR | `Feature` |
 | migration | MG | `Migration` |
 | debt | TD | `Technical Debt` |
 | testing | TS | `Testing` |
@@ -90,6 +95,29 @@ add a prefix here, add its canonical type in
 evidence (only 41% of refactor briefs carried a `TD-` prefix) and the operator
 declined an `RF-` prefix. Use it for refactor work minted under `BR-` or `TD-`.
 See `core/enforcement/brief-type-vocabulary.md`.
+
+**`feature` mints `FR-`, not `BR-` (TD-331, operator decision 2026-08-06).**
+Until then this table's first row read `bug, feature | BR`, and it was the ONLY
+prefix that named two kinds. That collision is why 20 briefs are permanently
+untypeable: 17 NULL-type `BR-` rows could not be inferred (every other prefix
+inferred losslessly — `FR-` 25, `TD-` 21, `TS-` 2, `PF-` 1) and 3 rows typed
+literally `BR` cannot be folded, because `BR` meant either thing.
+
+So the rule this table states — *a prefix names exactly one canonical type* — is
+now TIGHTENED rather than patched. After TD-331 every canonical type with a mint
+prefix has exactly ONE, and `Refactor` (above) remains the single documented
+prefix-less canonical type. There is no second exception.
+
+`FR-` now covers what used to be split across "feature" and "request". They were
+never distinct at the mint surface — the distinction was an artifact of having
+two rows, not a concept the corpus tracks.
+
+**The 20 historical rows are NOT retro-assigned.** They are dispositioned as
+permanently ambiguous, by decision, and the reason is recorded: at the time they
+were minted `BR-` did not distinguish bug from feature, and no non-guessing
+source of that distinction survives. An inference that can be wrong should
+surface, not silently write (TD-311). What the decision DID buy is that the
+unresolvable set is now capped at 20 rather than growing with every new brief.
 
 ### 3. Find Next Available Number
 
@@ -199,7 +227,7 @@ Display:
 Brief registered: {PREFIX}-{XXX}
 
 Brief: {PREFIX}-{XXX} (stored in brain DB)
-Type: [Bug Fix | Feature | Migration | etc.]
+Type: [Bug | Feature | Migration | etc.]   (canonical values only — `Bug Fix` is an ALIAS that BRIEF_TYPE_ALIASES folds, and a non-canonical spelling on the mint surface is how the 50-spelling drift started)
 Priority: P2 (default)
 Status: Ready
 

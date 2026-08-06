@@ -301,10 +301,18 @@ describe('normalizeBriefType — TD-328 widened fold table', () => {
 });
 
 describe('BRIEF_ID_PREFIX_TYPES — the D5 NULL-inference decode table', () => {
-  it('has NO `BR` key — /register maps BOTH bug and feature to BR-', () => {
-    // Guards the D5 ambiguity against a well-meaning future addition. Inferring
-    // BR- → Bug would silently mistype an unknown number of features, and BR-
-    // is the oldest and largest prefix in the corpus.
+  it('has NO `BR` key — the 17 NULL BR- rows predate TD-331 and cannot be decoded', () => {
+    // Guards the D5 ambiguity against a well-meaning future addition.
+    //
+    // READ THIS BEFORE "FIXING" THE TITLE. TD-331 made the MINT map 1:1
+    // (`bug` → BR, `feature` → FR), so it is tempting to conclude BR: 'Bug' is
+    // now safe. It is not, and the reason is what this table is FOR: it decodes
+    // brief IDs that ALREADY EXIST, and it is applied to every NULL-type row
+    // with no date gate (db.ts's v22 UPDATE and normalize_brief_types.ts, which
+    // is re-runnable on demand). All 17 NULL BR- rows predate the decision, so
+    // adding the key retro-assigns exactly the rows TD-331 scope item 2
+    // forbids touching. The ambiguity is a property of WHEN a brief was minted,
+    // which this table cannot see.
     expect(BRIEF_ID_PREFIX_TYPES).not.toHaveProperty('BR');
   });
 

@@ -200,8 +200,11 @@ export function planNormalization(
         noteUnfolded(
           raw,
           row.brief_id,
-          'BR- is ambiguous: /register maps BOTH `bug` and `feature` to it, so ' +
-            'inference would mistype an unknown number of features',
+          'BR- is ambiguous for rows minted before TD-331: the prefix meant ' +
+            'EITHER bug or feature at the time, so inference would mistype an ' +
+            'unknown number of features. TD-331 made the mint map 1:1 ' +
+            '(bug -> BR, feature -> FR), which caps this set but cannot ' +
+            'resolve the rows already in it',
         );
       } else {
         noteUnfolded(
@@ -284,7 +287,8 @@ export function planNormalization(
       noteUnfolded(
         raw,
         row.brief_id,
-        'BR is ambiguous by design: /register maps BOTH `bug` and `feature` to it',
+        'BR predates TD-331: the prefix meant either kind at mint time, and this ' +
+          'table decodes IDs that already exist, so no key can recover it',
       );
     } else {
       noteUnfolded(

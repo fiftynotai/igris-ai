@@ -49,11 +49,13 @@ set -e
 #
 # CANONICAL SET: must stay element-identical to CANONICAL_STATUSES in
 #   brain-mcp-server/src/tools/brief-normalize.ts. This is the THIRD bash mirror
-#   of a TS canonical array (after CANONICAL_PHASES, which HAS a real parity
-#   guard, and CANONICAL_BRIEF_TYPES, which does not) — TD-330 now owes three,
-#   not one. There is no build step generating one from the other, and the bats
-#   trio only SPOT-CHECKS presence: it will not fail if you add a seventh status
-#   here, remove one, or reorder them.
+#   of a TS canonical array. CANONICAL_PHASES (TD-257) and CANONICAL_BRIEF_TYPES
+#   (TD-330) BOTH have element-identical parity guards; this pair and the
+#   priority pair have only element-COUNT checks in their bats suites — which
+#   see an add or a delete but CANNOT see a rename or a swap of two members.
+#   Upgrading these two is TD-356. There is no build step generating one from
+#   the other, so until then this remains partly a two-file edit you have to
+#   remember.
 #
 #   `status` is `TEXT NOT NULL`, so unlike `priority` there is NO unset family:
 #   a NULL or an empty status is an OFFENDER (class 2), not an "unset".
