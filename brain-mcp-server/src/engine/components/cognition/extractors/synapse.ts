@@ -224,6 +224,17 @@ export function createSynapseInstance(
   return {
     id: 'synapse',
 
+    // TD-327 — the REQUIRED observability declaration. Own switch, own cron.
+    health: {
+      component: 'cognition.synapse',
+      event_prefix: 'cognition.synapse',
+      gate_keys: ['cognition.synapse.enabled'],
+      gate_default: false, // DEFAULT_SYNAPSE_CONFIG.enabled === false
+      driver: 'schedule',
+      driver_ref: 'synapse_engine',
+      output: "suggestions[source_module='edge_inference']",
+    },
+
     async buildContext(
       db: Database.Database,
       args: ExtractorArgs,

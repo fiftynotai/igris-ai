@@ -245,6 +245,21 @@ export function createJanitorInstance(
   return {
     id: 'janitor',
 
+    // TD-327 — the REQUIRED observability declaration. The janitor is the
+    // DRIVER of three other instances: `janitor/runner.ts` co-drives arbiter,
+    // curator and cartographer inside its own run, so a wedged `janitor_engine`
+    // schedule takes FOUR instances offline, not one. Those three name this
+    // instance's id in their `driver_ref`.
+    health: {
+      component: 'cognition.janitor',
+      event_prefix: 'cognition.janitor',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // DEFAULT_JANITOR_CONFIG.enabled === false
+      driver: 'schedule',
+      driver_ref: 'janitor_engine',
+      output: "suggestions[source_module='janitor']",
+    },
+
     async buildContext(
       db: Database.Database,
       args: ExtractorArgs,

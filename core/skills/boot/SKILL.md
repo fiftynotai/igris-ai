@@ -362,74 +362,70 @@ Each entry carries `goal_id` / `title` / `deadline` / `priority`. (The prior "N 
 
 If `goals_upcoming[]` is empty, render nothing — no "No goals" line. Token budget: ~120 tokens.
 
-### 4.10 Ready Check — Subconscious Suggestions (FR-106)
+### 4.10 Ready Check — Cognition Health + Subconscious Suggestions (FR-106 / TD-327)
 
-> **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
-> `cognition.subconscious.enabled` config flag, which defaults to `false`. The old
-> rule-based engine had a 2% true-positive rate; FR-118 SHIPPED the redesign —
-> the subconscious is now a cognition instance (digest → isolated LLM call →
+> **TD-102 / FR-118 / FR-191 (V7.1):** The subconscious SUGGESTIONS table below is
+> gated behind the `cognition.subconscious.enabled` config flag, which defaults to
+> `false`. The old rule-based engine had a 2% true-positive rate; FR-118 SHIPPED the
+> redesign — the subconscious is now a cognition instance (digest → isolated LLM call →
 > open-typed suggestions), and the rule detectors were deleted. Re-enable is
 > just a flag flip — no schedule re-bootstrap needed.
 
-Read `<detect.brain_root>/config.json` and check `cognition.subconscious.enabled`. If the
-key is absent, treat as `false`. If `false`, skip this section silently — render
-nothing (no suggestion MCP tools, no failure WARNING, no "disabled" notice).
-Resume reading at §4.11.
+#### Pre-step (TD-327): cognition health WARNING — every instance, DERIVED
 
-#### Pre-step (FR-118): subconscious failure WARNING
-
-Mirroring §4.11's perception failure pre-step. Before rendering the pending
-suggestions, query the latest subconscious run so a recent LLM-run failure
-surfaces prominently. The engine writes its lifecycle to `event_log` directly
-under the `cognition.subconscious` component (NOT the legacy `subconscious.*`
-bus events). Read the local DB via `sqlite3` (same TD-080 rationale: the local
-DB is the merged superset post-§4 pull; the `igris_event_log` MCP routes to
-the remote and would miss this machine's local-only runs). The subconscious
-runs whole-brain (no per-project slug), so this query is NOT slug-scoped:
+Run the deterministic verb and render its output. Do NOT read `config.json` and
+do NOT run SQL here: the digest already resolves each instance's declared gate
+key, reads the local `event_log` / `schedules` / `schedule_runs`, and scopes
+every reading to THIS machine.
 
 ```bash
-command -v sqlite3 >/dev/null 2>&1 || return 0  # skip WARNING silently if absent
-sqlite3 "<detect.brain_root>/memory/knowledge.db" \
-  "SELECT created_at, event_name, json_extract(payload, '\$.reason') AS reason
-   FROM event_log
-   WHERE component = 'cognition.subconscious'
-   ORDER BY created_at DESC LIMIT 1;" 2>/dev/null || true
+igris cognition health --json 2>/dev/null || true
 ```
 
-If the latest row's `event_name` is `'cognition.subconscious.run_failed'` AND no
-later `'cognition.subconscious.run_succeeded'` row exists (defensive follow-up
-to confirm the failure has not self-recovered), prepend a single WARNING block.
-The "no later success" check (substitute the failed row's `created_at`):
+The roster is DERIVED from the brain's projected extractor registry, so this
+covers every instance — including ones added after this skill was last edited.
+That is the point: the previous version of this section hand-listed two of seven
+instances in embedded SQL, and the five it did not name were silent for four
+weeks before anyone noticed.
 
-```bash
-command -v sqlite3 >/dev/null 2>&1 || return 0
-sqlite3 "<detect.brain_root>/memory/knowledge.db" \
-  "SELECT COUNT(*) FROM event_log
-   WHERE component = 'cognition.subconscious'
-     AND event_name = 'cognition.subconscious.run_succeeded'
-     AND created_at > '<failed_row_created_at>';" 2>/dev/null || true
-```
-
-A return of `0` confirms the failure is the latest terminal state.
+**Render rule — nothing when healthy.** If `degraded` is `true`, render nothing.
+If every entry in `instances[]` has `status` of `ok` or `disabled`, render
+nothing. Otherwise render ONE block listing only the non-`ok`, non-`disabled`
+entries, one line each:
 
 ```
-## Subconscious WARNING
-Latest subconscious run FAILED at 2026-06-24 06:00 (reason: timeout).
-No new suggestions were produced on the last sweep.
-Investigate: igris_event_log component='cognition.subconscious' limit=5
+## Cognition WARNING
+- janitor: WEDGED — janitor_engine has an OPEN run 14.5 days old
+- arbiter: BLOCKED_UPSTREAM — runs only inside a janitor run
+Investigate: igris cognition health
 ```
 
-Suppression rules (do NOT render the WARNING when):
-- Latest event is `'cognition.subconscious.run_skipped'` — skipping is normal
-  (disabled gate, cold-start grace, daily budget, min-digest-bytes).
-- Latest event is `'cognition.subconscious.run_started'` with no terminal event
-  yet (in-flight run; /scan surfaces the stuck-RUNNING case).
-- A `'cognition.subconscious.run_succeeded'` row exists with `created_at` newer
-  than the failed row.
+Line format: `- {id}: {status uppercased} — {first sentence of reason}`. Append
+each entry of `warnings[]` as its own `- ` line. Token budget: ~80 tokens, and
+zero on a healthy brain.
 
-If `sqlite3` is unavailable, the DB is missing, or the query errors, skip the
-WARNING silently (`2>/dev/null || true` absorbs all three). Token budget: ~80
-tokens.
+Read the statuses as declared, not as guessed:
+- `no_signal` means "silent for at least the retained `event_log` window"
+  (`event_log_retention_days`), **NOT** "never ran". The brain purges that table
+  on every engine init, so absence of a row is absence of evidence.
+- `blocked_upstream` means the instance has no switch or schedule of its own and
+  its driver is the thing to fix. Do not investigate the blocked instance.
+- `disabled` is a deliberate operator choice and is never a warning.
+
+If the verb is unavailable or emits nothing parseable, skip this pre-step
+silently (`2>/dev/null || true` absorbs it). Never block the boot on it.
+
+#### Subconscious suggestions
+
+Gate this sub-block on the SUBCONSCIOUS entry of the digest above: find the
+entry with `id == "subconscious"` and use its `enabled` field. (That field is
+the resolution of the instance's own declared `gate_keys`, which is
+`cognition.subconscious.enabled` — read it from the digest rather than
+re-reading `config.json`, so a gate that moves brain-side sweeps itself.) When
+the digest is `degraded` or carries no `subconscious` entry, treat as `false`.
+
+If `false`, skip the rest of this section silently — render nothing (no
+suggestion MCP tools, no "disabled" notice). Resume reading at §4.11.
 
 If `igris-brain` MCP is available, call `igris_suggestion_list` with:
 - `status` = `'pending'`
@@ -455,35 +451,14 @@ run `igris_suggestion_list` directly for full details.
 If zero results, render nothing — no "No suggestions" line. If the tool
 is unavailable (older brain), skip silently.
 
-#### Janitor engine health (FR-119)
-
-Gated behind `cognition.janitor.enabled` in `~/.igris/config.json` (key absent =
-`false`). If `false`, skip this line silently — the engine does not run.
-
-When enabled, surface a one-line memory-hygiene health summary from the latest
-`cognition.janitor.*` lifecycle event + the latest `brain_maintenance_runs` audit
-row (same local-DB `sqlite3` rationale as the subconscious block — the local DB
-is the merged superset post-§4 pull; the janitor runs whole-brain, NOT
-slug-scoped):
-
-```bash
-command -v sqlite3 >/dev/null 2>&1 || return 0  # skip silently if absent
-sqlite3 "<detect.brain_root>/memory/knowledge.db" \
-  "SELECT status, merges_proposed, confidence_bumps, stale_rejected, finished_at
-   FROM brain_maintenance_runs ORDER BY id DESC LIMIT 1;" 2>/dev/null || true
-```
-
-Render one terse line (skip entirely if no maintenance rows exist yet). Merge
-PROPOSALS surface through the pending-suggestions block above
-(`source_module='janitor'`); this line is the engine-health summary only.
-
-```
-## Janitor
-Last run 2026-07-02 04:00 — SUCCEEDED · merges_proposed=2 · confidence_bumps=1 · stale_rejected=3
-```
-
-If `sqlite3` is unavailable, the DB is missing, or the query errors, skip the
-line silently. Token budget: ~40 tokens.
+> **TD-327 — the janitor health line moved.** This section used to carry a
+> second embedded `sqlite3` block reading `brain_maintenance_runs` for a
+> one-line janitor summary. That block is gone: the janitor is one of the seven
+> instances the health pre-step above now covers, derived rather than named. A
+> per-instance line only prints when the janitor is NOT `ok`, which is the same
+> render-when-it-matters posture at a seventh of the surface area. `/scan` §6.5
+> carries the full roster table for deliberate inspection. Merge PROPOSALS still
+> surface through the pending-suggestions block above (`source_module='janitor'`).
 
 ### 4.11 Ready Check — Pending Perception Candidates (FR-109 / TD-066)
 

@@ -56,6 +56,7 @@ import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
+import { runCognition } from "./verbs/cognition.js";
 import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
@@ -1160,6 +1161,19 @@ async function main(argv: string[]): Promise<void> {
         process.exitCode = code;
       },
     );
+
+  program
+    .command("cognition <action>", { hidden: true })
+    .description(
+      "TD-327: per-instance health for the cognition subsystem. Action: health. The roster is DERIVED from the brain's projected extractor registry (cognition_instances), never hand-listed — a new extractor appears here with no edit. Reads are strictly read-only and LOCAL (event_log/schedules/schedule_runs on THIS machine; igris_event_log routes to the remote and would miss local-only runs). Prints a JSON digest. Exit 0 even when degraded; unknown action → exit 2.",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the boot path)", true)
+    .action((action: string, opts: { json?: boolean }): void => {
+      process.exitCode = runCognition({
+        action,
+        json: opts.json !== false,
+      });
+    });
 
   // FR-238 — the CLI's first LONG-LIVED verb. Visible (not hidden): the
   // dashboard is a product surface, not an internal boot-lifecycle step.

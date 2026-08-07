@@ -16,6 +16,9 @@
 #       5. `igris assess` emits valid JSON with the D-A fields.
 #   M3: 6. `igris boot-sync` with remote unconfigured → degraded, valid JSON, exit 0.
 #       7. `igris boot-sync` with an unreachable remote → valid JSON, exit 0 (never blocks).
+#   TD-327: 8. `igris cognition health` on a brain with no roster → degraded, exit 0.
+#           9. `igris cognition health` renders an instance the CLI never heard of.
+#          10. `igris cognition bogus` → exit 2.
 
 load _helpers.bash
 
@@ -263,4 +266,70 @@ SQL
       process.exit(0);
     });
   '
+}
+
+@test "cognition health: no roster projection → degraded, valid JSON, exit 0" {
+  # stage_brain creates memory/ but no knowledge.db. A health question must
+  # never block session start, so this is exit 0 with a NAMED reason.
+  run $CLI_BIN cognition health
+  [ "$status" -eq 0 ]
+  echo "$output" | node -e '
+    let s = ""; process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      for (const k of ["degraded","degraded_reason","hostname","event_log_retention_days","instances","warnings"]) {
+        if (!(k in o)) { console.error("missing key: " + k); process.exit(1); }
+      }
+      if (o.degraded !== true) { console.error("expected degraded=true"); process.exit(1); }
+      if (o.instances.length !== 0) { console.error("expected an empty roster"); process.exit(1); }
+      process.exit(0);
+    });
+  '
+}
+
+@test "cognition health: renders an instance the CLI has never heard of" {
+  # THE DERIVATION PROOF, end-to-end through the built CLI. `roadmap_drift`
+  # appears nowhere in cli/src — the roster is read out of the brain's own
+  # projection of its OPEN registry, so a new extractor needs no CLI edit.
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" <<'SQL'
+-- DUPLICATED DDL — schema.ts#cognitionMigrations is the SOURCE OF TRUTH.
+-- This arm drives the CLI end-to-end without booting the engine, so it hand-
+-- writes the table. A column added to the migration will NOT drift-fail here.
+-- Mitigated rather than solved: readCognitionRoster reads tolerantly and
+-- withReadonlyBrain degrades, so a shape change surfaces as a degraded digest
+-- rather than a crash. If this drifts often enough to hurt, export the DDL.
+CREATE TABLE IF NOT EXISTS cognition_instances (
+  id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
+  gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
+  driver TEXT NOT NULL, driver_ref TEXT,
+  output TEXT NOT NULL, registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT INTO cognition_instances (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output)
+VALUES ('roadmap_drift', 'cognition.roadmap_drift', 'cognition.roadmap_drift',
+        '["cognition.roadmap_drift.enabled"]', 0, 'manual', NULL,
+        'suggestions[source_module=''roadmap_drift'']');
+SQL
+  printf '{"cognition":{"roadmap_drift":{"enabled":true}}}\n' > "$IGRIS_BRAIN_DIR/config.json"
+
+  run $CLI_BIN cognition health
+  [ "$status" -eq 0 ]
+  echo "$output" | node -e '
+    let s = ""; process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      if (o.degraded !== false) { console.error("expected degraded=false"); process.exit(1); }
+      const inst = o.instances.find(i => i.id === "roadmap_drift");
+      if (!inst) { console.error("roadmap_drift absent from the digest"); process.exit(1); }
+      if (inst.enabled !== true) { console.error("expected enabled=true"); process.exit(1); }
+      // No events at all, and the purge window makes absence unprovable — so
+      // the verdict must be no_signal, never "never ran".
+      if (inst.status !== "no_signal") { console.error("bad status: " + inst.status); process.exit(1); }
+      process.exit(0);
+    });
+  '
+}
+
+@test "cognition <unknown>: returns exit 2" {
+  run $CLI_BIN cognition bogus
+  [ "$status" -eq 2 ]
 }

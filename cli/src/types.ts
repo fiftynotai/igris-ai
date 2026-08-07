@@ -394,6 +394,146 @@ export interface AssessDigest {
   goals_upcoming: AssessGoal[];
 }
 
+// ---------------------------------------------------------------------------
+// TD-327 — cognition instance health
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-327 — one instance's health verdict, in PRECEDENCE order (the classifier
+ * returns the first that matches):
+ *
+ * | status | predicate |
+ * |---|---|
+ * | `disabled` | one of the declared `gate_keys` is false/absent in `config.json` |
+ * | `wedged` | its schedule is enabled and an OPEN `running` run exists |
+ * | `blocked_upstream` | it is `co_driven` and its driver is `wedged`/`disabled`/`failing` |
+ * | `failing` | the latest terminal event on THIS host is `run_failed`, no later success |
+ * | `no_signal` | enabled, but no terminal event inside the retained `event_log` window |
+ * | `ok` | the latest terminal on THIS host is `run_succeeded` or `run_skipped` |
+ *
+ * `no_signal` IS NOT "never ran". `monitoring/index.ts` purges `event_log`
+ * older than 30 days on every engine init, so "stopped a while ago" and "never
+ * existed" are indistinguishable from that table alone. The digest therefore
+ * reports the retention floor alongside the status and cross-checks the
+ * NON-purged `schedules` / `schedule_runs` signals before an operator draws a
+ * conclusion.
+ */
+export type CognitionHealthStatus =
+  | "disabled"
+  | "wedged"
+  | "blocked_upstream"
+  | "failing"
+  | "no_signal"
+  | "ok";
+
+/**
+ * TD-327 — the `schedules` + `schedule_runs` cross-check for a schedule-driven
+ * instance. Both tables survive the `event_log` purge, so this is what makes a
+ * long-dormant instance distinguishable from one that never existed.
+ */
+export interface CognitionScheduleSignal {
+  /** The `schedules.name` the instance declared as its `driver_ref`. */
+  name: string;
+  /**
+   * How many `schedules` rows share that NAME. >1 is a defect: the bootstrap's
+   * idempotency check is `WHERE name = ?` while `schedules` syncs on a
+   * per-machine random `id`, so two brains each keep their own row. Surfaced as
+   * a digest warning.
+   */
+  rows: number;
+  /** True when ANY row with this name is enabled. */
+  enabled: boolean;
+  /** The earliest `next_run_at` across the matching rows. */
+  next_run_at: string | null;
+  /** True when `next_run_at` is in the past — the schedule is due and has not fired. */
+  overdue: boolean;
+  /** The id of an OPEN (`status='running'`) run, if one exists. */
+  open_run_id: string | null;
+  /** When that open run started. */
+  open_run_started_at: string | null;
+  /** Its age in days, rounded to one decimal. A stale one wedges the schedule. */
+  open_run_age_days: number | null;
+}
+
+/** TD-327 — one row of the health digest, derived from the projected roster. */
+export interface CognitionInstanceHealth {
+  /** The instance id, from `cognition_instances` (the registry's projection). */
+  id: string;
+  /** Its `event_log.component` LITERAL — `perception` is NOT `cognition.perception`. */
+  component: string;
+  /** Its `event_log.event_name` prefix LITERAL. */
+  event_prefix: string;
+  /** The CONJUNCTION of `config.json` keys gating it — all must be truthy. */
+  gate_keys: string[];
+  /**
+   * What an ABSENT gate key resolves to for THIS instance. `false` for six of
+   * seven; `true` for perception, whose RESOLVER default is ON for an ABSENT
+   * key — not its shipped posture (install writes it false, FR-191). Surfaced in the digest so a
+   * renderer can say "absent, and that means enabled here" rather than guessing.
+   */
+  gate_default: boolean;
+  /** True when every declared gate key resolved truthy. */
+  enabled: boolean;
+  /** The FIRST gate key that resolved false/absent; null when enabled. */
+  disabled_by: string | null;
+  /** `schedule` | `co_driven` | `session_hook` | `manual`. */
+  driver: string;
+  /** Schedule name / driving instance id / hook name / null. */
+  driver_ref: string | null;
+  /** The verdict — see {@link CognitionHealthStatus}. */
+  status: CognitionHealthStatus;
+  /** One operator-readable sentence explaining the verdict. */
+  reason: string;
+  /** Latest terminal event on THIS host. */
+  last_run_at: string | null;
+  /** That event's name (`…run_succeeded` / `…run_failed` / `…run_skipped`). */
+  last_outcome: string | null;
+  /**
+   * Latest terminal event on ANY host. `event_log` syncs, so a VPS-born success
+   * would render a locally-wedged instance green if the reads were not
+   * host-scoped. Reported separately rather than folded in.
+   */
+  last_run_any_host: string | null;
+  /** `run_started` rows on this host today (UTC) — the daily-budget view. */
+  runs_today: number;
+  /** Where its output lands, verbatim from the instance's declaration. */
+  output: string;
+  /**
+   * Rows matching the declared output predicate, or null when the declared
+   * expression is not a countable `table[column='value']` form (the
+   * subconscious names an OPEN `source_module`, so it has no fixed predicate).
+   */
+  output_rows: number | null;
+  /** The schedule cross-check; null for non-schedule drivers. */
+  schedule: CognitionScheduleSignal | null;
+}
+
+/**
+ * TD-327 — the `igris cognition health` digest.
+ *
+ * `degraded` is true when the brain DB is absent OR the `cognition_instances`
+ * projection has not been written yet (a brain that has not booted this build).
+ * Exit is ALWAYS 0 — a health question never blocks session start.
+ */
+export interface CognitionHealthDigest {
+  degraded: boolean;
+  /** Why it degraded; null when it did not. */
+  degraded_reason: string | null;
+  /** `os.hostname()` — the host every `last_run_at` is scoped to. */
+  hostname: string;
+  /** The `event_log` retention window `monitoring` enforces, in days. */
+  event_log_retention_days: number;
+  /**
+   * The OLDEST retained `event_log` row. Anything before this is unknowable, so
+   * a `no_signal` verdict means "silent since at least here", never "never ran".
+   */
+  event_log_oldest_at: string | null;
+  /** One row per REGISTERED instance, in registry order. Never hand-listed. */
+  instances: CognitionInstanceHealth[];
+  /** Digest-level anomalies (duplicate schedule rows, absent tables). */
+  warnings: string[];
+}
+
 /** FR-209 — project profile fields read from the local brain `projects` row. */
 export interface ProjectProfile {
   slug: string;

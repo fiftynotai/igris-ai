@@ -339,6 +339,34 @@ export function createPerceptionInstance(
   const instance: CognitionInstance<PerceptionContext, PerceptionCandidate> = {
     id: 'perception',
 
+    // TD-327 — the REQUIRED observability declaration. PERCEPTION IS THE
+    // EXCEPTION THAT MAKES THIS FIELD NECESSARY: `registry.ts:42` says an id
+    // "becomes its `event_log.component` namespace `cognition.<id>`", and
+    // perception does not obey it. Its production path is
+    // `perception/runner.ts`, which calls `writePerceptionEvent(db,
+    // 'perception.run_started', …)` — so BOTH the component and the event-name
+    // prefix are the LEGACY bare `perception`, and `cognition.perception` has
+    // never had a single row. MAINTAINING's L-857 row states the rule these two
+    // literals encode: assert the literal, do not derive it. A health surface
+    // that iterates `cognition.*` silently omits the healthiest instance.
+    health: {
+      component: 'perception',
+      event_prefix: 'perception',
+      gate_keys: ['cognition.perception.enabled'],
+      // The one instance whose RESOLVER default is ON for an absent key — NOT
+      // its shipped posture (install writes it false, FR-191; see types.ts
+      // #gate_default and MAINTAINING row 73). DEFAULT_PERCEPTION_CONFIG sets
+      // `extractor_llm_enabled: true`, so an absent key means ENABLED here
+      // and DISABLED for every other instance. Declared, never assumed.
+      gate_default: true,
+      // Spawned out of band at session end / pre-compact by
+      // `perception_extract_and_persist.sh`, not by a `schedules` row. It also
+      // has manual MCP entry points, but the hook is the routine driver.
+      driver: 'session_hook',
+      driver_ref: 'session_end',
+      output: "learnings[review_status='pending_review']",
+    },
+
     async buildContext(
       _db: Database.Database,
       args: ExtractorArgs,

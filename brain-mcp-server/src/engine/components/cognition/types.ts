@@ -145,6 +145,115 @@ export interface ExtractorResult {
 }
 
 // ---------------------------------------------------------------------------
+// The instance OBSERVABILITY declaration (TD-327)
+// ---------------------------------------------------------------------------
+
+/**
+ * How an instance is driven. Read by the health classifier to decide which
+ * signal to cross-check when `event_log` has gone quiet:
+ *   - `schedule`     — a `schedules` row fires it (`driver_ref` = the row NAME).
+ *   - `co_driven`    — another INSTANCE runs it inside its own run
+ *                      (`driver_ref` = that instance's `id`). It has no
+ *                      schedule of its own, so a wedged driver takes it down.
+ *   - `session_hook` — a harness/session hook spawns it out of band.
+ *   - `manual`       — only an explicit MCP tool / operator call runs it.
+ */
+export type CognitionDriver =
+  | 'schedule'
+  | 'co_driven'
+  | 'session_hook'
+  | 'manual';
+
+/**
+ * TD-327 — the REQUIRED observability self-description.
+ *
+ * WHY REQUIRED. The registry is OPEN (`registry.ts`), so any health surface that
+ * hand-lists its members cannot report on the ones nobody remembered to list.
+ * That is exactly how five of seven instances went silent for four weeks
+ * unnoticed. Making this block part of the CONTRACT means you cannot add an
+ * instance without declaring how an operator sees it STOP: the roster
+ * (`roster.ts`) projects `registry.all()` into `cognition_instances`, and the
+ * `igris cognition health` verb renders that projection. A new instance appears
+ * in `/boot` and `/scan` with ZERO edit to either surface.
+ *
+ * EVERY FIELD IS A LITERAL, NEVER A DERIVATION. `registry.ts:42` claims an id
+ * "becomes its `event_log.component` namespace `cognition.<id>`" — perception
+ * does NOT obey that (see `extractors/perception.ts`), so a surface that derives
+ * `cognition.${id}` silently omits the single healthiest instance. MAINTAINING's
+ * L-857 row states the rule: assert the literal, do not derive it.
+ */
+export interface CognitionInstanceHealth {
+  /**
+   * The `event_log.component` value this instance's lifecycle rows carry,
+   * VERBATIM. `cognition.<id>` for every instance except perception, whose
+   * production path (`perception/runner.ts` → `writePerceptionEvent`) writes the
+   * LEGACY bare `perception`.
+   */
+  readonly component: string;
+  /**
+   * The `event_log.event_name` prefix, VERBATIM — rows are named
+   * `<event_prefix>.run_started` / `.run_succeeded` / `.run_failed` /
+   * `.run_skipped`. Differs from `component` for no instance today, but it is
+   * declared separately because perception proved the two CAN diverge and a
+   * single field would force the next divergence to be derived.
+   */
+  readonly event_prefix: string;
+  /**
+   * The `~/.igris/config.json` dotted key(s) that gate this instance, as a
+   * CONJUNCTION — the instance runs only when EVERY key resolves truthy. Most
+   * instances declare one key. `arbiter`/`curator` declare the JANITOR's key
+   * (they have no switch of their own); `cartographer` declares that key AND
+   * `cognition.janitor.cluster.enabled`, its second gate.
+   *
+   * Declared as a list rather than a single key precisely so the double gate is
+   * DERIVED from the instance rather than special-cased in the reader — a
+   * `if (id === 'cartographer')` branch in the CLI would be the hand-list this
+   * contract exists to abolish.
+   */
+  readonly gate_keys: readonly string[];
+  /**
+   * What an ABSENT `gate_keys` entry resolves to — applied per key.
+   *
+   * THE CONVENTION HAS AN EXCEPTION, WHICH IS WHY THIS IS DECLARED RATHER THAN
+   * ASSUMED. `/boot` and `/scan` have long documented "if the key is absent,
+   * treat as false", and that is right for six of the seven: subconscious,
+   * synapse and janitor all default `enabled: false`, and arbiter, curator and
+   * cartographer derive from the janitor's key. Perception does NOT —
+   * `DEFAULT_PERCEPTION_CONFIG.extractor_llm_enabled` is `true`.
+   *
+   * DISTINGUISH THE RESOLVER DEFAULT FROM THE SHIPPED POSTURE — they are not
+   * the same and conflating them puts a false claim in a consumer doc.
+   * The resolver treats a truly ABSENT key as ON. But a stock fresh install
+   * never has an absent key: `igris install` calls `applyPerceptionDefault()`
+   * and `config.json.tmpl` ships `"perception": { "enabled": false }` — FR-191's
+   * zero-config door, pinned by `cli/src/__tests__/init.test.ts` and mapped at
+   * MAINTAINING row 73. **So a stock fresh install has perception OFF.**
+   *
+   * This declaration exists for the configs where the key was never written:
+   * pre-FR-191 installs, hand-edited configs, and an `IGRIS_BRAIN_DIR` with no
+   * `config.json`. Hard-coding "absent means off" would misreport exactly those
+   * as `disabled` while they are extracting — the same silent-omission class as
+   * deriving its event namespace, in a second place.
+   */
+  readonly gate_default: boolean;
+  /** How this instance is driven — see {@link CognitionDriver}. */
+  readonly driver: CognitionDriver;
+  /**
+   * What `driver` points at: the `schedules.name` for `schedule`, the DRIVING
+   * INSTANCE's `id` for `co_driven`, the hook name for `session_hook`, `null`
+   * for `manual`.
+   */
+  readonly driver_ref: string | null;
+  /**
+   * Where this instance's output LANDS, as a human-readable table+filter
+   * expression (e.g. `suggestions[source_module='arbiter']`). This is the
+   * answer to the brief's "where does its output go?" and is what an operator
+   * queries when they want to see whether a run produced anything.
+   */
+  readonly output: string;
+}
+
+// ---------------------------------------------------------------------------
 // The instance CONTRACT — what makes a part a cognition instance
 // ---------------------------------------------------------------------------
 
@@ -171,8 +280,22 @@ export interface ExtractorPrompt {
  * parts, the contract decides membership.
  */
 export interface CognitionInstance<TContext = unknown, TCandidate = unknown> {
-  /** OPEN id — 'perception' | 'subconscious' | any future extractor. The `event_log.component` is `cognition.<id>`. */
+  /**
+   * OPEN id — 'perception' | 'subconscious' | any future extractor. The
+   * `event_log.component` is CONVENTIONALLY `cognition.<id>`, but the
+   * convention is not load-bearing and perception breaks it — read the LITERAL
+   * out of `health.component` instead of deriving it from this id (TD-327).
+   */
   readonly id: string;
+
+  /**
+   * TD-327 — the REQUIRED observability self-description: which `event_log`
+   * namespace this instance writes, which config keys gate it, what drives it,
+   * and where its output lands. REQUIRED, not optional: the registry is OPEN,
+   * so an instance that does not declare how an operator sees it stop can ship
+   * invisible — the exact regression TD-327 closes.
+   */
+  readonly health: CognitionInstanceHealth;
 
   /**
    * Slot 1 — INPUT. Read brain state into the instance's private context shape.

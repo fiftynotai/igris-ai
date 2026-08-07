@@ -83,6 +83,17 @@ function makeDummyInstance(
 ): CognitionInstance<DummyCtx, DummyCandidate> {
   return {
     id: 'dummy',
+    // TD-327: `health` is REQUIRED on the contract. Overridable via `overrides`
+    // (spread below) so a case can vary it.
+    health: {
+      component: 'cognition.dummy',
+      event_prefix: 'cognition.dummy',
+      gate_keys: ['cognition.dummy.enabled'],
+      gate_default: false,
+      driver: 'manual',
+      driver_ref: null,
+      output: 'nothing (test dummy)',
+    },
     buildContext: async () => ({ bytes: 4096 }),
     promptBuilder: (ctx) => ({ system: 'extract', user: `ctx bytes=${ctx.bytes}` }),
     parseResponse: (raw) => {
@@ -489,6 +500,18 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
     const persisted: string[] = [];
     const novelInstance: CognitionInstance<{ bytes: number }, { title: string }> = {
       id: 'roadmap_drift', // a NEW id the engine has never heard of
+      // TD-327: the REQUIRED observability declaration — part of the 4-slot
+      // cost of authoring an instance file, and the reason a new instance shows
+      // up in `igris cognition health` with no edit to any surface.
+      health: {
+        component: 'cognition.roadmap_drift',
+        event_prefix: 'cognition.roadmap_drift',
+        gate_keys: ['cognition.roadmap_drift.enabled'],
+        gate_default: false,
+        driver: 'manual',
+        driver_ref: null,
+        output: "suggestions[source_module='roadmap_drift']",
+      },
       buildContext: async () => ({ bytes: 5000 }),
       promptBuilder: (ctx) => ({ system: 'watch the roadmap', user: `digest ${ctx.bytes}` }),
       parseResponse: (raw) => (JSON.parse(raw) as { title: string }[]),

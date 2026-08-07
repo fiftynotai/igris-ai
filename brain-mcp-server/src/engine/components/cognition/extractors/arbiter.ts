@@ -286,6 +286,23 @@ export function createArbiterInstance(
   return {
     id: 'arbiter',
 
+    // TD-327 — the REQUIRED observability declaration. THE ARBITER HAS NO
+    // SWITCH OF ITS OWN. `resolveArbiterConfig` (`arbiter/types.ts`) DERIVES
+    // `enabled` from `cognition.janitor.enabled`, and the runner co-drives it
+    // inside `runJanitor`. So an absent `cognition.arbiter` key is not a gate
+    // that defaulted to false — expecting a `cognition.<id>` key here is the
+    // mistake. Its dormancy is always upstream, which is why the classifier
+    // reports `blocked_upstream` rather than `no_signal`.
+    health: {
+      component: 'cognition.arbiter',
+      event_prefix: 'cognition.arbiter',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // derived from the janitor, which ships off
+      driver: 'co_driven',
+      driver_ref: 'janitor',
+      output: "suggestions[source_module='arbiter']",
+    },
+
     async buildContext(
       db: Database.Database,
       args: ExtractorArgs,

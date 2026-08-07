@@ -386,9 +386,14 @@ cognition instance — the tool count stays 111, and the vocabulary is UNCHANGED
   maintenance surface (tools #109–111): reverse an action, list runs, get/set the
   pruning thresholds. `_config` GET also returns the resolved cartographer
   (`cluster`) config + the M5 emergence config. M4/M5 add NO new tool.
-- `/scan` §6.9 + `/boot` — a janitor health line read from the
-  `cognition.janitor.*` lifecycle events + the latest `brain_maintenance_runs`
-  row, gated behind `cognition.janitor.enabled`.
+- `/scan` §6.5 + `/boot` §4.10 — since **TD-327** neither skill queries the
+  janitor by name. Both run `igris cognition health` and render its digest,
+  whose roster is DERIVED from the brain's projected extractor registry; the
+  janitor is one row of seven, carrying its status, its declared gate
+  (`cognition.janitor.enabled`), and its output count. `/scan` renders the whole
+  roster; `/boot` renders only the non-healthy entries. The per-run
+  `brain_maintenance_runs` counters moved to `igris_brain_maintenance_history`
+  (they are family-specific run detail, not health — see `/scan` §6.9).
 - Merge / contradiction / prune / cluster-meta / edge-type proposals render
   through the existing `igris_suggestion_list`
   (`source_module='janitor'`/`'arbiter'`/`'curator'`/`'cartographer'`; the M5

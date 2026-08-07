@@ -237,6 +237,20 @@ export function createSubconsciousInstance(
   return {
     id: 'subconscious',
 
+    // TD-327 — the REQUIRED observability declaration. Own switch, own cron.
+    // `source_module` is OPEN post-FR-118: the LLM names the kind, so the
+    // output expression names the table and the provenance rather than a fixed
+    // module string.
+    health: {
+      component: 'cognition.subconscious',
+      event_prefix: 'cognition.subconscious',
+      gate_keys: ['cognition.subconscious.enabled'],
+      gate_default: false, // DEFAULT_SUBCONSCIOUS_CONFIG.enabled === false
+      driver: 'schedule',
+      driver_ref: 'subconscious_engine',
+      output: 'suggestions[source_module=LLM-named, type_inferred=1]',
+    },
+
     async buildContext(
       db: Database.Database,
       args: ExtractorArgs,

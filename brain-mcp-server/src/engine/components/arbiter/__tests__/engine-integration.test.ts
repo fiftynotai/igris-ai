@@ -19,6 +19,10 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import { createRequire } from 'node:module';
 import { runJanitor } from '../../janitor/runner.js';
+// TD-327 AC #3 — the control arm drives ONE instance directly so the legacy
+// pre-TD-292 verdict can be restored on it without touching the runner.
+import { runExtractor } from '../../cognition/engine/index.js';
+import { createArbiterInstance } from '../../cognition/extractors/arbiter.js';
 import { DEFAULT_JANITOR_CONFIG, type JanitorConfig } from '../../janitor/types.js';
 import { DEFAULT_ARBITER_CONFIG, type ArbiterConfig } from '../types.js';
 import { subconsciousMigrations } from '../../subconscious/schema.js';
@@ -238,5 +242,110 @@ describe('runJanitor + arbiter (FR-116 M2 — mocked backend, vec-gated)', () =>
     expect(result.arbiter_outcome).toBe('skipped');
     const n = db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE source_module='arbiter'`).get() as { n: number };
     expect(n.n).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-327 AC #3 — the arbiter `parse_error` re-test, against THIS build.
+  //
+  // The brief recorded arbiter's last state before it went silent as
+  // `run_failed reason=parse_error` on 2026-07-02, and asked whether the
+  // failure mode survives. It does not, and the mechanism is TD-292 / L-1017:
+  // the engine CONFLATED a valid empty LLM judgment with a malformed response,
+  // mapping both to `parse_error`. `arbiter.ts` now declares the
+  // `isMalformedResponse` hook wired to `isArbiterResponseWellFormed`, and per
+  // `cognition/types.ts:parseResponse` a well-formed empty array settles to a
+  // SUCCESSFUL run with zero candidates.
+  //
+  // `extractors/__tests__/empty-context.test.ts` already asserts the hook's
+  // verdict in isolation (`isMalformedResponse('[]') === false`). What was
+  // missing — and what this arm adds — is the END-TO-END proof through
+  // `runJanitor`, which is the path that actually wrote the 2026-07-02 row.
+  //
+  // HERMETIC BY NECESSITY, and that necessity is itself part of the finding: a
+  // live re-run was impossible while `janitor_engine` was wedged by a stuck
+  // `schedule_runs` row, and the 2026-07-02 evidence has since aged out under
+  // `monitoring`'s 30-day `event_log` purge. A stubbed backend returning the
+  // literal '[]' is the only way to interrogate this build's behaviour.
+  // -------------------------------------------------------------------------
+  it.skipIf(!HAS_VEC)('AC #3: a valid-but-EMPTY arbiter response is NOT parse_error (TD-292 fixed)', async () => {
+    vi.clearAllMocks();
+    db = makeBrain();
+    vi.mocked(getDb).mockReturnValue(db as unknown as ReturnType<typeof getDb>);
+
+    // The literal the 2026-07-02 run is believed to have received: a
+    // well-formed, EMPTY array — "I looked and found no real contradictions".
+    const result = await runJanitor(db, 'all', {
+      config: JAN,
+      arbiterConfig: ARB,
+      embed: embedMix,
+      deps: deps('[]'),
+    });
+
+    expect(result.arbiter_outcome).not.toBe('failed');
+    // Stronger than `!== 'failed'`, and deliberately so: `'skipped'` would also
+    // clear that bar while meaning the arbiter never reached the backend, which
+    // would make every assertion below vacuous. Measured: `'succeeded'`.
+    expect(result.arbiter_outcome).toBe('succeeded');
+    expect(result.contradictions_proposed).toBe(0);
+    expect(result.contradictions_resolved).toBe(0);
+
+    // No `parse_error` row was written under the arbiter's namespace. Asserted
+    // on the PAYLOAD reason, not merely on the event name, because a
+    // `run_failed` for some other reason would be a different bug wearing the
+    // same shape.
+    const failures = db
+      .prepare(
+        `SELECT payload FROM event_log
+          WHERE component = 'cognition.arbiter' AND event_name = 'cognition.arbiter.run_failed'`,
+      )
+      .all() as Array<{ payload: string }>;
+    expect(failures).toHaveLength(0);
+
+    // Positive control — the run genuinely REACHED the arbiter rather than
+    // never starting it, which would make the assertion above vacuous.
+    const names = (
+      db.prepare(`SELECT event_name FROM event_log ORDER BY id`).all() as {
+        event_name: string;
+      }[]
+    ).map((r) => r.event_name);
+    expect(names).toContain('cognition.arbiter.run_started');
+    expect(
+      names.filter((n) => /^cognition\.arbiter\.run_(succeeded|failed|skipped)$/.test(n)),
+    ).toHaveLength(1);
+  });
+
+  it.skipIf(!HAS_VEC)('AC #3 control: the PRE-TD-292 legacy rule reproduces the 2026-07-02 parse_error', async () => {
+    // The red arm for the case above. Restoring the legacy verdict — "any zero
+    // parse is malformed" — by stubbing the hook to always report malformed
+    // recreates the exact event the brief recorded. That is the evidence that
+    // the case above is testing the FIX and not merely a happy path.
+    vi.clearAllMocks();
+    db = makeBrain();
+    vi.mocked(getDb).mockReturnValue(db as unknown as ReturnType<typeof getDb>);
+
+    const legacyArbiter = createArbiterInstance(ARB, { embed: embedMix });
+    const spy = vi
+      .spyOn(legacyArbiter, 'isMalformedResponse')
+      .mockImplementation(() => true);
+
+    const outcome = await runExtractor(
+      db,
+      legacyArbiter,
+      { project: 'all', trigger: 'td327-control' },
+      deps('[]'),
+    );
+
+    expect(spy).toHaveBeenCalled();
+    expect(outcome.outcome).toBe('failed');
+    expect(outcome.fail_reason).toBe('parse_error');
+
+    const row = db
+      .prepare(
+        `SELECT payload FROM event_log
+          WHERE event_name = 'cognition.arbiter.run_failed' LIMIT 1`,
+      )
+      .get() as { payload: string } | undefined;
+    expect(row).toBeDefined();
+    expect(JSON.parse(row!.payload).reason).toBe('parse_error');
   });
 });

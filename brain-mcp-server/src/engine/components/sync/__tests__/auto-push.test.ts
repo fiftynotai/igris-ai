@@ -283,6 +283,16 @@ describe('Sync Auto-Push', () => {
       expect(SYNC_TABLES).toHaveLength(20);
     });
 
+    it('EXCLUDES cognition_instances — the roster is per-machine derived state (TD-327)', () => {
+      // `cognition_instances` is a projection of THIS build's extractor
+      // registry, regenerated at every engine boot. Replicating it would assert
+      // one machine's roster onto another — the same class of mistake that put
+      // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
+      // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
+      // wrong to merge, so it stays out and the count above stays 20.
+      expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
+    });
+
     const newTables = [
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },

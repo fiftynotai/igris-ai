@@ -203,7 +203,7 @@ X agents registered (Y skills available)
 2. [Secondary recommendation]
 ```
 
-### 6.5. Subconscious Suggestions (FR-106)
+### 6.5. Cognition Roster + Subconscious Suggestions (FR-106 / TD-327)
 
 > **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
 > `cognition.subconscious.enabled` config flag (default `false`). FR-118 SHIPPED the
@@ -212,12 +212,19 @@ X agents registered (Y skills available)
 > (`stalled`/`gap`/`conflict`/`pattern` detectors) was deleted. The section
 > stays silent until `cognition.subconscious.enabled` is flipped to `true`.
 
-This section is rendered ONLY when ALL of the following are true:
-1. `cognition.subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
+The SUGGESTIONS TABLE below is rendered ONLY when ALL of the following are true:
+1. The `subconscious` entry of the `igris cognition health` digest (see the
+   Cognition Roster sub-section below) has `enabled: true`. That field is the
+   resolution of the instance's OWN declared `gate_keys` — read it from the
+   digest rather than re-reading `~/.igris/config.json`, so a gate that moves
+   brain-side sweeps itself. An absent entry or a `degraded` digest = `false`.
 2. `$ARGUMENTS` contains the literal token `--suggestions`.
 
-If either gate fails, skip this section silently — render nothing, do not
-call any suggestion MCP tools.
+If either gate fails, skip the suggestions table silently — render nothing, do
+not call any suggestion MCP tools. **The Cognition Roster sub-section below is
+NOT gated by either condition**: it renders whenever `/scan` runs, because the
+whole point of TD-327 is that a disabled or silent instance is exactly the thing
+an operator needs to see.
 
 If both gates pass and the `igris-brain` MCP is available:
 
@@ -273,67 +280,91 @@ End the section with the action hint:
 If `igris-brain` MCP is unavailable, render this single line instead:
 `Subconscious suggestions unavailable (brain MCP offline).`
 
-#### Subconscious health line (FR-118)
+#### Cognition roster — every instance, DERIVED (TD-327)
 
-Independent of the gated suggestions table above, surface a single health line
-for the LLM subconscious engine — when it last fired, the outcome, how many
-suggestions it produced today, and the remaining daily budget. This is the
-subconscious analogue of §6.6's Perception health line and is ALSO gated behind
-`cognition.subconscious.enabled` (skip silently when the flag is absent/`false` —
-the engine does not run, so there is nothing to report).
+`/scan` is the deliberate-inspection surface, so unlike `/boot` (which prints
+only exceptions) this renders the FULL roster: one row per registered cognition
+instance, always. That is the brief's "instance health should not require SQL"
+target.
 
-Query the NEW `cognition.subconscious.*` lifecycle namespace (the engine writes
-these to `event_log` directly under `component = 'cognition.subconscious'` — the
-legacy `subconscious.*` bus events are gone). Prefer the local-DB `sqlite3` read
-(same TD-080 rationale as §6.6 — the local DB is the merged superset):
+Run the deterministic verb. Do NOT read `config.json` and do NOT run SQL here —
+the digest already resolves each instance's declared gate keys, reads the local
+`event_log` / `schedules` / `schedule_runs`, and scopes every reading to THIS
+machine (the TD-080 rationale: `igris_event_log` routes to the REMOTE brain and
+would miss local-only runs).
 
 ```bash
-# Latest run of the day for the lifecycle line + today's run/persist tallies.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT event_name, payload, created_at FROM event_log
-   WHERE component = 'cognition.subconscious'
-   ORDER BY created_at DESC LIMIT 1;"
-
-# suggested_today = sum of payload.persisted across today's run_succeeded rows.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT COALESCE(SUM(json_extract(payload,'\$.persisted')),0)
-   FROM event_log
-   WHERE component = 'cognition.subconscious'
-     AND event_name = 'cognition.subconscious.run_succeeded'
-     AND date(created_at) = date('now');"
+igris cognition health --json 2>/dev/null || true
 ```
 
-Fallback (only when `sqlite3` is absent): call `igris_event_log` with
-`component = 'cognition.subconscious'`, `limit = 1` (it inherits the §6.6
-remote-only blind spot — acceptable degradation).
+This replaced a hand-listed pair of embedded `sqlite3` blocks that covered two
+of seven instances by name. The roster is now DERIVED from the brain's projected
+extractor registry, so an instance added tomorrow renders here with no edit to
+this skill — which is exactly the failure the previous version could not catch.
 
-Render one line under a `### Subconscious Engine` heading. Map the latest event
-suffix to an uppercase status (`run_succeeded`→`SUCCEEDED`,
-`run_failed`→`FAILED`, `run_skipped`→`SKIPPED`, `run_started`→`RUNNING`).
-`budget_remaining` = the run's `payload.budget − payload.used_today` when the
-latest event is a `run_skipped` with `reason='budget'`; otherwise derive it from
-the resolved `cognition.subconscious.llm_daily_budget` minus the count of
-today's `run_started` rows.
+Render every entry of `instances[]`, in the order the digest returns them, under
+a `### Cognition Roster` heading:
 
 ```
-### Subconscious Engine
-Last run: 2026-06-24 06:00 — SUCCEEDED · suggested_today=3 · budget_remaining=2
+### Cognition Roster
+| Instance | Status | Last run (this host) | Gate | Output rows |
+|---|---|---|---|---|
+| perception | OK | 2026-08-06 20:40 | cognition.perception.enabled | 50 |
+| synapse | OK | 2026-08-06 23:01 | cognition.synapse.enabled | 411 |
+| janitor | WEDGED | — | cognition.janitor.enabled | 0 |
+| arbiter | BLOCKED_UPSTREAM | — | cognition.janitor.enabled | 1 |
+| cartographer | DISABLED | — | cognition.janitor.cluster.enabled | 17 |
 ```
 
-When no `cognition.subconscious.*` rows exist (never run, or gate off):
-```
-### Subconscious Engine
-No subconscious runs yet.
-```
+Column rules:
+- **Status** — `status` uppercased.
+- **Last run (this host)** — `last_run_at` formatted `YYYY-MM-DD HH:MM`, or `—`
+  when null. When `last_run_at` is null but `last_run_any_host` is not, render
+  `— (other host)`: `event_log` syncs, so a run that succeeded elsewhere must
+  never be read as this machine being healthy.
+- **Gate** — `disabled_by` when the instance is disabled (it names WHICH of the
+  declared `gate_keys` is off, and the two gates on a double-gated instance have
+  different remedies); otherwise `gate_keys` joined with ` AND `. Do NOT restate
+  the "an absent key means off" convention when explaining a gate: it is false
+  for perception, whose `gate_default` is `true`. The digest already resolved
+  the key against the instance's declared default — report `enabled`, not your
+  own reading of `config.json`.
+- **Output rows** — `output_rows`, or `—` when null (the declared output
+  expression is not a countable predicate). Hover-equivalent detail lives in the
+  entry's `output` string.
 
-If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
-Do NOT block /scan.
+Below the table, render each non-`ok` entry's `reason` as its own bullet, then
+each entry of `warnings[]` as a bullet. Render nothing extra when both are
+empty.
+
+Read the statuses as declared:
+- `no_signal` means "silent for at least `event_log_retention_days` days"
+  (the brain purges `event_log` on every engine init), **NOT** "never ran".
+  Say so when rendering the reason; do not paraphrase it as "never ran".
+- `blocked_upstream` names the DRIVER to fix. The blocked instance has no switch
+  or schedule of its own — investigating it is investigating the wrong thing.
+- `wedged` means the schedule cannot fire because an earlier run never reached a
+  terminal status. Report the open run's age; do not clear it from `/scan`.
+
+If the verb is unavailable or the digest is `degraded`, render the single line
+`Cognition roster unavailable (<degraded_reason>).` and move on. Do NOT block
+`/scan`.
 
 ### 6.6. Perception Engine (TD-074, TD-080)
 
 Surface the latest detached perception extraction run so operators can see
 when the LLM extractor last fired, succeeded, failed, or got skipped by the
 60s min-window guard. Token budget: ~150 tokens.
+
+> **TD-327 — why this section KEEPS its own query.** §6.5's Cognition Roster
+> covers perception like every other instance, but it answers a different
+> question: it is WHOLE-BRAIN and host-scoped, and it carries no inbox signal.
+> This section is PROJECT-scoped (`project_slug = '$PROJECT_SLUG'`) and reports
+> inbox size and staleness. Folding it into the roster would drop both, so it
+> stays. What it must NOT do is contradict the roster: both read the same
+> `component = 'perception'` LITERAL (the legacy namespace — perception does
+> NOT write under `cognition.perception`, and deriving that name is the L-857
+> trap). If the two ever disagree, the roster's host scoping is the difference.
 
 #### Query
 
@@ -495,54 +526,24 @@ When the command returns markdown output, render it under:
 If the primitive is unavailable or errors, omit the section entirely. Do not
 block `/scan`, do not author docs automatically, and do not print a stack trace.
 
-### 6.9. Janitor Engine (FR-119)
+### 6.9. Janitor Engine (FR-119, folded into §6.5 by TD-327)
 
-Surface a single health line for the LLM memory-hygiene engine — when it last
-fired, the outcome, and the counters from its latest maintenance run. This is
-the janitor analogue of §6.5's Subconscious health line and is ALSO gated behind
-`cognition.janitor.enabled` (skip silently when the flag is absent/`false` — the
-engine does not run, so there is nothing to report). Merge PROPOSALS themselves
-render via `igris_suggestion_list` `source_module='janitor'`; this line is the
-engine-health summary only.
+The janitor's lifecycle status, its gate, and its output count are rendered by
+the §6.5 Cognition Roster like every other instance — the janitor is one of
+seven, and a section that named it by hand was half of the hand-list TD-327
+removed. Do NOT re-add a janitor-specific `sqlite3` query here.
 
-Query the `cognition.janitor.*` lifecycle namespace (the engine writes these to
-`event_log` directly under `component = 'cognition.janitor'`) plus the latest
-`brain_maintenance_runs` audit row for the counters. Prefer the local-DB
-`sqlite3` read (same TD-080 rationale as §6.5/§6.6 — the local DB is the merged
-superset):
+**State the residual plainly:** the per-run `brain_maintenance_runs` counters
+(`merges_proposed` / `merges_applied` / `confidence_bumps` / `stale_rejected`)
+are no longer rendered by `/scan`. They are engine-internal run detail rather
+than health, they exist only for the janitor family (so no derived surface can
+carry them without special-casing one instance), and they are reachable on
+demand:
 
-```bash
-# Latest janitor run lifecycle event.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT event_name, created_at FROM event_log
-   WHERE component = 'cognition.janitor'
-   ORDER BY created_at DESC LIMIT 1;"
+- `igris_brain_maintenance_history` — the audit rows with every counter.
+- `igris_suggestion_list` with `source_module='janitor'` / `'arbiter'` /
+  `'curator'` / `'cartographer'` — the PROPOSALS themselves, which is what an
+  operator acts on.
 
-# Latest maintenance run counters (proposed / applied / bumps / stale rejected).
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT status, merges_proposed, merges_applied, confidence_bumps, stale_rejected, finished_at
-   FROM brain_maintenance_runs ORDER BY id DESC LIMIT 1;"
-```
-
-Fallback (only when `sqlite3` is absent): call `igris_event_log` with
-`component = 'cognition.janitor'`, `limit = 1` (it inherits the §6.6 remote-only
-blind spot — acceptable degradation).
-
-Render one line under a `### Janitor Engine` heading. Map the latest event suffix
-to an uppercase status (`run_succeeded`→`SUCCEEDED`, `run_failed`→`FAILED`,
-`run_skipped`→`SKIPPED`, `run_started`→`RUNNING`); append the maintenance-row
-counters.
-
-```
-### Janitor Engine
-Last run: 2026-07-02 04:00 — SUCCEEDED · merges_proposed=2 · confidence_bumps=1 · stale_rejected=3
-```
-
-When no `cognition.janitor.*` rows exist (never run, or gate off):
-```
-### Janitor Engine
-No janitor runs yet.
-```
-
-If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
-Do NOT block /scan.
+If an operator asks "what did the last maintenance run actually do", call
+`igris_brain_maintenance_history`. Do not block `/scan` on it.

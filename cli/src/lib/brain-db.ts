@@ -2416,3 +2416,363 @@ export function applyImport(
 
   return { perStore, conflicts, ancestorUpdates, projectRegistered };
 }
+
+// ---------------------------------------------------------------------------
+// TD-327 — cognition instance health readers (READ-ONLY door only)
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-327 — one projected roster row, read back from `cognition_instances`.
+ *
+ * THE ROSTER IS THE REGISTRY'S PROJECTION, NEVER A CLI-SIDE LIST. That is the
+ * whole point: `cli/` and `brain-mcp-server/` are separate npm packages with no
+ * cross-imports, so the only honest way to enumerate an OPEN registry from here
+ * is to read what the registry itself wrote. A literal list in this file would
+ * be the exact regression TD-327 closes — it could not report on the instance
+ * nobody remembered to add to it.
+ *
+ * Column contract mirrored from
+ * `brain-mcp-server/src/engine/components/cognition/schema.ts` v1; MAINTAINING
+ * pins the pair.
+ */
+export interface CognitionRosterRow {
+  /** `cognition_instances.id`. */
+  id: string;
+  /** `cognition_instances.component` — the `event_log.component` LITERAL. */
+  component: string;
+  /** `cognition_instances.event_prefix` — the `event_name` prefix LITERAL. */
+  event_prefix: string;
+  /** `cognition_instances.gate_keys`, JSON-parsed. Empty when unparseable. */
+  gate_keys: string[];
+  /**
+   * `cognition_instances.gate_default` — what an ABSENT gate key resolves to.
+   * Declared per instance because the "absent means off" convention has one
+   * exception: perception's RESOLVER default is ON for a truly absent key, so
+   * hard-coding "absent means off" would misreport a config where the key was
+   * never written. That is NOT the shipped posture — `igris install` writes
+   * `enabled: false` (FR-191), so a stock fresh install has perception OFF.
+   */
+  gate_default: boolean;
+  /** `cognition_instances.driver`. */
+  driver: string;
+  /** `cognition_instances.driver_ref`. */
+  driver_ref: string | null;
+  /** `cognition_instances.output`. */
+  output: string;
+}
+
+/** TD-327 — outcome of {@link readCognitionRoster}. */
+export interface CognitionRosterResult {
+  /** True when there is no readable brain DB or no `cognition_instances` table. */
+  degraded: boolean;
+  /** Why; null when not degraded. */
+  reason: string | null;
+  /** The projected rows, in insertion (registry) order. */
+  rows: CognitionRosterRow[];
+}
+
+/**
+ * Read the projected instance roster.
+ *
+ * `rowid` ordering preserves the order the projector wrote, which is
+ * `registry.all()` insertion order — i.e. the extractors-barrel order. A brain
+ * that has never booted this build has no table, which is a DEGRADED read (the
+ * health surface has nothing to report on), never a created table: the brain
+ * owns this schema and `brain-db.ts` is create-never.
+ */
+export function readCognitionRoster(): CognitionRosterResult {
+  return withReadonlyBrain<CognitionRosterResult>(
+    { degraded: true, reason: "brain DB not readable", rows: [] },
+    (handle) => {
+      if (!tableExists(handle, "cognition_instances")) {
+        return {
+          degraded: true,
+          reason:
+            "cognition_instances not present — this brain has not booted a build that projects the roster",
+          rows: [],
+        };
+      }
+      // A roster projected by an OLDER brain build can be missing a column this
+      // CLI knows about. SELECTing it would throw and take the whole digest
+      // with it, so the shape is checked first and the absent column degrades
+      // to its documented default — the same create-never / tolerant-read
+      // posture the rest of this module uses.
+      const columns = tableColumns(handle, "cognition_instances");
+      const hasGateDefault = columns.has("gate_default");
+      const gateDefaultSelect = hasGateDefault
+        ? "gate_default"
+        : "0 AS gate_default";
+      const raw = handle
+        .prepare(
+          `SELECT id, component, event_prefix, gate_keys, ${gateDefaultSelect},
+                  driver, driver_ref, output
+             FROM cognition_instances ORDER BY rowid`,
+        )
+        .all() as Array<{
+        id: string;
+        component: string;
+        event_prefix: string;
+        gate_keys: string;
+        gate_default: number;
+        driver: string;
+        driver_ref: string | null;
+        output: string;
+      }>;
+
+      const rows: CognitionRosterRow[] = raw.map((r) => ({
+        id: r.id,
+        component: r.component,
+        event_prefix: r.event_prefix,
+        gate_keys: parseGateKeys(r.gate_keys),
+        gate_default: r.gate_default === 1,
+        driver: r.driver,
+        driver_ref: r.driver_ref,
+        output: r.output,
+      }));
+      return {
+        degraded: false,
+        reason: hasGateDefault
+          ? null
+          : "cognition_instances predates the gate_default column — every instance is read as absent-key-means-off, which is wrong for perception",
+        rows,
+      };
+    },
+  );
+}
+
+/**
+ * Parse the stored `gate_keys` JSON array.
+ *
+ * Tolerant on purpose: a roster row written by a NEWER brain build with a shape
+ * this CLI does not understand degrades to "no declared gate", which the
+ * classifier reports as such — it does not throw and take the whole digest with
+ * it. Only string members survive.
+ */
+function parseGateKeys(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((k): k is string => typeof k === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * TD-327 — the `event_log` signals for ONE instance, split by host.
+ *
+ * The host split is not cosmetic. `event_log` is a SYNC table carrying a
+ * `machine_hostname` column, so a run that succeeded on the VPS replicates
+ * here; an unscoped "latest terminal event" read would render a locally-wedged
+ * instance green. `this_host` is what the verdict is computed from; `any_host`
+ * is reported alongside so the operator can see that the instance is alive
+ * SOMEWHERE.
+ */
+export interface CognitionRunSignals {
+  /** Latest terminal event on this host: its ISO timestamp. */
+  last_terminal_at: string | null;
+  /** Latest terminal event on this host: its `event_name`. */
+  last_terminal_name: string | null;
+  /** Latest terminal event on ANY host. */
+  last_terminal_any_host_at: string | null;
+  /** `run_started` rows on this host today (UTC). */
+  runs_today: number;
+}
+
+/**
+ * Read one instance's run signals.
+ *
+ * `component` and `event_prefix` are passed in as LITERALS read out of the
+ * roster — never derived as `cognition.${id}` here. Perception writes under the
+ * bare `perception` component with `perception.run_*` event names, so a derived
+ * namespace would report the single healthiest instance as never having run.
+ * MAINTAINING's L-857 row states the rule.
+ *
+ * ORDERING NOTE: `event_log.created_at` holds BOTH `YYYY-MM-DD HH:MM:SS` and
+ * ISO-8601 `…THH:MM:SS.sssZ` forms (measured on a live brain). Plain string
+ * ordering puts every space-form row before every ISO-form row WITHIN a shared
+ * date, because `' ' < 'T'`. `datetime()` normalises both, so the ORDER BY goes
+ * through it; the raw value is still what is RETURNED, so no timestamp is
+ * silently reformatted for the operator.
+ */
+export function readInstanceRunSignals(
+  component: string,
+  eventPrefix: string,
+  hostname: string,
+): CognitionRunSignals {
+  const empty: CognitionRunSignals = {
+    last_terminal_at: null,
+    last_terminal_name: null,
+    last_terminal_any_host_at: null,
+    runs_today: 0,
+  };
+  return withReadonlyBrain<CognitionRunSignals>(empty, (handle) => {
+    if (!tableExists(handle, "event_log")) return empty;
+
+    const terminals = [
+      `${eventPrefix}.run_succeeded`,
+      `${eventPrefix}.run_failed`,
+      `${eventPrefix}.run_skipped`,
+    ];
+
+    const thisHost = handle
+      .prepare(
+        `SELECT event_name, created_at FROM event_log
+          WHERE component = ? AND event_name IN (?, ?, ?)
+            AND machine_hostname = ?
+          ORDER BY datetime(created_at) DESC LIMIT 1`,
+      )
+      .get(component, ...terminals, hostname) as
+      | { event_name: string; created_at: string }
+      | undefined;
+
+    const anyHost = handle
+      .prepare(
+        `SELECT created_at FROM event_log
+          WHERE component = ? AND event_name IN (?, ?, ?)
+          ORDER BY datetime(created_at) DESC LIMIT 1`,
+      )
+      .get(component, ...terminals) as { created_at: string } | undefined;
+
+    const today = handle
+      .prepare(
+        `SELECT COUNT(*) AS n FROM event_log
+          WHERE component = ? AND event_name = ?
+            AND machine_hostname = ?
+            AND date(datetime(created_at)) = date('now')`,
+      )
+      .get(component, `${eventPrefix}.run_started`, hostname) as { n: number };
+
+    return {
+      last_terminal_at: thisHost?.created_at ?? null,
+      last_terminal_name: thisHost?.event_name ?? null,
+      last_terminal_any_host_at: anyHost?.created_at ?? null,
+      runs_today: today.n,
+    };
+  });
+}
+
+/** TD-327 — the retention floor of the local `event_log`. */
+export function readEventLogFloor(): string | null {
+  return withReadonlyBrain<string | null>(null, (handle) => {
+    if (!tableExists(handle, "event_log")) return null;
+    const row = handle
+      .prepare(`SELECT MIN(datetime(created_at)) AS oldest FROM event_log`)
+      .get() as { oldest: string | null };
+    return row.oldest ?? null;
+  });
+}
+
+/**
+ * TD-327 — the `schedules` + `schedule_runs` cross-check for one schedule NAME.
+ *
+ * Neither table is purged, which is what makes this the antidote to the 30-day
+ * `event_log` window: an instance with no events at all is still distinguishable
+ * from one that never existed if its schedule row is present and overdue.
+ *
+ * `schedules` is queried by NAME and the result is a COUNT, not a single row.
+ * The bootstrap's idempotency check is `WHERE name = ?` while the table syncs on
+ * a per-machine random `id`, so two brains each keep their own row under the
+ * same name — a duplicate pair was measured on this brain. Reporting the count
+ * makes a recurrence visible immediately.
+ */
+export interface CognitionScheduleRead {
+  /** How many `schedules` rows carry this name. 0 means the schedule is absent. */
+  rows: number;
+  /** True when ANY matching row is enabled. */
+  enabled: boolean;
+  /** The earliest `next_run_at` across matching rows. */
+  next_run_at: string | null;
+  /** An OPEN `status='running'` run's id, if any. */
+  open_run_id: string | null;
+  /** That run's `started_at`. */
+  open_run_started_at: string | null;
+}
+
+export function readScheduleSignals(name: string): CognitionScheduleRead {
+  const empty: CognitionScheduleRead = {
+    rows: 0,
+    enabled: false,
+    next_run_at: null,
+    open_run_id: null,
+    open_run_started_at: null,
+  };
+  return withReadonlyBrain<CognitionScheduleRead>(empty, (handle) => {
+    if (!tableExists(handle, "schedules")) return empty;
+
+    const scheduleRows = handle
+      .prepare(
+        `SELECT id, enabled, next_run_at FROM schedules WHERE name = ?`,
+      )
+      .all(name) as Array<{
+      id: string;
+      enabled: number;
+      next_run_at: string | null;
+    }>;
+
+    if (scheduleRows.length === 0) return empty;
+
+    const nextRuns = scheduleRows
+      .map((r) => r.next_run_at)
+      .filter((v): v is string => typeof v === "string" && v.length > 0)
+      .sort();
+
+    let openId: string | null = null;
+    let openStarted: string | null = null;
+    if (tableExists(handle, "schedule_runs")) {
+      const placeholders = scheduleRows.map(() => "?").join(", ");
+      const open = handle
+        .prepare(
+          `SELECT id, started_at FROM schedule_runs
+            WHERE schedule_id IN (${placeholders}) AND status = 'running'
+            ORDER BY datetime(started_at) ASC LIMIT 1`,
+        )
+        .get(...scheduleRows.map((r) => r.id)) as
+        | { id: string; started_at: string }
+        | undefined;
+      openId = open?.id ?? null;
+      openStarted = open?.started_at ?? null;
+    }
+
+    return {
+      rows: scheduleRows.length,
+      enabled: scheduleRows.some((r) => r.enabled === 1),
+      next_run_at: nextRuns[0] ?? null,
+      open_run_id: openId,
+      open_run_started_at: openStarted,
+    };
+  });
+}
+
+/**
+ * TD-327 — count the rows an instance's DECLARED output predicate selects.
+ *
+ * The declaration is prose-shaped by design (`suggestions[source_module='arbiter']`
+ * reads as documentation in the extractor file and in `docs/COGNITION.md`), so
+ * this parses the countable subset of that shape and returns `null` for the
+ * rest. `subconscious` names an OPEN `source_module` — the LLM chooses it — and
+ * therefore has no fixed predicate; `null` is the honest answer there rather
+ * than a number that means something other than what its label says.
+ *
+ * The table is checked against an ALLOWLIST and the column against a strict
+ * identifier pattern before either is interpolated; the VALUE is always bound.
+ * Both are read out of a table the brain writes, but "the input came from our
+ * own DB" is not a reason to interpolate it unchecked.
+ */
+const OUTPUT_TABLE_ALLOWLIST = new Set(["suggestions", "learnings", "entity_edges"]);
+
+export function readOutputCounts(outputExpr: string): number | null {
+  const m = /^([a-z_]+)\[([a-z_]+)='([^']*)'\]$/.exec(outputExpr.trim());
+  if (m === null) return null;
+  const [, table, column, value] = m;
+  if (!OUTPUT_TABLE_ALLOWLIST.has(table)) return null;
+
+  return withReadonlyBrain<number | null>(null, (handle) => {
+    if (!tableExists(handle, table)) return null;
+    if (!tableColumns(handle, table).has(column)) return null;
+    const row = handle
+      .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`)
+      .get(value) as { n: number };
+    return row.n;
+  });
+}

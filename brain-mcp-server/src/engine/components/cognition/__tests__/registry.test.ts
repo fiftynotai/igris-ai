@@ -18,6 +18,19 @@ import type { CognitionInstance } from '../types.js';
 function dummy(id: string): CognitionInstance {
   return {
     id,
+    // TD-327: `health` is REQUIRED on the contract — an instance that cannot
+    // say how an operator sees it stop cannot be registered. The dummy declares
+    // the conventional `cognition.<id>` namespace; perception's LEGACY literals
+    // are asserted separately in roster.test.ts.
+    health: {
+      component: `cognition.${id}`,
+      event_prefix: `cognition.${id}`,
+      gate_keys: [`cognition.${id}.enabled`],
+      gate_default: false,
+      driver: 'manual',
+      driver_ref: null,
+      output: 'nothing (test dummy)',
+    },
     buildContext: async () => ({}),
     promptBuilder: () => ({ system: 's', user: 'u' }),
     parseResponse: () => [],

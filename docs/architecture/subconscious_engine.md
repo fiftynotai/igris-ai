@@ -100,10 +100,17 @@ per-instance namespace `cognition.subconscious`:
 - `cognition.subconscious.run_skipped` (`payload.reason`; `budget` adds `used_today`/`budget`)
 
 Observe them with `igris_event_log component='cognition.subconscious'` or a direct
-`sqlite3` read. `/scan` renders a health line (last run, `suggested_today`,
-`budget_remaining`); `/boot` §4.8 renders a failure WARNING when the latest event
-is `run_failed` with no later `run_succeeded`. Both surfaces are gated behind
-`subconscious.enabled`, so they render nothing while the engine is off.
+`sqlite3` read.
+
+Since **TD-327** neither skill queries this namespace itself. Both run
+`igris cognition health`, whose roster is DERIVED from the brain's projected
+extractor registry, and render its digest: `/scan` §6.5 prints the full roster
+(the subconscious is one row of seven), `/boot` §4.10 prints only the
+non-healthy instances. The subconscious health surface is therefore NO LONGER
+gated behind `cognition.subconscious.enabled` — a disabled instance renders as
+`disabled` rather than rendering nothing, because "silently absent" is precisely
+how five instances went unnoticed for four weeks. What IS still gated behind the
+flag is the pending-suggestions table.
 
 > The legacy `subconscious.*` bus events (`run_start`/`run_complete`/
 > `suggestion_emitted`/`suggestion_suppressed`) are GONE — they belonged to the

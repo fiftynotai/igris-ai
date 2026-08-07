@@ -279,6 +279,20 @@ export function createCuratorInstance(
   return {
     id: 'curator',
 
+    // TD-327 — the REQUIRED observability declaration. Like the arbiter, the
+    // curator has NO switch of its own: `resolveCuratorConfig`
+    // (`curator/types.ts`) DERIVES `enabled` from `cognition.janitor.enabled`
+    // and the runner co-drives it inside `runJanitor`.
+    health: {
+      component: 'cognition.curator',
+      event_prefix: 'cognition.curator',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // derived from the janitor, which ships off
+      driver: 'co_driven',
+      driver_ref: 'janitor',
+      output: "suggestions[source_module='curator']",
+    },
+
     async buildContext(
       db: Database.Database,
       args: ExtractorArgs,

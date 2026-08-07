@@ -41,6 +41,9 @@ import { createPerceptionComponent } from '../perception/index.js';
 import { createSubconsciousComponent } from '../subconscious/index.js';
 import { createSynapseComponent } from '../synapse/index.js';
 import { createJanitorComponent } from '../janitor/index.js';
+import { cognitionMigrations } from './schema.js';
+import { discoverInstances } from './registry.js';
+import { buildRoster, projectRoster } from './roster.js';
 
 /**
  * Build the unified cognition component. Composes the perception + subconscious
@@ -135,6 +138,12 @@ export function createCognitionComponent(): BrainComponent {
         ctx.storage.runMigrations('janitor', janitorMigrations);
       }
 
+      // TD-327: the ONE migration that genuinely belongs to the merged
+      // component. `schema()` still returns `[]` (see its docstring — that is
+      // migration-identity preservation for the four inherited keys), so this
+      // runs here under the previously-unclaimed 'cognition' key.
+      ctx.storage.runMigrations('cognition', cognitionMigrations);
+
       // 2. Delegate init to the inner factories: each resolves its instance
       //    config, sets its handler context, and (subconscious/synapse/janitor)
       //    wires its schedule bootstrap on engine.ready.
@@ -143,8 +152,23 @@ export function createCognitionComponent(): BrainComponent {
       synapse.init(ctx);
       janitor.init(ctx);
 
+      // 3. TD-327 — project the OPEN registry into `cognition_instances` so a
+      //    strictly read-only reader outside this package can enumerate the
+      //    roster without hand-listing it. FAIL-SOFT (TD-074): a projection
+      //    failure degrades the health digest, it never fails a boot.
+      const projection = projectRoster(
+        ctx.storage.rawConnection,
+        buildRoster(discoverInstances()),
+      );
+      if (projection.error !== null) {
+        ctx.log.warn(
+          `Cognition roster projection failed (health surface degraded): ${projection.error}`,
+        );
+      }
+
       ctx.log.info(
-        'Cognition component initialized (perception + subconscious + synapse + janitor instances)',
+        'Cognition component initialized (perception + subconscious + synapse + janitor instances); ' +
+          `roster projected: ${projection.written} instances, ${projection.removed} stale removed`,
       );
     },
 
