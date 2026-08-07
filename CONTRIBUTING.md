@@ -167,7 +167,10 @@ IGRIS_BYPASS_BRIEF_GATE=1 <command>
 When the bypass fires, the hook emits a loud WARNING on stderr and writes
 a `brief_gate.bypassed` row into the brain DB's `event_log` table, so the
 bypass leaves an audit trail. Symmetric with `IGRIS_BYPASS_PHASE_GUARD=1`
-in `scripts/git-hooks/pre-commit`.
+in `scripts/git-hooks/pre-commit` and `IGRIS_BYPASS_AC_GATE=1` in
+`scripts/git-hooks/commit-msg` (TD-325 — the acceptance-criteria gate; the
+healthy path past an unmet criterion is `- [~] **DEFERRED: <why>** -> TD-XXX`,
+not the bypass).
 
 **Critical:** never `export IGRIS_BYPASS_BRIEF_GATE=1` in your shell or rc
 file. Exported env vars inherit into every subprocess — including subagent
@@ -524,7 +527,7 @@ you add or remove a script here, update this table in the same PR.
 | Script | Invoked by | Purpose |
 |--------|-----------|---------|
 | `scripts/git-hooks/pre-commit` | symlinked into `.git/hooks/pre-commit` (one-time, via `scripts/install_git_hooks.sh`) | Conditional pre-commit validators (enum drift, lockfile sync, harness drift) — runs only when the relevant files are staged. Also enforces the PI-004 phase guard. |
-| `scripts/git-hooks/commit-msg` | symlinked into `.git/hooks/commit-msg` (one-time, via `scripts/install_git_hooks.sh`) | Hard-fails a commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180; ≤72). Bypass with `git commit --no-verify`. |
+| `scripts/git-hooks/commit-msg` | symlinked into `.git/hooks/commit-msg` (one-time, via `scripts/install_git_hooks.sh`) | Two checks. (1) Hard-fails a commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180; ≤72). (2) TD-325 AC gate: hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no reason or no follow-up brief. Reads `brief_files.content` read-only and delegates the verdict to `core/scripts/brief_ac_check.sh`; fail-open at every tier. Bypass the AC half with `IGRIS_BYPASS_AC_GATE=1`, or both with `git commit --no-verify`. |
 | `scripts/install_git_hooks.sh` | manual (one-time, per contributor / fresh checkout) | Symlinks every file in `scripts/git-hooks/` into `.git/hooks/`; backs up any pre-existing non-symlink hook before clobbering (TD-072 F3). Idempotent. |
 | `scripts/validate_brain_stewardship_enums.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every `memory_store` enum value (`category`/`scope`/`provenance`) appears in the `brain_stewardship` section of `core/prompts/brain_stewardship.md`, plus schema-shrinkage reverse check. (Renamed from `validate_memory_agency_enums.sh` in TD-148.) |
 | `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
@@ -533,6 +536,8 @@ you add or remove a script here, update this table in the same PR.
 | `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. Local mode re-points at the bundled brain MCP that `igris install` registered (resolved from the existing `mcpServers["igris-brain"]` entry). Remote/dual refuses a non-local `http://` URL unless `IGRIS_ALLOW_INSECURE_SYNC=1` / `remote_brain.allow_insecure` (TD-256, mirrors the TD-252 sync-transport guard). The VPS half is populated by `igris_brain_deploy.sh`. |
 | `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
 | `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
+| `core/scripts/brief_ac_check.sh` | `scripts/git-hooks/commit-msg`, `scripts/validate_brief_ac_completion.sh`, `core/skills/hunt/SKILL.md` (Phase 5 step 0 / Phase 7 step 0), `acGateNote` in `brain-mcp-server/src/tools/briefs.ts` | THE acceptance-criteria checkbox parser (TD-325). Pure and DB-free: content on stdin or a file path, one machine-readable verdict line (`PASS` / `FAIL` / `NO_AC` / `NO_ITEMS` / `DEGRADED`) plus the offending criteria. Every consumer reads THIS file — a second implementation would give the gate and the audit different populations, which is the defect TD-325 removes. |
+| `scripts/validate_brief_ac_completion.sh` | `scripts/git-hooks/pre-commit` (WARN-only, and standalone) | TD-325 L3 observer: names every TERMINAL brief whose acceptance criteria are still open, or whose deferral lacks a reason or a follow-up brief. `--list` emits the bare-id worklist that drives TD-075's retroactive sweep. Deliberately never touches the cognition candidate queue (AC #7). |
 | `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
 | `core/scripts/cli-adapters/_common.sh` | sourced by every adapter | Shared helpers (parse_frontmatter, atomic_symlink, validate_manifest, merge_overlay_manifest, toml_escape*). FR-153 RETIRED `md_to_agents_md.sh` + `md_to_gemini_toml.sh` (codex + gemini now read SKILL.md natively via symlink — no aggregation/conversion). FR-152 RETIRED `sync_claude_agents.sh` (claude reads symlink to loadout-vendored canonical). FR-159 RETIRED `sync_codex_agents.sh` (codex MD → TOML emit moved to TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` for vendor-side + bash `assemble_codex_harness_into_loadout` in `compile_harnesses.sh` for compile-side fallback; the .toml is the target of a symlink to `<brain>/loadout/agents/<name>/harness.codex.toml`, parity with claude). No format-converter scripts remain. |
 

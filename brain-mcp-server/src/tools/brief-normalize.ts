@@ -795,6 +795,35 @@ export function nonCanonicalStatusNote(stored: string | null | undefined): strin
   );
 }
 
+/**
+ * The TERMINAL status set, as a predicate (TD-325).
+ *
+ * `Done` / `Archived` are the two canonical terminal states; `Completed` /
+ * `Complete` are the two RETAINED SYNONYMS that
+ * `scripts/validate_brief_state_reconciliation.sh` keeps as defense in depth
+ * (after the v25 fold they match zero local rows, but the column is still
+ * reachable by `igris import`, by an older direct writer, and by any path
+ * outside the fold table — deleting them silently re-opens the exemption that
+ * hid 26 terminal rows from the reconciliation invariant for their whole
+ * lifetime).
+ *
+ * The NOTATION FOLD — case, space, hyphen, underscore — is byte-aligned in
+ * effect with the portable SQL expression used at the gate sites:
+ * `replace(replace(replace(lower(status),' ',''),'-',''),'_','')`. It folds
+ * notation ONLY, never vocabulary: `Cancelled` / `Superseded` / `Deferred` are
+ * different WORDS and are deliberately not terminal here — whether they should
+ * be is TD-342's lifecycle question, not this predicate's to assume.
+ *
+ * THIS EXISTS SO THERE IS NO FIFTH LIST. The terminal set was previously spelled
+ * out inline at each site; a new consumer copying it by hand is exactly how the
+ * spelling-based exemption happened. Import this instead.
+ */
+export function isTerminalBriefStatus(v: string | null | undefined): boolean {
+  if (v === null || v === undefined) return false;
+  const folded = v.toLowerCase().replace(/[ \-_]/g, '');
+  return folded === 'done' || folded === 'archived' || folded === 'completed' || folded === 'complete';
+}
+
 // ===========================================================================
 // TD-338 — REPLICATION-INGRESS NORMALIZATION
 // ===========================================================================

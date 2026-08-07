@@ -14,6 +14,11 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type DatabaseType from 'better-sqlite3';
 import { getDb } from '../db.js';
 // FR-240 D1 — the pure `db`-param read layer. This file is the MCP WRAPPER over
 // it; `briefs-read.ts` holds the SQL and imports no singleton, which is what
@@ -28,6 +33,7 @@ import {
   nonCanonicalBriefTypeNote,
   nonCanonicalPriorityNote,
   nonCanonicalStatusNote,
+  isTerminalBriefStatus,
 } from './brief-normalize.js';
 import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
@@ -127,6 +133,122 @@ interface BriefUpdateInput {
 }
 
 /**
+ * Resolve the ONE acceptance-criteria parser (TD-325).
+ *
+ * `core/scripts/brief_ac_check.sh` is the single implementation of the checkbox
+ * grammar; `/hunt`, the commit-msg gate, the L3 validator and this note all read
+ * it. Reimplementing the grammar in TypeScript here would create a SECOND
+ * parser — and a second parser means a second population, which is the precise
+ * failure TD-325 exists to remove (the cognition queue was a 45%-coverage index
+ * of the same signal, and a cleared queue read as "handled"). So the note shells
+ * out to the shared script rather than re-deriving its verdict.
+ *
+ * Path: the TD-096 runtime mirror at `~/.igris/core/scripts/`, which is the
+ * stable location for a `core/` script at runtime. `IGRIS_AC_CHECK` overrides it
+ * — that is what keeps the unit test hermetic instead of depending on whatever
+ * the operator's mirror happens to contain.
+ *
+ * @returns an absolute path, or null when no parser is installed (fail-open)
+ */
+function resolveAcCheckScript(): string | null {
+  const explicit = process.env.IGRIS_AC_CHECK;
+  if (explicit) {
+    return existsSync(explicit) ? explicit : null;
+  }
+  const mirrored = join(homedir(), '.igris', 'core', 'scripts', 'brief_ac_check.sh');
+  return existsSync(mirrored) ? mirrored : null;
+}
+
+/**
+ * The AC-completion OBSERVER note (TD-325) — the fourth sibling of the three
+ * `nonCanonical*Note` calls below. Informs; never rejects, never alters what
+ * was stored.
+ *
+ * WHY THIS IS AN OBSERVER AND NOT A GATE — the argument, not the assumption.
+ * Both of `/hunt`'s terminal syncs run AFTER the commit has landed: Phase 7
+ * orders 7.1 phase=COMMITTING, 7.2 `git commit`, 7.4 status=Done, 7.5 sync;
+ * Phase 8.2 then syncs phase=COMPLETE. A rejecting gate here cannot un-close
+ * anything — it can only refuse to RECORD something already true in the world.
+ * Refusing at 7.5 leaves a landed commit with the store saying open (C3
+ * "committed-but-open"); refusing at 8.2 manufactures C1 "Done-but-not-COMPLETE"
+ * — the exact contradiction TD-257 shipped that second sync to eliminate — and
+ * TD-311 then forbids resolving C1 by editing brief data, so the operator is
+ * trapped in a state the system will not let them leave. Either key makes the
+ * store LESS truthful, which is the failure class TD-311 exists to prevent.
+ *
+ * The refusal therefore lives UPSTREAM of the commit, in
+ * `scripts/git-hooks/commit-msg`, keyed on the `closes #<ID>` footer.
+ *
+ * Guarded on the STORED status (like its three siblings), TERMINAL only: a
+ * mid-hunt sync says nothing, because unticked criteria mid-build are normal.
+ *
+ * Every failure mode returns null: no parser installed, no `brief_files` row,
+ * no `brief_files` TABLE, a parser that hangs, a parser that errors. This runs
+ * inside a WRITE path and must never be able to throw.
+ *
+ * @param db - the open brain handle (the row is already written when this runs)
+ * @param project - project slug
+ * @param briefId - brief id
+ * @param storedStatus - the status as STORED, not the raw argument
+ * @returns the note text, or null when there is nothing to say
+ */
+export function acGateNote(
+  db: DatabaseType.Database,
+  project: string,
+  briefId: string,
+  storedStatus: string | null | undefined,
+): string | null {
+  try {
+    if (!isTerminalBriefStatus(storedStatus)) return null;
+
+    const script = resolveAcCheckScript();
+    if (script === null) return null;
+
+    // Wrapped separately: a brain without `brief_files` (an old schema, a
+    // partially-migrated remote) must be silent, not throw.
+    let content: string | null = null;
+    try {
+      const row = db
+        .prepare('SELECT content FROM brief_files WHERE project = ? AND brief_id = ? LIMIT 1')
+        .get(project, briefId) as { content?: string } | undefined;
+      content = row?.content ?? null;
+    } catch {
+      return null;
+    }
+    if (!content) return null;
+
+    // The parser exits 1 on FAIL, which makes execFileSync throw; its stdout is
+    // carried on the error object. Both paths are read the same way.
+    let out = '';
+    try {
+      out = execFileSync('bash', [script, '--brief-id', briefId, '-'], {
+        input: content,
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    } catch (err) {
+      out = (err as { stdout?: string }).stdout ?? '';
+    }
+
+    const headline = out.split('\n', 1)[0] ?? '';
+    if (!headline.includes('VERDICT=FAIL')) return null;
+
+    return (
+      `NOTE: ${briefId} reached a terminal status with unmet acceptance criteria.\n` +
+      `      ${headline.trim()}\n` +
+      '      The brief was stored EXACTLY as synced — this informs, it does not\n' +
+      '      reject (TD-325). Resolve each criterion in the brief itself: tick it\n' +
+      '      with cited evidence, or defer it explicitly as\n' +
+      '      `- [~] **DEFERRED: <why>** -> TD-XXX`. A tick you cannot evidence is\n' +
+      '      the record-invention TD-311 forbids.'
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Sync a brief status change to the brain.
  *
  * Uses INSERT ... ON CONFLICT DO UPDATE to maintain one record per
@@ -189,6 +311,13 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
   const typeNote = nonCanonicalBriefTypeNote(storedBriefType);
   const priorityNote = nonCanonicalPriorityNote(storedPriority);
   const statusNote = nonCanonicalStatusNote(storedStatus);
+  // TD-325: the fourth note. Same posture as the three above — guarded on the
+  // STORED value, informs without rejecting — but it reads the brief's CONTENT
+  // rather than a metadata field, so it needs the db handle and the ids. It is
+  // the accumulation net for a close that never produces a commit (/archive, a
+  // direct sync, the dashboard, remote sync), which the commit-msg gate is
+  // structurally unable to see. See acGateNote for why it does not reject.
+  const acNote = acGateNote(db, args.project, args.brief_id, storedStatus);
 
   return {
     content: [{
@@ -214,6 +343,7 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
         typeNote ? `\n${typeNote}` : null,
         priorityNote ? `\n${priorityNote}` : null,
         statusNote ? `\n${statusNote}` : null,
+        acNote ? `\n${acNote}` : null,
       ].filter(Boolean).join('\n'),
     }],
   };

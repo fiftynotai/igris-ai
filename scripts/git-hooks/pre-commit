@@ -89,6 +89,23 @@ set -e
 #       expected WARN cannot train the reader to ignore a real one. The
 #       release-gate and reconciler triggers are here because those two files
 #       are where a status predicate can regress. WARN only.
+#   - validate_brief_ac_completion.sh  (TD-325)
+#       Triggers if: core/skills/hunt/SKILL.md OR
+#                    core/scripts/brief_ac_check.sh OR
+#                    scripts/git-hooks/commit-msg OR
+#                    brain-mcp-server/src/tools/briefs.ts OR MAINTAINING.md
+#                    is staged.
+#       Reports every TERMINAL brief whose acceptance criteria are still open,
+#       or whose deferral lacks a reason or a follow-up brief. This is the L3
+#       ACCUMULATION OBSERVER of the AC gate: the hard-fail lives in
+#       scripts/git-hooks/commit-msg (L2) and only fires on a commit carrying a
+#       `closes #<ID>` footer, so a brief closed with NO commit — /archive, a
+#       direct igris_brief_sync, the dashboard, remote sync — is invisible to it
+#       and lands here instead. It is ALSO the driver for TD-075's retroactive
+#       sweep (`--list` emits the worklist), which is why it and the gate share
+#       one parser: the audit population and the refusal set are then identical
+#       by construction. WARN only — surfaces the report, does NOT block. It
+#       deliberately never touches the cognition candidate queue (TD-325 AC #7).
 #   - validate_error_fingerprint_loop.sh  (TD-240)
 #       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
 #                    staged.
@@ -115,6 +132,11 @@ set -e
 # Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
 # Bypass phase guard only: `IGRIS_BYPASS_PHASE_GUARD=1 git commit ...`
 #   (orchestrator-only — used by /hunt Phase 7 COMMITTING)
+# NB the AC gate's bypass, `IGRIS_BYPASS_AC_GATE=1`, belongs to
+#   scripts/git-hooks/commit-msg, NOT to this file. The two are deliberately
+#   separate: /hunt's COMMITTING step sets IGRIS_BYPASS_PHASE_GUARD on the exact
+#   commit the AC gate must inspect, so an AC check placed inside the phase
+#   guard's block below would be bypassed by construction on every close.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -258,6 +280,7 @@ needs_reconciliation_check=0
 needs_brief_type_check=0
 needs_brief_priority_check=0
 needs_brief_status_check=0
+needs_ac_completion_check=0
 needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -350,6 +373,18 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_status_vocabulary.sh" ]; then
   if echo "$staged" | grep -qE '^(brain-mcp-server/src/tools/brief-normalize\.ts|brain-mcp-server/src/db\.ts|core/skills/release/SKILL\.md|scripts/validate_brief_state_reconciliation\.sh|MAINTAINING\.md)$'; then
     needs_brief_status_check=1
+  fi
+fi
+
+# TD-325: trigger the AC-completion observer on every surface that can change
+# what "a complete brief" means — the hunt skill (the authoring layer), the
+# shared parser (the grammar itself), the commit-msg gate (the hard-fail), the
+# brief write path (the sync-time note), and MAINTAINING.md (the contract home).
+# The validator scans the whole DB regardless of which file changed, so the
+# trigger only decides whether to run at all.
+if [ -f "$REPO_ROOT/scripts/validate_brief_ac_completion.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|core/scripts/brief_ac_check\.sh|scripts/git-hooks/commit-msg|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
+    needs_ac_completion_check=1
   fi
 fi
 
@@ -496,6 +531,25 @@ if [ "$needs_brief_status_check" = "1" ]; then
   # to "resolve" them by editing brief state, which is the forbidden move.
   if ! bash "$REPO_ROOT/scripts/validate_brief_status_vocabulary.sh"; then
     echo "[pre-commit] status vocabulary drift surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_ac_completion_check" = "1" ]; then
+  echo "[pre-commit] Checking brief acceptance-criteria completion (TD-325)..."
+  # WARN-ONLY, and this one's posture is a deliberate ASYMMETRY rather than the
+  # family default. TD-325 puts the HARD-FAIL on the closing commit
+  # (scripts/git-hooks/commit-msg), because that is the one moment where
+  # refusing prevents the defect instead of recording it after the fact. This
+  # validator sees the historical accumulation — 388 terminal igris-ai briefs as
+  # of 2026-08-07 — and blocking on a backlog nobody can clear in one commit
+  # would just train everyone to --no-verify. It is the standing reminder and
+  # the driver for TD-075's sweep (`--list`), not a gate.
+  #
+  # It also takes ~15s on a 447-brief corpus (the TD-257 reconciler beside it
+  # takes ~19s on the same set), which is another reason it is trigger-gated to
+  # five files rather than run on every commit.
+  if ! bash "$REPO_ROOT/scripts/validate_brief_ac_completion.sh"; then
+    echo "[pre-commit] Briefs closed with unmet criteria surfaced above (WARN only — not blocking)."
   fi
 fi
 

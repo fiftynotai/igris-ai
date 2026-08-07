@@ -478,6 +478,38 @@ Agent tool parameters:
 
 ### Phase 5: REVIEWING
 
+0. **Acceptance-criteria reconciliation (TD-325).** Before warden runs, resolve
+   the brief's acceptance criteria against what was actually built. Run the
+   shared parser on the brief's stored content:
+
+   ```bash
+   bash <parser> --brief-id {BRIEF_ID} --guidance <brief-content-file>
+   ```
+
+   The parser is `core/scripts/brief_ac_check.sh` in the project checkout, or
+   `~/.igris/core/scripts/brief_ac_check.sh` at runtime. If neither exists, skip
+   this step silently and continue.
+
+   Read the `VERDICT=` field of its first output line:
+   - `PASS` / `NO_AC` / `NO_ITEMS` / `DEGRADED` — nothing to do, continue.
+   - `FAIL` — resolve every criterion it names, **one at a time**, before
+     REVIEWING proceeds:
+     - **Tick it (`- [x]`) ONLY with cited evidence.** The evidence is an
+       artifact: a test name, a `file:line`, a measured figure, a commit sha.
+       Record it on an `EVIDENCE:` line in the Agent Log beside the tick.
+       A tick you cannot evidence invents the record, which is the move TD-311
+       forbids — it is worse than leaving the box open.
+     - **Otherwise defer it explicitly**, in the brief itself:
+       `- [~] **DEFERRED: <why it is unmet>** -> {FOLLOW_UP_BRIEF_ID}`
+       The follow-up brief is required. A deferral with nowhere to go is
+       indistinguishable from one that was forgotten.
+     - **If you can neither evidence nor honestly defer it, stop and ask the
+       operator.** Do not guess, and do not tick to make the verdict green.
+
+   Write the resolved criteria back with `igris_brief_update`. Doing this here
+   rather than at COMMITTING is deliberate: warden then reviews the ticks, and
+   the Phase 7 gate becomes a confirmation instead of a surprise.
+
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
@@ -507,6 +539,14 @@ Agent tool parameters:
   4. No security vulnerabilities.
   5. Tests are adequate.
   6. Documentation is present where required.
+  7. ACCEPTANCE CRITERIA (TD-325). No regex can catch a false tick, so this is
+     yours: for every criterion ticked during this hunt, is there a NAMED
+     artifact in the diff, the tests or the hunt log that establishes it — a
+     test name, a file:line, a measured figure, a commit? REJECT a tick whose
+     evidence you cannot locate; an unevidenced tick invents the record, which
+     is the move TD-311 forbids, and it is worse than an open box. And for
+     every `- [~]`, REJECT if it carries no DEFERRED reason or names no
+     follow-up brief.
 
   Output: APPROVE or REJECT with feedback."
 ```
@@ -616,6 +656,20 @@ Agent tool parameters:
    - Proceed to COMMITTING
 
 ### Phase 7: COMMITTING
+
+0. **Acceptance-criteria gate (TD-325) — the confirmation.** Re-run the parser
+   from Phase 5 step 0 on the brief's current stored content. On `FAIL`, do NOT
+   commit: return to the Phase 5 step 0 resolution loop (tick with cited
+   evidence, or defer with a reason and a follow-up brief), then re-run.
+
+   This is a confirmation, not a discovery: Phase 5 step 0 should already have
+   resolved everything. If it fires here, something changed the brief between
+   REVIEWING and COMMITTING, and that is worth knowing before the close.
+
+   The commit below carries a `closes #{BRIEF_ID}` footer, so the commit-msg
+   hook enforces the same verdict mechanically. Reaching that hook by surprise
+   means this step was skipped. `IGRIS_BYPASS_AC_GATE=1` exists for a genuine
+   emergency and is one-shot — it is never the way to get past an open box.
 
 1. Update brief: Phase = COMMITTING, Active Agent = none
 2. Run git commands:

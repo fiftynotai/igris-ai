@@ -49,4 +49,5 @@ Enforcement of these belongs to the Enforcement layer — some gated, some autom
 
 - `IGRIS_BYPASS_BRIEF_GATE=1` — lets a single Write/Edit through the brief-gate (stderr warning + audit event).
 - `IGRIS_BYPASS_PHASE_GUARD=1` — bypasses the commit-time phase guard.
-- **Never `export` either** — pass one-shot per command, or it leaks into subagent processes.
+- `IGRIS_BYPASS_AC_GATE=1` — bypasses the acceptance-criteria gate in `commit-msg` for one commit (TD-325). It is not the way past an open box: the healthy path is `- [~] **DEFERRED: <why>** -> TD-XXX`, which costs the same one character as a tick.
+- **Never `export` any of them** — pass one-shot per command, or it leaks into subagent processes.

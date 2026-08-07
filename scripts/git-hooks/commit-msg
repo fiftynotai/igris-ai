@@ -1,10 +1,20 @@
 #!/bin/bash
 
-# Description: Igris commit-msg hook. Hard-fails a commit whose summary (the
-#   first non-comment, non-blank line of the message) exceeds 72 characters.
-#   The locked convention is ≤72 (TD-180): a 72-char summary passes, 73 fails.
-#   See core/os/standards.md ("72-char summary") and
-#   core/templates/commit_message.md ("Max 72 characters").
+# Description: Igris commit-msg hook. Two checks, in this order:
+#
+#   1. SUMMARY LENGTH (TD-180) — hard-fails a commit whose summary (the first
+#      non-comment, non-blank line) exceeds 72 characters. The locked
+#      convention is ≤72: a 72-char summary passes, 73 fails. See
+#      core/os/standards.md ("72-char summary") and
+#      core/templates/commit_message.md ("Max 72 characters").
+#
+#   2. ACCEPTANCE-CRITERIA GATE (TD-325) — hard-fails a CLOSING commit (one
+#      carrying a `closes #<BRIEF_ID>` footer) when that brief still has an
+#      unticked acceptance criterion, or a deferral without a reason and a
+#      follow-up brief. Bypass: IGRIS_BYPASS_AC_GATE=1.
+#
+#   The two are independent: the length check runs first and is unchanged, so
+#   test/commit_msg_length.test.bash is the regression control for it.
 #
 # Usage: git invokes this as `.git/hooks/commit-msg <msg-file>`.
 #   Argument $1 is the path to the file holding the pending commit message.
@@ -14,8 +24,52 @@
 #   step is guarded explicitly and the empty-message case falls through to
 #   exit 0 (let git handle an empty commit itself; don't block).
 #
+# WHY THE AC GATE LIVES HERE AND NOT IN THREE OTHER PLACES (TD-325 §0):
+#
+#   NOT in `igris_brief_sync` (the brain). Both of /hunt's terminal syncs run
+#   AFTER the commit has landed — Phase 7 orders 7.1 phase=COMMITTING, 7.2
+#   `git commit`, 7.4 status=Done, 7.5 sync; Phase 8.2 syncs phase=COMPLETE. A
+#   rejecting brain gate cannot un-close anything; it can only refuse to RECORD
+#   something already true in the world. Keyed on `status` it leaves a landed
+#   commit with the store saying open — contradiction C3 in
+#   scripts/validate_brief_state_reconciliation.sh. Keyed on phase='COMPLETE'
+#   it manufactures C1, which TD-311 then forbids fixing by editing brief data,
+#   trapping the operator in a state the system will not let them leave. Either
+#   key makes the store LESS truthful. The brain gets the OBSERVER role instead
+#   (the `nonCanonical*Note` pattern: informs, never rejects).
+#
+#   NOT in the pre-commit phase guard. `scripts/git-hooks/pre-commit:146` wraps
+#   that whole guard in `IGRIS_BYPASS_PHASE_GUARD != 1`, and /hunt's COMMITTING
+#   step SETS that flag on the exact commit we need to gate. A check inside
+#   that block is bypassed by construction on every closing commit.
+#
+#   HERE, because the closing commit is DEFINED by its `closes #<ID>` footer —
+#   already this repo's own definition of closed
+#   (validate_brief_state_reconciliation.sh:95) — and commit-msg is the only
+#   hook that sees the message. So the gate needs no phase heuristic at all: a
+#   WIP commit has no footer and is untouched. The "don't block mid-build
+#   commits" problem disappears rather than being mitigated, the gate and the
+#   C2/C3 reconciliation check agree by construction, and there is no
+#   entanglement with IGRIS_BYPASS_PHASE_GUARD and no dependence on the
+#   `instances` registry (no stale-instance failure mode, the G-01R class).
+#
+# WHAT THIS GATE DOES NOT COVER — named, because an unnamed gap is worse than a
+#   known one:
+#     - a close with NO commit: /archive, a direct igris_brief_sync, the
+#       dashboard, or remote sync. Refusing those is the C1/C3 manufacture
+#       argued above, so they are OBSERVED instead — by the acGateNote in
+#       brain-mcp-server/src/tools/briefs.ts at the moment of the sync, and by
+#       scripts/validate_brief_ac_completion.sh on the next brief-state commit.
+#     - `git commit --no-verify` (git skips every hook natively).
+#     - a checkout without the hooks installed, or a project whose briefs live
+#       in a different brain.
+#   All of those land in the same L3 accumulation net.
+#
 # Bypass: `git commit --no-verify` (git skips this hook entirely — native, no
 #   code here). Use sparingly.
+# Bypass the AC gate only: `IGRIS_BYPASS_AC_GATE=1 git commit ...`
+#   One-shot, never `export`ed — same posture as IGRIS_BYPASS_PHASE_GUARD and
+#   IGRIS_BYPASS_BRIEF_GATE.
 
 MSG_FILE="$1"
 
@@ -42,6 +96,100 @@ if [ "$len" -gt 72 ]; then
   echo "  summary: ${summary}"
   echo "  shorten the first line to ≤72 chars (imperative mood). See core/os/standards.md."
   echo "  bypass (discouraged): git commit --no-verify"
+  echo ""
+  exit 1
+fi
+
+# =============================================================================
+# 2. Acceptance-criteria gate (TD-325)
+# =============================================================================
+# FAIL-OPEN AT EVERY TIER. This hook runs on every commit in every repo that
+# installs it; a missing brain DB, a missing sqlite3, a brief with no stored
+# content, or a missing parser must never block a commit. The ONLY exit-1 path
+# below is the parser returning FAIL on a brief this commit claims to close.
+
+if [ "${IGRIS_BYPASS_AC_GATE:-0}" = "1" ]; then
+  exit 0
+fi
+
+# --- Is this a CLOSING commit? -----------------------------------------------
+# Comment lines are stripped first, so a `closes #` appearing in git's own
+# commentary (or in a verbose-mode diff hunk) cannot fake a closing footer.
+#
+# The footer pattern FOLDS NOTATION, not vocabulary. Measured over the last 400
+# commits of this repo: 343 `closes #<ID>`, 1 `closes <ID>` (no hash), 1
+# `close <ID>`. So: clos(e|es|ed), an optional colon, an optional `#`. The id
+# itself is then re-extracted CASE-SENSITIVELY, so only a canonical uppercase
+# brief id is ever interpolated into SQL.
+#
+# ALL ids are gated, not just the first: a commit closing two briefs must
+# satisfy both.
+msg_body="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" 2>/dev/null)"
+brief_ids="$(printf '%s\n' "$msg_body" \
+  | grep -ioE 'clos(e|es|ed)[[:space:]]*:?[[:space:]]*#?[A-Z]{2,3}-[0-9]+' 2>/dev/null \
+  | grep -oE '[A-Z]{2,3}-[0-9]+' 2>/dev/null \
+  | sort -u)"
+
+# No footer -> not a closing commit -> the gate is silent. This is why mid-hunt
+# WIP commits need no phase heuristic to be exempt.
+[ -n "$brief_ids" ] || exit 0
+
+# --- Resolve the shared parser (repo first, runtime mirror second) ------------
+# core/scripts/brief_ac_check.sh is the ONE checkbox parser; /hunt and the L3
+# validator read the same file. Preferring the repo copy means a change to the
+# parser is gated by the parser as edited, not by a stale mirror.
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
+AC_CHECK=""
+if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/core/scripts/brief_ac_check.sh" ]; then
+  AC_CHECK="$REPO_ROOT/core/scripts/brief_ac_check.sh"
+elif [ -f "$HOME/.igris/core/scripts/brief_ac_check.sh" ]; then
+  AC_CHECK="$HOME/.igris/core/scripts/brief_ac_check.sh"
+fi
+[ -n "$AC_CHECK" ] || exit 0
+[ -n "$REPO_ROOT" ] || exit 0
+
+BRAIN_DB="$HOME/.igris/memory/knowledge.db"
+[ -f "$BRAIN_DB" ] || exit 0
+command -v sqlite3 >/dev/null 2>&1 || exit 0
+
+# $PROJECT is basename(repo) and each id matched ^[A-Z]{2,3}-[0-9]+$ above —
+# neither is user-controlled free text. Both are still single-quote-escaped
+# (doubling any embedded quote) before interpolation, matching the
+# pre-commit:171-172 idiom. The DB is opened -readonly: this hook never writes.
+PROJECT="$(basename "$REPO_ROOT")"
+PROJECT_SQL="${PROJECT//\'/\'\'}"
+
+ac_failed=0
+for BRIEF_ID in $brief_ids; do
+  BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
+  brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
+    "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
+    2>/dev/null)"
+
+  # No stored content for this project+brief -> nothing to read -> stay silent.
+  # (A brief tracked in another project's brain, or one that predates
+  # brief_files, must not block this repo's commits.)
+  [ -n "$brief_content" ] || continue
+
+  if ac_out="$(printf '%s\n' "$brief_content" \
+                 | bash "$AC_CHECK" --brief-id "$BRIEF_ID" --guidance - 2>/dev/null)"; then
+    # PASS / NO_AC / NO_ITEMS / DEGRADED — all exit 0 by contract.
+    continue
+  fi
+
+  if [ "$ac_failed" -eq 0 ]; then
+    echo ""
+    echo "[commit-msg] TD-325 AC gate: refusing to close a brief with unmet criteria"
+    echo ""
+  fi
+  printf '%s\n' "$ac_out"
+  ac_failed=1
+done
+
+if [ "$ac_failed" -eq 1 ]; then
+  echo ""
+  echo "  One-shot bypass (leaves a trail in this terminal, never export it):"
+  echo "    IGRIS_BYPASS_AC_GATE=1 git commit ..."
   echo ""
   exit 1
 fi

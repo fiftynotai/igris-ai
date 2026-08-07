@@ -7,7 +7,11 @@ Igris ships local git hooks that catch drift between the brain stewardship doc (
 Two hook types:
 
 - A `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
-- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) that hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180). This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change). The ≤72 limit matches `core/os/standards.md` and `core/templates/commit_message.md`; bypass with `git commit --no-verify`.
+- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) carrying two independent checks. This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change).
+  1. **Summary length (TD-180).** Hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters. The limit matches `core/os/standards.md` and `core/templates/commit_message.md`.
+  2. **Acceptance-criteria gate (TD-325).** Hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no `DEFERRED` reason or no follow-up brief. It reads `brief_files.content` read-only from the brain and delegates the verdict to `core/scripts/brief_ac_check.sh`, the one shared parser. **This hook, and not `pre-commit`, is where the gate belongs:** the closing commit is *defined* by that footer, so the check needs no phase heuristic and a WIP commit is untouched; and `pre-commit`'s phase-guard block is wrapped in `IGRIS_BYPASS_PHASE_GUARD != 1`, a flag `/hunt` sets on the exact commit that must be gated. Fail-open at every tier (no brain DB, no `sqlite3`, no stored content, no parser → silent exit 0). Bypass this half only with `IGRIS_BYPASS_AC_GATE=1`.
+
+  Bypass both with `git commit --no-verify`.
 
 The `pre-commit` dispatcher's validators:
 
@@ -20,8 +24,8 @@ The `pre-commit` dispatcher's validators:
 > The full validator roster lives in the dispatcher's header comment
 > (`scripts/git-hooks/pre-commit`); this table summarizes the load-bearing
 > ones. Several validators (TD-219 SKILL.md YAML, TD-248 harness-leak, FR-135
-> harness drift, FR-186 contract consumers, TD-257 brief-state reconciliation)
-> are wired in addition to the rows above.
+> harness drift, FR-186 contract consumers, TD-257 brief-state reconciliation,
+> TD-325 AC completion) are wired in addition to the rows above.
 
 Both core validators are also runnable standalone:
 
