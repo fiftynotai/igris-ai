@@ -16,6 +16,10 @@ allowed-tools:
   - mcp__igris-brain__igris_brief_create
   - mcp__igris-brain__igris_suggestion_list
   - mcp__igris-brain__igris_perception_review_pending
+  - mcp__igris-brain__igris_memory_recall
+  - mcp__igris-brain__igris_session_recall
+  - mcp__igris-brain__igris_project_status
+  - mcp__igris-brain__igris_project_register
 triggers:
   - "BOOT"
   - "AWAKEN"
@@ -180,9 +184,43 @@ It prints `{ "completed": <bool>, "boot_welcomed": <bool>, "first_run": <bool> }
 ### 4.3 Query Brain for Context (Optional)
 
 If the `igris-brain` MCP server is available:
-- Call `igris_memory_recall` with the current project slug and context="session start, current project priorities"
+- Call `igris_memory_recall` with `project` = the current project slug and
+  `context` = "session start, current project priorities". Both are REQUIRED — a
+  call omitting either is rejected at the gateway (BR-080).
 - Display any relevant cross-project learnings to the user
-- Call `igris_project_register` to update `last_session_at` for this project
+- Refresh `last_session_at` for this project. **Read first, then register** —
+  never register from the detect digest alone:
+  - Call `igris_project_status` with `slug` = the current project slug to read
+    the existing record. If it reports the project is not registered, SKIP this
+    refresh entirely: `/boot` does not mint project records.
+  - **If the read fails, is unavailable, or you cannot obtain a `Name:` value
+    for any reason, SKIP the refresh.** Do not proceed to register. A missing
+    read is the one state where inventing a slug-derived name is the path of
+    least resistance, and that is precisely the loss this step exists to
+    prevent. A stale `last_session_at` is harmless; a clobbered project record
+    is not.
+  - Otherwise call `igris_project_register` echoing back what you just read:
+    `slug` = the current project slug, `name` = the `Name:` value, `path` = the
+    `Path:` value, and `tech_stack` = the `Tech Stack:` value. `slug`, `name`
+    and `path` are REQUIRED — a call omitting any is rejected at the gateway
+    (BR-080).
+  - **`Tech Stack: (none)` is a RENDERING, not a value.** `igris_project_status`
+    prints `(none)` when the column is empty, so echoing that string literally
+    would write `(none)` into the column. When the read shows `(none)`, omit
+    `tech_stack` from the call.
+  - Do NOT substitute the slug for `name`, and do NOT invent `path` or
+    `tech_stack`. `igris_project_register` is an UPSERT keyed on `slug`, and its
+    conflict arm overwrites `name`, `path` AND `tech_stack` with whatever you
+    pass — **only `archetype` is `COALESCE`d**. The handler binds
+    `args.tech_stack ?? ''`, so a call that omits `tech_stack` writes an EMPTY
+    STRING over it, not a no-op.
+    The detect digest carries neither a name nor a tech stack, so registering
+    from it would overwrite the operator's curated project name with a slug and
+    blank their tech stack on EVERY session start. `tech_stack` is curated data
+    — `/harvest` writes it and `/ground` and `/scan` read it as half the project
+    profile that drives context-doc `applies_when` matching.
+    Echoing back what you just read is what makes this refresh safe.
+    TD-365 is the handler-side fix that would make this echo unnecessary.
 - Call `igris_session_recall` with days=2 to see recent cross-project activity
 - If sessions returned, display a "Cross-Project Context" section:
   ```

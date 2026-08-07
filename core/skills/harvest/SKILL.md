@@ -152,7 +152,6 @@ keeping (resist storing everything — curation is the value).
      tags:             "<comma-separated: domain, tech, archetype>",
      tech_stack:       "<e.g. 'Flutter:3.9.2,GetX:4.6.6'>",
      source_brief:     "<the brief(s) this came from, e.g. 'BR-008,BR-012'>",
-     confidence:       <0.0-1.0, default 0.8 — higher = battle-tested>,
      source_extractor: "distill"
    })
    ```
@@ -167,6 +166,19 @@ keeping (resist storing everything — curation is the value).
      and the channel-tag value are deliberately decoupled.
    - `category` MUST be one of the five enum values above (no others are
      accepted): `pattern`, `decision`, `discovery`, `mistake`, `optimization`.
+   - **Do NOT pass `confidence`.** `igris_memory_store`'s schema is
+     `additionalProperties: false`, so an unknown key is rejected outright
+     (TD-128) and the whole store call fails. Re-adding it to the schema alone
+     would be strictly WORSE than the rejection, not better: the store path has
+     never persisted the field — the INSERT writes `project`, `category`,
+     `title`, `content`, `tags`, `tech_stack`, `source_brief`, `scope`,
+     `provenance`, `review_status`, `source_extractor` and nothing else — so a
+     schema-only fix converts a loud rejection into a SILENT discard. The
+     `learnings.confidence` column exists and defaults to 0.8; setting it needs
+     the schema, the handler input type and the INSERT column list changed
+     together, which is tracked as **TD-364**. Until that ships, harvested rows
+     take the default and confidence is adjusted afterwards via
+     `igris_memory_update`.
    - These rows land at `review_status: 'approved'` by default — they appear in
      recall immediately (operator-curated content needs no perception review).
    - For the exact JSON shape of high-quality learnings (the worked examples:
@@ -197,7 +209,7 @@ Report what was captured:
 - Archetype: <confirmed archetype>
 - Modules cataloged: <M> (<new>, <updated>, <skipped-as-dup>)
 - Learnings stored: <N> (source_extractor: distill)
-  - <title> [<category>, conf <x>]
+  - <title> [<category>]
   - ...
 - Dedup: <k> candidate(s) skipped/merged against existing memory
 ```

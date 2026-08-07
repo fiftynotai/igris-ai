@@ -506,9 +506,15 @@ Agent tool parameters:
      - **If you can neither evidence nor honestly defer it, stop and ask the
        operator.** Do not guess, and do not tick to make the verdict green.
 
-   Write the resolved criteria back with `igris_brief_update`. Doing this here
-   rather than at COMMITTING is deliberate: warden then reviews the ticks, and
-   the Phase 7 gate becomes a confirmation instead of a surprise.
+   Write the resolved criteria back with `igris_brief_update`, passing `project`
+   (the current project slug) and `brief_id` (`$ARGUMENTS`) alongside the updated
+   content — both are REQUIRED, and a call omitting either is rejected at the
+   gateway (BR-080). Doing this here rather than at COMMITTING is deliberate:
+   warden then reviews the ticks, and the Phase 7 gate becomes a confirmation
+   instead of a surprise. **If this call is rejected, STOP and report it** — the
+   ticks stay unwritten, and the TD-325 commit-msg gate reads the brain record,
+   not your working notes, so the closing commit would be refused with no
+   indication that the resolution work was ever done.
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."

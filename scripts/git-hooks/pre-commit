@@ -22,6 +22,19 @@ set -e
 #       define_subagent/invoke_subagent) and hard-fails on a genuine
 #       instruction-level leak. Conservative recurrence net (L-400) with an
 #       explicit allowlist for the adapter-authoring/by-design files.
+#   - validate_skill_required_args.py  (TD-324)
+#       Triggers if: any core/skills/**/*.md OR
+#                    brain-mcp-server/src/engine/components/*/index.ts OR
+#                    MAINTAINING.md is staged.
+#       Flags a skill call site that names a brain tool without naming one of
+#       its declared-required arguments — which BR-080 turned from a silent
+#       NULL bind into a gateway REJECTION. The COMPONENT trigger is the
+#       load-bearing half: adding a key to an existing tool's `required` array
+#       is what silently invalidates skill prose that already calls it, and no
+#       compiler or test sees skill markdown. Ships with an explicit
+#       disposition ledger (TD-324 classified all 56 sites: 26 prose, 27
+#       already-loud, 3 regressions fixed), so clean-tree output is ZERO and
+#       the only thing it ever reports is a NEW site. WARN only.
 #   - validate_lockfile_in_sync.sh  (TD-134)
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
@@ -275,6 +288,7 @@ needs_lockfile_check=0
 needs_harness_check=0
 needs_skill_yaml_check=0
 needs_skill_os_leak_check=0
+needs_skill_required_args_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
 needs_brief_type_check=0
@@ -311,6 +325,21 @@ fi
 # so the trigger only decides whether to run at all.
 if echo "$staged" | grep -qE '^(core/skills/.*/SKILL\.md|core/os/.*\.md|core/prompts/.*\.md)$'; then
   needs_skill_os_leak_check=1
+fi
+
+# TD-324: trigger the required-argument sweep on a staged skill markdown file
+# (ANY .md under core/skills/, not just SKILL.md — restricting to SKILL.md is
+# exactly how hunt/workflow-template.md stayed invisible through two sweeps),
+# on a staged component tool-schema file, or on MAINTAINING.md (the contract
+# home, row 113). The COMPONENT trigger is the one that earns this gate its
+# place: a key added to an existing tool's `required` array invalidates every
+# skill line that already calls that tool, and nothing else in the repo looks.
+# The validator scans the whole tree regardless of which file changed, so the
+# trigger only decides whether to run at all.
+if [ -f "$REPO_ROOT/scripts/validate_skill_required_args.py" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/.*\.md|brain-mcp-server/src/engine/components/[^/]+/index\.ts|MAINTAINING\.md)$'; then
+    needs_skill_required_args_check=1
+  fi
 fi
 
 # FR-186: trigger the contract-consumer checker when MAINTAINING.md is staged
@@ -436,6 +465,24 @@ if [ "$needs_skill_os_leak_check" = "1" ]; then
   # together at the end, rather than aborting on the first failure.
   if ! python3 "$REPO_ROOT/scripts/validate_skill_os_harness_leak.py"; then
     failed=1
+  fi
+fi
+
+if [ "$needs_skill_required_args_check" = "1" ]; then
+  echo "[pre-commit] Checking skill call sites for missing required args (TD-324)..."
+  # WARN-ONLY, matching the TD-257/328/333/338/325 family. The posture is
+  # deliberate even though clean-tree output is ZERO: the verdict on a NEW site
+  # is a judgement call (prose / already-loud / regression) that belongs to a
+  # human reading the handler, not to a hook. Blocking would push someone to
+  # "resolve" a prose reference by rewording it, or to ledger a real regression
+  # just to get the commit through — which is the one failure mode the ledger's
+  # own header forbids. It reports; you classify.
+  #
+  # If this fires, do NOT reach for --no-verify. Either name the argument in the
+  # prose, or add a LEDGER entry with a CODE-FACT citation (a named in-band
+  # validator line, or a NOT NULL/CHECK column) in the validator.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_required_args.py"; then
+    echo "[pre-commit] Unclassified skill call sites surfaced above (WARN only — not blocking)."
   fi
 fi
 
