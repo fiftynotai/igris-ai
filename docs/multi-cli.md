@@ -1,17 +1,26 @@
 # Multi-CLI Support
 
-**Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer), FR-170 (Harness abstraction), FR-171 (OpenCode first-class), FR-172 (Onboard-harness runbook)
+**Briefs:** FR-103 (Skill Distribution), FR-104 (Hook Bridge Layer), FR-170 (Harness abstraction), FR-171 (OpenCode first-class), FR-172 (Onboard-harness runbook), FR-192 (Cursor onboarding), TD-367 (Harness tiers — the definition)
 **Status:** Stable
-**Last Updated:** 2026-06-08
+**Last Updated:** 2026-08-10
 
 Igris skills and hooks live canonically under `~/.igris/core/`. This document defines
-how those surfaces are distributed to multiple CLI agents (Claude Code, OpenCode,
-Codex CLI, Antigravity) via filesystem routing — no duplication, no drift.
+how those surfaces are distributed, via filesystem routing, to every CLI agent
+declared under `harnesses` in `harness-manifest.json` — no duplication, no drift.
+The manifest is the roster; this document is the meaning (see
+[Harness tiers](#harness-tiers)).
 
-> **Note (harness decision 2026-06-16):** Gemini CLI was dropped as a standalone
-> supported harness. The `~/.gemini/*` paths throughout this doc are now the
-> infrastructure **Antigravity** rides (it shares Gemini's config, skills-symlink,
-> and MCP paths) — preserved for Antigravity, not for Gemini CLI.
+> **Note (the `~/.gemini/*` path family serves Gemini CLI *and* Antigravity).** **Gemini CLI** is
+> a harness in its own right, with a full `harnesses.gemini` descriptor block
+> (agent hard-links, the cross-CLI skills dir, and MCP in
+> `~/.gemini/settings.json`). **Antigravity** rides the same path family but from
+> DISTINCT files it owns — `~/.gemini/config/mcp_config.json` for MCP and
+> `~/.gemini/config/hooks.json` for hooks — and does **not** read Gemini's
+> `settings.json`. A 2026-06-16 decision note previously stood here saying Gemini
+> CLI "was dropped as a standalone supported harness"; that has not matched the
+> descriptor for some time and is corrected by TD-367. Read every `~/.gemini/*`
+> path below as *"which harness owns THIS file"*, never as *"this belongs to
+> Antigravity"*.
 
 Two independent axes of coverage:
 
@@ -27,6 +36,65 @@ ship (defaults to `all`).
 
 ---
 
+## Harness tiers
+
+**This section is the definition** (TD-367). Every other Igris artifact that uses
+the words *first-class* or *bridge* about a harness — `README.md`,
+`cli/README.md`, `docs/SETUP_GUIDE.md`, `docs/substitution.md` — links here
+instead of restating the rule. Do not write a second definition anywhere else;
+five artifacts once
+answered "how many harnesses does IGRIS support?" five different ways precisely
+because the term had no home.
+
+A harness's tier is **DERIVED, never declared**: it follows from
+`harness-manifest.json` → `harnesses.<id>.hooks.supported`. **The manifest is the
+count; this document is the meaning.** There is no `tier` field in the
+descriptor, and adding one would re-create the drift — it would be a second
+source of truth for something already computable.
+
+| Tier | Checkable property | What it means to a user |
+|------|--------------------|-------------------------|
+| **first-class** | `hooks.supported == true` | Igris's enforcement gates run natively — brief-first, phase guard, commit + secret scans BLOCK. |
+| **bridge** | has an `agent_id` and an `mcp` block, but `hooks.supported == false` | Brain, skills, MCP and (where the harness has a static-agent surface) agents all reach it; only the gates soften to advisories. The workflow still runs — the blocking does not. |
+| **onboarding target** | declared under `harnesses` with no projected surface and no verified probe | Declared, not yet wired. No harness sits here today; the tier stays defined so a future one has somewhere to land. |
+
+**Re-derive the membership rather than trusting prose** — that is the whole point
+of keying the tier on a manifest property:
+
+```bash
+jq -r '.harnesses | to_entries[] | "\(.key)\t\(if .value.hooks.supported then "first-class" else "bridge" end)"' harness-manifest.json
+```
+
+**Why `hooks.supported` and not some other property.** Enforcement-as-code is the
+product's own claim, so the distinction a user actually feels is whether the gates
+BIND (this is the split `README.md` already described in prose: the full gate set
+runs where there is a hook API, and softens to advisories where there is not). It
+is one boolean already in the descriptor, it partitions every declared harness
+with no residue, and `hookTargetTypes()` / `hookProjectedHarnesses()`
+(`cli/src/lib/harness-descriptor.ts`) already compute the same predicate in
+TypeScript. **Rejected alternative:** keying on the presence of an `agents` block.
+It partitions cleanly too, but it would promote harnesses on a surface the user
+never sees and demote the ones whose gates actually bind. Depth of projection does
+not order linearly across surfaces; gate enforceability does.
+
+**`igris doctor`'s `bridge-missing` drift class is UNRELATED to the `bridge`
+tier.** It reports a CLI that is on PATH but has no `config.json#cli_targets`
+entry — usually because the CLI was installed after `igris init` — and `igris
+doctor --fix` resolves it (`cli/src/lib/drift/bridge-missing.ts`). It is machine
+state about one install, not a claim about a harness's tier.
+
+**Changing a harness's `hooks.supported` changes its published tier.** Every tier
+sentence must be swept in the same commit — see the harness-tier contract row in
+`MAINTAINING.md`, which defines the set as a PROPERTY and carries the `grep` that
+re-derives it. It deliberately does not list them: a hand-maintained tally lived
+there, was wrong at four, was corrected to five, and five was still short. A tier
+sentence is any sentence that claims a harness's tier, whether by a tier word or
+by partitioning the roster by hook capability — the second kind is what a listed
+set keeps missing. Never hand-write a harness COUNT in a doc; name the property
+and let the reader run the command above.
+
+---
+
 ## Skills Distribution
 
 > **FR-212d (delegate engine):** skills projection is now DELEGATED to the pinned
@@ -34,8 +102,9 @@ ship (defaults to `all`).
 > from the LOCAL `node_modules` — never a bare `npx`). `igris add/remove skill` and
 > the skills pass of `igris harness compile` shell out to `skills add <root> -g -a
 > <agents…>` / `skills remove <name> -g --all -y`. The tool places skills by NAME
-> in the universal store — `claude-code` → `~/.claude/skills/<name>`, the other 4
-> harnesses → the shared `~/.agents/skills/<name>` — and IGNORES the manifest
+> in the universal store — `claude-code` → `~/.claude/skills/<name>`, every other
+> skills-target harness → the shared `~/.agents/skills/<name>` (the set is
+> `skillAgentIds()`, i.e. every harness carrying an `agent_id`) — and IGNORES the manifest
 > `targets[].path` (which the custom engine used). The custom per-skill
 > symlink/wrapper engine + the `IGRIS_SKILLS_ENGINE` flag were RETIRED. The
 > per-CLI rows BELOW are HISTORICAL (the custom-engine placement); the live
@@ -104,8 +173,8 @@ Each entry supports:
 As of FR-137 the skill projection logic lives inside the FR-136 manifest-driven
 harness engine as first-class `surfaces.skills` targets — projected (and
 drift-checked) by `igris harness compile` / `igris harness drift`, exactly the
-way per-agent harnesses are. **FR-153** then unified all three harnesses
-(claude/codex/gemini) onto the same per-skill loadout-anchored symlink
+way per-agent harnesses are. **FR-153** then unified claude, codex and gemini
+onto the same per-skill loadout-anchored symlink
 projection that FR-149 established for claude, and **retired** the legacy
 `md_to_agents_md.sh` (AGENTS.md aggregator) + `md_to_gemini_toml.sh` (per-skill
 TOML converter) scripts entirely.
@@ -202,7 +271,7 @@ came from).
 **Adding a skill — `igris add skill` (one-step) / `igris loadout add-skill`
 (write-only, FR-180):** for the common case, prefer the one-step `igris add skill
 <name> --from <skills-dir> --target <type:method:path>` — it vendors the skill AND
-projects it to all four harnesses (per-skill symlink) AND verifies drift-clean in
+projects it to every skills-target harness (per-skill symlink) AND verifies drift-clean in
 one command, failing loudly if nothing projected (TD-235). `--core` writes
 `core/skills/<name>/SKILL.md` (auto-discovered — no manifest edit) instead of the
 personal overlay. `igris loadout add-skill` (above) is the **write-only**
@@ -223,8 +292,9 @@ project-scoped skill category; `/onboard-harness` is now shipped globally.)
 > **FR-212d (delegate engine):** the harness-COMPILE MCP projection
 > (`igris harness compile --surface mcp` → `igris loadout project-mcp`) now
 > DELEGATES server registration to the pinned external `add-mcp` CLI (npm
-> `add-mcp`, exact-pinned, resolved LOCAL — never a bare `npx`) for FOUR harnesses
-> (claude-code / codex / gemini-cli / opencode), then writes the Igris-owned
+> `add-mcp`, exact-pinned, resolved LOCAL — never a bare `npx`) for every harness
+> in `mcpAgentIds()` except antigravity (claude-code, codex, gemini-cli, opencode,
+> and — since FR-192 — cursor), then writes the Igris-owned
 > no-prompt trust GRANT (`mcp-grant.ts`, FR-184). **Antigravity is the exception
 > (KEPT custom):** its MCP config lives at `~/.gemini/config/mcp_config.json`
 > (FR-179 R1) — a path add-mcp does NOT write — so antigravity's ENTRY stays on
@@ -244,15 +314,16 @@ MCP servers are a **third** first-class manifest surface, alongside agents and
 skills — projected and drift-checked by `igris harness compile` /
 `igris harness check`, exactly the way skills are. Unlike skills (symlinks) and
 agents (symlinks/hardlinks), **MCP projection is a config MERGE**: each declared
-server is upserted into the five harnesses' native MCP config files (FR-179
-added Antigravity as a 5th MCP target), leaving every other entry and top-level
-key in those (hot, user-owned) files byte-for-byte untouched.
+server is upserted into the native MCP config file of every harness carrying an
+`mcp` block in the descriptor (FR-179 added Antigravity; FR-192 added Cursor),
+leaving every other entry and top-level key in those (hot, user-owned) files
+byte-for-byte untouched.
 
 ### Registering an MCP server — `igris add mcp` (one-step) / `igris loadout add-mcp` (write-only)
 
 > **FR-180:** for the common case, prefer the one-step `igris add mcp <name>
 > --command <bin> --target type:merge` — it registers the server AND projects it
-> to all four harness configs AND verifies drift-clean in one command (and fails
+> to every targeted harness config AND verifies drift-clean in one command (and fails
 > loudly if nothing projected). `igris loadout add-mcp` below is the
 > **write-only** low-level primitive (register only, no project/verify), kept as
 > the repair primitive. See `core/docs/ADD-SURFACES.md`.
@@ -273,7 +344,9 @@ igris loadout add-mcp <name> \
   block per name).
 - `--command` is **required for a new server**; a same-name re-add inherits it.
 - `--arg` is repeatable → the launch `args[]`.
-- `--target` is repeatable; `<type>` ∈ `{claude, codex, gemini, opencode}`,
+- `--target` is repeatable; `<type>` ranges over `mcpTargetTypes()` — every
+  harness declaring an `mcp` block, re-derived with
+  `jq -r '.harnesses | to_entries[] | select(.value.mcp) | .key' harness-manifest.json` —
   `method` is always `merge`, and an optional `:false` disables the entry for
   that harness (opencode passthrough).
 - **`--env` values MUST be a single `${VAR}` indirection reference** (e.g.
@@ -289,7 +362,7 @@ Igris writes `~/.igris/config.json` (may carry `remote_brain` credentials) and
 `~/.igris/secrets.env` at mode **600** (owner read/write only) — `igris init`
 creates them at 600 and tightens a pre-existing loose file on every run. **Never
 commit these files.** `igris doctor` flags any secret file that is group/world-
-readable or git-tracked (including the four harness configs above); `igris doctor
+readable or git-tracked (including the harness MCP configs above); `igris doctor
 --fix` chmods them to 600. A git-tracked file stays flagged after `--fix` because
 chmod cannot untrack it — remove it from git. On Windows the perms check is a
 no-op (NTFS has no POSIX mode bits), so init/doctor never false-flag there.
@@ -319,15 +392,15 @@ symlinks from the source (never a real dir), realpath-contains every mutation,
 refuses a root symlink pointing anywhere other than the canonical source, and is
 idempotent (a migrated real dir is a no-op on re-run). On Windows it is a no-op.
 
-### The six native per-harness shapes (the projection)
+### The native per-harness shapes (the projection)
 
 `igris harness compile --surface mcp` (or `--surface all`) flattens every
 `surfaces.mcp_servers[]` block into one `(server, target)` row per declared
 harness and merges the native entry into that harness's config. The bash pass is
 a thin driver; the JSON/TOML merge (atomic, idempotent, malformed-never-clobber,
 single rolling `.igris.bak`) lives in **one** place in the CLI — bash never
-re-implements it (L-519 §18.1). The six shapes (four DISTINCT wire-shapes —
-antigravity rides the gemini shape, cursor rides the claude shape):
+re-implements it (L-519 §18.1). The per-harness shapes (four DISTINCT
+wire-shapes — antigravity rides the gemini shape, cursor rides the claude shape):
 
 | Harness | Config file | Map | Native entry shape |
 |---------|-------------|-----|--------------------|
@@ -372,8 +445,8 @@ verdict `MATCH` / `DRIFTED` (naming the differing **key names**, never values) /
 ### Shipped default: `igris-brain`
 
 The Igris brain MCP server is itself a **loadout-distributed default** — it
-rides the very mechanism described above to reach all five harnesses (FR-169
-wires it into every harness at `igris init`; FR-179 added Antigravity). It is
+rides the very mechanism described above to reach every MCP-target harness
+(FR-169 wires it into every harness at `igris init`; FR-179 added Antigravity). It is
 registered and projected exactly like any other server:
 
 ```
@@ -414,16 +487,20 @@ holds its config from start-up (L-256: verify MCP changes in a fresh process).
 The rollout was confirmed by running `gemini mcp list` in a **fresh** Gemini
 process, which reported `✓ igris-brain ... - Connected`; checking the
 already-running session would have shown stale state. `igris harness check`
-returned **MATCH** for the `igris-brain` entry on all five harness targets.
+returned **MATCH** for the `igris-brain` entry on every projected harness target.
 
 ---
 
 ## Cursor (FR-192) — the `inline`-delegation harness
 
-Cursor is the **6th Igris harness**, onboarded via the descriptor-centric
+Cursor is the **6th declared Igris harness**, onboarded via the descriptor-centric
 `/onboard-harness` flow (one `harnesses.cursor` block in `harness-manifest.json`,
 no per-surface scatter). It is the first harness with the new
-**`delegation_model: inline`**.
+**`delegation_model: inline`**. Its tier is **bridge**: `hooks.supported: false`,
+so Igris's gates soften to advisories there while brain, skills and MCP all reach
+it — see [Harness tiers](#harness-tiers). (The ordinal "6th" is a historical fact
+about this onboarding, not a live support count; run the `jq` line in that
+section for the current roster.)
 
 - **Delegation (`inline`).** Cursor's `cursor-agent` is a **single agent with no
   subagent spawning** — neither static Igris-agent files (`native-static`) nor a
@@ -564,7 +641,7 @@ defence-in-depth back-compat but is no longer called by the live compile path.
 
 ## Nested Skill Files
 
-Post-FR-153, all three harnesses (claude/codex/gemini) project each skill as a
+Post-FR-153, claude, codex and gemini each project a skill as a
 **directory symlink** to the loadout-vendored `<source>/<name>/` tree — so
 nested files like `scripts/*.sh`, `workflow-template.md`, and
 `register/templates/*.md` are visible to every consumer that follows symlinks.
@@ -590,7 +667,7 @@ loadout copy was not self-sufficient.
 
 **Adding an agent — `igris add agent` (one-step) / `igris loadout add` (write-only,
 FR-180):** for the common case, prefer the one-step `igris add agent <name> --from
-<dir> --target <type:path>` — it α-assembles the agent into all four harness shapes
+<dir> --target <type:path>` — it α-assembles the agent into every agent-target harness shape
 at vendor time AND projects it (per-harness symlink/hard-link) AND verifies
 drift-clean in one command, failing loudly if nothing projected (TD-235). `--core`
 writes `core/agents/<name>.md` + the repo-root `harness-manifest.json` entry, then
@@ -767,7 +844,7 @@ coexist:
 | `cli/src/verbs/loadout.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
 | `cli/src/verbs/loadout.ts::assembleOpencodeHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.opencode.md` (OpenCode-shaped frontmatter: `mode: subagent`, boolean `tools:` map via `CLAUDE_TO_OPENCODE_TOOLS`, `permission:` MCP grant) from `frontmatter.claude.md` + body, OR honors an operator-authored `frontmatter.opencode.md` verbatim. FR-171. Byte-identical to the compile-side bash inline-python3 translator (§18.1 golden-fixture parity). |
 | `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`) to each target. claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_*_harness_into_loadout` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
-| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). All 4 agent harnesses use per-harness loadout-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
+| `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). Every agent-surface harness (`agentTargetTypes()` — the ones declaring an `agents` block) uses per-harness loadout-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
 | `scripts/cli-adapters/body-exceptions/*.json` | Documented intentional body divergences (see below). |
 
 ### Manifest schema
@@ -1088,7 +1165,7 @@ igris remove <skill|agent|mcp|hook> <name> [--core | --no-core] \
              [--harness <type>] [--event <Event>] [--yes] [--force]
 ```
 
-For one invocation it **un-projects** the surface from every harness (deletes the
+For one invocation it **un-projects** the surface from every harness it reached (deletes the
 loadout-anchored symlink/hardlink, un-merges the named native-config block —
 preserving every other server/hook-group/top-level key byte-for-byte),
 **de-materializes** it from the loadout overlay (personal) / deletes the `core/`
@@ -1353,8 +1430,11 @@ third families have live disposition today:
 > subagents at runtime, by giving it a harness-specific context-layer file), never
 > by hand-writing its artifacts.
 
-A harness becomes first-class across **four material surfaces**, each with its
-own projection primitive, plus the delegation-mechanism context layer:
+A harness is ONBOARDED across the **four material surfaces**, each with its
+own projection primitive, plus the delegation-mechanism context layer. Its TIER
+follows from which of them it can carry — specifically from whether it can carry
+Hooks; see [Harness tiers](#harness-tiers). Onboarded is not the same as
+first-class, and the runbook decides the former only:
 
 | Surface | Canonical source | Projection primitive |
 |---------|------------------|----------------------|
@@ -1376,11 +1456,18 @@ are linked so a reader chases the single source of truth, not a copy:
 | **Gemini** | **Hard link** (`emit_md_hardlink`) → `~/.gemini/agents/<name>.md` — loader does NOT follow symlinks (TD-208) | `symlink` → `~/.agents/skills/` (FR-157 cross-CLI) | `mcpServers.<name>` / no-`type` env | **None** projected (gemini-cli 0.45.0 has `gemini hooks` — FR-182) | `core/os/harness-specific/gemini.md` | `dynamic-define` (reads its harness-specific file at Boot → the shared delegation recipe) |
 | **Antigravity** | **N/A** — documented (no static-subagent path; built-in dynamic subagents only — FR-179) | install-time parent symlink `~/.gemini/antigravity-cli/skills` → `~/.agents/skills` (`linkAntigravitySkills`; items ride the `agents/symlink` target, FR-179) | `mcpServers.<name>` / no-`type` env — DISTINCT file `~/.gemini/config/mcp_config.json` (FR-179) | `PreToolUse` + `PostToolUse` — BASH bridge → `~/.gemini/config/hooks.json` → `core/hooks/bridges/antigravity/<event>.sh` (FR-181); session via `/boot`+`/rest` | `core/os/harness-specific/antigravity.md` | `dynamic-define` (reads its harness-specific file at Boot — `define_subagent`/`invoke_subagent`; live-proven `agy` v1.0.10, 2026-06-21) |
 | **OpenCode** | Symlink → `~/.config/opencode/agent/<name>.md` — loader **does** follow symlinks (FR-171, verified live 1.14.22) | `command` → `~/.config/opencode/command/<name>.md` thin `@file` wrapper (FR-171) | `mcp.<name>` / `{type:"local", command:[…fused…], environment{}}` | All 6 portable (TS plugin) | none (native-static) | `native-static` |
+| **Cursor** | **N/A** — `cursor-agent` has no static-agent file mechanism, so cursor carries no `agents` descriptor block (excluded from `agentTargetTypes()`, exactly like antigravity — FR-192) | delegated to the `skills` CLI via agent-id `cursor` (`cursor` is in `skillAgentIds()`; no per-harness skills code — FR-192) | `mcpServers.<name>` / `{type:"stdio",…}` in `~/.cursor/mcp.json` — claude-identical shape, DISTINCT file, written by the `add-mcp` delegate (FR-192) | **None** — `hooks.supported:false`, a documented N/A (excluded from `hookTargetTypes()`) | `core/os/harness-specific/cursor.md` | `inline` (single agent, no subagent spawning — reads `~/.igris/core/agents/X.md` and adopts the role in-process via `_inline-delegation-recipe.md`) |
 
 - Agent primitive details: see the **TD-208 subagent-distribution primitive
   table** (above, "The consumer-side agent target …").
-- MCP entry shapes: see the **FR-160 native-shapes table** (above, "The five
-  shapes").
+- MCP entry shapes: see the **FR-160 native-shapes table** (above, "The native
+  per-harness shapes").
+- Tier: **derived**, not listed here — it is `harnesses.<id>.hooks.supported` in
+  the descriptor, which the `Hooks` cell *describes* but does not *equal*.
+  Codex's cell is non-empty (`session_end` notify wrapper) and codex is still
+  `hooks.supported: false` → **bridge**: a session-level notification is not a
+  hook API Igris can project its gates through. Read the boolean, not the cell
+  (see [Harness tiers](#harness-tiers)).
 - Hook coverage: see the **FR-104 per-CLI coverage table** (above, "Per-CLI
   Coverage").
 - Identity: the `os_identity` projection surface was **retired** (FR-202 M4) —

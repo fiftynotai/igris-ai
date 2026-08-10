@@ -21,10 +21,13 @@ and hook surfaces. `igris install .` is register-only: it records the project in
 the brain so those global surfaces apply, without copying Igris files into your
 repo.
 
-First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini
-CLI are supported bridges.
-
-Cursor remains an onboarding target, not a shipped surface.
+First-class harnesses — Igris's gates run natively there: Claude Code, OpenCode,
+Antigravity. Bridge harnesses — brain, skills and MCP reach them, and agents too
+where the harness has a static-agent surface (Cursor has none; it reads the
+canonical agent files in-process instead); only the gates soften to advisories:
+Codex, Gemini CLI, Cursor. The tier is
+derived from `harnesses.<id>.hooks.supported` in the harness descriptor:
+[Harness tiers](https://github.com/fiftynotai/igris-ai/blob/main/docs/multi-cli.md#harness-tiers).
 
 ## Why Igris
 
@@ -57,8 +60,8 @@ sections below are for contributors working on the CLI source.
 | `igris install <path>` | Register a project with the brain; no repo-local surfaces are copied |
 | `igris update [--all\|--slug X\|--self] [--dry-run]` | Update materialized layer |
 | `igris register-project [path]` | Write the brain registry row only |
-| `igris add <skill\|agent\|mcp\|hook> [name]` | One-step add of a surface — materialize, project to all harnesses, verify drift-clean |
-| `igris remove <skill\|agent\|mcp\|hook> [name]` | Symmetric inverse of `add` — un-project from every harness and verify absent |
+| `igris add <skill\|agent\|mcp\|hook> [name]` | One-step add of a surface — materialize, project to every harness that exposes that surface (skills and MCP reach all of them; agents reach the ones whose descriptor declares an `agents` block; hooks reach the ones whose descriptor sets `hooks.supported: true` — block presence is NOT the hook test, every harness declares a `hooks` block), verify drift-clean |
+| `igris remove <skill\|agent\|mcp\|hook> [name]` | Symmetric inverse of `add` — un-project from every harness the surface reached and verify absent |
 | `igris harness <compile\|check>` | Regenerate or drift-check the per-harness agent-prompt projections |
 | `igris loadout <action>` | Register Layer-2 personal customizations into the overlay (superseded by `igris add`) |
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |

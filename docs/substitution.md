@@ -56,7 +56,9 @@ That is why B2/G-14 matters. On 2026-06-16, the same work crossed Claude -> Open
 
 ## Choose IGRIS when
 
-- Work jumps between Claude Code, OpenCode, Antigravity, Codex, or Gemini CLI.
+- Work jumps between harnesses — any of the CLIs the roster declares, not one.
+  See [Harness tiers](multi-cli.md#harness-tiers) for the current membership and
+  the one-line command that re-derives it.
 - You need "no brief, no write" enforced by hooks and role tooling.
 - Duplicate work, stale claims, and crash recovery are expensive.
 - You want project memory, cross-project learnings, briefs, plans, sessions, and sync in one place.
@@ -64,11 +66,19 @@ That is why B2/G-14 matters. On 2026-06-16, the same work crossed Claude -> Open
 
 ## Current harness claim
 
-As of 2026-06-26, IGRIS treats Claude Code, OpenCode, and Antigravity as first-class targets.
+IGRIS treats Claude Code, OpenCode, and Antigravity as first-class targets — its
+enforcement gates run natively there.
 
-Codex and Gemini CLI are supported bridges.
+Codex, Gemini CLI, and Cursor are bridge harnesses: brain, skills and MCP reach
+them, and agents too where the harness has a static-agent surface (Cursor has
+none; it reads the canonical agent files in-process instead). Only the gates
+soften to advisories.
 
-Cursor remains an onboarding target, not a shipped surface.
+The tier is derived, not declared — it follows from
+`harnesses.<id>.hooks.supported` in `harness-manifest.json`. See
+[Harness tiers](multi-cli.md#harness-tiers) for the definition and the one-line
+command that re-derives the membership, rather than trusting this list to be
+current.
 
 ## Sources
 

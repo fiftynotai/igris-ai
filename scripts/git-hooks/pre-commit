@@ -119,6 +119,22 @@ set -e
 #       one parser: the audit population and the refusal set are then identical
 #       by construction. WARN only — surfaces the report, does NOT block. It
 #       deliberately never touches the cognition candidate queue (TD-325 AC #7).
+#   - validate_harness_tier_claims.sh  (TD-367)
+#       Triggers if: harness-manifest.json OR README.md OR cli/README.md OR
+#                    docs/multi-cli.md OR docs/SETUP_GUIDE.md OR
+#                    docs/substitution.md OR MAINTAINING.md OR any core/**/*.md
+#                    is staged.
+#       Scans that published doc list PLUS every markdown file under core/ (the
+#       TD-096-mirrored OS prose read at Boot on every install) for a
+#       HAND-WRITTEN harness count ("all five harnesses", "all-four-harness")
+#       and reports each one against the count the descriptor actually declares. A harness TIER derives from
+#       harnesses.<id>.hooks.supported and the roster derives from the
+#       descriptor's keys, so a numeral in prose is an uncoupled copy — five
+#       artifacts disagreed on the count before TD-367, two of them with
+#       themselves. Both CHANGELOGs are excluded BY DESIGN: a shipped
+#       changelog is a historical record, corrected by an appended note, and a
+#       scanner that flagged it would push someone to rewrite history. WARN
+#       only — surfaces the report, does NOT block the commit.
 #   - validate_error_fingerprint_loop.sh  (TD-240)
 #       Triggers if: core/agents/mender.md OR core/skills/hunt/SKILL.md is
 #                    staged.
@@ -295,6 +311,7 @@ needs_brief_type_check=0
 needs_brief_priority_check=0
 needs_brief_status_check=0
 needs_ac_completion_check=0
+needs_harness_tier_check=0
 needs_error_loop_check=0
 
 if echo "$staged" | grep -qE '^(core/prompts/brain_stewardship\.md|brain-mcp-server/src/engine/components/memory/index\.ts)$'; then
@@ -414,6 +431,34 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_ac_completion.sh" ]; then
   if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|core/scripts/brief_ac_check\.sh|scripts/git-hooks/commit-msg|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
     needs_ac_completion_check=1
+  fi
+fi
+
+# TD-367: trigger the harness-count guard on the descriptor itself (where the
+# roster changes) and on every published doc that carries a tier or roster
+# sentence (where a numeral can grow back). MAINTAINING.md is in the list for
+# the family reason — it is the contract home. The validator scans its whole
+# corpus regardless of which file changed, so the trigger only decides whether
+# to run at all.
+#
+# `core/**/*.md` is in the trigger because the validator's scan set is a list
+# PLUS a walk of core/ — the TD-096-mirrored OS prose that ships to every
+# install. A scanner that CAN see a file but never RUNS when that file is staged
+# is the same gap TD-367 already closed once from the other side (MAINTAINING.md
+# was a trigger the scanner could not see; core/ was a corpus no trigger reached).
+#
+# `cli/src/**/*.ts` joined them in TD-367's round-5 widening, for the third
+# instance of the same gap: the validator scanned *.md ONLY, so no shipped
+# `--help` string or doc comment in the CLI was ever covered, and `igris remove
+# --help` shipped a claim both of its prose twins had been hedged out of in the
+# SAME diff. The trigger deliberately does NOT exclude `cli/src/__tests__` even
+# though the CORPUS does (validator limit #6): a trigger that fires more often
+# than strictly needed costs one 0.5s WARN-only scan, whereas one that fires less
+# often is the exact failure above. Trigger wide, scan narrow — never the
+# reverse.
+if [ -f "$REPO_ROOT/scripts/validate_harness_tier_claims.sh" ]; then
+  if echo "$staged" | grep -qE '^(harness-manifest\.json|README\.md|cli/README\.md|docs/multi-cli\.md|docs/SETUP_GUIDE\.md|docs/substitution\.md|MAINTAINING\.md|core/.*\.md|cli/src/.*\.ts)$'; then
+    needs_harness_tier_check=1
   fi
 fi
 
@@ -597,6 +642,18 @@ if [ "$needs_ac_completion_check" = "1" ]; then
   # five files rather than run on every commit.
   if ! bash "$REPO_ROOT/scripts/validate_brief_ac_completion.sh"; then
     echo "[pre-commit] Briefs closed with unmet criteria surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_harness_tier_check" = "1" ]; then
+  echo "[pre-commit] Checking harness-count claims (TD-367)..."
+  # WARN-ONLY. The pattern requires a numeral adjacent to the word harness, so
+  # it is narrow — but it is still a regex over prose, and a false positive
+  # must never cost someone a commit. It is also legitimate for a doc to be
+  # mid-edit: a count deleted in one paragraph and not yet the next is a state
+  # worth reporting, not one worth blocking.
+  if ! bash "$REPO_ROOT/scripts/validate_harness_tier_claims.sh"; then
+    echo "[pre-commit] Hand-written harness counts surfaced above (WARN only — not blocking)."
   fi
 fi
 

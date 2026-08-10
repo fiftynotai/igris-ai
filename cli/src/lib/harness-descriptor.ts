@@ -37,7 +37,7 @@ import { fileURLToPath } from "node:url";
 import { expandTilde } from "./paths.js";
 
 /**
- * The five Igris harness SHAPE ids — the `harnesses.<id>` keys, the agent/mcp/
+ * The Igris harness SHAPE ids — the `harnesses.<id>` keys, the agent/mcp/
  * hook target `type` values, and the buildHarnessMcpEntry switch keys. This is
  * the re-homed `McpHarness` union (mcp-env-normalize.ts + mcp-shape.ts re-export
  * it for back-compat). DISTINCT from the npx AGENT id (`agentId()`), which differs
@@ -397,7 +397,9 @@ export function agentId(id: HarnessId): string {
 }
 
 /**
- * Agent ids of every harness with an `agent_id` (all 5 participate in skills).
+ * Agent ids of every harness with an `agent_id` — the skills-target set. Every
+ * declared harness carries one today, but the filter below is the contract, not
+ * a count: read `jq '.harnesses|map(select(.agent_id))|length'` to re-derive.
  * Replaces `IGRIS_SKILLS_HARNESSES`.
  */
 export function skillAgentIds(): string[] {
@@ -407,8 +409,9 @@ export function skillAgentIds(): string[] {
 }
 
 /**
- * Agent ids of every harness with an `agent_id` (all 5 participate in MCP
- * registration). Replaces `IGRIS_MCP_HARNESSES` / `ADD_MCP_AGENT_ID`.
+ * Agent ids of every harness with an `agent_id` — the same set as
+ * `skillAgentIds()`, reused for MCP registration.
+ * Replaces `IGRIS_MCP_HARNESSES` / `ADD_MCP_AGENT_ID`.
  */
 export function mcpAgentIds(): string[] {
   return skillAgentIds();
@@ -497,9 +500,9 @@ export function agentTargetRowHarnesses(): HarnessId[] {
 
 /**
  * Harnesses that are surface-PROJECTED for MCP (`mcp.projected === true`), in
- * declaration order = {claude, codex, gemini, opencode}. The drift parity-guard's
- * expected mcp set (TD-281). DISTINCT from `mcpTargetTypes()` (block presence /
- * capability): all 5 have an `mcp` block, but antigravity is `mcp.projected:false`
+ * declaration order. The drift parity-guard's expected mcp set (TD-281).
+ * DISTINCT from `mcpTargetTypes()` (block presence / capability): every declared
+ * harness has an `mcp` block, but antigravity is `mcp.projected:false`
  * (the FR-179 carve-out — its entry is custom-written to ~/.gemini/config/, not
  * add-mcp-projected) so it is excluded. This is the "surface-projected vs carve-
  * out" signal that lets parity expect only the harnesses whose targets SHOULD

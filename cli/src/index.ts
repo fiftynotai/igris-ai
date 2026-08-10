@@ -62,6 +62,10 @@ import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
 import type { ExportTier, OnConflictPolicy } from "./types.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
+// TD-367 round 6: the `--cli-bridge` help text DERIVES its roster. The literal
+// it replaced named four targets while `applyBridgeOverride` validates against
+// this same accessor (six), so the shipped help contradicted the shipped error.
+import { knownCLITargets } from "./lib/cli-detect.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
 /** Commander reducer for a repeatable option: accumulate into an array. */
@@ -125,7 +129,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--cli-bridge <list>",
-      "override auto-detected bridges: 'none' or 'claude,codex,gemini,opencode'",
+      `override auto-detected bridges: 'none' or a comma-separated subset of ${knownCLITargets().join(",")}`,
     )
     .option(
       "--dry-run",
@@ -486,7 +490,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "INTERNAL (project-mcp/project-hook): which harness to project ONE entry into: claude | codex | gemini | opencode",
+      "INTERNAL (project-mcp/project-hook): which harness to project ONE entry into. Any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); the run verb then narrows it to the harnesses that declare the surface — project-mcp to mcpTargetTypes(), project-hook to hookTargetTypes()",
     )
     .option(
       "--overlay <path>",
@@ -726,7 +730,11 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-180: one-step add of a surface (skill | agent | mcp | hook) — " +
         "materializes (vendor/register for personal, write core/ for core), projects " +
-        "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
+        "to every harness whose descriptor declares that surface (skills/mcp: every " +
+        "harness with an agent_id; agents: every harness with an 'agents' block; " +
+        "hooks: every harness with hooks.supported true — run " +
+        "`jq -r '.harnesses | keys[]' harness-manifest.json` to re-derive the roster), " +
+        "AND verifies drift-clean. " +
         "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
         "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
         "always printed. ALL FOUR surfaces (skill, agent, mcp, hook) ship " +
@@ -755,7 +763,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "restrict projection to one harness: claude | codex | gemini | opencode",
+      "restrict projection to one harness — any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); a harness that does not declare the surface projects nothing",
     )
     // FR-180 Phase 3: MCP launch options (the `mcp` arm — same surface as
     // `loadout add-mcp`). --env values MUST be ${VAR} indirection refs.
@@ -866,8 +874,12 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-203: the symmetric inverse of `igris add` — one-step removal of a " +
         "surface (skill | agent | mcp | hook). UN-PROJECTS from every harness " +
-        "(deletes the loadout-anchored symlink/hardlink, un-merges the named " +
-        "native-config block), de-materializes from the loadout (personal) / " +
+        "the surface actually REACHED — never the whole roster: skills/mcp from " +
+        "every harness with an agent_id, agents from the entry's own targets[], " +
+        "hooks from every harness with hooks.supported true (run " +
+        "`jq -r '.harnesses | keys[]' harness-manifest.json` to re-derive the " +
+        "roster). Deletes the loadout-anchored symlink/hardlink, un-merges the " +
+        "named native-config block, de-materializes from the loadout (personal) / " +
         "deletes the core/ source + un-sweeps the §13 enumeration surfaces (core), " +
         "then VERIFIES the surface is ABSENT (drift-clean = removed). Core-vs-" +
         "personal is auto-detected and overridable with --core / --no-core; the " +
@@ -887,7 +899,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "restrict un-projection to one harness: claude | codex | gemini | opencode | antigravity",
+      "restrict un-projection to one harness — any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); a harness the surface never reached un-projects nothing",
     )
     .option(
       "--event <event>",

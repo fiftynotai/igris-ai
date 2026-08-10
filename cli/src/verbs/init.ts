@@ -693,8 +693,11 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // `npm install -g igris-ai` ships a bundled brain-mcp-server; a harness
   // only serves its tools once the `igris-brain` entry exists in that
   // harness's config. igris-brain is a CORE OS default (L-504), so init wires
-  // it into ALL supported harnesses (Claude, Gemini, Codex, OpenCode) via the
-  // proven FR-162/163 mergers. Non-fatal (mirrors step 9b): a per-harness
+  // it into ALL supported harnesses — the roster `harnessIds()` returns, NOT a
+  // hand-listed subset — via the proven FR-162/163 mergers. The SAME accessor
+  // `registerBrainAcrossHarnesses` defaults to, and its doc comment says so in
+  // the same words, so the two cannot drift into naming different sets.
+  // Non-fatal (mirrors step 9b): a per-harness
   // failure WARNs and lets init complete with exit 0 — NEVER returns non-zero.
   //
   // --dev resolution happened early (right after pre-flight) — devMcpPath

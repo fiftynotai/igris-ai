@@ -4670,8 +4670,14 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         },
       );
 
-      // FR-212d delegate placement: claude-code → ~/.claude/skills; the other 4
-      // harnesses → the shared universal store ~/.agents/skills. BOTH blocks'
+      // FR-212d delegate placement: claude-code → ~/.claude/skills; EVERY OTHER
+      // harness in `skillAgentIds()` → the shared universal store
+      // ~/.agents/skills. Stated as the property, not a count: this read "the
+      // other 4 / harnesses" until TD-367 round 7 and was one short (every
+      // declared harness carries an `agent_id`, so the universal store serves
+      // five). It survived every round because it is doubly invisible — the noun
+      // WRAPPED to the next line (limit #2) inside a directory the source walk
+      // PRUNES (limit #6). BOTH blocks'
       // sources were projected (core `alpha` from skills-core, personal `mine`
       // from the vendored loadout tree) — proving the multi-source dispatch ran.
       const claudeAlpha = join(homeSandbox, ".claude", "skills", "alpha", "SKILL.md");

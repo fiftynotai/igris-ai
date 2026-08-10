@@ -70,7 +70,7 @@ import {
   removeBrainGrant,
   type GrantResult,
 } from "./mcp-grant.js";
-// TD-221: these four harness configs are secret-bearing — `renameSync(tmp,
+// TD-221: every harness config this module writes is secret-bearing — `renameSync(tmp,
 // target)` below adopts the tmp file's umask-default mode (typically 644),
 // re-loosening a previously-600 config on every MCP (re-)registration. Re-harden
 // to 600 right after the rename, reusing TD-220's win32-gated, never-throwing
@@ -1119,7 +1119,8 @@ export interface BrainRegisterDeps {
  *
  * @param opts.mcpEntryPath  Override the bundled path (`--dev` clone / tests).
  *                           Defaults to `bundledMcpEntryPath()`.
- * @param opts.harnesses     Subset to target. Defaults to all 5.
+ * @param opts.harnesses     Subset to target. Defaults to the whole roster
+ *                           `harnessIds()` returns, NOT a hand-listed subset.
  * @param opts.configPaths   Per-harness config-path overrides (test sandbox seam).
  * @param opts.folder        FR-212c: the FOLDER to trust for the folder-scoped
  *                           grants (codex `[projects."<folder>"]` + gemini-cli
@@ -1176,7 +1177,7 @@ export function registerBrainAcrossHarnesses(
     // never looks. This is a tool-fundamental mismatch (no add-mcp flag retargets
     // the per-agent config path), so antigravity's ENTRY stays CUSTOM (the proven
     // FR-179 merger writes the correct `config/` path) even under the delegate
-    // engine; the other 4 harnesses delegate to add-mcp. The Igris-owned grant
+    // engine; every OTHER harness delegates to add-mcp. The Igris-owned grant
     // (a separate concern — antigravity's wildcard in `antigravity-cli/
     // settings.json`) is written identically below for parity with the delegate
     // path. NOT a fallback-on-failure (constraint #2): it is a deterministic,
@@ -1198,8 +1199,9 @@ export function registerBrainAcrossHarnesses(
       mcpEntryPath,
     );
     // FR-212d: on the delegate engine the antigravity carve-out must still write
-    // the Igris-owned no-prompt grant (the other 4 delegate harnesses get it via
-    // registerOneViaDelegate) so the multi-harness grant surface is uniform.
+    // the Igris-owned no-prompt grant (every OTHER delegate harness — the loop
+    // population minus antigravity — gets it via registerOneViaDelegate) so the
+    // multi-harness grant surface is uniform.
     if (engine === "delegate") {
       const grantFn = deps?.writeGrantFn ?? writeBrainGrant;
       const grant = grantFn(harness, {
@@ -1408,8 +1410,8 @@ export interface BrainUnregisterDeps {
  * wrong for our antigravity — FR-179 R1), its REMOVAL must ALSO use the custom
  * un-merger `unmergeJsonConfig` at that same correct path. Routing antigravity
  * removal through `add-mcp remove` (which targets the `antigravity/` path) would
- * leave the custom-written entry ORPHANED in `config/`. The other 4 harnesses
- * un-register via `add-mcp remove` (the delegate inverse), exactly as they were
+ * leave the custom-written entry ORPHANED in `config/`. Every OTHER harness
+ * un-registers via `add-mcp remove` (the delegate inverse), exactly as it was
  * registered. This is a deterministic per-harness routing decision (NOT a
  * fallback) — the mirror image of the registration carve-out.
  *
@@ -1417,7 +1419,8 @@ export interface BrainUnregisterDeps {
  * the custom un-mergers (so a `custom`-registered brain un-registers correctly
  * too) — keeping ONE place that knows the brain's per-harness removal shape.
  *
- * @param opts.harnesses    Subset to target. Defaults to all 5.
+ * @param opts.harnesses    Subset to target. Defaults to the whole roster
+ *                          `harnessIds()` returns, NOT a hand-listed subset.
  * @param opts.configPaths  Per-harness config-path overrides (test sandbox seam).
  * @param opts.folder       Folder for the folder-scoped grant revokes (codex/
  *                          gemini-cli). Absent = `process.cwd()`.
@@ -1436,7 +1439,7 @@ export function unregisterBrainAcrossHarnesses(
   const unregisterFn = deps?.unregisterViaToolFn ?? unregisterMcpViaTool;
   const revokeFn = deps?.removeGrantFn ?? removeBrainGrant;
 
-  // The 4 harnesses that un-register via `add-mcp remove` under the delegate
+  // The harnesses that un-register via `add-mcp remove` under the delegate
   // engine (antigravity is carved out to the custom un-merger). Computed once so
   // a single `add-mcp remove` call covers them (one tool invocation, filtered).
   const delegateHarnesses = harnesses.filter(

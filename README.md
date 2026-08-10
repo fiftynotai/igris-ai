@@ -28,13 +28,11 @@ IGRIS is the workbench around the model. it makes the brief the contract, makes 
 | Learns while you work | Background cognition mines your sessions into reusable learnings, surfaces suggestions from the whole-brain digest, and keeps memory deduped and hygienic. The OS sharpens the more you run it. |
 | A graph, not just a list | Briefs, learnings, and decisions link through typed edges (`depends_on`, `supersedes`, `derived_from`), so dependency chains and the lineage of a decision stay queryable instead of scrolling off in a flat log. |
 | Grounded in your project | Per-project context docs (coding guidelines, architecture map, test standards) the agent consults before it writes and maintains when it changes them, so it follows your conventions, not generic defaults. |
-| Extends itself | `igris add skill\|agent\|mcp\|hook` grows the OS and projects the new surface to every harness at once; self-describing modules are auto-discovered, with no registry to hand-edit. |
+| Extends itself | `igris add skill\|agent\|mcp\|hook` grows the OS and projects the new surface in one command to every harness that exposes it — skills and MCP reach every declared harness, agents reach the ones whose descriptor declares an `agents` block, and hooks reach the ones whose descriptor sets `hooks.supported: true`. Self-describing modules are auto-discovered, with no registry to hand-edit. |
 | Portable across machines and people | The brain syncs to a central store so your work follows you between machines, and `/handoff` exports a project slice as a portable bundle a colleague imports into their own install. |
 | Reuse before rewrite | A catalog of proven modules and templates (`/reuse`, `/harvest`) so the agent reaches for an existing block before rebuilding one. |
 
-First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini CLI are supported bridges.
-
-Cursor remains an onboarding target, not a shipped surface.
+First-class harnesses — the gates run natively there: Claude Code, OpenCode, Antigravity. Bridge harnesses — brain, skills and MCP reach them, and agents too where the harness has a static-agent surface (Cursor has none; it reads the canonical agent files in-process instead); only the gates soften to advisories: Codex, Gemini CLI, Cursor. What decides a tier, and the manifest property it derives from: [docs/multi-cli.md — Harness tiers](docs/multi-cli.md#harness-tiers).
 
 ## the idea.
 
@@ -60,7 +58,7 @@ every session starts with `/boot` and ends with `/rest`. in between, the agent i
 
 `/boot` runs the boot sequence:
 
-- **detect** — the harness (Claude, OpenCode, Antigravity, Codex, Gemini) and its capabilities.
+- **detect** — the harness (Claude, OpenCode, Antigravity, Codex, Gemini, Cursor) and its capabilities.
 - **boot** — load the OS: who the agent is, how it must operate, what it can do.
 - **login** — load who you are and how you work.
 - **mount** — pull the brain, restore session state, surface where your work stands: active brief, phase, blockers, what's next.
@@ -163,8 +161,8 @@ IGRIS runs the same brain, briefs, and lifecycle across every harness it support
 
 the OS core is harness-agnostic; each harness gets a thin adapter that maps the OS onto what that harness actually exposes:
 
-- **skills, agents, and MCP** project to every supported harness — write a skill once, they all get it.
-- **enforcement gates are hooks**, so they need a hook API. Claude Code and OpenCode run the full set (brief-first, phase guard, commit + secret scans); Codex gets the session-level subset; Gemini and Antigravity expose no hook API, so there the gates soften to advisories — the workflow still runs, the blocking doesn't.
+- **skills and MCP** project to every supported harness — write a skill once, they all get it. **agents** project as files to every harness with a static-agent surface; Antigravity and Cursor have none, so they pick the same roles up through their delegation recipe (next bullet) rather than as projected files.
+- **enforcement gates are hooks**, so they need a hook API — and that is exactly what sorts a harness into first-class or bridge. Claude Code and OpenCode run the full portable set (brief-first, phase guard, commit + secret scans); Antigravity runs its `PreToolUse`/`PostToolUse` bash bridge. Codex has only the session-level `session_end` wrapper, and Gemini CLI and Cursor expose no hook API Igris projects to, so for those three the gates soften to advisories — the workflow still runs, the blocking doesn't ([harness tiers](docs/multi-cli.md#harness-tiers)).
 - **delegation adapts.** a harness with native subagents uses them; one that defines its agents at runtime gets a per-harness recipe (its `harness-specific` file) so "delegate to the reviewer" resolves the same way everywhere — the skill never knows the difference.
 
 onboarding a new harness is declarative: describe it once in the manifest — agents, MCP, hooks, delegation model — and `/onboard-harness` projects every surface it can support and wires the adapter for the rest. a new harness is a descriptor, not a fork.
@@ -175,11 +173,11 @@ most tools you extend by editing them. IGRIS you extend by declaring — and it 
 
 the agent knows how to grow itself in every direction, and each direction is a defined connection point:
 
-- **a surface** — a skill, an agent, an MCP server, a hook, or an identity — added with one command (`igris add skill …`) and projected to every harness at once. write it once; Claude, OpenCode, and Antigravity all get it.
+- **a surface** — a skill, an agent, an MCP server, a hook, or an identity — added with one command (`igris add skill …`) and projected to every harness that exposes that surface. write it once; you do not wire it per harness.
 - **an OS module** — a new capability or rule: drop a self-describing file into the OS and it's discovered and indexed. no registry to hand-edit.
 - **a doc-type** — a new kind of project context doc: declare it in the catalog and the knowledge-map absorbs it.
 - **a cognition instance** — a new kind of background reflection: drop a self-describing extractor and the host runs it, unchanged.
-- **a harness** — a new CLI or IDE: onboard it, and every skill, agent, and gate it already has reaches the new surface.
+- **a harness** — a new CLI or IDE: onboard it, and the OS reaches it through every surface that harness exposes: skills and MCP to every declared harness, agents to the ones with a static-agent surface, the gates to the ones with a hook API — softening to advisories where there is none ([harness tiers](docs/multi-cli.md#harness-tiers)).
 
 the throughline: nothing here is ad-hoc. every extension is either self-describing and discovered, or it follows a defined procedure — never a one-off. the OS grows the same disciplined way it does everything else: a known move, not a rewrite. it even knows how to add a whole new layer to itself.
 

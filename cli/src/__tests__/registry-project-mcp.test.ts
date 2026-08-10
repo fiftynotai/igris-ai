@@ -15,8 +15,9 @@
  * custom `buildHarnessMcpEntry` shaper + `mergeJsonConfig`/`mergeTomlConfig`
  * mergers are KEPT (antigravity's ENTRY uses them under the delegate engine), so
  * each call forces `mcpEngine: "custom"` to pin that shaper's byte-shape. The
- * DELEGATE-default routing (4 harnesses → add-mcp, antigravity → custom) is
- * covered by the registry-project-mcp DELEGATE tests + the fr212-smoke gate.
+ * DELEGATE-default routing (every harness EXCEPT antigravity → add-mcp,
+ * antigravity → custom) is covered by the registry-project-mcp DELEGATE tests +
+ * the fr212-smoke gate.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
