@@ -1419,6 +1419,175 @@ export interface BriefsSearchPayload {
   degraded: DashboardDegraded | null;
 }
 
+// ---------------------------------------------------------------------------
+// FR-248 — `GET /api/search`, the fused cross-layer surface
+// ---------------------------------------------------------------------------
+
+/**
+ * The five layers the fused surface searches. A CLOSED union, and closed is the
+ * point: `layers[]` in the payload carries one entry per member ALWAYS, so a
+ * layer can be `available: false` but can never be missing. That is the single
+ * structural property that makes a silent drop unrepresentable rather than
+ * merely untested (AC-4).
+ *
+ * `GET /api/learnings?q=` — the candidates browse — is deliberately NOT a
+ * member (D7): it is a triage surface over the same table, not a sixth layer.
+ */
+export type SearchLayerId =
+  | "briefs"
+  | "learnings"
+  | "goals"
+  | "suggestions"
+  | "context-docs";
+
+/**
+ * What a layer's within-layer ORDER actually means, which is the input RRF
+ * consumes.
+ *
+ * `rrf` — the layer ran real ranked recall and its rank expresses relevance.
+ * `substring` — the layer ran `LIKE '%q%'` (or a file grep) and its rank
+ * expresses the list's own ordering, which is a deadline, a priority band or a
+ * catalog position. NOT relevance.
+ *
+ * THREE OF THE FIVE LAYERS ARE `substring` (goals, suggestions, context docs) —
+ * measured from FR-246's code, not assumed. Labelling the row is necessary and
+ * NOT sufficient, so this field appears on the layer block AND on every row
+ * (D1): a reader looking at one result must be able to tell what its position
+ * means without holding the whole payload in their head.
+ */
+export type SearchRankBasis = "rrf" | "substring";
+
+/**
+ * One layer's standing in a fused response. ALWAYS present, for ALL FIVE.
+ *
+ * INVARIANTS, all asserted in `dashboard-search-fused.test.ts`:
+ *  1. the array has one entry per {@link SearchLayerId}, on every code path
+ *     including the degraded ones;
+ *  2. `available === false` ⟺ `reason !== null`, both directions;
+ *  3. `retrieval !== null` XOR `search !== null` — FR-246's honesty pin
+ *     (`retrieval` and `search` are never both set on one surface), lifted to
+ *     the fused surface per layer;
+ *  4. every row's `rank_basis` equals its layer's;
+ *  5. Σ `contributed` === `items.length`.
+ */
+export interface FusedLayerReportPayload {
+  layer: SearchLayerId;
+  /**
+   * Did the caller ask for this layer? `?layers=` narrows; absent means all
+   * five.
+   *
+   * SEPARATE FROM `available` on purpose. "You excluded this" and "this is
+   * broken" are different facts, and a surface that renders them identically
+   * is the conflation this brief exists to remove. A non-requested layer is
+   * `available: false` with a `reason` that says so, which keeps invariant 2
+   * whole; `requested` is what lets a UI style the two differently.
+   */
+  requested: boolean;
+  available: boolean;
+  /** Non-null EXACTLY when `available === false`. */
+  reason: string | null;
+  rank_basis: SearchRankBasis;
+  /** What the arm returned. */
+  hits: number;
+  /** How many of those survived into `items` after the fused cap. */
+  contributed: number;
+  /** Non-null iff `rank_basis === "rrf"`. The layer's OWN intra-layer report. */
+  retrieval: BriefRetrievalPayload | RetrievalPayload | null;
+  /** Non-null iff `rank_basis === "substring"`. */
+  search: SubstringSearchPayload | null;
+  /**
+   * BR-085 — the wire parameters this layer's arm was ACTUALLY given, derived
+   * from that arm's own options object rather than from a comment beside the
+   * call.
+   *
+   * PER LAYER, not per response, because the fused surface faces a new variant
+   * of BR-085's defect: a filter that binds on SOME arms and not others. A
+   * whole-response `params` list would make "project was applied" a claim that
+   * is true on average.
+   */
+  applied: string[];
+}
+
+/**
+ * One row of the fused list.
+ *
+ * HOMOGENEOUS ON THE WIRE, deliberately. The alternative — a discriminated
+ * union of five row shapes — would push the narrowing into every consumer, and
+ * the fused list's whole job is to be one list. The layer-native address
+ * survives in `ref`, so a UI can still open the underlying record.
+ */
+export interface FusedRowPayload {
+  layer: SearchLayerId;
+  /** Equal to the layer's own `rank_basis` (invariant 4) — AC-5, per row. */
+  rank_basis: SearchRankBasis;
+  /** 1-based position WITHIN its own layer. The input to the fusion. */
+  layer_rank: number;
+  /** `weight / (rrf_k + layer_rank)`. See `search-fuse.ts` for the arithmetic. */
+  fused_score: number;
+  /** `<layer>:<id>` — stable identity across the fused list. */
+  key: string;
+  /** The layer-native address. `project` is null for globally-addressed rows. */
+  ref: { project: string | null; id: string };
+  title: string;
+  /** A short layer-specific context line, or null when the layer has none. */
+  subtitle: string | null;
+  updated_at: string | null;
+  /**
+   * The layer's OWN intra-layer RRF score, when it has one.
+   *
+   * `null` on every substring layer and on a BM25-only retrieval arm. It is
+   * carried for DIAGNOSIS and is NOT an input to the fusion — that is the AC-2
+   * property: fusing these would be the ad-hoc score normalisation across types
+   * that RRF exists to avoid, and the values are not on a shared scale.
+   */
+  rrf_score: number | null;
+}
+
+/**
+ * The INTER-layer fusion parameters — structurally distinct from any layer's
+ * own `retrieval.rrf_k`.
+ *
+ * D2. The brief said these were "inherited from FR-246, unchanged". THERE IS
+ * NOTHING TO INHERIT: `memory-read.ts` and `briefs-read.ts` own INTRA-layer
+ * parameters (they fuse a layer's BM25 arm against its vector arm), and FR-246
+ * defined no inter-layer ones. So `rrf_k = 60` here is REUSED from that
+ * default, not inherited from it, and it is recorded as a new decision. Keeping
+ * this block separate from `layers[].retrieval.rrf_k` is what stops the two
+ * stages being read as one number.
+ */
+export interface SearchFusionPayload {
+  rrf_k: number;
+  /** Uniform 1.0 per layer, and NOT caller-tunable — tuning is out of scope. */
+  weights: Record<SearchLayerId, number>;
+  /**
+   * D1's mandatory readout, as data rather than as a sentence in the client:
+   * the substring layers that actually CONTRIBUTED rows. A UI that renders this
+   * says "N of these results are ordered by the list's own order, not by
+   * relevance" without hard-coding which layers those are.
+   */
+  substring_layers: SearchLayerId[];
+}
+
+/**
+ * `GET /api/search?q=<query>&project=<slug>&limit=&layers=<csv>` — FR-248.
+ *
+ * BINDS `q` + `project` + `limit` + `layers`, AND NOTHING ELSE (BR-085). Every
+ * other parameter is reported as `unknown filter: <name>` by `params.ts`'s
+ * existing machinery rather than accepted and quietly dropped.
+ */
+export interface FusedSearchPayload {
+  query: string;
+  items: FusedRowPayload[];
+  count: number;
+  /** ALWAYS one entry per {@link SearchLayerId}. Invariant 1. */
+  layers: FusedLayerReportPayload[];
+  fusion: SearchFusionPayload;
+  params: DashboardParamNotes;
+  generated_at: string;
+  /** A WHOLE-RESPONSE failure only. A single dead layer is `layers[]`'s job. */
+  degraded: DashboardDegraded | null;
+}
+
 /** `GET /api/learning?id=<n>` — the full row, body included. */
 export interface LearningDetailPayload {
   learning: {

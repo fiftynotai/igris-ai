@@ -92,6 +92,16 @@ export function Nav({
         RECALL is a different operation with a different cost, so it has its own
         box inside the view rather than borrowing this one. Two controls, because
         there are two operations; the placeholders say which is which.
+
+        FR-248 ADDED A FIFTH ROUTE AND DELIBERATELY DID NOT ADD A THIRD CONSUMER.
+        `#/search` is the one route where a box in the chrome would be read as
+        "the search box", and it is the one route where this box would be wrong:
+        the fused surface's control issues a five-arm READ, and the invariant
+        above is that this state never becomes a query. So the slot stays empty
+        on `#/search` (keeping its reserved height, so the nav geometry still
+        does not shift) and the page brings its own box. Retiring that invariant
+        to make this THE one box is a different and larger brief — it would have
+        to re-point the graph consumer too.
       */}
       <div className="shell-search-slot" data-slot="search">
         {(route === "graph" || route === "layers") && (

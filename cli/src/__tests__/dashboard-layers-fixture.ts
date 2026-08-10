@@ -189,6 +189,48 @@ const DDL_SUGGESTIONS = `
   );
 `;
 
+/**
+ * FR-248 — schema objects `seedLayerBrain` can be told NOT to create.
+ *
+ * A UNION, not `string`, so a typo is a compile error rather than a silently
+ * complete world in which the "the layer is unavailable" gate passes because
+ * the layer was never disabled.
+ */
+export type OmittableObject = "briefs_fts";
+
+/** FR-248 — {@link seedLayerBrain}'s options. Every field is opt-in. */
+export interface SeedLayerBrainOptions {
+  /**
+   * Schema objects to leave out.
+   *
+   * `briefs_fts` is the one that matters: `db.ts` creates it at **v23**, so a
+   * brain that has not booted that migration really does have no lexical arm
+   * for briefs. Omitting it here reproduces that production state exactly —
+   * no mock, no monkey-patch — and it is what makes the AC-4 "this layer is
+   * unavailable" assertion reachable.
+   */
+  omit?: readonly OmittableObject[];
+  /**
+   * FR-248 — add the CROSS-LAYER corpus the fused-search gates need.
+   *
+   * OPT-IN, and that is not timidity. `dashboard-layers-fixture.ts` is shared
+   * by four suites plus the browser gate, and several of their assertions are
+   * exact arrays and exact counts over the seeded population
+   * (`FIXTURE.suggestions.*`, the `GL-001/GL-002/GL-003` ordering list, the
+   * brief-key lists). Adding rows to the DEFAULT world would silently re-scope
+   * every one of them — the TD-326 failure, where a widened fixture left two
+   * gates green while measuring a different population. Behind a flag, the
+   * default world stays byte-identical and the new rows exist only for the
+   * suite that asked for them.
+   *
+   * The corpus shares ONE token, `telemetry`, which appears in no default row,
+   * across FOUR layers with TWO rows each. That is what makes the fused list
+   * interleave observable: with one row per layer any ordering looks like a
+   * round-robin.
+   */
+  fusion?: boolean;
+}
+
 /** Ids the suites assert on, named so an assertion reads as a claim. */
 export const FIXTURE = {
   projects: ["demo", "other"],
@@ -218,6 +260,14 @@ export const FIXTURE = {
     /** Counted from the data, never enumerated in code (L-967). */
     sourceModules: ["gap", "janitor", "missing_followup", "edge_inference"],
   },
+  /** FR-248 — the `fusion: true` corpus. See {@link SeedLayerBrainOptions.fusion}. */
+  fusion: {
+    /** The one token the cross-layer corpus shares. Absent from every default row. */
+    token: "telemetry",
+    /** Layers the corpus seeds, with two matching rows each. */
+    layers: ["briefs", "learnings", "goals", "suggestions"],
+    rowsPerLayer: 2,
+  },
 } as const;
 
 /**
@@ -241,8 +291,19 @@ export const FIXTURE = {
  * and asserts the whole tier leaves it alone. Do not change the mode here to
  * close it — the WAL crawl and the `delete`-mode gates cover different things
  * and the suite needs both.
+ *
+ * FR-248 — `opts` IS ADDITIVE AND THE DEFAULT WORLD IS BYTE-IDENTICAL TO THE
+ * ONE FR-241 SHIPPED. `seedLayerBrain(path)` with no second argument executes
+ * the same DDL string and the same inserts in the same order; every branch
+ * below is guarded by an option that defaults to off. That property is not
+ * decorative — `dashboard-readonly.test.ts` hashes this file's bytes, and four
+ * suites assert exact row sets over it.
  */
-export function seedLayerBrain(dbPath: string): void {
+export function seedLayerBrain(
+  dbPath: string,
+  opts: SeedLayerBrainOptions = {},
+): void {
+  const omit = new Set<OmittableObject>(opts.omit ?? []);
   mkdirSync(dirname(dbPath), { recursive: true });
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
@@ -250,7 +311,7 @@ export function seedLayerBrain(dbPath: string): void {
     DDL_PROJECTS +
       DDL_BRIEF_STATUS +
       DDL_BRIEF_FILES +
-      DDL_BRIEFS_FTS +
+      (omit.has("briefs_fts") ? "" : DDL_BRIEFS_FTS) +
       DDL_LEARNINGS +
       DDL_GOALS +
       DDL_EDGES +
@@ -295,16 +356,32 @@ export function seedLayerBrain(dbPath: string): void {
     "2026-07-30 08:00:00",
   );
 
+  // FR-248 — the cross-layer corpus, seeded BEFORE the FTS backfill so the two
+  // new briefs are indexed by the same statement v23 uses rather than by a
+  // second one. Guarded by `opts.fusion`; see the option's docstring for why it
+  // is not in the default world.
+  if (opts.fusion === true) {
+    insBrief.run("demo", "FR-248", "feature", "Telemetry sweep across layers", "Pending", "P1-High", "L", null, "2026-08-03 09:00:00");
+    insBrief.run("demo", "TD-370", "tech-debt", "Telemetry counters drift", "Pending", "P2-Medium", "M", null, "2026-08-02 09:00:00");
+  }
+
   // FR-246 — the BM25 arm's index, backfilled exactly the way v23 backfills it.
   // Note what this makes searchable that nothing else does: `bf-1`'s BODY. The
   // word "shell" appears in no brief TITLE.
-  db.exec(`
-    INSERT INTO briefs_fts(rowid, brief_id, title, content)
-    SELECT bs.id, bs.brief_id, bs.title, COALESCE(bf.content, '')
-      FROM brief_status bs
-      LEFT JOIN brief_files bf
-             ON bf.project = bs.project AND bf.brief_id = bs.brief_id;
-  `);
+  //
+  // FR-248 — SKIPPED ENTIRELY when `briefs_fts` was omitted. The table is the
+  // only thing this statement writes, so leaving it in would turn the omitted
+  // world into a hard throw during seeding instead of the pre-v23 brain it is
+  // supposed to be.
+  if (!omit.has("briefs_fts")) {
+    db.exec(`
+      INSERT INTO briefs_fts(rowid, brief_id, title, content)
+      SELECT bs.id, bs.brief_id, bs.title, COALESCE(bf.content, '')
+        FROM brief_status bs
+        LEFT JOIN brief_files bf
+               ON bf.project = bs.project AND bf.brief_id = bs.brief_id;
+    `);
+  }
 
   // --- learnings ---------------------------------------------------------
   //  id | project | category  | scope  | provenance | review_status
@@ -324,6 +401,16 @@ export function seedLayerBrain(dbPath: string): void {
   insLearning.run("other", "decision", "Ceramic kiln schedule", "Bisque firing peaks at cone 04 overnight.", "pottery", "", "local", "", 0.7, "2026-07-03 10:00:00", "2026-07-03 10:00:00", 2, "observed", "approved", "manual", "doc.md#1");
   insLearning.run("demo", "discovery", "Pending wrapper note", "A pending wrapper candidate awaiting review.", "perception", "", "local", "", 0.4, "2026-07-04 10:00:00", "2026-07-04 10:00:00", 0, "inferred", "pending_review", "llm", null);
 
+  // FR-248 — ids 5 and 6, seeded AFTER the four the other suites address by id
+  // so `zeroOverlapLearningId: 3` and `pendingLearningId: 4` keep meaning what
+  // they meant. Both `approved`, because the fused surface recalls the
+  // conscious channel and a `pending_review` row here would contribute nothing
+  // while looking like it should.
+  if (opts.fusion === true) {
+    insLearning.run("demo", "pattern", "Telemetry counters", "Telemetry counters are emitted per project, never per session.", "brain", "typescript", "local", "FR-248", 0.8, "2026-07-05 10:00:00", "2026-07-05 10:00:00", 0, "observed", "approved", "manual", null);
+    insLearning.run("demo", "decision", "Telemetry scope", "Telemetry stays out of the read path.", "brain", "typescript", "local", "FR-248", 0.8, "2026-07-06 10:00:00", "2026-07-06 10:00:00", 0, "observed", "approved", "manual", null);
+  }
+
   // --- goals -------------------------------------------------------------
   const insGoal = db.prepare(
     `INSERT INTO goals
@@ -334,6 +421,16 @@ export function seedLayerBrain(dbPath: string): void {
   insGoal.run("GL-001", "demo", "Ship the lens", null, "Browsable brain", "2026-08-31", "active", "P1-High", "2026-06-01 10:00:00", "2026-06-01 10:00:00", null, "{}");
   insGoal.run("GL-002", "demo", "Undated goal", null, "Sorts last", null, "active", "P2-Medium", "2026-06-02 10:00:00", "2026-06-02 10:00:00", null, "{}");
   insGoal.run("GL-003", "other", "Achieved goal", null, "Done", "2026-05-01", "achieved", "P3-Low", "2026-06-03 10:00:00", "2026-06-03 10:00:00", "2026-05-01 12:00:00", "{}");
+
+  // FR-248. BOTH carry a deadline, and they differ: `listGoals` orders
+  // deadline ASC nulls last, so GL-004 is rank 1 and GL-005 is rank 2 by
+  // construction rather than by whichever the planner happened to emit first.
+  // A fused-order assertion over rows whose within-layer rank is arbitrary
+  // would be asserting the planner, not the fusion.
+  if (opts.fusion === true) {
+    insGoal.run("GL-004", "demo", "Telemetry rollout", "Ship telemetry counters", "Counters live", "2026-09-01", "active", "P1-High", "2026-06-04 10:00:00", "2026-06-04 10:00:00", null, "{}");
+    insGoal.run("GL-005", "demo", "Telemetry retention", "Decide how long telemetry is kept", "Policy written", "2026-10-01", "active", "P2-Medium", "2026-06-05 10:00:00", "2026-06-05 10:00:00", null, "{}");
+  }
 
   const insEdge = db.prepare(
     `INSERT INTO entity_edges
@@ -406,6 +503,17 @@ export function seedLayerBrain(dbPath: string): void {
   insSuggestion.run("edge_inference", null, "Edge: BR-001 -> learning 2 (inferred)", '{"kind":"edge"}', "low", "pending", "2026-07-26 09:00:00");
   insSuggestion.run("janitor", null, "Orphan graph node with no owner", '{"kind":"orphan"}', "high", "pending", "2026-07-27 09:00:00");
 
+  // FR-248. `listSuggestions` orders by the `CASE priority` collation then
+  // created_at, so `high` before `medium` fixes the within-layer rank the same
+  // way the goals pair does. Both are `demo`-scoped: the fused surface's
+  // `?project=` arm has to narrow them, and a project-less row would make that
+  // narrowing untestable here (TD-326's population already covers the other
+  // half).
+  if (opts.fusion === true) {
+    insSuggestion.run("gap", "demo", "Telemetry counter has no owner", '{"kind":"gap"}', "high", "pending", "2026-08-01 09:00:00");
+    insSuggestion.run("janitor", "demo", "Telemetry rows never expire", '{"kind":"dupe"}', "medium", "pending", "2026-08-02 09:00:00");
+  }
+
   db.close();
 }
 
@@ -452,4 +560,12 @@ export const LAYER_PATHS: readonly string[] = [
   // read-only crawl covers it too rather than leaving the newest query shape
   // (`project_slug IS NULL`) as the one path no digest gate ever exercised.
   "/api/suggestions?project_scope=brain-level&status=pending",
+  // FR-248 — the fused surface. It is the FIRST path to serve five readers off
+  // ONE `openBrainReadonlyWithVec` handle, so it is the path with most to prove
+  // to the read-only crawl: a handle shared across five readers is exactly
+  // where a `query_only` regression would first become invisible. Both the
+  // unscoped and the project-scoped forms, because the second one takes a
+  // different branch in every arm.
+  "/api/search?q=wrapper",
+  "/api/search?q=wrapper&project=demo",
 ];

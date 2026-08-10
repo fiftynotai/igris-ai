@@ -90,7 +90,12 @@ wait_for_url() {
   # FR-246 adds exactly ONE: `/api/briefs/search`. Goals, context docs,
   # suggestions and candidates gained a `q` PARAMETER on paths that already
   # exist, which is why this set moves once rather than five times.
-  local expected="/ /api/brief /api/briefs /api/briefs/search /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/suggestions /api/summary POST /api/triage"
+  # FR-248 adds exactly ONE more: `/api/search`, the fused cross-layer surface.
+  # Its ROW SHAPE is new (mixed row types plus a per-layer availability block),
+  # which is what makes it a new path rather than a `&layers=` parameter on
+  # `/api/briefs/search` — FR-246's own rule, applied. It sorts between
+  # `/api/projects` and `/api/suggestions`.
+  local expected="/ /api/brief /api/briefs /api/briefs/search /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/search /api/suggestions /api/summary POST /api/triage"
   local actual
   actual="$(echo "$output" | node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
@@ -131,11 +136,12 @@ wait_for_url() {
     });
   " <<< "$output"
   [ "$status" -eq 0 ]
-  # 16 -> 17: FR-246 added `/api/briefs/search`, the ONE path it adds. This
-  # count is the digest's OWN summary line, computed from `reads.length` above —
-  # so it is a SECOND place the endpoint count is spelled out, and the exact-set
-  # assertion earlier in this test does not cover it.
-  echo "$output" | grep -q '17 read paths all 200, 1 write path 400'
+  # 16 -> 17 -> 18: FR-246 added `/api/briefs/search` and FR-248 added
+  # `/api/search`, one path each. This count is the digest's OWN summary line,
+  # computed from `reads.length` above — so it is a SECOND place the endpoint
+  # count is spelled out, and the exact-set assertion earlier in this test does
+  # not cover it.
+  echo "$output" | grep -q '18 read paths all 200, 1 write path 400'
 }
 
 @test "dashboard --smoke releases the lock on exit" {

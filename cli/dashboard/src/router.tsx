@@ -43,7 +43,16 @@ import {
   type RecordAddress,
 } from "./layers/model";
 
-export const ROUTES = ["overview", "graph", "layers", "triage"] as const;
+/**
+ * FR-248 adds `search` — the fifth route and the fourth LAZY one.
+ *
+ * It is LAST in this array, which decides its nav position and nothing else:
+ * `parse` below matches the first hash segment against the set, so order is
+ * presentational. It sits at the end because the four before it are places you
+ * BROWSE and this one is a place you ASK; putting it first would imply the
+ * dashboard opens on a question.
+ */
+export const ROUTES = ["overview", "graph", "layers", "triage", "search"] as const;
 export type Route = (typeof ROUTES)[number];
 
 /**
@@ -64,6 +73,7 @@ export const ROUTE_LABELS: Record<Route, string> = {
   graph: "Graph",
   layers: "Layers",
   triage: "Triage",
+  search: "Search",
 };
 
 /** Everything the shell needs to know about the current location. */

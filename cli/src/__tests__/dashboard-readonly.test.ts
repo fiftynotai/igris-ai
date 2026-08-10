@@ -307,7 +307,7 @@ describe("G-RO-1 — a full crawl of every endpoint changes nothing", () => {
     expect(after.db_mtime_ms).toBe(before.db_mtime_ms);
   });
 
-  it("BOTH hybrid searches and three detail views specifically change nothing", { timeout: 180_000 }, async () => {
+  it("ALL THREE searches and three detail views specifically change nothing", { timeout: 180_000 }, async () => {
     // Called out separately because these are the paths that WOULD write if the
     // dashboard reached the MCP handlers: `handleMemoryGet` and
     // `handleMemoryRecall` both bump `access_count` (TD-092), and `getDb()`
@@ -319,11 +319,20 @@ describe("G-RO-1 — a full crawl of every endpoint changes nothing", () => {
     // own beyond symmetry: `/api/briefs/search` is the second path to open
     // `openBrainReadonlyWithVec()`, and loading an extension onto a handle is
     // the most plausible way a "read" acquires a write.
+    //
+    // FR-248 adds `/api/search` for a STRONGER version of that reason: it is
+    // the THIRD path to open `openBrainReadonlyWithVec()` and the FIRST to
+    // serve FIVE readers off ONE handle. Every other endpoint in this tier
+    // opens, calls one reader, and closes; sharing a handle is a new shape, and
+    // a `query_only` regression on a shared handle would surface on four layers
+    // at once.
     const before = snapshot(dbPath());
     await start();
     for (const p of [
       "/api/learnings/search?q=wrapper",
       "/api/briefs/search?q=wrapper",
+      "/api/search?q=wrapper",
+      "/api/search?q=wrapper&project=demo",
       "/api/brief?project=demo&id=FR-240",
       "/api/learning?id=1",
       "/api/goal?id=GL-001",

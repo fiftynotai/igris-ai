@@ -423,10 +423,13 @@ type BootEngineFn = (config: {
  *
  * So the ROW SHAPE widens once, additively: `target` says whether the caller
  * supplies `ids: number[]` or `refs: {project, brief_id}[]`. `POST /api/triage`
- * is unchanged as a PATH — the surface stays sixteen GET + one POST, which
- * `dashboard.bats`'s exact-set string asserts byte-identically. That is the
- * payoff of refusing a new endpoint, and it is a measurement rather than a
- * claim.
+ * is unchanged as a PATH — FR-247 left the surface at sixteen GET + one POST,
+ * which `dashboard.bats`'s exact-set string asserted byte-identically. That was
+ * the payoff of refusing a new endpoint, and it was a measurement rather than a
+ * claim. **Read that in the past tense: FR-248 added `/api/search`, so the live
+ * surface is SEVENTEEN GET + one POST and the exact-set string moved with it.**
+ * FR-247's point survives — a mutation that needs no new path should not take
+ * one — but the count it cited is no longer the count.
  *
  * `refKeys` and `fixed` are what keep a `brief-ref` row honest:
  *   - `fixed` values come from the MAP, never from the caller. If

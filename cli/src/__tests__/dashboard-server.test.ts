@@ -764,10 +764,15 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
    * required: SQL-free routes calling an impure reader would still mutate the
    * operator's brain.
    */
-  it("params.ts and context-docs-read.ts hold no SQL (FR-240 G-EP-5)", () => {
+  it("params.ts, context-docs-read.ts and search-fuse.ts hold no SQL", () => {
     for (const rel of [
       "../lib/dashboard/params.ts",
       "../lib/dashboard/context-docs-read.ts",
+      // FR-248. `search-fuse.ts` is the brief's ONE new server-layer module and
+      // it takes no `db` at all — it fuses lists five arms already produced.
+      // Naming it here is what keeps the corpus claim ("every server-layer
+      // file") true rather than "every server-layer file as of FR-241".
+      "../lib/dashboard/search-fuse.ts",
     ]) {
       const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
       const code = src
@@ -848,6 +853,7 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       "params.ts",
       "context-docs-read.ts",
       "graph-query.ts",
+      "search-fuse.ts", // FR-248 — pure rank arithmetic; takes no `db`
       // Not SQL-scanned above but deliberately so, and named here so the set is
       // a complete accounting rather than a partial one:
       "headers.ts", // constants only
@@ -855,7 +861,7 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       "default-project.ts", // pure function over rows the caller supplies
     ]);
     const present = readdirSync(dir).filter((f) => f.endsWith(".ts"));
-    expect(present.length).toBeGreaterThanOrEqual(9);
+    expect(present.length).toBeGreaterThanOrEqual(10);
     for (const f of present) {
       expect(scanned.has(f), `${f} is in the server layer but not in the scan list`).toBe(
         true,

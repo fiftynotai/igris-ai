@@ -317,6 +317,75 @@ export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
   { name: "q", allowed: null },
 ];
 
+/**
+ * FR-248 — the fused search's filter spec. **`project` and nothing else.**
+ *
+ * The shortness is the design. `/api/search` fans one query out to five arms,
+ * and BR-085's defect gets a NEW variant on a fused surface: a filter that
+ * binds on SOME layers and not others. `project` binds on all five;
+ * `review_status` binds on learnings alone; `status` exists on briefs AND goals
+ * with DIFFERENT vocabularies. Accepting any of those would make the response's
+ * scope a claim that is true on average — so they are not in the spec at all,
+ * and `parseFilters`'s existing machinery reports each one as
+ * `unknown filter: <name>` rather than swallowing it.
+ */
+export const SEARCH_FILTERS: readonly FilterSpec[] = [
+  { name: "project", allowed: null },
+];
+
+/** The outcome of parsing `?layers=`. */
+export interface LayersResult {
+  /** The layers to query. Every declared layer when `?layers=` was absent. */
+  layers: string[];
+  /** True when the caller narrowed the set — as opposed to taking the default. */
+  narrowed: boolean;
+  rejected: string[];
+}
+
+/**
+ * FR-248 — parse the `?layers=<csv>` allow-list.
+ *
+ * @param allowed the declared layer set, INJECTED rather than imported. Same
+ *   reason `parseTriageBody` takes `isKnownAction`: this module keeps its
+ *   zero-dependency, zero-I/O property, and the vocabulary keeps exactly ONE
+ *   definition (`search-fuse.ts#DECLARED_LAYERS`). A second copy here is the
+ *   list that would go stale the first time a sixth layer landed.
+ *
+ * An unknown member is DROPPED AND NAMED, never silently ignored — a
+ * `?layers=candidates` that quietly returned all five would look exactly like
+ * a narrowing that worked. A value naming NO known layer falls back to the full
+ * set with the drop reported, rather than answering nothing: an empty result
+ * set with no rows and no explanation is the shape this whole surface exists to
+ * remove.
+ */
+export function parseLayers(
+  search: URLSearchParams,
+  allowed: readonly string[],
+): LayersResult {
+  const raw = search.get("layers");
+  const rejected: string[] = [];
+  if (raw === null || raw.trim().length === 0) {
+    return { layers: [...allowed], narrowed: false, rejected };
+  }
+  const asked = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const kept: string[] = [];
+  for (const name of asked) {
+    if (!allowed.includes(name)) {
+      rejected.push(`layers: "${name}" is not one of ${allowed.join(", ")}`);
+      continue;
+    }
+    if (!kept.includes(name)) kept.push(name);
+  }
+  if (kept.length === 0) {
+    rejected.push(`layers: no known layer named; searching all ${allowed.length}`);
+    return { layers: [...allowed], narrowed: false, rejected };
+  }
+  return { layers: kept, narrowed: true, rejected };
+}
+
 // ---------------------------------------------------------------------------
 // FR-241 — the triage request body (the ONE mutating endpoint's input)
 // ---------------------------------------------------------------------------

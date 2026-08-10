@@ -408,6 +408,14 @@ async function handle(
     sendJson(res, 200, await routes.briefsSearch(query));
     return;
   }
+  // FR-248 — the ONE path this brief adds, and the eighteenth on the surface.
+  // Placed adjacent to the two per-layer search paths because it is their
+  // fusion, not a sibling of the browse routes. Exact-match like every route in
+  // this function, so nothing here can shadow anything.
+  if (pathname === "/api/search") {
+    sendJson(res, 200, await routes.fusedSearch(query));
+    return;
+  }
   if (pathname === "/api/brief") {
     sendJson(res, 200, await routes.brief(query));
     return;

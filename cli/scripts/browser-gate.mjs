@@ -52,15 +52,18 @@
  * dashboard tier is read-only, but a harness that pointed at the live brain
  * would still be one typo away from a `VACUUM INTO` over it.
  *
- * SIX WORLDS, because three of the gates are about DISAGREEMENT between them
- * (the count was stale at FOUR from FR-241 until FR-244 recounted it against
- * `main()`'s own list, which is the only place that cannot drift):
- *   seeded  — the shared fixture. Rows in every layer.
- *   vec     — the fixture PLUS a `learnings_vec` index, so hybrid recall runs.
- *   empty   — the fixture's schema with every row deleted. `empty` empty-state.
- *   missing — no `knowledge.db` at all. `degraded` empty-state.
- * A single-world gate cannot tell "the empty state renders" from "the empty
- * state always renders", which is exactly the vacuity learning 1092 describes.
+ * SEVERAL WORLDS, because several of the gates are about DISAGREEMENT between
+ * them. A single-world gate cannot tell "the empty state renders" from "the
+ * empty state always renders", which is exactly the vacuity learning 1092
+ * describes.
+ *
+ * THIS PARAGRAPH DELIBERATELY STATES NO COUNT AND NO LIST — see {@link WORLDS},
+ * which is the one declaration `main()` builds from, and read the run banner,
+ * which prints the count and every world's purpose from that same object.
+ * The number in this comment has now been wrong TWICE: stale at FOUR from
+ * FR-241 until FR-244 recounted it, then re-stated as SIX beside a list of
+ * FOUR, which is the state FR-248 found it in. A count and a list maintained by
+ * hand in a comment will drift again; a count DERIVED from the list cannot.
  *
  * @module scripts/browser-gate
  */
@@ -113,7 +116,7 @@ const MUTATIONS = {
   },
   "br3-hermetic-one-world-unarmed": {
     gate: "G-BR-3-hermetic",
-    how: "point the `empty` world's hermetic preload at a transformers entry that does NOT exist, so its `await import()` throws and its receipt records `armed:false` — ONE world of six un-armed, which is precisely the state TD-320 #1 found unassertable while the check read `worlds.vec` alone. The failure must NAME `empty` and its reason. The harness-level fail-fast WARNS instead of exiting under `--mutate`, so the ledger check is the thing that reddens",
+    how: "point the `empty` world's hermetic preload at a transformers entry that does NOT exist, so its `await import()` throws and its receipt records `armed:false` — ONE world of the full set un-armed (the set is `WORLDS`; this sentence deliberately states no count, because it used to say `six` beside a list of four), which is precisely the state TD-320 #1 found unassertable while the check read `worlds.vec` alone. The failure must NAME `empty` and its reason. The harness-level fail-fast WARNS instead of exiting under `--mutate`, so the ledger check is the thing that reddens",
   },
   "br4-same-palette": {
     gate: "G-BR-4d",
@@ -294,6 +297,22 @@ const MUTATIONS = {
   "td347-warm-cold-reading": {
     gate: "G-BR-15e",
     how: "take the 'cold' navigation readings on a WARM document: skip `Network.setCacheDisabled` and pre-load every chunk first. The timings still look plausible — faster, in fact, which is the trap — and only `15e`'s `transferSize > 0` self-check can tell that the number recorded as a cold cost was paid from cache. The `coding_guidelines.md` §12 rule that a test-harness safety guard must assert it is ARMED, applied to a measurement rather than to a fence",
+  },
+  // --- FR-248 ---------------------------------------------------------------
+  //
+  // BOTH inject the defect INTO THE RESPONSE, in the `nofts` world only, so the
+  // POSITIVE CONTROL (`17-control`, taken on `seeded` through a different tab)
+  // stays green and the run still shows that a live briefs layer renders as
+  // live. A mutation that broke both readings would leave "the page can never
+  // say a layer is out" and "the page always says a layer is out"
+  // indistinguishable, which is the vacuity `17-control` exists to exclude.
+  "br17-silent-layer-drop": {
+    gate: "G-BR-17a",
+    how: "rewrite `/api/search`'s response in the browser so every UNAVAILABLE layer is simply ABSENT from `layers[]` — the handler doing `layers.filter(l => l.available)`. THIS IS THE EXACT DEFECT AC-4 NAMES: the list still returns rows from the four working layers, every row is correctly labelled, no error is raised, and the only thing lost is the STATEMENT that a fifth layer was not searched. `layers[]` having one entry per declared layer on every code path is the single structural property that makes that drop unrepresentable, so 17a asserts the COUNT and the SET rather than the presence of the one layer this world happens to disable",
+  },
+  "br17-layer-lies-available": {
+    gate: "G-BR-17b",
+    how: "rewrite `/api/search`'s response so a layer that is OUT reports `available: true, reason: null` while still contributing zero rows — the shape a handler produces when availability is defaulted rather than derived. It is the more dangerous half of the pair: the layer block is still complete, so 17a cannot see it, and the page renders a five-of-five all-clear over a search that silently missed a layer. Caught by 17b (the state and the server's verbatim reason) and by 17c (the LOUD banner)",
   },
   // --- TD-332 ---------------------------------------------------------------
   // NOTE ON THE `gate` FIELD in these two: it carries the CHECK id rather than a
@@ -844,6 +863,52 @@ function seedTriageWorld(db) {
  */
 const DENSE_EXTRA_LEARNINGS = 700;
 
+/**
+ * EVERY WORLD THIS HARNESS BUILDS, and why each one exists.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * ONE DECLARATION, SO THE COUNT AND THE LIST CANNOT DISAGREE (FR-248)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * This object is the ONLY place the set is written down. `main()` iterates its
+ * keys to build the servers and the tabs, the run banner prints
+ * `Object.keys(WORLDS).length` beside each world's purpose, and the file header
+ * states no number at all. Before this, the header carried a hand-maintained
+ * count AND a hand-maintained list; they drifted apart twice (FOUR vs six),
+ * because nothing executed either of them.
+ *
+ * ORDER MATTERS ONLY FOR STARTUP COST, not for correctness: `main()` opens one
+ * server and one tab per key, and every gate names the world it wants.
+ */
+const WORLDS = {
+  seeded: "the shared fixture. Rows in every layer.",
+  vec: "the fixture PLUS a `learnings_vec` index, so hybrid recall runs.",
+  empty: "the fixture's schema with every row deleted. `empty` empty-state.",
+  missing: "no `knowledge.db` at all. `degraded` empty-state.",
+  triage:
+    "FR-241 — the only brain built by the ENGINE's own migrations, i.e. the only schema the write door can boot against.",
+  dense:
+    "FR-244 — the fixture plus 700 learnings, the only world whose payload reaches graph Tier C.",
+  /*
+   * FR-248 — a brain that never ran `db.ts` v23, so `briefs_fts` does not
+   * exist. THIS IS A REAL PRODUCTION STATE, not a mock and not a monkey-patch:
+   * the fixture simply does not emit that one DDL fragment
+   * (`dashboard-layers-fixture.ts#OmittableObject`). Combined with the hermetic
+   * preload — no HF model, so no query embedding — the briefs layer then has
+   * NEITHER a lexical arm NOR a vector one, which is the only way to reach
+   * AC-4's "a layer is out" without faking anything.
+   *
+   * IDENTICAL TO `seeded` IN EVERY OTHER RESPECT, deliberately. G-BR-17 reads
+   * the SAME query in both worlds and the ONLY variable between the two
+   * readings is `briefs_fts`; a world that also differed in its corpus would
+   * make "briefs went dark" and "the corpus changed" indistinguishable.
+   */
+  nofts:
+    "FR-248 — `seeded` MINUS `briefs_fts` (a pre-v23 brain), so the briefs layer has no lexical arm and no vector arm.",
+};
+
+/** The world keys, DERIVED. Never write this list a second time. */
+const WORLD_KINDS = Object.keys(WORLDS);
+
 function makeWorld(kind) {
   const brain = mkdtempSync(join(tmpdir(), `igris-fr240-gate-${kind}-`));
   mkdirSync(join(brain, "memory"), { recursive: true });
@@ -943,7 +1008,18 @@ function makeWorld(kind) {
       `;
     }
     extra += "\n      db2.close();\n";
-    runSeedScript(`seedLayerBrain(process.env.GATE_DB);\n${extra}`, {
+    /*
+     * FR-248 — the ONLY difference the `nofts` world carries, and it is a
+     * SEED-TIME one rather than a post-seed `DROP TABLE`.
+     *
+     * Dropping `briefs_fts` afterwards would leave v23's six triggers behind
+     * pointing at a table that no longer exists, so the next write to
+     * `brief_status` would throw — a state no production brain is ever in. The
+     * fixture's `omit` simply never emits the DDL fragment, which is exactly
+     * what a brain that has not run the migration looks like.
+     */
+    const seedOpts = kind === "nofts" ? `, { omit: ["briefs_fts"] }` : "";
+    runSeedScript(`seedLayerBrain(process.env.GATE_DB${seedOpts});\n${extra}`, {
       GATE_DB: db,
       GATE_VEC_ENTRY: join(
         CLI_ROOT,
@@ -1173,8 +1249,25 @@ const INSTRUMENT = `
  * client agreeing with its own copy of the rule would prove nothing about the
  * route the shell actually committed to — which is why `routeReady` then reads
  * `#main[data-route]` out of the DOM rather than trusting this.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A MIRROR HAS TO BE SWEPT WHEN THE THING IT MIRRORS GAINS A MEMBER (FR-248)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `search` WAS MISSING HERE for the whole of FR-248's phase 5, and the failure
+ * mode is the one a `?:` fallback always has: an unrecognised segment is not an
+ * error, it is silently `overview`. So `routeOf("#/search")` answered
+ * `"overview"`, `routeReady` waited for `#main[data-route="overview"]` on a
+ * page that had committed to `search`, and every navigation to the new route
+ * would have hung for 45 s and then thrown — a harness that cannot reach a
+ * route rather than a check that says so. NOTHING WAS RED, because no gate
+ * visited `#/search`.
+ *
+ * `15-mirror` closes that: it compares this prediction against the
+ * `data-route` the shell actually committed to, for every route the gate
+ * drives. A member added to `router.tsx#ROUTES` and forgotten here is then a
+ * named failure instead of a timeout.
  */
-const APP_ROUTES = ["overview", "graph", "layers", "triage"];
+const APP_ROUTES = ["overview", "graph", "layers", "triage", "search"];
 function routeOf(hashOrUrl) {
   const i = hashOrUrl.indexOf("#");
   const hash = i === -1 ? "" : hashOrUrl.slice(i);
@@ -6823,12 +6916,31 @@ async function gBr12(cdpPort, seeded) {
 // ---------------------------------------------------------------------------
 
 /**
+ * FR-248 — the query G-BR-15's `#/search` target and G-BR-17 both submit.
+ *
+ * CHOSEN BY MEASUREMENT over the fixture, not by taste. Against the `seeded`
+ * world scoped to `demo` it returns TWO rows from TWO layers — one brief
+ * (`FR-240`, whose body carries "read-only", so it is a `briefs_fts` content
+ * match rather than a title one) and one suggestion ("Two near-duplicate
+ * learnings"… via the substring arm). Two layers is the minimum that makes
+ * G-BR-17's "not merely fewer rows" clause observable: in the `nofts` world the
+ * brief row disappears with its layer and the suggestion row stays, so the
+ * fused list is still SERVING while the payload states a layer is out.
+ *
+ * A single-layer query would make "briefs went dark" and "the search found
+ * nothing" the same reading.
+ */
+const FUSED_Q = "read";
+
+/**
  * The routes G-BR-15 drives, each with the DATA-BEARING reading that proves the
  * route reached its data rather than merely mounting its shell.
  *
  * `sel` is the thing the in-page timer watches (15e's stopwatch). `read` is a
  * page expression returning a value; `ok` judges it host-side; `say` renders it
- * into the check line so a green run still prints what it saw.
+ * into the check line so a green run still prints what it saw. `pre` is an
+ * optional host-side interaction run after the route is ready and BEFORE the
+ * reading — see the `#/search` entry for the only route that needs one.
  *
  * EVERY SELECTOR HERE IS ONE GATES 1-14 ALREADY USE. That is the point: a
  * fifteenth gate with its own private selectors could go green while the
@@ -6923,6 +7035,47 @@ const TD347_TARGETS = [
     ok: (v) => v !== null && v.bulk === true && v.rows > 0,
     say: (v) => (v === null ? "no reading" : `bulk bar=${v.bulk} queue rows=${v.rows}`),
   },
+  {
+    /*
+     * FR-248 — THE FIFTH ROUTE, AND THE ONLY ONE WHOSE DATA NEEDS A QUESTION.
+     *
+     * The other eight targets reach their data by NAVIGATING: the route mounts,
+     * an effect fetches, rows appear. `#/search` holds its query in component
+     * state (`Search.tsx` — deliberately NOT in the hash, and not on the live
+     * beat, because a five-arm read per keystroke would queue an embedding cold
+     * start per arm), so a cold document renders the route's own controls and
+     * an empty state and NOTHING ELSE. That is a real distinction and the
+     * target records it rather than papering over it: `pre` types the query and
+     * clicks RUN, so the reading below is the same class of DATA reading the
+     * other eight take — rows on screen, from the wire, in this document.
+     *
+     * WHAT IT THEREFORE PROVES that a chip-count reading would not: the route's
+     * chunk arrived AND its module executed AND it issued its request AND the
+     * shared record tier rendered the answer. A "5 layer chips are present"
+     * check would pass on a build whose fetch was broken.
+     */
+    hash: "#/search",
+    sel: ".search-layers",
+    pre: async (tab) => {
+      await submitFilterSearch(tab, FUSED_Q);
+    },
+    read: `
+      const strip = document.querySelector('.search-layers');
+      return {
+        layers: strip === null ? null : Number(strip.getAttribute('data-layer-count')),
+        rows: document.querySelectorAll('.record-row-title').length,
+        readout: document.querySelector('[data-rank-readout]') !== null,
+      };`,
+    // `layers > 0` rather than `=== 5`: the SIZE of the layer block is
+    // G-BR-17a's subject and asserting it here too would make one property look
+    // like two independent readings. This target's claim is that the route
+    // reached its data.
+    ok: (v) => v !== null && v.layers > 0 && v.rows > 0 && v.readout === true,
+    say: (v) =>
+      v === null
+        ? "no reading"
+        : `${v.rows} fused row(s) for "${FUSED_Q}" · layer block=${v.layers} · rank-basis readout=${v.readout}`,
+  },
 ];
 
 /**
@@ -7006,12 +7159,45 @@ const ms = (x) => (x === null || x === undefined ? "n/a" : `${Math.round(x * 10)
 const TD347_GRAPH_ROUTE_CHUNKS = ["Graph", "neighbours", "Button"];
 
 /**
- * G-BR-15 — TD-347.
+ * FR-248 — THE CHUNKS THE SEARCH ROUTE PULLS, and the half that matters is the
+ * NEGATIVE one.
+ *
+ *   Search         its route chunk — `pages/Search.tsx` + `search/model.ts`.
+ *   SearchReadout  Rollup's shared hoist of the RECORD TIER: `RecordList`,
+ *                  `FilterBar` and `SearchReadout`, reached by Layers, Triage
+ *                  AND now Search. THIS CHUNK IS WHY FR-248's UI IS NEARLY
+ *                  FREE: a third async importer of an already-hoisted chunk
+ *                  adds no duplicate bytes.
+ *
+ * DERIVED FROM THE BUILT ARTIFACT'S OWN IMPORT STATEMENTS, following 15d-graph's
+ * `Button` lesson — `grep -o 'from"\./[A-Za-z]*-[^"]*\.js"' dist/dashboard/assets/Search-*.js`
+ * reports exactly `index` and `SearchReadout`, and `SearchReadout-*.js` in turn
+ * imports only `index`. Not read off a group table, which is what got `Button`
+ * wrong the first time.
+ *
+ * WHAT THE NEGATIVE HALF ASSERTS, and it is the whole point of the check: the
+ * search route must NOT pull `useQFilter`, `Button`, `neighbours`, `Layers`,
+ * `Triage` or `Graph`. `useQFilter` is the trap — `Layers` and `Triage` both
+ * fetch it AND `SearchReadout`, so a careless import of a list hook into
+ * `search/model.ts` would drag a chunk this route has no use for onto it, and
+ * the BYTE gate would not care because the total would not move.
+ */
+const TD347_SEARCH_ROUTE_CHUNKS = ["Search", "SearchReadout"];
+
+/**
+ * G-BR-15 — TD-347, extended by FR-248.
  *
  * PROVES: every route reaches its DATA from a cold document and from an
- * in-session navigation, after the bundle was split into seven chunks; no
+ * in-session navigation, after the bundle was split; no
  * dynamic import fails; the routes that do NOT need a chunk do not fetch one;
+ * this harness's own route mirror agrees with the shell's committed route;
  * and the cold cost of a deferred route is on the record.
+ *
+ * THE CHUNK COUNT IS NOT WRITTEN DOWN HERE — the run prints
+ * `bundleAssets().all.length` and the deferred names on every pass. It said
+ * "seven chunks" through TD-347 and the split is nine after FR-248's fifth
+ * route; a number in a docstring beside a number the run derives is the world-
+ * count drift this file just finished removing, one file down.
  *
  * DOES NOT PROVE: that the deferred bytes are the RIGHT ones, or that either
  * ceiling is correct — `cli/src/__tests__/dashboard-chunks.test.ts` owns the
@@ -7123,13 +7309,61 @@ async function gBr15(cdpPort, seeded) {
   // route's chunk has NEVER been evaluated in that document. `tolerant` so a
   // route that never becomes ready is REPORTED by the data check below rather
   // than aborting the gate with a bare `threw`.
+  //
+  // `pre` (the `#/search` target's query submission) runs INSIDE the cold
+  // document, between readiness and the reading. It is wrapped because a route
+  // that never became ready has no controls to drive: a throw there must be
+  // reported as this route's failed reading, not lost as a bare gate abort —
+  // and `td347-chunk-404` deliberately produces exactly that state.
   const cold = [];
+  /** `{hash, want, got}` per route — `15-mirror`'s subject. */
+  const committed = [];
   for (const t of TD347_TARGETS) {
     const ready = await coldGoto(t.hash);
+    committed.push({
+      hash: t.hash,
+      want: routeOf(t.hash),
+      got: await tab
+        .eval("const m = document.querySelector('#main'); return m === null ? null : m.getAttribute('data-route');")
+        .catch(() => null),
+    });
+    if (t.pre !== undefined) {
+      await t.pre(tab).catch((err) => {
+        errors.push(`cold ${t.hash} pre: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
     const value = await tab.eval(t.read).catch(() => null);
     await drainErrors(`cold ${t.hash}`);
     cold.push({ hash: t.hash, ready, value, ok: t.ok(value), say: t.say(value) });
   }
+
+  // --- 15-mirror · THE HARNESS'S ROUTE TABLE AGREES WITH THE SHELL'S --------
+  //
+  // `routeOf` is a hand-written mirror of `router.tsx#parse`, and `parse` falls
+  // back to `overview` for an unrecognised first segment — so a route added to
+  // the app and forgotten in the mirror does not raise anything, it silently
+  // predicts the WRONG route. `routeReady` then waits 45 s for a `data-route`
+  // that will never appear and throws a timeout naming no route.
+  //
+  // FR-248 arrived in exactly that state: `search` was in `router.tsx#ROUTES`
+  // and not in `APP_ROUTES`, and NOTHING IN THIS FILE WAS RED, because no gate
+  // visited `#/search`. This check is the cheap standing guard — it compares the
+  // prediction against the route the shell COMMITTED to, which is the only
+  // authority — and it is the reason adding the fifth target above is not a
+  // one-off sweep.
+  const mirrorBad = committed.filter((r) => r.got !== r.want);
+  check(
+    "15-mirror",
+    mirrorBad.length === 0,
+    mirrorBad.length === 0
+      ? `${committed.length}/${committed.length} routes: this harness's \`APP_ROUTES\` mirror predicted the ` +
+        `\`data-route\` the shell committed to · ` +
+        committed.map((r) => `${r.hash} -> ${r.got}`).join(" · ")
+      : `${mirrorBad.length} route(s) where the mirror DISAGREES with the shell: ` +
+        mirrorBad.map((r) => `${r.hash} predicted ${JSON.stringify(r.want)} but #main committed to ${JSON.stringify(r.got)}`).join(" · ") +
+        ` — \`APP_ROUTES\` is stale against \`router.tsx#ROUTES\`, and because \`parse\` falls back to ` +
+        `\`overview\` rather than refusing, every navigation to the missing route hangs on \`routeReady\``,
+  );
   const coldBad = cold.filter((r) => !r.ok);
   check(
     "15a",
@@ -7155,6 +7389,11 @@ async function gBr15(cdpPort, seeded) {
       await tab.eval(`location.hash = ${JSON.stringify(t.hash)}; return 1;`);
     } else {
       ready = await tab.hash(t.hash, { tolerant: true, readyTimeout: 20_000 });
+    }
+    if (t.pre !== undefined) {
+      await t.pre(tab).catch((err) => {
+        errors.push(`in-session ${t.hash} pre: ${err instanceof Error ? err.message : String(err)}`);
+      });
     }
     const value = await tab.eval(t.read).catch(() => null);
     warm.push({ hash: t.hash, ready, value, ok: t.ok(value), say: t.say(value) });
@@ -7217,12 +7456,31 @@ async function gBr15(cdpPort, seeded) {
         assets.deferred.map(assets.chunkName).filter((n) => !graphExtra.includes(n)),
       )}`,
   );
+  // FR-248 — the fifth route, whose interesting half is what it does NOT pull.
+  await coldGoto("#/search");
+  const searchJs = await tab.eval(TD347_READ_JS);
+  const searchExtra = searchJs
+    .map((e) => assets.chunkName(e.file))
+    .filter((n, i, a) => a.indexOf(n) === i)
+    .filter((n) => !assets.initial.map(assets.chunkName).includes(n))
+    .sort();
+  const wantSearch = [...TD347_SEARCH_ROUTE_CHUNKS].sort();
+  check(
+    "15d-search",
+    JSON.stringify(searchExtra) === JSON.stringify(wantSearch),
+    `cold #/search fetched beyond the initial set: ${JSON.stringify(searchExtra)} · enumerated expectation ` +
+      `${JSON.stringify(wantSearch)} · and it did NOT fetch ${JSON.stringify(
+        assets.deferred.map(assets.chunkName).filter((n) => !searchExtra.includes(n)),
+      )}`,
+  );
   note(
-    "15d-overview and 15d-graph are a PAIR and neither means much alone: 'no chunk was fetched' " +
+    "15d-overview, 15d-graph and 15d-search are a SET and none means much alone: 'no chunk was fetched' " +
       "is also true of a page that failed to load, and 'the graph chunk was fetched' is also true " +
       "of a bundle that fetches everything everywhere. Read beside each other they say the split " +
       "is a split. `td347-preload-the-lazy-chunk` is the demonstrated failing counterpart, and it " +
-      "is deliberately a defect the BYTE gate cannot see.",
+      "is deliberately a defect the BYTE gate cannot see. 15d-search adds the FR-248 half: the " +
+      "shared record-tier chunk is fetched by THREE routes and is charged once, while `useQFilter` " +
+      "— which Layers and Triage fetch alongside it — must not follow it onto this route.",
   );
 
   // --- 15e · THE COLD COST, RECORDED (AC #5) --------------------------------
@@ -7286,6 +7544,295 @@ async function gBr15(cdpPort, seeded) {
       "274_126 B is what FR-248 and FR-249 were blocked on. If the cold cost above ever stops " +
       "looking acceptable, the answer is a new brief with its own gate — NOT an idle prefetch, " +
       "which would re-charge the initial load in a form 15d exists to catch.",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// G-BR-17 — FR-248
+// ---------------------------------------------------------------------------
+
+/**
+ * The five layers `/api/search` declares — a MIRROR of `DECLARED_LAYERS` in
+ * `cli/src/types.ts`, deliberately not an import of it.
+ *
+ * The property under test is that the response block is COMPLETE, and a gate
+ * that read its expectation out of the same module the handler builds from
+ * could not tell a complete block from a shrunken constant: drop a layer from
+ * `DECLARED_LAYERS` and the handler and the gate would agree, silently, which
+ * is the exact defect AC-4 names one level up. So it is written out here, and
+ * a sixth layer is a deliberate two-file sweep rather than a silent pass.
+ */
+const FUSED_LAYERS = ["briefs", "learnings", "goals", "suggestions", "context-docs"];
+
+/** The rendered per-layer standings strip, plus everything around it. */
+const READ_STANDINGS = `
+  const strip = document.querySelector('.search-layers');
+  const text = (el, sel) => {
+    const n = el.querySelector(sel);
+    return n === null ? null : n.textContent.trim();
+  };
+  return {
+    stamped: strip === null ? null : Number(strip.getAttribute('data-layer-count')),
+    layers: strip === null ? [] : [...strip.querySelectorAll('.search-layer')].map(li => ({
+      layer: li.getAttribute('data-layer'),
+      state: li.getAttribute('data-layer-state'),
+      basis: li.getAttribute('data-rank-basis'),
+      reason: text(li, '.search-layer-reason'),
+      count: text(li, '.search-layer-count'),
+    })),
+    banners: [...document.querySelectorAll('.shell-banner')].map(b => b.textContent.trim()),
+    rows: [...document.querySelectorAll('.record-row-title')].map(e => e.textContent.trim()),
+    readout: text(document, '[data-rank-readout]'),
+  };
+`;
+
+/** `"3 OF 7 SHOWN"` -> `3`; `"NO ROWS"` and anything unparsable -> `0`. */
+function contributedFrom(countText) {
+  const m = /^(\d+)\s+OF\s+(\d+)\s+SHOWN$/.exec(countText ?? "");
+  return m === null ? 0 : Number(m[1]);
+}
+
+/**
+ * G-BR-17 — FR-248. WITH A LAYER DEAD, THE RENDERED PAGE SAYS SO.
+ *
+ * WHY 17 AND NOT 16, RECORDED SO THE HOLE IS NOT READ AS A DELETION: there has
+ * never been a `G-BR-16` in this file. FR-248's plan named this gate `G-BR-17`
+ * and it was built under that name; the number 16 was never allocated to a
+ * check, is referenced nowhere in the repo, and nothing was removed. A gap in a
+ * ladder whose whole premise is "a guard that silently disappears is the
+ * failure class this file exists to close" should not have to be reconstructed
+ * from `git log`.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * WHAT AC-4 ACTUALLY CLAIMS, AND WHY "FEWER ROWS" IS NOT IT
+ * ─────────────────────────────────────────────────────────────────────────────
+ * A fused search over five layers degrades in the most comfortable way software
+ * can: one arm fails, the other four answer, the list is shorter, and NOTHING
+ * IS WRONG on screen. The operator reads a plausible answer to "what do we know
+ * about X" that silently excludes a fifth of the brain. AC-4 says the response
+ * must SAY SO — and a payload nobody renders is half a claim, which is why the
+ * DOM half is its own gate rather than a line in the vitest suite.
+ *
+ * PROVES, against a REAL pre-v23 brain (`nofts`, see `WORLDS`) in a real browser:
+ *  - **17-control** THE VACUITY GUARD, and it is not optional. The SAME page,
+ *    the SAME query, in the world that HAS `briefs_fts`: briefs renders `ok`
+ *    with rows, and no banner names it. Without this, every assertion below is
+ *    satisfied by a build in which briefs never work at all.
+ *  - **17-wire** the endpoint's own `layers[]` (read from node, OUT of the
+ *    browser process) carries one entry per declared layer and reports briefs
+ *    `available:false` with a reason. This is the SERVER contract, pinned
+ *    separately so a DOM failure below localises to the RENDER.
+ *  - **17a** the strip shows every layer the endpoint named, and its stamped
+ *    `data-layer-count` agrees with the elements it actually rendered. THE
+ *    STRUCTURAL PROPERTY: a silent drop is unrepresentable, not merely untested.
+ *  - **17b** the dead layer is `unavailable` and carries the server's reason
+ *    VERBATIM — the sentence that names `briefs_fts`, never a re-worded one.
+ *  - **17c** the fault is LOUD: a `shell-banner` NAMES the layer, following
+ *    G-BR-13d's rule that a degraded mode must not be a quiet readout.
+ *  - **17d** the fused list is STILL SERVING — rows on screen, from a layer
+ *    that is not briefs. This is the half that makes AC-4 a claim about
+ *    HONESTY rather than about failure: the page is useful AND truthful.
+ *
+ * DOES NOT PROVE: that the four surviving layers ranked anything well, or that
+ * the fusion arithmetic is RRF. `dashboard-search-fused.test.ts` owns the five
+ * payload invariants and the AC-2 scale-invariance property; this gate owns
+ * whether any of it reaches a screen.
+ *
+ * WORLDS: `seeded` and `nofts`, each on a tab THIS GATE OPENS. It seeds
+ * nothing, writes nothing, and leaves both shared tabs untouched — the two
+ * documents it drives are its own, so it can sit anywhere in the ladder.
+ */
+async function gBr17(cdpPort, worlds) {
+  gate("G-BR-17", "FR-248: a dead layer is NAMED on screen, and the fused list keeps serving the rest");
+
+  const seededTab = await openTab(cdpPort, `${worlds.seeded.url}/#/search`);
+  const noftsTab = await openTab(cdpPort, `${worlds.nofts.url}/#/search`);
+
+  /*
+   * Both mutations rewrite `/api/search`'s response IN THE NOFTS DOCUMENT ONLY.
+   *
+   * Scoping them to one tab is what keeps the run informative: `17-control`
+   * reads the seeded document through a different tab and stays green, so a
+   * mutated run still demonstrates that this page CAN render a live layer. A
+   * mutation that broke both readings would make "the page never says a layer
+   * is out" and "the page always says a layer is out" the same transcript.
+   *
+   * They are `window.fetch` rewrites rather than server changes for the reason
+   * `br13-silent-empty-search` is: the defect being modelled is a RESPONSE
+   * SHAPE, and `17-wire` reads the real endpoint from node, so the injected lie
+   * cannot reach the control it is being compared against.
+   */
+  if (mut("br17-silent-layer-drop")) {
+    await noftsTab.eval(`
+      const orig = window.fetch;
+      window.fetch = async function (u, i) {
+        const res = await orig.call(window, u, i);
+        if (!String(u).includes('api/search')) return res;
+        const body = await res.clone().json();
+        // The whole defect: one line in a handler, and the response is still
+        // well-formed, still ranked, still correctly labelled row by row.
+        body.layers = (body.layers ?? []).filter((l) => l.available === true);
+        return new Response(JSON.stringify(body), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      return 1;
+    `);
+  }
+  if (mut("br17-layer-lies-available")) {
+    await noftsTab.eval(`
+      const orig = window.fetch;
+      window.fetch = async function (u, i) {
+        const res = await orig.call(window, u, i);
+        if (!String(u).includes('api/search')) return res;
+        const body = await res.clone().json();
+        for (const l of body.layers ?? []) {
+          if (l.available !== true) { l.available = true; l.reason = null; }
+        }
+        return new Response(JSON.stringify(body), {
+          status: res.status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      };
+      return 1;
+    `);
+  }
+
+  await seededTab.focus();
+  await submitFilterSearch(seededTab, FUSED_Q);
+  const control = await seededTab.eval(READ_STANDINGS);
+
+  await noftsTab.focus();
+  await submitFilterSearch(noftsTab, FUSED_Q);
+  const dead = await noftsTab.eval(READ_STANDINGS);
+
+  const briefsOf = (r) => r.layers.find((l) => l.layer === "briefs") ?? null;
+  const namesBriefs = (r) => r.banners.filter((b) => /\bBRIEFS\b/i.test(b));
+
+  // --- 17-control · the SAME page renders a LIVE briefs layer ---------------
+  const ctlBriefs = briefsOf(control);
+  const ctlContributed = contributedFrom(ctlBriefs?.count);
+  check(
+    "17-control",
+    ctlBriefs !== null &&
+      ctlBriefs.state === "ok" &&
+      ctlBriefs.reason === null &&
+      ctlContributed > 0 &&
+      namesBriefs(control).length === 0,
+    ctlBriefs === null
+      ? `POSITIVE CONTROL FAILED — the seeded world's strip has no \`briefs\` entry at all (stamped=${control.stamped}, layers=${JSON.stringify(control.layers.map((l) => l.layer))})`
+      : `POSITIVE CONTROL — seeded world, q="${FUSED_Q}": briefs state=${ctlBriefs.state} reason=${JSON.stringify(ctlBriefs.reason)} ` +
+        `count=${JSON.stringify(ctlBriefs.count)} (contributed ${ctlContributed}) · ${control.rows.length} row(s) on screen · ` +
+        `${namesBriefs(control).length} banner(s) naming BRIEFS. The world differs from \`nofts\` in ONE thing — \`briefs_fts\` — so ` +
+        `every reading below is caused by that table and not by a page that can only render failure`,
+  );
+
+  // --- 17-wire · the SERVER's layer block, read out of process --------------
+  //
+  // `apiJson` is a node-side `fetch`, so neither browser mutation can touch it.
+  // That is what makes 17a a COMPARISON rather than a mirror: the DOM is judged
+  // against a reading the page could not have produced.
+  const scope = await activeProject(noftsTab);
+  const wire = await apiJson(
+    `${worlds.nofts.url}/api/search?q=${encodeURIComponent(FUSED_Q)}` +
+      (scope === null ? "" : `&project=${encodeURIComponent(scope)}`),
+  );
+  const wireLayers = (wire.layers ?? []).map((l) => l.layer);
+  const wireBriefs = (wire.layers ?? []).find((l) => l.layer === "briefs") ?? null;
+  check(
+    "17-wire",
+    JSON.stringify([...wireLayers].sort()) === JSON.stringify([...FUSED_LAYERS].sort()) &&
+      wireBriefs !== null &&
+      wireBriefs.available === false &&
+      typeof wireBriefs.reason === "string" &&
+      wireBriefs.reason.length > 0,
+    `nofts endpoint, q="${FUSED_Q}" scope=${JSON.stringify(scope)}: layers[]=${JSON.stringify(wireLayers)} ` +
+      `(expected the ${FUSED_LAYERS.length} declared) · briefs available=${wireBriefs?.available} ` +
+      `reason=${JSON.stringify(wireBriefs?.reason ?? null)} · ${wire.count} fused row(s)`,
+  );
+
+  // --- 17a · the strip shows EVERY layer the endpoint named ----------------
+  const domLayers = dead.layers.map((l) => l.layer);
+  check(
+    "17a",
+    JSON.stringify([...domLayers].sort()) === JSON.stringify([...wireLayers].sort()) &&
+      dead.stamped === dead.layers.length,
+    `nofts DOM strip: ${JSON.stringify(domLayers)} against the endpoint's ${JSON.stringify(wireLayers)} · ` +
+      `data-layer-count=${dead.stamped} vs ${dead.layers.length} rendered · ` +
+      `MISSING FROM THE PAGE: ${JSON.stringify(wireLayers.filter((l) => !domLayers.includes(l)))}` +
+      (mut("br17-silent-layer-drop")
+        ? "  [MUTATED: every unavailable layer filtered out of `layers[]` before the page saw it]"
+        : ""),
+  );
+
+  // --- 17b · the dead layer is named UNAVAILABLE, with the server's words ---
+  const domBriefs = briefsOf(dead);
+  check(
+    "17b",
+    domBriefs !== null &&
+      domBriefs.state === "unavailable" &&
+      domBriefs.reason !== null &&
+      domBriefs.reason === (wireBriefs?.reason ?? null),
+    domBriefs === null
+      ? "no `briefs` entry in the nofts strip at all — see 17a"
+      : `nofts DOM: briefs state=${domBriefs.state} basis=${domBriefs.basis} count=${JSON.stringify(domBriefs.count)} · ` +
+        `reason=${JSON.stringify(domBriefs.reason)} · the server's reason VERBATIM=${
+          domBriefs.reason === (wireBriefs?.reason ?? null)
+        } (the page never re-words it; a summarised reason would hide which arm is out)` +
+        (mut("br17-layer-lies-available")
+          ? "  [MUTATED: the out layer reports available:true with reason:null]"
+          : ""),
+  );
+
+  // --- 17c · the fault is LOUD, not a line in a strip -----------------------
+  //
+  // G-BR-13d's rule, one surface along: a degraded retrieval mode must carry
+  // the `shell-banner` class rather than render as a quiet readout. A reader
+  // scanning results should not have to audit a five-row strip to discover
+  // that a fifth of the brain was not searched.
+  const loud = namesBriefs(dead);
+  check(
+    "17c",
+    loud.length > 0 && loud.some((b) => /INCOMPLETE/i.test(b)),
+    loud.length === 0
+      ? `NOT LOUD — no \`shell-banner\` on the nofts page names BRIEFS. Banners present: ${JSON.stringify(dead.banners)}`
+      : `LOUD: ${JSON.stringify(loud)}`,
+  );
+
+  // --- 17d · and the list is STILL SERVING ---------------------------------
+  //
+  // The "not merely fewer rows" clause. Rows on screen, contributed by a layer
+  // that is NOT the dead one — so the page is simultaneously useful and honest,
+  // which is the whole shape AC-4 asks for.
+  const survivors = dead.layers.filter(
+    (l) => l.layer !== "briefs" && l.state === "ok" && contributedFrom(l.count) > 0,
+  );
+  check(
+    "17d",
+    dead.rows.length > 0 && survivors.length > 0,
+    `nofts: ${dead.rows.length} fused row(s) still on screen ${JSON.stringify(dead.rows)} · ` +
+      `contributed by ${survivors.length} live layer(s): ${JSON.stringify(
+        survivors.map((l) => `${l.layer} ${l.count}`),
+      )} · against the seeded world's ${control.rows.length} row(s) for the same query`,
+  );
+
+  note(
+    `THE PAIRED READING, which is the gate's actual argument: same query, same corpus, same page, and the ` +
+      `ONLY difference between the two worlds is \`briefs_fts\`. seeded -> ${control.rows.length} row(s), briefs ` +
+      `${JSON.stringify(ctlBriefs?.count ?? null)}; nofts -> ${dead.rows.length} row(s), briefs ` +
+      `${JSON.stringify(domBriefs?.count ?? null)} + ${loud.length} banner(s). The row count DID fall — and a ` +
+      `page that reported only that fall would be the defect, not the gate.`,
+  );
+  note(
+    "STATED LIMIT. This gate disables ONE layer, through the ONE mechanism a real pre-v23 brain provides. It " +
+      "does NOT prove the page renders four simultaneous faults, nor that a layer whose arm THROWS (rather " +
+      "than reporting itself unavailable) reaches the same rendering — `routes.ts` normalises throw / " +
+      "reader-`degraded` / `ok:false` into one `LayerReport` per arm and `dashboard-search-fused.test.ts` " +
+      "covers all three shapes at payload level. What is unexercised HERE is the browser twin of the other " +
+      "two shapes. The `context-docs` layer is the free second control the plan names (it reports itself out " +
+      "when no `?project=` is supplied) and is deliberately NOT used as the primary: 'not applicable' and " +
+      "'broken' are different facts and an implementation could special-case the first.",
   );
 }
 
@@ -7476,12 +8023,11 @@ async function main() {
   const worlds = {};
   const tabs = {};
   try {
-    // FR-241 adds a FIFTH world. `triage` is the only one whose brain is built
-    // by the engine's own migrations, which is the only schema the write door
-    // can boot against — see `seedTriageWorld`.
-    // FR-244 adds a SIXTH. `dense` is the only world whose payload reaches
-    // Tier C, which is the only tier where the density defect exists.
-    for (const kind of ["seeded", "vec", "empty", "missing", "triage", "dense"]) {
+    // THE SET LIVES IN `WORLDS` AND NOWHERE ELSE (FR-248). This loop used to
+    // carry its own literal array while the file header carried a count and a
+    // list, and the three drifted; each world's REASON now sits beside its key
+    // in `WORLDS` and is printed below, so the run states the set it built.
+    for (const kind of WORLD_KINDS) {
       const w = makeWorld(kind);
       worldDirs.push(w.brain);
       worlds[kind] = await startServer(w);
@@ -7491,8 +8037,10 @@ async function main() {
     process.stdout.write("FR-240 · G-BR — real-browser behavioural gates (CDP, no new dependency)\n");
     process.stdout.write(`node        ${process.version}\n`);
     process.stdout.write(`chrome      ${chrome.version}\n`);
+    process.stdout.write(`worlds      ${WORLD_KINDS.length}, derived from \`WORLDS\` — the count is not written anywhere by hand\n`);
     for (const kind of Object.keys(worlds)) {
       process.stdout.write(`${`${kind} brain`.padEnd(12)}${worlds[kind].brain}  ->  ${worlds[kind].url}\n`);
+      process.stdout.write(`${"".padEnd(12)}${WORLDS[kind]}\n`);
     }
     const herm = hermeticSurvey(worlds);
     process.stdout.write(`hermetic    allowRemoteModels=false in every server: ${herm.line}\n`);
@@ -7578,6 +8126,12 @@ async function main() {
     // gate that asserts row counts there (1, 2, 3, 4, 5, 6, 7, 9) and BEFORE
     // G-BR-12, which opens its own tabs and seeds an extra brief.
     await runGate("G-BR-13", () => gBr13(tabs.seeded, worlds.seeded));
+    // FR-248, next to G-BR-13 because they are the two search gates and a
+    // reader comparing them should not have to scroll. It opens its OWN tabs on
+    // `seeded` and `nofts`, seeds nothing and writes nothing, so its position is
+    // free — but it is placed BEFORE G-BR-12, which seeds a fifth brief into the
+    // `seeded` world, so its positive control reads the pristine fixture.
+    await runGate("G-BR-17", () => gBr17(chrome.port, worlds));
     await runGate("G-BR-12", () => gBr12(chrome.port, worlds.seeded));
     // FR-244, LAST. Its own world and its own tab, so its zoom sweep and its
     // viewport overrides cannot disturb any earlier gate — G-BR-7 in particular

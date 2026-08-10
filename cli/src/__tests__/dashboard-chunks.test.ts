@@ -136,7 +136,7 @@
  *
  *   chunk            on disk   route it serves   what it is charged for
  *   ───────────────  ────────  ────────────────  ────────────────────────────
- *   index-<hash>     285_390   INITIAL / every   react-dom (459_831 rendered),
+ *   index-<hash>     285_689   INITIAL / every   react-dom (459_831 rendered),
  *                                                gsap (153_215 — see below),
  *                                                react, scheduler, `App.tsx`,
  *                                                `router.tsx`, `main.tsx`,
@@ -152,16 +152,37 @@
  *                                                float-tooltip + its preact,
  *                                                canvas-color-tracker,
  *                                                accessor-fn, index-array-by
- *   Layers-<hash>     45_539   #/layers          `pages/Layers.tsx`,
+ *   Search-<hash>      7_364   #/search          FR-248: `pages/Search.tsx`,
+ *                                                `search/model.ts`
+ *   SearchReadout-<h>  6_181   layers + triage   FR-248 re-partition: Rollup
+ *                                + search        moved `components/record/**`
+ *                                                (`RecordList`, `FilterBar`,
+ *                                                `SearchReadout`) OUT of
+ *                                                `useQFilter` when `#/search`
+ *                                                became a THIRD async importer.
+ *                                                Nothing duplicated; the sharing
+ *                                                set changed, so the partition
+ *                                                did. Net +948 B for the split.
+ *                                                `15d-search` asserts the search
+ *                                                route fetches THIS and NOT
+ *                                                `useQFilter`.
+ *   Layers-<hash>      45_577   #/layers          `pages/Layers.tsx`,
  *                                                `pages/layers/**`,
  *                                                `markdown/**`
- *   Triage-<hash>     12_675   #/triage          `pages/Triage.tsx`
- *   useQFilter-<h>    11_448   layers + triage   `components/record/**`,
- *                                                `triage/**` — SHARED between
+ *   Triage-<hash>     12_721   #/triage          `pages/Triage.tsx`
+ *   useQFilter-<h>     6_215   layers + triage   `triage/**` + the layer hooks
+ *                                                + `ui/Badge` — SHARED between
  *                                                two async chunks, so Rollup
  *                                                hoisted it and Vite fetches it
  *                                                in PARALLEL with the route
- *                                                chunk, not after it
+ *                                                chunk, not after it. SHRANK
+ *                                                11_448 -> 6_215 at FR-248 when
+ *                                                `components/record/**` left for
+ *                                                `SearchReadout-<h>` (above).
+ *                                                A row that still said
+ *                                                "`components/record/**`" would
+ *                                                send the next author to the
+ *                                                wrong chunk.
  *   neighbours-<h>     1_036   graph + layers    `graph/neighbours.ts`,
  *                                                `lib/graphCache.ts`
  *   Button-<hash>        380   graph + layers    `components/ui/Button.tsx`

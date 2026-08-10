@@ -64,6 +64,21 @@ import { PENDING_ROUTES, ROUTE_LABELS, useRoute } from "./router";
 const Graph = lazy(() => import("./pages/Graph").then((m) => ({ default: m.Graph })));
 const Layers = lazy(() => import("./pages/Layers").then((m) => ({ default: m.Layers })));
 const Triage = lazy(() => import("./pages/Triage").then((m) => ({ default: m.Triage })));
+/*
+ * FR-248 — THE FOURTH LAZY ROUTE, and it is lazy for the reason the block above
+ * describes rather than by habit.
+ *
+ * `pages/Search.tsx` exclusively owns `search/**`. Everything else it renders —
+ * `components/record/**`, `ProjectScope`, `ui/Chip` — is already in the entry or
+ * in the shared async chunk that Layers and Triage fetch, so a third async
+ * importer of that chunk duplicates nothing. The eager cost of this route is
+ * these three lines plus a `ROUTES` member and a nav label.
+ *
+ * The obligation from the block above applies in full: making it eager (or
+ * static-importing `pages/Search` anywhere) pulls `search/**` back onto the
+ * critical path and re-bases both ceilings.
+ */
+const Search = lazy(() => import("./pages/Search").then((m) => ({ default: m.Search })));
 
 export function App() {
   const [palette, setPalette] = usePalette();
@@ -169,6 +184,16 @@ export function App() {
                * exist". *Disabled, not broken.*
                */
               <Triage live={live} search={search} />
+            ) : route === "search" ? (
+              /*
+               * FR-248. It takes NO `search` prop, and the omission is the
+               * decision (D6): the nav box is a MUTE over data already in
+               * memory, and this page's box is a QUERY that reaches five
+               * readers. Handing this route the shell's state would make one of
+               * the two a lie about its own cost, so `Nav.tsx` leaves the slot
+               * empty here and the page brings its own control.
+               */
+              <Search live={live} />
             ) : (
               <Overview live={live} />
             )}

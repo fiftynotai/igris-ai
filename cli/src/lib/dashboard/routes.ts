@@ -77,24 +77,38 @@ import {
   BRIEF_FILTERS,
   GOAL_FILTERS,
   LEARNING_FILTERS,
+  SEARCH_FILTERS,
   SUGGESTION_FILTERS,
   parseFilters,
+  parseLayers,
   parsePageParams,
   parseQuery,
   parseTriageBody,
 } from "./params.js";
+import {
+  DECLARED_LAYERS,
+  FUSION_RRF_K,
+  appliedParams,
+  fuseLayers,
+  fusionWeights,
+  retrievalAvailability,
+  type LayerRanking,
+} from "./search-fuse.js";
 import type {
   BrainGraphPayload,
   BrainGraphStatsPayload,
   BriefDetailPayload,
   BriefListRowPayload,
   BriefSearchRowPayload,
+  BriefRetrievalPayload,
   BriefsPayload,
   BriefsSearchPayload,
   ContextDocPayload,
   ContextDocRowPayload,
   ContextDocsPayload,
   DashboardProject,
+  FusedLayerReportPayload,
+  FusedSearchPayload,
   GoalDetailPayload,
   GoalListRowPayload,
   GoalRowPayload,
@@ -106,6 +120,9 @@ import type {
   LearningsPayload,
   LearningsSearchPayload,
   ProjectsPayload,
+  RetrievalPayload,
+  SearchLayerId,
+  SearchRankBasis,
   SuggestionRowPayload,
   SuggestionsPayload,
   SubstringSearchPayload,
@@ -713,6 +730,546 @@ export async function briefsSearch(
     return {
       ...base,
       degraded: { reason: `brief search failed: ${messageOf(err)}` },
+    };
+  } finally {
+    closeQuietly(handle.db);
+  }
+}
+
+// --- FR-248: the fused cross-layer search ----------------------------------
+
+/**
+ * Which layers rank by RELEVANCE and which by their own list order.
+ *
+ * MEASURED FROM FR-246'S CODE, not assumed: `hybridSearchBriefs` and
+ * `hybridSearchLearnings` fuse BM25 against a vector arm; `listGoals`,
+ * `listSuggestions` and `grepDocs` run `LIKE '%q%'` (or a file grep) and return
+ * the list's own order — a deadline, a priority band, a catalog position. THREE
+ * OF THE FIVE ARE SUBSTRING. That asymmetry is the whole of AC-5 and it is
+ * carried on the layer block AND on every row, because labelling the layer
+ * alone leaves a reader looking at one result unable to tell what its position
+ * means.
+ */
+const RANK_BASIS: Record<SearchLayerId, SearchRankBasis> = {
+  briefs: "rrf",
+  learnings: "rrf",
+  goals: "substring",
+  suggestions: "substring",
+  "context-docs": "substring",
+};
+
+/**
+ * The `retrieval` block a RETRIEVAL layer carries when its arm never ran.
+ *
+ * It is emitted rather than left null so invariant 3 (`retrieval` XOR `search`)
+ * holds on EVERY layer on EVERY path, including the degraded ones. A layer that
+ * dropped its block when it failed would make the honesty contract hold exactly
+ * when nothing was wrong.
+ */
+function emptyFusedRetrieval(reason: string | null): BriefRetrievalPayload {
+  return {
+    mode: "none",
+    vector_available: false,
+    embedding_available: false,
+    bm25_hits: 0,
+    vector_hits: 0,
+    rrf_k: 60,
+    weights: { bm25: 0.5, vector: 0.5 },
+    reason,
+    bm25_reason: null,
+  };
+}
+
+/**
+ * A layer that produced nothing, with the reason it produced nothing.
+ *
+ * `fields: []` on the substring side is deliberate and is not a placeholder: no
+ * grep ran, so no fields were searched. Naming them anyway would put a SECOND
+ * definition of each reader's field list in this file — the drift FR-246's
+ * "forward the reader's own block" rule exists to prevent.
+ */
+function outLayer(
+  layer: SearchLayerId,
+  requested: boolean,
+  reason: string,
+): FusedLayerReportPayload {
+  const basis = RANK_BASIS[layer];
+  return {
+    layer,
+    requested,
+    available: false,
+    reason,
+    rank_basis: basis,
+    hits: 0,
+    contributed: 0,
+    retrieval: basis === "rrf" ? emptyFusedRetrieval(reason) : null,
+    search: basis === "rrf" ? null : { mode: "substring", fields: [] },
+    applied: [],
+  };
+}
+
+/** One arm's outcome: its standing, plus its ranked rows when it has any. */
+interface ArmOutcome {
+  report: FusedLayerReportPayload;
+  ranking: LayerRanking | null;
+}
+
+/**
+ * `GET /api/search?q=<query>&project=<slug>&limit=&layers=<csv>` — FR-248.
+ *
+ * ONE ranked list over all five layers, fused by RANK. The eighteenth endpoint
+ * path and the seventeenth GET.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * ONE HANDLE, FIVE READERS — AND IT MUST BE THE `WithVec` ONE
+ * ─────────────────────────────────────────────────────────────────────────
+ * `openBrainReadonlyWithVec()` is opened ONCE and passed to all four brain
+ * readers. Every other endpoint in this tier opens, calls one reader and
+ * closes; this is the first to share a handle, which is why
+ * `dashboard-readonly.test.ts` names it as well as crawling it.
+ *
+ * The `WithVec` door is not a preference. `isVectorSearchAvailable(db)` probes
+ * `SELECT vec_version()` on THAT connection, so a plain `openBrainReadonly`
+ * would make BOTH hybrid arms take their BM25-only path **silently** — a
+ * degradation invisible in the payload, which is the exact failure AC-4 names.
+ * `handle.vector_reason` is forwarded into each retrieval layer's report the
+ * same way `briefsSearch` does it: the reader can say "sqlite-vec not loaded",
+ * but only the bridge knows WHY.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * `Promise.allSettled`, NOT ONE `try`/`catch` — THIS IS THE AC-4 MECHANISM
+ * ─────────────────────────────────────────────────────────────────────────
+ * better-sqlite3 is synchronous, so this parallelises almost nothing (only the
+ * two embedding calls, which latch after the first). It is chosen for FAILURE
+ * ISOLATION. The five arms report unavailability in THREE different shapes —
+ * `listGoals` THROWS on an absent table, `listSuggestions` returns
+ * `degraded: string`, `readInventory` returns `{ok:false, reason}` — and an
+ * outer catch would collapse any one of them into a whole-response degrade,
+ * which is the precise opposite of "the response SAYS which layer is out".
+ *
+ * `layers[]` therefore carries one entry PER DECLARED LAYER on every path,
+ * including the ones that return before a single arm runs. A layer is never
+ * absent, only `available: false` — which is what makes a silent drop
+ * unrepresentable rather than merely untested.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * BR-085, IN ITS FUSED VARIANT
+ * ─────────────────────────────────────────────────────────────────────────
+ * This endpoint binds `q` + `project` + `limit` + `layers` AND NOTHING ELSE,
+ * and each layer's `applied` is derived from THAT ARM'S OWN OPTIONS OBJECT via
+ * `appliedParams`, whose map is typed `keyof typeof opts` so a false binding
+ * claim fails to COMPILE. Per-layer rather than per-response, because the new
+ * variant of BR-085's defect on a fused surface is a filter that binds on some
+ * arms and not others: a whole-response claim would be true on average.
+ *
+ * `parseQuery` (not the `q`-as-filter form): an empty `q` REFUSES, matching
+ * `/api/briefs/search`. A search with no query is not a search with a default.
+ */
+export async function fusedSearch(
+  search: URLSearchParams,
+): Promise<FusedSearchPayload> {
+  const page = parsePageParams(search, { limit: 20 });
+  const filters = parseFilters(search, SEARCH_FILTERS, ["limit", "q", "layers"]);
+  const parsed = parseQuery(search);
+  const picked = parseLayers(search, DECLARED_LAYERS);
+  const notes = [...page.rejected, ...filters.rejected, ...picked.rejected];
+
+  const project = filters.values.project;
+  const limit = page.limit;
+  const requested = new Set(picked.layers as SearchLayerId[]);
+
+  // `offset` is parsed by `parsePageParams` and cannot be forwarded: rank
+  // fusion over five arms has no stable offset semantics. Silently serving page
+  // one for `?offset=20` is BR-085's shape with a page control.
+  if (page.offset > 0) {
+    notes.push(
+      `offset: dropped — the fused list is one page; page a layer's own endpoint instead`,
+    );
+  }
+
+  // TD-326 — scoping to a project HIDES a population that belongs to no
+  // project. On the operator brain that is 377 of 1,210 pending suggestions.
+  // "search everything" quietly meaning "everything that has a project" is
+  // BR-085's shape one level up, so it is stated whenever it applies.
+  if (project !== undefined && requested.has("suggestions")) {
+    notes.push(
+      `suggestions: project=${project} hides the brain-level queue (project_slug IS NULL) — those rows belong to no project and a scoped search cannot reach them`,
+    );
+  }
+
+  /** The whole-response failure shape: five stated unavailabilities. */
+  const allOut = (reason: string): FusedSearchPayload => ({
+    query: parsed.ok ? parsed.query : "",
+    items: [],
+    count: 0,
+    layers: DECLARED_LAYERS.map((l) => outLayer(l, requested.has(l), reason)),
+    fusion: {
+      rrf_k: FUSION_RRF_K,
+      weights: fusionWeights(),
+      substring_layers: [],
+    },
+    params: notes,
+    generated_at: now(),
+    degraded: { reason },
+  });
+
+  if (!parsed.ok) return allOut(parsed.reason);
+  if (!brainPresent()) return allOut(brainMissingReason());
+
+  const readers = await bridge.loadLayerReaders();
+  if (readers === null) {
+    return allOut(
+      bridge.lastLayerReadersFailure() ??
+        "brain read layer could not be loaded from the vendored bundle",
+    );
+  }
+  const handle = await bridge.openBrainReadonlyWithVec();
+  if (handle === null) {
+    return allOut(
+      `brain database at ${brainDbPath()} could not be opened read-only`,
+    );
+  }
+
+  const query = parsed.query;
+  const NOT_REQUESTED = `not requested — ?layers= narrowed this search to ${picked.layers.join(", ")}`;
+
+  // --- the five arms -------------------------------------------------------
+  //
+  // Each one is its own async thunk so `Promise.allSettled` can isolate its
+  // failure. Each converts the THREE shapes of unavailability its reader uses
+  // into the ONE `LayerReport` shape the wire carries.
+
+  const briefsArm = async (): Promise<ArmOutcome> => {
+    const opts = { query, project, limit };
+    const BOUND_BY: ReadonlyMap<string, keyof typeof opts> = new Map([
+      ["q", "query"],
+      ["project", "project"],
+      ["limit", "limit"],
+    ]);
+    const r = await readers.hybridSearchBriefs(handle.db, opts);
+    // `vector_available` is forwarded VERBATIM — the probe is the authoritative
+    // answer to "can this connection run vector search", a strictly different
+    // fact from "the vector arm contributed". Only the REASON is enriched.
+    const retrieval: BriefRetrievalPayload = {
+      ...r.retrieval,
+      reason: handle.vector_reason ?? r.retrieval.reason,
+    };
+    const avail = retrievalAvailability(retrieval);
+    // A hydration miss is dropped rather than shipped as a placeholder row, so
+    // `hits` counts what could actually be contributed — an over-claimed `hits`
+    // would make invariant 5's `contributed <= hits` pass for the wrong reason.
+    const rows = r.rows
+      .filter((e) => e.row !== null)
+      .map((e) => {
+        const row = e.row as NonNullable<typeof e.row>;
+        return {
+          // BR-078: a brief id alone names a different brief in 25 projects, so
+          // the address is the PAIR. `key` composes both, which is what keeps
+          // the fused list's keys unique when `BR-001` matches twice.
+          ref: { project: row.project, id: row.brief_id },
+          title: row.title,
+          subtitle: `${row.brief_type ?? "brief"} · ${row.status}`,
+          updated_at: row.updated_at,
+          rrf_score: e.rrf_score,
+        };
+      });
+    return {
+      report: {
+        layer: "briefs",
+        requested: true,
+        available: avail.available,
+        reason: avail.reason,
+        rank_basis: RANK_BASIS.briefs,
+        hits: rows.length,
+        contributed: 0,
+        retrieval,
+        search: null,
+        applied: appliedParams(opts, BOUND_BY),
+      },
+      ranking: avail.available
+        ? { layer: "briefs", rank_basis: RANK_BASIS.briefs, rows }
+        : null,
+    };
+  };
+
+  const learningsArm = async (): Promise<ArmOutcome> => {
+    // `review_status` is NOT bound. The reader defaults it to `approved` — the
+    // FR-109 conscious channel — and widening a fused "what do we know about X"
+    // to unreviewed candidates is a retrieval decision this brief does not
+    // make. It is not silently dropped either: it is not in `SEARCH_FILTERS`,
+    // so `parseFilters` reports `unknown filter: review_status`.
+    const opts = { query, project, limit };
+    const BOUND_BY: ReadonlyMap<string, keyof typeof opts> = new Map([
+      ["q", "query"],
+      ["project", "project"],
+      ["limit", "limit"],
+    ]);
+    const r = await readers.hybridSearchLearnings(handle.db, opts);
+    const retrieval: RetrievalPayload = {
+      ...r.retrieval,
+      reason: handle.vector_reason ?? r.retrieval.reason,
+    };
+    // No `bm25_reason` key: `learnings_fts` has existed since schema v1, so
+    // this layer's lexical arm cannot be structurally missing.
+    const avail = retrievalAvailability(retrieval);
+    const rows = r.rows
+      .filter((e) => e.row !== null)
+      .map((e) => {
+        const row = e.row as NonNullable<typeof e.row>;
+        return {
+          ref: { project: row.project, id: String(row.id) },
+          title: row.title,
+          subtitle: row.category,
+          updated_at: row.created_at,
+          rrf_score: e.rrf_score,
+        };
+      });
+    return {
+      report: {
+        layer: "learnings",
+        requested: true,
+        available: avail.available,
+        reason: avail.reason,
+        rank_basis: RANK_BASIS.learnings,
+        hits: rows.length,
+        contributed: 0,
+        retrieval,
+        search: null,
+        applied: appliedParams(opts, BOUND_BY),
+      },
+      ranking: avail.available
+        ? { layer: "learnings", rank_basis: RANK_BASIS.learnings, rows }
+        : null,
+    };
+  };
+
+  const goalsArm = async (): Promise<ArmOutcome> => {
+    // `listGoals` THROWS on an absent table — no `degraded` field. That throw
+    // is the whole reason this is a thunk under `allSettled`.
+    const opts = { q: query, project, limit, offset: 0 };
+    const BOUND_BY: ReadonlyMap<string, keyof typeof opts> = new Map([
+      ["q", "q"],
+      ["project", "project"],
+      ["limit", "limit"],
+    ]);
+    const r = readers.listGoals(handle.db, opts);
+    const rows = r.goals.map((g) => ({
+      ref: { project: g.project_slug, id: g.goal_id },
+      title: g.title,
+      subtitle: g.deadline === null ? g.status : `${g.status} · ${g.deadline}`,
+      updated_at: g.updated_at,
+      // No relevance score exists for a `LIKE`, and inventing one here is
+      // precisely the laundering scope item 5 forbids.
+      rrf_score: null,
+    }));
+    return {
+      report: {
+        layer: "goals",
+        requested: true,
+        available: true,
+        reason: null,
+        rank_basis: RANK_BASIS.goals,
+        hits: rows.length,
+        contributed: 0,
+        retrieval: null,
+        // The reader's OWN block, forwarded. Never a field list written here.
+        search: r.search,
+        applied: appliedParams(opts, BOUND_BY),
+      },
+      ranking: { layer: "goals", rank_basis: RANK_BASIS.goals, rows },
+    };
+  };
+
+  const suggestionsArm = async (): Promise<ArmOutcome> => {
+    // `project` on the wire, `project_slug` in the table — the shared project
+    // selector emits `project` on every page.
+    const opts = { q: query, project_slug: project, limit, offset: 0 };
+    const BOUND_BY: ReadonlyMap<string, keyof typeof opts> = new Map([
+      ["q", "q"],
+      ["project", "project_slug"],
+      ["limit", "limit"],
+    ]);
+    const r = readers.listSuggestions(handle.db, opts);
+    // The THIRD shape: this reader reports an absent table through its own
+    // `degraded` string rather than throwing.
+    if (r.degraded !== null) {
+      return {
+        report: {
+          ...outLayer("suggestions", true, r.degraded),
+          applied: appliedParams(opts, BOUND_BY),
+        },
+        ranking: null,
+      };
+    }
+    const rows = r.suggestions.map((s) => ({
+      ref: { project: s.project_slug, id: String(s.id) },
+      title: s.title,
+      subtitle: `${s.source_module} · ${s.priority}`,
+      updated_at: s.created_at,
+      rrf_score: null,
+    }));
+    return {
+      report: {
+        layer: "suggestions",
+        requested: true,
+        available: true,
+        reason: null,
+        rank_basis: RANK_BASIS.suggestions,
+        hits: rows.length,
+        contributed: 0,
+        retrieval: null,
+        search: r.search,
+        applied: appliedParams(opts, BOUND_BY),
+      },
+      ranking: { layer: "suggestions", rank_basis: RANK_BASIS.suggestions, rows },
+    };
+  };
+
+  const contextDocsArm = async (): Promise<ArmOutcome> => {
+    const opts = { q: query, project, limit };
+    const BOUND_BY: ReadonlyMap<string, keyof typeof opts> = new Map([
+      ["q", "q"],
+      ["project", "project"],
+      ["limit", "limit"],
+    ]);
+    const applied = appliedParams(opts, BOUND_BY);
+    if (project === undefined) {
+      return {
+        report: {
+          ...outLayer(
+            "context-docs",
+            true,
+            "context docs are addressed per project — supply ?project=<slug>",
+          ),
+          applied,
+        },
+        ranking: null,
+      };
+    }
+    // The SECOND shape: `{ok:false, reason}`.
+    const inventory = readInventory(project);
+    if (!inventory.ok) {
+      return {
+        report: { ...outLayer("context-docs", true, inventory.reason), applied },
+        ranking: null,
+      };
+    }
+    if (inventory.digest.degraded) {
+      // An incomplete inventory means the doc LIST could not be determined, so
+      // a grep over it cannot claim to have covered the corpus. Reported as
+      // unavailable with the same sentence `/api/context-docs` already uses for
+      // this state, rather than as an honest-looking empty result.
+      return {
+        report: {
+          ...outLayer(
+            "context-docs",
+            true,
+            "inventory incomplete: project profile or catalog data missing",
+          ),
+          applied,
+        },
+        ranking: null,
+      };
+    }
+    const hits = grepDocs(project, query, inventory.digest.docs).slice(0, limit);
+    const rows = hits.map((hit) => ({
+      ref: { project, id: hit.type },
+      title: hit.type,
+      subtitle: hit.matches[0]?.snippet ?? null,
+      updated_at: null,
+      rrf_score: null,
+    }));
+    return {
+      report: {
+        layer: "context-docs",
+        requested: true,
+        available: true,
+        reason: null,
+        rank_basis: RANK_BASIS["context-docs"],
+        hits: rows.length,
+        contributed: 0,
+        retrieval: null,
+        // Written here rather than forwarded because this arm has no reader to
+        // forward from — it really is a file grep, and `body` says so instead
+        // of naming a column that would imply an index.
+        search: { mode: "substring", fields: ["body"] },
+        applied: appliedParams(opts, BOUND_BY),
+      },
+      ranking: { layer: "context-docs", rank_basis: RANK_BASIS["context-docs"], rows },
+    };
+  };
+
+  const ARMS: Record<SearchLayerId, () => Promise<ArmOutcome>> = {
+    briefs: briefsArm,
+    learnings: learningsArm,
+    goals: goalsArm,
+    suggestions: suggestionsArm,
+    "context-docs": contextDocsArm,
+  };
+
+  try {
+    // Derived from `DECLARED_LAYERS`, so a sixth layer cannot be added to the
+    // union and forgotten here — the dispatch is the map, never a chain of
+    // `else`s that would send a new id to whichever arm sits last.
+    const run = DECLARED_LAYERS.map((layer) =>
+      requested.has(layer)
+        ? ARMS[layer]()
+        : Promise.resolve<ArmOutcome>({
+            report: outLayer(layer, false, NOT_REQUESTED),
+            ranking: null,
+          }),
+    );
+    const settled = await Promise.allSettled(run);
+
+    const reports: FusedLayerReportPayload[] = [];
+    const rankings: LayerRanking[] = [];
+    settled.forEach((outcome, i) => {
+      const layer = DECLARED_LAYERS[i] as SearchLayerId;
+      if (outcome.status === "rejected") {
+        // The FIRST shape: the reader threw. Normalised here, per arm, so one
+        // dead layer cannot take the other four with it.
+        reports.push(
+          outLayer(
+            layer,
+            requested.has(layer),
+            `${layer} search failed: ${messageOf(outcome.reason)}`,
+          ),
+        );
+        return;
+      }
+      reports.push(outcome.value.report);
+      if (outcome.value.ranking !== null) rankings.push(outcome.value.ranking);
+    });
+
+    const items = fuseLayers(rankings, limit);
+    for (const report of reports) {
+      report.contributed = items.filter((r) => r.layer === report.layer).length;
+    }
+
+    const anyAvailable = reports.some((r) => r.available);
+    return {
+      query,
+      items,
+      count: items.length,
+      layers: reports,
+      fusion: {
+        rrf_k: FUSION_RRF_K,
+        weights: fusionWeights(),
+        // D1's mandatory readout, as data: the substring layers that actually
+        // CONTRIBUTED. A layer that returned nothing has nothing to warn about,
+        // and listing it would train the reader to ignore the warning.
+        substring_layers: reports
+          .filter((r) => r.rank_basis === "substring" && r.contributed > 0)
+          .map((r) => r.layer),
+      },
+      params: notes,
+      generated_at: now(),
+      // A single dead layer is `layers[]`'s job, NOT a whole-response degrade —
+      // four working layers is a working search. Zero working layers is not,
+      // and that one IS stated here as well as per-layer.
+      degraded: anyAvailable
+        ? null
+        : { reason: "no layer could be searched — see layers[] for each cause" },
     };
   } finally {
     closeQuietly(handle.db);

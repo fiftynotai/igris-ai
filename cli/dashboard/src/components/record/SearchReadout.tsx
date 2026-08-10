@@ -28,6 +28,12 @@
  */
 
 import type { RetrievalReport, SubstringSearch } from "../../lib/api";
+// TYPE-ONLY, and that matters here rather than being a style choice: this file
+// sits in the SHARED `useQFilter` chunk that Layers and Triage both fetch, and a
+// value import from `search/model` would pull the fused search's model into it
+// for two routes that never render one. `verbatimModuleSyntax` makes the
+// erasure explicit, so this line emits nothing and creates no chunk edge.
+import type { LayerStanding } from "../../search/model";
 
 /** The hybrid/degraded readout. Moved from `Learnings.tsx`, wording unchanged. */
 export function RetrievalBanner({ retrieval }: { retrieval: RetrievalReport }) {
@@ -81,6 +87,86 @@ export function SubstringBanner({ substring }: { substring: SubstringSearch }) {
       SUBSTRING FILTER — literal match over {substring.fields.join(", ")}. No
       ranking and no recall; a synonym will not match.
     </p>
+  );
+}
+
+/**
+ * FR-248 — the PER-LAYER variant, for a surface that searched more than one.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * WHY A THIRD READOUT AND NOT A THIRD CALLER OF THE TWO ABOVE
+ * ─────────────────────────────────────────────────────────────────────────
+ * `RetrievalBanner` and `SubstringBanner` each describe ONE search. The fused
+ * surface ran five, and the fact that matters about it is not any one arm's mode
+ * — it is the SET: which layers ran, which the operator excluded, and which are
+ * broken. Rendering five stacked banners would say all of it and communicate
+ * none of it, and (worse) a layer with nothing to say would render nothing,
+ * which is exactly the absence AC-4 forbids.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * IT RENDERS EVERY ELEMENT IT IS GIVEN, UNCONDITIONALLY
+ * ─────────────────────────────────────────────────────────────────────────
+ * There is no `.filter()` in this component and there must not be one. The wire
+ * guarantees `layers[]` carries one entry per layer on every code path, and
+ * `search/model.ts#layerStandings` maps it 1:1; this is the last link in that
+ * chain. A layer whose retrieval is unavailable is REPORTED — with the server's
+ * own sentence, verbatim — never silently absent.
+ *
+ * `data-layer-state` is the gate's handle, for the same reason
+ * `data-search-mode` is above: a gate that matched on the copy would go stale
+ * the first time the copy improved. THREE values, not two, because `excluded`
+ * (the operator's own `?layers=` choice) and `unavailable` (a fault) are
+ * different facts and the whole surface exists to stop them being rendered as
+ * one.
+ */
+export function LayerAvailability({
+  standings,
+}: {
+  standings: readonly LayerStanding[];
+}) {
+  return (
+    <ul
+      className="search-layers"
+      aria-label="Which layers this search reached"
+      // The count is stamped so a gate can assert that ALL of them are on
+      // screen without knowing their names — the property is "one per declared
+      // layer", and a gate that enumerated names would pass a payload missing
+      // the sixth layer it had never heard of.
+      data-layer-count={standings.length}
+    >
+      {standings.map((s) => (
+        <li
+          key={s.layer}
+          className="search-layer"
+          data-layer={s.layer}
+          data-layer-state={s.state}
+          data-rank-basis={s.rank_basis}
+        >
+          <span className="search-layer-head">
+            <b>{s.label}</b>
+            <span className="search-layer-state">{s.state_label}</span>
+            <span className="search-layer-basis">{s.basis_label}</span>
+            <span className="search-layer-count">
+              {s.state === "ok" ? `${s.contributed} OF ${s.hits} SHOWN` : "NO ROWS"}
+            </span>
+          </span>
+          {/*
+            BR-085, per layer. `applied` is derived server-side from the arm's
+            OWN options object, so this line is what that arm really bound —
+            and on a fused surface the interesting case is a filter that binds
+            on some arms and not others, which a whole-response list would
+            average away.
+          */}
+          <span className="search-layer-applied">
+            BOUND: {s.applied.length > 0 ? s.applied.join(", ") : "—"}
+          </span>
+          {/* The server's sentence, verbatim. Never re-worded, never summarised. */}
+          {s.reason !== null && (
+            <span className="search-layer-reason">{s.reason}</span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

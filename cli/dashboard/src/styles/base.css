@@ -2027,3 +2027,109 @@ h6.record-md-h {
 .brief-write-select option[disabled] {
   color: var(--muted);
 }
+
+/* ═════════════════════════════════════════════════════════════════════════
+   FR-248 · the fused cross-layer search (`#/search`)
+
+   INSIDE THE FR-240 SCAN, like every block since it: the scan runs from
+   "FR-240 · the record layer" to EOF, so the four executable constraints hold
+   here — token-only colour, no custom property, no radius, hairline borders.
+   `design_system.md` records them and points at
+   `cli/src/__tests__/dashboard-layers-source.test.ts`, which is what actually
+   goes red.
+
+   ONE NEW ELEMENT, AND IT IS A READOUT RATHER THAN A CONTROL: the per-layer
+   STANDINGS strip (`.search-layers`). Everything else on this page is the
+   record tier's existing vocabulary — `.record-list` rows, `.record-filters`,
+   `.record-readout`, `.shell-banner`, `.tweaks-chip`.
+
+   WHY THE STRIP IS A LIST AND NOT A TABLE: every row carries a variable-length
+   sentence (the server's own `reason`, verbatim), and a table would either clip
+   it or make the column width a function of the worst failure. The mono head
+   line is fixed-width by content and the reason wraps beneath it.
+
+   NOTHING HERE HIDES A LAYER. There is no `display: none` in this block and
+   there must not be one — AC-4's whole claim is that an unavailable layer is
+   REPORTED rather than absent, and CSS is the last place that claim can be
+   quietly undone after the component has done it right. State is carried by
+   the border and the label, never by removal.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+/* The `?layers=` selector. Sits between the project scope and the list, so the
+   two narrowings read as one strip of scope controls. */
+.search-scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2);
+  margin-bottom: var(--s-3);
+}
+
+/* ─── The per-layer standings (AC-4) ─── */
+.search-layers {
+  list-style: none;
+  margin: 0 0 24px;
+  padding: 0;
+  border-top: 0.5px solid var(--line);
+}
+.search-layer {
+  display: grid;
+  gap: 4px;
+  padding: 10px 4px;
+  border-bottom: 0.5px solid var(--line);
+}
+/* A LAYER THAT RAN reads as ordinary. The two that did not are marked on the
+   leading edge — the same accent rail `.record-row[data-active]` uses, so the
+   page has one idiom for "look here" rather than a second one invented for
+   failure. */
+.search-layer[data-layer-state="unavailable"] {
+  border-left: 0.5px solid var(--accent);
+  padding-left: 10px;
+}
+/* EXCLUDED IS NOT A FAULT — it is the operator's own `?layers=` choice, so it
+   is DIMMED rather than flagged. Rendering it in the fault register is the
+   conflation this whole surface exists to remove, one stylesheet lower down. */
+.search-layer[data-layer-state="excluded"] {
+  opacity: 0.62;
+}
+.search-layer-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.search-layer-head b {
+  font-weight: 400;
+  color: var(--fg);
+}
+/* The state word is the one thing on the row that is allowed to be loud, and
+   only in the fault case. */
+.search-layer[data-layer-state="unavailable"] .search-layer-state {
+  color: var(--accent);
+}
+.search-layer-basis,
+.search-layer-count,
+.search-layer-applied {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.7;
+}
+/* The server's sentence, VERBATIM — so it is NOT uppercased here. Every other
+   mono line on this page is transformed; this one carries a real message with
+   real table names and real paths in it, and shouting it would make it harder
+   to read at the exact moment it matters. */
+.search-layer-reason {
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--fg);
+}

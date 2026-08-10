@@ -95,6 +95,11 @@ const SMOKE_PROBE_PATHS: readonly string[] = [
   "/api/briefs",
   // FR-246 — the tenth, and the only path this brief adds.
   "/api/briefs/search",
+  // FR-248 — the fused cross-layer surface. Probed WITHOUT a `q`, like every
+  // detail endpoint above: `/api/search` with no query is a stated refusal that
+  // still answers 200, so the probe stays free of fixture data and works
+  // against any brain, including none.
+  "/api/search",
   "/api/brief",
   "/api/learnings",
   "/api/learnings/search",

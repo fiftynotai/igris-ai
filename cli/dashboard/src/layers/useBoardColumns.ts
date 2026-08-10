@@ -6,9 +6,12 @@
  * D1 — TWO EXISTING ENDPOINTS, AND FR-245 ADDED NONE
  *
  * (The heading used to read "no seventeenth", which was true of the endpoint
- * count as FR-245 left it — sixteen. FR-246 has since added a seventeenth,
- * `/api/briefs/search`, so the ORDINAL is no longer the claim. The claim was
- * always that the BOARD composes existing endpoints, and that is unchanged.)
+ * count as FR-245 left it. FR-246 then added `/api/briefs/search` and FR-248
+ * added `/api/search`, so the ORDINAL has been wrong twice. This file now
+ * carries no count at all: a historical note that quotes a live number goes
+ * stale on every endpoint after it, and it was never the claim. The claim was
+ * always that the BOARD composes endpoints that already exist — and that is
+ * unchanged, and cannot go stale.)
  * ─────────────────────────────────────────────────────────────────────────
  * `/api/summary` already returns `briefs.by_status`: a complete
  * `GROUP BY status` over the same project scope the board uses. That IS the

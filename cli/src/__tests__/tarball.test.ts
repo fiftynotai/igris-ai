@@ -951,8 +951,9 @@ interface PackReport {
  * same commit or do not write the second one.
  *
  * READ THIS BEFORE PLANNING THE NEXT BRIEF: **SUPERSEDED BY TD-374 — see the
- * directive further down; the live figure is ~148.3 KB (151_892 B) and it is
- * measured from a DIFFERENT baseline.** This paragraph is kept as FR-247-era
+ * directive further down, which is the ONE copy — this sentence deliberately
+ * carries no number, because a second copy is exactly how the last three went
+ * stale.** This paragraph is kept as FR-247-era
  * history, and it is the second copy of this directive: TD-373's changelog
  * claimed to have re-pointed "the ledger's head directive" and hit only one of
  * the two. ~104.9 KB was what was left (the
@@ -1251,8 +1252,55 @@ interface PackReport {
  *   `package.json` `files`. Which prose costs is a property of `files` and
  *   `tsconfig`, not intuition, and it is cheap to check before writing.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~148.3 KB (151_892 B) is what is
- * left** — the GRANT is +150 KB and the headroom is what remains under it, and
+ * FR-248 MEASURED LAST — the first brief to spend against TD-374's origin:
+ *   packed              1_889_030    800 entries
+ *   cumulative delta    +25.0 KB     (25_610 B over PACK_BASELINE_PACKED)
+ *   FR-248's own share  +23_902 B    against its plan's ~26 KB estimate, which
+ *                                    HELD — worth saying, since five other
+ *                                    numbers quoted into this brief did not
+ *   headroom remaining  ~125.0 KB    (127_990 B under TD-374's +150)
+ *   browser surfaces    INITIAL +299 B (estimate said ~300, also held)
+ *                       TOTAL   +8_695 B over 9 chunks (was 8 — Rollup
+ *                       re-partitioned when `SearchReadout` gained a third
+ *                       async importer). NEITHER chunk ceiling re-based:
+ *                       `HEADROOM` is deliberately ~four briefs of CUMULATIVE
+ *                       budget, so moving `MEASURED_TOTAL` would turn it into a
+ *                       per-brief reset.
+ *
+ *   WHICH PROSE COSTS IS A PROPERTY OF WHAT IT IS ATTACHED TO, not of which
+ *   file it lives in — and this session made three different claims about it
+ *   before measuring. The rule, verified in both directions:
+ *     - `src/__tests__/**`            FREE. `tsconfig` `exclude`s it from `dist`.
+ *     - `scripts/**`                  FREE. Outside `package.json` `files`.
+ *     - `docs/**`, `MAINTAINING.md`   FREE. Same reason.
+ *     - `cli/CHANGELOG.md`            CHARGED, verbatim — `files` ships it.
+ *     - a comment on RUNTIME code     CHARGED TWICE (`.js` + `.js.map`).
+ *                                     Verified: TD-373's note on `RSYNC_EXCLUDES`
+ *                                     (a `const`) appears in `dist/lib/sync/code.js`.
+ *     - a comment on a TYPE-ONLY      **FREE.** TypeScript ERASES `type` and
+ *       declaration                   `interface` entirely, and the docblock
+ *                                     above them goes with it. Verified: FR-248
+ *                                     added ~500 B of prose above
+ *                                     `TriageExtraKey`/`BriefRef` in
+ *                                     `brain-write-bridge.ts` and
+ *                                     `dist/lib/brain-write-bridge.js` came back
+ *                                     BYTE-IDENTICAL (same shasum after `touch`
+ *                                     + `tsc --listEmittedFiles` confirmed the
+ *                                     file WAS re-emitted).
+ *   So "it is in `cli/src`, therefore it ships" is too coarse, and so is "it is
+ *   a comment, therefore it is free". Check what the comment sits on.
+ *
+ *   THE LAST TWO DIGITS CHASE THEMSELVES, and this row is where that is stated.
+ *   `cli/CHANGELOG.md` SHIPS, so writing the exact byte count into the entry
+ *   changes the byte count. Three iterations converged to within 1 B and then
+ *   oscillated on the digit itself. Resolved by rounding in the changelog
+ *   (`~23.8 KB`) and putting the exact figure HERE — `src/__tests__` is excluded
+ *   from `dist` by `tsconfig`, so this file is packed-free and can carry a
+ *   number the changelog cannot. TD-374's row established that property; this
+ *   row is the first to need it.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~125.0 KB (127_990 B) is what is
+ * left** — FR-248's row below is the live reading; ~148.3 KB was TD-374's. — the GRANT is +150 KB and the headroom is what remains under it, and
  * the figure changed MEANING as well as value: TD-374 re-based the constant to
  * a clean measurement of TD-373's tree, and the operator granted +150 KB over
  * it, so this now reads growth-since-clean rather than growth-since-FR-238.

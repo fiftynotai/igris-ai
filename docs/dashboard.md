@@ -71,7 +71,7 @@ The dashboard is the first network listener this CLI has ever opened, so:
 
 ## API surface
 
-**Sixteen GET paths and one POST path.** All same-origin. Every response carries
+**Seventeen GET paths and one POST path.** All same-origin. Every response carries
 a `degraded` field with the same shape. Every GET is a read; the single POST is
 the write path FR-241 added, and it is the only endpoint on this surface that
 changes a row.
@@ -85,6 +85,7 @@ changes a row.
 | `GET` | `/api/graph?project=<slug>` | `{project, nodes, edges, stats, truncated, truncation_reason, query, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` + `dashboard/graph-query.ts` |
 | `GET` | `/api/briefs` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `brain-bridge.ts#loadLayerReaders` → `briefs-read.ts#listBriefs` |
 | `GET` | `/api/briefs/search?q=<query>[&project=<slug>]` | `{query, items, count, retrieval, params, generated_at, degraded}` | `briefs-read.ts#hybridSearchBriefs` — **FR-246, the one path it adds** |
+| `GET` | `/api/search?q=<query>[&project=<slug>][&limit=<n>][&layers=<csv>]` | `{query, items, count, layers, fusion, params, generated_at, degraded}` | `search-fuse.ts#fuseLayers` + `routes.ts#fusedSearch` — **FR-248, the one path it adds.** `layers[]` ALWAYS has all five entries so an unavailable layer is REPORTED, never absent; every row carries `layer` and `rank_basis`; `fusion` holds the INTER-layer `rrf_k` and is distinct from each layer's own `retrieval.rrf_k` |
 | `GET` | `/api/brief?project=<slug>&id=<brief_id>` | `{brief, generated_at, degraded}` | `briefs-read.ts#getBrief` |
 | `GET` | `/api/learnings[&q=<text>]` | `{items, count, total, limit, offset, review_status, search, params, generated_at, degraded}` | `memory-read.ts#listLearnings` |
 | `GET` | `/api/learnings/search?q=<query>[&project=<slug>][&review_status=<scope>]` | `{query, items, count, retrieval, review_status, params, generated_at, degraded}` | `memory-read.ts#hybridSearchLearnings` — **BR-085**: `review_status` is FORWARDED (both RRF arms plus hydration bind it, default `approved`), and the payload's `review_status` is the scope the reader APPLIED, not the one requested |
@@ -233,7 +234,7 @@ component state, because `router.tsx` unmounts the page on a route change. A
 reload keeps it; a **new tab** opens on the list, which is what makes the choice
 session-scoped rather than permanent.
 
-**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, and moved to seventeen only at FR-246 (`/api/briefs/search`). The board composes two endpoints that
+**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, moved to seventeen at FR-246 (`/api/briefs/search`) and to eighteen at FR-248 (`/api/search`). The board composes two endpoints that
 already exist:
 
 | What | Where it comes from | Why not somewhere else |
@@ -253,6 +254,42 @@ endpoint #17, sweeping two MAINTAINING rows, `SMOKE_PROBE_PATHS`, the
 `dashboard.bats` exact-set assertion, `cli/src/types.ts`, `lib/api.ts` and this
 file, and vendoring a new reader into the packed brain bundle — all for an
 arrangement of rows the client can already ask for.
+
+**THAT REJECTION STILL STANDS, AND FR-248 IS NOT A REVERSAL OF IT.** FR-248 did
+add a new GET (`/api/search`, the seventeenth), paying exactly the sweep priced
+above — so read the two decisions together rather than as a precedent. What
+separates them is not size but whether the SERVER does work the client cannot.
+`/api/briefs/board` would have returned rows `/api/briefs` already returns, in a
+different arrangement; arranging rows is the client's job.
+
+**Be careful with the tempting version of this argument.** A draft of this
+paragraph said `/api/search` produces a ranked list no client could assemble,
+"because RRF is not distributive over separate requests". **That is false, and
+this brief's own code says so:** every fused row belongs to exactly one layer, so
+its score is `w/(k + layer_rank)` with **no cross-list summation term**, and
+`dashboard-search-fused.test.ts` pins the output as a deterministic round-robin
+interleave with a documented tie-break. A browser holding five responses could
+reproduce `items[]` exactly. The argument was reached backwards from a decision
+that happens to be right — which is the more dangerous kind, because it is the
+argument that gets inherited.
+
+The three things that actually distinguish it are all server-side and all real:
+
+1. **One handle, one latch.** The five arms share a single
+   `openBrainReadonlyWithVec()` and one embedding warm-up. Five client fetches
+   are five handles and five cold starts.
+2. **Three failure shapes become one.** The layers report unavailability three
+   different ways — a `degraded` field, an `ok:false`, and a throw. Normalising
+   them into one `LayerReport` (`available`, `requested`, a verbatim `reason`)
+   is work a client would have to re-implement, and getting it wrong is exactly
+   the silent-drop failure `G-BR-17` exists to prevent.
+3. **The cap must fall on the FUSED order.** A client can only approximate that
+   by over-fetching every arm and hoping its `limit` was generous.
+
+So the test the next brief should apply is not *can the client render this?* but
+***can the client get this answer without re-implementing server work or
+over-fetching?*** If it can, the endpoint is an arrangement and the sweep is not
+worth it.
 
 **Columns are DATA ∪ VOCABULARY, never a hand-list.** The union is the statuses
 present in scope plus the documented lifecycle
@@ -491,7 +528,7 @@ bottom because knowing what the fix was for is what stops it being undone.
 
 | Door | Endpoints | Connection |
 |---|---|---|
-| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, FR-248's `/api/search` (the first path to serve FIVE readers off ONE handle), both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
 | **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
 | *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
 
@@ -588,15 +625,18 @@ it is deliberately **one** endpoint with an `action` discriminator rather than
 five verb endpoints. That shape is what makes the whole delegation rule a single
 table a reviewer reads in one glance.
 
-**FR-247 added two mutations and NO endpoint.** The path set is still sixteen GET
-and one POST, and that is a measurement rather than a claim: `dashboard.bats`'s
-exact-set string and `SMOKE_PROBE_PATHS` are byte-identical to their pre-FR-247
-values. What widened is the request BODY.
+**FR-247 added two mutations and NO endpoint.** The path set was still sixteen GET
+and one POST **as of FR-247**, and that was a measurement rather than a claim:
+`dashboard.bats`'s exact-set string and `SMOKE_PROBE_PATHS` were byte-identical
+to their pre-FR-247 values. (**Past tense since FR-248**, which added
+`/api/search` and therefore edited both of those instruments. The claim was true
+when written; the paragraph is kept as FR-247's record, not as the live count —
+which is seventeen GET and one POST.) What widened is the request BODY.
 
 **The name is now wrong, and it stays.** `triage` no longer describes what this
 path carries. Renaming it would sweep MAINTAINING rows 109 and 110,
 `SMOKE_PROBE_PATHS`, `dashboard.bats`'s exact-set string *and* its
-`17 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
+`18 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
 document, the parity harness and the browser gate — for a noun. Read the path as
 **a stable identifier for the write door**; the MAP, not the path, is the
 vocabulary.
@@ -1013,7 +1053,7 @@ igris dashboard (verb)
   ├─ open-url.ts    cross-platform browser ladder
   └─ server.ts      node:http, 127.0.0.1, Host guard, traversal guard
        ├─ static.ts   dist/dashboard/** + SPA fallback
-       └─ routes.ts   the seventeen endpoints (16 GET + 1 POST) — CONTAINS ZERO SQL
+       └─ routes.ts   the eighteen endpoints (17 GET + 1 POST) — CONTAINS ZERO SQL
             ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
             ├─ registry.ts#listProjectsReadonly       (TD-319 read door)
             ├─ brain-db.ts#briefStatusSummaryReadonly / #listInstancesReadonly
@@ -1609,7 +1649,7 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-artifact.test.ts` | bundle present, bundle current (stale guard), AC #4 no-network |
 | `cli/src/__tests__/dashboard-chunks.test.ts` | **TD-347 — the bundle's two byte ceilings.** `INITIAL_JS_CEILING` over the initial LOAD (the entry `<script>` plus its `<link rel="modulepreload">` closure, NOT the entry file), `TOTAL_JS_CEILING` over every `assets/*.js`, and an assertion that at least one chunk is non-initial so the app cannot quietly un-split. Both are `measured + 24_000 B`; **neither is ever raised to make room.** Demonstrated red three ways — eager bulk (both red), lazy-only bulk (initial green, total red — the reason the total half exists), and a vendor `manualChunks` split (entry file −189,996 B, initial set −343 B, green and correct). |
 | `cli/src/__tests__/open-url.test.ts` | every rung of the ported open ladder |
-| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+150 KB** over baseline since TD-374 (2026-08-10), which RE-BASED `PACK_BASELINE_PACKED` to a clean measurement (1_863_420) and re-derived the grant; the delta now means growth-since-clean, not growth-since-FR-238, and the absolute cap ROSE (1_865_051 → 2_017_020). It was +550 KB from TD-329 (2026-08-02) and +400 KB before that. Both moves were recorded operator decisions taken *before* the work that needed them, on a measurement. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246) → **+445.1 KB** (FR-247) → **+445.1 KB** (FR-250, +1_471 B — CSS lands in the stylesheet asset, so the app CHUNK is byte-identical and its 616 B of slack is untouched), leaving **104.9 KB** under TD-329's +550 KB ceiling. (Every figure in that chain is against the OLD baseline and was measured on a tree carrying the orphan artifacts TD-373 deleted; TD-374 re-based, so convert with `new = old − 561_569` and read them as narrative rather than as comparable to anything measured after 2026-08-10. The live headroom is ~148.3 KB / 151_892 B — `tarball.test.ts` is the one authoritative copy.) FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit — it was effectively SPENT from FR-247 (616 B) through BR-085 (484 B), and **TD-347 RETIRED THE PREMISE**: there is no single app chunk any more. The dashboard now ships an eager INITIAL SET of **285,390 B** plus six deferred chunks holding **277,533 B** off the critical path, and the binding budget is two EXECUTABLE ceilings in `cli/src/__tests__/dashboard-chunks.test.ts` (`INITIAL_JS_CEILING` 309,390 B and `TOTAL_JS_CEILING` 586,923 B), not a Vite warning. `chunkSizeWarningLimit` is re-aimed just above the largest chunk and demoted to a build-time surprise detector. A brief adding UI now plans against the INITIAL ceiling and reads the composition table in `tarball.test.ts` to see which chunk it is charged to. FR-247 spent **+11,132 B** here against a 17-32 KB estimate and **+5,899 B** of chunk against a 2.5-4.6 KB one — two errors in opposite directions across two briefs, which is why both surfaces must be estimated AND measured. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
+| `cli/src/__tests__/tarball.test.ts` | `npm pack` manifest + packed-size ceiling — **+150 KB** over baseline since TD-374 (2026-08-10), which RE-BASED `PACK_BASELINE_PACKED` to a clean measurement (1_863_420) and re-derived the grant; the delta now means growth-since-clean, not growth-since-FR-238, and the absolute cap ROSE (1_865_051 → 2_017_020). It was +550 KB from TD-329 (2026-08-02) and +400 KB before that. Both moves were recorded operator decisions taken *before* the work that needed them, on a measurement. The single asserted number. Measured LAST in every brief, because the figure is stale the moment another round edits a comment in `cli/src/lib/**` (`tsc` carries those into `dist/` verbatim) or touches `cli/CHANGELOG.md`, which is in `package.json` `files` and SHIPS. Cumulative by brief: **+331.8 KB** (FR-240) → **+370.6 KB** (FR-241) → **+373.6 KB** (BR-082) → **+376.4 KB** (TD-326) → **+400.7 KB** (TD-328) → **+402.8 KB** (FR-244) → **+406.4 KB** (FR-245) → **+432.8 KB** (FR-246) → **+445.1 KB** (FR-247) → **+445.1 KB** (FR-250, +1_471 B — CSS lands in the stylesheet asset, so the app CHUNK is byte-identical and its 616 B of slack is untouched), leaving **104.9 KB** under TD-329's +550 KB ceiling. (Every figure in that chain is against the OLD baseline and was measured on a tree carrying the orphan artifacts TD-373 deleted; TD-374 re-based, so convert with `new = old − 561_569` and read them as narrative rather than as comparable to anything measured after 2026-08-10. The live headroom is NOT restated here — `tarball.test.ts`'s head directive is the one authoritative copy, and every stale figure this file has carried came from a second one — `tarball.test.ts` is the one authoritative copy.) FR-245 spent **+3_698 B** against a +6-12 KB estimate, for the same structural reason FR-244's was small: a whole board view, a browser gate, eight mutations and three suites' worth of assertions, of which the only packed surface is `cli/dashboard/src/**` — which Vite minifies — plus its changelog entry. (Watch the OTHER limit — it was effectively SPENT from FR-247 (616 B) through BR-085 (484 B), and **TD-347 RETIRED THE PREMISE**: there is no single app chunk any more. The dashboard now ships an eager INITIAL SET of **285,390 B** plus six deferred chunks holding **277,533 B** off the critical path, and the binding budget is two EXECUTABLE ceilings in `cli/src/__tests__/dashboard-chunks.test.ts` (`INITIAL_JS_CEILING` 309,390 B and `TOTAL_JS_CEILING` 586,923 B), not a Vite warning. `chunkSizeWarningLimit` is re-aimed just above the largest chunk and demoted to a build-time surprise detector. A brief adding UI now plans against the INITIAL ceiling and reads the composition table in `tarball.test.ts` to see which chunk it is charged to. FR-247 spent **+11,132 B** here against a 17-32 KB estimate and **+5,899 B** of chunk against a 2.5-4.6 KB one — two errors in opposite directions across two briefs, which is why both surfaces must be estimated AND measured. Note the units differ: Vite reports kB as 1000 bytes, this ceiling is in KiB. It is a build-time warning about one chunk, not this ceiling.) FR-244 spent **+2_088 B**, and where it went is the instructive part: everything BULKY it added lives outside `package.json` `files` — a new browser gate and its separability instrument in `cli/scripts/`, four suites' worth of assertions under `src/__tests__` (excluded from `dist` by `tsconfig`), and `docs/`. Its client-side changes are minified by Vite to almost nothing. Essentially the whole figure is its `cli/CHANGELOG.md` entry, which ships. TD-328 is the first non-dashboard, non-`cli/` brief in this ledger and it spent 24.3 KB anyway: the `cli` package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`, so a `brain-mcp-server/`-only change still costs packed bytes (learning 1132). It is also the first entry-count change since FR-241 (792 → 793), from the new packed `dist/brain-mcp-server/scripts/normalize_brief_types.ts`. |
 | `cli/src/__tests__/dashboard-graph-endpoint.test.ts` | `/api/graph` payload shape field-for-field, project drill-down + `boundary` nodes, four degraded brains, inherited security posture |
 | `cli/src/__tests__/dashboard-graph-query.test.ts` | the exemption-04 twin: whole-brain, scoped, truncated, degraded; the cap constants checked against the real engine |
 | `cli/src/__tests__/dashboard-graph-source.test.ts` | zero colour literals in the graph source, the F2 camera scan, library-API confinement, zero rAF/`setInterval`, token-only timings |
@@ -2363,3 +2403,69 @@ read. The distinction is the whole scope fence — a per-node detail fetch there
 would turn a 2,400-node graph into 2,400 potential body reads hanging off a
 hover, which is the superlinear term FR-237's "returns NO body content" rule
 exists to remove.
+
+---
+
+### G-BR-17 — FR-248: a dead layer is REPORTED, in the browser, not merely absent
+
+`/api/search` fuses five layers. The failure this gate exists to make impossible
+is the one that is **invisible by construction**: a fused list quietly missing a
+whole layer looks exactly like a fused list with fewer matches. Nothing about
+the rendered page distinguishes "briefs had nothing to say" from "briefs was
+never asked."
+
+So the contract is not *report the error* — it is **`layers[]` always carries all
+five entries**, which makes a silent drop unrepresentable rather than merely
+untested, and the page must render every one of them.
+
+**The 7th world, `nofts`.** `seedLayerBrain(db, { omit: ["briefs_fts"] })` — a
+brain where the v23 lexical index was never created, so the briefs layer has
+neither a lexical nor a vector arm. This is a **real production state** (a brain
+that never ran the migration), not a mock, and it is seeded that way rather than
+`DROP TABLE`d afterwards, which would strand v23's six triggers in a state no
+production brain is ever in.
+
+| check | asserts |
+|---|---|
+| `17-control` | in the SEEDED world the same query leaves briefs `available`, contributing, with no fault banner — the positive control, so the rest cannot pass vacuously on a build where the layer never worked |
+| `17-wire` | the endpoint's own reading, out of process: `layers[]` names all five and briefs carries `available:false` with a non-empty `reason` |
+| `17a` | the DOM strip matches the endpoint's layer list exactly — `MISSING FROM THE PAGE: []` |
+| `17b` | the dead layer renders as `unavailable` with the server's `reason` **verbatim** |
+| `17c` | it is LOUD — a `.shell-banner` names `BRIEFS` and says `INCOMPLETE` |
+| `17d` | the list still serves: the live layers keep contributing rows |
+
+**The query was chosen by measurement, not taste.** Eight candidates were probed
+against both worlds; `q="read"` is the only one where the seeded world gives
+briefs `contributed > 0` **and** another layer contributes, so `nofts` shows
+briefs dark while the list keeps working. Same query, same corpus, one variable.
+
+**`17c` cannot use a naive substring.** The retrieval banner on the `nofts` page
+already contains the literal `briefs_fts`, so "a loud element mentions briefs"
+would pass **under the silent-drop mutation**. The check matches `/\bBRIEFS\b/i`
+— which does not match `briefs_fts`, because `_` is a word character — plus
+`/INCOMPLETE/i`. Both mutations confirm it reports zero matches when the fault
+banner is gone despite `briefs_fts` being on screen.
+
+**Mutations**, each shown to redden this gate and to name it:
+
+- `br17-silent-layer-drop` — the handler filters unavailable layers out of
+  `layers[]`. Reds `17a`, `17b`, `17c`.
+- `br17-layer-lies-available` — a dead layer reports `available: true` with a
+  null reason. Reds `17b`, `17c`; `17a` correctly still passes, because the
+  entry is present — it is lying, not missing.
+
+Both are scoped to the `nofts` tab, so `17-control` and `17-wire` stay green
+under them: a mutated run still demonstrates the page CAN render a live layer.
+
+**The server-side twin (R5), run and reverted, not shipped:** replacing
+`layers: reports` with `layers: reports.filter(l => l.available)` in `routes.ts`
+reds 9 of 42 in `dashboard-search-fused.test.ts`, including *INVARIANT 1 —
+layers[] has all five, in the FULL world*. Note `routes.ts` has **two**
+`layers:` assembly points — the degraded early-return and the main path — and
+invariant 1 needs both; mutating only the main one leaves the degraded-path
+assertion green.
+
+**The world count is now derived.** `WORLDS` is the single declaration and the
+banner prints `Object.keys(WORLDS).length`. The file header states no number and
+no list, because it had drifted twice — stale at FOUR, then reading "SIX" beside
+a list of four.
