@@ -486,8 +486,12 @@ interface PackReport {
 }
 
 /**
- * The dashboard packed-size gate is **one number: a hard ceiling of +550 KB**
- * over `PACK_BASELINE_PACKED`, asserted below. An ordinary CLI change does not
+ * The dashboard packed-size gate is **one number: a hard ceiling of +150 KB**
+ * over `PACK_BASELINE_PACKED`, asserted below. (It read +550 KB from TD-329
+ * until TD-374 RE-BASED the baseline to a clean measurement and re-derived the
+ * grant; +150 KB over the new origin is a LARGER absolute cap than +550 KB was
+ * over the old one. The TD-329 provenance immediately below narrates the
+ * +400 -> +550 history and is correct as history.) An ordinary CLI change does not
  * fail the suite; a bundle that doubles does.
  *
  * ─────────────────────────────────────────────────────────────────────────────
@@ -741,8 +745,9 @@ interface PackReport {
  *   **616 B**, against this gate's 104.9 KB. That is not headroom. A brief that
  *   adds any UI to this bundle should expect to SPLIT the chunk (a route-level
  *   dynamic import for the layers or the graph) as its first step, not as a
- *   cut-ladder rung. **Raise NEITHER limit** — TD-329 raised the packed one
- *   ONCE, before the work, as a recorded operator decision, and that is not a
+ *   cut-ladder rung. **Raise NEITHER limit** — the packed one has been moved
+ *   TWICE (TD-329 2026-08-02, TD-374 2026-08-10), each time before the work,
+ *   on a measurement, as a recorded operator decision. Two decisions is not a
  *   precedent. *(The "raise neither" rule is the one line here that is NOT
  *   superseded — TD-347 inherits it verbatim for both of its ceilings.)*
  *
@@ -945,7 +950,12 @@ interface PackReport {
  * has no way to be caught when it goes stale, so keep the two in sync in the
  * same commit or do not write the second one.
  *
- * READ THIS BEFORE PLANNING THE NEXT BRIEF: ~104.9 KB is what is left (the
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: **SUPERSEDED BY TD-374 — see the
+ * directive further down; the live figure is ~148.3 KB (151_892 B) and it is
+ * measured from a DIFFERENT baseline.** This paragraph is kept as FR-247-era
+ * history, and it is the second copy of this directive: TD-373's changelog
+ * claimed to have re-pointed "the ledger's head directive" and hit only one of
+ * the two. ~104.9 KB was what was left (the
  * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
  * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
  * superseded).
@@ -1120,8 +1130,11 @@ interface PackReport {
  * all." At the fourth time, they WERE removed — see above. Past-tensed because
  * a live imperative inside a preserved history block is the shape that gets
  * obeyed by someone who did not read twenty lines up.] The answer when it binds is still to cut or to vendor less,
- * never to raise `PACK_HARD_CEILING_DELTA` — TD-329 raised it ONCE, before the
- * work, as a recorded operator decision, and that is not a precedent.
+ * never to raise `PACK_HARD_CEILING_DELTA` — it has moved TWICE (TD-329
+ * 2026-08-02, TD-374 2026-08-10 which also RE-BASED it), each time before the
+ * work, on a measurement, as a recorded operator decision. Two decisions taken
+ * that way are not a sliding number; FR-239 is the proof, having proposed a
+ * raise, measured, not needed it, and RESTORED the old value.
  *
  * (An earlier revision of this sentence said the headroom was "smaller than
  * what any single brief has spent except TD-326 and BR-082". That was true at
@@ -1168,10 +1181,15 @@ interface PackReport {
  *                                    `cli/dist`, then rebuild)
  *   cumulative delta    +548.4 KB    (561_569 B over PACK_BASELINE_PACKED)
  *   headroom remaining  ~1.6 KB      (1_631 B under TD-329's +550)
- *                                    **PROVISIONAL** — the baseline is ~24 KB
+ *                                    SUPERSEDED BY TD-374 — this reading is
+ *                                    what triggered the re-base and the +150 KB
+ *                                    grant, and is kept as its evidence.
+ *                                    This row SAID `the baseline is ~24 KB
  *                                    high and correcting it goes ~19.9 KB
- *                                    NEGATIVE. See the provenance note and
- *                                    TD-374.
+ *                                    NEGATIVE`. TD-374 measured it: the clean
+ *                                    figure went **+189 KB the OTHER way**, and
+ *                                    the baseline was replaced rather than
+ *                                    corrected.
  *   orphans deleted     -9_624 B     24 files with no source, shipping since
  *                                    `c6777bc`. Their presence is what put the
  *                                    working tree 3 B PAST the ceiling.
@@ -1215,9 +1233,32 @@ interface PackReport {
  *   of doing this, and FR-248's plan then bounded the slack at 52_099 B — 13x
  *   the truth, against a tree that was already over.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~4.0 KB is what is left** —
- * see TD-373's row below, which is the first CLEAN reading this ledger has
- * ever carried and is 26x tighter than the figure that stood here. (~104.9 KB
+ * TD-374 IS THE NEW ORIGIN, and its own row is the first one measured against
+ * itself:
+ *   baseline set        1_863_420    796 entries — the clean measurement of
+ *                                    TD-373's tree, taken on `bd49525`
+ *   packed after        1_865_128    796 entries
+ *   TD-374's own share  +1_708 B     `cli/CHANGELOG.md` ONLY — the root
+ *                                    CHANGELOG is not in `cli`'s `files`, so
+ *                                    an earlier draft saying "its two CHANGELOG
+ *                                    entries" over-attributed by one. The constants,
+ *                                    this docblock and the whole provenance
+ *                                    rewrite cost ZERO, because `tsconfig`
+ *                                    excludes `src/__tests__` from `dist`
+ *   delta after         +1_708 B     headroom +151_892 B under the +150 KB grant
+ *
+ *   MEASURED LAST. The `MAINTAINING.md` row also cost nothing — it is outside
+ *   `package.json` `files`. Which prose costs is a property of `files` and
+ *   `tsconfig`, not intuition, and it is cheap to check before writing.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~148.3 KB (151_892 B) is what is
+ * left** — the GRANT is +150 KB and the headroom is what remains under it, and
+ * the figure changed MEANING as well as value: TD-374 re-based the constant to
+ * a clean measurement of TD-373's tree, and the operator granted +150 KB over
+ * it, so this now reads growth-since-clean rather than growth-since-FR-238.
+ * TD-373's row below is the first CLEAN reading this ledger ever carried; it
+ * read ~1.6 KB against the OLD ceiling, which is precisely why the grant
+ * happened. (~104.9 KB
  * was FR-247's, ~117.2 KB FR-246's, ~143.6 KB FR-245's, ~147.2 KB FR-244's,
  * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded. Every one of
  * those was measured on a tree carrying orphan artifacts, so every one was
@@ -1245,48 +1286,80 @@ interface PackReport {
  * The budget is CUMULATIVE across the family, not per-brief: a per-brief
  * reading lets three views bust the ceiling with every individual brief
  * passing. Subtract the shipped delta before claiming headroom, and measure
- * rather than estimate. `PACK_BASELINE_PACKED` is UNCHANGED.
+ * rather than estimate. (`PACK_BASELINE_PACKED` was UNCHANGED for the whole
+ * FR-238..TD-373 run; TD-374 re-based it — see the provenance block below.)
  *
- * PROVENANCE OF THE BASELINE CONSTANT, stated because it is softer than it looks:
- * 1_301_851 was measured on the FR-238 authoring checkout (739 files /
- * 5_475_927 unpacked). A CLEAN worktree measures ~1_277_864 (715 files /
- * 5_394_552) — a long-lived checkout accumulated orphan artifacts from deleted
- * sources (this note called them "~91 KB of `subconscious/` leftovers at the
- * time of writing") that a fresh clone did not have.
+ * PROVENANCE OF THE BASELINE CONSTANT — RE-BASED TO A MEASURED NUMBER
+ * (TD-374, operator grant 2026-08-10)
+ * ─────────────────────────────────────────────────────────────────────────
+ * The baseline is now **today, measured on a clean tree**, not an archaeological
+ * figure from FR-238. That is a change of MEANING, not just of value:
+ * `delta` used to read "cumulative growth since the dashboard family began" and
+ * now reads "growth since the tree was known clean."
  *
- * **THE BUILD NOW CLEANS — TD-373, 2026-08-10.** `cli`'s build script leads
- * with `rm -rf dist`; `brain-mcp-server`'s builds to `dist.tmp` and swaps (its
- * dist is live-served on the VPS, so it must survive a failed build). This
- * paragraph used to read "`cli/dist` is never cleaned by the build"; that
- * sentence is retired rather than reworded, because it was the thing that
- * changed. `copy-templates.sh` also rebuilds when it finds output for a
- * deleted source — an mtime check cannot see a deletion, which is why the
- * leftovers survived for months.
+ * WHY THE OLD BASELINE WAS ABANDONED RATHER THAN CORRECTED. The previous note
+ * asserted `1_301_851` was ~24 KB HIGH versus a clean build, and instructed a
+ * re-measure once dist-cleaning landed. TD-373 landed it, so TD-374 took the
+ * measurement — and the instruction turned out to rest on an estimate that does
+ * not survive contact:
  *
- * The orphans this note predicted were real and were finally measured:
- * **24 files, 9_624 B packed** (`subconscious/detectors/{conflict,gap,pattern,
- * stalled}` + `readonly-db` + `verifier`, sources deleted by `c6777bc`). They
- * are what pushed the working tree 3 B PAST this ceiling — a red gate for a
- * reason unrelated to any recent commit.
+ *   FR-238's commit (`71abaa0`), built CLEAN with today's node_modules:
+ *     packed 1_467_162  /  740 files  /  5_854_678 unpacked
+ *   what this note predicted:
+ *     packed ~1_277_864 /  715 files  /  5_394_552 unpacked
  *
- * Direction of the error, stated plainly: the constant is ~24 KB HIGHER than a
- * clean baseline, so on a clean tree (where CI runs) the computed delta
- * UNDER-reports the true one by ~24 KB and the ceiling is that much more
- * permissive. It does not invalidate the assertion — this is a one-sided
- * tripwire — but do not read the number as a precise per-commit delta.
+ * **+189 KB in the opposite direction from the prediction.** The confound is
+ * dependencies, not sources: `package-lock.json` has drifted since 2026-07-29
+ * (different digest), and the dashboard bundle is built from whatever `vite`,
+ * `react` and `force-graph` are installed. So a "clean FR-238 baseline" is not
+ * one number — it is a number per dependency tree, and recovering the July one
+ * would need a period-accurate `npm ci` to describe a July fact that no longer
+ * governs anything. The old constant is retired rather than corrected because
+ * the question it answers is unanswerable and, once answered, useless.
  *
- * **AND THE ERROR IS NOW WORSE THAN IT WAS, which is why the constant did NOT
- * move here.** Before TD-373 both sides carried orphans and partially
- * cancelled; TD-373 cleaned the MEASURED side only, so the under-report is now
- * closer to the full ~24 KB. Correcting the baseline would push today's delta
- * to ~583_100 against a 563_200 ceiling — **~19.9 KB OVER, with nothing having
- * grown.** That is a ceiling decision, not a cleanup: TD-329 granted +550 KB
- * once, deliberately, and re-opening it from inside a tidy-up would be the
- * wrong way to ask. Owned by **TD-374**, with both options and the measured
- * numbers written down. Until it lands, treat the headroom below as PROVISIONAL.
+ * HOW THE NEW BASELINE WAS TAKEN, so it can be re-derived:
+ *   `rm -rf cli/dist brain-mcp-server/dist && (cd cli && npm run build)` then
+ *   `npm pack --dry-run --json`, on `bd49525` (TD-373).
+ *     packed 1_863_420  /  796 files
+ *   Never `npm run build` in `cli/` on the operator's machine casually — it is
+ *   a live deploy. TD-373 records the scratch-worktree method for that case.
+ *
+ * READING THE LEDGER'S OLDER ROWS. Every "cumulative delta" above is stated
+ * against the OLD baseline. Convert with a single offset:
+ *   new_delta = old_delta - 561_569        (1_863_420 - 1_301_851)
+ * They are also all measured on trees carrying the orphan artifacts TD-373
+ * deleted, so treat them as historical narrative, not as comparable figures.
+ *
+ * THE CEILING — +150 KB, operator grant, 2026-08-10
+ * ─────────────────────────────────────────────────
+ * Raised from +550 KB over the old baseline. In absolute terms the cap moves
+ * 1_865_051 -> 2_017_020, i.e. **+148 KB of real room**, because the old
+ * ceiling had 1_631 B left and GL-006 could not finish inside it.
+ *
+ * DERIVED, not chosen round — though only two of the five inputs are SOURCED
+ * (FR-248's from its own plan, the overhead from this session's measurements);
+ * the other three are labelled estimates rather than presented as readings.
+ * The remaining GL-006 work and its overhead:
+ *   FR-248 cross-layer search      ~26 KB (its own plan's upper estimate)
+ *   FR-249 create-a-goal            ~20 KB  ESTIMATE, by analogy to FR-247
+ *   BR-083 entity_edges project     ~10 KB  ESTIMATE, brain-side migration
+ *   TD-369/370/371/372 follow-ups    ~5 KB  ESTIMATE, all S-Small
+ *   changelog + docstring overhead  ~24 KB (this session measured 2.5-4.4 KB
+ *                                    per brief, and prose in shipped files is
+ *                                    charged twice via .js + .js.map)
+ *                                   ───────
+ *                                    ~85 KB, so +150 KB is ~76% margin.
+ *
+ * WHAT THE GRANT DOES NOT LICENSE. The instruction still inverts rather than
+ * disappears: a brief that runs out cuts scope or vendors less. The ceiling was
+ * raised because a MEASUREMENT showed real work did not fit, taken before the
+ * work rather than after a failing assertion — the same standard TD-329 set.
+ * It was NOT raised to accommodate cruft: TD-373 deleted 9_624 B of artifacts
+ * for sources that no longer existed, and that deletion happened FIRST,
+ * deliberately, so this grant is spent on features rather than on leftovers.
  */
-const PACK_BASELINE_PACKED = 1_301_851;
-const PACK_HARD_CEILING_DELTA = 550 * 1024; // TD-329, operator, 2026-08-02
+const PACK_BASELINE_PACKED = 1_863_420; // TD-374, measured clean on bd49525
+const PACK_HARD_CEILING_DELTA = 150 * 1024; // TD-374, operator, 2026-08-10
 
 /**
  * TD-336: how long a pack-dependent test is allowed to take.
@@ -1479,7 +1552,7 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
     }
   }, PACK_TIMEOUT_MS);
 
-  it("stays under the hard packed-size ceiling (+550 KB over baseline)", () => {
+  it("stays under the hard packed-size ceiling (+150 KB over baseline)", () => {
     const report = packReport();
     const delta = report.size - PACK_BASELINE_PACKED;
     expect(
