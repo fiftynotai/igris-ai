@@ -294,8 +294,17 @@ export function isDashed(shape: ShapeKind): boolean {
  * So: **moving `NODE_SIZE_ZOOM_FLOOR` re-bases those four checks.** Re-run the
  * gate's invariance probe and re-derive `FROZEN_PRESERVATION_FLOOR` in the same
  * change. And note the constant is a LEGIBILITY decision wearing a number —
- * the derivation above is a design argument, so the sweep also belongs wherever
- * the design tokens are eventually written down (TD-335).
+ * the derivation above is a design argument, and TD-335 wrote that relationship
+ * down at `~/.igris/projects/igris-ai/context/design_system.md`.
+ *
+ * DO NOT MOVE THE SWEEP THERE. This line used to say the sweep "belongs
+ * wherever the design tokens are eventually written down"; the doc now exists
+ * and explicitly REFUSES it — its "Numbers this doc deliberately does not
+ * carry" section keeps every measured figure with the artifact that produces
+ * it, on the grounds that a design doc is read for orientation, rarely
+ * re-derived, and executed by nothing. The doc records that the FIGURE lives
+ * HERE and that `browser-gate.mjs` holds its cross-package mirror. This file
+ * stays the owner.
  *
  * ─────────────────────────────────────────────────────────────────────────
  * WHAT IS BEING TRADED, STATED PLAINLY. Above `K_FLOOR` nothing changes: the
@@ -409,8 +418,17 @@ export function drawNode(
   tracePath(ctx, visual.shape, x, y, s);
 
   if (visual.chrome === "silhouette") {
-    // Rung 2 fully engaged: silhouette only. Role is carried by shape plus
-    // colour role — no glyph, no padding, no border.
+    // Rung 2 fully engaged: silhouette only — no glyph, no padding, no border.
+    //
+    // ROLE IS CARRIED BY SHAPE ALONE HERE (corrected TD-335). This comment used
+    // to read "shape plus colour role", which is true of EDGES and false of
+    // nodes: `useGraph.ts#visualFor` derives `fill` from isActive/isHovered/
+    // muted/clearing and never from `node.type`, so node colour is interaction
+    // state at every tier. Two consequences the design doc records: there is no
+    // fallback role carrier at this rung, and `TOOL` traces the same rectangle
+    // as `SERVICE` with the dash applied only in the `else` branch below — so
+    // five roles render as four distinguishable silhouettes here, and no test
+    // compares the two paths.
     ctx.fillStyle = visual.fill;
     ctx.fill();
   } else {

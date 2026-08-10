@@ -40,7 +40,9 @@
  * Fixed-width columns (they scroll, they never compress), hairline separators,
  * zero radius, token-only colour, a mono header carrying `n OF total`, and a
  * pure truncation rule at 22 characters. The CSS block in `styles/base.css`
- * states it too; `/ground design_system` is TD-335 and will lift it.
+ * states it too. TD-335 HAS lifted it — the grammar's home is now
+ * `~/.igris/projects/igris-ai/context/design_system.md`; this header is its
+ * origin, kept so the rule sits beside the code it governs.
  */
 
 import type { EmptyCopy } from "../../layers/model";

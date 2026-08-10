@@ -359,10 +359,17 @@ describe("the FR-245 CSS block exists inside that same scan", () => {
   });
 
   it("states the layout grammar in words, for the design_system grounding pass", () => {
-    // FR-245's stated obligation: `design_system.md` does not exist yet and is
-    // filed as its own brief, so the grammar this board introduces has to be
-    // WRITTEN somewhere a grounding pass can lift it from rather than
-    // reverse-engineer it out of declarations.
+    // FR-245's stated obligation, and it has now been DISCHARGED: at the time,
+    // `design_system.md` did not exist and was filed as its own brief, so the
+    // grammar this board introduces had to be WRITTEN somewhere a grounding pass
+    // could lift it from rather than reverse-engineer out of declarations.
+    // TD-335 grounded the doc and lifted exactly this block.
+    //
+    // THE ASSERTION STAYS, and the reason is the point: the doc is runtime-only
+    // (`~/.igris/projects/igris-ai/context/`) with no repo mirror, so nothing in
+    // this repo can test it. This check is what keeps the grammar stated BESIDE
+    // the code even after a copy of it exists elsewhere — if the doc is ever
+    // lost, deleted, or drifts, the origin is still here and still enforced.
     const block = css.slice(css.indexOf("FR-245 · the briefs board"));
     expect(block).toContain("LAYOUT GRAMMAR");
     expect(block).toContain("TD-333");

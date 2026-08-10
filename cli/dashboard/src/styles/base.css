@@ -839,7 +839,9 @@ body[data-motion="low"] *::after {
 
 /* ─── FR-239 · the graph surface ──────────────────────────────
    Original to FR-239 — fifty.dev has no data-viz consumer to port from, which
-   is precisely the gap `design_system.md` is reported missing for. Built
+   is precisely the gap `design_system.md` was filed for. That doc NOW EXISTS
+   (TD-335); its "Design tokens" section carries the five `--dataviz-*` roles
+   and the reason there is no sixth. Built
    ENTIRELY from the ported tokens plus the five `--dataviz-*` role aliases, so
    BRAND_RULES #2 (sharp corners), #3 (3-tier type) and #6 (palette switching)
    hold by construction rather than by review.
@@ -1245,7 +1247,9 @@ body[data-motion="low"] *::after {
 
 /* ─── FR-240 · the record layer (briefs / learnings / context docs / goals) ──
    Original to FR-240 — fifty.dev has no browse/detail consumer to port from,
-   which is the same `design_system.md` gap PORTING.md §6 records for FR-239.
+   which is the same `design_system.md` gap PORTING.md §6 recorded for FR-239.
+   TD-335 CLOSED that gap; the four constraints below are this block's
+   contribution to it, and the doc points back here rather than restating them.
    This block's own decisions are PORTING.md §5 (D14, D15).
    Built ENTIRELY from the ported tokens and the `.shell-*` / ported-primitive
    classes, so BRAND_RULES #2 (sharp corners), #3 (3-tier type) and #6 (palette
@@ -1793,10 +1797,12 @@ h6.record-md-h {
    Borders are `0.5px solid var(--line)` or `var(--accent)`; radii are zero.
 
    ─── THE LAYOUT GRAMMAR, WRITTEN DOWN ───
-   `design_system.md` does not exist yet (`/ground design_system` is filed as
-   TD-335). Until it does, this is the written home for the board's
-   grammar, so the grounding pass has something to LIFT rather than something to
-   reverse-engineer:
+   `design_system.md` NOW EXISTS — TD-335 grounded it at
+   `~/.igris/projects/igris-ai/context/design_system.md`, lifting this block
+   rather than reverse-engineering it. What follows is retained as the grammar's
+   ORIGIN, not as its home: the doc is the place to read it, this is the place it
+   was first written. If the two ever disagree, the CSS is what ships and the doc
+   is what is stale:
 
      · a COLUMN is a FIXED width (`--board-col`-free: the literal is `280px`,
        declared inline on `.record-board-col` because a custom property here
@@ -1966,9 +1972,12 @@ h6.record-md-h {
    FR-247 · brief writes (LIST ONLY)
 
    THE NEW GRAMMAR THIS BRIEF INTRODUCES, WRITTEN DOWN HERE ON PURPOSE.
-   `design_system.md` is applicable-but-absent for this project and is already
-   filed as TD-335, so FR-247 does not re-file it and does not ground it —
-   instead it leaves TD-335 a record rather than an archaeology problem. Three
+   `design_system.md` was applicable-but-absent when FR-247 shipped, so FR-247
+   left a record rather than an archaeology problem instead of grounding it
+   inline. TD-335 has since grounded it
+   (`~/.igris/projects/igris-ai/context/design_system.md`) and consumed exactly
+   that record — which is what the leave-a-record-instead-of-guessing move was
+   for. Three
    things are new to the record layer:
 
      1. an INLINE PICKER inside a selection bar (a labelled `<select>`), where

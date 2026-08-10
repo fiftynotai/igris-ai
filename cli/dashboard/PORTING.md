@@ -6,10 +6,13 @@
 **Ported:** 2026-07-28
 
 This file exists because R6 says so. The dashboard is a **port**, not an
-original design, and this repo has no `design_system` context doc to anchor it
-against (see "Missing doc" below). Six months from now nobody will be able to
-tell which divergences from fifty.dev were deliberate and which were drift —
-unless the deliberate ones are written down. That is this file's whole job.
+original design. Six months from now nobody will be able to tell which
+divergences from fifty.dev were deliberate and which were drift — unless the
+deliberate ones are written down. That is this file's whole job.
+
+The `design_system` context doc this file spent four briefs asking for **now
+exists** (TD-335, at `~/.igris/projects/igris-ai/context/design_system.md`) and
+carries the CONVENTIONS. This file keeps the PROVENANCE — see §6.
 
 **Discipline that makes drift greppable:** exported names, prop names and CSS
 class names are kept **byte-aligned with fifty.dev**. A future divergence is one
@@ -281,10 +284,42 @@ default-resolving beat will meet the same trap.
 
 ---
 
-## 6. Missing doc
+## 6. The doc this file kept asking for — GROUNDED (TD-335)
 
-There is no `design_system` context doc in
-`~/.igris/projects/igris-ai/context/`. It is **applicable but absent**, and more
+> **RESOLVED 2026-08-10.** `~/.igris/projects/igris-ai/context/design_system.md`
+> exists; `igris context-docs inventory --project igris-ai` no longer reports
+> `design_system` as missing-applicable. The section below is kept as the
+> RECORD of why it was needed and what it was written from — five briefs of
+> accumulating cost, which is the argument that eventually paid for it. Read it
+> in the past tense.
+>
+> **The split that now holds, stated precisely because the loose version is
+> wrong:** the design doc carries the visual GRAMMAR, and it carries **all seven
+> families §6 below enumerates** — the four palettes, the 3-tier type stack, the
+> five durations, the four easings, the 8-pt scale, and the five-shape /
+> four-edge data-viz vocabulary — plus the canvas label rules, the Tier-A glyph
+> marks, and the record-layer and board layout rules, each with its
+> constraint-vs-convention label and its enforcing test. (The first version of
+> this banner claimed that list while the doc held only three of the families;
+> review caught it and the harvest was completed rather than the claim softened.)
+> This file keeps the PROVENANCE: what was taken from `dc9da4a`, what was
+> renamed, and every numbered decision D1–D15.
+>
+> **D1–D15 did NOT move, and §§ 2/4/5 below are unchanged.** They are decision
+> RECORDS — each is a fact about a choice made at a moment, and moving one out of
+> its port record would strand it from the alternatives it was chosen against.
+> The design doc points at them (`§2 D1–D11`, `§4 D12–D13`, `§5 D14–D15`) instead
+> of restating them, the same way it points at a test instead of restating a
+> rule. So the paragraph further down THIS section — the one about §5, reading
+> *"they belonged in a catalog-routed `design_system` doc"* — was right that the
+> GRAMMAR belonged there, and is superseded as to the RECORDS: those stay here.
+> One item it names, **the shared list/detail/filter family**, is neither a
+> D-record nor grammar the design doc carries; it is a component convention that
+> still lives only in §5's prose. Left there deliberately rather than moved
+> without a home. → TD-369's sibling question, if it ever becomes load-bearing.
+
+There was no `design_system` context doc in
+`~/.igris/projects/igris-ai/context/`. It was **applicable but absent**, and more
 salient after FR-239 than it was after FR-238.
 
 FR-238's reason still stands: this repo ported an entire design language into a
@@ -303,11 +338,11 @@ scratch.
 decision record wearing a provenance file's clothes: the token-only rule, the
 zero-custom-property rule, the shared list/detail/filter family, the
 `<a href>`-not-onClick rule and the default-vs-cleared trap are all *conventions*,
-not port notes. They belong in a catalog-routed `design_system` doc that loads for
-every agent on every harness; they are here because no such doc exists, and a
-free-standing unregistered file would not load at all. FR-241 will re-derive them
-a third time.
+not port notes. They belonged in a catalog-routed `design_system` doc that loads
+for every agent on every harness; they were here because no such doc existed, and
+a free-standing unregistered file would not load at all.
 
-Authoring it is a follow-up (`/ground design_system`), now with **two** shipped
-consumers to write it from. This file remains the interim provenance record and
-the natural seed — §2 (D1-D11), §4 (D12-D13) and §5 (D14-D15) are its outline.
+**TD-335 authored it**, from five shipped consumers rather than the two this
+section anticipated — FR-239, FR-240, FR-244, FR-245 and FR-247. This file
+remains the provenance record, and §2 (D1-D11), §4 (D12-D13) and §5 (D14-D15)
+were indeed its outline.

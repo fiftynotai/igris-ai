@@ -4742,8 +4742,24 @@ async function gBr10(tab, world) {
  * zoom at which the picture held its structure, `0.10533` measured and `0.11`
  * taken for margin. It trades the `--s-1` 8 px legibility floor below itself and
  * the Rule-2.4 44 px tap target down to `44 · k / K_FLOOR`. By anchoring here,
- * three checks in this file became downstream of a design token. TD-335
- * (`/ground design_system.md`) is where that relationship gets written down.
+ * FOUR checks in this file became downstream of a design token — `11a`, `11b`,
+ * `11e` and `11-range`, the same four the paragraph above enumerates and the
+ * same four `MAINTAINING.md`, `shapes.ts` and `dashboard-graph-source.test.ts`
+ * name. (This line read "three" until TD-335; it was the only site in the repo
+ * with that count, and it UNDERSTATED the blast radius in the one docblock
+ * whose job is telling a future reader what moving the constant costs.
+ * RESIDUAL, not resolved here: `gBr11`'s own header ~420 lines below says
+ * `11-range` / `11-anchor` / `11a` / `11b` / `11e` — FIVE — as does
+ * `docs/dashboard.md`. The two senses differ (`11-anchor` asserts achieved-vs-
+ * requested zoom AT each anchor rather than deriving a threshold FROM the
+ * floor), but the repo states both counts flatly. Reconciling them is TD-337's
+ * contract, not this documentation brief's -> TD-370.)
+ * TD-335 wrote the relationship itself down:
+ * `~/.igris/projects/igris-ai/context/design_system.md` ("The size law is NOT
+ * restated here either") records that the FIGURE lives in `graph/shapes.ts`,
+ * that this constant is its cross-package MIRROR, and that moving it re-bases
+ * those four. The doc deliberately carries no copy of the number —
+ * MAINTAINING.md's row is the map.
  */
 const K_FLOOR = 0.11;
 
