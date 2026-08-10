@@ -295,6 +295,21 @@ const MUTATIONS = {
     gate: "G-BR-15e",
     how: "take the 'cold' navigation readings on a WARM document: skip `Network.setCacheDisabled` and pre-load every chunk first. The timings still look plausible — faster, in fact, which is the trap — and only `15e`'s `transferSize > 0` self-check can tell that the number recorded as a cold cost was paid from cache. The `coding_guidelines.md` §12 rule that a test-harness safety guard must assert it is ARMED, applied to a measurement rather than to a fence",
   },
+  // --- TD-332 ---------------------------------------------------------------
+  // NOTE ON THE `gate` FIELD in these two: it carries the CHECK id rather than a
+  // `G-BR-0…` id, because the verdict inversion matches `MUTATIONS[m].gate` against
+  // `failed[].id` by prefix (see the `want`/`hit` pair at the bottom of this file).
+  // G-BR-0's checks are named for what they assert rather than numbered under
+  // their gate, so `G-BR-0` would match neither and every run would report
+  // "caught by a different check than predicted" on a correct catch.
+  "br0-plant-known-red-orphan": {
+    gate: "ledger-orphans",
+    how: "plant a bogus `KNOWN_RED[\"7z-no-such-check\"] = \"TD-332\"` ON THE MAP ITSELF (beside the map, not inside the gate), i.e. a ledger row whose check does not exist — what a rename or a deletion leaves behind. THIS IS TD-332 AC-3's PLANTED ORPHAN, made re-runnable: the brief asked for planted/shown-red/removed, and a hand-edit satisfies that once and then leaves nothing for the next reader. WHAT MAKES IT THE RIGHT DEFECT rather than a straw man: on the same run, every OTHER consumer of the ledger reads the planted row and none of them can say anything — `knownRedFailures` cannot name it (it never fails), `knownRedSurprises` cannot flag it (it never passes), and no FAILED line mentions it. `ledger-orphans` is the only thing between that silence and a clean-looking ladder, which is the exact dual of the problem the ledger was built for: an orphan row is 'a ledger entry for a check that no longer exists, silently' against the ledger's own 'an unowned red check is indistinguishable from an accepted one'",
+  },
+  "br0-duplicate-check-id": {
+    gate: "ledger-ids",
+    how: "re-emit an id that ALREADY appeared in this run as a second check under G-BR-0 — the collision a future gate would create by naming a sub-check after one that already exists. The donor is DERIVED from `results` (the last non-`threw`, non-KNOWN_RED id the ladder produced) rather than hard-coded, so the mutation cannot quietly stop biting when a check is renamed — a hard-coded donor would emit a UNIQUE id and the harness would report VACUOUS while looking like a rename. It matters because `KNOWN_RED` keys are gate-UNQUALIFIED: two checks sharing an id make a row ambiguous about which one it owns, and the file's mutation-inversion prefix-matching parses those same unqualified ids. TD-332 chose to DETECT the collision here rather than re-key the map, because qualifying the keys has real blast radius (every KNOWN_RED key, every mutation `gate` field) for a defect that does not exist yet",
+  },
   "br13-silent-empty-search": {
     gate: "G-BR-13d",
     how: "rewrite the briefs-search response the BROWSER sees to claim `mode: \"hybrid\"` with zero items, while the gate reads the endpoint directly from node and sees the true mode. 'a degrade is loud' inverted, and the exact shape a missing-migration ship would produce: a search that answers nothing while looking perfectly healthy. ALSO reddens 13a, because the rewritten body renders zero rows while the endpoint returns one",
@@ -344,7 +359,19 @@ const ONLY_GATES =
           .map((s) => s.trim())
           .filter((s) => s !== ""),
       );
-const gateEnabled = (id) => ONLY_GATES === null || ONLY_GATES.has(id.replace(/^G-BR-/, ""));
+/*
+ * `G-BR-0` is EXEMPT from `--gates=`, and that is not a convenience.
+ *
+ * Its subject is the ledger the other gates just wrote, so filtering it out
+ * would make a filtered run silent about the one thing a filter puts at risk.
+ * It runs, sees `notRun` is non-empty, and SKIPS with the filtered gates named —
+ * so the transcript says "the ledger was NOT audited" out loud instead of
+ * omitting the audit without comment. A guard that silently disappears under a
+ * flag is the same failure class it exists to close.
+ */
+const ALWAYS_RUN = new Set(["G-BR-0"]);
+const gateEnabled = (id) =>
+  ALWAYS_RUN.has(id) || ONLY_GATES === null || ONLY_GATES.has(id.replace(/^G-BR-/, ""));
 
 // ---------------------------------------------------------------------------
 // Verdict ledger
@@ -395,7 +422,19 @@ const KNOWN_RED = {
   // back-out 72.0-74.1 % (spread 2.1pp) against a 0.75 floor and separation
   // 13.8-17.9pp (spread 4.1pp) against a 15pp floor. The pre-registered rule
   // lands on R4 — REPLACE THE SURFACE (an 11-node ink distribution does not
-  // separate with margin), not re-derive the numbers. See `gBr7`'s notes.
+  // separate with margin), not re-derive the numbers.
+  // THE `dense` WORLD WAS EVALUATED AS THAT REPLACEMENT AND REJECTED, 2026-08-06
+  // (measured k_fit=0.34271, so the settled reference saturates against the
+  // canvas and the separation would be bought from CLIPPING). The residual is an
+  // HONEST DENOMINATOR — TD-366 owns it, and it carries TWO candidate designs
+  // because the layout overflows the canvas AT k=1 and either side is fixable:
+  // a RIGHT-SIZED world (k_fit ~ 1), or an ANCHORED CAMERA on the world we have
+  // (G-BR-11 already drives absolute zooms and verifies achieved-vs-requested).
+  // WHICHEVER IS CHOSEN MUST NOT PUT A CANVAS-DEPENDENT QUANTITY BACK INTO THE
+  // READING — that is the defect TD-337 removed from 11a/11b by re-anchoring
+  // them off k_fit onto the absolute K_FLOOR. Do not narrow this to one design
+  // before measuring; this note used to prescribe `dense` and was wrong.
+  // See `gBr7`'s notes for the measurement and the derived band table.
   "7d": "TD-332",
   // TD-337's rows for `11a` and `11b` were REMOVED here, in the same commit that
   // re-anchored both to `K_FLOOR` and measured them green — which is the
@@ -403,6 +442,21 @@ const KNOWN_RED = {
   // in `gBr11` were rewritten in the same pass. Kept as a comment because the
   // discipline is easier to copy than to describe.
 };
+
+/*
+ * `--mutate=br0-plant-known-red-orphan` — the planted orphan of TD-332 AC-3,
+ * injected HERE, at the map itself, rather than inside `gLedger`.
+ *
+ * The position is the point. Every other consumer of this ledger reads the
+ * planted row too — `knownRedSurprises` at the bottom of this file,
+ * `knownRedFailures` in the verdict block, the `UNINFORMATIVE VERDICT` line —
+ * and NOT ONE OF THEM SAYS A WORD, because all three key on the id appearing in
+ * `results`. That silence IS the hole, reproduced on demand. `G-BR-0` is the
+ * only thing in the run that notices.
+ */
+if (mut("br0-plant-known-red-orphan")) {
+  KNOWN_RED["7z-no-such-check"] = "TD-332";
+}
 
 /** `{ id, brief }` for every KNOWN_RED check that PASSED — i.e. every surprise. */
 function knownRedSurprises() {
@@ -3386,7 +3440,12 @@ async function gBr7(tab) {
       "runs clear it) and 13.8pp worst case against the 15pp separation (6/7 clear it). " +
       "FOR COMPARISON the FR-240 figures were back-out 84.3-85.3%, cold 61.2-61.9%, worst-case " +
       "separation 22.4pp with a 0.7-1.0pp spread, on the pre-reflow canvas with the " +
-      "aspect-COUPLED metric.",
+      "aspect-COUPLED metric. " +
+      "TWO FURTHER HEALTHY READINGS, 2026-08-06 (TD-332's second pass, recorded rather than folded into " +
+      "the band above, because two ad-hoc runs do not re-measure an n=7 population): 74.1 / 56.2 / 17.9pp " +
+      "and 74.4 / 59.5 / 14.9pp. The second is 0.3pp ABOVE the recorded back-out maximum and its " +
+      "separation lands 0.1pp under the 15pp floor — so the spread is if anything slightly wider than " +
+      "recorded, both runs are red, and neither is a sign that the world moved.",
   );
   note(
     "THE PRE-REGISTERED DECISION RULE, APPLIED — AND IT LANDS ON 'REPLACE THE SURFACE'. The rule " +
@@ -3404,12 +3463,86 @@ async function gBr7(tab) {
       "WHY THE SURFACE IS THE PROBLEM, mechanically: d3-force initialises unplaced nodes on a " +
       "phyllotaxis spiral of radius 10*sqrt(i). For ELEVEN nodes that opening clump is already " +
       "fairly spread relative to the settled extent, which is why the cold arm reads ~57% rather " +
-      "than ~10% and why the separation is both small and noisy. At 710 nodes the opening clump is " +
-      "proportionally far tighter, so the SIGNAL grows rather than the noise merely averaging out. " +
-      "The `dense` world already exists with a drillable `demo` scope. " +
-      "THAT RELOCATION IS NOT IN THIS PASS, and saying so is the point of writing the rule down: " +
-      "it is a new sub-gate with its own calibration, and TD-332 is re-scoped to 'replace 7d's " +
-      "surface' as its whole remaining content.",
+      "than ~10% and why the separation is both small and noisy. At a larger node count the opening " +
+      "clump is proportionally far tighter, so the SIGNAL grows rather than the noise merely " +
+      "averaging out. THAT MECHANISM IS RIGHT AND IT IS WHY 'BIGGER WORLD' IS THE OBVIOUS MOVE — " +
+      "see the NULL RESULT below for why the obvious move was measured and REJECTED.",
+  );
+  note(
+    "THE NULL RESULT, TD-332, 2026-08-06: THE `dense` WORLD WAS EVALUATED AS 7d's REPLACEMENT " +
+      "SURFACE AND IT IS A NO-GO. READ THIS BEFORE RELOCATING 7d — THIS FILE USED TO PRESCRIBE " +
+      "EXACTLY THAT MOVE AND THE PRESCRIPTION WAS WRONG. " +
+      "THE REASON THAT DECIDES IT — THE DENOMINATOR SATURATES. `inkSpread` samples the CANVAS ONLY " +
+      "(a 24x24 grid over the backing store; ink outside the canvas is not sampled and cannot be), " +
+      "and EVERY 7d ARM MEASURES AT CAMERA k=1: each arm is a fresh graph instance (`useGraph.ts` " +
+      "rebuilds on payload identity), and `zoomToFit` is reachable only through the FIT button, " +
+      "which this gate never clicks and CANNOT — the opening frames it measures precede any click " +
+      "on the new instance. `k_fit` is zoomToFit()'s scale, so at k=1 the VISIBLE LINEAR FRACTION " +
+      "of the layout IS k_fit. MEASURED on the dense world, unfiltered run 2026-08-06, from " +
+      "G-BR-11's own `11-instrument` line: k_fit=0.34271 at --graph-column-scale 2 (canvas " +
+      "1058x1084) and 0.13275 at scale 1 — the canvas shows about a THIRD of the layout's width " +
+      "and an eighth of its area. The cold arm's NUMERATOR would stay honest (d3's phyllotaxis puts " +
+      "unplaced node i at radius 10*sqrt(i), so the opening RMS is 7.07*sqrt(N) ~ 189 units at " +
+      "N=710, well inside the canvas) — but BOTH arms' settled reference would saturate at the RMS " +
+      "radius of a canvas-filling ink field, reporting the same number for ANY layout >= ~3x the " +
+      "canvas. Separation would widen from ~14pp to roughly 50pp AND EVERY POINT OF THAT " +
+      "IMPROVEMENT WOULD BE BOUGHT FROM CLIPPING RATHER THAN FROM LAYOUT PHYSICS. This file refuses " +
+      "that twice already in writing — FR-250's 'an instrument that stops measuring reports the " +
+      "reassuring answer', and BACKOUT_COLLAPSE_FLOOR's own refusal of a 7d that reads its own " +
+      "instrument. Relocating a marginal canvas-COUPLED metric onto a world where the canvas IS the " +
+      "denominator makes the coupling TOTAL. The numbers improve; the subject degrades. " +
+      "THE OTHER HALF, AND IT IS THE MORE INSTRUCTIVE ONE: the brief's own gate was 'does the dense " +
+      "world's `demo` scope differ enough from whole-brain to make the drill/back-out " +
+      "non-degenerate'. Answered from the fixture: the delta is 3 of 710 nodes and 0 of 352 edges " +
+      "(0.42%) — degenerate as the brief suspected — SO THAT GATE WOULD HAVE REACHED NO-GO FOR THE WRONG " +
+      "REASON. The scope delta does not drive 7d at all: the back-out arm seeds from " +
+      "`cachedScope(null).positions` and the cold arm from the `{}` that `putScope` writes on a " +
+      "forced refetch, so both arms are the WHOLE-BRAIN node set with only the position seed " +
+      "differing and neither one touches the drilled payload. The drill is a cache-LEAVING " +
+      "manoeuvre; the drilled scope's size is incidental. " +
+      "WHERE 710 COMES FROM, because an earlier draft of this note said 711 and reasoned it from " +
+      "a MISSING error node — backwards, since a missing node cannot explain a count BELOW the " +
+      "derivation. `whole-graph.ts` filters `WHERE review_status = 'approved'`, which drops the " +
+      "fixture's one pending_review learning: 4 briefs + 703 learnings + 3 goals = 710. The " +
+      "independent confirmation is G-BR-11's `11-instrument` line on the DENSE world (this gate " +
+      "runs the 11-node `seeded` world and prints 11), which reads `TIER C - 710 NODES - 352 " +
+      "EDGES`. Check it there, not here. " +
+      "ONE CANDIDATE RESIDUAL IS A RIGHT-SIZED WORLD (the other is below) — a seventh world whose " +
+      "settled layout still fits the canvas at k=1 (k_fit ~ 1), so the denominator measures the " +
+      "LAYOUT. That is a node count between 11 and 710, chosen BY MEASURING k_fit rather than " +
+      "guessed. TD-366 owns it, and carries two hazards forward: this gate allows 60 s to settle " +
+      "while G-BR-11 needs 90 s " +
+      "for the dense world, so a larger world needs its own timeout re-derived; and 7a's readout " +
+      "must differ by more than a rounding accident (on `dense` it would clear by exactly 3 nodes). " +
+      "AND THE RESIDUAL IS NOT NECESSARILY A WORLD AT ALL. The denominator saturates because the " +
+      "layout overflows the canvas AT k=1, and that has two sides: change the POPULATION (a " +
+      "right-sized world) or change the OBSERVER (anchor both arms at a k where the layout fits — " +
+      "G-BR-11 already drives absolute zooms with real wheel events and verifies achieved-vs- " +
+      "requested within 5%, so the machinery exists on the world we already have). TD-366 carries " +
+      "both and must weigh them before building either. THE CRITERION THAT DECIDES IT, and it is " +
+      "the most transferable thing here: whichever design is chosen MUST NOT PUT A CANVAS-DEPENDENT " +
+      "QUANTITY BACK INTO THE READING. That is precisely the defect TD-337 spent a brief removing " +
+      "from 11a/11b, which had been anchored to k_fit — a quantity that moves with the canvas box — " +
+      "and were re-anchored onto the absolute K_FLOOR. An anchored camera that anchors to k_fit " +
+      "would reintroduce it in a new place; a right-sized world sized BY k_fit would not, because " +
+      "there k_fit is a selection input rather than a term in the reading. That asymmetry is the " +
+      "whole comparison and it is not obvious which way it falls.",
+  );
+  note(
+    "THE RULE THAT PRODUCED THAT VERDICT, DERIVED FROM THE MECHANISM AND FIXED BEFORE THE READING, " +
+      "recorded so the next brief inherits the criterion instead of re-deriving it. Because the " +
+      "visible linear fraction at k=1 IS k_fit, a candidate world's k_fit decides whether 7d's " +
+      "denominator is the layout or the canvas: " +
+      "k_fit >= 0.9 -> the layout essentially fits the canvas at k=1, the denominator is honest, and " +
+      "the surface is a candidate (take N>=7 readings per population before adopting it); " +
+      "0.6 <= k_fit < 0.9 -> the layout is up to ~1.7x the canvas and partially clipped, which is an " +
+      "OPERATOR CALL, not an author's; " +
+      "k_fit < 0.6 -> at least 40% of the layout's width is outside the canvas and the denominator " +
+      "IS the canvas — NO-GO. " +
+      "The dense world reads 0.34271, deep in the third band, and the margin survives the box " +
+      "difference between this gate (1058x1258) and G-BR-11 (1058x1084): even a 50% more favourable " +
+      "canvas would only reach ~0.51, still inside the NO-GO band. THE MEASUREMENT IS FREE — " +
+      "`11-instrument` prints k_fit on every unfiltered run.",
   );
   note(
     "WHAT WAS FIXED HERE, AND IT IS INDEPENDENT OF ANY VERDICT (TD-332 AC-1). THE GATE NOW " +
@@ -7140,6 +7273,179 @@ async function gBr15(cdpPort, seeded) {
   );
 }
 
+/**
+ * G-BR-0 — THE LEDGER AUDITS ITSELF (TD-332).
+ *
+ * PROVES:
+ *   ledger-orphans  every `KNOWN_RED` row names a check that ACTUALLY RAN;
+ *   ledger-ids      no check id was emitted under two different gates.
+ *
+ * DOES NOT PROVE: that a known-red row is still the RIGHT disposition. That is a
+ * judgement a brief owns; this gate only says the row still has a subject.
+ *
+ * WHY IT EXISTS — THE ORPHAN IS THE DUAL OF THE SURPRISE. The `KNOWN_RED` map
+ * keys on a check id, and every consumer of it — `knownRedFailures`,
+ * `knownRedSurprises`, the `UNINFORMATIVE VERDICT` line — reaches the row only
+ * by finding that id in `results`. So a row whose check was RENAMED OR DELETED
+ * produces no failure, no `SURPRISE`, and no output at all: it is a decision
+ * about the world that the world no longer contains, and the ledger cannot say
+ * so. That is precisely the shape the ledger was built to refuse — *"an unowned
+ * red check is indistinguishable from an accepted one"* — arriving from the
+ * other side as *"a ledger entry for a check that no longer exists, silently"*.
+ *
+ * IT IS NUMBERED 0 AND IT RUNS LAST, and the position is load-bearing rather
+ * than tidy: `notRun` is only fully populated once every `runGate` has been
+ * reached, and `notRun` is what this gate fences itself on.
+ *
+ * `--mutate=br0-plant-known-red-orphan` and `--mutate=br0-duplicate-check-id`
+ * are the demonstrated failing counterparts.
+ */
+function gLedger() {
+  gate(
+    "G-BR-0",
+    "ledger integrity — the KNOWN_RED map describes checks that EXIST (TD-332). Numbered 0, RUN LAST: its subject is the ledger every other gate just wrote",
+  );
+
+  /*
+   * SELF-FENCE, FIRST. A filtered run legitimately never reaches most gates, so
+   * the checks they own never reach `results` and every `KNOWN_RED` row
+   * belonging to them would read as an orphan — the guard would report a hole
+   * that is not there, on exactly the runs a developer iterates with.
+   *
+   * `skip()` rather than an early `return`: it is this file's only non-silent
+   * omission path (counted apart from PASS, printed in the summary, named in the
+   * verdict line), so a filtered run says the ledger was NOT audited out loud.
+   * A guard that quietly passes under a flag is the same failure class it closes.
+   */
+  if (notRun.length > 0) {
+    const why =
+      `--gates= filtered ${notRun.length} gate(s) out of this run (${notRun.join(", ")}), so the checks they ` +
+      `own never reached the ledger and every KNOWN_RED row belonging to them would read as an ORPHAN. ` +
+      `This audit is only meaningful on an UNFILTERED run — which is the same run a brief is allowed to ` +
+      `quote as evidence`;
+    skip("ledger-orphans", why);
+    skip("ledger-ids", why);
+    return;
+  }
+
+  /*
+   * `seen` is `results` UNION `skipped`. A `skip()` does NOT push to `results`
+   * (it has its own ledger), so a check that exists but legitimately did not run
+   * — `3f-hybrid`/`3f-loud`, exactly one of which is skipped on every run — must
+   * not read as an orphan. It is present; it was declined, loudly, with a reason.
+   */
+  const seenAt = new Map();
+  for (const r of results) if (!seenAt.has(r.id)) seenAt.set(r.id, r.gate);
+  for (const s of skipped) if (!seenAt.has(s.id)) seenAt.set(s.id, `${s.gate} SKIPPED`);
+
+  const rows = Object.keys(KNOWN_RED);
+  const orphans = rows.filter((id) => !seenAt.has(id));
+  check(
+    "ledger-orphans",
+    orphans.length === 0,
+    orphans.length === 0
+      ? `all ${rows.length} KNOWN_RED row(s) name a check this run actually produced: ` +
+        `${rows.map((id) => `${id} -> ${KNOWN_RED[id]} (${seenAt.get(id)})`).join(" · ")}. ` +
+        `Audited against ${seenAt.size} distinct ids from ${results.length} result(s) + ${skipped.length} skip(s)`
+      : `${orphans.length} ORPHANED KNOWN_RED row(s) — the check was renamed or deleted and the row was left ` +
+        `behind: ${orphans.map((id) => `${id} -> owned by ${KNOWN_RED[id]}`).join(" · ")}. ` +
+        `NOTHING ELSE IN THIS RUN CAN SEE THEM: knownRedFailures only reaches a row through a FAILED id and ` +
+        `knownRedSurprises only through a PASSED one, so an id that appears in neither is a disposition about ` +
+        `a check that no longer exists — the dual of the SURPRISE this ledger was built to report. Delete the ` +
+        `row (and its disposition note) or restore the check`,
+  );
+
+  /*
+   * The injected collision, derived rather than hard-coded — see the mutation's
+   * `how`. Emitted through `check()` so it enters the ledger exactly as a real
+   * duplicate would: a second gate honestly reporting under an id that is
+   * already taken. It is injected AFTER `ledger-orphans` so a mutation cannot
+   * cost the run the other check — a guard that disappears while another guard
+   * is being exercised is the shape this gate exists to refuse. KNOWN_RED ids
+   * are excluded as donors so the plant cannot fire a spurious SURPRISE (a
+   * PASSING check under a known-red id) and be misread as a finding about `7d`.
+   */
+  let donorFailure = null;
+  if (mut("br0-duplicate-check-id")) {
+    const donor = [...results]
+      .reverse()
+      .find((r) => r.id !== "threw" && KNOWN_RED[r.id] === undefined && r.gate !== "G-BR-0");
+    if (donor === undefined) {
+      donorFailure =
+        "[MUTATED: br0-duplicate-check-id] the mutation could not run — this ladder produced no id eligible " +
+        "to duplicate, so the run proves nothing about ledger-ids";
+    } else {
+      check(
+        donor.id,
+        true,
+        `[MUTATED: br0-duplicate-check-id] a SECOND check emitted under G-BR-0 wearing ${donor.gate}'s id — ` +
+          `the id is now gate-ambiguous, which is exactly what a KNOWN_RED row keyed on it would inherit`,
+      );
+    }
+  }
+
+  /*
+   * `threw` is excluded by construction, not by convenience: `runGate` emits it
+   * under whichever gate aborted, so it is a HARNESS id that is expected to
+   * appear under many gates over many runs and carries no keyspace risk. Its
+   * count is printed rather than hidden, so the exclusion is visible.
+   */
+  const byId = new Map();
+  let threwRows = 0;
+  let emitted = 0;
+  const record = (id, gateId) => {
+    if (id === "threw") {
+      threwRows += 1;
+      return;
+    }
+    emitted += 1;
+    if (!byId.has(id)) byId.set(id, []);
+    byId.get(id).push(gateId);
+  };
+  for (const r of results) record(r.id, r.gate);
+  for (const s of skipped) record(s.id, s.gate);
+  // UNIQUENESS, not merely "under two different gates". Two checks sharing an id
+  // inside ONE gate leave a KNOWN_RED row just as ambiguous about which of them
+  // it owns, and `knownRedFailures` would name it twice. The cross-gate case is
+  // the strictly harder one and is what the mutation injects; asserting the
+  // whole property costs nothing, measured: the ladder BEFORE this gate existed
+  // emitted 109 rows and 109 distinct ids, and 110/110 with it (unfiltered runs,
+  // 2026-08-06), so the stricter property was already true of the whole corpus.
+  const collisions = [...byId.entries()].filter(([, gates]) => gates.length > 1);
+  check(
+    "ledger-ids",
+    donorFailure === null && collisions.length === 0,
+    donorFailure !== null
+      ? donorFailure
+      : collisions.length === 0
+      ? `${byId.size} check id(s) emitted, all DISTINCT and each under exactly one gate, so a KNOWN_RED key ` +
+        `(which is gate-UNQUALIFIED) resolves to one check and one owner. ` +
+        `${threwRows} \`threw\` row(s) excluded — that id belongs to runGate's barrier, not to a gate`
+      : `${collisions.length} check id(s) emitted MORE THAN ONCE across ${emitted} rows: ` +
+        `${collisions.map(([id, gates]) => `${id} in ${gates.join(" + ")}`).join(" · ")}. ` +
+        `KNOWN_RED keys are gate-unqualified, so a row keyed on one of these is ambiguous about which check ` +
+        `it owns — and the mutation-inversion prefix match at the bottom of this file parses the same ` +
+        `unqualified ids. Rename one of them`,
+  );
+
+  note(
+    "WHY THIS GATE IS A CHECK AND NOT A CONVENTION (TD-332 AC-3). The KNOWN_RED ledger's own premise is " +
+      "that a warning nobody can execute is not a warning — it asks a human to notice an ABSENCE. The " +
+      "orphan row is that failure one level up: it asks a human to notice the absence of a check they " +
+      "already stopped seeing. `--mutate=br0-plant-known-red-orphan` reproduces it on demand and is the " +
+      "planted orphan TD-332 AC-3 called for, re-runnable rather than hand-edited once. A run under " +
+      "`--gates=` SKIPS both checks by design: the audit needs the full ladder, which is the same run a " +
+      "brief may quote as evidence.",
+  );
+  note(
+    "WHY IDS ARE DETECTED RATHER THAN RE-KEYED (TD-332, the secondary decision). Making KNOWN_RED keys " +
+      "gate-qualified would defend the same property, and it would touch every key, every mutation `gate` " +
+      "field and the `want`/`hit` prefix match — real blast radius for a defect that does not exist yet. " +
+      "`ledger-ids` closes the gap where it can be observed instead: the run says whether the keyspace is " +
+      "still flat, and the day it is not, the re-key becomes a decision with a red check behind it.",
+  );
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -7268,6 +7574,12 @@ async function main() {
     // i.e. the only one the write door can boot against.
     await runGate("G-BR-14", () => gBr14(tabs, worlds));
     await runGate("G-BR-11", () => gBr11(tabs.dense));
+    // TD-332, ABSOLUTELY LAST and numbered 0 to say so. It audits the LEDGER
+    // rather than the browser: `notRun` is only fully populated once every
+    // `runGate` above has been reached, and `results` is only complete here. It
+    // opens no tab, touches no world, and is exempt from `--gates=` (ALWAYS_RUN)
+    // so a filtered run SKIPS it loudly instead of omitting it silently.
+    await runGate("G-BR-0", () => gLedger());
   } finally {
     teardown();
     if (!KEEP) for (const d of worldDirs) rmSync(d, { recursive: true, force: true });

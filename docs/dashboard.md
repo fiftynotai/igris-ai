@@ -1700,10 +1700,14 @@ a single-world run cannot tell "the empty state renders" from "the empty state
 always renders".
 
 `--gates=11` runs a named subset. It is a development aid for iterating on one
-gate without paying for the other thirteen, and it is fenced: a filtered run stamps
+gate without paying for the rest of the ladder (the count is deliberately not
+written down here — the run prints its own), and it is fenced: a filtered run stamps
 `FILTERED` and the list of gates that did not run into its own verdict line, so
 a filtered transcript cannot be quoted as evidence of a green ladder. **Evidence
-reported for a brief is always an unfiltered run.**
+reported for a brief is always an unfiltered run.** `G-BR-0` is the one gate
+`--gates=` cannot switch off (TD-332): it audits the ledger the other gates
+wrote, so under a filter it RUNS and **skips its checks with the filtered gates
+named** rather than vanishing — see the `KNOWN_RED` section below.
 
 **Neither the gate nor `npm test` reaches the network.** Every server the gate
 starts runs with a `--import` preload that sets `env.allowRemoteModels = false`
@@ -1725,6 +1729,7 @@ the gate prints the exact command.
 
 | Gate | Proves | Does NOT prove |
 |---|---|---|
+| **G-BR-0** (TD-332) | the LEDGER, not the browser: every `KNOWN_RED` row names a check that actually ran (`ledger-orphans`), and no check id was emitted twice, since `KNOWN_RED` keys are gate-**unqualified** (`ledger-ids`). Numbered 0 and run **LAST** — `notRun` is only fully populated once every gate has been reached, and `notRun` is what it self-fences on | that a known-red row is still the RIGHT disposition — that is a judgement a brief owns; this only says the row still has a subject. Nor anything at all on a filtered run: under `--gates=` it SKIPS both checks, loudly, because every row owned by a gate that did not run would otherwise read as an orphan |
 | **G-BR-1** | AC #3 both ways with real clicks: list row → detail, LOCATE IN GRAPH → the node selected on the canvas, OPEN RECORD → back to the same address. Plus `BR-001` in two projects resolving to two different records | anything about node types with no detail view — 1e asserts that STATE explicitly (`// NO DETAIL VIEW FOR ERROR`) rather than a blank panel |
 | **G-BR-2** | the chips and both search boxes are WIRED: each rendered row count matches the endpoint's own `count` for the same filter, over fixture partitions that disagree | ranking, or that the SQL binds — `dashboard-layers-endpoint.test.ts` owns that |
 | **G-BR-3** | all four `EmptyKind`s observed in pixels (`degraded` / `empty` / `filtered` / `no-project`); that the hermetic guard is ARMED; and that the reported `retrieval.mode` matches the reported capability, with the banner LOUD (`BM25 ONLY`) whenever an arm did not run and QUIET (`HYBRID RECALL`) when both did | that the copy is right — operator review. The `vec` world's vectors are deterministic, not real embeddings, so it proves the MODE plumbing and never recall quality. On a tree with no warm model cache the QUIET-hybrid DOM rendering is SKIPPED and **no sibling covers it** — the endpoint's field separation is proven offline by `dashboard-learnings-search.test.ts` and the recall semantics by `memory-read.test.ts`, but neither renders |
@@ -1770,7 +1775,24 @@ on an off-screen FIT button as a 400×700 viewport, then stalled at
 `k_fit = 0.131` when driven by `--graph-column-scale` alone, because
 `.graph-layout` carries a 420px `min-height` the scale cannot reach past.
 
-**Two of those eight exist because a check had no failing counterpart of its
+**TD-332's second pass added two more (`br0-*`), both confirmed 2026-08-06
+against their predicted checks.** `br0-plant-known-red-orphan` plants a bogus
+`KNOWN_RED` row **on the map itself** rather than inside the gate, so the run
+shows the hole rather than a proxy for it: every other consumer of the ledger
+reads the planted row and not one of them can say a word. It is the *planted
+orphan* the brief asked for, made **re-runnable** — a hand-plant satisfies
+"planted, shown red, removed" once and then leaves nothing behind, which is the
+same reason this file prefers a mutation everywhere else.
+`br0-duplicate-check-id` re-emits an id that already appeared in the run, and
+its donor is **derived from `results`** (the last non-`threw`, non-known-red id
+the ladder produced) rather than hard-coded: a hard-coded donor would emit a
+*unique* id the day that check is renamed, and the harness would report
+`VACUOUS` for what looks like a rename. Note the `gate` field of both entries
+carries the CHECK id rather than a `G-BR-0…` id, because the verdict inversion
+prefix-matches `MUTATIONS[m].gate` against `failed[].id`, and these two checks
+are named for what they assert rather than numbered under their gate.
+
+**Two of FR-245's eight exist because a check had no failing counterpart of its
 own, which is a distinct gap from a check that is wrong.** `12d-session`
 (a new browsing context opens on the list) stayed GREEN under
 `br12-view-in-component-state`, which only reddens `12d-nav` — so the thing it
@@ -1909,7 +1931,50 @@ exists. TD-337's rows for `11a` and `11b` were removed exactly that way.
 
 | Check | Owner | Why it is red |
 |---|---|---|
-| `7d` | **TD-332** | The back-out-versus-cold-entrance ink reading does not separate with margin on an **11-node** canvas. Conditions are now fixed and documented; the metric is the residual. See the baseline below. |
+| `7d` | **TD-332** | The back-out-versus-cold-entrance ink reading does not separate with margin on an **11-node** canvas. Conditions are fixed and documented; the metric is the residual. The `dense` world was evaluated as the replacement surface and **REJECTED** (`k_fit = 0.34271` — the settled reference saturates against the canvas); the residual is an **honest denominator** — a right-sized world OR an anchored camera, owned by **TD-366**, which must weigh both. See the baseline and the null result below. |
+
+##### The orphan is the dual of the surprise, and `G-BR-0` is what sees it (TD-332)
+
+The ledger keys on a check id **appearing in `results`**, and so does every
+consumer of it — `knownRedFailures` reaches a row only through a FAILED id,
+`knownRedSurprises` only through a PASSED one. So an **orphaned row** — the
+check renamed or deleted, the ledger row left behind — produced **no failure, no
+`SURPRISE`, and no output at all.**
+
+That is the exact dual of the problem the ledger exists to solve. Its premise is
+*"an unowned red check is indistinguishable from an accepted one"*; an orphan row
+is *"a ledger entry for a check that no longer exists, silently"* — a decision
+about the world that the world no longer contains, and nothing could say so.
+It is also the failure the `KNOWN_RED` map's own preamble names one level up: a
+warning that asks a human to notice an **absence** is not a warning, and an
+orphan asks them to notice the absence of a check they had already stopped
+seeing.
+
+`G-BR-0` closes it with two checks:
+
+- **`ledger-orphans`** — every `KNOWN_RED` key appeared in `results` **∪
+  `skipped`**. The union matters: a `skip()` does not push to `results`, and
+  exactly one of `3f-hybrid` / `3f-loud` is skipped on every run, so a check that
+  exists and was loudly declined must not read as an orphan.
+- **`ledger-ids`** — every check id in the run is unique. `KNOWN_RED` keys are
+  gate-**unqualified**, so two checks sharing an id leave a row ambiguous about
+  which one it owns, and the mutation-inversion prefix match parses the same
+  unqualified ids. TD-332 chose to **detect** the collision rather than re-key
+  the map: qualifying the keys touches every key and every mutation `gate` field,
+  which is real blast radius for a defect that does not exist yet. Measured: the
+  ladder emitted 109 rows / 109 distinct ids *before* this gate existed and
+  110/110 with it, so the stricter property was already true of the whole corpus
+  rather than newly imposed on it.
+
+**It is numbered 0 and it runs LAST**, and both halves are load-bearing rather
+than tidy: `notRun` is only fully populated once every `runGate` has been
+reached, and `notRun` is what the gate self-fences on. **Under `--gates=` it
+SKIPS both checks** with the filtered gates named, because a filtered run
+legitimately never reaches most gates and every row they own would read as an
+orphan — the guard would report a hole that is not there, on exactly the runs a
+developer iterates with. It is exempt from `--gates=` for the same reason: a
+guard that silently disappears under a flag is the failure class it exists to
+close, and `skip()` is this file's only non-silent omission path.
 
 #### `7d`'s baseline, its spread, and the rule that was applied (TD-332)
 
@@ -1924,6 +1989,15 @@ its own browser chrome, leaving a ~1058×813 content box), canvas **1058×1258**
 | **healthy**, n=7 | 72.0–74.1% (spread **2.1pp**) | 56.2–59.5% (spread 3.3pp) | 13.8–17.9pp (spread **4.1pp**) |
 | `br7-backout-re-entrances` | 56.2% | 56.2% | 0.0pp |
 | `br7-crumb-forces-refetch` | 55.0% | 58.6% | −3.6pp, **and +1 `/api/graph`** |
+
+**Two further healthy readings, 2026-08-06, recorded and NOT folded in:**
+74.1 / 56.2 / 17.9pp and **74.4** / 59.5 / 14.9pp. The second sits **0.3pp above
+the recorded back-out maximum** and its separation lands 0.1pp under the 15pp
+floor — so the observed spread is if anything slightly wider than the table
+says, both runs are still red, and neither is a sign that the world moved. They
+are appended rather than folded because two ad-hoc runs cannot re-measure an
+n=7 population, and folding them would make a documented spread a moving target
+that accommodates whatever the last run said. **No threshold moved.**
 
 Bounds are `BACKOUT_COLLAPSE_FLOOR = 0.75` and
 `BACKOUT_COLD_SEPARATION_FLOOR = 0.15` — **named by TD-332, values UNCHANGED.**
@@ -1940,15 +2014,108 @@ numbers:
 - so the surface is what is wrong. `d3-force` initialises unplaced nodes on a
   phyllotaxis spiral of radius `10·√i`; for **eleven** nodes that opening clump is
   already fairly spread relative to the settled extent, which is why the cold arm
-  reads ~57% rather than ~10% and why the separation is both small and noisy. At
-  710 nodes the opening clump is proportionally far tighter, so the SIGNAL grows
-  rather than the noise merely averaging out. **TD-332 is re-scoped to relocating
-  `7d`'s reading to the `dense` world as its whole remaining content.**
+  reads ~57% rather than ~10% and why the separation is both small and noisy. At a
+  larger node count the opening clump is proportionally far tighter, so the SIGNAL
+  grows rather than the noise merely averaging out. **That mechanism is right, and
+  it is why "a bigger world" is the obvious move — see the null result below for
+  why the obvious move was measured and rejected.**
 
 What TD-332 DID close, independently of any verdict: the gate now measures at the
 viewport it documents, cleared in a `finally` so it cannot leak into `G-BR-9` or
 `G-BR-13`, with the box printed at every stage. That alone tightened the cold arm
 from ~63% to ~57% and moved the worst-case separation from 9.6pp to 13.8pp.
+
+#### The `dense` world is NOT the replacement surface — a measured NULL RESULT (TD-332, 2026-08-06)
+
+**Read this before relocating `7d`.** Both this document and `browser-gate.mjs`
+used to prescribe exactly that relocation, and the prescription was wrong.
+
+**The reason that decides it: the denominator saturates.** `inkSpread` samples
+the **canvas only** — a 24×24 grid over the backing store, so ink outside the
+canvas is not sampled and cannot be. And **every `7d` arm measures at camera
+`k = 1`**: each arm is a fresh graph instance (`useGraph.ts` rebuilds on payload
+identity — *"a new scope is a new instance"*), and `zoomToFit` is reachable only
+through the FIT button, which `gBr7` never clicks and *cannot*, since the opening
+frames it measures precede any possible click on the new instance. `k_fit` is
+`zoomToFit()`'s scale, so **at `k = 1` the visible linear fraction of the layout
+IS `k_fit`.**
+
+Measured on the `dense` world, from `G-BR-11`'s own `11-instrument` line on an
+unfiltered run:
+
+| `--graph-column-scale` | `k_fit` | what the canvas shows at k=1 |
+|---|---|---|
+| 2 (shipped, and `gBr7`'s box) | **0.34271** | ~34% of the layout's width, ~12% of its area |
+| 1 | **0.13275** | ~13% of its width |
+
+- the cold arm's **numerator stays honest** — d3 puts unplaced node *i* at radius
+  `10·√i`, so the opening RMS is `7.07·√N` ≈ **189 units** at N = 710, well
+  inside the canvas;
+- but **both arms' denominator saturates.** A settled field ~3× the canvas fills
+  the grid, and `settledSpread` then reports the same number for *any* layout
+  ≥ ~3× the canvas.
+
+Separation would widen from ~14pp to roughly **50pp**, and every point of that
+improvement would be **bought from clipping rather than from layout physics**.
+This file refuses that twice already in writing — FR-250's *"an instrument that
+stops measuring reports the reassuring answer"*, and `BACKOUT_COLLAPSE_FLOOR`'s
+own refusal of a `7d` that reads its own instrument. Relocating a marginal
+canvas-**coupled** metric onto a world where the canvas IS the denominator makes
+the coupling total. The numbers improve; the subject degrades.
+
+**The brief's own gate would have reached NO-GO for the wrong reason, and that is
+the more instructive half.** It asked whether the `dense` world's `demo` scope
+differs enough from whole-brain to make the drill non-degenerate. Derived from
+the fixture: the delta is **3 of 710 nodes and 0 of 352 edges** — degenerate, as
+the brief suspected. But that variable does not drive `7d` at all. The back-out
+arm seeds from `cachedScope(null).positions` and the cold arm from the `{}` that
+`putScope` writes on a forced refetch, so **both arms are the whole-brain node
+set with only the position seed differing**, and neither touches the drilled
+payload. The drill is a cache-*leaving* manoeuvre; the drilled scope's size is
+incidental.
+
+**The rule, derived from the mechanism and fixed before the reading** — recorded
+so the next brief inherits the criterion instead of re-deriving it:
+
+| `k_fit` on the candidate world | meaning | action |
+|---|---|---|
+| **≥ 0.9** | the layout essentially fits the canvas at k=1; the denominator is honest | a candidate — take N ≥ 7 readings per population before adopting it |
+| **0.6 – 0.9** | up to ~1.7× the canvas, partially clipped | **operator call**, not an author's |
+| **< 0.6** | ≥ 40% of the layout's width outside the canvas; the denominator IS the canvas | **NO-GO** |
+
+`dense` reads 0.34271, deep in the third band, and the margin survives the box
+difference between the two gates — `gBr7` sets 1058×1258 while `G-BR-11`'s
+reading is taken at 1058×1084, and even a 50% more favourable canvas would only
+reach ~0.51. **The measurement is free: `11-instrument` prints `k_fit` on every
+unfiltered run.**
+
+**The residual is an HONEST DENOMINATOR — and it is not necessarily a world at
+all.** The denominator saturates because the layout overflows the canvas *at
+k=1*, which has two sides:
+
+- **change the population** — a seventh world whose settled layout still fits the
+  canvas at k=1 (`k_fit ≈ 1`), a node count between 11 and 710 chosen **by
+  measuring `k_fit`** rather than guessed; or
+- **change the observer** — anchor both arms at a `k` where the layout fits, on
+  the world we already have. `G-BR-11` drives absolute zooms with real wheel
+  events and verifies achieved-vs-requested within 5%, so the machinery exists.
+
+**TD-366** owns both and must weigh them before building either.
+
+**The criterion that decides it, and it is the most transferable thing here:
+whichever design is chosen MUST NOT PUT A CANVAS-DEPENDENT QUANTITY BACK INTO
+THE READING.** That is precisely the defect TD-337 removed from `11a`/`11b`,
+which had been anchored to `k_fit` — a quantity that moves with the canvas box —
+and were re-anchored onto the absolute `K_FLOOR`. An anchored camera that
+anchors to `k_fit` reintroduces it in a new place; a world *sized by* `k_fit`
+does not, because there `k_fit` is a selection input rather than a term in the
+reading. That asymmetry is the whole comparison, and it is not obvious which way
+it falls.
+
+Two hazards carry forward either way: `gBr7` allows 60 s to settle while
+`G-BR-11` needs 90 s for the dense world, so a larger world needs its own timeout
+re-derived; and `7a`'s readout must differ by more than a rounding accident (on
+`dense` it would clear by exactly three nodes).
 
 #### `G-BR-11`'s anchors are ABSOLUTE now, and `11e` is why you can believe it (TD-337)
 
