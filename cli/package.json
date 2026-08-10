@@ -15,7 +15,7 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc && bash scripts/copy-templates.sh && bash scripts/build-dashboard.sh",
+    "build": "rm -rf dist && tsc && chmod +x dist/index.js && bash scripts/copy-templates.sh && bash scripts/build-dashboard.sh",
     "prepublishOnly": "npm run build",
     "dev": "tsc --watch",
     "test": "vitest run",

@@ -1161,10 +1161,68 @@ interface PackReport {
  * this keeps re-teaching: measure LAST, or the figure you write down is one
  * commit stale on arrival.)
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~104.9 KB is what is left** (the
- * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
- * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
- * superseded). **And the OTHER ceiling is not merely binding now, it is
+ * TD-373 MEASURED ON A CLEAN TREE — the first reading in this ledger that is
+ * one, and the reason the numbers above all shifted:
+ *   packed              1_863_420    796 entries (a CLEAN build: `rm -rf` on
+ *                                    BOTH `brain-mcp-server/dist` and
+ *                                    `cli/dist`, then rebuild)
+ *   cumulative delta    +548.4 KB    (561_569 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~1.6 KB      (1_631 B under TD-329's +550)
+ *                                    **PROVISIONAL** — the baseline is ~24 KB
+ *                                    high and correcting it goes ~19.9 KB
+ *                                    NEGATIVE. See the provenance note and
+ *                                    TD-374.
+ *   orphans deleted     -9_624 B     24 files with no source, shipping since
+ *                                    `c6777bc`. Their presence is what put the
+ *                                    working tree 3 B PAST the ceiling.
+ *   TD-373's own share  NOT ISOLATED, deliberately. A clean build of `HEAD`
+ *                                    (873d012) in a scratch worktree read
+ *                                    1_855_430 / +9_621 B headroom. The 5_541 B
+ *                                    between that and the figure above is
+ *                                    uncommitted work that SHIPS — TD-373's own
+ *                                    `cli/CHANGELOG.md` entry AND a concurrent
+ *                                    session's TD-367 changes, in the same
+ *                                    file. Separating them would mean stashing
+ *                                    another agent's live work, so the ledger
+ *                                    says "both" rather than guessing a split.
+ *                                    (This is the TD-333 lesson applied to
+ *                                    itself: an earlier draft of this row
+ *                                    attributed the whole 5_541 B to the other
+ *                                    session and forgot its own changelog
+ *                                    entry, which is exactly the over-
+ *                                    attribution TD-333 warns about.)
+ *
+ *   MEASURED LAST, twice, and the second pass corrected the first. An
+ *   intermediate reading of 1_860_971 / +4_080 B was written here; the review
+ *   round that followed spent **+2_449 B** and the row was re-measured. A draft
+ *   of this paragraph blamed "this very docblock and two CHANGELOG entries",
+ *   which is wrong in the flattering direction: `tsconfig` excludes
+ *   `src/__tests__` from `dist`, so **every byte of prose in THIS file is
+ *   packed-free**, and so is `scripts/copy-templates.sh` (outside
+ *   `package.json` `files`). Re-measuring after the edit confirmed it —
+ *   1_863_420 both before and after, unchanged to the byte. The 2_449 B is
+ *   `cli/CHANGELOG.md`, which `files` ships verbatim, plus a four-line comment
+ *   in `src/lib/sync/code.ts`, which `tsc` compiles into `dist` and charges for
+ *   TWICE (`.js` and `.js.map`). Which prose costs is not intuition; it is a
+ *   property of `files` and `tsconfig`, and it is cheap to check.
+ *
+ *   HOW IT WAS TAKEN, so the next brief does not re-derive it: `git worktree
+ *   add` a detached checkout, symlink `node_modules` at the repo root AND in
+ *   `cli/` AND in `brain-mcp-server/` (the last is required or `tsc` cannot
+ *   resolve `@types/express`), `npm run build`, `npm pack --dry-run --json`.
+ *   The live deploy is never touched because the worktree's `cli/dist` is a
+ *   different path. Four minutes. BR-085 and TD-347 both logged a FLOOR instead
+ *   of doing this, and FR-248's plan then bounded the slack at 52_099 B — 13x
+ *   the truth, against a tree that was already over.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~4.0 KB is what is left** —
+ * see TD-373's row below, which is the first CLEAN reading this ledger has
+ * ever carried and is 26x tighter than the figure that stood here. (~104.9 KB
+ * was FR-247's, ~117.2 KB FR-246's, ~143.6 KB FR-245's, ~147.2 KB FR-244's,
+ * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded. Every one of
+ * those was measured on a tree carrying orphan artifacts, so every one was
+ * generous by roughly the 9.6 KB TD-373 deleted — and the last two were
+ * explicitly logged as FLOORS, not readings.) **And the OTHER ceiling is not merely binding now, it is
  * effectively spent**: **616 B** of chunk slack against this gate's 104.9 KB.
  * *(THAT CHUNK CLAUSE IS SUPERSEDED BY TD-347 — there is no single chunk any
  * more, and the browser-bundle budget is now two executable ceilings in
@@ -1192,18 +1250,40 @@ interface PackReport {
  * PROVENANCE OF THE BASELINE CONSTANT, stated because it is softer than it looks:
  * 1_301_851 was measured on the FR-238 authoring checkout (739 files /
  * 5_475_927 unpacked). A CLEAN worktree measures ~1_277_864 (715 files /
- * 5_394_552) — `cli/dist` is never cleaned by the build, so a long-lived
- * checkout accumulates orphan artifacts from deleted sources (~91 KB of
- * `subconscious/` leftovers at the time of writing) that a fresh clone does
- * not have.
+ * 5_394_552) — a long-lived checkout accumulated orphan artifacts from deleted
+ * sources (this note called them "~91 KB of `subconscious/` leftovers at the
+ * time of writing") that a fresh clone did not have.
+ *
+ * **THE BUILD NOW CLEANS — TD-373, 2026-08-10.** `cli`'s build script leads
+ * with `rm -rf dist`; `brain-mcp-server`'s builds to `dist.tmp` and swaps (its
+ * dist is live-served on the VPS, so it must survive a failed build). This
+ * paragraph used to read "`cli/dist` is never cleaned by the build"; that
+ * sentence is retired rather than reworded, because it was the thing that
+ * changed. `copy-templates.sh` also rebuilds when it finds output for a
+ * deleted source — an mtime check cannot see a deletion, which is why the
+ * leftovers survived for months.
+ *
+ * The orphans this note predicted were real and were finally measured:
+ * **24 files, 9_624 B packed** (`subconscious/detectors/{conflict,gap,pattern,
+ * stalled}` + `readonly-db` + `verifier`, sources deleted by `c6777bc`). They
+ * are what pushed the working tree 3 B PAST this ceiling — a red gate for a
+ * reason unrelated to any recent commit.
  *
  * Direction of the error, stated plainly: the constant is ~24 KB HIGHER than a
  * clean baseline, so on a clean tree (where CI runs) the computed delta
  * UNDER-reports the true one by ~24 KB and the ceiling is that much more
  * permissive. It does not invalidate the assertion — this is a one-sided
- * tripwire with ~200 KB of headroom either way — but do not read the number as
- * a precise per-commit delta. If dist-cleaning ever lands, re-measure on a
- * clean worktree and update this constant together with this provenance note.
+ * tripwire — but do not read the number as a precise per-commit delta.
+ *
+ * **AND THE ERROR IS NOW WORSE THAN IT WAS, which is why the constant did NOT
+ * move here.** Before TD-373 both sides carried orphans and partially
+ * cancelled; TD-373 cleaned the MEASURED side only, so the under-report is now
+ * closer to the full ~24 KB. Correcting the baseline would push today's delta
+ * to ~583_100 against a 563_200 ceiling — **~19.9 KB OVER, with nothing having
+ * grown.** That is a ceiling decision, not a cleanup: TD-329 granted +550 KB
+ * once, deliberately, and re-opening it from inside a tidy-up would be the
+ * wrong way to ask. Owned by **TD-374**, with both options and the measured
+ * numbers written down. Until it lands, treat the headroom below as PROVISIONAL.
  */
 const PACK_BASELINE_PACKED = 1_301_851;
 const PACK_HARD_CEILING_DELTA = 550 * 1024; // TD-329, operator, 2026-08-02

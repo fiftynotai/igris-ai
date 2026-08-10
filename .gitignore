@@ -39,6 +39,9 @@ node_modules/
 
 # Build artifacts
 dist/
+# TD-373: brain-mcp-server builds to dist.tmp and swaps, so a failed build
+# leaves the last-good dist/ serving. A crashed build can leave this behind.
+dist.tmp/
 build/
 *.zip
 *.tar.gz

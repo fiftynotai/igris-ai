@@ -74,18 +74,91 @@ if [ ! -d "$MCP_SRC" ]; then
   exit 1
 fi
 
-# Build brain-mcp-server (tsc) when its dist/ is absent OR src/ is newer
-# than the compiled entrypoint. On a clean publish machine the monorepo
-# install brings brain-mcp-server's devDeps, so `tsc` is available.
+# Build brain-mcp-server (tsc) when its dist/ is absent, when src/ is newer
+# than the compiled entrypoint, OR when dist/ holds output for a source that no
+# longer exists. On a clean publish machine the monorepo install brings
+# brain-mcp-server's devDeps, so `tsc` is available.
+#
+# THE THIRD CONDITION IS NOT REDUNDANT (TD-373). An mtime comparison answers
+# "is anything NEWER", and a DELETED source makes nothing newer — so the first
+# two conditions pass, no rebuild runs, and `tsc` (which emits but never
+# prunes) leaves the orphaned `.js`/`.d.ts`/`.map` in place forever. That is
+# not hypothetical: `c6777bc` deleted the rule-detector engine and its 24
+# artifacts kept shipping for months, until they pushed the packed tarball 3 B
+# over TD-329's ceiling. Nothing failed, because nothing was asking.
+#
+# The orphan scan is the count-vs-identity lesson applied to a build: a guard
+# that only ever looks at the files PRESENT cannot report one that should not
+# be. Cost is a single `find` over dist/.
 mcp_needs_build=0
+mcp_build_reason=""
 if [ ! -f "$MCP_SRC/dist/index.js" ]; then
   mcp_needs_build=1
+  mcp_build_reason="dist/ absent"
 elif [ -n "$(find "$MCP_SRC/src" -type f -newer "$MCP_SRC/dist/index.js" -print -quit 2>/dev/null)" ]; then
   mcp_needs_build=1
+  mcp_build_reason="src/ newer than dist/index.js"
+else
+  # Orphan scan: every emitted `.js` / `.d.ts` under dist/ must trace back to a
+  # `.ts` (or `.tsx`) under src/. Longest suffix first, so `foo.d.ts` strips to
+  # `foo` rather than being tested against a source literally named `foo.d.ts`
+  # — otherwise every declaration file in the tree reads as an orphan.
+  #
+  # The `find` deliberately does NOT list `.map` files. A `.js.map` cannot
+  # exist without its `.js`, so scanning maps would only ever re-report a
+  # sibling this loop has already caught, and one hit is enough — the loop
+  # breaks on the first. Maps are still DELETED, because the fix is a rebuild
+  # that clears the whole directory; they simply are not how it is detected.
+  # (The `*.map` arms below are kept as a guard for the day someone widens the
+  # `find`, not because they fire today.)
+  #
+  # `__tests__` needs no exclusion here, unlike the vitest guard's mtime walk:
+  # `tsconfig.json` scopes emit to `src/**/*` with `rootDir: ./src`, and test
+  # files are excluded from the program, so no emitted file traces to one.
+  mcp_orphan=""
+  while IFS= read -r emitted; do
+    rel="${emitted#"$MCP_SRC/dist/"}"
+    stem="$rel"
+    case "$stem" in
+      *.d.ts.map) stem="${stem%.d.ts.map}" ;;
+      *.js.map)   stem="${stem%.js.map}" ;;
+      *.d.ts)     stem="${stem%.d.ts}" ;;
+      *.js)       stem="${stem%.js}" ;;
+      *) continue ;;
+    esac
+    if [ ! -f "$MCP_SRC/src/$stem.ts" ] && [ ! -f "$MCP_SRC/src/$stem.tsx" ]; then
+      mcp_orphan="$rel"
+      break
+    fi
+  done <<EOF
+$(find "$MCP_SRC/dist" -type f \( -name '*.js' -o -name '*.d.ts' \) 2>/dev/null)
+EOF
+  if [ -n "$mcp_orphan" ]; then
+    mcp_needs_build=1
+    mcp_build_reason="dist/ holds output for a deleted source ($mcp_orphan)"
+  fi
 fi
 
 if [ "$mcp_needs_build" -eq 1 ]; then
-  echo "copy-templates: building brain-mcp-server (dist/ missing or stale)..."
+  echo "copy-templates: building brain-mcp-server ($mcp_build_reason)..."
+  # Its `build` script BUILDS TO `dist.tmp` AND SWAPS (TD-373), rather than
+  # cleaning `dist/` in place the way `cli`'s does. The clean is what actually
+  # removes an orphan — tsc alone only re-emits alongside one — but the two
+  # packages earn different shapes because they have different callers:
+  #
+  #   brain-mcp-server  `igris sync code` and `scripts/igris_brain_deploy.sh`
+  #                     run this ON THE VPS while PM2 `igris-brain` is STILL
+  #                     SERVING; the restart is a later step, gated on a smoke
+  #                     check whose whole documented purpose is "fail loud
+  #                     BEFORE we tear down the running brain". An in-place
+  #                     `rm -rf dist` would delete the last-good artifact
+  #                     before knowing the new one compiles, so a failed build
+  #                     plus any later PM2 restart finds no dist/index.js.
+  #                     Build-then-swap keeps that invariant: on failure dist/
+  #                     is byte-identical and the old brain keeps serving.
+  #   cli               local + CI only (`prepublishOnly`, the workflows,
+  #                     CONTRIBUTING). No live consumer reads cli/dist mid-build
+  #                     on a server, so the simpler in-place clean is fine.
   (cd "$MCP_SRC" && npm run build)
 fi
 
