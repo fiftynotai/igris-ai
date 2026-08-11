@@ -151,6 +151,35 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
     for (const migration of sorted) {
       if (migration.version <= currentVersion) continue;
 
+      // BR-083 D1a — PRE-FLIGHT, OUTSIDE THE TRANSACTION.
+      //
+      // A `false` return (or a throw) SKIPS this migration and every later one
+      // for this component: versions are monotonic, so applying v5 over a v3
+      // schema because v4 aborted would be worse than not migrating at all.
+      // The component stays at its previous version and the next boot retries
+      // — `db.ts` v22's abort semantics, which exist because the alternative
+      // to a verified backup is a hope.
+      if (migration.pre) {
+        let ok = false;
+        try {
+          ok = migration.pre(db);
+        } catch (err) {
+          console.error(
+            `[engine] Migration ${componentName}@${migration.version} pre-flight THREW: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+          ok = false;
+        }
+        if (!ok) {
+          console.error(
+            `[engine] Migration ${componentName}@${migration.version} ABORTED by pre-flight; ` +
+              `component stays at v${currentVersion}. Later migrations are skipped until this one applies.`,
+          );
+          return;
+        }
+      }
+
       // MIGRATE WITH `trusted_schema = ON`, THEN HARDEN AGAIN (BR-089).
       //
       // The SECOND door with this problem, and the reason it needs its own fix
@@ -181,6 +210,23 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
         })();
       } finally {
         db.pragma('trusted_schema = OFF');
+      }
+
+      // BR-083 D1a — POST-COMMIT verification (e.g. `PRAGMA foreign_key_check`,
+      // restoring a pragma `pre` toggled). It runs after COMMIT because the
+      // checks it makes are about the NEW schema. A throw here is reported and
+      // does NOT roll the migration back — it is already committed; the honest
+      // signal is a loud log, not a lie about the version.
+      if (migration.post) {
+        try {
+          migration.post(db);
+        } catch (err) {
+          console.error(
+            `[engine] Migration ${componentName}@${migration.version} post-check FAILED: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
       }
 
       console.error(

@@ -158,15 +158,38 @@ export interface BrainGraphEdge {
   resolution: EdgeResolution;
 }
 
-/** The AC #4 report block — emitted unconditionally on every response. */
+/**
+ * The AC #4 report block — emitted unconditionally on every response.
+ *
+ * BR-083 RESTATED ITS PURPOSE AND FROZE ITS FIELD SET. Before BR-083 this was
+ * a report about an inference. Now it is **the residual meter**: `unique`
+ * absorbs every row whose qualifiers are STORED (branch 0, no inference at
+ * all), so `replicated_sources` + `dangling` + `ambiguous_unresolved` +
+ * `over_replicated` count exactly the rows still carrying a NULL qualifier —
+ * the share of the graph this brief deliberately left unattributed, measured
+ * on every call rather than estimated once.
+ *
+ * It is expected to trend toward zero and never to rise, because every row
+ * minted after edges@4 is qualified at write time. It will NOT reach zero:
+ * roughly half the pre-BR-083 rows are unprovable and a wrong attribution is
+ * worse than a null. Deleting the counter would reproduce the unreported-loss
+ * sin it exists to prevent.
+ *
+ * NO FIELD MAY BE ADDED, RENAMED OR REMOVED without the MAINTAINING row-107
+ * sweep (~20 consumers including a four-file browser type mirror). BR-083
+ * moved VALUES only.
+ */
 export interface EdgeResolutionReport {
   rule: 'intra_project_projection';
   max_edge_replicas: number;
   /** Non-soft-deleted `entity_edges` rows read. */
   source_edges: number;
-  /** Source rows that projected onto exactly one instance. */
+  /**
+   * Source rows that projected onto exactly one instance — since BR-083 this
+   * includes every row whose two qualifiers are stored (branch 0).
+   */
   unique: number;
-  /** Ambiguous source rows that were replicated. */
+  /** Ambiguous source rows that were replicated. Post-BR-083: NULL rows only. */
   replicated_sources: number;
   /** Instances those replicated sources produced. */
   replicas_emitted: number;
@@ -259,6 +282,11 @@ interface RawEdgeRow {
   confidence: number;
   provenance: string;
   metadata: string;
+  /** BR-083 — stored qualifier, or `null` on a pre-edges@4 brain / an
+   * unattributed row. `null` means "the row does not say", which is exactly
+   * the state the inference ladder below exists to handle. */
+  from_project?: string | null;
+  to_project?: string | null;
 }
 
 /** A loaded node row, normalised across source tables. */
@@ -619,10 +647,20 @@ function loadEdges(db: Database.Database, missingTables: string[]): RawEdgeRow[]
     missingTables.push('entity_edges');
     return [];
   }
+  // BR-083 — the two qualifier columns are PROBED, not assumed. A brain that
+  // predates edges@4 (an older export, a VPS mid-deploy, a fixture that
+  // hand-rolls the table) must degrade to the inference ladder rather than
+  // throw `no such column`. Same posture as `learnings.review_status` above.
+  const qualified =
+    columnExists(db, 'entity_edges', 'from_project') &&
+    columnExists(db, 'entity_edges', 'to_project');
+  const projectCols = qualified
+    ? ', from_project, to_project'
+    : ", NULL AS from_project, NULL AS to_project";
   return db
     .prepare(
       `SELECT id, from_type, from_id, to_type, to_id, edge_type,
-              confidence, provenance, metadata
+              confidence, provenance, metadata${projectCols}
        FROM entity_edges
        WHERE COALESCE(json_extract(metadata, '$.deleted'), 0) = 0
        ORDER BY id ASC`,
@@ -675,13 +713,46 @@ export function buildProjectIndex(nodes: LoadedNode[]): ProjectIndex {
 }
 
 /**
+ * The three loads + the index, as ONE unit.
+ *
+ * BR-083 factored this out of `buildBrainGraph` so the backfill resolves
+ * against the SAME index `igris_graph_brain` does — by calling the same
+ * function, not by repeating the same three calls in the same order. A
+ * reconstructed index is a second rule, and a second rule is exactly what the
+ * backfill is forbidden from inventing.
+ *
+ * Reconstructing it from a built payload's `nodes[]` would be WRONG in a
+ * specific and silent way: replicated edges materialise a phantom node per
+ * candidate project, so a payload-derived index would report project
+ * memberships no source table contains.
+ */
+export function loadGraphInputs(
+  db: Database.Database,
+  missingTables: string[],
+): { loaded: LoadedNode[]; rawEdges: RawEdgeRow[]; index: ProjectIndex } {
+  const loaded = loadNodes(db, missingTables);
+  const rawEdges = loadEdges(db, missingTables);
+  loaded.push(...loadAdjacencyOnlyNodes(db, rawEdges, missingTables));
+  return { loaded, rawEdges, index: buildProjectIndex(loaded) };
+}
+
+/**
  * Resolve one edge row onto the project axis — the *intra-project projection
  * with declared multiplicity* rule.
  *
- * `entity_edges` has no project column and its `metadata` carries only
- * `{"source":"backfill","label":"**Parent Brief:**"}` — the project context is
- * genuinely lost at row level. With `P(x)` = the projects containing endpoint
- * `x`:
+ * BR-083 CHANGED THE PREMISE, NOT THE RULE. `entity_edges` now HAS
+ * `from_project` / `to_project`, so branch 0 below reads the answer instead of
+ * inferring it. Branches 1-4 are unchanged and remain the rule for every row
+ * the qualifiers do not cover: rows minted before edges@4 that the backfill
+ * could not PROVE (deliberately left NULL — a wrong attribution is worse than
+ * a null), and endpoints that legitimately have no project at all.
+ *
+ *  0. Both qualifiers stored -> ONE instance with exactly those projects,
+ *     `unique`. No inference. See the branch for why the guarantee survives.
+ *
+ * For every other row the project context is genuinely lost at row level (its
+ * `metadata` carries only `{"source":"backfill","label":"**Parent Brief:**"}`).
+ * With `P(x)` = the projects containing endpoint `x`:
  *
  *  1. Both endpoints NON-ambiguous (`|P| <= 1`) -> ONE instance with each
  *     endpoint's own project. Cross-project instances are LEGITIMATE here (a
@@ -731,10 +802,45 @@ export function buildProjectIndex(nodes: LoadedNode[]): ProjectIndex {
  * `edges.filter(e => e.resolution === 'unique')`.
  */
 export function resolveEdgeProjects(
-  edge: Pick<RawEdgeRow, 'from_type' | 'from_id' | 'to_type' | 'to_id'>,
+  edge: Pick<
+    RawEdgeRow,
+    'from_type' | 'from_id' | 'to_type' | 'to_id' | 'from_project' | 'to_project'
+  >,
   index: ProjectIndex,
   maxEdgeReplicas: number,
 ): ResolvedEdge {
+  // --- Branch 0 (BR-083): THE ROW SAYS SO. --------------------------------
+  // When both qualifiers are stored, there is nothing to infer: the writer
+  // recorded which instance of each endpoint it meant, and every branch below
+  // is a reconstruction of information this row no longer has to guess at.
+  // Short-circuiting is not an optimisation, it is the correct answer taking
+  // precedence over an inference about it.
+  //
+  // The guarantee below is UNAFFECTED: branch 0 emits exactly ONE instance, so
+  // it cannot replicate, and a cross-project pair here is one the WRITER
+  // asserted through the `handleEdgeCreate` ladder — which verified both
+  // endpoints exist in the projects named — rather than one this function
+  // fabricated. Branch 4's no-fabricated-bridge property is a statement about
+  // REPLICATION, and branch 0 does not replicate.
+  //
+  // Requiring BOTH is deliberate. A half-qualified row (one side attributed,
+  // the other deliberately NULL — a `brief@igris-ai -> concept` edge, say)
+  // falls through to the ladder, where the stored side is still consistent
+  // with what the ladder computes, because the ladder's input is the same
+  // `brief_status` the qualifier was checked against.
+  if (
+    edge.from_project !== undefined && edge.from_project !== null &&
+    edge.to_project !== undefined && edge.to_project !== null
+  ) {
+    return {
+      instances: [
+        { fromProject: edge.from_project, toProject: edge.to_project, replicaKey: null },
+      ],
+      resolution: 'unique',
+      candidateCount: 1,
+    };
+  }
+
   const fromSet = index.get(indexKey(edge.from_type, edge.from_id)) ?? [];
   const toSet = index.get(indexKey(edge.to_type, edge.to_id)) ?? [];
 
@@ -906,13 +1012,11 @@ export function buildBrainGraph(db: Database.Database, opts: BuildOpts = {}): Br
 
   const missingTables: string[] = [];
 
-  // ---- 1. Read. Node rows first, then the edges they will be joined against.
-  const loaded = loadNodes(db, missingTables);
-  const rawEdges = loadEdges(db, missingTables);
-  loaded.push(...loadAdjacencyOnlyNodes(db, rawEdges, missingTables));
-
-  // ---- 2. Project index (no extra query — built from the rows above).
-  const index = buildProjectIndex(loaded);
+  // ---- 1+2. Read, and index. Shared with `loadGraphInputs` so any other
+  //           consumer of the project index resolves against the IDENTICAL
+  //           index by construction rather than by re-implementing the three
+  //           loads in the same order and hoping.
+  const { loaded, rawEdges, index } = loadGraphInputs(db, missingTables);
 
   // ---- 3. Materialise the unconditional node set.
   const nodeMap = new Map<string, BrainGraphNode>();

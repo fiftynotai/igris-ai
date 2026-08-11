@@ -290,9 +290,15 @@ igris_graph_node_create({
 })
 igris_edge_create({
   from_type: "concept", from_id: "concept:vector-search",
-  to_type: "brief", to_id: "FR-076",
+  to_type: "brief", to_id: "FR-076", to_project: "igris-ai",
   edge_type: "related_to"
 })
+// BR-083: a brief id is unique only WITHIN a project. Qualify any endpoint
+// whose id exists in more than one project with `from_project` / `to_project`
+// — the call is REFUSED with the candidate list rather than storing an edge
+// that resolves to whichever project matched first. An id that exists in
+// exactly one project is resolved for you; a concept has no project and
+// stores NULL.
 
 // Topology snapshot before a refactor.
 igris_graph_dashboard({ project: "igris-ai", summary_only: true })

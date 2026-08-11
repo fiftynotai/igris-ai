@@ -36,8 +36,10 @@ import type {
   Migration,
   ToolDefinition,
 } from '../../types.js';
+import { getDb } from '../../../db.js';
 import { errMsg } from '../../helpers.js';
 import { edgeMigrations } from './schema.js';
+import { createProjectResolver, hintedQualifier } from './node-project.js';
 import {
   handleEdgeCreate,
   handleEdgeList,
@@ -78,12 +80,27 @@ export function createEdgesComponent(): BrainComponent {
    * Listens on brief.created; expects the payload to optionally include
    * a `parent_brief_id` field populated by the briefs component (parsed
    * from explicit input or `**Parent Brief:** FR-XXX` in markdown).
+   *
+   * BR-083 — THE TWO SIDES OF THE PAYLOAD'S `project` ARE NOT THE SAME KIND OF
+   * FACT, and this is the highest-risk pair in the whole caller sweep because
+   * `brief -> brief` is 313 of the 692 live brief edges.
+   *   - NEAR side: `project` is an ASSERTION. The payload says which project
+   *     this brief was just created in, so it is passed verbatim as
+   *     `from_project` and the ladder verifies it.
+   *   - FAR side: `project` is only a HINT. A parent brief usually lives in the
+   *     same project, but `derived_from`/`parent_of` across projects is legal
+   *     (FR-237 branch 1), so asserting it would REJECT edges that are written
+   *     today. `hintedQualifier` forwards it only where it turns a refusal into
+   *     a resolution: `|P| > 1` and the hint is one of the candidates.
+   * An ambiguous parent with no applicable hint is REFUSED — logged by the
+   * existing `result.isError` branch, never silently written unqualified.
    */
   function onBriefCreated(payload: EventPayload): void {
     if (!_ctx) return;
 
     const briefId = payload.data.brief_id;
     const parentBriefId = payload.data.parent_brief_id;
+    const project = payload.data.project;
 
     if (typeof briefId !== 'string' || !briefId) return;
     if (typeof parentBriefId !== 'string' || !parentBriefId) return;
@@ -92,6 +109,7 @@ export function createEdgesComponent(): BrainComponent {
     if (briefId === parentBriefId) return;
 
     try {
+      const resolver = createProjectResolver(getDb());
       const result = handleEdgeCreate({
         from_type: 'brief',
         from_id: briefId,
@@ -101,6 +119,11 @@ export function createEdgesComponent(): BrainComponent {
         confidence: 1.0,
         provenance: 'observed',
         metadata: { source: 'brief.created' },
+        ...(typeof project === 'string' && project ? { from_project: project } : {}),
+        ...(() => {
+          const hint = hintedQualifier('brief', parentBriefId, project, resolver);
+          return hint ? { to_project: hint } : {};
+        })(),
       });
 
       if (!result.isError) {
@@ -156,6 +179,16 @@ export function createEdgesComponent(): BrainComponent {
     if (rawId === undefined || rawId === null || rawId === '') return;
     const fromId = String(rawId);
 
+    // BR-083 — the payload ALREADY carries `project` (MAINTAINING row 106,
+    // FR-210); this hook simply starts reading a field it always received. No
+    // new field on the event. It is the far side's owner HINT, never an
+    // assertion: `learning -> brief` where the brief lives only in another
+    // project is a legitimate cross-project edge, so forwarding the learning's
+    // project as `to_project` would refuse an edge that is written today.
+    // This is the single highest-value line of the sweep — `derived_from` is
+    // 132 of the live brief edges and every one of them is minted here.
+    const storedProject = data.project;
+
     // Local helper: write one learning→X edge, guard degenerate self-edges,
     // emit edge.created on success, log (never throw) on failure.
     const writeEdge = (
@@ -174,6 +207,12 @@ export function createEdgesComponent(): BrainComponent {
       const source = typeof metadata.source === 'string' ? metadata.source : 'memory.stored';
 
       try {
+        const hint = hintedQualifier(
+          toType,
+          toId,
+          storedProject,
+          createProjectResolver(getDb()),
+        );
         const result = handleEdgeCreate({
           from_type: 'learning',
           from_id: fromId,
@@ -183,6 +222,7 @@ export function createEdgesComponent(): BrainComponent {
           confidence,
           provenance: 'observed',
           metadata,
+          ...(hint ? { to_project: hint } : {}),
         });
 
         if (!result.isError) {
@@ -248,7 +288,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.5.0',
+    version: '1.6.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -263,7 +303,7 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_edge_create',
           description:
-            'Create a typed edge between two Igris entities. Idempotent: re-creating an identical (from_type, from_id, to_type, to_id, edge_type) tuple returns the existing edge instead of failing. Self-loops are rejected unless edge_type is "recurs_with".',
+            'Create a typed edge between two Igris entities. Idempotent: re-creating an identical (from_type, from_id, from_project, to_type, to_id, to_project, edge_type) tuple returns the existing edge instead of failing. Self-loops are rejected unless edge_type is "recurs_with". BR-083: an endpoint whose id exists in MORE THAN ONE project must be qualified with from_project / to_project — the call is refused with the candidate list rather than minting an ambiguous row.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -304,7 +344,24 @@ export function createEdgesComponent(): BrainComponent {
                 type: 'object',
                 description: 'Free-form metadata stored as JSON (default {})',
               },
+              from_project: {
+                type: 'string',
+                description:
+                  'BR-083: project qualifying from_id. REQUIRED when the id exists in more than one project (the call is refused, listing the candidates); resolved for free when it exists in exactly one; stored as NULL when the entity has no project.',
+              },
+              to_project: {
+                type: 'string',
+                description:
+                  'BR-083: project qualifying to_id. Same rule as from_project.',
+              },
             },
+            // BR-083 D3 / P2: `required` is DELIBERATELY UNCHANGED. The rule is
+            // conditional on `|P(type, id)| > 1` — a database lookup — which a
+            // static JSON-Schema `required` array cannot express, and a blanket
+            // entry would reject the legitimately project-less concept and
+            // synapse edges. Enforcement lives in `handleEdgeCreate`; see its
+            // header for why that is the choke point. MAINTAINING row 113 is
+            // therefore NOT changed by BR-083.
             required: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
           },
           handler: (args) => {
@@ -340,6 +397,16 @@ export function createEdgesComponent(): BrainComponent {
               to_id: { type: 'string' },
               edge_type: { type: 'string', enum: [...VALID_EDGE_TYPES] },
               provenance: { type: 'string', enum: [...VALID_PROVENANCE] },
+              from_project: {
+                type: 'string',
+                description:
+                  'BR-083: exact-match filter on the stored source qualifier. Rows left deliberately unattributed (NULL) match NO value of this filter.',
+              },
+              to_project: {
+                type: 'string',
+                description:
+                  'BR-083: exact-match filter on the stored target qualifier. See from_project.',
+              },
               min_confidence: {
                 type: 'number',
                 description: 'Filter to edges with confidence >= this value (0-1)',

@@ -272,16 +272,38 @@ export const SYNC_TABLES: SyncTableConfig[] = [
   {
     // FR-105: typed-edges graph layer.
     // Append strategy + composite syncKey including edge_type matches the
-    // local UNIQUE(from_type, from_id, to_type, to_id, edge_type) so remote
-    // INSERT OR IGNORE has the same idempotency semantics. Soft-deletes are
-    // captured as metadata mutations, not row deletions.
+    // local UNIQUE so remote INSERT OR IGNORE has the same idempotency
+    // semantics. Soft-deletes are captured as metadata mutations, not row
+    // deletions.
+    //
+    // BR-083 D7 — THE QUALIFIERS JOIN BOTH `columns` AND `syncKey`, AND THAT
+    // MAKES THIS A DEPLOY-ORDERING HAZARD.
+    //
+    // `syncKey` exists to MIRROR the local uniqueness so the remote
+    // `INSERT OR IGNORE` shares it. The local rule is now the expression index
+    // over `(from_type, from_id, COALESCE(from_project,''), to_type, to_id,
+    // COALESCE(to_project,''), edge_type)`. Leaving the two projects out of
+    // the key would re-create the FUSION on the VPS: two edges that differ
+    // only by project would collapse into one remote row, which is this
+    // brief's defect reproduced on the other machine.
+    //
+    // DEPLOY ORDER IS NOT OPTIONAL: the VPS must run `edges@4` BEFORE the
+    // first local push, or every INSERT fails on `no such column:
+    // from_project`. Confirm `engine_migrations` shows `edges@4` on
+    // brain.fifty.dev first. A receiver that predates the migration cannot be
+    // degraded around from this side — the column list IS the payload.
     table: 'entity_edges',
-    syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+    syncKey: [
+      'from_type', 'from_id', 'from_project',
+      'to_type', 'to_id', 'to_project',
+      'edge_type',
+    ],
     timestampCol: 'created_at',
     strategy: 'append',
     columns: [
       'from_type', 'from_id', 'to_type', 'to_id', 'edge_type',
       'confidence', 'provenance', 'created_at', 'metadata',
+      'from_project', 'to_project',
     ],
   },
   {
@@ -702,8 +724,15 @@ export function mergeRows(
   const normalizations: MergeRowNormalization[] = [];
   const nonCanonical: MergeRowNonCanonical[] = [];
 
+  // BR-083 — `IS`, NOT `=`. `entity_edges.from_project` / `to_project` are the
+  // first NULLABLE syncKey columns in the table set, and `col = NULL` is NULL,
+  // never true: the lookup would MISS every deliberately-unattributed row, the
+  // merge would take the insert branch, and each pull would append a duplicate
+  // of the ~half of the graph this brief leaves NULL. `IS` is equivalent to `=`
+  // for non-NULL operands, so every other table's behaviour is unchanged, and
+  // SQLite plans it against the same indexes.
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${
-    config.syncKey.map(k => `${k} = ?`).join(' AND ')
+    config.syncKey.map(k => `${k} IS ?`).join(' AND ')
   }`;
   const lookupStmt = db.prepare(lookupSql);
 
@@ -791,7 +820,10 @@ export function mergeRows(
           }
 
           if (setClauses.length > 0) {
-            const whereClause = config.syncKey.map(k => `${k} = ?`).join(' AND ');
+            // `IS` for the same reason as the lookup above (BR-083): an UPDATE
+            // keyed on a NULL qualifier with `=` would match zero rows and the
+            // LWW winner would be silently dropped.
+            const whereClause = config.syncKey.map(k => `${k} IS ?`).join(' AND ');
             db.prepare(
               `UPDATE ${config.table} SET ${setClauses.join(', ')} WHERE ${whereClause}`
             ).run(...setValues, ...keyValues);

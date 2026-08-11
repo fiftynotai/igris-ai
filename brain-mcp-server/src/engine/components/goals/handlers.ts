@@ -26,6 +26,10 @@ import { errorResult, successResult } from '../../helpers.js';
 // what lets the FR-238 dashboard reach the same queries with its own read-only
 // handle. Do not move query logic back up here.
 import { listGoals, getGoal } from './read.js';
+// BR-083 — PROBE, do not assume. A brain predating `edges@4` (an older export,
+// a VPS mid-deploy, a hand-rolled fixture) has no qualifier columns and must
+// degrade rather than throw `no such column`.
+import { edgeProjectPredicate } from '../edges/node-project.js';
 import type { GoalRow } from './read.js';
 
 /**
@@ -207,10 +211,17 @@ function queryServingBriefBuckets(
 ): ServingBriefBuckets {
   const row = db
     .prepare(
+      // BR-083 — the same project predicate as `goals/read.ts::getGoal`. This
+      // is `igris_goal_progress`'s counter, and without it a Done brief that
+      // merely SHARES an id with a serving brief counted toward completion in
+      // another project's goal. The `IS NULL` arm preserves today's behaviour
+      // for deliberately unattributed rows rather than deleting them.
       `WITH serving AS (
          SELECT bs.status AS s
          FROM entity_edges e
-         JOIN brief_status bs ON bs.brief_id = e.from_id
+         JOIN brief_status bs
+           ON bs.brief_id = e.from_id
+          AND ${edgeProjectPredicate(db, 'e', 'bs')}
          WHERE e.to_type = 'goal'
            AND e.to_id = ?
            AND e.from_type = 'brief'
@@ -730,6 +741,15 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
   // quick-glance surface, not a full report. Days-remaining is computed in
   // SQL (julianday diff) so callers get an integer rather than re-parsing.
   // Serving-brief counts are subqueries on entity_edges (mirrors handleGoalList).
+  //
+  // BR-083 — `serving_brief_count` counts EDGES and joins nothing, so it was
+  // never a fan-out victim and is deliberately left alone. It is also what
+  // makes the pair readable: after this brief `serving_brief_count` and
+  // `getGoal(...).serving_briefs.length` finally AGREE (on the live brain,
+  // GL-006: 32 edges vs 44 joined rows before, 32 vs 32 after).
+  // `completed_brief_count` DOES join `brief_status`, so a Done brief in
+  // another project that merely shares an id inflated it — those four sites
+  // carry the project predicate.
   const upcomingSql = projectFilter
     ? `SELECT
          g.goal_id,
@@ -744,7 +764,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
          ) AS serving_brief_count,
          (
            SELECT COUNT(*) FROM entity_edges e
-           JOIN brief_status bs ON bs.brief_id = e.from_id
+           JOIN brief_status bs
+             ON bs.brief_id = e.from_id
+            AND ${edgeProjectPredicate(db, 'e', 'bs')}
            WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
              AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
              AND bs.status IN ('Done', 'Archived')
@@ -770,7 +792,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
          ) AS serving_brief_count,
          (
            SELECT COUNT(*) FROM entity_edges e
-           JOIN brief_status bs ON bs.brief_id = e.from_id
+           JOIN brief_status bs
+             ON bs.brief_id = e.from_id
+            AND ${edgeProjectPredicate(db, 'e', 'bs')}
            WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
              AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
              AND bs.status IN ('Done', 'Archived')
@@ -812,7 +836,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
            ) AS serving_brief_count,
            (
              SELECT COUNT(*) FROM entity_edges e
-             JOIN brief_status bs ON bs.brief_id = e.from_id
+             JOIN brief_status bs
+               ON bs.brief_id = e.from_id
+              AND ${edgeProjectPredicate(db, 'e', 'bs')}
              WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
                AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
                AND bs.status IN ('Done', 'Archived')
@@ -837,7 +863,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
            ) AS serving_brief_count,
            (
              SELECT COUNT(*) FROM entity_edges e
-             JOIN brief_status bs ON bs.brief_id = e.from_id
+             JOIN brief_status bs
+               ON bs.brief_id = e.from_id
+              AND ${edgeProjectPredicate(db, 'e', 'bs')}
              WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
                AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
                AND bs.status IN ('Done', 'Archived')

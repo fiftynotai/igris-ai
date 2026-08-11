@@ -127,7 +127,7 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
 
   it('reports version 1.5.0 (BR-078 bump — project-qualified traversal)', () => {
     const comp = createEdgesComponent();
-    expect(comp.version).toBe('1.5.0');
+    expect(comp.version).toBe('1.6.0');
   });
 
   // -------------------------------------------------------------------------
@@ -154,15 +154,14 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     insBrief.run('proj-a', 'BR-002', "A's BR-002");
     insBrief.run('proj-b', 'BR-009', "B's BR-009");
 
-    const create = comp.tools().find((t) => t.name === 'igris_edge_create')!;
+    // BR-083: these rows are UNQUALIFIED on purpose — `igris_edge_create` now
+    // REFUSES an ambiguous endpoint, so the ambiguity this test exists to
+    // resolve can only be written the way the pre-BR-083 handler wrote it.
+    // Roughly half the live rows are in exactly this state and the two tools
+    // must still agree about them. Minting through the tool here would produce
+    // an EMPTY fixture and three vacuously green assertions.
     for (const to of ['BR-002', 'BR-009']) {
-      create.handler({
-        from_type: 'brief',
-        from_id: 'BR-001',
-        to_type: 'brief',
-        to_id: to,
-        edge_type: 'depends_on',
-      });
+      legacyEdge('brief', 'BR-001', 'brief', to, 'depends_on');
     }
 
     const neighbors = comp.tools().find((t) => t.name === 'igris_graph_neighbors')!;
@@ -242,6 +241,24 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
   // These two tests are the branch-4 coverage that was missing, and they
   // bracket the replica cap from both sides.
 
+  /**
+   * Insert an UNQUALIFIED `entity_edges` row — a PRE-BR-083 row, written the
+   * way the old handler wrote it. See the T7 fixture for why the tool cannot
+   * be used to build a collision fixture any more.
+   */
+  function legacyEdge(
+    fromType: string,
+    fromId: string,
+    toType: string,
+    toId: string,
+    edgeType: string,
+  ): void {
+    db.prepare(
+      `INSERT INTO entity_edges (from_type, from_id, to_type, to_id, edge_type)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(fromType, fromId, toType, toId, edgeType);
+  }
+
   /** Put `briefId` in every one of `projects`, so |P(briefId)| = projects.length. */
   function seedInProjects(briefId: string, projects: string[]): void {
     const ins = db.prepare(
@@ -258,10 +275,8 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     // strictly intra-project instance per shared project.
     seedInProjects('BR-100', ['p1', 'p2']);
     seedInProjects('BR-200', ['p1', 'p2']);
-    comp.tools().find((t) => t.name === 'igris_edge_create')!.handler({
-      from_type: 'brief', from_id: 'BR-100', to_type: 'brief', to_id: 'BR-200',
-      edge_type: 'depends_on',
-    });
+    // BR-083 — unqualified by construction; see the T7 fixture's note.
+    legacyEdge('brief', 'BR-100', 'brief', 'BR-200', 'depends_on');
 
     const nb = parseResult<{ neighbors: Array<{ id: string; project: string | null }> }>(
       comp.tools().find((t) => t.name === 'igris_graph_neighbors')!.handler({
@@ -300,10 +315,8 @@ describe('FR-113 graph traversal — MCP roundtrip', () => {
     const projects = Array.from({ length: 10 }, (_, i) => `p${String(i + 1).padStart(2, '0')}`);
     seedInProjects('BR-300', projects);
     seedInProjects('BR-400', projects);
-    comp.tools().find((t) => t.name === 'igris_edge_create')!.handler({
-      from_type: 'brief', from_id: 'BR-300', to_type: 'brief', to_id: 'BR-400',
-      edge_type: 'depends_on',
-    });
+    // BR-083 — unqualified by construction; see the T7 fixture's note.
+    legacyEdge('brief', 'BR-300', 'brief', 'BR-400', 'depends_on');
 
     const nb = parseResult<{ neighbors: Array<{ id: string; project: string | null }> }>(
       comp.tools().find((t) => t.name === 'igris_graph_neighbors')!.handler({

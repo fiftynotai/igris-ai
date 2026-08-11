@@ -246,6 +246,8 @@ is annotated inline.
 - `provenance`
 - `created_at`
 - `metadata`
+- `from_project`
+- `to_project`
 
 #### `graph_nodes` — append-only
 

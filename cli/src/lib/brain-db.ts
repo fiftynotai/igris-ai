@@ -1531,13 +1531,24 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
   // sync.ts:271-285 — brief↔brief subset filtered in readBriefBriefEdges; the
   // concept-graph reuses this config for its concept-touching edges.
   {
+    // BR-083 — VERIFIED as a verbatim mirror of `SYNC_TABLES`, not assumed:
+    // both qualifiers join `columns` AND `syncKey`, exactly as sync.ts does,
+    // so a pack cannot re-fuse two projects' same-id edges on import.
+    // An OLDER pack that lacks the columns still imports: `readExportRows`
+    // intersects `columns` with the columns that actually exist, and the
+    // import writer binds a missing key as NULL rather than failing.
     table: "entity_edges",
-    syncKey: ["from_type", "from_id", "to_type", "to_id", "edge_type"],
+    syncKey: [
+      "from_type", "from_id", "from_project",
+      "to_type", "to_id", "to_project",
+      "edge_type",
+    ],
     timestampCol: "created_at",
     strategy: "append",
     columns: [
       "from_type", "from_id", "to_type", "to_id", "edge_type",
       "confidence", "provenance", "created_at", "metadata",
+      "from_project", "to_project",
     ],
   },
   // sync.ts:301-317 — project_slug-scoped.
@@ -2028,10 +2039,29 @@ export function lookupLocalRow(
 ): Record<string, unknown> | undefined {
   const handle = getDb();
   if (!tableExists(handle, config.table)) return undefined;
-  const sql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
-    .map((k) => `${k} = ?`)
+  // BR-083 — `IS`, NOT `=`. `entity_edges.from_project` / `to_project` are the
+  // first NULLABLE syncKey columns, and `col = NULL` is NULL rather than true:
+  // with `=` an unattributed edge would never be found locally, every import
+  // would classify it NEW, and the append strategy would duplicate it. `IS`
+  // behaves identically to `=` for every non-NULL key, so no other store moves.
+  //
+  // BR-083 — the key is also INTERSECTED with the columns that actually exist,
+  // matching `readExportRows`. On a brain that predates `edges@4` the two
+  // qualifiers are not merely NULL, they are ABSENT, and naming them would
+  // throw `no such column` on a path whose whole job is to tolerate an older
+  // artifact. Degrading to the pre-BR-083 key there loses NOTHING: that
+  // database holds no qualifier to distinguish rows by.
+  const existing = tableColumns(handle, config.table);
+  const keyCols = config.syncKey.filter((k) => existing.has(k));
+  const keyVals = config.syncKey
+    .map((k, i) => [k, keyValues[i]] as const)
+    .filter(([k]) => existing.has(k))
+    .map(([, v]) => v);
+  if (keyCols.length === 0) return undefined;
+  const sql = `SELECT * FROM ${config.table} WHERE ${keyCols
+    .map((k) => `${k} IS ?`)
     .join(" AND ")}`;
-  return handle.prepare(sql).get(...keyValues) as
+  return handle.prepare(sql).get(...keyVals) as
     | Record<string, unknown>
     | undefined;
 }

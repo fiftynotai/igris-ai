@@ -1354,7 +1354,31 @@ interface PackReport {
  *   browser surfaces    UNCHANGED — no `cli/dashboard/**` file was touched.
  *                       INITIAL 285_689, TOTAL 573_322, slack 13_601 B.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~114.3 KB (117_075 B) is what is
+ * BR-083 MEASURED LAST — the biggest single spend since the ledger was re-based:
+ *   packed              1_931_485    801 entries (800 + the new backfill script,
+ *                                    which SHIPS on purpose: `copy-templates.sh`
+ *                                    stages `scripts/` into the bundle so the
+ *                                    VPS can run the same backfill this brief
+ *                                    ran locally — see the deploy hazard below)
+ *   cumulative delta    +66.5 KB     (68_065 B over PACK_BASELINE_PACKED)
+ *   BR-083's own share  +31_540 B    the largest of the session, and almost all
+ *                                    of it is the VENDORED BRAIN: a new schema
+ *                                    version, the qualification ladder, the
+ *                                    backfill, and the prose on runtime code
+ *                                    that `tsc` charges TWICE (.js + .js.map)
+ *                                    per the rule below
+ *   headroom remaining  ~83.5 KB     (85_535 B under TD-374's +150)
+ *   browser surfaces    UNCHANGED — INITIAL 285_689, TOTAL 573_322, slack
+ *                       13_601 B. Brain-side brief; the prediction that it
+ *                       would not touch the browser was CHECKED, not assumed.
+ *
+ *   THE DEPLOY HAZARD IS A PACKED FACT, not only a runtime one. `entity_edges`
+ *   is in `SYNC_TABLES` and the new qualifiers join the `syncKey`, so a push to
+ *   a VPS still on `edges@3` fails on every INSERT. The backfill script ships in
+ *   the tarball precisely so the remote can be brought forward with the same
+ *   instrument rather than a hand-written UPDATE -> TD-378.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~83.5 KB (85_535 B) is what is
  * left on PACKED** — FR-249's row below is the live reading. **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the

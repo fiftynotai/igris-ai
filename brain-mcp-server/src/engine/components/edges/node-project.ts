@@ -27,12 +27,31 @@
  * "THE ONE DELIBERATE DEVIATION" below — do not describe this module as
  * reproducing FR-237 verbatim.
  *
+ * BR-083 — THE FIRST QUESTION IS NOW "DOES THE ROW SAY?"
+ * ------------------------------------------------------
+ * `entity_edges` gained `from_project` / `to_project`. When BOTH are stored,
+ * `resolveHopProject` reads them and asks only whether the near one is the
+ * instance we are standing on — no inference, no `projectsFor` verdict. The
+ * condition is BOTH-stored, identical to `resolveEdgeProjects`'s branch 0,
+ * because these two functions agreeing is the anti-fork invariant.
+ *
+ * The ladder below is therefore no longer the primary path; it is the rule for
+ * the NULL RESIDUAL — rows written before edges@4 that the backfill could not
+ * prove, and endpoints that legitimately have no project. `unresolved_hops`
+ * narrows to mean exactly that residual (see `traversal.ts`), is expected to
+ * trend down and never up, and will not reach zero.
+ *
  * Let `A = P(near)`, `C = P(far)`, and `Pc` = the already-fixed project of the
  * node we are hopping FROM (`Pc ∈ A` whenever `|A| > 1`, because an ambiguous
  * seed is refused and every hop adopts a member):
  *
  *   | case                                    | FR-237 verdict            | here            |
  *   |-----------------------------------------|---------------------------|-----------------|
+ *   | BOTH qualifiers STORED (BR-083)         | br0: one instance, as     | TRAVERSE as the |
+ *   |                                         | stored                    | stored far side |
+ *   |                                         |                           | if `Pc` == the  |
+ *   |                                         |                           | stored near one,|
+ *   |                                         |                           | else OTHER      |
  *   | `|A| <= 1` and `|C| <= 1`               | br1: one instance, each   | TRAVERSE, far   |
  *   |                                         | endpoint keeps its own    | project `C[0]`  |
  *   |                                         | project (cross-project    | (or `null`)     |
@@ -353,6 +372,136 @@ export function createProjectResolver(db: Database.Database): ProjectResolver {
   };
 }
 
+// ---------------------------------------------------------------------------
+// The qualification ladder (BR-078 seeds + BR-083 edge endpoints — ONE ladder)
+// ---------------------------------------------------------------------------
+
+/** Max candidate slugs echoed in an ambiguity error before eliding. */
+export const MAX_LISTED_CANDIDATE_PROJECTS = 10;
+
+/**
+ * Render a candidate project list for an error message, capped and elided.
+ *
+ * ONE renderer for BOTH surfaces. BR-078 minted this string for traversal
+ * seeds; BR-083 needed the same sentence for `igris_edge_create`'s endpoints,
+ * and a second copy would have been a second dialect the day one of them
+ * changed. `traversal.ts` imports this rather than keeping its own.
+ */
+export function describeCandidates(candidates: Array<string | null>): string {
+  const shown = candidates
+    .slice(0, MAX_LISTED_CANDIDATE_PROJECTS)
+    .map((p) => (p === null ? '(no project)' : p));
+  const remainder = candidates.length - shown.length;
+  return remainder > 0 ? `${shown.join(', ')}, and ${remainder} more` : shown.join(', ');
+}
+
+/** Discriminated so `if (!q.ok) return errorResult(q.error)` narrows. */
+export type ProjectQualification =
+  | { ok: true; project: string | null }
+  | { ok: false; error: string };
+
+/** Wording knobs — the ONLY thing that differs between the two surfaces. */
+export interface QualifyOptions {
+  /** The caller-facing project param (`node_project`, `from_project`, …). */
+  paramName: string;
+  /** The caller-facing id param, for a precise error message. */
+  idParam: string;
+  /** `'seed'` for traversal, `'endpoint'` for an edge row. */
+  noun: string;
+  /** Appended to the ambiguity error. Traversal's scope caveat lives here. */
+  trailer?: string;
+}
+
+/**
+ * THE LADDER. `|P(type, id)|` decides whether a qualifier is required.
+ *
+ * | `\|P\|` | qualifier omitted            | qualifier supplied              |
+ * |---------|------------------------------|---------------------------------|
+ * | 0       | `null`                       | accept VERBATIM                 |
+ * | 1       | resolve for free -> `P[0]`   | `== P[0]` accept, else REJECT   |
+ * | >1      | REJECT, listing candidates   | `∈ P` accept, else REJECT       |
+ *
+ * THE CONDITION IS EMPIRICAL, NOT A TYPE LIST. `PROJECT_SCOPED_TYPES` above is
+ * a DOC-CONSTANT and this function does not read it, so a future type that
+ * starts colliding is handled with no code change.
+ *
+ * `|P| = 0` accepting an unsupported-but-unrefutable claim is BR-078's second
+ * deliberate deviation from FR-237, kept verbatim here because BR-083's D4
+ * reaches the same conclusion from the other direction: `handleEdgeCreate` has
+ * never validated endpoint EXISTENCE (`INSERT OR IGNORE` on any id), so
+ * refusing an unverifiable qualifier would make edge creation order-dependent
+ * — an edge written before its node would fail where it used to succeed.
+ *
+ * `|P| = 1` where `P[0]` is `null` (a row exists but owns no project) and a
+ * qualifier IS supplied is a REJECT, not an accept: the brain has a row and
+ * that row says "no project", so the claim is refutable and refuted.
+ */
+export function qualifyNodeProject(
+  type: string,
+  id: string,
+  supplied: unknown,
+  resolver: ProjectResolver,
+  opts: QualifyOptions,
+): ProjectQualification {
+  const candidates = resolver.projectsFor(type, id);
+
+  if (supplied !== undefined && supplied !== null) {
+    if (typeof supplied !== 'string' || !supplied) {
+      return {
+        ok: false,
+        error: `${opts.paramName} must be a non-empty string when provided`,
+      };
+    }
+    if (candidates.length > 0 && !candidates.includes(supplied)) {
+      return {
+        ok: false,
+        error:
+          `${type} "${id}" does not exist in project "${supplied}". ` +
+          `It exists in: ${describeCandidates(candidates)}.`,
+      };
+    }
+    return { ok: true, project: supplied };
+  }
+
+  if (candidates.length === 0) return { ok: true, project: null };
+  if (candidates.length === 1) return { ok: true, project: candidates[0] };
+
+  return {
+    ok: false,
+    error:
+      `Ambiguous ${opts.noun}: ${type} "${id}" exists in ${candidates.length} projects ` +
+      `(${describeCandidates(candidates)}). Pass ${opts.paramName} to qualify ${opts.idParam}.` +
+      (opts.trailer ? ` ${opts.trailer}` : ''),
+  };
+}
+
+/**
+ * Turn a CONTEXT project into a qualifier only where it is an owner HINT.
+ *
+ * An in-process caller (`onMemoryStored`, `onBriefCreated`) knows the project
+ * the WRITE happened in. For the near endpoint that is an assertion. For the
+ * FAR endpoint it is only a hint, and forwarding it as an assertion would be a
+ * regression: a learning in project A that genuinely links to project B's brief
+ * has `P = ['B']`, and asserting `A` would REJECT an edge that used to be
+ * written — FR-237 branch 1 calls those cross-project edges legitimate.
+ *
+ * So the hint is forwarded ONLY when it changes a refusal into a resolution:
+ * the endpoint is ambiguous (`|P| > 1`) AND the hint is one of its candidates.
+ * That is FR-237's branch-2 owner hint, applied at mint time instead of at
+ * read time. Everywhere else it returns `undefined` and the ladder decides.
+ */
+export function hintedQualifier(
+  type: string,
+  id: string,
+  hint: unknown,
+  resolver: ProjectResolver,
+): string | undefined {
+  if (typeof hint !== 'string' || !hint) return undefined;
+  const candidates = resolver.projectsFor(type, id);
+  if (candidates.length <= 1) return undefined;
+  return candidates.includes(hint) ? hint : undefined;
+}
+
 /**
  * Why an edge was or was not walked from the current instance.
  *
@@ -377,6 +526,19 @@ function contains(set: Array<string | null>, value: string | null): boolean {
 }
 
 /**
+ * BR-083 — the edge row's OWN qualifiers, oriented to the current hop.
+ *
+ * `near` is the stored qualifier of the endpoint we are standing on and `far`
+ * the other one, so the caller performs the outbound/inbound swap once. Both
+ * `null` (deliberately unattributed) and `undefined` (a brain that predates
+ * `edges@4`) mean the same thing here: the row does not say, use the ladder.
+ */
+export interface StoredHopProjects {
+  near: string | null | undefined;
+  far: string | null | undefined;
+}
+
+/**
  * Decide whether — and as which project — to walk one edge from a FIXED near end.
  *
  * FR-237's `resolveEdgeProjects` verdict, plus the "is that instance us?" test.
@@ -396,7 +558,28 @@ export function resolveHopProject(
   curProject: string | null,
   nearCandidates: Array<string | null>,
   farCandidates: Array<string | null>,
+  stored?: StoredHopProjects,
 ): HopResolution {
+  // --- Branch 0 (BR-083): the ROW says which instances it meant. -----------
+  // The mirror of `resolveEdgeProjects`'s branch 0, and it fires on EXACTLY
+  // the same condition — both qualifiers stored — because agreement between
+  // `igris_graph_neighbors` and `igris_graph_brain` is the anti-fork invariant
+  // this module exists to hold. A looser condition here (acting on a
+  // half-qualified row) would be a fork.
+  //
+  // This is a SHORT CIRCUIT, not extra work: a qualified row skips both
+  // `projectsFor` lookups' contribution to the decision entirely.
+  //
+  // `other_instance`, not `unresolved`, when the row names a different
+  // instance: the data said precisely what it meant and it is not ours, so it
+  // is not a loss and must not inflate `unresolved_hops`.
+  if (stored && stored.near !== null && stored.near !== undefined &&
+      stored.far !== null && stored.far !== undefined) {
+    return curProject === stored.near
+      ? { verdict: 'traverse', project: stored.far }
+      : { verdict: 'other_instance', project: null };
+  }
+
   const nearAmbiguous = nearCandidates.length > 1;
   const farAmbiguous = farCandidates.length > 1;
   const farFixed = farCandidates.length === 1 ? farCandidates[0] : null;
@@ -440,4 +623,53 @@ export function resolveHopProject(
   return curProject !== null && farLookup.has(curProject)
     ? { verdict: 'traverse', project: curProject }
     : { verdict: 'other_instance', project: null };
+}
+
+/**
+ * Does `table` have `column`? A `PRAGMA table_info` lookup, uncached.
+ *
+ * BR-083 — exported so every reader of `entity_edges`'s qualifier columns can
+ * PROBE rather than assume. `whole-graph.ts` had a private copy of this and
+ * used it correctly; `goals/read.ts` and `goals/handlers.ts` referenced
+ * `e.from_project` unprobed, so on a brain that predates `edges@4` they would
+ * throw `no such column` instead of degrading.
+ *
+ * That is not hypothetical — it is the exact fault that took down
+ * `dashboard-layers-fixture.ts`, which sat at the v1 table shape while a reader
+ * moved on, and surfaced as `/api/goal` returning `goal: undefined`: a
+ * fixture-only fault that reads exactly like a broken reader.
+ *
+ * Three real brains lack the columns: an older export, a VPS mid-deploy (the
+ * qualifiers join the sync `syncKey`, so the remote migrates on its own
+ * schedule), and any fixture that hand-rolls the table.
+ */
+export function edgeTableHasQualifiers(db: Database.Database): boolean {
+  const cols = db.prepare(`PRAGMA table_info(entity_edges)`).all() as Array<{
+    name: string;
+  }>;
+  const names = new Set(cols.map((c) => c.name));
+  return names.has('from_project') && names.has('to_project');
+}
+
+/**
+ * The join predicate that keeps a brief edge inside its own project.
+ *
+ * Returns the real predicate when the columns exist and an always-true one when
+ * they do not, so a pre-`edges@4` brain degrades to the OLD behaviour (fused,
+ * but working) rather than throwing. Callers interpolate it into a `JOIN ... ON`
+ * — it is a constant string with no caller input, never a parameter site.
+ *
+ * @param edgeAlias  alias of `entity_edges` in the query (e.g. `e`)
+ * @param briefAlias alias of `brief_status` (e.g. `bs`)
+ * @param side       which endpoint carries the brief — `from` or `to`
+ */
+export function edgeProjectPredicate(
+  db: Database.Database,
+  edgeAlias: string,
+  briefAlias: string,
+  side: 'from' | 'to' = 'from',
+): string {
+  if (!edgeTableHasQualifiers(db)) return '1 = 1';
+  const col = `${edgeAlias}.${side}_project`;
+  return `(${col} IS NULL OR ${briefAlias}.project = ${col})`;
 }

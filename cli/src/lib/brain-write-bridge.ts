@@ -627,13 +627,19 @@ export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
      * is an enum over `VALID_EDGE_TYPES`; a caller-supplied one would make this
      * single row ~20 different mutations behind one confirm.
      *
-     * `refKeys` FORWARDS ONLY `brief_id`. `entity_edges.from_id` is the BARE
-     * brief id with no project column, and `BR-001` names a different brief in
-     * 25 projects — so a `serves_goal` edge is project-ambiguous and
-     * `getGoal`'s `serving_briefs` join has no project predicate (Phase-0
-     * P0.4). That is PRE-EXISTING (BR-078) and not this brief's to fix, but the
-     * dashboard is minting new instances of it, so the drop is written down at
-     * the point it happens rather than hidden in a builder.
+     * `refKeys` FORWARDS BOTH HALVES OF THE REF — BR-083 CLOSED THE DROP.
+     * It used to forward `brief_id` ALONE, because `entity_edges.from_id` was
+     * the BARE brief id with no project column and `BR-001` names a different
+     * brief in 25 projects, so a `serves_goal` edge was project-ambiguous by
+     * construction. `entity_edges` now HAS `from_project`, `handleEdgeCreate`
+     * REFUSES an ambiguous endpoint outright, and `getGoal`'s serving-briefs
+     * join carries the project predicate. The browser already sends
+     * `{project, brief_id}` refs, so this is a server-side map edit with ZERO
+     * browser bytes.
+     *
+     * The forward is also what keeps the surface WORKING: without it, an
+     * attach on a brief whose id lives in two projects would now be a hard
+     * refusal from the brain rather than a silently-wrong edge.
      *
      * GOAL CREATION IS ITS OWN ROW, and it is the next one down. FR-249 shipped
      * `create_goal` rather than a composite precisely so rule 3 survives — see
@@ -643,7 +649,7 @@ export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
       tool: "igris_edge_create",
       bulk: true,
       target: "brief-ref",
-      refKeys: Object.freeze({ from_id: "brief_id" }),
+      refKeys: Object.freeze({ from_id: "brief_id", from_project: "project" }),
       extra: Object.freeze(["goal_id"]),
       fixed: Object.freeze({
         from_type: "brief",
@@ -1072,8 +1078,9 @@ export function buildTriageArgs(
  *  - a caller-supplied `status`/`content`/`title` cannot reach the tool, even
  *    if the parser were to let it past — the built object's key set is exactly
  *    `fixed ∪ refKeys ∪ (extra ∩ supplied)`;
- *  - `attach_goal` really does drop the ref's `project`, because `refKeys` does
- *    not name it (P0.4 / BR-078).
+ *  - `attach_goal` really does forward BOTH halves of the ref, because
+ *    `refKeys` names `project` as well as `brief_id` (BR-083 — it named only
+ *    `brief_id` under BR-078, and that omission was the ambiguity).
  */
 export function buildBriefArgs(
   spec: TriageActionSpec,

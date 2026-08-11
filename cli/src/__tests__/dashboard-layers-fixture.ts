@@ -137,7 +137,22 @@ const DDL_GOALS = `
   );
 `;
 
-/** `entity_edges` — engine/components/edges/schema.ts v1. */
+/**
+ * `entity_edges` — engine/components/edges/schema.ts **v4** (BR-083).
+ *
+ * THIS FIXTURE MUST MIRROR THE SHIPPED SCHEMA, and it silently did not.
+ * It sat at v1 while `goals/read.ts` began selecting `e.from_project`, so the
+ * whole query failed and `/api/goal` returned `goal: undefined` — a fixture-only
+ * failure that looks exactly like a broken reader. Caught by two endpoint tests
+ * whose assertions were about serving briefs, not about schema drift.
+ *
+ * The UNIQUE is an EXPRESSION INDEX over `COALESCE(project, '')`, not a
+ * table-level UNIQUE, and that is load-bearing rather than stylistic: NULL is
+ * DISTINCT from NULL in a SQLite UNIQUE, so `UNIQUE(..., from_project, ...)`
+ * would let two identical project-LESS edges (a `concept -> concept`, a synapse
+ * inference) both insert and quietly break idempotency. Copy the shape from
+ * `schema.ts` v4 when it changes; do not re-derive it here.
+ */
 const DDL_EDGES = `
   CREATE TABLE entity_edges (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -147,7 +162,12 @@ const DDL_EDGES = `
     provenance TEXT NOT NULL DEFAULT 'observed',
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     metadata TEXT NOT NULL DEFAULT '{}',
-    UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+    from_project TEXT,
+    to_project   TEXT
+  );
+  CREATE UNIQUE INDEX idx_entity_edges_identity ON entity_edges(
+    from_type, from_id, to_type, to_id, edge_type,
+    COALESCE(from_project, ''), COALESCE(to_project, '')
   );
 `;
 

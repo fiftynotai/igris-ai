@@ -30,6 +30,9 @@
 
 import type Database from 'better-sqlite3';
 import { WhereBuilder } from '../../helpers.js';
+// BR-083 — PROBE the qualifier columns; a pre-`edges@4` brain must degrade,
+// not throw. See the helper's docblock for the three brains that lack them.
+import { edgeProjectPredicate } from '../edges/node-project.js';
 import {
   likePattern,
   substringReport,
@@ -118,6 +121,13 @@ export interface ServingBrief {
   title: string;
   status: string;
   priority: string;
+  /**
+   * BR-083 — WHICH instance of `brief_id` this row is. A brief id is unique
+   * only within a project, so `brief_id` alone never identified a brief; this
+   * field is what makes the answer readable. Appended LAST so the pre-BR-083
+   * key order the MCP wrapper `JSON.stringify`s onto the wire is unchanged.
+   */
+  project: string;
 }
 
 /** The `igris_goal_get` payload, key-for-key. */
@@ -243,11 +253,25 @@ export function getGoal(db: Database.Database, goalId: string): GoalDetail | nul
   if (!goal) return null;
 
   // Soft-deleted edges (metadata.deleted=1) are excluded.
+  //
+  // BR-083 — THE DEMONSTRATING BUG, AND ITS FIX. This join used to be
+  // `ON bs.brief_id = e.from_id` with no project predicate, so ONE edge fanned
+  // out to N rows — one per project that happens to use that brief id.
+  // Measured on the live brain, 2026-08-11: GL-006 had 32 `serves_goal` edges
+  // and this query returned 44 rows.
+  //
+  // The `IS NULL` arm is deliberate and is NOT a loophole. A row left
+  // deliberately unattributed by the backfill still fans out exactly as it did
+  // before; dropping it instead would make the count LOOK fixed by deleting
+  // data the brain never had. The residual shrinks as rows are qualified at
+  // mint time, and it is visible rather than silent.
   const serving_briefs = db
     .prepare(
-      `SELECT bs.brief_id, bs.title, bs.status, bs.priority
+      `SELECT bs.brief_id, bs.title, bs.status, bs.priority, bs.project
        FROM entity_edges e
-       JOIN brief_status bs ON bs.brief_id = e.from_id
+       JOIN brief_status bs
+         ON bs.brief_id = e.from_id
+        AND ${edgeProjectPredicate(db, 'e', 'bs')}
        WHERE e.to_type = 'goal'
          AND e.to_id = ?
          AND e.from_type = 'brief'

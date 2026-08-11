@@ -11,6 +11,7 @@ Igris already has implicit graph data: briefs reference parents in markdown head
 A single table, owned by the `edges` engine component (per-component migration `edges:1`).
 
 ```sql
+-- as of migration edges:4 (BR-083)
 CREATE TABLE entity_edges (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   from_type TEXT NOT NULL,
@@ -22,13 +23,106 @@ CREATE TABLE entity_edges (
   provenance TEXT NOT NULL DEFAULT 'observed',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   metadata   TEXT NOT NULL DEFAULT '{}',
-  UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+  from_project TEXT,          -- BR-083, NULLABLE
+  to_project   TEXT           -- BR-083, NULLABLE
+  -- NO table-level UNIQUE. See the expression index below.
 );
 
 CREATE INDEX idx_edges_from ON entity_edges(from_type, from_id);
 CREATE INDEX idx_edges_to   ON entity_edges(to_type, to_id);
 CREATE INDEX idx_edges_type ON entity_edges(edge_type);
+CREATE INDEX idx_edges_compound ON entity_edges(from_type, from_id, edge_type);
+
+CREATE UNIQUE INDEX idx_edges_unique ON entity_edges(
+  from_type, from_id, COALESCE(from_project, ''),
+  to_type,   to_id,   COALESCE(to_project, ''),
+  edge_type);
+
+CREATE INDEX idx_edges_from_proj ON entity_edges(from_type, from_id, from_project);
+CREATE INDEX idx_edges_to_proj   ON entity_edges(to_type,   to_id,   to_project);
 ```
+
+## The project axis (BR-083)
+
+A brief id is unique only WITHIN a project. Before `edges:4` an edge row
+addressed each endpoint as a bare `(type, id)` pair, so every edge to or from a
+brief whose id existed in more than one project was ambiguous. Measured on the
+operator's brain, 2026-08-11: **785 edges, 692 touching a brief, 515 of those
+(74.6%) referencing an id that lives in 2+ projects, across 35 projects**. The
+demonstrating case was `igris_goal_get GL-006` returning **44 rows for 32
+edges**, four of them briefs from three unrelated projects.
+
+**Both columns are NULLABLE and must stay that way.** A `concept -> concept`
+edge legitimately has no project, and synapse's `edge_inference` suggestions are
+deliberately project-less. More importantly, **NULL is a stated verdict** —
+*deliberately unattributed* — and never *"unknown, guess later"*. Roughly half
+the pre-BR-083 rows carry it permanently.
+
+### The qualification ladder — required IFF ambiguous
+
+Enforced in `handleEdgeCreate`, per endpoint. `P(type, id)` is the set of
+projects that entity lives in, computed by `node-project.ts::projectsFor` — the
+SAME resolver BR-078's traversal seeds use, so an operator sees one error
+dialect rather than two.
+
+| `\|P\|` | qualifier omitted | qualifier supplied |
+|---|---|---|
+| 0 | store `NULL` | store VERBATIM (endpoint existence was never validated) |
+| 1 | resolve for free -> `P[0]` | `== P[0]` accept; else REJECT |
+| >1 | **REJECT**, listing the candidates | `∈ P` accept; `∉ P` REJECT |
+
+The condition is **empirical, not a type list**. `PROJECT_SCOPED_TYPES` is a
+doc-constant and no code branches on it, so a type that starts colliding in
+future is handled with no code change.
+
+**Why it is not a `required` key and not a `CHECK`.** The rule needs a lookup
+into `brief_status`, so JSON Schema cannot express it (there is no conditional
+`required`) and neither can a DDL `CHECK` (it cannot read another table). A
+blanket `required` entry would also reject the legitimately project-less
+concept and synapse edges. `handleEdgeCreate` is the choke point for this
+table — one gateway-dispatched call site and NINE in-process callers that never
+touch `dispatch()` — so enforcing there is the choke-point principle applied
+correctly, not a per-tool guard substituting for it.
+
+**Why the UNIQUE is an expression index.** NULL is DISTINCT from NULL in a
+SQLite `UNIQUE`, so `UNIQUE(..., from_project, ...)` would let two identical
+project-less concept edges BOTH insert and silently break idempotency for
+exactly the population that legitimately has no project. `COALESCE(x, '')`
+folds them. A table-level UNIQUE also cannot be dropped in place, which is why
+`edges:4` is a 12-step REBUILD — and the rebuild is what makes two edges
+differing ONLY by project storable at all.
+
+### Attribution of pre-BR-083 rows
+
+`scripts/backfill_entity_edge_projects.ts`. **Provable is defined as
+`resolveEdgeProjects(...).resolution === 'unique'`** — the verdict
+`igris_graph_brain` already computes on every call — and nothing else. Dry run
+by default; `--apply` requires `--snapshot <verified backup>`; every decision,
+attributed or refused, goes to a JSONL report.
+
+Measured on a `VACUUM INTO` snapshot of the operator's brain, 2026-08-11:
+
+| class | FR-237 branch | verdict | count |
+|---|---|---|---|
+| C1 | 1 — neither endpoint ambiguous | attributed | 268 |
+| C2 | 2 — owner hint applies | attributed | 175 |
+| C3 | 4, `\|C\| = 1` | attributed | 15 |
+| C4 | 4, `1 < \|C\| <= 8` | **NULL** | 283 |
+| C5 | 4, `\|C\| > 8` | **NULL** | 43 |
+| C6 | 3 — one ambiguous, hint fails | **NULL** | 1 |
+| C7 | 4, `\|C\| = 0` dangling | **NULL** | 0 |
+
+**458 of 785 (58.3%) attributed, 327 (41.7%) deliberately left NULL.** That is
+the honest headline: a wrong attribution is worse than a null, so C4-C7 are
+refused rather than guessed. Widening the provable classes needs its own brief.
+
+### Egress ordering hazard
+
+Both columns join `SYNC_TABLES.entity_edges`'s `columns` AND its `syncKey`
+(the key mirrors the local uniqueness so the remote `INSERT OR IGNORE` shares
+it; omitting them would re-create the fusion on the VPS). **The remote must run
+`edges:4` before the first local push**, or every INSERT fails on
+`no such column: from_project`.
 
 ### Index count discrepancy (flagged)
 
@@ -74,14 +168,16 @@ Edge types are stored as plain strings — extending the catalog is a code chang
 ## MCP tools
 
 ### `igris_edge_create`
-Idempotent insert. Re-creating an identical `(from_type, from_id, to_type, to_id, edge_type)` tuple returns the existing edge with `created: false`.
+Idempotent insert. Re-creating an identical `(from_type, from_id, from_project, to_type, to_id, to_project, edge_type)` tuple returns the existing edge with `created: false`.
 
 ```jsonc
 {
   "from_type": "brief",
   "from_id": "FR-053",
+  "from_project": "igris-ai",
   "to_type": "brief",
   "to_id":   "FR-051",
+  "to_project": "igris-ai",
   "edge_type": "parent_of",
   "confidence": 1.0,
   "provenance": "observed",
@@ -94,6 +190,17 @@ Validation rules in the handler (defense in depth beyond the JSON Schema enums):
 - `edge_type` must be in the catalog.
 - `confidence` is clamped to `[0, 1]`; non-numeric inputs fall back to the default.
 - Self-loops (same `from` and `to`) are rejected unless `edge_type === 'recurs_with'`.
+- **BR-083:** each endpoint runs the qualification ladder above. An id that
+  lives in more than one project and arrives unqualified is REFUSED, with the
+  candidate projects named; an id that lives in exactly one is resolved for
+  you and the caller need pass nothing.
+
+### `igris_edge_list`
+…also filters on `from_project` / `to_project`. These are EQUALITY filters, so
+they never match the deliberately-unattributed rows: asking for
+`from_project = 'igris-ai'` returns the edges PROVEN to be igris-ai's, not
+everything that might be. The residual is visible by omitting the filter and
+comparing totals.
 
 ### `igris_edge_list`
 Filter by any subset of `from_type`, `from_id`, `to_type`, `to_id`, `edge_type`, `provenance`, `min_confidence`. Defaults to `LIMIT 200` (max 1000). Soft-deleted edges are excluded unless `include_deleted: true`.

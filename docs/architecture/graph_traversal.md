@@ -169,14 +169,27 @@ no code change.
 ### Hop resolution
 
 Even with a correct seed, walking an edge to `brief/BR-002` must decide *which*
-project's BR-002 — and `entity_edges` has no project column (out of scope to
-change; own brief). `node-project.ts::resolveHopProject` reaches the same
-verdict `whole-graph.ts::resolveEdgeProjects` (FR-237) reaches for that row, and
-then asks whether the verdict names the instance the walk is standing on. With
+project's BR-002.
+
+**Since BR-083 the row usually says.** `entity_edges` gained `from_project` /
+`to_project`, and when BOTH are stored `resolveHopProject` reads them and asks
+only whether the near one is the instance the walk is standing on — no
+inference at all. The condition is BOTH-stored, identical to
+`resolveEdgeProjects`'s, because these two functions agreeing is the anti-fork
+invariant.
+
+The ladder below is now the rule for the **NULL residual**: rows written before
+`edges:4` that BR-083's backfill could not PROVE (327 of 785 on the operator's
+brain, 41.7%, deliberately left NULL — a wrong attribution is worse than a
+null), plus endpoints that legitimately have no project at all.
+`node-project.ts::resolveHopProject` reaches the same verdict
+`whole-graph.ts::resolveEdgeProjects` (FR-237) reaches for those rows, and then
+asks whether the verdict names the instance the walk is standing on. With
 `A = P(near)`, `C = P(far)` and `Pc` the near node's fixed project:
 
 | Case | FR-237 verdict | Traversal |
 |---|---|---|
+| **both qualifiers STORED** (BR-083) | branch 0 — one instance, exactly as stored | **walk** as the stored far project when `Pc` equals the stored near one; otherwise it is a *different instance* and is skipped **without** being counted |
 | `\|A\| <= 1`, `\|C\| <= 1` | branch 1 — one instance, each endpoint keeps its own project | **walk**, far project = `C[0]` (or `null`). Cross-project edges are legitimate and are not forced intra-project |
 | `\|A\| <= 1`, `\|C\| > 1`, `Pc ∈ C` | branch 2 — owner hint | **walk** as `Pc` |
 | `\|A\| <= 1`, `\|C\| > 1`, `Pc ∉ C` | branch 3 — emit nothing | **drop**, count in `unresolved_hops` |
@@ -440,7 +453,13 @@ If the label table is missing (e.g. `goals` before FR-110 lands), the tool falls
 - **Cross-process cache** (in-memory, per server instance)
 - **Subgraph layout hints** (positions, communities) — FR-112
 - **Diff/changed-since traversal**
-- **A project column on `entity_edges`** — the only complete remedy for the `unresolved_hops` residual (own brief)
+- ~~**A project column on `entity_edges`**~~ — **SHIPPED, BR-083** (`edges:4`).
+  It did not retire `unresolved_hops`; it NARROWED it. The counter now means
+  *"hops over rows that predate `edges:4` and could not be attributed"*, it
+  cannot be incremented by a row minted after the migration (an ambiguous
+  endpoint is refused at `handleEdgeCreate`), and it is expected to trend toward
+  zero without reaching it. Removing it would be a payload break across ten
+  consumers to delete a number that is still non-zero.
 
 ---
 

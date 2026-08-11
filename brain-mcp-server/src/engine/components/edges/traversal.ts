@@ -42,19 +42,33 @@
  *
  * HOP RESOLUTION AND ITS RESIDUAL
  * -------------------------------
- * Walking an edge to `brief|BR-002` must decide WHICH project's BR-002, and
- * `entity_edges` has no project column. `node-project.ts::resolveHopProject`
- * reaches FR-237's `resolveEdgeProjects` verdict for the row and then asks
- * whether that verdict names the instance we are standing on. Three outcomes:
- * walk it, skip it because it demonstrably belongs to another instance of the
- * same id (NOT a loss), or skip it because the data cannot say (a real loss).
- * Only the last increments `unresolved_hops`. That counter is mandatory: an
- * unreported loss would reproduce the original `LABEL_SCHEMA` sin — an
- * acknowledged omission with no signal. Traversal NEVER replicates: it walks at
- * most one candidate per hop, so the visited set cannot explode. See
- * `igris_graph_brain`'s `edge_resolution` block for the same loss measured
- * brain-wide, and `docs/architecture/graph_traversal.md` for the argument that
- * this layer is SOUND but not COMPLETE without a schema change.
+ * Walking an edge to `brief|BR-002` must decide WHICH project's BR-002.
+ * Since BR-083 the row itself usually says: when `entity_edges.from_project`
+ * and `to_project` are BOTH stored, `resolveHopProject` reads them and only
+ * asks whether the near one is the instance we are standing on. When they are
+ * not, it falls back to reaching FR-237's `resolveEdgeProjects` verdict by
+ * inference. Three outcomes either way: walk it, skip it because it
+ * demonstrably belongs to another instance of the same id (NOT a loss), or
+ * skip it because the data cannot say (a real loss).
+ *
+ * `unresolved_hops` — NARROWED MEANING, NOT RETIRED (BR-083).
+ * It now counts hops over rows that PREDATE `edges@4` and could not be
+ * attributed by the backfill, plus the endpoints that legitimately have no
+ * project. It cannot be incremented by a row minted after edges@4, because an
+ * ambiguous endpoint is refused at `handleEdgeCreate`. Expect it to trend
+ * toward zero and never to rise; do NOT expect zero — roughly half the
+ * pre-BR-083 rows are unprovable and a wrong attribution is worse than a null.
+ * The counter is mandatory: an unreported loss would reproduce the original
+ * `LABEL_SCHEMA` sin — an acknowledged omission with no signal. Removing it
+ * would also be a payload break across ten consumers to delete a number that
+ * is still non-zero.
+ *
+ * Traversal NEVER replicates: it walks at most one candidate per hop, so the
+ * visited set cannot explode. See `igris_graph_brain`'s `edge_resolution`
+ * block — the same residual measured brain-wide — and
+ * `docs/architecture/graph_traversal.md`. This layer was SOUND but not
+ * COMPLETE without a schema change; BR-083 supplied the schema change and
+ * completeness now grows with attribution rather than being unreachable.
  *
  * Implementation notes:
  *   - Iterative BFS in TypeScript with per-frontier parameterized SQL queries
@@ -129,8 +143,10 @@ import { VALID_EDGE_TYPES, VALID_ENTITY_TYPES } from './handlers.js';
 import { encodeNodeKey, type NodeKeyParts } from './graph-keys.js';
 import {
   createProjectResolver,
+  qualifyNodeProject,
   resolveHopProject,
   type ProjectResolver,
+  type StoredHopProjects,
 } from './node-project.js';
 
 // ---------------------------------------------------------------------------
@@ -187,7 +203,10 @@ interface SubgraphResult {
   edges: EdgeProjection[];
   truncated: boolean;
   cached: boolean;
-  /** BR-078: hops dropped because `entity_edges` carries no project column. */
+  /**
+   * BR-078 + BR-083: hops dropped because the row could not be attributed —
+   * the NULL residual only. See the module header.
+   */
   unresolved_hops: number;
 }
 
@@ -318,16 +337,46 @@ function validateEdgeTypesFilter(raw: unknown): { types: string[] | undefined; e
 // Seed qualification (BR-078)
 // ---------------------------------------------------------------------------
 
-/** Max candidate slugs echoed in the ambiguous-seed error before eliding. */
-const MAX_LISTED_CANDIDATE_PROJECTS = 10;
+// ---------------------------------------------------------------------------
+// BR-083 — reading the row's own qualifiers on the hop path
+// ---------------------------------------------------------------------------
 
-/** Render a candidate project list for an error message, capped and elided. */
-function describeCandidates(candidates: Array<string | null>): string {
-  const shown = candidates
-    .slice(0, MAX_LISTED_CANDIDATE_PROJECTS)
-    .map((p) => (p === null ? '(no project)' : p));
-  const remainder = candidates.length - shown.length;
-  return remainder > 0 ? `${shown.join(', ')}, and ${remainder} more` : shown.join(', ');
+/**
+ * `, e.from_project, e.to_project` — or literal NULLs on a pre-`edges@4` brain.
+ *
+ * PROBED, never assumed. Several traversal fixtures hand-roll `entity_edges`,
+ * and an exported or mid-deploy brain can legitimately predate the columns; on
+ * any of those, `no such column` would turn a degradation into an outage. A
+ * NULL column reads as *"the row does not say"*, which routes straight to the
+ * inference ladder — the pre-BR-083 behaviour, exactly.
+ */
+function edgeProjectColumns(db: Database.Database): string {
+  try {
+    const cols = db.prepare('PRAGMA table_info(entity_edges)').all() as Array<{ name: string }>;
+    const names = new Set(cols.map((c) => c.name));
+    if (names.has('from_project') && names.has('to_project')) {
+      return ', e.from_project, e.to_project';
+    }
+  } catch {
+    // Fall through — a brain that cannot answer the question has no columns.
+  }
+  return ', NULL AS from_project, NULL AS to_project';
+}
+
+/**
+ * Orient a row's stored qualifiers to the hop: near = the side we stand on.
+ *
+ * The swap happens HERE, once, rather than at three call sites — an inbound
+ * hop reads `to_project` as its near side, and getting that backwards would
+ * traverse the wrong instance while looking entirely correct.
+ */
+function storedHop(
+  row: { from_project?: string | null; to_project?: string | null },
+  isOutbound: boolean,
+): StoredHopProjects {
+  return isOutbound
+    ? { near: row.from_project, far: row.to_project }
+    : { near: row.to_project, far: row.from_project };
 }
 
 /** Discriminated so `if (!seed.ok) return errorResult(seed.error)` narrows. */
@@ -338,8 +387,19 @@ type SeedResolution =
 /**
  * Resolve the project of ONE seed endpoint — the decision-C ladder.
  *
- * Returns `{ ok: true, project }` or `{ ok: false, error }` for the caller to
- * surface via `errorResult`. See the module header's table for the four cases.
+ * BR-083 MOVED THE LADDER, NOT THE BEHAVIOUR. The four cases now live in
+ * `node-project.ts::qualifyNodeProject`, because `handleEdgeCreate` needs the
+ * identical ladder over the identical `projectsFor` resolver and a second copy
+ * would have become a second dialect the first time either moved. Both
+ * BR-078 deviations travelled with it and are documented at the new site:
+ *   - `|P| = 0` + a supplied slug is ACCEPTED (unverifiable, not false), which
+ *     is what lets a first hop satisfy branch 2 where `resolveEdgeProjects`
+ *     would take branch 3;
+ *   - `|P| > 1` is a REFUSAL, never a fused multi-project answer.
+ *
+ * The strings this surface emits are byte-identical to their pre-BR-083 form:
+ * the traversal-only scope caveat is passed as the `trailer`, and the noun
+ * stays `seed` here while `handleEdgeCreate` passes `endpoint`.
  *
  * @param paramName - The tool's project param (`node_project`, `from_project`,
  *                    `to_project`, `seed_node_project`) — named in the error so
@@ -354,56 +414,12 @@ function resolveSeedProject(
   supplied: unknown,
   resolver: ProjectResolver,
 ): SeedResolution {
-  const candidates = resolver.projectsFor(type, id);
-
-  if (supplied !== undefined && supplied !== null) {
-    if (typeof supplied !== 'string' || !supplied) {
-      return { ok: false, error: `${paramName} must be a non-empty string when provided` };
-    }
-    // An explicit project the id does not live in is an ERROR, never a silent
-    // empty result. The `candidates.length > 0` guard is deliberate: when the
-    // brain cannot answer at all (|P| = 0 — a phantom endpoint, or a schema
-    // that predates the project column) the claim is unverifiable rather than
-    // false, and refusing it would make degraded brains unusable. That is the
-    // same permissiveness the |P| = 0 row of the ladder rests on.
-    //
-    // SECOND DEVIATION FROM FR-237, accepted (BR-078, warden r1 Minor 1): an
-    // accepted slug becomes `curProject`, so the FIRST hop can satisfy
-    // `contains(farCandidates, curProject)` and take branch 2 — where
-    // `resolveEdgeProjects`, computing `fixedProject = null` for a phantom
-    // endpoint, would take branch 3 and emit nothing. We prefer the caller's
-    // unverifiable-but-not-false claim over discarding it: they asserted an
-    // ownership the brain has no row to confirm OR deny, and on a degraded or
-    // orphan-heavy brain that assertion is the only project signal available.
-    // It cannot fabricate a bridge between two REAL projects, because the near
-    // side has no backing row in any project. Same divergence CLASS as the
-    // branch-4 cap deviation in `node-project.ts`; both are recorded rather
-    // than silent.
-    if (candidates.length > 0 && !candidates.includes(supplied)) {
-      return {
-        ok: false,
-        error:
-          `${type} "${id}" does not exist in project "${supplied}". ` +
-          `It exists in: ${describeCandidates(candidates)}.`,
-      };
-    }
-    return { ok: true, project: supplied };
-  }
-
-  // |P| = 0 — phantom endpoint. Pre-BR-078 behaviour, preserved.
-  if (candidates.length === 0) return { ok: true, project: null };
-  // |P| = 1 — compute the answer the caller would otherwise have had to supply.
-  if (candidates.length === 1) return { ok: true, project: candidates[0] };
-
-  // |P| > 1 — refuse. Returning all of them is the fusion bug BR-078 exists to
-  // end, and returning one arbitrarily would be a silent wrong answer.
-  return {
-    ok: false,
-    error:
-      `Ambiguous seed: ${type} "${id}" exists in ${candidates.length} projects ` +
-      `(${describeCandidates(candidates)}). Pass ${paramName} to qualify ${idParam}. ` +
-      `${paramName} qualifies the seed only — it does not filter the result to that project.`,
-  };
+  return qualifyNodeProject(type, id, supplied, resolver, {
+    paramName,
+    idParam,
+    noun: 'seed',
+    trailer: `${paramName} qualifies the seed only — it does not filter the result to that project.`,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -646,7 +662,7 @@ export function handleGraphNeighbors(args: Record<string, unknown>): ToolResult 
   const outPred = '(e.from_type = ? AND e.from_id = ?)';
   const bothPred = `(${outPred} OR ${inPred})`;
   const incidentSql = `
-    SELECT e.from_type, e.from_id, e.to_type, e.to_id
+    SELECT e.from_type, e.from_id, e.to_type, e.to_id${edgeProjectColumns(db)}
     FROM entity_edges e
     WHERE ${direction === 'in' ? inPred : direction === 'out' ? outPred : bothPred}
       ${edgeBundle.fragment}
@@ -666,7 +682,7 @@ export function handleGraphNeighbors(args: Record<string, unknown>): ToolResult 
     node_project: string | null;
     depth: number;
   }> = [];
-  /** Hops dropped by FR-237 branch 3 — reported, never hidden. */
+  /** Hops dropped over UNATTRIBUTED rows (BR-083 residual) — never hidden. */
   let unresolvedHops = 0;
 
   while (frontier.length > 0) {
@@ -683,7 +699,14 @@ export function handleGraphNeighbors(args: Record<string, unknown>): ToolResult 
       const rows = incidentStmt.all(
         ...params,
         ...edgeBundle.params,
-      ) as Array<{ from_type: string; from_id: string; to_type: string; to_id: string }>;
+      ) as Array<{
+        from_type: string;
+        from_id: string;
+        to_type: string;
+        to_id: string;
+        from_project: string | null;
+        to_project: string | null;
+      }>;
 
       for (const r of rows) {
         const isOutbound = r.from_type === cur.type && r.from_id === cur.id;
@@ -693,6 +716,7 @@ export function handleGraphNeighbors(args: Record<string, unknown>): ToolResult 
           cur.project,
           resolver.projectsFor(cur.type, cur.id),
           resolver.projectsFor(otherType, otherId),
+          storedHop(r, isOutbound),
         );
         if (hop.verdict !== 'traverse') {
           // Only a genuine loss is counted — `other_instance` means FR-237
@@ -830,7 +854,7 @@ export function handleGraphPath(args: Record<string, unknown>): ToolResult {
   // which blows up exponentially in dense graphs. Standard BFS via JS visits
   // each node at most once, giving O(V + E) within max_depth.
   const outgoingSql = `
-    SELECT e.id AS edge_id, e.to_type, e.to_id, e.edge_type
+    SELECT e.id AS edge_id, e.to_type, e.to_id, e.edge_type${edgeProjectColumns(db)}
     FROM entity_edges e
     WHERE e.from_type = ? AND e.from_id = ?
       ${edgeBundle.fragment}
@@ -864,7 +888,7 @@ export function handleGraphPath(args: Record<string, unknown>): ToolResult {
     { ...startParts, key: startKey, depth: 0 },
   ];
   let foundDepth: number | null = null;
-  /** Hops dropped by FR-237 branch 3 — reported, never hidden. */
+  /** Hops dropped over UNATTRIBUTED rows (BR-083 residual) — never hidden. */
   let unresolvedHops = 0;
 
   outer: while (frontier.length > 0) {
@@ -876,12 +900,17 @@ export function handleGraphPath(args: Record<string, unknown>): ToolResult {
         to_type: string;
         to_id: string;
         edge_type: string;
+        from_project: string | null;
+        to_project: string | null;
       }>;
       for (const r of rows) {
+        // `igris_graph_path` walks OUTBOUND only, so the near side is always
+        // the row's `from_project`.
         const hop = resolveHopProject(
           cur.project,
           resolver.projectsFor(cur.type, cur.id),
           resolver.projectsFor(r.to_type, r.to_id),
+          storedHop(r, true),
         );
         if (hop.verdict !== 'traverse') {
           if (hop.verdict === 'unresolved') unresolvedHops += 1;
@@ -1055,8 +1084,11 @@ export function handleGraphSubgraph(args: Record<string, unknown>): ToolResult {
   // dense graphs (5^10 ≈ 10M rows on a 200-node/500-edge graph). Here we keep
   // a global visited set in JS and run one parameterized neighbor-fetch per
   // frontier node — O(n × avg-degree) total work, capped at maxNodes.
+  // BR-083: the qualifiers are read for the HOP DECISION only. They are NOT
+  // added to the `edgeSql` below, so `igris_graph_subgraph`'s emitted
+  // `edges[]` field set is byte-identical to its pre-BR-083 shape.
   const neighborSql = `
-    SELECT e.id, e.from_type, e.from_id, e.to_type, e.to_id, e.edge_type, e.confidence, e.provenance, e.metadata
+    SELECT e.id, e.from_type, e.from_id, e.to_type, e.to_id, e.edge_type, e.confidence, e.provenance, e.metadata${edgeProjectColumns(db)}
     FROM entity_edges e
     WHERE ((e.from_type = ? AND e.from_id = ?) OR (e.to_type = ? AND e.to_id = ?))
       ${edgeBundle.fragment}
@@ -1071,7 +1103,7 @@ export function handleGraphSubgraph(args: Record<string, unknown>): ToolResult {
     { node_type: seedType, node_id: seedId, node_project: seedProject },
   ];
   const queue: NodeKeyParts[] = [{ type: seedType, project: seedProject, id: seedId }];
-  /** Hops dropped by FR-237 branch 3 — reported, never hidden. */
+  /** Hops dropped over UNATTRIBUTED rows (BR-083 residual) — never hidden. */
   let unresolvedHops = 0;
 
   while (queue.length > 0 && nodeRows.length < maxNodes) {
@@ -1082,7 +1114,9 @@ export function handleGraphSubgraph(args: Record<string, unknown>): ToolResult {
       cur.type,
       cur.id,
       ...edgeBundle.params,
-    ) as EdgeProjection[];
+    ) as Array<
+      EdgeProjection & { from_project: string | null; to_project: string | null }
+    >;
 
     for (const r of rows) {
       // Determine the "other side" of the edge relative to cur.
@@ -1093,6 +1127,7 @@ export function handleGraphSubgraph(args: Record<string, unknown>): ToolResult {
         cur.project,
         resolver.projectsFor(cur.type, cur.id),
         resolver.projectsFor(otherType, otherId),
+        storedHop(r, isOutbound),
       );
       if (hop.verdict !== 'traverse') {
         if (hop.verdict === 'unresolved') unresolvedHops += 1;
@@ -1127,14 +1162,24 @@ export function handleGraphSubgraph(args: Record<string, unknown>): ToolResult {
        PRIMARY KEY (node_type, node_id)
      )`);
     db.exec('DELETE FROM _subgraph_nodes');
-    // OR IGNORE, and no project column: `entity_edges` has none, so an edge can
-    // only ever be matched on `(type, id)`. When fan-out legitimately places two
-    // instances of ONE id in the node set (reached in two project contexts),
-    // they collapse to a single row here. RESIDUAL, deliberately documented
-    // rather than papered over: `edges[]` is then attributable to the id but not
-    // to a specific instance. The `nodes[]` array is unaffected and remains
-    // project-correct. Closing this needs a project column on `entity_edges` —
-    // explicitly out of BR-078's scope (own brief).
+    // OR IGNORE, matched on `(type, id)` only. When fan-out legitimately places
+    // two instances of ONE id in the node set (reached in two project
+    // contexts), they collapse to a single row here, so `edges[]` is
+    // attributable to the id but not to a specific instance. The `nodes[]`
+    // array is unaffected and remains project-correct.
+    //
+    // BR-083 UPDATE — the premise changed, the residual did not close, AND
+    // THAT IS A DECISION RATHER THAN AN OVERSIGHT. `entity_edges` now HAS
+    // `from_project` / `to_project`, so the match COULD carry a project
+    // predicate. It is deliberately not added here: putting `project` in this
+    // temp table's PRIMARY KEY would let two instances of one id both insert,
+    // and the two EXISTS clauses would then emit the SAME `entity_edges` row
+    // twice — a duplicate in `edges[]`, which is a wire-shape regression in
+    // exchange for a precision gain on the qualified subset only (about half
+    // the rows still carry NULL and would need the `IS NULL` arm anyway).
+    // Closing it means deciding how `edges[]` de-duplicates, which is
+    // `igris_graph_subgraph`'s payload contract and belongs to its own brief
+    // (TD-308 territory).
     const insert = db.prepare(
       'INSERT OR IGNORE INTO _subgraph_nodes (node_type, node_id) VALUES (?, ?)',
     );

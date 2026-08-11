@@ -111,6 +111,10 @@ function makeBriefIsolationDb(): Database.Database {
       UNIQUE(project, brief_id)
     );
 
+    -- BR-083 edges@4 shape: nullable qualifiers and an EXPRESSION unique
+    -- index (a table-level UNIQUE would treat two NULL qualifiers as distinct
+    -- and break idempotency for every project-less edge). A receiver that has
+    -- NOT migrated is a different scenario and has its own test below.
     CREATE TABLE entity_edges (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       from_type TEXT NOT NULL,
@@ -122,8 +126,12 @@ function makeBriefIsolationDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       metadata TEXT NOT NULL DEFAULT '{}',
-      UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+      from_project TEXT,
+      to_project TEXT
     );
+    CREATE UNIQUE INDEX idx_edges_unique ON entity_edges(
+      from_type, from_id, COALESCE(from_project, ''),
+      to_type, to_id, COALESCE(to_project, ''), edge_type);
   `);
 
   // Stub the rest of SYNC_TABLES so iteration finds them but they are
@@ -259,6 +267,67 @@ describe('BR-066 /sync/push per-table isolation', () => {
     expect(ee.c).toBe(1);
     const bf = db.prepare('SELECT COUNT(*) as c FROM brief_files').get() as { c: number };
     expect(bf.c).toBe(0);
+  });
+
+  // -------------------------------------------------------------------------
+  // BR-083 R2 — the deploy-ordering hazard, pinned rather than described.
+  // -------------------------------------------------------------------------
+
+  it('BR-083: a receiver that has NOT run edges@4 fails entity_edges ALONE, loudly', () => {
+    // THE HAZARD: `SYNC_TABLES.entity_edges.columns` now names two columns a
+    // pre-edges@4 receiver does not have, so the VPS MUST migrate before the
+    // first push. This test pins what happens if that ordering is broken:
+    // entity_edges fails with a message that NAMES the missing column, every
+    // sibling table still merges, and the failure is reported rather than
+    // swallowed. That is the difference between an operator who reads
+    // "no such column: from_project" and one who reads "HTTP 500".
+    const stale = makeBriefIsolationDb();
+    stale.exec('DROP TABLE entity_edges');
+    stale.exec(`
+      CREATE TABLE entity_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_type TEXT NOT NULL, from_id TEXT NOT NULL,
+        to_type TEXT NOT NULL, to_id TEXT NOT NULL,
+        edge_type TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        provenance TEXT NOT NULL DEFAULT 'observed',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+      );
+    `);
+
+    const result = processSyncPush(stale, {
+      event_log: [
+        {
+          id: 3001, event_name: 'brief.synced', component: 'briefs',
+          payload: '{}', created_at: '2026-05-05T11:00:00Z',
+        },
+      ],
+      entity_edges: [
+        {
+          from_type: 'brief', from_id: 'TD-099', to_type: 'brief', to_id: 'FR-111',
+          edge_type: 'parent_of', confidence: 1, provenance: 'observed',
+          created_at: '2026-05-05T11:00:00Z', metadata: '{}',
+          from_project: 'igris-ai', to_project: 'igris-ai',
+        },
+      ],
+    });
+
+    // The sibling merged — isolation held.
+    expect(result.results.event_log.inserted).toBe(1);
+
+    // entity_edges did NOT, and the reason names the column. Whether the
+    // failure surfaces per-table or per-row, it must be VISIBLE and specific.
+    const edgeErr =
+      result.errors.entity_edges ??
+      result.results.entity_edges?.failures?.[0]?.error ??
+      '';
+    expect(String(edgeErr)).toMatch(/no such column: from_project/i);
+    expect(
+      (stale.prepare('SELECT COUNT(*) as c FROM entity_edges').get() as { c: number }).c,
+    ).toBe(0);
+    stale.close();
   });
 
   // -------------------------------------------------------------------------

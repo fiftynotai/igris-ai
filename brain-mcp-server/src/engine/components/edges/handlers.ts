@@ -18,6 +18,7 @@
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
 import { errorResult, successResult, WhereBuilder } from '../../helpers.js';
+import { createProjectResolver, qualifyNodeProject } from './node-project.js';
 
 // ---------------------------------------------------------------------------
 // Validation catalogs (runtime defense, complementary to JSON Schema enums)
@@ -119,6 +120,15 @@ export interface EdgeRow {
   provenance: string;
   created_at: string;
   metadata: string;
+  /**
+   * BR-083 — the project the SOURCE endpoint is read as. `null` is a real
+   * value with a stated meaning: *deliberately unattributed*, never "unknown,
+   * guess later". A row that predates BR-083 and could not be PROVEN keeps
+   * `null` forever unless a brief widens the provable classes.
+   */
+  from_project: string | null;
+  /** BR-083 — the project the TARGET endpoint is read as. See `from_project`. */
+  to_project: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,13 +140,56 @@ export interface EdgeRow {
  *
  * Required: from_type, from_id, to_type, to_id, edge_type
  * Optional: confidence (default 1.0), provenance (default 'observed'),
- *           metadata (default {})
+ *           metadata (default {}), from_project / to_project (BR-083)
  *
  * Idempotent: re-creating an identical edge returns the existing row's id
- * with `created: false`. The handler relies on the UNIQUE constraint over
- * (from_type, from_id, to_type, to_id, edge_type) for atomicity.
+ * with `created: false`. The handler relies on the UNIQUE INDEX over
+ * (from_type, from_id, COALESCE(from_project,''), to_type, to_id,
+ * COALESCE(to_project,''), edge_type) for atomicity.
  *
  * Self-loops are rejected unless edge_type === 'recurs_with'.
+ *
+ * ===========================================================================
+ * BR-083 — PROJECT QUALIFICATION IS ENFORCED HERE, AND THAT IS THE CHOKE
+ * POINT, NOT AN EXCEPTION TO IT.
+ * ===========================================================================
+ *
+ * `architecture_map` §Forbidden patterns bans *per-tool guards as a substitute
+ * for the gateway*. This is the opposite of that pattern, on two independent
+ * grounds, and it is written HERE so the next reader of that rule finds the
+ * argument at the code rather than in a brief:
+ *
+ *  1. **The gateway cannot express the rule.** `gateway.ts` walks a STATIC
+ *     `required` array with a presence test. BR-083's rule is *"a qualifier is
+ *     required iff `|P(type, id)| > 1`"* — a LOOKUP into `brief_status`, whose
+ *     answer depends on the VALUE of another argument and on the state of the
+ *     database. JSON Schema has no conditional-required, and a blanket
+ *     `required` entry would reject the legitimately project-less
+ *     `concept -> concept` edge and every synapse `edge_inference` suggestion.
+ *     A DDL `CHECK` cannot read another table either. There is no declarative
+ *     door.
+ *
+ *  2. **The gateway sees a MINORITY of the callers.** `handleEdgeCreate` is
+ *     the shared write path for `entity_edges` — measured, not assumed:
+ *     `grep -rn 'handleEdgeCreate' src scripts | grep -v __tests__` finds ONE
+ *     gateway-dispatched call site (`edges/index.ts`'s `igris_edge_create`
+ *     registration) and NINE in-process callers that never touch
+ *     `dispatch()` — `edges/index.ts` `onBriefCreated` + `onMemoryStored`,
+ *     `subconscious/actions/kinds.ts` x4, `subconscious/handlers.ts` x2, and
+ *     `cognition/extractors/synapse.ts`'s auto-approve path. (The BR-083 plan
+ *     said EIGHT; it missed the synapse one.) `scripts/backfill_brief_edges.ts`
+ *     is a tenth, out of process. A gateway-only rule would leave every one of
+ *     them minting ambiguous edges silently — BR-080's silent-drop class, one
+ *     layer down. Enforcing at the shared handler is the choke-point principle
+ *     applied CORRECTLY: this function is the narrowest point every writer
+ *     passes through.
+ *
+ * The gateway change is therefore additive only: the two keys join
+ * `properties` so TD-128's extras walk stops rejecting them, and `required`
+ * is NOT touched (MAINTAINING row 113 unchanged).
+ *
+ * The ladder itself is `node-project.ts::qualifyNodeProject` — the SAME
+ * function BR-078's traversal seeds use, so an operator sees one dialect.
  */
 export function handleEdgeCreate(args: Record<string, unknown>): ToolResult {
   const fromType = args.from_type as string | undefined;
@@ -186,23 +239,54 @@ export function handleEdgeCreate(args: Record<string, unknown>): ToolResult {
 
   const db = getDb();
 
-  // Atomic upsert: INSERT OR IGNORE on UNIQUE then SELECT to find the row.
+  // --- BR-083: the qualification ladder, per endpoint. ----------------------
+  // Runs BEFORE the INSERT so an ambiguous endpoint is refused at the moment
+  // of minting rather than becoming another row the backfill cannot attribute.
+  const resolver = createProjectResolver(db);
+  const fromQ = qualifyNodeProject(fromType, fromId, args.from_project, resolver, {
+    paramName: 'from_project',
+    idParam: 'from_id',
+    noun: 'endpoint',
+  });
+  if (!fromQ.ok) return errorResult(fromQ.error);
+  const toQ = qualifyNodeProject(toType, toId, args.to_project, resolver, {
+    paramName: 'to_project',
+    idParam: 'to_id',
+    noun: 'endpoint',
+  });
+  if (!toQ.ok) return errorResult(toQ.error);
+  const fromProject = fromQ.project;
+  const toProject = toQ.project;
+
+  // Atomic upsert: INSERT OR IGNORE on the UNIQUE INDEX then SELECT to find
+  // the row. Both projects are part of the uniqueness tuple, so the follow-up
+  // SELECT MUST match on them too — without that, two edges differing only by
+  // project would read back each other's row and report the wrong id.
+  // `IS` rather than `=` because the columns are nullable and `NULL = NULL` is
+  // NULL, which would make the read-back miss every project-less edge.
   const insert = db
     .prepare(
       `INSERT OR IGNORE INTO entity_edges
-         (from_type, from_id, to_type, to_id, edge_type, confidence, provenance, metadata)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (from_type, from_id, to_type, to_id, edge_type, confidence, provenance, metadata,
+          from_project, to_project)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(fromType, fromId, toType, toId, edgeType, confidence, provenance, metadata);
+    .run(
+      fromType, fromId, toType, toId, edgeType, confidence, provenance, metadata,
+      fromProject, toProject,
+    );
 
   const created = insert.changes === 1;
 
   const row = db
     .prepare(
       `SELECT * FROM entity_edges
-       WHERE from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND edge_type = ?`,
+       WHERE from_type = ? AND from_id = ? AND to_type = ? AND to_id = ? AND edge_type = ?
+         AND from_project IS ? AND to_project IS ?`,
     )
-    .get(fromType, fromId, toType, toId, edgeType) as EdgeRow | undefined;
+    .get(fromType, fromId, toType, toId, edgeType, fromProject, toProject) as
+      | EdgeRow
+      | undefined;
 
   if (!row) {
     // Should be unreachable — INSERT OR IGNORE either inserts or finds an
@@ -269,7 +353,13 @@ export function handleEdgeList(args: Record<string, unknown>): ToolResult {
     .add('to_type = ?', args.to_type)
     .add('to_id = ?', args.to_id)
     .add('edge_type = ?', args.edge_type)
-    .add('provenance = ?', args.provenance);
+    .add('provenance = ?', args.provenance)
+    // BR-083. These are EQUALITY filters, so they never match the deliberately
+    // unattributed rows — asking for `from_project = 'igris-ai'` returns the
+    // rows PROVEN to be igris-ai's, not "everything that might be". The NULL
+    // residual is visible by omitting the filter and comparing totals.
+    .add('from_project = ?', args.from_project)
+    .add('to_project = ?', args.to_project);
 
   const minConfidence = args.min_confidence !== undefined ? Number(args.min_confidence) : undefined;
   if (minConfidence !== undefined) {

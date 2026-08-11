@@ -143,6 +143,16 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
    *    all the scan can see. It stays safe because `memory-read.ts` is itself in
    *    `PURE_READERS` and is scanned by the same RULES — do not add an entry
    *    here for a module that is not covered by that loop.
+   *  - `../edges/node-project.js` — BR-083. `goals/read.ts` calls
+   *    `edgeProjectPredicate(db, 'e', 'bs')` so it can PROBE for the
+   *    `edges@4` qualifier columns instead of assuming them; a brain that
+   *    predates the migration must degrade, not throw `no such column`.
+   *    Justified by READING it (L-711), not by the name: the module has
+   *    **exactly one import**, `import type Database from 'better-sqlite3'`,
+   *    which is type-only and erased at compile time — so it cannot reach
+   *    `db.js` transitively. Every export takes `db` as a parameter; there is
+   *    no singleton and no import-time side effect. Asserted below, because a
+   *    claim in a comment is not a gate.
    */
   const ALLOWED_IMPORTS = new Set([
     'better-sqlite3',
@@ -155,6 +165,7 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
     '../../helpers.js',
     '../engine/helpers.js',
     './memory-read.js',
+    '../edges/node-project.js',
   ]);
 
   /** Every `from '…'` specifier in a source file, comments stripped. */
@@ -180,6 +191,38 @@ describe('FR-240 — the pure read layer imports no singleton and issues no writ
     // imports must be non-empty. Without this, a regex that stopped matching
     // would make the assertion above pass by returning nothing at all.
     expect(importsOf(new URL('../briefs-read.ts', import.meta.url)).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The SAME standard applied to BR-083's entry. Its justification is "exactly
+   * one import, and that one is type-only" — a CLAIM about a file, so it is
+   * asserted rather than trusted.
+   *
+   * PROVES: `node-project.ts` cannot acquire a transitive edge to `db.js` (or
+   * anything else) without this going red, which is what makes it safe for a
+   * PURE_READER to import. Does NOT prove anything about `qualifyNodeProject`'s
+   * behaviour — that is `node-project.test.ts`'s job.
+   */
+  it('BR-083 node-project has exactly one import, and it is type-only', () => {
+    const url = new URL(
+      '../../engine/components/edges/node-project.ts',
+      import.meta.url,
+    );
+    const src = stripComments(readFileSync(fileURLToPath(url), 'utf-8'));
+    const specifiers = [...src.matchAll(/from\s+['"]([^'"]+)['"]/g)].map(
+      (m) => m[1],
+    );
+    expect(
+      specifiers,
+      'node-project.ts gained an import — re-justify its allowlist entry or ' +
+        'remove it. A PURE_READER may only reach modules that cannot reach db.js.',
+    ).toEqual(['better-sqlite3']);
+    // ...and it must stay TYPE-only, or the erased-at-compile-time argument dies.
+    expect(
+      /import\s+type\s+Database\s+from\s+'better-sqlite3'/.test(src),
+      'the better-sqlite3 import is no longer `import type` — it now exists at ' +
+        'runtime in dist/, so the allowlist justification no longer holds',
+    ).toBe(true);
   });
 
   for (const reader of PURE_READERS) {

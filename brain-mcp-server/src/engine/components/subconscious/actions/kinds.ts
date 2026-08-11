@@ -417,7 +417,19 @@ export function applyAddEdge(
     return fail('add_edge', `to node ${toType}:${toId} does not exist`);
   }
 
-  // Delegate to the canonical edge creator (validates vocabulary + self-loops).
+  // Delegate to the canonical edge creator (validates vocabulary + self-loops,
+  // and since BR-083 the project-qualification ladder).
+  //
+  // BR-083 — NO QUALIFIER IS PASSED, AND THAT IS THE CORRECT CHOICE HERE, NOT
+  // AN OMISSION. A `suggested_action` carries `{type, id}` and nothing else, so
+  // this call site has no project context to assert. The ladder resolves every
+  // `|P| <= 1` endpoint for free — which is all of them today, since the
+  // suggestion pipeline proposes `learning -> learning` edges over integer PKs
+  // — and REFUSES an `|P| > 1` endpoint with the candidate list, which arrives
+  // here as a structured `fail(...)` naming the projects. Inventing a project
+  // from the suggestion's own `project_slug` would be exactly the guess this
+  // brief forbids: the suggestion's project is where the INFERENCE ran, not
+  // where the endpoint lives.
   const justification = asString(params.justification);
   const result = handleEdgeCreate({
     from_type: fromType,

@@ -91,6 +91,43 @@ import { brainDbPath } from "../lib/paths.js";
 import { MAX_BULK } from "../lib/dashboard/params.js";
 import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
 import { bundleStaged } from "./hermetic-embeddings.js";
+
+/**
+ * BR-083 — assert the VENDORED brain bundle knows about project qualifiers.
+ *
+ * THIS TIER DISPATCHES THROUGH A BUILD ARTIFACT, NOT THROUGH SOURCE.
+ * `brain-write-bridge.ts` `import()`s `cli/dist/brain-mcp-server/dist/...`, so
+ * a brain-side change is invisible here until that bundle is refreshed. The
+ * three `attach_goal` gates below therefore report `applied: 0` with the
+ * brain's own TD-128 message — *"unknown argument 'from_project'"* — which is
+ * the exact sentence BR-083's brief quotes as the DEFECT, arriving from a
+ * stale artifact rather than from a real regression.
+ *
+ * The bundle is deliberately NOT refreshed by the BR-083 implementation:
+ * `~/.claude.json` points the live `igris-brain` MCP server at that same path,
+ * so rebuilding it ARMS the `edges@4` migration to run against the operator's
+ * live brain on the next MCP restart — unattended, before the operator has
+ * read the dry-run. That is the one thing this brief's migration posture
+ * forbids.
+ *
+ * REMEDIATION (operator, after reviewing the dry-run):
+ *   cd brain-mcp-server && npx tsc
+ *   bash cli/scripts/copy-templates.sh     # or the normal cli build
+ * then re-run this suite.
+ */
+function expectQualifierAwareBundle(): void {
+  const bundled = join(
+    process.cwd(),
+    "dist/brain-mcp-server/dist/engine/components/edges/handlers.js",
+  );
+  const src = existsSync(bundled) ? readFileSync(bundled, "utf8") : "";
+  expect(
+    src.includes("qualifyNodeProject"),
+    "STALE VENDORED BRAIN BUNDLE: cli/dist/brain-mcp-server predates BR-083, so " +
+      "igris_edge_create still refuses `from_project` (TD-128). Rebuild the bundle " +
+      "AFTER the operator has approved the edges@4 migration — see this helper's docblock.",
+  ).toBe(true);
+}
 import { armAutoPushFence, type AutoPushFence } from "./auto-push-fence.js";
 import {
   TRIAGE_FIXTURE,
@@ -1098,7 +1135,7 @@ describe("G-TR-9 — the map's allow-list is the filter, not the parser", () => 
     expect(args).toEqual({ project: P, brief_id: "FR-001", priority: "P0-Critical" });
   });
 
-  it("attach_goal pins the edge shape and DROPS the ref's project (BR-078)", () => {
+  it("attach_goal pins the edge shape and FORWARDS the ref's project (BR-083)", () => {
     const spec = TRIAGE_ACTIONS.attach_goal!;
     const args = buildBriefArgs(spec, ref("FR-001"), {
       goal_id: "GL-100",
@@ -1112,11 +1149,18 @@ describe("G-TR-9 — the map's allow-list is the filter, not the parser", () => 
       to_type: "goal",
       edge_type: "serves_goal",
       from_id: "FR-001",
+      from_project: P,
       to_id: "GL-100",
     });
-    // The `project` DROP, asserted rather than left to a comment. It is the
-    // point at which the dashboard mints a BR-078-ambiguous edge, and the
-    // absence is deliberate (`refKeys` does not name it).
+    // BR-083 CLOSED THE DROP. This assertion used to read
+    // `expect(Object.keys(args)).not.toContain("project")` and recorded the
+    // point at which the dashboard MINTED a BR-078-ambiguous edge. The ref's
+    // project now reaches the tool as `from_project` — and it has to, because
+    // `handleEdgeCreate` REFUSES an ambiguous endpoint outright, so dropping
+    // it would turn a silently-wrong edge into a hard failure.
+    expect(args.from_project).toBe(P);
+    // The wire name is still the tool's, not the ref's — a bare `project` key
+    // would be a TD-128 rejection.
     expect(Object.keys(args)).not.toContain("project");
   });
 
@@ -1211,6 +1255,7 @@ describe("G-TR-10 — the args the BRAIN's own handler received", () => {
   });
 
   it("attach_goal writes ONE serves_goal edge and touches no brief column", async () => {
+    expectQualifierAwareBundle();
     const before = briefStatusRows(dbPath());
     expect(edgeRows(dbPath())).toEqual([]);
 
@@ -1220,7 +1265,11 @@ describe("G-TR-10 — the args the BRAIN's own handler received", () => {
       goal_id: TRIAGE_FIXTURE.goalIds[0],
     });
     expect(r.status).toBe(200);
-    expect(r.json<TriagePayload>()).toMatchObject({ applied: 1, failed: 0 });
+    const payload = r.json<TriagePayload>();
+    // Surface the brain's own message when this fails — a bare `applied: 0`
+    // says nothing about WHICH refusal fired.
+    expect(payload.results?.[0]?.error ?? null).toBeNull();
+    expect(payload).toMatchObject({ applied: 1, failed: 0 });
 
     expect(edgeRows(dbPath())).toEqual([
       {
@@ -2061,6 +2110,7 @@ describe("G-TR-17 — create succeeds, attach fails, and the goal is an ORDINARY
   });
 
   it("the RETRY is one click and cannot double-write — the attach that DOES work", async () => {
+    expectQualifierAwareBundle();
     // The operator's next click after the refusal above. `igris_edge_create` is
     // `INSERT OR IGNORE` on a UNIQUE tuple, so firing it twice is free.
     await triage({ action: "create_goal", goal_title: "t", goal_outcome: "o" });

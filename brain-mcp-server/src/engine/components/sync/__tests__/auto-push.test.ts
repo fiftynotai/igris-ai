@@ -299,7 +299,15 @@ describe('Sync Auto-Push', () => {
       // FR-105: typed-edges graph layer
       {
         table: 'entity_edges',
-        syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+        // BR-083 D7 — the two qualifiers are IN the syncKey, because the key
+        // exists to mirror the local uniqueness so the remote INSERT OR IGNORE
+        // shares it. Leaving them out would re-create the same-id fusion ON
+        // THE VPS, which is this brief's defect reproduced on another machine.
+        syncKey: [
+          'from_type', 'from_id', 'from_project',
+          'to_type', 'to_id', 'to_project',
+          'edge_type',
+        ],
         strategy: 'append',
         timestampCol: 'created_at',
       },

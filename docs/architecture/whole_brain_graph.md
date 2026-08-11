@@ -113,15 +113,24 @@ explicit `0` rather than vanishing from the contract.
 
 **Rule name: *intra-project projection with declared multiplicity*.**
 
-`entity_edges` has **no project column**, and its `metadata` carries only
-`{"source":"backfill","label":"**Parent Brief:**"}` — the project context is
-genuinely lost at row level. **374 of 543 edges (69 %) have at least one
-ambiguous endpoint; 287 have both.**
+**BR-083 CHANGED THE PREMISE, NOT THE RULE.** `entity_edges` now HAS
+`from_project` / `to_project`, so branch 0 reads the answer instead of inferring
+it. Branches 1-7 are unchanged and remain the rule for every row the qualifiers
+do not cover.
+
+For those rows the project context is still genuinely lost at row level (their
+`metadata` carries only
+`{"source":"backfill","label":"**Parent Brief:**"}`). Re-measured on the
+operator's brain, 2026-08-11: **785 source edges; after BR-083's backfill 458
+(58.3%) carry both qualifiers and take branch 0, and 327 (41.7%) remain NULL
+and go through the ladder.** That residual is deliberate — a wrong attribution
+is worse than a null — and `edge_resolution` is now its standing meter.
 
 With `P(x)` = the set of projects containing endpoint `x`:
 
 | # | Condition | Emit | `resolution` |
 |---|---|---|---|
+| 0 | **both qualifiers stored** (BR-083) | one edge, exactly the projects the row names | `unique` |
 | 1 | both endpoints non-ambiguous (`\|P\| ≤ 1`) | one edge, each endpoint's own project — **may legitimately be cross-project** | `unique` |
 | 2 | exactly one ambiguous, and the fixed endpoint's non-null project ∈ the ambiguous set (**owner hint**) | one edge, adopt that project on both sides | `unique` |
 | 3 | exactly one ambiguous, hint does **not** apply | **nothing** — see "Why branch 3 cannot replicate" | `ambiguous_unresolved` (counted) |
@@ -483,7 +492,7 @@ dashboard must render an empty brain, not an error envelope.
 
 | Item | Why it is not here |
 |---|---|
-| **`entity_edges` project-scoping migration** | The justification is the `edge_resolution` numbers above: 245 replicated sources + 36 over-replicated rows. A schema change to carry project on the edge row would collapse all of it. Worth its own brief now that the count is measured. |
+| ~~**`entity_edges` project-scoping migration**~~ | **SHIPPED — BR-083** (`edges:4`). It collapsed 458 of 785 source rows onto branch 0. It did NOT collapse all of it: 327 rows (283 replicated, 43 over-replicated, 1 ambiguous_unresolved) stay NULL because no honest attribution exists for them, so `edge_resolution` survives with a restated purpose — the RESIDUAL METER — and a FROZEN field set. Widening the provable classes needs its own brief. |
 | **`traversal.ts` shared-key retrofit** | **DONE — BR-078.** `igris_graph_neighbors` / `_path` / `_subgraph` had the identical exposure (a two-part visited-set key, plus a `LABEL_SCHEMA.brief` comment that admitted it picked the first project's title). BR-078 re-keyed every traversal site on the triple, importing `encodeNodeKey` from `graph-keys.ts` unmoved — exactly the reuse this module's dependency-free design was written for. It did change the **result set** of three shipped tools; see `docs/architecture/graph_traversal.md`. |
 | **Retiring the single-project HTML renderer** | TD-308 owns `igris_brief_graph_render` / `/visualize`. |
 | **New edge inference** | FR-211 (Archived). This layer reads `entity_edges`; it writes nothing and infers nothing. |

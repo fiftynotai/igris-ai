@@ -638,6 +638,34 @@ interface SubgraphShape {
 }
 
 /**
+ * Insert an UNQUALIFIED edge row directly — a PRE-BR-083 row.
+ *
+ * BR-083 made `handleEdgeCreate` REFUSE an endpoint whose id lives in more
+ * than one project, so the ambiguity these BR-078 fixtures exist to test can
+ * no longer be minted through the handler. That refusal is the fix; it is not
+ * a reason to stop testing the inference ladder, because roughly half of the
+ * live rows predate the column and keep a NULL qualifier forever.
+ *
+ * So the collision fixtures below write the row the way the old handler did:
+ * both qualifiers NULL. That is exactly the population `resolveHopProject`'s
+ * branches 1-4 still serve. Using `handleEdgeCreate` here would silently
+ * produce an EMPTY fixture and a suite that asserts nothing.
+ */
+function legacyEdge(
+  db: Database.Database,
+  fromType: string,
+  fromId: string,
+  toType: string,
+  toId: string,
+  edgeType: string,
+): void {
+  db.prepare(
+    `INSERT INTO entity_edges (from_type, from_id, to_type, to_id, edge_type)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(fromType, fromId, toType, toId, edgeType);
+}
+
+/**
  * The collision fixture.
  *
  * `BR-001` exists in BOTH projects. `BR-002` is A's alone, `BR-009` is B's
@@ -651,12 +679,8 @@ function seedCollision(db: Database.Database): void {
   ins.run('proj-a', 'BR-002', "A's BR-002");
   ins.run('proj-b', 'BR-009', "B's BR-009");
 
-  handleEdgeCreate({
-    from_type: 'brief', from_id: 'BR-001', to_type: 'brief', to_id: 'BR-002', edge_type: 'depends_on',
-  });
-  handleEdgeCreate({
-    from_type: 'brief', from_id: 'BR-001', to_type: 'brief', to_id: 'BR-009', edge_type: 'depends_on',
-  });
+  legacyEdge(db, 'brief', 'BR-001', 'brief', 'BR-002', 'depends_on');
+  legacyEdge(db, 'brief', 'BR-001', 'brief', 'BR-009', 'depends_on');
 }
 
 /**
@@ -920,9 +944,7 @@ describe('BR-078 — traversal no longer fuses same-id briefs across projects', 
     ins.run('proj-a', 'A-ONLY', 'A only');
     ins.run('proj-b', 'B-ONLY', 'B only');
     const edge = (from: string, to: string): void => {
-      handleEdgeCreate({
-        from_type: 'brief', from_id: from, to_type: 'brief', to_id: to, edge_type: 'related_to',
-      });
+      legacyEdge(db, 'brief', from, 'brief', to, 'related_to');
     };
     edge('SH-1', 'A-ONLY');
     edge('SH-1', 'B-ONLY');
@@ -989,9 +1011,7 @@ describe('BR-078 — traversal no longer fuses same-id briefs across projects', 
     ins.run('proj-q', 'BR-400', 'seed');
     ins.run('proj-x', 'BR-500', 'x');
     ins.run('proj-y', 'BR-500', 'y');
-    handleEdgeCreate({
-      from_type: 'brief', from_id: 'BR-400', to_type: 'brief', to_id: 'BR-500', edge_type: 'depends_on',
-    });
+    legacyEdge(db, 'brief', 'BR-400', 'brief', 'BR-500', 'depends_on');
 
     const r = parseResult<NeighborsShape>(
       handleGraphNeighbors({ node_type: 'brief', node_id: 'BR-400', depth: 1, direction: 'out' }),

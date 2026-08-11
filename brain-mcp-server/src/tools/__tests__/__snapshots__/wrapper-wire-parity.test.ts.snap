@@ -217,7 +217,8 @@ exports[`WIRE GOLDEN — handleGoalGet > goal with serving briefs and learnings 
       "brief_id": "FR-240",
       "title": "Dashboard layer views",
       "status": "In Progress",
-      "priority": "P1-High"
+      "priority": "P1-High",
+      "project": "igris-ai"
     }
   ],
   "serving_learnings_count": 1
