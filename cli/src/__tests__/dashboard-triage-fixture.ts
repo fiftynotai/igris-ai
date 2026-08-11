@@ -151,8 +151,20 @@ export const TRIAGE_FIXTURE = {
   /** A brief id that exists in NEITHER table. */
   missingBriefId: "ZZ-999",
 
-  /** Two goals. `attach_goal` targets these; creation is FR-249, not here. */
+  /**
+   * Two goals. `attach_goal` targets these, and FR-249's `create_goal` is
+   * measured against them.
+   *
+   * THE IDS ARE LOAD-BEARING, NOT DECORATIVE. `handleGoalCreate` allocates
+   * `MAX(CAST(SUBSTR(goal_id,4) AS INTEGER)) + 1` (`goals/handlers.ts#nextGoalId`),
+   * so with exactly these two seeded the FIRST dashboard create is
+   * DETERMINISTICALLY `GL-102` — which is what lets FR-249's create-then-attach
+   * proof name an id instead of matching a shape. Seeding a third goal here
+   * moves that id and reds the FR-249 gates by design.
+   */
   goalIds: ["GL-100", "GL-101"],
+  /** FR-249 — the id the first `create_goal` against this fixture allocates. */
+  nextGoalId: "GL-102",
 } as const;
 
 /** Every brief id the fixture seeds with a `brief_status` row at P2-Medium. */
@@ -537,6 +549,39 @@ export function edgeRows(dbPath: string): EdgeState[] {
   }
 }
 
+/** FR-249 — `goals` rows, for the `create_goal` assertions. */
+export interface GoalState {
+  goal_id: string;
+  project_slug: string | null;
+  title: string;
+  outcome: string;
+  status: string;
+  priority: string;
+  deadline: string | null;
+  description: string | null;
+}
+
+/**
+ * Every goal, oldest first.
+ *
+ * `created_at`/`updated_at` are NOT selected — a create's timestamps cannot be
+ * asserted against a literal, and including them would force every caller into
+ * `toMatchObject`, which is the assertion shape that hides an extra column.
+ */
+export function goalRows(dbPath: string): GoalState[] {
+  const db = readTriageBrain(dbPath);
+  try {
+    return db
+      .prepare(
+        `SELECT goal_id, project_slug, title, outcome, status, priority, deadline, description
+           FROM goals ORDER BY id`,
+      )
+      .all() as GoalState[];
+  } finally {
+    db.close();
+  }
+}
+
 /**
  * The `NOT NULL` on `brief_status.status`, read out of the LIVE schema.
  *
@@ -613,6 +658,15 @@ export interface DomainSnapshot {
   entity_edges: unknown[];
   /** FR-247 — the table `set_priority` writes. One line; the rest was there. */
   brief_status: unknown[];
+  /**
+   * FR-249 — the table `create_goal` writes.
+   *
+   * Without it the parity differ would compare `[] === []` for a create:
+   * `goal.created` reaches NEITHER `monitoring`'s `EVENT_COMPONENT_MAP` nor its
+   * `bus.on` list, so `event_log` is DECLARED-EMPTY for this action and the
+   * "something happened" half of the comparison has to be carried here.
+   */
+  goals: unknown[];
 }
 
 /**
@@ -658,6 +712,13 @@ export function domainSnapshot(dbPath: string): DomainSnapshot {
       brief_status: dump(
         `SELECT project, brief_id, title, status, priority, effort, phase, brief_type
            FROM brief_status ORDER BY project, brief_id`,
+      ),
+      // FR-249. `goal_id` IS compared: both arms allocate from their own copy
+      // of the same seeded fixture, so the allocator is deterministic across
+      // them and an id divergence would be a real difference, not a clock.
+      goals: dump(
+        `SELECT goal_id, project_slug, title, description, outcome, deadline, status, priority, metadata
+           FROM goals ORDER BY id`,
       ),
     };
   } finally {

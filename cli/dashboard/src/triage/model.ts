@@ -50,9 +50,11 @@
 
 /**
  * The five TRIAGE-TAB actions — the `target: "id"` rows of
- * `brain-write-bridge.ts#TRIAGE_ACTIONS`. Since FR-247 that map has SEVEN rows;
- * the two `brief-ref` rows are brief writes and live on the Briefs surface, not
- * here. This mirrors 5 of 7 deliberately, not by omission.
+ * `brain-write-bridge.ts#TRIAGE_ACTIONS`. That map has EIGHT rows since FR-249:
+ * the two `brief-ref` rows are brief writes and live on the Briefs surface, and
+ * the one `target: "none"` row (`create_goal`) has no subject at all, so it
+ * belongs to no tab. This mirrors 5 of 8 deliberately, not by omission — see
+ * `BRIEF_WRITE_ACTIONS` and `CREATE_ACTIONS` below for the other three.
  */
 export const TRIAGE_ACTIONS = [
   "dismiss",
@@ -425,9 +427,19 @@ export interface TriageItemOutcome {
   ref?: { project: string; brief_id: string } | null;
   ok: boolean;
   error: string | null;
+  /** FR-249 — the id a `create_goal` allocated. `null` for every other row. */
+  created_id?: string | null;
 }
 
-/** How a failure names its subject: an id, or a brief. Never "undefined". */
+/**
+ * How a failure names its subject: an id, or a brief, or nothing at all.
+ *
+ * FR-249's create has NO subject — that is the definition of a `target: "none"`
+ * row — so `"?"` is the honest label rather than a placeholder for a lookup
+ * that failed. The banner that renders it already carries the action name, so
+ * "CREATE_GOAL — ? : title exceeds maximum length of 256 characters" reads
+ * correctly; inventing a subject here would be the only lie available.
+ */
 export function outcomeLabel(o: TriageItemOutcome): string {
   if (o.ref !== undefined && o.ref !== null) {
     return `${o.ref.project}/${o.ref.brief_id}`;
@@ -508,8 +520,27 @@ export function summaryLine(action: string, s: TriageSummary): string {
 export const BRIEF_WRITE_ACTIONS = ["set_priority", "attach_goal"] as const;
 export type BriefWriteAction = (typeof BRIEF_WRITE_ACTIONS)[number];
 
-/** Every action this client can post. Used where the two families converge. */
-export type WriteAction = TriageAction | BriefWriteAction;
+/**
+ * FR-249 — the SUBJECTLESS actions, mirroring the `target: "none"` rows.
+ *
+ * A third list rather than an entry in either above, for the same reason those
+ * two are separate: they answer different questions. This one is "what may a
+ * mutation with no subject be", and a subjectless action shares no consumer
+ * with a selection-driven one — it has no selection to be enabled by, no count
+ * to render and no per-item results to attribute.
+ *
+ * NO DESTRUCTIVENESS TIER, and the absence is a decision. The three tiers exist
+ * for DELETES (`confirmCopy`'s subject: the typed confirmation, the hard-delete
+ * sentence). A create destroys nothing, cannot be bulk, and its subject does
+ * not exist until it succeeds — so routing it through the tier machinery would
+ * mean rendering a permanent-deletion warning for the least destructive act on
+ * the surface, which is how the real warnings stop being read.
+ */
+export const CREATE_ACTIONS = ["create_goal"] as const;
+export type CreateAction = (typeof CREATE_ACTIONS)[number];
+
+/** Every action this client can post. Used where the families converge. */
+export type WriteAction = TriageAction | BriefWriteAction | CreateAction;
 
 /**
  * ═══════════════════════════════════════════════════════════════════════════
@@ -630,6 +661,42 @@ export function buildBriefWriteRequest(
     if (g !== undefined && g.length > 0) body.goal_id = g;
   }
   return body;
+}
+
+/**
+ * Build the `create_goal` request body.
+ *
+ * `project` is the shell's scope and its ABSENCE is the all-projects scope —
+ * the brain stores that as `project_slug NULL`, which the goals layer already
+ * renders as "Cross-project". So an empty string is NOT SENT rather than sent
+ * as `""`: both reach the same row, but only one of them says what was meant.
+ *
+ * A blank title or outcome is refused HERE as well as by the button's
+ * `disabled`, because a builder that can emit a body the brain will certainly
+ * refuse is a builder a future caller can misuse. The brain's own
+ * `Missing required fields: title, outcome` remains the message if one ever
+ * gets through — this client never invents a validation sentence of its own.
+ */
+export function buildCreateGoalRequest(
+  title: string,
+  outcome: string,
+  project?: string | null,
+): {
+  action: string;
+  goal_title: string;
+  goal_outcome: string;
+  goal_project?: string;
+} | null {
+  const t = title.trim();
+  const o = outcome.trim();
+  if (t.length === 0 || o.length === 0) return null;
+  const p = project?.trim() ?? "";
+  return {
+    action: "create_goal",
+    goal_title: t,
+    goal_outcome: o,
+    ...(p.length > 0 ? { goal_project: p } : {}),
+  };
 }
 
 /** The `(project, brief_id)` pair, encoded as the record list's row key. */

@@ -698,19 +698,40 @@ export interface TriageRequest {
   brief_id?: string;
   priority?: string;
   goal_id?: string;
+  /**
+   * FR-249 — `target: "none"` (`create_goal`) only. Never sent with `ids` or
+   * `refs`: a create addresses nothing. PREFIXED because the server's
+   * unknown-key set is global and a bare `title` in it would stop `title` being
+   * refused by absence for every other action.
+   */
+  goal_title?: string;
+  goal_outcome?: string;
+  goal_project?: string;
 }
 
 /**
  * Mirrors `TriageItemResultPayload`. `error` is the BRAIN's own message.
  *
- * FR-247 made `id` nullable: exactly one of `id`/`ref` identifies the item, and
+ * FR-247 made `id` nullable: at most one of `id`/`ref` identifies the item, and
  * a renderer must read whichever is non-null rather than assume an integer.
+ *
+ * **FR-249: "at most" is not pedantry.** A `target: "none"` row (`create_goal`)
+ * has no subject, so BOTH are null — there is no pre-existing row to name. The
+ * created identity arrives on `created_id`; the label is `"?"`.
  */
 export interface TriageItemResult {
   id: number | null;
   ref: BriefRef | null;
   ok: boolean;
   error: string | null;
+  /**
+   * FR-249 — the id a `create_goal` allocated. `null` for every other row,
+   * AND `null` on a `create_goal` whose declared `returns` path did not
+   * resolve in the tool's payload — the row succeeded, the id could not be
+   * read. A client must treat `ok && created_id === null` as "created, but
+   * I cannot preselect it" rather than as a failure.
+   */
+  created_id: string | null;
 }
 
 /**

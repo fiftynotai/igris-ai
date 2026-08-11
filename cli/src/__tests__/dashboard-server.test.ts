@@ -1252,8 +1252,71 @@ describe("G-SEC-1 — the write surface's fences", () => {
  * of them on the assumption another has it covered.
  */
 describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state field", () => {
-  /** TD-311's invariant, plus the two content fields. */
-  const FORBIDDEN = ["status", "phase", "content", "title", "filename"] as const;
+  /**
+   * ═══════════════════════════════════════════════════════════════════════
+   * FR-249 — THE BAN HAS AN ENTITY DIMENSION, AND IT IS A RATIFIED WIDENING
+   * ═══════════════════════════════════════════════════════════════════════
+   * Until FR-249 this guard banned `status` / `phase` / `content` / `title` /
+   * `filename` from EVERY row's argument surface, globally. That was right for
+   * the five FR-241 rows and the two FR-247 rows, and it was ENTITY-BLIND: it
+   * could not tell `goals.title` from `brief_status.title`, so it refused
+   * FR-249's row in all three of the shapes that brief considered.
+   *
+   * TD-311's invariant is a claim about BRIEFS — `brief_status.status`, `.phase`
+   * and a brief's `content`/`title`/`filename`, whose single sanctioned writers
+   * are the `/hunt` state machine and the pre-commit phase guard. `goals.title`
+   * is a different column on a different table with no state machine over it,
+   * and `entity_edges` has no build-state at all. So the ban is applied PER
+   * ENTITY, and the entity is resolved from the tool the row dispatches.
+   *
+   * THE WIDENING IS ONLY AS GOOD AS THE THREE CLAUSES THAT KEEP IT HONEST, and
+   * each has its own assertion below:
+   *   - TOTAL — every row's tool must appear in `TOOL_WRITES`, or the test reds.
+   *     Without this a NEW row with an unclassified tool would be silently
+   *     exempt, and the guard would go vacuous exactly where it mattered.
+   *   - FAIL-CLOSED — an unclassified tool is nevertheless checked against the
+   *     BRIEF ban, so even in the window before someone notices the totality
+   *     failure the row is refused rather than admitted.
+   *   - A MUST-NOT-FIRE CONTROL — a planted `brief_status.title` write is still
+   *     flagged. A control that only proves the predicate FIRES cannot prove it
+   *     stopped firing on purpose rather than by accident.
+   */
+  const TOOL_WRITES = Object.freeze({
+    igris_suggestion_dismiss: "suggestion",
+    igris_suggestion_acted: "suggestion",
+    igris_suggestion_apply_action: "suggestion",
+    igris_perception_approve: "learning",
+    igris_perception_reject: "learning",
+    igris_brief_update: "brief",
+    igris_edge_create: "edge",
+    igris_goal_create: "goal",
+  } as Record<string, string>);
+
+  /**
+   * The ban, per entity. THE EMPTY SETS ARE DECISIONS, WITH A REASON EACH, and
+   * they are written here rather than left implicit precisely because an empty
+   * set is what an oversight also looks like.
+   */
+  const FORBIDDEN_BY_ENTITY = Object.freeze({
+    brief: ["status", "phase", "content", "title", "filename"],
+    // No build-state invariant: `/hunt` is not a goal's writer, and a goal's
+    // `status` is `VALID_GOAL_STATUSES`, a different vocabulary on a different
+    // table. The create row does not offer it anyway — but that is a property
+    // of the row, and this is a property of the ENTITY.
+    goal: [],
+    // Structural. An edge has no columns of a brief; `attach_goal` pins its
+    // three enum-ish fields in `fixed`, which the `fixed`-is-a-constant
+    // assertion below covers.
+    edge: [],
+    // Cognition state, FR-241's subject. `suggestions.status` is a triage
+    // state, not build state, and it is what the three suggestion tools exist
+    // to move.
+    suggestion: [],
+    learning: [],
+  } as Record<string, readonly string[]>);
+
+  /** The brief ban, by name, for the fail-closed default. */
+  const FORBIDDEN = FORBIDDEN_BY_ENTITY.brief!;
 
   /** Every key a row can put in front of a brain tool, from the row itself. */
   const surfaceOf = (row: TriageActionSpec): string[] => [
@@ -1265,20 +1328,141 @@ describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state
   const violationsIn = (map: Record<string, TriageActionSpec>): string[] => {
     const out: string[] = [];
     for (const [name, row] of Object.entries(map)) {
-      for (const key of surfaceOf(row)) {
-        if ((FORBIDDEN as readonly string[]).includes(key)) {
-          out.push(`${name}.${key}`);
-        }
+      const entity = TOOL_WRITES[row.tool];
+      // FAIL CLOSED. An unclassified tool is reported AS SUCH — so the failure
+      // names the real problem — and is ALSO checked against the brief ban, so
+      // it cannot be admitted while nobody is looking.
+      if (entity === undefined) out.push(`${name}.tool=UNCLASSIFIED`);
+      const banned = entity === undefined ? FORBIDDEN : (FORBIDDEN_BY_ENTITY[entity] ?? FORBIDDEN);
+      // A `rename` TARGET is an argument name too, and it is the route a
+      // row-adder is most likely to think is permitted, because it names the
+      // field on the RIGHT-hand side where a reader's eye does not look.
+      for (const key of [...surfaceOf(row), ...Object.values(row.rename ?? {})]) {
+        if (banned.includes(key)) out.push(`${name}.${key}`);
       }
       if (row.tool === "igris_brief_sync") out.push(`${name}.tool=igris_brief_sync`);
     }
     return out.sort();
   };
 
-  it("no row names status, phase, content, title or filename", () => {
+  it("no row names a field forbidden FOR ITS OWN ENTITY", () => {
     expect(
       violationsIn(TRIAGE_ACTIONS as Record<string, TriageActionSpec>),
     ).toEqual([]);
+  });
+
+  it("TOOL_WRITES is TOTAL over the map — an unclassified tool cannot slip in", () => {
+    // THE CLAUSE THAT STOPS THE WIDENING BEING A HOLE. Without it, adding a row
+    // whose tool has no entry would exempt that row from the brief ban entirely
+    // and every assertion above would still read `[]`.
+    const unclassified = Object.entries(TRIAGE_ACTIONS as Record<string, TriageActionSpec>)
+      .filter(([, row]) => TOOL_WRITES[row.tool] === undefined)
+      .map(([name, row]) => `${name} -> ${row.tool}`);
+    expect(
+      unclassified,
+      "a map row dispatches a tool with no entity classification — add it to TOOL_WRITES and decide its ban set",
+    ).toEqual([]);
+    // ...and the table names no tool the map does not dispatch, so it cannot
+    // rot into a list of historical names that classify nothing.
+    const dispatched = new Set(
+      Object.values(TRIAGE_ACTIONS as Record<string, TriageActionSpec>).map((r) => r.tool),
+    );
+    expect(Object.keys(TOOL_WRITES).filter((t) => !dispatched.has(t))).toEqual([]);
+    // Every classification must resolve to a declared ban set — a typo'd
+    // entity would otherwise fall through to the fail-closed default and look
+    // like a working classification.
+    for (const [tool, entity] of Object.entries(TOOL_WRITES)) {
+      expect(FORBIDDEN_BY_ENTITY[entity], `${tool} -> ${entity}`).toBeDefined();
+    }
+  });
+
+  it("MUST-NOT-FIRE CONTROL — the ban on a BRIEF row is untouched by the widening", () => {
+    // THE ASSERTION THE WIDENING IS ACCOUNTABLE TO. If the entity dimension had
+    // been implemented as "allow `title` everywhere", this is the reading that
+    // changes — and nothing else in this file would.
+    const planted: Record<string, TriageActionSpec> = {
+      brief_title: {
+        tool: "igris_brief_update",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: ["title"] as unknown as TriageActionSpec["extra"],
+      },
+      brief_title_by_rename: {
+        tool: "igris_brief_update",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: ["reason"],
+        rename: { reason: "title" },
+      },
+    };
+    expect(violationsIn(planted)).toEqual([
+      "brief_title.title",
+      "brief_title_by_rename.title",
+    ]);
+  });
+
+  it("the widening is SCOPED — the same field name on a GOAL row is allowed", () => {
+    // The other half of the control, and the one that proves the scoping is
+    // INTENTIONAL. A guard that only ever fires is indistinguishable from one
+    // that has not been told what it is about.
+    const goalRow: Record<string, TriageActionSpec> = {
+      make_goal: {
+        tool: "igris_goal_create",
+        bulk: false,
+        target: "none",
+        extra: ["title"] as unknown as TriageActionSpec["extra"],
+        rename: { title: "title" },
+      },
+    };
+    expect(violationsIn(goalRow)).toEqual([]);
+    // ...and the SHIPPED row does not spell it that way anyway: the wire keys
+    // are prefixed so `params.ts`' global `KNOWN` set never gains `title`.
+    expect(TRIAGE_ACTIONS.create_goal?.extra).not.toContain("title");
+    expect(TRIAGE_ACTIONS.create_goal?.extra).toContain("goal_title");
+  });
+
+  it("FAIL-CLOSED CONTROL — a tool with NO classification is refused, not exempt", () => {
+    const rogue: Record<string, TriageActionSpec> = {
+      mystery: {
+        tool: "igris_something_new",
+        bulk: true,
+        target: "brief-ref",
+        refKeys: { project: "project", brief_id: "brief_id" },
+        extra: ["status"] as unknown as TriageActionSpec["extra"],
+      },
+    };
+    // BOTH readings: the unclassified tool is named, AND the brief ban was
+    // still applied to it. Either alone would leave the other half arguable.
+    expect(violationsIn(rogue)).toEqual([
+      "mystery.status",
+      "mystery.tool=UNCLASSIFIED",
+    ]);
+  });
+
+  it("a `returns` path is a READ, and must never also be an ARGUMENT", () => {
+    // FR-249's `returns` declares a dotted path into the tool's own result. If
+    // the same name were also in `extra`, a caller could supply a value for
+    // something this tier only ever reads back — and the row would be doing two
+    // different things through one key.
+    for (const [name, row] of Object.entries(
+      TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
+    )) {
+      if (row.returns === undefined) continue;
+      expect(row.returns.length, `${name}: an empty returns path`).toBeGreaterThan(0);
+      for (const segment of row.returns.split(".")) {
+        expect(row.extra as readonly string[], `${name}: ${segment} is both read and written`).not.toContain(segment);
+        expect(Object.keys(row.fixed ?? {}), `${name}: ${segment} is fixed AND returned`).not.toContain(segment);
+      }
+    }
+    // SELF-NEGATIVE-CONTROL: exactly one row declares a `returns`, so the loop
+    // above has a corpus. A future second one is welcome; zero is not.
+    expect(
+      Object.values(TRIAGE_ACTIONS as Record<string, TriageActionSpec>).filter(
+        (r) => r.returns !== undefined,
+      ),
+    ).toHaveLength(1);
   });
 
   it("SELF-NEGATIVE-CONTROL — the predicate fires on a deliberately dirty map", () => {
@@ -1312,6 +1496,12 @@ describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state
     expect(violationsIn(dirty)).toEqual([
       "sneaky_fixed_phase.phase",
       "sneaky_status.status",
+      // FR-249: `igris_brief_sync` is not in `TOOL_WRITES` — it is forbidden,
+      // so classifying it would be recording an entity for a tool no row may
+      // ever dispatch. It is therefore reported TWICE, by two independent
+      // clauses, and that is the fail-closed default doing its job on the one
+      // planted row that exercises it.
+      "sneaky_sync.tool=UNCLASSIFIED",
       "sneaky_sync.tool=igris_brief_sync",
     ]);
     // WHAT THIS CONTROL DOES NOT COVER: a row that reaches a forbidden column
@@ -1321,18 +1511,30 @@ describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state
   });
 
   it("no `rename` TARGET is a forbidden field either — the indirect route", () => {
+    // Scoped the SAME WAY as `extra` and `fixed`, and it has to be: FR-249's
+    // create row reaches the tool's `title` through exactly this route, and the
+    // reason that is allowed is the entity, not the route. A rename target that
+    // was checked globally while `extra` was checked per entity would refuse
+    // the row for a reason the guard no longer holds.
+    for (const [name, row] of Object.entries(
+      TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
+    )) {
+      const banned = FORBIDDEN_BY_ENTITY[TOOL_WRITES[row.tool] ?? "brief"] ?? FORBIDDEN;
+      for (const t of Object.values(row.rename ?? {})) {
+        expect(banned.includes(t), `${name}: rename -> ${t}`).toBe(false);
+      }
+    }
+    // Self-negative-control for THIS assertion: the shipped map does use
+    // `rename`, so the corpus above is non-empty and the loop really ran — and
+    // it now contains a target that IS in the brief ban, reached by a goal row.
     const targets = Object.values(
       TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
     ).flatMap((r) => Object.values(r.rename ?? {}));
-    for (const t of targets) {
-      expect((FORBIDDEN as readonly string[]).includes(t), `rename -> ${t}`).toBe(false);
-    }
-    // Self-negative-control for THIS assertion: the shipped map does use
-    // `rename`, so the corpus above is non-empty and the loop really ran.
     expect(targets, "no row uses `rename` — this guard has no corpus").toContain("to_id");
+    expect(targets).toContain("title");
   });
 
-  it("the row set is EXACTLY the seven expected keys", () => {
+  it("the row set is EXACTLY the eight expected keys", () => {
     // A claim about a SET. `TRIAGE_ACTION_NAMES` is what `/api/health` serves,
     // so this also pins the vocabulary the client is offered.
     expect([...TRIAGE_ACTION_NAMES].sort()).toEqual([
@@ -1340,6 +1542,7 @@ describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state
       "apply",
       "approve",
       "attach_goal",
+      "create_goal",
       "dismiss",
       "reject",
       "set_priority",
@@ -1384,6 +1587,17 @@ describe("FR-247 AC-3(a) — the frozen delegation map cannot name a build-state
     for (const [name, row] of Object.entries(
       TRIAGE_ACTIONS as Record<string, TriageActionSpec>,
     )) {
+      if (row.target === "none") {
+        // FR-249 — a SUBJECTLESS row addresses nothing, so it must carry
+        // NEITHER addressing field. A `none` row with an `idKey` would build an
+        // argument object containing `{undefined: ...}` and reach the gateway
+        // as a TD-128 rejection naming the wrong problem.
+        expect(row.idKey, `${name}: a subjectless row with an idKey`).toBeUndefined();
+        expect(row.refKeys, `${name}: a subjectless row with refKeys`).toBeUndefined();
+        // ...and it is single-item by construction: there is no set to bulk over.
+        expect(row.bulk, `${name}: a subjectless row cannot be bulk`).toBe(false);
+        continue;
+      }
       if (row.target === "id") {
         expect(row.idKey, `${name}: an id row with no idKey`).toBeDefined();
         expect(row.refKeys, `${name}: an id row with refKeys`).toBeUndefined();

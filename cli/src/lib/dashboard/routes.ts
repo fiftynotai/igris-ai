@@ -2081,11 +2081,17 @@ export async function triage(
     return { status: 400, payload: { error: parsed.reason } };
   }
 
+  // The resolved row's `target`, read ONCE: it decides the requested count AND
+  // the dispatcher, and two lookups could not disagree but two READERS could.
+  const target = write.triageAction(parsed.action)?.target;
+
   const base = {
     action: parsed.action,
     // Exactly one of the two is non-empty (`parseTriageBody` enforces it), so
-    // the sum IS the count and does not need a branch to say so.
-    requested: parsed.ids.length + parsed.refs.length,
+    // the sum IS the count — EXCEPT for FR-249's subjectless row, where both
+    // are empty and the request is nevertheless for exactly one mutation.
+    // Without the branch a successful create reports `requested: 0, applied: 1`.
+    requested: target === "none" ? 1 : parsed.ids.length + parsed.refs.length,
     applied: 0,
     failed: 0,
     results: [] as TriageResultPayload["results"],
@@ -2103,24 +2109,32 @@ export async function triage(
     };
   }
 
-  // The extras are assembled ONCE for both address kinds. Each row's `extra`
+  // The extras are assembled ONCE for all THREE address kinds (`id`,
+  // `brief-ref`, and FR-249's subjectless `none`). Each row's `extra`
   // allow-list is what decides which of them reaches the tool, so handing all
-  // four to either dispatcher is not laxity — it is the single place the
-  // allow-list is allowed to be the only filter.
+  // seven to any of the three dispatchers is not laxity — it is the single
+  // place the allow-list is allowed to be the only filter. (Four extras and two
+  // of each until FR-249; the counts move together and this comment is the one
+  // place that says so, which is why it is written out rather than implied.)
   const extra = {
     ...(parsed.reason !== undefined ? { reason: parsed.reason } : {}),
     ...(parsed.brief_id !== undefined ? { brief_id: parsed.brief_id } : {}),
     ...(parsed.priority !== undefined ? { priority: parsed.priority } : {}),
     ...(parsed.goal_id !== undefined ? { goal_id: parsed.goal_id } : {}),
+    ...(parsed.goal_title !== undefined ? { goal_title: parsed.goal_title } : {}),
+    ...(parsed.goal_outcome !== undefined ? { goal_outcome: parsed.goal_outcome } : {}),
+    ...(parsed.goal_project !== undefined ? { goal_project: parsed.goal_project } : {}),
   };
 
-  // FR-247 — ONE branch, on the resolved spec's `target`. Not a new handler,
-  // not a new export, and still no SQL: both arms end at
+  // FR-247/FR-249 — ONE switch, on the resolved spec's `target`. Not a new
+  // handler, not a new export, and still no SQL: every arm ends at
   // `gateway.dispatch(<a name from the frozen map>, args)`.
   const dispatched =
-    write.triageAction(parsed.action)?.target === "brief-ref"
-      ? await write.dispatchBriefWrite(parsed.action, parsed.refs, extra)
-      : await write.dispatchTriage(parsed.action, parsed.ids, extra);
+    target === "none"
+      ? await write.dispatchSubjectless(parsed.action, extra)
+      : target === "brief-ref"
+        ? await write.dispatchBriefWrite(parsed.action, parsed.refs, extra)
+        : await write.dispatchTriage(parsed.action, parsed.ids, extra);
 
   if (!dispatched.ok) {
     // The DISCRIMINATED cause, verbatim — `engine_unavailable` (packaging) and

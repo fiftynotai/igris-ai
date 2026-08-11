@@ -277,9 +277,22 @@ const MUTATIONS = {
     gate: "G-BR-14c",
     how: "inject a `.record-select` checkbox and a priority `<select>` into every `.record-board` card — F4's shared-mapper leak made observable. `briefRow` is ONE mapper for the list and the board, so an unconditional `select` would put a write path onto the status board, which is a write into TD-311's own view. Pairs with the shipped `br12-drag-affordance` / `br12-post-from-board`",
   },
+  "br12-form-on-board": {
+    gate: "G-BR-12f",
+    how: "inject a `<form>` into `.record-board` — the THIRD clause of 12f's DOM half, and until FR-249 the only one no mutation drove. `forms === 0` was therefore satisfied by a page that renders no form ANYWHERE, which is the vacuous reading this file exists to refuse. FR-249 put a create control on the briefs surface — DELIBERATELY as a `<div>`, not a `<form>`: two inputs and a button need nothing a form provides, and not building one is cheaper than proving it stays off `.record-board`. So this clause guards a class the page still does not use, and that is the point — the cheapest way to keep `forms === 0` honest is to arm it while it is easy, not after someone reaches for a `<form>` and finds the assertion has been vacuous for a year",
+  },
   "br14-write-affordance-when-down": {
     gate: "G-BR-14d",
     how: "assert the brief write controls are PRESENT in the world whose write surface is unavailable — AC-7 inverted, the `br8-write-affordance-when-down` shape on the briefs surface",
+  },
+  // --- FR-249 -------------------------------------------------------------
+  "br18-create-not-preselected": {
+    gate: "G-BR-18a",
+    how: "let the create SUCCEED and then blank the goal picker — i.e. ship the create without the result channel. The goal exists and the list contains it, so a check that only asserted \"a new goal appeared\" passes; what breaks is the ONE property the `returns` path was added for, which is that the operator\u2019s next click is already aimed at the goal they just made",
+  },
+  "br18-attach-a-different-goal": {
+    gate: "G-BR-18b",
+    how: "attach to the SEEDED goal (GL-900) instead of the created one — an edge of the right SHAPE pointing at the wrong subject. A check that counted `serving_briefs.length === 1` on either goal is blind to it, which is why 18b reads the created goal\u2019s OWN serving list",
   },
   // --- TD-347 ---------------------------------------------------------------
   "td347-read-before-ready": {
@@ -4331,6 +4344,173 @@ async function gBr14(tabs, worlds) {
   );
 }
 
+/**
+ * G-BR-18 — FR-249. **A goal created here is the goal the next click attaches to.**
+ *
+ * PROVES, in a real browser against a real brain:
+ *   18a  typing a title and an outcome into the write bar creates a goal — read
+ *        back from `/api/goals` OUT OF BAND, not from the page — and the goal
+ *        picker is left POINTING AT IT. The preselect is the whole reason the
+ *        map row declares a `returns` path; without it FR-249 is two workflows
+ *        rather than two clicks.
+ *   18b  the very next ATTACH click writes a `serves_goal` edge to THAT goal,
+ *        witnessed by the created goal's own `serving_briefs` list.
+ *
+ * DOES NOT PROVE that the create reached `handleGoalCreate` with the mapped
+ * arguments — a browser cannot see a call graph. That is
+ * `dashboard-triage-endpoint.test.ts` G-TR-16 (the handler call trace) and
+ * G-TR-15 (the built argument key set with the parser bypassed). Nor that the
+ * map cannot NAME a brief field — `dashboard-server.test.ts` AC-3(a), over the
+ * frozen object, per entity. All are required.
+ *
+ * RUNS AFTER G-BR-14, on the same `triage` world and the same tab, which
+ * G-BR-14 leaves on the LIST arrangement (its `14d-control` clicks LIST). It
+ * writes a NEW goal and ONE edge; it touches no `brief_status` column, so every
+ * priority reading G-BR-14 took stays true.
+ */
+async function gBr18(tabs, worlds) {
+  gate("G-BR-18", "FR-249: a created goal is preselected, and the next click attaches to it");
+
+  const tab = tabs.triage;
+  const world = worlds.triage;
+  const goalsOf = async () => (await apiJson(`${world.url}/api/goals?limit=50`)).items;
+
+  await tab.hash("#/layers/briefs");
+  await tab.until(has(".brief-write"), { label: "the brief write bar mounts" });
+  await untilListStable(tab);
+
+  // THE PRE-STATE, from the endpoint. The seeded world has exactly ONE goal, so
+  // the allocator's MAX+1 makes the new id `GL-901` — which is what lets 18a
+  // name an id instead of matching a shape.
+  const before = await goalsOf();
+  check(
+    "18-pre",
+    before.length === 1 && before[0]?.goal_id === "GL-900",
+    `PRE-STATE from the endpoint: ${JSON.stringify(before.map((g) => g.goal_id))} — ` +
+      `exactly the seeded goal. Every assertion below is satisfiable by a world ` +
+      `that already had the goal without this reading.`,
+  );
+
+  // --- 18a: create, and land preselected ------------------------------------
+  await clickButton(tab, "NEW GOAL", { scroll: true });
+  await tab.until(has('[data-create="goal"]'), { label: "the create panel opens" });
+
+  /** Type into a controlled `<input>` the way React sees a real user do it. */
+  const typeInto = async (ariaLabel, value) => {
+    const ok = await tab.eval(`
+      const el = document.querySelector('input[aria-label=' + JSON.stringify(${JSON.stringify(ariaLabel)}) + ']');
+      if (el === null) return null;
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+      setter.call(el, ${JSON.stringify(value)});
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      return el.value;
+    `);
+    if (ok !== value) throw new Error(`could not type into ${ariaLabel} (got ${ok})`);
+    await tab.settle(120);
+  };
+
+  const TITLE = "Gate-created goal";
+  await typeInto("New goal title", TITLE);
+  await typeInto("New goal outcome", "the gate can create one");
+  await clickButton(tab, "CREATE", { scroll: true });
+  // The re-read of `/api/goals` is awaited before the preselect, so waiting for
+  // the picker to carry the id is waiting for BOTH.
+  await tab.settle(1_200);
+
+  if (mut("br18-create-not-preselected")) {
+    // The create WITHOUT the result channel: the goal exists, the list has it,
+    // and the picker is where it was. The shipped expectation must catch that.
+    await tab.eval(`
+      const el = document.querySelector('select[aria-label="Goal to attach to"]');
+      if (el !== null) {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+        setter.call(el, '');
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      return 1;
+    `);
+    await tab.settle(200);
+  }
+
+  const after = await goalsOf();
+  const created = after.find((g) => g.title === TITLE) ?? null;
+  const picker = await tab.eval(`
+    const el = document.querySelector('select[aria-label="Goal to attach to"]');
+    return el === null ? null : {
+      value: el.value,
+      options: [...el.options].map(o => o.value),
+    };
+  `);
+  check(
+    "18a",
+    created !== null &&
+      created.goal_id === "GL-901" &&
+      created.project_slug === "demo" &&
+      after.length === before.length + 1 &&
+      picker !== null &&
+      picker.options.includes("GL-901") &&
+      picker.value === "GL-901",
+    `created=${JSON.stringify(created === null ? null : { id: created.goal_id, project: created.project_slug })} ` +
+      `(read from /api/goals, out of band) · goals ${before.length} -> ${after.length} · ` +
+      `picker value=${JSON.stringify(picker?.value)} options=${JSON.stringify(picker?.options)} ` +
+      `— the PRESELECT is the property, not merely the row${
+        mut("br18-create-not-preselected")
+          ? "  [MUTATED: the picker blanked after a successful create]"
+          : ""
+      }`,
+  );
+  note(
+    "18a reads the goal from /api/goals rather than from the picker, and the " +
+      "picker from the DOM rather than from the response: one of the two would " +
+      "be satisfied by a client that rendered an id it invented, and the other " +
+      "by a server that wrote a row nothing pointed at.",
+  );
+
+  // --- 18b: the very next click attaches to THAT goal -----------------------
+  if (mut("br18-attach-a-different-goal")) {
+    await tab.eval(`
+      const el = document.querySelector('select[aria-label="Goal to attach to"]');
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+      setter.call(el, 'GL-900');
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return 1;
+    `);
+    await tab.settle(200);
+  }
+
+  // FR-905: the one gate brief G-BR-14 neither wrote to nor read as a survivor
+  // of its own write, so an edge on it disturbs nothing above.
+  const box = await tab.eval(`
+    const cb = document.querySelector('.record-select[data-select-key="demo|FR-905"]');
+    if (cb === null) return null;
+    cb.scrollIntoView({ block: 'center' });
+    const r = cb.getBoundingClientRect();
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  `);
+  if (box === null) throw new Error("no selectable row for FR-905");
+  await tab.clickAt(box.x, box.y);
+  await clickButton(tab, "ATTACH TO GOAL", { scroll: true });
+  await tab.until(has(".triage-confirm"), {
+    label: "the attach confirm dialog opens",
+    timeout: 8_000,
+  });
+  await clickButton(tab, "ATTACH 1", { scroll: true });
+  await tab.settle(1_200);
+
+  const detail = await apiJson(`${world.url}/api/goal?id=GL-901`);
+  const serving = (detail.serving_briefs ?? []).map((b) => b.brief_id);
+  check(
+    "18b",
+    serving.length === 1 && serving[0] === "FR-905",
+    `GL-901's OWN serving_briefs=${JSON.stringify(serving)} — the edge points at the goal ` +
+      `the operator just made, read from that goal's detail rather than counted anywhere${
+        mut("br18-attach-a-different-goal")
+          ? "  [MUTATED: attached to the SEEDED goal instead]"
+          : ""
+      }`,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // main
 // ---------------------------------------------------------------------------
@@ -6813,6 +6993,19 @@ async function gBr12(cdpPort, seeded) {
       return 1;
     `);
   }
+  if (mut("br12-form-on-board")) {
+    // The shape a create control would take if it were ever built into the
+    // shared row mapper instead of the write bar above the list.
+    await tab.eval(`
+      const col = document.querySelector('.record-board-col');
+      if (col !== null) {
+        const f = document.createElement('form');
+        f.appendChild(document.createElement('input'));
+        col.appendChild(f);
+      }
+      return 1;
+    `);
+  }
   if (mut("br12-post-from-board")) {
     // A deliberately invalid action, so even the mutation run mutates nothing:
     // the server answers 400 with a stated reason. What matters to 12f is that
@@ -6892,11 +7085,15 @@ async function gBr12(cdpPort, seeded) {
       `[draggable]=${affordances.draggable} · drag handlers=${affordances.handlers} · forms=${affordances.forms} · ` +
       `first column unchanged=${JSON.stringify(orderAfter) === JSON.stringify(orderBefore)}${
         mut("br12-drag-affordance") ? "  [MUTATED: cards marked draggable]" : ""
-      }${mut("br12-post-from-board") ? "  [MUTATED: one POST fired from the board]" : ""}`,
+      }${mut("br12-post-from-board") ? "  [MUTATED: one POST fired from the board]" : ""}${
+        mut("br12-form-on-board") ? "  [MUTATED: a form injected into the board]" : ""
+      }`,
   );
   note(
-    "12f makes TWO independent claims and therefore has TWO mutations: `br12-drag-affordance` " +
-      "breaks the DOM half and `br12-post-from-board` breaks the counter half. Without both, a " +
+    "12f makes TWO independent claims and carries THREE mutations: `br12-drag-affordance` " +
+      "and FR-249's `br12-form-on-board` break the DOM half (the drag clause and the " +
+      "`forms === 0` clause, which no mutation armed until FR-249 put a create control on " +
+      "this page), and `br12-post-from-board` breaks the counter half. Without both, a " +
       "'no writes' assertion on a page with no write code passes by construction — which is the " +
       "vacuity this file exists to prevent, not a hypothetical. There is no drag-to-change-status " +
       "affordance and there is not going to be: `brief_status.status` is the canonical " +
@@ -8143,6 +8340,11 @@ async function main() {
     // triage world because that is the only one whose brain is engine-migrated,
     // i.e. the only one the write door can boot against.
     await runGate("G-BR-14", () => gBr14(tabs, worlds));
+    // FR-249, immediately after G-BR-14: same world, same tab, and G-BR-14
+    // leaves that tab on the LIST arrangement (its `14d-control` clicks LIST),
+    // which is where the write bar lives. It writes a goal and one edge, so it
+    // must follow every reading G-BR-14 takes of that world.
+    await runGate("G-BR-18", () => gBr18(tabs, worlds));
     await runGate("G-BR-11", () => gBr11(tabs.dense));
     // TD-332, ABSOLUTELY LAST and numbered 0 to say so. It audits the LEDGER
     // rather than the browser: `notRun` is only fully populated once every

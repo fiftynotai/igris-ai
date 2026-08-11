@@ -1794,6 +1794,11 @@ export interface TriageRequest {
    *
    * FR-247: required for a `target: "id"` action and REFUSED for a
    * `target: "brief-ref"` one. Never both `ids` and `refs`.
+   *
+   * FR-249 added a THIRD kind, `target: "none"` (the subjectless
+   * `create_goal`), which refuses BOTH by name — there is no subject to
+   * address. The enumeration is written out because two-of-three reads as
+   * exhaustive.
    */
   ids?: number[];
   /**
@@ -1820,19 +1825,49 @@ export interface TriageRequest {
   priority?: string;
   /** FR-247 `attach_goal` only — an EXISTING `goals.goal_id` (`GL-XXX`). */
   goal_id?: string;
+  /**
+   * FR-249 `create_goal` only. PREFIXED on the wire and renamed to the tool's
+   * `title` / `outcome` / `project` by the map row — because the parser's
+   * unknown-key set is GLOBAL, and a bare `title` in it would stop `title`
+   * being refused by absence for every OTHER action, which is the property
+   * TD-311 needs. Two layers, two jobs.
+   *
+   * `goal_project` is the shell's project scope, and its ABSENCE is the
+   * all-projects scope: `handleGoalCreate` stores that as `project_slug NULL`,
+   * which the goals layer already renders as "Cross-project".
+   */
+  goal_title?: string;
+  goal_outcome?: string;
+  goal_project?: string;
 }
 
 /**
  * One item's outcome. `error` is the BRAIN's verbatim message, never a rewrite.
  *
- * FR-247: exactly one of `id` / `ref` is populated, matching the action's
+ * FR-247: at most one of `id` / `ref` is populated, matching the action's
  * target. A client renders whichever is non-null.
+ *
+ * **FR-249 made "at most" load-bearing, and it used to read "exactly one".**
+ * A `target: "none"` row (`create_goal`, the first SUBJECTLESS mutation) has no
+ * subject at all, so BOTH are null and a renderer reading "whichever is
+ * non-null" gets nothing. That is correct, not a gap: there is no pre-existing
+ * row to name. The identity of what was CREATED arrives on `created_id`
+ * instead, and `triage/model.ts` renders `"?"` as the honest label.
  */
 export interface TriageItemResultPayload {
   id: number | null;
   ref: { project: string; brief_id: string } | null;
   ok: boolean;
   error: string | null;
+  /**
+   * FR-249 — the value at the row's DECLARED `returns` path, or `null`.
+   *
+   * The only fragment of any tool payload that crosses back. `null` for the
+   * seven rows that declare no path, and `null` for a declared path that did
+   * not resolve — which does not make the item a failure, because the write
+   * happened and only the read-back did not.
+   */
+  created_id: string | null;
 }
 
 /**

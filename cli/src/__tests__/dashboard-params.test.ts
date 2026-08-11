@@ -477,16 +477,50 @@ describe("FR-247 — parseTriageBody over `refs`", () => {
   });
 
   it("the forbidden build-state fields are unknown at the door, for EVERY action", () => {
+    // THE ACCEPTED LIST IS QUOTED IN FULL, NOT SAMPLED, and that is the point of
+    // this assertion rather than an accident of how it was written: the ban on
+    // `title` here is BY ABSENCE, so the only way to pin it is to state what IS
+    // present. FR-249 needed `igris_goal_create`'s `title` argument and did NOT
+    // take it out of this set — the wire keys are `goal_*` and the map row
+    // renames them at the boundary — which is why this string grew by three
+    // prefixed names and by none of the five below.
+    const ACCEPTED =
+      "action, ids, refs, reason, brief_id, priority, goal_id, goal_title, goal_outcome, goal_project";
     for (const field of ["status", "phase", "content", "title", "filename"]) {
+      expect(ACCEPTED.split(", "), `${field} is in the accepted set`).not.toContain(field);
       expect(
         parse({ action: "set_priority", refs: [ref("FR-1")], [field]: "x" }),
         field,
-      ).toMatchObject({ ok: false, reason: `unknown field: ${field}. Accepted: action, ids, refs, reason, brief_id, priority, goal_id` });
+      ).toMatchObject({ ok: false, reason: `unknown field: ${field}. Accepted: ${ACCEPTED}` });
       // ...and on an id-addressed action too, so the ban is not brief-specific.
       expect(parse({ action: "dismiss", ids: [1], [field]: "x" }), field).toMatchObject({
         ok: false,
       });
     }
+  });
+
+  it("FR-249 — a subjectless action refuses BOTH address keys, by name", () => {
+    const create = { targetOf: () => "none" as const, bulkAllowed: () => false };
+    const parseCreate = (body: unknown) =>
+      parseTriageBody(body, (a: string) => a === "create_goal", create);
+
+    expect(
+      parseCreate({ action: "create_goal", goal_title: "t", goal_outcome: "o" }),
+    ).toMatchObject({ ok: true, ids: [], refs: [], goal_title: "t", goal_outcome: "o" });
+
+    for (const key of ["ids", "refs"]) {
+      expect(
+        parseCreate({ action: "create_goal", goal_title: "t", goal_outcome: "o", [key]: [] }),
+        key,
+      ).toMatchObject({ ok: false, reason: `action 'create_goal' addresses nothing; '${key}' is not accepted for it` });
+    }
+    // ...and an EMPTY one is refused too: the anti-vacuity gate does not apply
+    // to a subjectless row, so `refs: []` must be caught by the exclusivity
+    // check rather than by "must not be empty" — which would otherwise let a
+    // `refs: [ref]` through the same branch on a later edit.
+    expect(
+      parseCreate({ action: "create_goal", goal_title: "t", goal_outcome: "o", refs: [{ project: "demo", brief_id: "FR-1" }] }),
+    ).toMatchObject({ ok: false });
   });
 
   it("single-item-only still bites on the refs path", () => {

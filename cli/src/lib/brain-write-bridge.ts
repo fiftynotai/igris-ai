@@ -401,18 +401,40 @@ type BootEngineFn = (config: {
  *      intended. `igris_brief_update` is the correct tool precisely because its
  *      SET list is built from the fields actually supplied.
  *   3. **One row = one `gateway.dispatch`.** No row may fire two tools or thread
- *      one tool's output into another's input. This is why goal CREATION is
- *      deferred to FR-249 rather than shipped here: `dispatchTriage` discards the
- *      tool payload (`results.push({id, ok:true, error:null})`), so
- *      create-then-attach would need one row to orchestrate — and the property
- *      that makes this map a review artifact is that it cannot.
+ *      one tool's output into another's input. FR-249 was the first brief to
+ *      test this rule and it **SURVIVED VERBATIM**: goal creation shipped as its
+ *      OWN row (`create_goal`), and the operator attaches with a second click on
+ *      the row that already existed. The composite — one row that creates a goal
+ *      and then attaches briefs to it — was costed and REJECTED, on three
+ *      grounds and not on appetite: it deletes this rule, it sweeps six
+ *      assertions over the most-asserted frozen object in this tier, and it buys
+ *      an acceptance criterion that **cannot be tested without a mock**, because
+ *      `igris_edge_create` never verifies the goal exists (`INSERT OR IGNORE` on
+ *      any `to_id`), so an attach cannot fail on a goal that was just created.
+ *      Eight rows, eight tools, eight dispatches. If one click is ever wanted,
+ *      it is a brief that argues this rule on its own terms.
+ *   4. **THE BAN IN RULE 1 IS ABOUT AN ENTITY, NOT ABOUT A WORD (FR-249).**
+ *      `status`, `phase`, `content`, `title` and `filename` are forbidden
+ *      because they are BRIEF build-state. `goals.title` is a different column
+ *      on a different table with no `/hunt` state machine over it, and
+ *      `entity_edges` has no build-state at all. The runtime guard therefore
+ *      resolves each row's tool to the ENTITY it writes (`TOOL_WRITES` in
+ *      `dashboard-server.test.ts`) and applies the ban PER ENTITY. Three clauses
+ *      keep that from becoming a hole, and all three are asserted: the table is
+ *      TOTAL over the map (a row whose tool has no entry REDS), it FAILS CLOSED
+ *      (an unclassified tool is treated as a brief AND separately reported), and
+ *      a planted `brief_status.title` write must STILL be refused.
+ *      **This is a deliberate widening of a guard, ratified by the operator, not
+ *      a relaxation to be inferred from a diff.** The wire keys stay prefixed
+ *      (`goal_title`, not `title`) so `params.ts`' by-absence property is
+ *      untouched — two layers, two jobs; neither makes the other unnecessary.
  *
  * If a future brief needs to move `status` from the dashboard, that is a
  * decision about TD-311's boundary and it belongs in a brief that argues the
  * boundary, not in a diff that adds a row here.
  *
  * ───────────────────────────────────────────────────────────────────────────
- * TWO TARGET KINDS (FR-247) — AND WHY THAT IS NOT A NEW ENDPOINT
+ * THREE TARGET KINDS (FR-247, FR-249) — AND WHY THAT IS NOT A NEW ENDPOINT
  * ───────────────────────────────────────────────────────────────────────────
  * The five FR-241 rows address a row by INTEGER id. A brief is not addressable
  * that way: `igris_brief_update` declares `required: ['project','brief_id']`
@@ -441,6 +463,27 @@ type BootEngineFn = (config: {
  *     and the ABSENCE of `project` is the BR-078 asymmetry written down where
  *     the ambiguity is minted (Phase-0 P0.4).
  *
+ * FR-249 ADDS THE THIRD KIND, `target: "none"` — A MUTATION WITH NO SUBJECT.
+ * `create_goal` is the first row that addresses nothing: there is no id and no
+ * ref, because the thing being written does not exist yet. Consequences, all of
+ * them stated rather than discovered:
+ *   - the parser refuses BOTH `ids` and `refs` for such a row, by name;
+ *   - `count` is 1, so `requested: 1` — without that the response reports
+ *     `requested: 0, applied: 1`, arithmetic the operator has to decode;
+ *   - the anti-vacuity gate (`'ids' must not be empty`) does not apply and
+ *     cannot: a subjectless create is never vacuous;
+ *   - `bulk: false` makes the single-item rule trivially true.
+ *
+ * `returns` IS THE ONLY READ-BACK, AND IT LIVES IN THE MAP. `dispatchTriage`
+ * discards the tool payload; a create must not, or the client cannot preselect
+ * the goal it just made. So a row may DECLARE a dotted path into its tool's own
+ * JSON result (`returns: "goal.goal_id"`), and the dispatcher walks it
+ * generically. The delegation tier therefore still knows nothing about what a
+ * goal IS — it knows the map said "read this path", and a reviewer reading the
+ * row can see exactly which value crosses back. Seven of the eight rows declare
+ * no `returns` and report `created_id: null`. Nothing else of any tool payload
+ * reaches the wire.
+ *
  * `idKey` and `refKeys` are mutually exclusive and each is optional here rather
  * than modelled as a discriminated union, deliberately: a union would make
  * `TRIAGE_ACTIONS.dismiss?.idKey` a type error across four shipped suites for
@@ -450,8 +493,23 @@ type BootEngineFn = (config: {
  * cast.
  */
 
-/** Every body field any row may name. The union IS the allow-list. */
-export type TriageExtraKey = "reason" | "brief_id" | "priority" | "goal_id";
+/**
+ * Every body field any row may name. The union IS the allow-list.
+ *
+ * FR-249's three are PREFIXED (`goal_title`, not `title`) and renamed at the
+ * boundary. That is not cosmetic: `params.ts`' `KNOWN` set is GLOBAL, so a bare
+ * `title` here would make its stated property — "`status`, `phase`, `content`
+ * and `title` are refused HERE, by absence, for every action" — false for
+ * `set_priority` as well. The prefix keeps that sentence true byte-identically.
+ */
+export type TriageExtraKey =
+  | "reason"
+  | "brief_id"
+  | "priority"
+  | "goal_id"
+  | "goal_title"
+  | "goal_outcome"
+  | "goal_project";
 
 /** FR-247 — how a `brief-ref` row addresses its subject. */
 export interface BriefRef {
@@ -462,8 +520,11 @@ export interface BriefRef {
 export interface TriageActionSpec {
   readonly tool: string;
   readonly bulk: boolean;
-  /** FR-247. `"id"` = `ids: number[]`; `"brief-ref"` = `refs: BriefRef[]`. */
-  readonly target: "id" | "brief-ref";
+  /**
+   * FR-247. `"id"` = `ids: number[]`; `"brief-ref"` = `refs: BriefRef[]`.
+   * FR-249. `"none"` = no subject at all; neither key is accepted.
+   */
+  readonly target: "id" | "brief-ref" | "none";
   /** `target: "id"` only. The tool's own required id argument name. */
   readonly idKey?: "id" | "learning_id";
   /**
@@ -476,6 +537,13 @@ export interface TriageActionSpec {
   readonly fixed?: Readonly<Record<string, string>>;
   /** `<body field> -> <tool argument>`, when they differ. */
   readonly rename?: Readonly<Record<string, string>>;
+  /**
+   * FR-249 — a dotted path into the TOOL's own JSON result, and the only value
+   * of a tool payload that ever crosses back to the client. A READ path, never
+   * an argument: it must not also appear in `extra`, and the AC-3(a) guard
+   * asserts that it does not.
+   */
+  readonly returns?: string;
 }
 
 export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
@@ -567,9 +635,9 @@ export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
      * dashboard is minting new instances of it, so the drop is written down at
      * the point it happens rather than hidden in a builder.
      *
-     * GOAL CREATION IS NOT HERE. Deferred to FR-249 by operator decision, on
-     * rule 3 above — see the TD-311 boundary block. `docs/dashboard.md` states
-     * the deferral and its reasoning so this reads as a decision, not a gap.
+     * GOAL CREATION IS ITS OWN ROW, and it is the next one down. FR-249 shipped
+     * `create_goal` rather than a composite precisely so rule 3 survives — see
+     * the TD-311 boundary block and `docs/dashboard.md`.
      */
     attach_goal: Object.freeze({
       tool: "igris_edge_create",
@@ -583,6 +651,51 @@ export const TRIAGE_ACTIONS: Readonly<Record<string, TriageActionSpec>> =
         edge_type: "serves_goal",
       }),
       rename: Object.freeze({ goal_id: "to_id" }),
+    }),
+
+    // --- FR-249: the SUBJECTLESS row.
+    /**
+     * Create a goal. THE FIRST ROW THAT ADDRESSES NOTHING.
+     *
+     * `igris_goal_create` declares `required: ['title','outcome']`
+     * (`goals/index.ts`), so this row necessarily puts a `title` in front of a
+     * brain tool — which the AC-3(a) guard banned GLOBALLY until FR-249 gave it
+     * an entity dimension (rule 4 in the boundary block). The ban was always
+     * about `brief_status.title`; `goals.title` is a different column on a
+     * different table and has no `/hunt` state machine over it.
+     *
+     * WHAT IS NOT OFFERED, AND WHY THE ABSENCE IS THE DESIGN:
+     *   - `status` — `VALID_GOAL_STATUSES` is a brain vocabulary, and offering
+     *     it from a CREATE form is editing by another name ("editing or
+     *     deleting goals" is out of this brief's scope). The handler defaults it
+     *     to `active`.
+     *   - `priority` — likewise; the handler defaults it to `P2-Medium`. It is
+     *     a DIFFERENT vocabulary from `CANONICAL_PRIORITIES` on a different
+     *     table, and mirroring a second brain vocabulary in the client would be
+     *     a second thing to drift.
+     *   - `deadline` — a validated ISO date with its own error surface, out this
+     *     round by operator decision. Adding it later is one `extra` key.
+     *   - `description`, `metadata` — no operator asked.
+     * The UI must SAY that `active` / `P2-Medium` were defaulted rather than
+     * chosen; `extra` is the ceiling, and this is what the ceiling is set at.
+     *
+     * LENGTHS ARE NOT MIRRORED. The brain caps title and outcome at 256
+     * (`goals/handlers.ts`); this tier reuses `MAX_TEXT` and surfaces the
+     * brain's rejection VERBATIM. A fourth copy of a brain constant is a fourth
+     * thing to drift — the same reasoning that kept `CANONICAL_PRIORITIES` to
+     * exactly one mirror.
+     */
+    create_goal: Object.freeze({
+      tool: "igris_goal_create",
+      bulk: false,
+      target: "none",
+      extra: Object.freeze(["goal_title", "goal_outcome", "goal_project"]),
+      rename: Object.freeze({
+        goal_title: "title",
+        goal_outcome: "outcome",
+        goal_project: "project",
+      }),
+      returns: "goal.goal_id",
     }),
   } as Record<string, TriageActionSpec>);
 
@@ -894,6 +1007,16 @@ export interface TriageItemResult {
   ok: boolean;
   /** The brain's verbatim message when `ok` is false; null otherwise. */
   error: string | null;
+  /**
+   * FR-249 — the value at the row's declared `returns` path, or `null`.
+   *
+   * `null` for all seven rows that declare no path, and `null` for a row that
+   * declares one whose value did not resolve. A `returns` that fails to resolve
+   * does NOT make the item `ok: false`: the write happened, only the read-back
+   * failed, and reporting a false failure for a real mutation is the worse of
+   * the two errors.
+   */
+  created_id: string | null;
 }
 
 export type DispatchTriageResult =
@@ -974,6 +1097,137 @@ export function buildBriefArgs(
 }
 
 /**
+ * FR-249 — build a SUBJECTLESS dispatch's args from the map row.
+ *
+ * The whole argument object is `rename(extra ∩ supplied)`, and there is nothing
+ * else it could be: a `target: "none"` row has no id and no ref to contribute.
+ * So the map's allow-list is not merely the filter here, it is the ENTIRE
+ * surface — which is why `create_goal` can be read off its row in one glance.
+ *
+ * `fixed` is honoured for symmetry with `buildBriefArgs` (a future subjectless
+ * row may need a pinned constant), and `extra` still cannot overlap it — the
+ * AC-3(a) guard asserts that for every row.
+ */
+export function buildSubjectlessArgs(
+  spec: TriageActionSpec,
+  extra: Record<string, string>,
+): Record<string, unknown> {
+  if (spec.target !== "none") {
+    throw new TypeError(
+      `buildSubjectlessArgs called for a subject-addressed action (${spec.tool}, target=${spec.target})`,
+    );
+  }
+  const args: Record<string, unknown> = { ...(spec.fixed ?? {}) };
+  for (const key of spec.extra) {
+    const value = extra[key];
+    if (value !== undefined) args[spec.rename?.[key] ?? key] = value;
+  }
+  return args;
+}
+
+/**
+ * FR-249 — walk a row's DECLARED `returns` path over a tool's JSON payload.
+ *
+ * Generic on purpose: the path comes from the map, so this function knows
+ * nothing about goals. Anything that is not a plain string at the end of the
+ * path is `null` rather than coerced — a number or an object arriving where an
+ * id was declared means the map and the tool disagree, and inventing
+ * `"[object Object]"` for the client to preselect would hide that.
+ */
+function readDeclaredReturn(spec: TriageActionSpec, text: string | undefined): string | null {
+  if (spec.returns === undefined || text === undefined) return null;
+  let cursor: unknown;
+  try {
+    cursor = JSON.parse(text);
+  } catch {
+    // A tool whose success body is not JSON simply has no read-back. The write
+    // still happened; see `TriageItemResult.created_id`.
+    return null;
+  }
+  for (const segment of spec.returns.split(".")) {
+    if (cursor === null || typeof cursor !== "object") return null;
+    cursor = (cursor as Record<string, unknown>)[segment];
+  }
+  return typeof cursor === "string" ? cursor : null;
+}
+
+/**
+ * FR-249 — dispatch ONE subjectless mutation.
+ *
+ * Its failure discipline is `dispatchTriage`'s, exactly: a gateway throw and an
+ * `isError` envelope both become one `ok: false` carrying the BRAIN's own
+ * message, so the dashboard never invents its own vocabulary for a brain
+ * failure (`title exceeds maximum length of 256 characters` is the brain's
+ * sentence and it is the one the operator sees).
+ *
+ * There is no loop and no batching: a `target: "none"` row is `bulk: false` and
+ * the parser gives it a count of exactly one. One request, one dispatch, one
+ * result — rule 3 holds here as everywhere.
+ */
+export async function dispatchSubjectless(
+  action: string,
+  extra: Record<string, string> = {},
+): Promise<DispatchTriageResult> {
+  const spec = triageAction(action);
+  if (spec === null || spec.target !== "none") {
+    return {
+      ok: false,
+      kind: "engine_unavailable",
+      reason: `unknown subjectless action: ${action}`,
+    };
+  }
+
+  const booted = await bootWriteEngine();
+  if (!booted.ok) return booted;
+
+  try {
+    const res = await booted.engine.gateway.dispatch(
+      spec.tool,
+      buildSubjectlessArgs(spec, extra),
+    );
+    if (res.isError === true) {
+      return {
+        ok: true,
+        results: [
+          {
+            id: null,
+            ref: null,
+            ok: false,
+            created_id: null,
+            error: res.content?.[0]?.text ?? "brain reported an error",
+          },
+        ],
+      };
+    }
+    return {
+      ok: true,
+      results: [
+        {
+          id: null,
+          ref: null,
+          ok: true,
+          error: null,
+          created_id: readDeclaredReturn(spec, res.content?.[0]?.text),
+        },
+      ],
+    };
+  } catch (err) {
+    return {
+      ok: true,
+      results: [
+        {
+          id: null,
+          ref: null,
+          ok: false,
+          created_id: null,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      ],
+    };
+  }
+}
+
+/**
  * Dispatch one action across ids, SEQUENTIALLY, one transaction per id (D6).
  *
  * NO CROSS-ID TRANSACTION. Wrapping N dispatches in a transaction would mean
@@ -1022,19 +1276,21 @@ export async function dispatchTriage(
           id,
           ref: null,
           ok: false,
+          created_id: null,
           // The handler's verbatim text (`Suggestion 12 already acted; cannot
           // dismiss`). Re-wording it here would hide the one fact the operator
           // needs.
           error: res.content?.[0]?.text ?? "brain reported an error",
         });
       } else {
-        results.push({ id, ref: null, ok: true, error: null });
+        results.push({ id, ref: null, ok: true, error: null, created_id: null });
       }
     } catch (err) {
       results.push({
         id,
         ref: null,
         ok: false,
+        created_id: null,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -1194,6 +1450,7 @@ export async function dispatchBriefWrite(
           id: null,
           ref,
           ok: false,
+          created_id: null,
           error: preconditionUnavailable(
             err instanceof Error ? err.message : String(err),
           ),
@@ -1205,6 +1462,7 @@ export async function dispatchBriefWrite(
           id: null,
           ref,
           ok: false,
+          created_id: null,
           // The two refusals are DISTINGUISHED: "this brief does not exist" and
           // "this brief exists but has no status row" send an operator to
           // completely different places, and collapsing them would hide the
@@ -1228,15 +1486,17 @@ export async function dispatchBriefWrite(
                 id: null,
                 ref,
                 ok: false,
+                created_id: null,
                 error: res.content?.[0]?.text ?? "brain reported an error",
               }
-            : { id: null, ref, ok: true, error: null },
+            : { id: null, ref, ok: true, error: null, created_id: null },
         );
       } catch (err) {
         results.push({
           id: null,
           ref,
           ok: false,
+          created_id: null,
           error: err instanceof Error ? err.message : String(err),
         });
       }

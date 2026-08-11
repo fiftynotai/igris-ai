@@ -1267,6 +1267,45 @@ interface PackReport {
  *                       budget, so moving `MEASURED_TOTAL` would turn it into a
  *                       per-brief reset.
  *
+ * FR-249 MEASURED LAST:
+ *   packed              1_896_135    800 entries
+ *   cumulative delta    +31.9 KB     (32_715 B over PACK_BASELINE_PACKED)
+ *   FR-249's own share  +7_105 B     against its plan's +8-18 KB estimate, which
+ *                                    OVER-shot. The charge is `cli/CHANGELOG.md`
+ *                                    verbatim plus the bridge's runtime prose;
+ *                                    the guard rewrite, the five new gates, the
+ *                                    browser gate, `docs/**` and `MAINTAINING.md`
+ *                                    are all packed-free by the rule below
+ *   headroom remaining  ~118.1 KB    (120_885 B under TD-374's +150)
+ *   browser surfaces    INITIAL +0 B — the `lib/api.ts` widening is TYPE-ONLY
+ *                       and the rule below predicted zero. PREDICTED, THEN
+ *                       MEASURED: 285_689 before and after, to the byte
+ *                       TOTAL   +1_704 B over the same 9 chunks — `Layers`
+ *                       45_577 -> 46_789 (the form) and `useQFilter` 6_215 ->
+ *                       6_707 (the create builder and the third `useTriage`
+ *                       wrapper, which live in `triage/**` and are therefore
+ *                       charged to the SHARED chunk rather than to the page
+ *                       that renders them). NEITHER chunk ceiling re-based
+ *
+ *   MEASURE IT THE WAY THE BASELINE WAS TAKEN, OR THE COMPARISON IS OFF BY A
+ *   FILE. `DASH_BUNDLE_REPORT=1 bash scripts/build-dashboard.sh` writes
+ *   `dist/dashboard/.bundle-report.json`, which `files` SHIPS — so an in-place
+ *   pack taken after a report-enabled build reads 801 entries and 1_898_453,
+ *   +3_395 B against an otherwise identical tree. `npm run build` does not set
+ *   that variable, so no clean-worktree baseline in this ledger contains the
+ *   file. Both numbers were taken here; the 800-entry one is the comparable.
+ *   **The ENTRY COUNT is what exposes it** — 801 vs 800 — which is the argument
+ *   for this ledger's convention of recording entries beside every byte figure.
+ *   A 3_395 B phantom looks exactly like code growth if you only read bytes.
+ *   NOW GUARDED: see the assertion "no build DIAGNOSTIC reaches the tarball",
+ *   proven red-first by rebuilding WITH the flag and watching it fire. The
+ *   measuring instrument could inflate the thing it measures; it no longer can.
+ *
+ *   AND THE TOTAL_JS CEILING IS NOW THE TIGHT ONE — 13_601 B after this brief,
+ *   against packed's 121_962. The next brief with a UI hits the browser ceiling
+ *   first, and this row is where it should learn that rather than reading
+ *   packed's comfortable figure and planning against the wrong constraint.
+ *
  *   WHICH PROSE COSTS IS A PROPERTY OF WHAT IT IS ATTACHED TO, not of which
  *   file it lives in — and this session made three different claims about it
  *   before measuring. The rule, verified in both directions:
@@ -1299,8 +1338,11 @@ interface PackReport {
  *   number the changelog cannot. TD-374's row established that property; this
  *   row is the first to need it.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~125.0 KB (127_990 B) is what is
- * left** — FR-248's row below is the live reading; ~148.3 KB was TD-374's. — the GRANT is +150 KB and the headroom is what remains under it, and
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~119.1 KB (121_962 B) is what is
+ * left on PACKED** — FR-249's row below is the live reading. **But packed is
+ * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
+ * **13_601 B**, and any brief with a UI will hit that first. Read both — the
+ * packed GRANT is +150 KB and the headroom is what remains under it, and
  * the figure changed MEANING as well as value: TD-374 re-based the constant to
  * a clean measurement of TD-373's tree, and the operator granted +150 KB over
  * it, so this now reads growth-since-clean rather than growth-since-FR-238.
@@ -1598,6 +1640,39 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         true,
       );
     }
+  }, PACK_TIMEOUT_MS);
+
+  /**
+   * FR-249 — a DIAGNOSTIC must not be able to ship, or to corrupt the reading.
+   *
+   * `DASH_BUNDLE_REPORT=1 bash cli/scripts/build-dashboard.sh` writes
+   * `dist/dashboard/.bundle-report.json` — the file every recent brief has used
+   * to prove which chunk its code landed in. `package.json` `files` ships
+   * `dist`, wholesale, so that diagnostic SHIPS.
+   *
+   * It bit FR-249 immediately and in the worst way: a pack taken right after a
+   * report-enabled build read **801 entries / 1_898_453 B** against the
+   * comparable **800 / 1_895_058** — a 3,395 B phantom delta that looks exactly
+   * like code growth. The ENTRY COUNT is the tell, which is why this ledger
+   * records entries beside every byte figure and why that convention is worth
+   * keeping.
+   *
+   * So the instrument used to measure the budget could silently inflate the
+   * budget. This assertion closes that: it does not care whether the file is
+   * present in the working tree (it legitimately is, mid-diagnosis) — only that
+   * it never reaches the tarball.
+   */
+  it("no build DIAGNOSTIC reaches the tarball (FR-249)", () => {
+    const report = packReport();
+    const leaked = report.files
+      .map((f) => f.path)
+      .filter((p) => /\.bundle-report\.json$|\.tsbuildinfo$|\.vite[/\\]/.test(p));
+    expect(
+      leaked,
+      "a diagnostic artifact is in the published tarball. It inflates the " +
+        "packed delta and every brief downstream reads a phantom number. " +
+        "Rebuild without DASH_BUNDLE_REPORT=1, or exclude it in package.json files.",
+    ).toEqual([]);
   }, PACK_TIMEOUT_MS);
 
   it("stays under the hard packed-size ceiling (+150 KB over baseline)", () => {

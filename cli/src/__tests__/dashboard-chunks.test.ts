@@ -166,11 +166,11 @@
  *                                                `15d-search` asserts the search
  *                                                route fetches THIS and NOT
  *                                                `useQFilter`.
- *   Layers-<hash>      45_577   #/layers          `pages/Layers.tsx`,
+ *   Layers-<hash>      46_789   #/layers          `pages/Layers.tsx`,
  *                                                `pages/layers/**`,
  *                                                `markdown/**`
  *   Triage-<hash>     12_721   #/triage          `pages/Triage.tsx`
- *   useQFilter-<h>     6_215   layers + triage   `triage/**` + the layer hooks
+ *   useQFilter-<h>     6_707   layers + triage   `triage/**` + the layer hooks
  *                                                + `ui/Badge` — SHARED between
  *                                                two async chunks, so Rollup
  *                                                hoisted it and Vite fetches it
@@ -182,7 +182,17 @@
  *                                                A row that still said
  *                                                "`components/record/**`" would
  *                                                send the next author to the
- *                                                wrong chunk.
+ *                                                wrong chunk. GREW again at
+ *                                                FR-249 (6_215 -> 6_707), which
+ *                                                is where `triage/**` living
+ *                                                here becomes visible: the
+ *                                                create builder and the third
+ *                                                `useTriage` wrapper are charged
+ *                                                to THIS chunk, not to `Layers`,
+ *                                                even though the only surface
+ *                                                that renders them is a briefs
+ *                                                page. Layers took 45_577 ->
+ *                                                46_789 for the form itself.
  *   neighbours-<h>     1_036   graph + layers    `graph/neighbours.ts`,
  *                                                `lib/graphCache.ts`
  *   Button-<hash>        380   graph + layers    `components/ui/Button.tsx`

@@ -2028,6 +2028,21 @@ h6.record-md-h {
   color: var(--muted);
 }
 
+/* FR-249 · the create form's two TEXT fields.
+   `.brief-write-select`'s shape is right and is reused rather than cloned — but
+   three of its rules are about a PICKER and are wrong for a caret. The
+   `text-transform` one is not cosmetic: CSS uppercases the DISPLAY only, so a
+   goal typed in mixed case would be shown in a case the brain will not store,
+   and the operator would first see the real title in the picker after the
+   create. Showing an operator something other than what is about to be written
+   is the one thing a write form must not do. */
+.brief-write-input {
+  text-transform: none;
+  letter-spacing: 0;
+  cursor: text;
+  min-width: 18ch;
+}
+
 /* ═════════════════════════════════════════════════════════════════════════
    FR-248 · the fused cross-layer search (`#/search`)
 

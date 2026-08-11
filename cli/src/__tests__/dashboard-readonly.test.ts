@@ -1032,7 +1032,7 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
       write: { available: boolean; state: string; actions: string[] };
     };
     expect(health.write.state).toBe("not-booted");
-    // FR-247 grew this from five to SEVEN. It is spelled out rather than
+    // FR-247 grew this from five to seven; FR-249 to EIGHT. It is spelled out rather than
     // derived from `TRIAGE_ACTION_NAMES`, deliberately: this is the vocabulary
     // the endpoint SERVES to a client, and reading it from the same constant
     // the endpoint reads would make the assertion a tautology. A new mutation
@@ -1042,6 +1042,7 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
       "apply",
       "approve",
       "attach_goal",
+      "create_goal",
       "dismiss",
       "reject",
       "set_priority",

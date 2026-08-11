@@ -40,6 +40,7 @@ import { describe, expect, it } from "vitest";
 import {
   BRIEF_WRITE_ACTIONS,
   CANONICAL_PRIORITIES,
+  CREATE_ACTIONS,
   EMPTY_KEY_SELECTION,
   EMPTY_SELECTION,
   MAX_BULK,
@@ -48,6 +49,7 @@ import {
   TRIAGE_ACTIONS,
   briefWriteCopy,
   buildBriefWriteRequest,
+  buildCreateGoalRequest,
   buildTriageRequest,
   chunkIds,
   confineToKeys,
@@ -725,5 +727,81 @@ describe("FR-247 — outcomeLabel names a failure's subject", () => {
     // The failure banner is what an operator reads when something went wrong.
     // `#null: <brain message>` is a bug report nobody can act on.
     expect(outcomeLabel({ id: null, ref: null, ok: false, error: null })).toBe("?");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-249 — the subjectless create
+// ---------------------------------------------------------------------------
+
+describe("FR-249 — the create_goal request body", () => {
+  it("carries the THREE prefixed keys and nothing else", () => {
+    // THE PREFIX IS THE ASSERTION. The server's unknown-key set is GLOBAL, so a
+    // body naming `title` is a 400 for EVERY action — which is the property
+    // that keeps `title` refused by absence on `set_priority` too. A builder
+    // that emitted `title` would take this whole surface down, not just its own.
+    const body = buildCreateGoalRequest("Ship the write door", "Every mutation is a row", "demo");
+    expect(body).toEqual({
+      action: "create_goal",
+      goal_title: "Ship the write door",
+      goal_outcome: "Every mutation is a row",
+      goal_project: "demo",
+    });
+    expect(Object.keys(body!).sort()).not.toContain("title");
+  });
+
+  it("omits `goal_project` for the all-projects scope — absence IS the scope", () => {
+    // `null`, `undefined` and `""` are the three ways the shell says "all
+    // projects", and all three must produce the SAME body: the brain reads a
+    // missing project as `project_slug NULL`, which the goals layer renders as
+    // "Cross-project". Sending `""` would reach the same row while saying
+    // something the reader has to decode.
+    for (const scope of [null, undefined, "", "   "]) {
+      expect(buildCreateGoalRequest("t", "o", scope)).toEqual({
+        action: "create_goal",
+        goal_title: "t",
+        goal_outcome: "o",
+      });
+    }
+  });
+
+  it("REFUSES a blank title or outcome rather than posting one", () => {
+    // The button is disabled for the same condition, and this is the layer that
+    // makes the disabling a property rather than a coincidence — a future caller
+    // that forgets the guard cannot post a body the brain will certainly refuse.
+    expect(buildCreateGoalRequest("", "o")).toBeNull();
+    expect(buildCreateGoalRequest("   ", "o")).toBeNull();
+    expect(buildCreateGoalRequest("t", "")).toBeNull();
+    expect(buildCreateGoalRequest("t", "  \n ")).toBeNull();
+  });
+
+  it("TRIMS, because a trailing space is not part of a goal's title", () => {
+    expect(buildCreateGoalRequest("  Ship it  ", "  done  ", " demo ")).toEqual({
+      action: "create_goal",
+      goal_title: "Ship it",
+      goal_outcome: "done",
+      goal_project: "demo",
+    });
+  });
+
+  it("the create vocabulary is DISJOINT from the other two, and complete", () => {
+    // Three lists, three questions — "what may a triage tab offer", "what may a
+    // BRIEF row offer", "what has no subject at all". An action in two of them
+    // would be an action whose enabling condition depends on which list a
+    // consumer happened to read.
+    expect([...CREATE_ACTIONS]).toEqual(["create_goal"]);
+    for (const a of CREATE_ACTIONS) {
+      expect(TRIAGE_ACTIONS as readonly string[]).not.toContain(a);
+      expect(BRIEF_WRITE_ACTIONS as readonly string[]).not.toContain(a);
+    }
+  });
+
+  it("outcomeLabel says `?` for a subjectless failure — there IS no subject", () => {
+    // Not a degradation: a `target: "none"` row addresses nothing, so `?` is the
+    // true answer. The readout that renders it carries the action name, so the
+    // line reads "CREATE_GOAL — 0 of 1 applied" with the brain's own reason.
+    expect(
+      outcomeLabel({ id: null, ref: null, ok: false, error: "x", created_id: null }),
+    ).toBe("?");
   });
 });

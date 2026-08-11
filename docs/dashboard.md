@@ -61,7 +61,7 @@ The dashboard is the first network listener this CLI has ever opened, so:
 | `Origin` header (POST only) | Absent (a `curl`, the `--smoke` probe) or **exactly** the served origin → allowed; anything else, including the literal string `null`, → **403**. Compared as a whole string against both loopback spellings, never by `startsWith`: `http://127.0.0.1:7317` is a prefix of `http://127.0.0.1:7317.evil.test`. |
 | `Content-Type` (POST only) | `application/json` required → otherwise **415**. This is the fence that actually blocks the classic no-JS CSRF: an HTML `<form>` can POST cross-origin without a preflight, but only as `application/x-www-form-urlencoded`, `multipart/form-data` or `text/plain`. Requiring JSON forces a preflight, which the `Origin` fence then answers. |
 | Request body cap (POST only) | 64 KB, enforced **while reading** rather than after → otherwise **413**, so an unbounded upload is never buffered first and rejected second. |
-| Write endpoints | **Exactly one, since FR-241: `POST /api/triage`.** Every mutation it performs is a `gateway.dispatch` of a tool named by a frozen map (five rows at FR-241, SEVEN since FR-247) — there is no code path in this tier that writes any other way. See *The write path* below. |
+| Write endpoints | **Exactly one, since FR-241: `POST /api/triage`.** Every mutation it performs is a `gateway.dispatch` of a tool named by a frozen map (five rows at FR-241, seven since FR-247, EIGHT since FR-249) — there is no code path in this tier that writes any other way. See *The write path* below. |
 | Static serving | Path-traversal guarded (normalise, then resolved-prefix check — a LEXICAL check; see `static.ts` for why `realpath` is not needed while the bundle is a build artifact). Unknown extensions serve as `application/octet-stream`. |
 | Response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Content-Security-Policy: frame-ancestors 'none'`, `Referrer-Policy: no-referrer` — on **every** response, from `dashboard/headers.ts`. The framing pair landed in FR-238 as defence in depth on a then-read-only surface with nothing to actuate and no cookies, in anticipation of a write endpoint. **FR-241 added that endpoint**, so the pair is now load-bearing rather than anticipatory: a framed dashboard with a working bulk-reject button is a real clickjacking target. |
 | Caching | `Cache-Control: no-store` on all of `/api/*`; `no-cache` on `index.html`; long immutable max-age only on content-hashed `assets/`. |
@@ -618,7 +618,7 @@ one this surface can cause, and it is why the write engine must stay **lazy**:
 G-RO-5's fixture is a `journal_mode = delete` brain, and a write engine booted on
 a browsing session would flip it.
 
-### The write path (FR-241, extended by FR-247)
+### The write path (FR-241, extended by FR-247 and FR-249)
 
 `POST /api/triage` is the only endpoint on this surface that changes a row, and
 it is deliberately **one** endpoint with an `action` discriminator rather than
@@ -654,6 +654,7 @@ and a mutation that does not resolve to a registered brain tool is forbidden.*
 | `reject` | `igris_perception_reject` | yes | `id` | `learning_id` | `reason` |
 | `set_priority` (FR-247) | `igris_brief_update` | yes | `brief-ref` | `project` + `brief_id` | `priority` |
 | `attach_goal` (FR-247) | `igris_edge_create` | yes | `brief-ref` | `brief_id` **only** | `goal_id` |
+| `create_goal` (FR-249) | `igris_goal_create` | **no** | **`none`** | — (no subject) | `goal_title`, `goal_outcome`, `goal_project` |
 
 #### Why a brief needed a second target kind
 
@@ -677,16 +678,86 @@ rather than buried in a builder.
 block on the map row, never from the caller. A caller-supplied `edge_type` would
 silently turn that one row into ~20 different mutations.
 
-#### Goal CREATION is deferred to FR-249 — a decision, not a gap
+#### Goal CREATION — what FR-249 shipped, and the two options it rejected
 
-The request was "attach to a new goal or an old one". v1 ships the old-one half,
-and the reason is mechanical rather than appetite: `dispatchTriage` **discards
-the tool's success payload** (it pushes `{id, ok, error}` and nothing else), so
+The request was "attach to a new goal or an old one". FR-247 shipped the
+old-one half and deferred the rest to FR-249, on a mechanical reason rather than
+appetite: `dispatchTriage` **discards the tool's success payload**, so
 create-then-attach would need one map row to fire two tools and thread the new
-goal's id between them. That would be the first exception to *one row is one
-dispatch* — which is the property that makes this map a review artifact at all.
-A `create_goal` row firing `igris_goal_create` **alone**, with the operator
-attaching in a second click, preserves the property and is what FR-249 is for.
+goal's id between them — the first exception to *one row is one dispatch*, which
+is the property that makes this map a review artifact at all.
+
+**FR-249 shipped the recommendation this paragraph made, and rule 3 survives
+verbatim.** `create_goal` fires `igris_goal_create` **alone**; the operator
+attaches with a second click on the row that already existed. Two clicks, not
+two workflows: the map row declares `returns: "goal.goal_id"`, the dispatcher
+walks that one path, and the client **preselects the goal it just made** in the
+picker beside the CREATE control. Eight rows, eight tools, eight dispatches.
+
+The two rejected options are recorded because they were live:
+
+- **A typed result channel on every row.** Its NARROW form was adopted — a
+  single map-declared `returns` path, `null` on the seven rows that declare
+  none. Its general form was not: if every row *may* return a value, a reader
+  can no longer tell from a row whether it feeds another mutation, and every row
+  becomes potentially compositional.
+- **A composite `steps: [...]` row.** Rejected on three grounds, and not on
+  appetite: it deletes rule 3, it sweeps six assertions over the most-asserted
+  frozen object in the tier, and it buys an acceptance criterion that **cannot
+  be tested without a mock** — `igris_edge_create` never verifies the goal
+  exists (`INSERT OR IGNORE` on any `to_id`), so an attach cannot fail on a goal
+  that was just created. If one click is ever wanted, it is a brief that argues
+  rule 3 on its own terms.
+
+**The third target kind: `none`.** `create_goal` is the first row that addresses
+nothing — the thing being written does not exist yet. Both `ids` and `refs` are
+refused **by name**, the requested count is 1 (without that, a successful create
+would report `requested: 0, applied: 1`), and the anti-vacuity gate that refuses
+an empty `ids` does not apply and cannot: a subjectless create is never vacuous.
+
+**Partial failure is PREVENTED, not compensated — and compensation is not on the
+menu.** The brain registers six goal tools and **none of them deletes**, so a
+composite that created a goal and failed to attach could not roll back. Under
+two requests there is no window to roll back from: a create that fails leaves no
+row, and a create that succeeds followed by an attach that fails leaves **a goal
+with zero serving briefs** — a state the brain already models
+(`handleGoalProgress` returns `completion_pct: null` at total 0) and the picker
+shows immediately. It is loud rather than silent: the failure banner names the
+refused brief and the brain's verbatim reason, the new goal is preselected, and
+`igris_edge_create` is idempotent, so the retry is one click and cannot
+double-write.
+
+**What the create form does NOT offer, and why the absence is the design.**
+`status` and `priority` are defaulted by `handleGoalCreate` to `active` and
+`P2-Medium`; the form **says so** rather than letting the operator believe they
+chose them. Offering `status` from a create form is editing by another name, and
+editing goals is out of scope. `deadline` is out this round — it is a validated
+ISO date with its own error surface, and adding it later is one `extra` key.
+The goal's **project is the shell's scope**, and the all-projects scope is the
+ABSENCE of one: the brain stores that as `project_slug NULL`, which the goals
+layer already renders as "Cross-project".
+
+**The wire keys are PREFIXED, and that is a second layer rather than a
+duplicate.** `igris_goal_create` declares `required: ['title','outcome']`, but
+`parseTriageBody`'s unknown-key set is GLOBAL — so adding a bare `title` to it
+would stop `title` being refused *by absence* for `set_priority` too. The wire
+therefore says `goal_title` / `goal_outcome` / `goal_project` and the map row's
+`rename` turns them into the tool's argument names at the boundary. A body
+posting a bare `title` at `create_goal` is still a 400, and a gate asserts it.
+
+**The AC-3(a) guard gained an ENTITY dimension to allow this, deliberately and
+by operator ratification.** Until FR-249 the guard banned
+`status`/`phase`/`content`/`title`/`filename` from every row's argument surface,
+globally — and it was entity-blind, so it could not tell `goals.title` from
+`brief_status.title` and refused this row in all three options. TD-311's
+invariant is a claim about BRIEFS; a goal is a different table with no `/hunt`
+state machine over it. The guard now resolves each row's tool to the entity it
+writes and applies the ban per entity, with three clauses that keep it a real
+instrument and each asserted: the classification table is **total** over the map
+(an unclassified tool reds), it **fails closed** (an unclassified tool is
+checked against the brief ban anyway), and a **planted `brief_status.title`
+write must still be refused**. Adding a row therefore means classifying its
+tool, not merely naming it.
 
 #### What the priority picker offers — and what it refuses to offer
 
@@ -2387,14 +2458,14 @@ one.*
 ## Out of scope
 
 Auth, remote hosting, per-user identity · a `/dashboard` skill (the verb is the
-product) · any mutation that is not one of the SEVEN actions in the delegation
+product) · any mutation that is not one of the EIGHT actions in the delegation
 map — including editing a brief, storing a learning, or running an extractor.
 
 *Layer views left this list when FR-240 shipped, and cognition triage plus the
 write path left it when FR-241 did* — each time the same one-line edit to
 `PENDING_ROUTES` in `router.tsx`. What did **not** leave with FR-241: writes
 still reach the brain only through `gateway.dispatch`, so "all write actions" was
-replaced by a bounded map — five rows at FR-241, SEVEN since FR-247 — rather than by an open door.
+replaced by a bounded map — five rows at FR-241, seven since FR-247, EIGHT since FR-249 — rather than by an open door.
 
 `NodeInspector` renders payload fields only and still issues **no second fetch**.
 FR-240 arrived and the resolution was a LINK, not an endpoint: `OPEN RECORD`

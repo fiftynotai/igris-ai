@@ -425,6 +425,10 @@ export type TriageBodyResult =
       brief_id?: string;
       priority?: string;
       goal_id?: string;
+      /** FR-249 — the `create_goal` fields. PREFIXED on the wire; see `KNOWN`. */
+      goal_title?: string;
+      goal_outcome?: string;
+      goal_project?: string;
       /** Clamp/dedupe notes. Empty when the body was clean. */
       params: string[];
     }
@@ -463,7 +467,7 @@ export function parseTriageBody(
      * property, and the map stays the ONE definition of the vocabulary.
      * Absent means "id", so every pre-FR-247 caller is unchanged.
      */
-    targetOf?: (action: string) => "id" | "brief-ref";
+    targetOf?: (action: string) => "id" | "brief-ref" | "none";
   } = {},
 ): TriageBodyResult {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
@@ -492,7 +496,24 @@ export function parseTriageBody(
   // THE TWO KEYS ARE EXCLUSIVE, AND THE WRONG ONE IS REFUSED BY NAME. A body
   // carrying both would leave "which one did the server act on?" answerable
   // only by reading this file — and the answer would be a mutation.
-  if (target === "id") {
+  if (target === "none") {
+    // FR-249 — A MUTATION WITH NO SUBJECT. Both address keys are refused BY
+    // NAME rather than ignored: a body carrying `refs` at a create was written
+    // by someone who believes it addresses something, and silently dropping it
+    // would apply a mutation whose scope the caller and the server disagree on.
+    //
+    // The anti-vacuity gate above does NOT apply here and cannot: "a bulk over
+    // zero items" is the failure it exists to refuse, and a subjectless create
+    // has no items to be zero of. Its count is 1, always.
+    for (const key of ["ids", "refs"] as const) {
+      if (b[key] !== undefined) {
+        return {
+          ok: false,
+          reason: `action '${action}' addresses nothing; '${key}' is not accepted for it`,
+        };
+      }
+    }
+  } else if (target === "id") {
     if (b.refs !== undefined) {
       return {
         ok: false,
@@ -597,7 +618,9 @@ export function parseTriageBody(
     }
   }
 
-  const count = ids.length + refs.length;
+  // FR-249 — a subjectless row requests exactly ONE mutation. Without this the
+  // sum is 0 and a successful create reports `requested: 0, applied: 1`.
+  const count = target === "none" ? 1 : ids.length + refs.length;
 
   if (opts.bulkAllowed !== undefined && !opts.bulkAllowed(action) && count > 1) {
     return {
@@ -623,7 +646,14 @@ export function parseTriageBody(
   }
 
   const text = (
-    key: "reason" | "brief_id" | "priority" | "goal_id",
+    key:
+      | "reason"
+      | "brief_id"
+      | "priority"
+      | "goal_id"
+      | "goal_title"
+      | "goal_outcome"
+      | "goal_project",
   ): TriageBodyResult | string | undefined => {
     const v = b[key];
     if (v === undefined) return undefined;
@@ -648,6 +678,21 @@ export function parseTriageBody(
   if (typeof priority === "object") return priority;
   const goalId = text("goal_id");
   if (typeof goalId === "object") return goalId;
+  // FR-249. The LENGTHS ARE NOT MIRRORED EITHER: `MAX_TEXT` is this tier's own
+  // "no unbounded string" ceiling, and the brain's 256-character caps on a
+  // goal's title and outcome stay the brain's, surfaced verbatim when they
+  // fire. A copy of them here would be a fourth thing to drift, and a
+  // client-side cap that disagreed with the brain's would refuse writes the
+  // brain would have accepted. Presence is not checked either: `title` and
+  // `outcome` are `required` on the TOOL, and `handleGoalCreate`'s
+  // `Missing required fields: title, outcome` is a better sentence than
+  // anything this parser could invent for the same condition.
+  const goalTitle = text("goal_title");
+  if (typeof goalTitle === "object") return goalTitle;
+  const goalOutcome = text("goal_outcome");
+  if (typeof goalOutcome === "object") return goalOutcome;
+  const goalProject = text("goal_project");
+  if (typeof goalProject === "object") return goalProject;
 
   // Unknown top-level keys are REFUSED, mirroring the gateway's TD-128 posture
   // one layer out: a client that sends `{action, ids, resaon}` has a typo whose
@@ -662,6 +707,17 @@ export function parseTriageBody(
   // action would flip that shipped behaviour for no gain — while `status`,
   // `phase`, `content` and `title` are refused HERE, by absence, for every
   // action, which is the property TD-311 actually needs.
+  //
+  // FR-249 KEPT THAT SENTENCE TRUE BYTE-IDENTICALLY, AND THAT IS WHY ITS WIRE
+  // KEYS ARE PREFIXED. `igris_goal_create` declares `required: ['title',
+  // 'outcome']`, so the create row must put a `title` in front of a brain tool
+  // — but adding `title` to this GLOBAL set would refuse nothing anywhere and
+  // make the paragraph above false for `set_priority` too. So the wire says
+  // `goal_title` / `goal_outcome` / `goal_project` and the map's `rename` turns
+  // them into the tool's argument names at the boundary. `dashboard-triage-
+  // endpoint.test.ts` G-TR-18 posts a bare `title` at `create_goal` and
+  // requires the 400, so this property is pinned by an assertion rather than by
+  // this comment.
   const KNOWN = new Set([
     "action",
     "ids",
@@ -670,6 +726,9 @@ export function parseTriageBody(
     "brief_id",
     "priority",
     "goal_id",
+    "goal_title",
+    "goal_outcome",
+    "goal_project",
   ]);
   for (const key of Object.keys(b)) {
     if (!KNOWN.has(key)) {
@@ -689,6 +748,9 @@ export function parseTriageBody(
     ...(briefId !== undefined ? { brief_id: briefId } : {}),
     ...(priority !== undefined ? { priority } : {}),
     ...(goalId !== undefined ? { goal_id: goalId } : {}),
+    ...(goalTitle !== undefined ? { goal_title: goalTitle } : {}),
+    ...(goalOutcome !== undefined ? { goal_outcome: goalOutcome } : {}),
+    ...(goalProject !== undefined ? { goal_project: goalProject } : {}),
     params,
   };
 }

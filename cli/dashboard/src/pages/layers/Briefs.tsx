@@ -298,6 +298,8 @@ function BriefWriteBar({
   onSelectAll,
   onClear,
   onApply,
+  onCreateGoal,
+  scope,
   busy,
   writeAvailable,
   writeReason,
@@ -310,6 +312,15 @@ function BriefWriteBar({
   goalsError: string | null;
   onSelectAll: () => void;
   onClear: () => void;
+  /**
+   * FR-249 — create a goal and hand back its id, or `null` if it failed.
+   * The PARENT owns the request and the goal-list re-read; this bar owns the
+   * selection, because the whole point of the id coming back is that the
+   * picker below is already pointing at it when the operator reaches for ATTACH.
+   */
+  onCreateGoal: (title: string, outcome: string) => Promise<string | null>;
+  /** The shell's project scope, or `null` for all projects. Rendered, not guessed. */
+  scope: string | null;
   onApply: (
     action: BriefWriteAction,
     refs: BriefRef[],
@@ -324,6 +335,13 @@ function BriefWriteBar({
   const [pending, setPending] = useState<BriefWriteAction | null>(null);
   const [priority, setPriority] = useState<string>(CANONICAL_PRIORITIES[0]);
   const [goalId, setGoalId] = useState<string>("");
+  // FR-249 — the create form. `open` is separate from the two fields so the bar
+  // stays one line until an operator asks for it: the common case is attaching
+  // to a goal that already exists, and a permanently-expanded form would put
+  // two text inputs above the list on every visit.
+  const [creating, setCreating] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newOutcome, setNewOutcome] = useState("");
 
   const chosen = rows.filter((r) => selection.has(refKey(r)));
   const count = chosen.length;
@@ -437,15 +455,84 @@ function BriefWriteBar({
         <Button
           size="sm"
           variant="secondary"
-          // Attachment needs an EXISTING goal. Creation is FR-249, and it is a
-          // deferred half of a stated request rather than an oversight — see
-          // `docs/dashboard.md`.
+          // Attachment needs an EXISTING goal — FR-249 put the NEW GOAL control
+          // next to it, because that is where an operator is standing when they
+          // discover the goal they want does not exist yet.
           disabled={count === 0 || busy || goalId.length === 0}
           onClick={() => setPending("attach_goal")}
         >
           ATTACH TO GOAL
         </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          // NOT gated on the selection: creating a goal has NO subject, so a
+          // control disabled by an empty selection would be lying about what it
+          // needs. It is gated on `busy` like every other write affordance.
+          disabled={busy}
+          onClick={() => setCreating((v) => !v)}
+        >
+          {creating ? "CANCEL NEW GOAL" : "NEW GOAL"}
+        </Button>
       </div>
+
+      {creating && (
+        // NO <form> ELEMENT, and that is deliberate rather than incidental: the
+        // board's read-only claim is asserted by `browser-gate.mjs` G-BR-12f,
+        // which scopes `form` (with `draggable`, `ondragstart`, `ondrop` and a
+        // non-GET counter) to `.record-board`. This panel lives ABOVE the list
+        // and never reaches `briefRow`, so it could carry one — but two raw
+        // inputs and a button need nothing a form provides, and the cheapest way
+        // to keep a write affordance off the status board is not to build one
+        // that could travel there.
+        <div className="triage-bulk brief-write" data-create="goal">
+          <span className="record-readout">new goal</span>
+          <input
+            className="brief-write-select brief-write-input"
+            value={newTitle}
+            aria-label="New goal title"
+            placeholder="TITLE"
+            onChange={(e) => setNewTitle(e.target.value)}
+          />
+          <input
+            className="brief-write-select brief-write-input"
+            value={newOutcome}
+            aria-label="New goal outcome"
+            placeholder="WHAT SUCCESS LOOKS LIKE"
+            onChange={(e) => setNewOutcome(e.target.value)}
+          />
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={busy || newTitle.trim().length === 0 || newOutcome.trim().length === 0}
+            onClick={() => {
+              void (async () => {
+                const id = await onCreateGoal(newTitle, newOutcome);
+                // PRESELECTED, and only on success. The failure is already
+                // rendered by the shared readout below, and leaving the fields
+                // filled is what lets the operator fix a too-long title rather
+                // than retype both.
+                if (id === null) return;
+                setGoalId(id);
+                setNewTitle("");
+                setNewOutcome("");
+                setCreating(false);
+              })();
+            }}
+          >
+            {busy ? "…" : "CREATE"}
+          </Button>
+          <span className="record-readout">
+            {/*
+              The two fields the operator did NOT choose. `handleGoalCreate`
+              defaults them, and a form that stayed silent would let the
+              operator believe they had picked `active` / `P2-Medium`.
+            */}
+            {scope === null ? "cross-project" : scope} · created active ·
+            P2-Medium · attach it below
+          </span>
+        </div>
+      )}
 
       {goalsError !== null && (
         <div className="shell-banner" role="status">
@@ -600,24 +687,26 @@ function BriefListView({
    * legitimately serve a brain-level goal, so scoping this to the selected
    * project would silently hide exactly the goals that span projects.
    */
-  useEffect(() => {
-    const ctrl = new AbortController();
+  const loadGoals = useCallback(async (signal?: AbortSignal): Promise<void> => {
     const q = new URLSearchParams();
     q.set("status", "active");
     q.set("limit", "100");
-    api
-      .goals(q, ctrl.signal)
-      .then((p) => {
-        if (ctrl.signal.aborted) return;
-        setGoals(p.items);
-        setGoalsError(p.degraded?.reason ?? null);
-      })
-      .catch((err: unknown) => {
-        if (ctrl.signal.aborted) return;
-        setGoalsError(err instanceof ApiError ? err.message : String(err));
-      });
-    return () => ctrl.abort();
+    try {
+      const p = await api.goals(q, signal);
+      if (signal?.aborted === true) return;
+      setGoals(p.items);
+      setGoalsError(p.degraded?.reason ?? null);
+    } catch (err: unknown) {
+      if (signal?.aborted === true) return;
+      setGoalsError(err instanceof ApiError ? err.message : String(err));
+    }
   }, []);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void loadGoals(ctrl.signal);
+    return () => ctrl.abort();
+  }, [loadGoals]);
 
   const browsing = query === null;
   const descriptor = layerById(LAYER);
@@ -708,6 +797,21 @@ function BriefListView({
           onApply={(action, refs, extra) => {
             setSelection(EMPTY_KEY_SELECTION);
             void mutation.applyRefs(action, refs, extra);
+          }}
+          scope={project}
+          onCreateGoal={async (title, outcome) => {
+            // The SCOPE is supplied here, not typed: a dashboard-created goal
+            // belongs to whatever the shell is scoped to, and the all-projects
+            // scope is the ABSENCE of a project — which the brain stores as
+            // `project_slug NULL` and the goals layer renders as
+            // "Cross-project".
+            const id = await mutation.create(title, outcome, project);
+            // RE-READ BEFORE PRESELECTING. The picker renders `goals`, so
+            // selecting an id the list does not yet contain would show an empty
+            // control for a goal that exists — the one state the result channel
+            // was added to avoid.
+            if (id !== null) await loadGoals();
+            return id;
           }}
         />
       )}

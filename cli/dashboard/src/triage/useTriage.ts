@@ -31,6 +31,7 @@ import { useCallback, useRef, useState } from "react";
 import { api, ApiError, type BriefRef, type TriageResultPayload } from "../lib/api";
 import {
   buildBriefWriteRequest,
+  buildCreateGoalRequest,
   buildTriageRequest,
   chunkIds,
   mergeResults,
@@ -69,6 +70,21 @@ export interface TriageMutation {
     refs: readonly BriefRef[],
     extra?: { priority?: string; goalId?: string },
   ) => Promise<TriageSummary | null>;
+  /**
+   * FR-249 — the SUBJECTLESS twin. Resolves to the new goal's id, or `null`.
+   *
+   * A third wrapper over the SAME `runBatch`, for the reason `applyRefs` is one:
+   * the in-flight guard, the no-optimistic-state rule and the unconditional
+   * re-read have exactly one implementation, and what differs between the three
+   * is only how a request body is built. `chunkIds` over a one-element array
+   * yields one chunk, so even the chunking path is shared rather than special-
+   * cased — a create is a batch of one, not a different kind of request.
+   *
+   * It returns the CREATED ID rather than the summary because that is the one
+   * thing the caller cannot recover from a re-read: the goal list is unordered
+   * by creation and the operator's next click needs this exact goal selected.
+   */
+  create: (title: string, outcome: string, project?: string | null) => Promise<string | null>;
   /** Drop the last summary — used when the selection or the tab changes. */
   clear: () => void;
 }
@@ -89,6 +105,12 @@ export function useTriage(onApplied: () => void): TriageMutation {
   // A guard, not an optimisation. Two concurrent batches would interleave their
   // chunks over one connection and produce a summary that belongs to neither.
   const inFlight = useRef(false);
+
+  // FR-249 — the ONE fragment of a tool payload that crosses back, held in a
+  // ref rather than state: nothing renders it, `create` returns it, and putting
+  // it in state would re-render every consumer of this hook for a value only
+  // its own caller reads.
+  const lastCreatedId = useRef<string | null>(null);
 
   /**
    * The ONE batch runner. Both public entry points are wrappers over it, so
@@ -114,6 +136,13 @@ export function useTriage(onApplied: () => void): TriageMutation {
       try {
         const responses: TriageResultPayload[] = [];
         for (const chunk of chunks) responses.push(await api.triage(toBody(chunk)));
+        // Rewritten on EVERY batch, including the ones that carry no id, so a
+        // create that failed can never return the previous create's goal.
+        lastCreatedId.current =
+          responses
+            .flatMap((r) => r.results)
+            .find((x) => x.created_id !== null && x.created_id !== undefined)
+            ?.created_id ?? null;
         const merged = mergeResults(items.length, responses);
         setSummary(merged);
         return merged;
@@ -156,11 +185,29 @@ export function useTriage(onApplied: () => void): TriageMutation {
     [runBatch],
   );
 
+  const create = useCallback(
+    async (
+      title: string,
+      outcome: string,
+      project?: string | null,
+    ): Promise<string | null> => {
+      const body = buildCreateGoalRequest(title, outcome, project);
+      if (body === null) return null;
+      // ONE item, so `chunkIds` yields one chunk and `mergeResults` sees one
+      // response. The summary lands in exactly the same readout as every other
+      // write; only the id is threaded back.
+      const summary = await runBatch("create_goal", [body], () => body);
+      if (summary === null || summary.applied === 0) return null;
+      return lastCreatedId.current;
+    },
+    [runBatch],
+  );
+
   const clear = useCallback(() => {
     setSummary(null);
     setError(null);
     setLastAction(null);
   }, []);
 
-  return { busy, summary, lastAction, error, apply, applyRefs, clear };
+  return { busy, summary, lastAction, error, apply, applyRefs, create, clear };
 }

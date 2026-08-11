@@ -79,7 +79,9 @@ import {
   TRIAGE_ACTIONS,
   bootWriteEngine,
   buildBriefArgs,
+  buildSubjectlessArgs,
   dispatchBriefWrite,
+  dispatchSubjectless,
   dispatchTriage,
   resetWriteEngine,
   writeEngineState,
@@ -99,7 +101,10 @@ import {
   countPendingBrainLevel,
   countPendingWithProject,
   edgeRows,
+  eventsSince,
+  goalRows,
   learningState,
+  maxEventId,
   pendingSuggestionIds,
   readTriageBrain,
   seedTriageBrain,
@@ -257,6 +262,8 @@ interface TriagePayload {
     ref: { project: string; brief_id: string } | null;
     ok: boolean;
     error: string | null;
+    /** FR-249 — populated only for a row that DECLARES a `returns` path. */
+    created_id: string | null;
   }[];
   params: string[];
   degraded: { reason: string } | null;
@@ -430,7 +437,9 @@ describe("G-TR-1 — one action at a time, PRE-state asserted, row change read b
     // id-addressed result, and asserted as such rather than dropped from the
     // comparison — "exactly one of id/ref is populated" is the contract, and a
     // `toMatchObject` here would not have noticed a row carrying both.
-    expect(p.results).toEqual([{ id: 1, ref: null, ok: true, error: null }]);
+    expect(p.results).toEqual([
+      { id: 1, ref: null, ok: true, error: null, created_id: null },
+    ]);
 
     const after = suggestionStates(dbPath()).find((s) => s.id === 1);
     expect(after).toMatchObject({
@@ -1127,7 +1136,7 @@ describe("G-TR-9 — the map's allow-list is the filter, not the parser", () => 
     ]);
   });
 
-  it("the two builders REFUSE each other's rows rather than emitting a wrong shape", () => {
+  it("the three builders REFUSE each other's rows rather than emitting a wrong shape", () => {
     expect(() => buildBriefArgs(TRIAGE_ACTIONS.dismiss!, ref("FR-001"), {})).toThrow(
       /non-brief-ref action/,
     );
@@ -1234,9 +1243,12 @@ describe("G-TR-10 — the args the BRAIN's own handler received", () => {
       priority: "P3-Low",
     });
     const p = r.json<TriagePayload>();
+    // FR-249 widened this payload by ONE field, and it is asserted here rather
+    // than matched loosely: `created_id` is null for every row that declares no
+    // `returns`, which is seven of the eight.
     expect(p.results).toEqual([
-      { id: null, ref: ref("FR-005"), ok: true, error: null },
-      { id: null, ref: ref("FR-006"), ok: true, error: null },
+      { id: null, ref: ref("FR-005"), ok: true, error: null, created_id: null },
+      { id: null, ref: ref("FR-006"), ok: true, error: null, created_id: null },
     ]);
   });
 });
@@ -1707,5 +1719,548 @@ describe("G-TR-14 — a down write surface makes brief writes DISABLED, not brok
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toContain("unknown brief-write action");
     expect(briefStatusRows(dbPath())).toEqual(before);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FR-249 — the SUBJECTLESS write
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * G-TR-15 … G-TR-19, and what each proves and does NOT prove.
+ *
+ *  G-TR-15  AC-3's shape for a `target: "none"` row, BYPASSING the parser.
+ *           `buildSubjectlessArgs` called with a dirty `extra`, asserting the
+ *           built key SET is exactly `rename(extra ∩ supplied)`.
+ *           Proves: the wire's `goal_title` really becomes the tool's `title`,
+ *           and nothing else can ride along.
+ *           Does NOT prove: the handler received those args — G-TR-16.
+ *
+ *  G-TR-16  BEHAVIOURAL. Spy the RESOLVED bundle's `handleGoalCreate`, read the
+ *           args it received, and read the row back.
+ *           Proves: `Object.keys(args)` is exactly `{title, outcome[, project]}`
+ *           — no `status`, no `phase`, no brief field — and that the row
+ *           carries the handler's OWN defaults.
+ *           Does NOT prove: what happens when the second half fails — G-TR-17.
+ *
+ *  G-TR-17  THE PARTIAL-FAILURE PROOF, and it needs NO MOCK. Two requests:
+ *           `create_goal` allocates `GL-102` deterministically, then
+ *           `attach_goal` at the `brief_files`-only brief hits FR-247's SHIPPED
+ *           precondition refusal. End state: the goal exists with ZERO serving
+ *           edges — an ordinary state, not a broken transaction.
+ *           STATED AND NOT REACHABLE: a create that succeeds followed by an
+ *           attach that fails for a VALID brief cannot be produced without a
+ *           mock. `igris_edge_create` never verifies the goal exists
+ *           (`INSERT OR IGNORE` on any `to_id`) and its other failure modes are
+ *           foreclosed by `fixed`. That is a property of option 3's design, not
+ *           a gap in this gate, and no mock is manufactured to satisfy a
+ *           sentence.
+ *
+ *  G-TR-18  THE BY-ABSENCE PROPERTY, over the wire. `create_goal` with `ids`,
+ *           with `refs`, and with a bare `title` are all 400s BY NAME. The last
+ *           is the one that keeps `params.ts`' stated property honest: the wire
+ *           key is `goal_title`, so `title` is still refused for EVERY action.
+ *
+ *  G-TR-19  THE EGRESS FENCE over the new path. Meaningful only because G-TR-13
+ *           above proves the fence CAN record an attempt.
+ */
+
+// ---------------------------------------------------------------------------
+// G-TR-15 — the seam, with the parser bypassed
+// ---------------------------------------------------------------------------
+
+describe("G-TR-15 — a subjectless row's whole argument surface is its own map row", () => {
+  it("buildSubjectlessArgs over a DIRTY extra emits exactly {title, outcome, project}", () => {
+    const spec = TRIAGE_ACTIONS.create_goal!;
+    const args = buildSubjectlessArgs(spec, {
+      goal_title: "Ship the write door",
+      goal_outcome: "Every mutation is a map row",
+      goal_project: P,
+      // Everything below is what a compromised or buggy client would send if it
+      // got past the parser. None of it may appear in the output — including
+      // the UNPREFIXED spellings, which are the ones a tool would actually act
+      // on if the builder had copied the body instead of walking `extra`.
+      title: "a brief title",
+      status: "Done",
+      phase: "COMMITTING",
+      content: "x",
+      filename: "x.md",
+      priority: "P0-Critical",
+      deadline: "2026-12-01",
+      metadata: "{}",
+      goal_id: "GL-100",
+    });
+    expect(Object.keys(args).sort()).toEqual(["outcome", "project", "title"]);
+    expect(args).toEqual({
+      title: "Ship the write door",
+      outcome: "Every mutation is a map row",
+      project: P,
+    });
+  });
+
+  it("SELF-NEGATIVE-CONTROL — an ABSENT optional key is not invented", () => {
+    // Without this, "the dirty keys are absent" is also what you observe from a
+    // builder that returns a constant. BR-080's presence-not-truthiness rule:
+    // an omitted `goal_project` must not arrive as `project: undefined`, which
+    // the gateway would read as a supplied argument.
+    const spec = TRIAGE_ACTIONS.create_goal!;
+    expect(buildSubjectlessArgs(spec, { goal_title: "t", goal_outcome: "o" })).toEqual({
+      title: "t",
+      outcome: "o",
+    });
+    // ...and an EMPTY STRING is a supplied value, not an absent one. It is how
+    // the client says "all projects" without a second control, and
+    // `handleGoalCreate` folds it to `project_slug NULL`.
+    expect(
+      buildSubjectlessArgs(spec, { goal_title: "t", goal_outcome: "o", goal_project: "" }),
+    ).toEqual({ title: "t", outcome: "o", project: "" });
+  });
+
+  it("the three builders REFUSE each other's rows rather than emitting a wrong shape", () => {
+    expect(() => buildSubjectlessArgs(TRIAGE_ACTIONS.set_priority!, {})).toThrow(
+      /subject-addressed action/,
+    );
+    expect(() => buildBriefArgs(TRIAGE_ACTIONS.create_goal!, ref("FR-001"), {})).toThrow(
+      /non-brief-ref action/,
+    );
+  });
+
+  it("`dispatchSubjectless` refuses an action outside its own target kind", async () => {
+    // The exported dispatcher is not reachable with a wrong action through the
+    // route (`triage()` switches on `target` first), so it must refuse on its
+    // own rather than become a hole in the delegation rule.
+    const before = goalRows(dbPath());
+    const r = await dispatchSubjectless("attach_goal", {});
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toContain("unknown subjectless action");
+    expect(goalRows(dbPath())).toEqual(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-16 — behavioural: the args the BRAIN's own handler received
+// ---------------------------------------------------------------------------
+
+describe("G-TR-16 — a create reaches handleGoalCreate with exactly the mapped args", () => {
+  it("the fixture seeds EXACTLY two goals, so GL-102 is the next id — the pre-state", () => {
+    // Without this reading, every `GL-102` assertion below is satisfiable by a
+    // fixture that happened to seed a different number of goals.
+    expect(goalRows(dbPath()).map((g) => g.goal_id)).toEqual([
+      ...TRIAGE_FIXTURE.goalIds,
+    ]);
+  });
+
+  it("the call trace: `goal_title` arrived as `title`, and no forbidden key came with it", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    const goalsUrl = resolveBundleModule("engine/components/goals/handlers.js");
+    expect(goalsUrl, "the goals handlers module did not resolve").not.toBeNull();
+    const mod = (await import(new URL(`file://${goalsUrl!}`).href)) as Record<
+      string,
+      unknown
+    >;
+    const original = mod.handleGoalCreate as (a: Record<string, unknown>) => unknown;
+    expect(typeof original, "handleGoalCreate is not exported").toBe("function");
+
+    const calls: Record<string, unknown>[] = [];
+    Object.defineProperty(mod, "handleGoalCreate", {
+      configurable: true,
+      writable: true,
+      value: (a: Record<string, unknown>) => {
+        calls.push(a);
+        return original(a);
+      },
+    });
+
+    try {
+      resetWriteEngine();
+      const r = await triage({
+        action: "create_goal",
+        goal_title: "Ship the write door",
+        goal_outcome: "Every dashboard mutation is a map row",
+        goal_project: P,
+      });
+      expect(r.status).toBe(200);
+      expect(r.json<TriagePayload>()).toMatchObject({
+        requested: 1,
+        applied: 1,
+        failed: 0,
+      });
+
+      // THE ARGUMENT SET. The wire names are `goal_*`; the tool's are not. A
+      // rename that leaked its SOURCE key, or a builder that copied the body,
+      // fails here rather than in review.
+      expect(calls, "the brain's own handler was never invoked").toHaveLength(1);
+      expect(Object.keys(calls[0]!).sort()).toEqual(["outcome", "project", "title"]);
+      for (const forbidden of [
+        "status",
+        "phase",
+        "content",
+        "filename",
+        "goal_title",
+        "priority",
+        "deadline",
+        "metadata",
+      ]) {
+        expect(calls[0], `${forbidden} reached the handler`).not.toHaveProperty(
+          forbidden,
+        );
+      }
+    } finally {
+      Object.defineProperty(mod, "handleGoalCreate", {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
+      resetWriteEngine();
+    }
+  });
+
+  it("the ROW: GL-102, the posted values, and the HANDLER's defaults", async () => {
+    const r = await triage({
+      action: "create_goal",
+      goal_title: "Ship the write door",
+      goal_outcome: "Every dashboard mutation is a map row",
+      goal_project: P,
+    });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+
+    const rows = goalRows(dbPath());
+    expect(rows.map((g) => g.goal_id)).toEqual([...TRIAGE_FIXTURE.goalIds, "GL-102"]);
+    expect(rows[2]).toEqual({
+      goal_id: TRIAGE_FIXTURE.nextGoalId,
+      project_slug: P,
+      title: "Ship the write door",
+      outcome: "Every dashboard mutation is a map row",
+      // NOT CHOSEN BY THE OPERATOR — defaulted by `handleGoalCreate`. The form
+      // offers neither field and SAYS so; asserting them here is what makes
+      // that sentence checkable rather than decorative.
+      status: "active",
+      priority: "P2-Medium",
+      deadline: null,
+      description: null,
+    });
+  });
+
+  it("the RESULT CHANNEL hands back the new id, and only for the row that declares it", async () => {
+    const r = await triage({
+      action: "create_goal",
+      goal_title: "t",
+      goal_outcome: "o",
+    });
+    const p = r.json<TriagePayload>();
+    // The whole reason the channel exists: the client preselects this.
+    expect(p.results).toEqual([
+      {
+        id: null,
+        ref: null,
+        ok: true,
+        error: null,
+        created_id: TRIAGE_FIXTURE.nextGoalId,
+      },
+    ]);
+
+    // ...and a row that declares no `returns` reports `null`, not a stale id.
+    const q = await triage({
+      action: "attach_goal",
+      refs: [ref("FR-001")],
+      goal_id: TRIAGE_FIXTURE.nextGoalId,
+    });
+    expect(q.json<TriagePayload>().results[0]?.created_id).toBeNull();
+  });
+
+  it("a create with NO project stores NULL — the all-projects scope", async () => {
+    // D-OP-4: the shell's scope supplies `goal_project`, and "all projects" is
+    // the ABSENCE of one. `handleGoalCreate` stores that as NULL, which
+    // `pages/layers/Goals.tsx` already renders as "Cross-project".
+    const r = await triage({
+      action: "create_goal",
+      goal_title: "a cross-project goal",
+      goal_outcome: "o",
+    });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+    expect(goalRows(dbPath())[2]?.project_slug).toBeNull();
+  });
+
+  it("the brain's own refusal is surfaced VERBATIM, and no row appears", async () => {
+    // 256 is the brain's cap (`goals/handlers.ts#MAX_TITLE_LEN`). It is NOT
+    // mirrored in `params.ts` — a fourth copy of a brain constant is a fourth
+    // thing to drift — so the rejection has to arrive from the brain, and this
+    // is the assertion that says it does.
+    const r = await triage({
+      action: "create_goal",
+      goal_title: "x".repeat(257),
+      goal_outcome: "o",
+    });
+    expect(r.status).toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 1, applied: 0, failed: 1 });
+    expect(p.results[0]?.error).toContain("title exceeds maximum length of 256");
+    expect(p.results[0]?.created_id).toBeNull();
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+
+  it("a create writes NOTHING to event_log, to entity_edges or to brief_status", async () => {
+    const events = maxEventId(dbPath());
+    const briefsBefore = briefStatusRows(dbPath());
+    await triage({ action: "create_goal", goal_title: "t", goal_outcome: "o" });
+
+    // `goal.created` IS emitted on the bus (`goals/index.ts`), but it reaches
+    // NEITHER `monitoring`'s `EVENT_COMPONENT_MAP` nor its `bus.on` list — so
+    // the create is DECLARED-EMPTY on `event_log`, exactly like `attach_goal`.
+    // Measured, not assumed (Phase-0 P0.2).
+    expect(eventsSince(dbPath(), events)).toEqual([]);
+    expect(edgeRows(dbPath())).toEqual([]);
+    expect(briefStatusRows(dbPath())).toEqual(briefsBefore);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-17 — the partial-failure proof, with no mock
+// ---------------------------------------------------------------------------
+
+describe("G-TR-17 — create succeeds, attach fails, and the goal is an ORDINARY state", () => {
+  it("two requests: GL-102 is created, then the attach is REFUSED and mints no edge", async () => {
+    // 1. THE PRE-STATE, both halves.
+    expect(goalRows(dbPath())).toHaveLength(2);
+    expect(edgeRows(dbPath())).toEqual([]);
+    expect(briefStatusCount(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId)).toBe(0);
+
+    // 2. THE CREATE. Deterministic id — see `TRIAGE_FIXTURE.goalIds`.
+    const created = await triage({
+      action: "create_goal",
+      goal_title: "Half a workflow",
+      goal_outcome: "o",
+      goal_project: P,
+    });
+    const c = created.json<TriagePayload>();
+    expect(c).toMatchObject({ requested: 1, applied: 1, failed: 0 });
+    expect(c.results[0]?.created_id).toBe(TRIAGE_FIXTURE.nextGoalId);
+
+    // 3. THE ATTACH, at FR-247's SHIPPED precondition refusal. `BR-900` is a
+    //    `brief_files` row with no `brief_status` row, seeded for this class.
+    const attached = await triage({
+      action: "attach_goal",
+      refs: [ref(TRIAGE_FIXTURE.filesOnlyBriefId)],
+      goal_id: TRIAGE_FIXTURE.nextGoalId,
+    });
+    const a = attached.json<TriagePayload>();
+    expect(a).toMatchObject({ requested: 1, applied: 0, failed: 1 });
+    expect(a.results[0]?.error).toContain("no brief_status row");
+
+    // 4. THE END STATE. The goal EXISTS and serves nothing. That is not the
+    //    orphan of a broken transaction — there is no `igris_goal_delete` to
+    //    compensate with and none is wanted: a goal with zero serving briefs is
+    //    a state the brain already models.
+    expect(goalRows(dbPath()).map((g) => g.goal_id)).toEqual([
+      ...TRIAGE_FIXTURE.goalIds,
+      TRIAGE_FIXTURE.nextGoalId,
+    ]);
+    expect(edgeRows(dbPath())).toEqual([]);
+    // ...and nothing was invented into `brief_status` for BR-900 along the way.
+    expect(briefStatusCount(dbPath(), P, TRIAGE_FIXTURE.filesOnlyBriefId)).toBe(0);
+  });
+
+  it("the RETRY is one click and cannot double-write — the attach that DOES work", async () => {
+    // The operator's next click after the refusal above. `igris_edge_create` is
+    // `INSERT OR IGNORE` on a UNIQUE tuple, so firing it twice is free.
+    await triage({ action: "create_goal", goal_title: "t", goal_outcome: "o" });
+    for (const _ of [1, 2]) {
+      const r = await triage({
+        action: "attach_goal",
+        refs: [ref("FR-004")],
+        goal_id: TRIAGE_FIXTURE.nextGoalId,
+      });
+      expect(r.json<TriagePayload>().applied).toBe(1);
+    }
+    expect(edgeRows(dbPath())).toEqual([
+      {
+        from_type: "brief",
+        from_id: "FR-004",
+        to_type: "goal",
+        to_id: TRIAGE_FIXTURE.nextGoalId,
+        edge_type: "serves_goal",
+      },
+    ]);
+  });
+
+  it("a FAILED create leaves nothing for a second click to attach to", async () => {
+    // An empty title is refused by the BRAIN, not by the parser — and that is
+    // the shipped posture rather than an omission. This tier allow-lists KEYS;
+    // presence and length are the tool's `required` and the handler's caps, and
+    // a copy of either here would be a fourth thing to drift. The CLIENT's
+    // disabled button is what makes this path rare; the server's job is to
+    // report the brain's own sentence when it is reached.
+    const r = await triage({ action: "create_goal", goal_title: "", goal_outcome: "o" });
+    expect(r.status).toBe(200);
+    const p = r.json<TriagePayload>();
+    expect(p).toMatchObject({ requested: 1, applied: 0, failed: 1 });
+    expect(p.results[0]?.error).toContain("Missing required fields: title, outcome");
+    expect(p.results[0]?.created_id).toBeNull();
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-18 — the by-absence property, over the wire
+// ---------------------------------------------------------------------------
+
+describe("G-TR-18 — a subjectless row takes NEITHER ids NOR refs, and never `title`", () => {
+  it("`ids` on a create is refused BY NAME, and nothing is created", async () => {
+    const r = await triage({
+      action: "create_goal",
+      ids: [1],
+      goal_title: "t",
+      goal_outcome: "o",
+    });
+    expect(r.status).toBe(400);
+    expect(r.json<{ error: string }>().error).toContain("'ids' is not accepted for it");
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+
+  it("`refs` on a create is refused BY NAME too", async () => {
+    const r = await triage({
+      action: "create_goal",
+      refs: [ref("FR-001")],
+      goal_title: "t",
+      goal_outcome: "o",
+    });
+    expect(r.status).toBe(400);
+    expect(r.json<{ error: string }>().error).toContain("'refs' is not accepted for it");
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+
+  it("A BARE `title` IS STILL AN UNKNOWN FIELD — for the create too", async () => {
+    // THE ASSERTION THAT KEEPS `params.ts`' STATED PROPERTY HONEST. Its `KNOWN`
+    // set gained `goal_title`, NOT `title`, precisely so that
+    // "`status`, `phase`, `content` and `title` are refused HERE, by absence,
+    // for every action" stays true byte-identically after FR-249. A row that
+    // took a bare `title` would make that sentence a lie for `set_priority` as
+    // well, because `KNOWN` is global.
+    for (const field of ["title", "outcome", "status", "phase", "content", "filename"]) {
+      const r = await triage({
+        action: "create_goal",
+        goal_title: "t",
+        goal_outcome: "o",
+        [field]: "x",
+      });
+      expect(r.status, `${field} was accepted`).toBe(400);
+      expect(r.json<{ error: string }>().error).toContain(`unknown field: ${field}`);
+    }
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+
+  it("a MISSING required field is the BRAIN's refusal, not a 400 — and no row appears", async () => {
+    // Deliberate, and the alternative was considered: the parser COULD refuse a
+    // create with no `goal_title`, but only by carrying a copy of the tool's
+    // `required: ['title','outcome']` in wire spelling — a fourth copy of a
+    // brain constant, which is exactly what `CANONICAL_PRIORITIES` is kept to
+    // one mirror to avoid. The tier's shipped division holds instead: the
+    // parser allow-lists KEYS, the brain validates PRESENCE, and the operator
+    // sees the brain's own sentence.
+    // AND THE TWO REFUSALS ARE NOT THE SAME ONE — measured, not assumed. An
+    // ABSENT key never reaches the handler at all: the gateway's BR-080
+    // strict-input walk refuses it first, with its own message. The handler's
+    // `Missing required fields` is reachable only through an EMPTY STRING,
+    // because BR-080 checks PRESENCE (`key in args`) and not truthiness. The
+    // plan predicted the handler's sentence for both; the gateway's arrives for
+    // one of them, which is BR-080 working exactly as the FR-247 header
+    // describes for `igris_brief_sync`.
+    for (const body of [
+      { action: "create_goal", goal_outcome: "o" },
+      { action: "create_goal", goal_title: "t" },
+    ]) {
+      const r = await triage(body);
+      expect(r.status, JSON.stringify(body)).toBe(200);
+      const p = r.json<TriagePayload>();
+      expect(p).toMatchObject({ requested: 1, applied: 0, failed: 1 });
+      expect(p.results[0]?.error).toMatch(
+        /missing required argument '(title|outcome)'.*BR-080/s,
+      );
+      expect(p.results[0]?.created_id).toBeNull();
+    }
+    // The EMPTY-STRING branch is the handler's, and it says something else.
+    const empty = await triage({
+      action: "create_goal",
+      goal_title: "",
+      goal_outcome: "",
+    });
+    expect(empty.json<TriagePayload>().results[0]?.error).toContain(
+      "Missing required fields: title, outcome",
+    );
+    expect(goalRows(dbPath())).toHaveLength(2);
+  });
+
+  it("a create is single-item by construction — `requested` is 1, never 0", async () => {
+    // Without an explicit `target === "none" ? 1 : ids+refs`, a successful
+    // create reports `requested: 0, applied: 1`, which is arithmetic the
+    // operator has to decode.
+    const r = await triage({ action: "create_goal", goal_title: "t", goal_outcome: "o" });
+    expect(r.json<TriagePayload>()).toMatchObject({ requested: 1, applied: 1 });
+  });
+
+  it("a REJECTED create never boots the write engine", async () => {
+    resetWriteEngine();
+    expect(writeEngineState()).toBe("not-booted");
+    const r = await triage({
+      action: "create_goal",
+      ids: [1],
+      goal_title: "t",
+      goal_outcome: "o",
+    });
+    expect(r.status).toBe(400);
+    expect(writeEngineState(), "a 400 booted the write engine").toBe("not-booted");
+  });
+
+  it("`/api/health` offers the create as part of the vocabulary", async () => {
+    const h = (await get("/api/health")).json<{ write: { actions: string[] } }>();
+    expect(h.write.actions).toContain("create_goal");
+    expect(h.write.actions).toHaveLength(8);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G-TR-19 — the egress fence over the NEW path
+// ---------------------------------------------------------------------------
+
+describe("G-TR-19 — a goal create cannot egress to a remote brain", () => {
+  it("the fence is ARMED in THIS test's body, not merely in a beforeEach", () => {
+    // A vitest worker is its own process and a fence armed in another file
+    // protects nothing. `assertArmed` reads BOTH layers back.
+    expect(fence, "the fence was not installed").not.toBeNull();
+    fence!.assertArmed();
+    expect(homedir()).toBe(sandbox);
+  });
+
+  it("with auto_push ON — the one arm that makes a zero mean something", async () => {
+    if (!canBoot()) throw new Error("bundle not staged — see G-TR-0");
+    await srv!.close();
+    srv = null;
+    resetWriteEngine();
+    fence!.writeConfig({
+      auto_push: true,
+      remote_brain: {
+        url: "https://fr249-fictional-remote.invalid",
+        api_key: "fr249-not-a-real-key",
+      },
+    });
+    srv = await startServer({ port: 0, cliVersion: "test" });
+
+    const r = await triage({ action: "create_goal", goal_title: "t", goal_outcome: "o" });
+    expect(r.json<TriagePayload>().applied).toBe(1);
+    await new Promise((res) => setTimeout(res, 200));
+
+    // ZERO, and it means something: G-TR-13 ARM B drives the SAME fence with
+    // the SAME config and records an attempt, so this reading distinguishes
+    // "no listener" from "a fence that does nothing". `sync` wires ten events
+    // and `goal.created` is not among them; `goals` is a SYNC_TABLE, but only a
+    // manual or scheduled push moves it and `schedules` is disabled here.
+    expect(
+      fence!.attempts,
+      `a create escaped to the network: ${JSON.stringify(fence!.attempts)}`,
+    ).toEqual([]);
+
+    // ...and the write really happened, so the zero is not the zero of a
+    // request that never ran.
+    expect(goalRows(dbPath())).toHaveLength(3);
   });
 });

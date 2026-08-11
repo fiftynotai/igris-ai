@@ -205,6 +205,12 @@ function harvest(response) {
     // priority arm is that both paths move the same single column and leave
     // the same others alone.
     brief_status: strip(c.prepare("SELECT project, brief_id, title, status, priority, effort, phase, brief_type FROM brief_status ORDER BY project, brief_id").all()),
+    // FR-249 -- goals. Without this selection a create_goal comparison would be
+    // [] === [] on every table AND on event_log, i.e. two arms agreeing that
+    // nothing happened while both had written a row. goal_id IS compared: both
+    // arms allocate MAX+1 from their OWN copy of the same seed, so the id is
+    // deterministic across them and a divergence would be real.
+    goals: strip(c.prepare("SELECT goal_id, project_slug, title, description, outcome, deadline, status, priority, metadata FROM goals ORDER BY id").all()),
   };
   // The arm reports event_log's OWN column list so the parent can assert the
   // COMPARED+EXCLUDED union equals it. The parent has no brain of its own, and
@@ -425,7 +431,7 @@ describe("G-EP-1 — dismiss: event_log is empty on BOTH sides, and empty is EXP
     expect(JSON.parse(mcp.response)).toMatchObject({ updated: true });
   });
 
-  it("the two arms are IDENTICAL on event_log AND on all four domain tables", () => {
+  it("the two arms are IDENTICAL on event_log AND on all six domain tables", () => {
     expect(diff(mcp, dash).join("\n")).toBe("");
   });
 });
@@ -484,7 +490,7 @@ describe("G-EP-2 — recurring reject: the ONE branch that logs, byte-equal on b
     }
   });
 
-  it("the two arms are IDENTICAL on event_log AND on all four domain tables", () => {
+  it("the two arms are IDENTICAL on event_log AND on all six domain tables", () => {
     expect(diff(mcp, dash).join("\n")).toBe("");
   });
 });
@@ -826,6 +832,75 @@ describe("G-EP-6 — THE FLIP: the FR-247 comparisons can actually fail", () => 
     // ...and the UNTAMPERED comparison agrees, so the flips are measuring the
     // tamper rather than a pre-existing difference.
     expect(diff(mcp, dash).join("\n")).toBe("");
+  });
+});
+
+describe("G-EP-7 — create_goal: DECLARED-empty on event_log, non-empty on goals", () => {
+  const args = { title: "Parity created goal", outcome: "an outcome", project: "demo" };
+  const mcp = armMcp("igris_goal_create", args);
+  const dash = armDashboard({
+    action: "create_goal",
+    goal_title: "Parity created goal",
+    goal_outcome: "an outcome",
+    goal_project: "demo",
+  });
+
+  it("DECLARED: a goal create logs nothing, for a traced reason", () => {
+    // `goals/index.ts` DOES `bus.emit('goal.created', …)` — and nobody listens.
+    // `goal.created` is in NEITHER `monitoring`'s `EVENT_COMPONENT_MAP` nor its
+    // `bus.on` list, so `[]` here is a FINDING rather than an absence. If either
+    // side ever starts logging, this is the assertion that says so.
+    expect(mcp.events, "the MCP goal path started logging").toEqual([]);
+    expect(dash.events, "the dashboard goal path started logging").toEqual([]);
+  });
+
+  it("...and `goals` is NOT empty, so `[] === []` cannot read as `nothing happened`", () => {
+    for (const arm of [mcp, dash]) {
+      const rows = arm.domain.goals as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[1]).toMatchObject({
+        // GL-900 is seeded, so MAX+1 is GL-901 on BOTH arms — the allocator is
+        // deterministic over identical seeds, which is what lets the id be
+        // compared rather than stripped.
+        goal_id: "GL-901",
+        project_slug: "demo",
+        title: "Parity created goal",
+        outcome: "an outcome",
+        // The HANDLER's defaults, identical on both paths. The dashboard offers
+        // neither field, and this is where "it inherits them" stops being a
+        // claim about the UI and becomes a claim about the row.
+        status: "active",
+        priority: "P2-Medium",
+      });
+    }
+  });
+
+  it("the two arms are IDENTICAL on event_log AND on every domain table", () => {
+    // The whole point: `goal_title` on the wire and `title` at the tool produce
+    // a byte-identical row. A rename that leaked its source key, or a default
+    // the dashboard supplied itself, would show up here.
+    expect(diff(mcp, dash).join("\n")).toBe("");
+  });
+
+  it("THE FLIP — a goals-ONLY difference is caught while event_log still matches", () => {
+    // Without this, the `goals` selection could be silently dropped from
+    // `harvest` and every assertion above would still pass.
+    const bad = JSON.parse(JSON.stringify(dash)) as ArmResult;
+    (bad.domain.goals as Record<string, unknown>[])[1]!.title = "BLANKED";
+    const d = diff(mcp, bad).join("\n");
+    expect(d).toContain("goals differs");
+    expect(d, "the event comparison should still agree").not.toContain("event_log differs");
+  });
+
+  it("no brief COLUMN and no EDGE moved on either arm — a create touches neither", () => {
+    for (const arm of [mcp, dash]) {
+      expect(arm.domain.entity_edges).toEqual([]);
+      expect((arm.domain.brief_status as Record<string, unknown>[])[0]).toMatchObject({
+        title: "Parity brief one",
+        status: "Ready",
+        priority: "P2-Medium",
+      });
+    }
   });
 });
 
