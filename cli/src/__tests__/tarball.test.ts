@@ -280,6 +280,21 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // give them one half of a two-half contract whose docblock insists on both.
   // TD-344 owns doing it properly. Do not "harmonize" these to
   // PACK_TIMEOUT_MS without also adding options.timeout at :276 and :362.
+  //
+  // TD-378 UPDATE — DONE, both halves, because the prediction came true and
+  // stopped being a flake. `npm pack --dry-run` was TIMED three times back to
+  // back on an otherwise idle machine: **16.53 s, 19.43 s, 19.92 s**, against
+  // TD-336's measurements of 9464 ms and 7256 ms for the same operation under
+  // EIGHT-WAY LOAD. The pack has roughly doubled in wall clock as the tarball
+  // grew this session (796 -> 801 entries, ~1.86 -> ~1.93 MB), so 15_000 is now
+  // exceeded on an IDLE machine, every run. These two stopped being
+  // intermittent and became reliably red.
+  //
+  // So both halves of the contract land together, as the paragraph above
+  // demands: `PACK_TIMEOUT_MS` replaces the two literals AND each `it` gains
+  // the matching `options.timeout`. Harmonising one without the other is what
+  // that sentence exists to prevent, and it is still the right warning — it is
+  // just no longer a reason to wait.
   it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
@@ -300,7 +315,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     expect(
       filePaths.includes("dist/brain-mcp-server/package.json"),
     ).toBe(true);
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 
   // BR-068: the bundle must vendor its production node_modules so the
   // igris-brain MCP can resolve @modelcontextprotocol/sdk on spawn.
@@ -359,7 +374,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 
   // BR-068: the vendored node_modules is a build/CI artifact only — it
   // MUST NOT ship in the published tarball (platform-locked native
@@ -392,7 +407,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     expect(
       filePaths.includes("dist/brain-mcp-server/package-lock.json"),
     ).toBe(true);
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 });
 
 // ----------------------------------------------------------------------
@@ -1378,7 +1393,23 @@ interface PackReport {
  *   the tarball precisely so the remote can be brought forward with the same
  *   instrument rather than a hand-written UPDATE -> TD-378.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~83.5 KB (85_535 B) is what is
+ * TD-378 — a DEPLOY brief, so the packed spend is prose only:
+ *   packed              1_932_758    801 entries (+1_273 B over BR-083, all of
+ *                                    it `cli/CHANGELOG.md`)
+ *   headroom remaining  ~82.3 KB     (84_262 B under TD-374's +150)
+ *
+ *   AND THE PACK ITSELF CROSSED A TEST BUDGET, which is a packed-size
+ *   consequence nobody had costed. `npm pack --dry-run` now takes **16.5-19.9 s
+ *   on an IDLE machine** (timed three times), against TD-336's 9464/7256 ms for
+ *   the same operation under EIGHT-WAY LOAD. The tarball roughly doubled the
+ *   pack's wall clock as it grew this session. Two TD-168 tests carried a
+ *   hand-written `15_000` rather than `PACK_TIMEOUT_MS` and went from
+ *   intermittent to RELIABLY RED. Fixed here, both halves of the contract at
+ *   once as the paragraph at the top of this file demands. **A growing tarball
+ *   costs seconds as well as bytes** — worth knowing before the next brief
+ *   plans a spend.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~82.3 KB (84_262 B) is what is
  * left on PACKED** — FR-249's row below is the live reading. **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the
