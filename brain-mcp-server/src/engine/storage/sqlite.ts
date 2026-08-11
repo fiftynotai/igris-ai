@@ -151,12 +151,37 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
     for (const migration of sorted) {
       if (migration.version <= currentVersion) continue;
 
-      db.transaction(() => {
-        db.exec(migration.sql);
-        db.prepare(
-          'INSERT INTO engine_migrations (component, version) VALUES (?, ?)'
-        ).run(componentName, migration.version);
-      })();
+      // MIGRATE WITH `trusted_schema = ON`, THEN HARDEN AGAIN (BR-089).
+      //
+      // The SECOND door with this problem, and the reason it needs its own fix
+      // rather than inheriting `db.ts`'s: this adapter opens its OWN connection
+      // (`new Database(dbPath)` above) and sets its own pragmas. A pragma is a
+      // property of a CONNECTION, not of a database file, so hardening one door
+      // does nothing for the other.
+      //
+      // `trusted_schema = OFF` is right at runtime — it stops a virtual table
+      // being reached from inside a trigger or view. But migration SQL is
+      // arbitrary DDL, and any `ALTER TABLE ... RENAME` in it makes SQLite
+      // re-parse every trigger in the schema, including the `vec0` cleanup
+      // triggers. Under `OFF` that re-parse is refused with
+      // `unsafe use of virtual table "learnings_vec"`, which surfaces here as
+      // `brain write engine boot failed` — 64 cli assertions at once, none of
+      // them naming a pragma.
+      //
+      // Latent under better-sqlite3 v11, live at v12 (BR-089). Scoped in TIME,
+      // and the `finally` means a migration that throws still leaves the
+      // connection hardened rather than trusting.
+      db.pragma('trusted_schema = ON');
+      try {
+        db.transaction(() => {
+          db.exec(migration.sql);
+          db.prepare(
+            'INSERT INTO engine_migrations (component, version) VALUES (?, ?)'
+          ).run(componentName, migration.version);
+        })();
+      } finally {
+        db.pragma('trusted_schema = OFF');
+      }
 
       console.error(
         `[engine] Migration ${componentName}@${migration.version}: ${migration.description}`

@@ -117,7 +117,48 @@ function isVecAvailable(): boolean {
  *
  * @param db - The database instance to migrate
  */
+/**
+ * MIGRATE WITH `trusted_schema = ON`, THEN RESTORE (BR-089).
+ *
+ * `trusted_schema = OFF` is the runtime hardening posture — it stops a virtual
+ * table being reached from inside a trigger or view, which is the shape a
+ * malicious schema uses. Schema MIGRATION is the operation that must do it
+ * legitimately: `ALTER TABLE ... RENAME TO` makes SQLite re-parse EVERY trigger
+ * in the schema, and the `vec0` cleanup triggers reference virtual tables. Under
+ * `OFF` that re-parse is refused:
+ *
+ *   SqliteError: error in trigger learnings_vec_ad:
+ *     unsafe use of virtual table "learnings_vec"
+ *
+ * The v19 `ALTER TABLE registry RENAME TO catalog` is the first migration to
+ * trip it. **Latent under better-sqlite3 v11, live at v12**, whose newer bundled
+ * SQLite enforces what v11 tolerated. Measured: the brain suite is 161/161 on
+ * v11 and 2 red on v12 with only the driver changed, and a minimal repro fails
+ * on `OFF` and passes on `ON` with the identical message.
+ *
+ * THE TOGGLE LIVES HERE, NOT AT THE CALL SITES, and that is the whole point.
+ * A pragma is a property of a CONNECTION, and `migrateSchema` has TWO callers
+ * on two different connections — `getDb()` (the singleton) and `bootEngine()`
+ * (the engine adapter's own handle, via `storage.rawConnection`). Fixing
+ * `getDb` alone left `bootEngine` broken and cost 64 cli assertions that named
+ * a boot failure rather than a pragma. The function that executes the DDL is
+ * the only place that cannot be forgotten by a third caller.
+ *
+ * Scoped in TIME rather than relaxed permanently, and the `finally` means a
+ * migration that throws still leaves the connection hardened rather than
+ * trusting. Restores to OFF unconditionally: every connection this project
+ * opens sets OFF, so there is no caller whose prior state was ON.
+ */
 function migrateSchema(db: Database.Database): void {
+  db.pragma('trusted_schema = ON');
+  try {
+    migrateSchemaInner(db);
+  } finally {
+    db.pragma('trusted_schema = OFF');
+  }
+}
+
+function migrateSchemaInner(db: Database.Database): void {
   let currentVersion = 0;
   try {
     const row = db.prepare(
