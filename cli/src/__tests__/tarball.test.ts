@@ -1338,7 +1338,23 @@ interface PackReport {
  *   number the changelog cannot. TD-374's row established that property; this
  *   row is the first to need it.
  *
- * READ THAT BEFORE PLANNING THE NEXT ONE. **~119.1 KB (121_962 B) is what is
+ * BR-089 MEASURED LAST — a DEPENDENCY bump, so the shape of the spend differs:
+ *   packed              1_899_945    800 entries
+ *   cumulative delta    +35.7 KB     (36_525 B over PACK_BASELINE_PACKED)
+ *   BR-089's own share  +10_915 B    and almost NONE of it is this brief's
+ *                                    prose. `better-sqlite3` 11 -> 12 changes
+ *                                    the vendored `dist/brain-mcp-server`
+ *                                    payload, and the two `trusted_schema`
+ *                                    fixes are comments on RUNTIME code, so
+ *                                    they are charged twice (.js + .js.map) per
+ *                                    the rule below. A dependency bump is the
+ *                                    one change whose packed cost is mostly not
+ *                                    yours to control.
+ *   headroom remaining  ~114.3 KB    (117_075 B under TD-374's +150)
+ *   browser surfaces    UNCHANGED — no `cli/dashboard/**` file was touched.
+ *                       INITIAL 285_689, TOTAL 573_322, slack 13_601 B.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~114.3 KB (117_075 B) is what is
  * left on PACKED** — FR-249's row below is the live reading. **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the

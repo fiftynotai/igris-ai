@@ -27,7 +27,7 @@
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.22.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "express": "^4.21.0",
     "sqlite-vec": "^0.1.7"
   },
@@ -40,6 +40,6 @@
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=20.0.0 <27.0.0"
   }
 }
