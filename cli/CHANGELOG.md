@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.2.1] - 2026-08-12
+
+> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-236, FR-243, FR-251, TD-345
+
+Hotfix off `v7.2.0` — install-path fixes only.
+
+### Fixed
+
+- **`npm install -g igris-ai` fails on Node 26 (BR-089)** — `better-sqlite3`
+  bumped to `^12`, which declares the 20.x–26.x range this package already
+  advertises in `engines.node`. Migration now runs with
+  `PRAGMA trusted_schema = ON` and restores `OFF` afterwards, so the v19
+  `ALTER TABLE … RENAME` no longer trips SQLite's virtual-table trigger check.
+- **Packaged `igris` bin is not executable (TD-373)** — `npm run build` now
+  restores the exec bit on `dist/index.js`.
+
 ## [7.2.0] - 2026-07-05
 
 ### Added

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.2.1] - 2026-08-12
+
+> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-236, FR-243, FR-251, TD-345
+
+Hotfix off `v7.2.0`. This is an install-path release and ships nothing else —
+the four briefs named in the bypass line above are unbuilt work on `develop`
+and no part of them is in this artifact.
+
+### Fixed
+
+- **`npm install -g igris-ai` fails on Node 26 (BR-089)** — `better-sqlite3` is
+  now `^12`, which declares the Node range we already advertise (20.x through
+  26.x). `^11` declared no `engines` at all and had no prebuilt binary for Node
+  26, so npm installed happily and then died in a node-gyp fallback. The bump
+  requires `PRAGMA trusted_schema = ON` during migration: with it `OFF`, an
+  `ALTER TABLE … RENAME` re-parses every trigger in the schema and the v19
+  migration hit `unsafe use of virtual table "learnings_vec"`. The pragma is
+  scoped to migration and restored to `OFF` after.
+- **Published `igris` bin is not executable (TD-373)** — the build left
+  `dist/index.js` at `-rw-r--r--`, so the packaged binary could not be invoked.
+  The build now restores the exec bit. Backported by hand: TD-373's own commit
+  also carries dashboard build steps that do not exist on the 7.2.x line.
+
 ## [7.2.0] - 2026-07-05
 
 ### Added
