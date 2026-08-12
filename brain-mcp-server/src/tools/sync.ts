@@ -81,6 +81,31 @@ interface SyncTableConfig {
    * appear in `columns` (asserted by the parity test).
    */
   redactCols?: string[];
+  /**
+   * BR-090: the syncKey this table used BEFORE {@link qualifierCols} were added
+   * to it. Declaring it opts the table into the migration-aware reconciliation
+   * in {@link mergeRows}; a table that has never widened its key omits both
+   * fields and is completely unaffected.
+   *
+   * WHY THIS EXISTS. A syncKey is an identity claim, so widening one silently
+   * redefines identity for every replica that has not migrated. The same
+   * logical row, keyed narrowly on one side and widely on the other, does not
+   * match — `mergeRows` takes the INSERT branch and the receiver ends up
+   * holding BOTH copies. `strategy: 'append'` never removes the older one.
+   *
+   * MUST be a strict prefix-in-spirit of `syncKey`: every entry here also
+   * appears in `syncKey`, and `syncKey` minus `qualifierCols` must equal this
+   * array as a SET. Asserted by `sync-legacy-key-parity.test.ts`, not trusted
+   * to this sentence.
+   */
+  legacySyncKey?: string[];
+  /**
+   * BR-090: the NULLABLE columns added to `syncKey` when it widened. The
+   * reconciliation only ever adopts an attribution onto a stored row whose
+   * qualifiers are ALL NULL, so it can never overwrite one attribution with a
+   * different one. Every entry MUST appear in both `syncKey` and `columns`.
+   */
+  qualifierCols?: string[];
 }
 
 function tableColumns(db: Database.Database, name: string): Set<string> {
@@ -298,6 +323,17 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'to_type', 'to_id', 'to_project',
       'edge_type',
     ],
+    // BR-090 — THE KEY ABOVE WIDENED, AND THAT IS A BREAKING CHANGE FOR EVERY
+    // REPLICA THAT HAS NOT MIGRATED. These two fields are what let a qualified
+    // row recognise its own unqualified self on the other side. Both directions
+    // are affected and PULL is the worse one: it corrupts the origin. See the
+    // reconciliation block in `mergeRows` for the full argument.
+    //
+    // At most ONE all-NULL row can exist per 5-tuple — the `edges@4` expression
+    // UNIQUE INDEX over `COALESCE(from_project,'')` / `COALESCE(to_project,'')`
+    // guarantees it — so the adopt below is never ambiguous.
+    legacySyncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+    qualifierCols: ['from_project', 'to_project'],
     timestampCol: 'created_at',
     strategy: 'append',
     columns: [
@@ -621,12 +657,39 @@ export interface MergeRowNonCanonical {
   value: string;
 }
 
+/**
+ * BR-090 — one row whose identity was reconciled across a widened syncKey.
+ *
+ * `action` names WHICH side won, because the two are not symmetric and a fix
+ * that got the direction wrong would look identical in a count:
+ *   - `adopted`  — the stored row had NULL qualifiers and took the incoming
+ *                  attribution. This is the PUSH shape (qualified row arrives
+ *                  at an unmigrated receiver).
+ *   - `retained` — the stored row was already qualified and the incoming row
+ *                  was NULL, so the local attribution was KEPT and the incoming
+ *                  NULL discarded. This is the PULL shape, and getting it
+ *                  backwards would null out every attribution on the origin.
+ */
+export interface MergeRowReconciliation {
+  key: string;
+  action: 'adopted' | 'retained';
+  /** The qualifier columns and the values now stored, after reconciliation. */
+  qualifiers: Record<string, string | null>;
+}
+
 /** Result of a mergeRows call including row-level failure breakdown. */
 export interface MergeRowsResult {
   inserted: number;
   updated: number;
   skipped: number;
   failed: number;
+  /**
+   * BR-090: rows matched across a widened syncKey instead of being duplicated.
+   * Always present; 0 for every table that never widened a key.
+   */
+  reconciled: number;
+  /** Per-row reconciliation detail. Present (and non-empty) only when > 0. */
+  reconciliations?: MergeRowReconciliation[];
   /** Present (and non-empty) only when failed > 0. */
   failures?: MergeRowFailure[];
   /**
@@ -720,9 +783,31 @@ export function mergeRows(
   let skipped = 0;
   let failed = 0;
   let normalized = 0;
+  let reconciled = 0;
   const failures: MergeRowFailure[] = [];
   const normalizations: MergeRowNormalization[] = [];
   const nonCanonical: MergeRowNonCanonical[] = [];
+  const reconciliations: MergeRowReconciliation[] = [];
+
+  // BR-090 — prepared ONCE, and only for a table that declares it widened.
+  // `legacyLookupStmt` stays null for all 19 other tables, so the reconciliation
+  // block below is unreachable for them: this cannot change the behaviour of a
+  // table that never widened a key.
+  const qualifierCols = config.qualifierCols ?? [];
+  // NOTE the absence of a qualifier predicate here: this deliberately returns
+  // EVERY row sharing the legacy key, qualified or not, because the two
+  // directions need different subsets of it (adopt wants the all-NULL row;
+  // retain wants to know whether ANY qualified row exists). Constraining it to
+  // `IS NULL` here would silently make the pull direction fall through to
+  // INSERT — which is the bug.
+  const legacyLookupStmt =
+    config.legacySyncKey && qualifierCols.length > 0
+      ? db.prepare(
+          `SELECT * FROM ${config.table} WHERE ${
+            config.legacySyncKey.map(k => `${k} IS ?`).join(' AND ')
+          }`,
+        )
+      : null;
 
   // BR-083 — `IS`, NOT `=`. `entity_edges.from_project` / `to_project` are the
   // first NULLABLE syncKey columns in the table set, and `col = NULL` is NULL,
@@ -758,7 +843,80 @@ export function mergeRows(
     try {
       const existing = lookupStmt.get(...keyValues) as Record<string, unknown> | undefined;
 
-      if (!existing) {
+      // BR-090 — RECONCILE ACROSS A WIDENED syncKey BEFORE INSERTING.
+      //
+      // A miss on the full key does NOT mean "new row". Once a syncKey gains a
+      // column, the same logical row keyed narrowly on one side and widely on
+      // the other misses — and inserting is how the duplicate is born. Ask the
+      // narrower question before concluding the row is new.
+      //
+      // THE TWO DIRECTIONS ARE NOT MIRROR IMAGES, and this is the whole
+      // subtlety of the fix:
+      //
+      //   PUSH  incoming QUALIFIED -> stored NULL  : ADOPT the attribution.
+      //   PULL  incoming NULL      -> stored QUALIFIED : RETAIN the local one.
+      //
+      // A "symmetric" implementation that just copied the incoming qualifiers
+      // over would, on the pull, null out every attribution on the ORIGIN —
+      // 458 of them here — which is strictly worse than the duplication it was
+      // written to prevent. The direction is asserted, not assumed.
+      //
+      // The conflict case is deliberately NOT reconciled: two rows sharing the
+      // legacy key with DIFFERENT non-NULL attributions are genuinely different
+      // edges (`BR-082` in one project vs another — exactly the ambiguity
+      // BR-083 existed to fix), so they fall through and insert.
+      let reconciledThisRow = false;
+      if (!existing && legacyLookupStmt && config.legacySyncKey) {
+        const legacyValues = config.legacySyncKey.map(k => row[k]);
+        const candidates = legacyLookupStmt.all(...legacyValues) as Record<string, unknown>[];
+        const incomingIsQualified = qualifierCols.some(c => normRow[c] != null);
+
+        if (incomingIsQualified) {
+          // At most one all-NULL row can exist per legacy key (the `edges@4`
+          // expression UNIQUE INDEX over COALESCE(...,'') enforces it), so this
+          // find is unambiguous by construction rather than by luck.
+          const unattributed = candidates.find(c => qualifierCols.every(q => c[q] == null));
+          if (unattributed) {
+            const setSql = qualifierCols.map(c => `${c} = ?`).join(', ');
+            const whereSql =
+              config.legacySyncKey.map(k => `${k} IS ?`).join(' AND ') +
+              ' AND ' + qualifierCols.map(c => `${c} IS NULL`).join(' AND ');
+            db.prepare(`UPDATE ${config.table} SET ${setSql} WHERE ${whereSql}`).run(
+              ...qualifierCols.map(c => (normRow[c] ?? null) as string | null),
+              ...legacyValues,
+            );
+            reconciled++;
+            reconciliations.push({
+              key: formatSyncKey(keyValues),
+              action: 'adopted',
+              qualifiers: Object.fromEntries(
+                qualifierCols.map(c => [c, (normRow[c] ?? null) as string | null]),
+              ),
+            });
+            recordNormalization();
+            reconciledThisRow = true;
+          }
+        } else if (candidates.length > 0) {
+          // Incoming carries no attribution and a stored row shares the legacy
+          // key. That stored row MUST be qualified — an unqualified one would
+          // have matched the full key above — so this is the pull shape. Keep
+          // what we have and drop the incoming NULL on the floor.
+          reconciled++;
+          reconciliations.push({
+            key: formatSyncKey(keyValues),
+            action: 'retained',
+            qualifiers: Object.fromEntries(
+              qualifierCols.map(c => [c, (candidates[0][c] ?? null) as string | null]),
+            ),
+          });
+          reconciledThisRow = true;
+        }
+      }
+
+      if (reconciledThisRow) {
+        // Handled above. Deliberately NOT counted as inserted/updated/skipped:
+        // a reconciliation is its own outcome and is reported as one.
+      } else if (!existing) {
         const cols = config.columns.filter(c => normRow[c] !== undefined);
         const placeholders = cols.map(() => '?').join(', ');
         db.prepare(
@@ -865,10 +1023,11 @@ export function mergeRows(
     }
   }
 
-  const result: MergeRowsResult = { inserted, updated, skipped, failed, normalized };
+  const result: MergeRowsResult = { inserted, updated, skipped, failed, normalized, reconciled };
   if (failed > 0) result.failures = failures;
   if (normalizations.length > 0) result.normalizations = normalizations;
   if (nonCanonical.length > 0) result.nonCanonical = nonCanonical;
+  if (reconciliations.length > 0) result.reconciliations = reconciliations;
   return result;
 }
 
@@ -1276,13 +1435,29 @@ async function handleBrainPull(
 
         const result = mergeRows(db, config, rows);
         results[config.table] = result;
-        totalMerged += result.inserted + result.updated;
+        // BR-090: an ADOPTED row changed the database and must be counted, or a
+        // pull that repaired 458 attributions reports "Total merged: 0" while
+        // 458 rows moved — the exact report-success-without-checking shape this
+        // brief exists to kill. A RETAINED row is deliberately NOT counted:
+        // nothing was written, the incoming NULL was discarded, and inflating
+        // the total would be the mirror-image lie.
+        const adopted = (result.reconciliations ?? []).filter(r => r.action === 'adopted').length;
+        totalMerged += result.inserted + result.updated + adopted;
         const failedSuffix = result.failed > 0 ? `, ${result.failed} failed` : '';
         // TD-338: silent when zero — a clean pull gains no new noise.
         const normalizedSuffix = result.normalized > 0 ? `, ${result.normalized} normalized` : '';
+        // BR-090: silent when zero, like the TD-338 fold above. A non-zero count
+        // means rows were matched across a widened syncKey instead of being
+        // duplicated — the operator should see that it happened AND which way.
+        const reconciledSuffix = result.reconciled > 0 ? `, ${result.reconciled} reconciled` : '';
         summary.push(
-          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix}${normalizedSuffix})`
+          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix}${normalizedSuffix}${reconciledSuffix})`
         );
+        for (const r of result.reconciliations ?? []) {
+          summary.push(
+            `      reconciled ${config.table} ${r.key}: ${r.action} ${JSON.stringify(r.qualifiers)}`
+          );
+        }
         // TD-338: name every fold and every non-canonical passthrough. The
         // brief's honesty contract — the fold is allowed to be lossy only in
         // the sense the fold table already licenses, and never silently.
