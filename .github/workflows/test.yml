@@ -106,10 +106,12 @@ jobs:
   # ---------------------------------------------------------------------------
   # TD-303 — CLI bats integration suite.
   #
-  # WHAT IT GUARDS: the 86 integration contracts under cli/tests/integration/,
-  # including the `init --upgrade` config.json user-data preservation guard
-  # (init.bats, "init --upgrade preserves USER.md byte-for-byte and config.json
-  # user-data"), the repo-root CLAUDE.md no-enumeration invariant
+  # WHAT IT GUARDS: the 121 integration contracts under cli/tests/integration/
+  # (re-derive, do not trust this numeral — `cd cli && npm run test:bats | grep
+  # -c '^ok '`; it read 86 while the suite actually ran 110, and BR-091 took it
+  # to 121), including the `init --upgrade` config.json user-data preservation
+  # guard (init.bats, "init --upgrade preserves USER.md byte-for-byte and
+  # config.json user-data"), the repo-root CLAUDE.md no-enumeration invariant
   # (install-symlinks.bats — MAINTAINING.md row #98's mechanical guard), and the
   # boot lifecycle detect-JSON shape (awaken-verbs.bats — row #80's guard).
   #
@@ -120,7 +122,7 @@ jobs:
   #
   # UBUNTU-ONLY BY DESIGN: the 2-OS matrix stays on the shell suite above. This
   # job exercises the CLI's Node build, which npm-publish.yml already gates on
-  # ubuntu only. No test in the suite is skipped — every one of the 86 runs.
+  # ubuntu only. No test in the suite is skipped — every one of the 121 runs.
   # ---------------------------------------------------------------------------
   cli-bats:
     name: CLI bats integration

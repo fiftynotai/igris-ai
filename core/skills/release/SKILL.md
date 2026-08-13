@@ -66,6 +66,15 @@ else
   # halves; each has been holed once. Move BOTH in lockstep with §17.2 and
   # with the pins in cli/tests/integration/release-audit-brief-type.bats.
   #
+  # A SECOND test file also reddens on a widening, and you were not warned by
+  # the file above: cli/tests/integration/release-audit-bypass-ids.bats. It
+  # does NOT pin these bytes — it EXTRACTS this predicate from this file — but
+  # it COUNTS the copies (a reorder, or dropping 'BR', fails its counting
+  # guard) and it holds a Technical-Debt row that must stay OUT of the result
+  # (adding that type fails its out-of-scope test). Expect BOTH files red on a
+  # legitimate widening; that is the warning, not a bug. Naming only one pin
+  # file here is what let TD-289's hole survive into TD-340.
+  #
   # brief_type half (TD-289) — the IN-list enumerates the real (inconsistent)
   # feature/bug vocabulary: 'Bug'/'BR' + 'Feature'/'FR'/'Feature Request'. Do
   # NOT drop synonyms: FR/Feature-typed P0/P1 blockers escaped the old
@@ -95,20 +104,45 @@ else
   # bearing: this fold stays even though v25 cleaned the data, because
   # `igris import` or a non-normalizing writer can deliver 'In_Progress'
   # tomorrow. Do not simplify it away on the grounds that the data is clean.
+  #
+  # The predicate is bound ONCE here and consumed TWICE below — by the rendered
+  # BLOCK listing and by the machine-facing bypass id list. Do NOT paste a
+  # second copy: the source guards are whole-file substring tests and cannot
+  # see two copies DRIFT, which would let the audit record gate on a narrower
+  # predicate than the listing that produced it (BR-091).
+  AUDIT_WHERE="project='$SLUG'
+      AND priority IN ('P0-Critical','P1-High')
+      AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') IN ('ready','inprogress','blocked')
+      AND brief_type IN ('Bug','BR','Feature','FR','Feature Request')"
+
   ROWS="$(sqlite3 -noheader "$DB" "
     SELECT brief_id || '  ' || priority || '  ' || status || '  ' || brief_type || '  ' || title
     FROM brief_status
-    WHERE project='$SLUG'
-      AND priority IN ('P0-Critical','P1-High')
-      AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') IN ('ready','inprogress','blocked')
-      AND brief_type IN ('Bug','BR','Feature','FR','Feature Request');")"
+    WHERE $AUDIT_WHERE;")"
   if [ -z "$ROWS" ]; then
     echo "AUDIT=PASS slug=$SLUG (zero P0/P1 broken-feature rows)"
   else
     echo "AUDIT=BLOCK slug=$SLUG — release-blocking briefs:"
     echo "$ROWS"
     if [ "${IGRIS_BYPASS_RELEASE_AUDIT:-}" = "1" ]; then
-      BYPASSED_IDS="$(printf '%s\n' "$ROWS" | awk '{print $1}' | paste -sd, -)"
+      # This list is the DURABLE CHANGELOG audit record, so ask the DB for the
+      # column — never parse it back out of $ROWS (BR-091 / #1269).
+      # WHY: a title's own double quotes re-split the rendered rows the moment
+      # this snippet is re-shaped, and it IS re-shaped — a model executes it, so
+      # it gets re-quoted or wrapped in `bash -c` as a matter of course. On
+      # 2026-08-12 that turned TD-345's `into "no match",` into a phantom id
+      # (`FR-236,FR-243,TD-345,match,,FR-251`). A DB-derived value has no
+      # rendered intermediate and survives every re-shaping.
+      # ORDER BY sits in a SUBQUERY, not beside group_concat: the in-aggregate
+      # form needs SQLite >= 3.44 and macOS system sqlite3 is older.
+      # `ids=` is read by a human/model, not parsed as a token — the ', '
+      # separator is deliberate. Do not add a second, differently-separated
+      # derivation.
+      BYPASSED_IDS="$(sqlite3 -noheader "$DB" "
+        SELECT group_concat(brief_id, ', ') FROM (
+          SELECT brief_id FROM brief_status
+          WHERE $AUDIT_WHERE
+          ORDER BY brief_id);")"
       echo "WARNING: RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1) — bypassed briefs: $BYPASSED_IDS" >&2
       echo "AUDIT=BYPASS ids=$BYPASSED_IDS"
     fi
@@ -135,7 +169,17 @@ Interpret the verdict:
      blockquote line directly under the new version heading:
      `> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): <bypassed brief-id list>`
      so the bypass ships with the release and is diff-visible to reviewers.
+     Copy the list from the `AUDIT=BYPASS ids=` line **verbatim**. Do NOT
+     re-derive it by reading the `AUDIT=BLOCK` rows above — those are a human
+     rendering, and re-deriving from them is the defect BR-091 fixed.
   3. Only then continue to Step 1.
+
+**Run the block above as written.** Do not re-wrap it in a nested `bash -c` with
+values spliced into the script text — a brief title's own double quotes then
+reach the shell's tokenizer. That re-shaping is what corrupted the id list
+produced during the v7.2.1 cut — caught by eye before it was written, so no
+shipped record was ever wrong (BR-091). The id list is now DB-derived and
+immune; the rendered `$ROWS` listing is not.
 
 The `IGRIS_BYPASS_RELEASE_AUDIT` override is **one-shot** and must **never** be
 `export`ed (it mirrors the `IGRIS_BYPASS_BRIEF_GATE` / `IGRIS_BYPASS_PHASE_GUARD`

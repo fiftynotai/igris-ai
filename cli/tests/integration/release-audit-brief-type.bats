@@ -34,6 +34,15 @@
 # 'Archived') are ABSENT BY DESIGN — a finished brief must not block a
 # release. Adding them would INVERT the gate. See the asymmetry test below.
 #
+# SIBLING FILE — READ BOTH. This file pins the §17.2 PREDICATE. Its companion
+# release-audit-bypass-ids.bats (BR-091) pins how the predicate's RESULT becomes
+# the durable CHANGELOG bypass record, and carries the counting guard that keeps
+# the predicate bound EXACTLY ONCE in the skill. That guard exists because the
+# `grep -F` pins below are whole-file SUBSTRING tests: a second, drifting copy of
+# the predicate would still satisfy them. Splitting the pin set across two files
+# is itself the TD-289 → TD-340 hazard (a pin that covers one surface while
+# another rots), so neither file may be widened without checking the other.
+#
 # LIMITATION: Step 0 is a skill-only markdown procedure with an inline sqlite3
 # query — there is no CLI verb or extracted script to invoke. This test is the
 # most faithful reproduction available: it (a) source-guards the exact
