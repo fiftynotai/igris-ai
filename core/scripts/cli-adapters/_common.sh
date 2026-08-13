@@ -275,34 +275,15 @@ sys.stdout.write("".join(lines[body_start:]))
 PY
 }
 
-# ---------------------------------------------------------------------------
-# is_claude_only <skill-md-path> [cli]
-#
-# Returns 0 (true) when the skill should be excluded from the target CLI:
-#   (a) frontmatter has `platform_overrides.{cli}.include: false`, OR
-#   (b) body contains `\bAgent\(` or `\bSkill\(` invocation patterns.
-# Returns 1 (false) otherwise.
-#
-# `cli` defaults to `codex` — the primary consumer of this heuristic.
-# Does not read stdin; safe in pipelines.
-# ---------------------------------------------------------------------------
-is_claude_only() {
-  local skill_path="$1"
-  local cli="${2:-codex}"
-  # Signal (a): explicit opt-out in frontmatter.
-  local include_flag
-  include_flag=$(get_skill_field "$skill_path" "platform_overrides.${cli}.include" || true)
-  if [ "$include_flag" = "false" ]; then
-    return 0
-  fi
-  # Signal (b): body contains Agent( or Skill( invocation patterns.
-  local body
-  body=$(strip_frontmatter "$skill_path")
-  if printf '%s' "$body" | grep -Eq '\bAgent\(|\bSkill\(' ; then
-    return 0
-  fi
-  return 1
-}
+# TD-345 removed `is_claude_only()` here. FR-153 retired the skill-exclusion
+# step entirely (every SKILL.md gets a per-skill symlink under every consumer),
+# after which the helper was kept only as "back-compat / defence-in-depth". It
+# had ZERO callers repo-wide and ZERO tests, and none of the 24 core SKILL.md
+# bodies matched its `\bAgent\(|\bSkill\(` signal — so it was dead code that
+# still carried a live defect (a `printf | grep -Eq` under this file's
+# `set -euo pipefail`, which inverted its verdict on any body past the pipe
+# buffer). Deleted rather than repaired. See docs/multi-cli.md § Skill
+# Projection for the projection model that replaced it.
 
 # ---------------------------------------------------------------------------
 # toml_escape <multiline-string>
@@ -2338,7 +2319,6 @@ PY
 export -f parse_frontmatter
 export -f get_skill_field
 export -f strip_frontmatter
-export -f is_claude_only
 export -f toml_escape
 export -f toml_escape_description
 export -f read_canonical_version

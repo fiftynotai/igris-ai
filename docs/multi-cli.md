@@ -598,8 +598,8 @@ platform_overrides:
 > Claude can omit the codex/gemini blocks entirely; co-installed Claude-only
 > skills appear as inert reference docs in `~/.codex/skills/` /
 > `~/.gemini/skills/` rather than being skipped at compile time. The
-> `is_claude_only` helper in `_common.sh` remains defined for back-compat but
-> is no longer called by the live compile path.
+> `is_claude_only` helper that implemented the old opt-out was deleted from
+> `_common.sh` by TD-345 — it had no callers after FR-153.
 
 ### Frontmatter Handling Per CLI
 
@@ -634,8 +634,8 @@ comment inside the generated `AGENTS.md`.
 exclusion step — every `SKILL.md` under the source tree gets a per-skill
 symlink in every consumer's skills dir. Consumers that can't execute
 Claude-orchestration skills will see them as inert reference docs rather than
-active commands. The `is_claude_only` helper in `_common.sh` is preserved as
-defence-in-depth back-compat but is no longer called by the live compile path.
+active commands. The `is_claude_only` helper in `_common.sh` outlived the
+mechanism as "defence-in-depth back-compat" with no caller; TD-345 deleted it.
 
 ---
 
@@ -789,7 +789,7 @@ heuristic). The legacy `md_to_agents_md.sh` script is deleted.
    `compile_harnesses.sh` walks each `<name>/SKILL.md` under the source root
    and emits one symlink per skill at `<target>/<name>` → `<source>/<name>`.
 4. Source `scripts/cli-adapters/_common.sh` for shared helpers
-   (`parse_frontmatter`, `strip_frontmatter`, `is_claude_only`, `toml_escape`).
+   (`parse_frontmatter`, `strip_frontmatter`, `toml_escape`).
 5. Add a vitest case in `cli/src/__tests__/bridges.test.ts` (or a bats fixture
    in `cli/tests/integration/install-symlinks.bats`) exercising the new adapter.
 

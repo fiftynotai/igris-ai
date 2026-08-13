@@ -214,10 +214,10 @@ PY
       fi
       if [ -n "$launch" ]; then
         entry_ok=1
-        if printf '%s' "$launch" | grep -qE '(^|[[:space:]])npx([[:space:]]|$)'; then
+        if printf '%s' "$launch" | grep -E '(^|[[:space:]])npx([[:space:]]|$)' >/dev/null; then
           launch_ok=0
           detail="launch is npx-wrapped ('$launch') — add-mcp treats command 'node' as an npx package -> runtime network fetch -> broken brain + violates the no-runtime-npx pin (constraint #2)"
-        elif printf '%s' "$launch" | grep -q "node .*$BRAIN_BASENAME"; then
+        elif printf '%s' "$launch" | grep "node .*$BRAIN_BASENAME" >/dev/null; then
           launch_ok=1
         else
           launch_ok=0; detail="unexpected launch spec ('$launch')"
@@ -350,7 +350,7 @@ check4_hookgate() {
     | HOME="$FAKEHOME" bash "$PTU" 2>&1)"
   echo "--- 4a registered, no brief (expect deny) ---"
   printf '%s\n' "$out_reg" | sed "s#$SB#\$SB#g" | head -6
-  if printf '%s' "$out_reg" | grep -q "permissionDecision"; then
+  if printf '%s' "$out_reg" | grep "permissionDecision" >/dev/null; then
     set_result "hookgate:reg_deny" "PASS"
   else
     set_result "hookgate:reg_deny" "FAIL"; note_gap "[hook-gate] registered project with no brief did NOT deny the write"
@@ -360,7 +360,7 @@ check4_hookgate() {
     | HOME="$FAKEHOME" bash "$PTU" 2>&1)"
   echo "--- 4b unregistered (expect allow, no deny) ---"
   printf '%s\n' "${out_unreg:-<empty>}" | sed "s#$SB#\$SB#g" | head -6
-  if printf '%s' "$out_unreg" | grep -q "permissionDecision"; then
+  if printf '%s' "$out_unreg" | grep "permissionDecision" >/dev/null; then
     set_result "hookgate:unreg_allow" "FAIL"; note_gap "[hook-gate] unregistered project write was DENIED (global misfire)"
   else
     set_result "hookgate:unreg_allow" "PASS"
@@ -370,7 +370,7 @@ check4_hookgate() {
     | HOME="$FAKEHOME" bash "$SST" 2>/dev/null)"
   echo "--- 4c unregistered session_start (expect empty additionalContext, no /boot nudge) ---"
   printf '%s\n' "${out_sst:-<empty>}" | sed "s#$SB#\$SB#g" | head -4
-  if printf '%s' "$out_sst" | grep -qE "IGRIS SESSION STATE|AUTO-BOOT|/boot"; then
+  if printf '%s' "$out_sst" | grep -E "IGRIS SESSION STATE|AUTO-BOOT|/boot" >/dev/null; then
     set_result "hookgate:unreg_nonudge" "FAIL"; note_gap "[hook-gate] unregistered session_start injected Igris context/nudge"
   else
     set_result "hookgate:unreg_nonudge" "PASS"
@@ -381,7 +381,7 @@ check4_hookgate() {
     | HOME="$FAKEHOME" bash "$SST" 2>/dev/null)"
   echo "--- 4d registered session_start (expect Igris context present) ---"
   printf '%s\n' "${out_sst_reg:-<empty>}" | sed "s#$SB#\$SB#g" | head -4
-  if printf '%s' "$out_sst_reg" | grep -qE "IGRIS SESSION STATE|AUTO-BOOT|additionalContext"; then
+  if printf '%s' "$out_sst_reg" | grep -E "IGRIS SESSION STATE|AUTO-BOOT|additionalContext" >/dev/null; then
     set_result "hookgate:reg_inject" "PASS"
   else
     set_result "hookgate:reg_inject" "FAIL"; note_gap "[hook-gate] registered session_start did NOT inject Igris context"

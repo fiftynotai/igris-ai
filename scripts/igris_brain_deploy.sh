@@ -244,11 +244,17 @@ start_pm2() {
 
   # Verify it's running
   sleep 2
-  if pm2 list | grep -q "$PM2_APP_NAME"; then
+  # TD-345: the missing `-q` is deliberate — do not add it back. `pm2 list |
+  # grep -q` under this script's `set -euo pipefail` (line 10) reports a false
+  # "no match" whenever grep short-circuits while pm2 still has output buffered
+  # — pm2's table is long on a busy VPS. Without `-q`, grep reads to EOF, pm2
+  # always finishes writing, and pm2's OWN failure still propagates through
+  # pipefail into this `if` (falling to the [WARN] branch below).
+  if pm2 list | grep "$PM2_APP_NAME" >/dev/null; then
     echo "  Verifying health..."
     local health_response
     health_response=$(curl -s "http://127.0.0.1:${PORT}/health" 2>/dev/null || echo "FAIL")
-    if echo "$health_response" | grep -q '"status":"ok"'; then
+    if echo "$health_response" | grep '"status":"ok"' >/dev/null; then
       echo "  [ok] Health check passed: $health_response"
     else
       echo "  [WARN] Health check did not return expected response."

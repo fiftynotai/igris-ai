@@ -820,3 +820,216 @@ MD
   assert_contains "STALE MAP" || return 1
   assert_contains "core/skills/TD334_NOT_A_SKILL/SKILL.md" || return 1
 }
+
+# =============================================================================
+# TD-345 — a MATCH must never be reported as "no match".
+#
+# The defect: `printf '%s\n' "$BIG" | grep -q PAT` under `set -o pipefail`.
+# grep -q exits at the FIRST match; if the producer still has buffered output
+# it dies of SIGPIPE (141); pipefail promotes 141 to the pipeline status; the
+# caller reads "no match" for something that matched.
+#
+# ### FIXTURE ORIENTATION — READ BEFORE "CORRECTING" THESE TESTS ###
+# The tokens are deliberately on the FIRST lines of the fixture, with the
+# padding BELOW them. That orientation is not incidental; it is the whole test.
+#
+#   * A token matching LATE in a large buffer is the SAFE case. grep has to
+#     read to (nearly) EOF to reach it, by which time the producer has already
+#     written everything and exited 0 — no SIGPIPE, no false negative.
+#   * A token matching EARLY in a large buffer is the DEFECTIVE case. grep
+#     exits after roughly one read while hundreds of KB are still unwritten.
+#
+# Measured on this machine (macOS, bash 3.2, 64 KB pipe buffer), token on
+# line 1, 40 trials of `printf | grep -q` under pipefail:
+#
+#   buffer 7,800,011 B, token on line 1      -> 40/40 spurious misses
+#   buffer 7,800,011 B, token on LAST line   ->  0/40 spurious misses
+#   buffer     1,961 B, token on line 1      ->  0/40 spurious misses
+#
+# So a fixture built the other way round — a token late in a big buffer, or an
+# early token in a small buffer — passes GREEN against the unfixed script and
+# proves nothing. Do not move the tokens to the bottom and do not shrink the
+# padding below ~1 MB.
+# =============================================================================
+
+# _td345_big_fixture — build a sandbox repo whose staged deletion yields a
+# ~1 MB REMOVED_LINES buffer with 12 mapped `column` tokens on its first
+# 12 lines. Leaves the deletion staged and MAINTAINING.md committed (unstaged),
+# so only the WARN scan half runs.
+_td345_big_fixture() {
+  mkdir -p "$REPO/src"
+  echo "const consumer = 1;" > "$REPO/src/consumer.ts"
+
+  {
+    for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+      echo "  TD345_TOK_$n: text,"
+    done
+    # ~1.2 MB of padding BELOW the tokens (see FIXTURE ORIENTATION above).
+    awk 'BEGIN { for (i = 0; i < 30000; i++) print "  filler_column_padding_to_widen_the_buffer: text," }'
+  } > "$REPO/src/schema.ts"
+
+  {
+    echo "# MAINTAINING"
+    echo
+    echo "## The Map"
+    echo
+    echo "| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |"
+    echo "|---|---|---|---|---|"
+    for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+      echo "| \`TD345_TOK_$n\` | \`column\` | \`src/consumer.ts:1\` | TD-345 | re-point it |"
+    done
+  } > "$REPO/MAINTAINING.md"
+
+  git -C "$REPO" add -A
+  git -C "$REPO" commit -qm init
+  # Stage the deletion: every line of schema.ts becomes a removed line, so the
+  # 12 tokens sit at the TOP of a ~1.2 MB buffer.
+  git -C "$REPO" rm -q src/schema.ts
+}
+
+# -----------------------------------------------------------------------------
+# (v) TD-345 positive control: 12 tokens matching EARLY in a ~1.2 MB removed-
+#     lines buffer must ALL be reported. Asserts every member by name — a count
+#     of report lines would let one token's disappearance hide behind another's.
+# -----------------------------------------------------------------------------
+@test "(v) TD-345: every early-matching token in a 1MB buffer is reported" {
+  _td345_big_fixture
+
+  # Guard: the fixture is only meaningful if the buffer is actually large.
+  local removed_lines
+  removed_lines="$(git -C "$REPO" diff --cached -U0 | grep -c '^-')"
+  if [ "$removed_lines" -lt 30000 ]; then
+    echo "FIXTURE NOT ARMED: only $removed_lines removed lines, need >=30000" >&2
+    return 1
+  fi
+
+  run_checker
+  [ "$status" -eq 0 ] || return 1
+
+  local n
+  for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
+    assert_contains "'TD345_TOK_$n' (column) is a mapped contract changed in this diff." || return 1
+  done
+  assert_contains "12 mapped contract(s) touched" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (w) TD-345 determinism: the same fixture 5x must report 12 every time.
+#     Note the `= 12` assertion is the ARMED half — the unfixed script is
+#     stably WRONG (0), so "all five runs agree" alone would pass RED. The 5x
+#     is the anti-flake half. Both are required.
+# -----------------------------------------------------------------------------
+@test "(w) TD-345: the mapped-contract count is 12 on all of 5 runs" {
+  _td345_big_fixture
+
+  local i counts=""
+  for i in 1 2 3 4 5; do
+    run_checker
+    [ "$status" -eq 0 ] || return 1
+    counts="$counts $(printf '%s\n' "$output" \
+      | sed -n 's/^.*\[contract-check\] \([0-9][0-9]*\) mapped contract(s) touched.*$/\1/p' \
+      | tail -1)"
+  done
+
+  output="run counts:$counts"
+  assert_contains "run counts: 12 12 12 12 12" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (x) TD-345 / F2: map_is_staged() was the same defect inside the TD-334
+#     HARD-FAIL gate's trigger. `git diff --cached --name-only | grep -qxF
+#     MAINTAINING.md` — the name list is index-sorted so MAINTAINING.md lands
+#     in the first few hundred bytes; on a large staged set grep short-circuits
+#     immediately, git dies of SIGPIPE, map_is_staged returns FALSE, and the
+#     hard-fail map check SILENTLY DOES NOT RUN. The tell is the absence of the
+#     `map citations:` summary line, so that is what this asserts — 5/5 runs.
+#
+#     Measured RED on a 501-path / 27,394-byte staged name list: the old form
+#     returned false 40/40; the fixed form returned true 40/40.
+#
+#     THE SHIPPED FIX IS `| grep -xF … >/dev/null` — a PIPE with `-q` REMOVED,
+#     not a herestring. An earlier draft of this brief used `<<<` and it was
+#     declined on cost: against the ORACLE baseline (the same script with
+#     pipefail off and `-q` kept) the herestring measured +33.5% where the
+#     shipped form measures +3.5% — one interleaved run, 5 repetitions each,
+#     medians, both emitting 152 warnings. bash 3.2.57 writes a $TMPDIR file
+#     per herestring. The invariant is "the reader must not short-circuit",
+#     NOT "no pipe" — so do not read the pipe here as non-compliant and do not
+#     "restore" the herestring. See the sibling comment at
+#     scripts/check_contract_consumers.sh token_hit().
+# -----------------------------------------------------------------------------
+@test "(x) TD-345: the map hard-fail gate still triggers on a large staged set" {
+  mkdir -p "$REPO/src"
+  echo "const consumer = 1;" > "$REPO/src/consumer.ts"
+
+  # ~700 tracked files under long nested paths, so `--name-only` output is
+  # comfortably past the 64 KB pipe buffer (measured: ~90 KB; 500 files gave
+  # only 64,031 B, which sits inside the nondeterministic band and would make
+  # this test flaky rather than armed).
+  local d="$REPO/a_very_long_directory_name_segment/another_long_segment_here/and_a_third_one"
+  mkdir -p "$d"
+  local i
+  for i in $(seq -w 1 700); do
+    echo "x" > "$d/padding_file_with_a_deliberately_long_name_$i.txt"
+  done
+
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `TD345_GATE_TOKEN` | `column` | `src/consumer.ts:1` | TD-345 | re-point it |
+MD
+  git -C "$REPO" add -A
+
+  # Guard: the trigger's producer must actually exceed the pipe buffer, or the
+  # test passes for the wrong reason.
+  local nameonly_bytes
+  nameonly_bytes="$(git -C "$REPO" diff --cached --name-only | wc -c | tr -d ' ')"
+  if [ "$nameonly_bytes" -lt 65536 ]; then
+    echo "FIXTURE NOT ARMED: --name-only is only $nameonly_bytes bytes, need >=65536" >&2
+    return 1
+  fi
+  # Guard: MAINTAINING.md must be in the staged set at all.
+  # NOTE: this `| grep -qxF` is NOT a TD-345 site. Condition (a) fails — no file
+  # under test/ sets `pipefail` (verified TD-345: `git grep -n pipefail -- test/`
+  # finds only prose, and `test_helper.bash` carries no `set -` line at all), and
+  # a bats body runs with pipefail OFF (probed). It also fails LOUDLY rather than
+  # silently: a spurious "no match" returns 1 with the message below. Do not read
+  # it as a counter-example to the block above.
+  if ! git -C "$REPO" diff --cached --name-only | grep -qxF MAINTAINING.md; then
+    echo "FIXTURE NOT ARMED: MAINTAINING.md is not staged" >&2
+    return 1
+  fi
+
+  # The `[ "$status" -eq 0 ]` below is LOAD-BEARING, not boilerplate:
+  # check_map_self_consistency prints the `map citations:` summary line at
+  # :536 BEFORE `return "$bad"` at :537, so a gate that RAN AND HARD-FAILED
+  # still emits the exact string this test greps for. The grep proves the gate
+  # RAN; only the exit code proves it ran AND PASSED — which is the
+  # operator-facing half of "arming this gate does not block a commit".
+  # Armed both ways: with a citation planted to hard-fail the gate, this test
+  # goes RED on the status line while `seen` still reads "ran ran ran ran ran".
+  #
+  # The `|| return 1` is this file's TD-341 convention, applied for
+  # consistency — NOT because a bare `[ ]` would be vacuous here. Measured, in
+  # a bats body: a non-final bare `[ ]` DOES fail the test (single bracket is
+  # the `test` BUILTIN, a simple command, so bash's ERR trap fires), while a
+  # non-final bare `[[ ]]` does NOT (compound conditionals are exempt). TD-341
+  # and the header above are about `[[ ]]`; do not generalise them to `[ ]`.
+  local seen=""
+  for i in 1 2 3 4 5; do
+    run_checker
+    [ "$status" -eq 0 ] || return 1
+    if [[ "$output" == *"map citations:"* ]]; then
+      seen="$seen ran"
+    else
+      seen="$seen SKIPPED"
+    fi
+  done
+
+  output="gate:$seen"
+  assert_contains "gate: ran ran ran ran ran" || return 1
+}

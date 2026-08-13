@@ -60,12 +60,12 @@ wait_for_url() {
   local port; port="$(free_port)"
   run $CLI_BIN dashboard --smoke --no-open --port "$port"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"ok": true'
-  echo "$output" | grep -q '"bundle_present": true'
+  echo "$output" | grep '"ok": true' >/dev/null
+  echo "$output" | grep '"bundle_present": true' >/dev/null
   # Every probed path must be 200 — including /api/graph/stats, which must
   # DEGRADE cleanly rather than error on this empty sandboxed brain.
-  echo "$output" | grep -q '"/api/health"'
-  echo "$output" | grep -q '"/api/graph/stats"'
+  echo "$output" | grep '"/api/health"' >/dev/null
+  echo "$output" | grep '"/api/graph/stats"' >/dev/null
   [ "$(echo "$output" | grep -c '"ok": false')" -eq 0 ]
 }
 
@@ -141,7 +141,7 @@ wait_for_url() {
   # computed from `reads.length` above — so it is a SECOND place the endpoint
   # count is spelled out, and the exact-set assertion earlier in this test does
   # not cover it.
-  echo "$output" | grep -q '18 read paths all 200, 1 write path 400'
+  echo "$output" | grep '18 read paths all 200, 1 write path 400' >/dev/null
 }
 
 @test "dashboard --smoke releases the lock on exit" {
@@ -155,8 +155,8 @@ wait_for_url() {
   local port; port="$(free_port)"
   run $CLI_BIN dashboard --smoke --no-open --port "$port"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"bundle_dir"'
-  echo "$output" | grep -q 'dist/dashboard'
+  echo "$output" | grep '"bundle_dir"' >/dev/null
+  echo "$output" | grep 'dist/dashboard' >/dev/null
 }
 
 # --- T5 — lifecycle + single instance --------------------------------------
@@ -198,8 +198,8 @@ wait_for_url() {
   # leave the first instance's lock (same pid) untouched.
   run $CLI_BIN dashboard --no-open
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q "already running"
-  echo "$output" | grep -q "http://127.0.0.1:$port/"
+  echo "$output" | grep "already running" >/dev/null
+  echo "$output" | grep "http://127.0.0.1:$port/" >/dev/null
 
   run node -e "
     const l = JSON.parse(require('node:fs').readFileSync('$IGRIS_BRAIN_DIR/dashboard.lock', 'utf-8'));
@@ -230,7 +230,7 @@ EOF
   local port; port="$(free_port)"
   run $CLI_BIN dashboard --smoke --no-open --port "$port"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"ok": true'
+  echo "$output" | grep '"ok": true' >/dev/null
 }
 
 @test "a MALFORMED lock is reclaimed, never fatal" {
@@ -253,7 +253,7 @@ EOF
 
   run $CLI_BIN dashboard --no-open --port "$port" --smoke
   [ "$status" -eq 1 ]
-  echo "$output" | grep -q "in use"
+  echo "$output" | grep "in use" >/dev/null
 
   # Restore so teardown's kill still cleans up predictably.
   kill -TERM "$DASH_PID"; wait "$DASH_PID" || true; DASH_PID=""
@@ -262,7 +262,7 @@ EOF
 @test "--port rejects a non-numeric value with exit 2" {
   run $CLI_BIN dashboard --no-open --port abc --smoke
   [ "$status" -eq 2 ]
-  echo "$output" | grep -q "must be an integer"
+  echo "$output" | grep "must be an integer" >/dev/null
 }
 
 # --- degraded brain --------------------------------------------------------
@@ -319,7 +319,7 @@ EOF
     }).on('error', e => { console.error(e.message); process.exit(1); });
   "
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '2 NODES · 1 EDGES'
+  echo "$output" | grep '2 NODES · 1 EDGES' >/dev/null
 
   # The project drill-down is the SAME endpoint with a scope (D6).
   run node -e "
@@ -379,11 +379,11 @@ EOF
   local port; port="$(free_port)"
   run $CLI_BIN dashboard --smoke --no-open --port "$port"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"brain_present": false'
+  echo "$output" | grep '"brain_present": false' >/dev/null
   # Every probe still 200s.
   [ "$(echo "$output" | grep -c '"ok": false')" -eq 0 ]
   # No stack trace anywhere in the output.
-  ! echo "$output" | grep -q "    at "
+  ! echo "$output" | grep "    at " >/dev/null
 }
 
 # --- T23 (FR-240) — the layer endpoints on a seeded brain and on a missing one
@@ -560,7 +560,7 @@ get_json() {
   # The DETAIL carries the body, and BOTH identifiers are required (BR-078).
   run get_json "$port" "/api/brief?project=demo&id=FR-240"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'FR-240 body from disk'
+  echo "$output" | grep 'FR-240 body from disk' >/dev/null
 
   run get_json "$port" "/api/brief?id=FR-240"
   [ "$status" -eq 0 ]
@@ -574,19 +574,19 @@ get_json() {
 
   run get_json "$port" "/api/learnings"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"Wrapper split"'
+  echo "$output" | grep '"Wrapper split"' >/dev/null
 
   run get_json "$port" "/api/goals"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"GL-001"'
+  echo "$output" | grep '"GL-001"' >/dev/null
 
   run get_json "$port" "/api/context-docs?project=demo"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q '"coding_guidelines"'
+  echo "$output" | grep '"coding_guidelines"' >/dev/null
 
   run get_json "$port" "/api/context-doc?project=demo&type=coding_guidelines"
   [ "$status" -eq 0 ]
-  echo "$output" | grep -q 'Read me over HTTP'
+  echo "$output" | grep 'Read me over HTTP' >/dev/null
 
   # AC #7, end to end: a full crawl of the layer surface must not touch the file.
   # `access_count` is the sharpest probe — `handleMemoryGet` bumps it and the
@@ -700,8 +700,8 @@ get_json() {
   [ "$status" -eq 0 ]
 
   # The bundle root must resolve to the EXTRACTED package, not to the repo.
-  echo "$output" | grep -q '"bundle_present": true'
-  echo "$output" | grep -q "$work/package/dist/dashboard"
+  echo "$output" | grep '"bundle_present": true' >/dev/null
+  echo "$output" | grep "$work/package/dist/dashboard" >/dev/null
 
   # `/` and every /api/* path must be 200 from the extracted layout.
   [ "$(echo "$output" | grep -c '"ok": false')" -eq 0 ]

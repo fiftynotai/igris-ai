@@ -271,23 +271,73 @@ CITE_LINEREFS=0
 CITE_WARNS=0
 
 # Called explicitly at the end of check_map_self_consistency — deliberately NOT
-# from an EXIT trap. Installing any EXIT trap makes bash stop dying on SIGPIPE,
-# so every `printf ... | grep -q` in token_hit() starts reporting
-# "printf: write error: Broken pipe" once grep short-circuits. That is 30+ lines
-# of noise in the pre-commit hook, which is worse than leaking two small temp
-# files if the script is killed mid-run.
+# from an EXIT trap. See the TD-334 / TD-345 note below before changing that.
 #
-# THAT IS ONLY THE NOISY HALF, AND REMOVING THE TRAP DOES NOT FIX THE OTHER ONE.
-# `token_hit()` is `printf | grep -q` under `set -euo pipefail`. grep -q
-# short-circuits, printf dies of SIGPIPE, and pipefail turns that into a false
-# "no match" EVEN WHEN GREP MATCHED — with or without a trap. Measured on a
-# map-staged index: 331/330/333/334/332 mapped contracts across five runs where
-# the true count is 367, i.e. ~36 consumer warnings silently dropped, a
-# DIFFERENT subset each run. It is pre-existing (byte-identical at HEAD) and
-# touches only scan(), which returns 0 unconditionally, so it can never change
-# an exit code — but it means the WARN half under-reports by ~10%.
-# TD-345 owns fixing it. Do not "fix" it here by re-adding a trap; that only
-# restores the noise while leaving the silent drop exactly where it is.
+# TD-345 (RESOLVED — the silent drop is gone).
+# ------------------------------------------------------------------------
+# The defect TD-334 recorded here was real: `token_hit()` was
+# `printf '%s\n' "$BIG" | grep -q PAT` under `set -euo pipefail`. grep -q exits
+# at the first match, printf dies of SIGPIPE (141) with the buffer half
+# written, pipefail promotes 141 to the pipeline status, and the caller reads
+# "no match" for something that MATCHED — a DIFFERENT subset each run, because
+# whether the producer's next write() lands after grep's exit is a scheduling
+# race at the pipe-buffer boundary.
+#
+# The fix was to REMOVE THE SHORT-CIRCUIT, not to touch the trap: all four call
+# sites dropped `-q` and redirect stdout instead (`producer | grep PAT
+# >/dev/null`). grep now reads to EOF, so the producer always finishes writing
+# and can never be orphaned. The pipe is retained deliberately — see the
+# cost note under token_hit(); a herestring is equally correct but measured
+# +33.5% against the oracle where this form measures +3.5%, on a script that
+# runs in the pre-commit hook.
+#
+# Measured (macOS, bash 3.2, 64 KB pipe buffer), on a pinned corpus —
+# `git worktree add --detach WT HEAD` then
+# `git rm --cached scripts/check_contract_consumers.sh core/skills/hunt/SKILL.md
+#  core/scripts/verify_mirror.sh` (76,166 bytes of removed lines):
+#
+# Two measurement rounds were taken; each figure below names its round, because
+# the counts are nondeterministic and mixing rounds is how a false "one run"
+# claim gets built.
+#
+#   ROUND 2 (the round matching the SHIPPED `-q`-dropped build):
+#     before, 12 consecutive runs : 124 126 125 125 125 125 125 126 125 125 122 127
+#                                   (FIVE distinct values: 122 124 125 126 127)
+#     oracle (true value), 3 runs : 152, 152, 152
+#     after,  12 consecutive runs : 152 x12, all 12 token sets byte-identical,
+#                                   and byte-identical to the oracle's
+#
+#   ROUND 1 (taken against an earlier herestring build; the BEFORE arm is the
+#   same HEAD code, so it is a second sample of the same population):
+#     before, 12 consecutive runs : 126 124 125 126 125 126 126 126 126 125 126 126
+#                                   (3 distinct values). This round additionally
+#                                   tracked the token SET across runs: `tier` and
+#                                   `true` appeared in some runs and not others,
+#                                   i.e. it is not merely the count that moves.
+#
+# On a larger corpus the loss is near-total rather than partial: 646,554 bytes
+# of removed lines gave 1/1/1/1/1 against an oracle of 868.
+#
+# TD-345 also fixed `map_is_staged()`, which was the SAME defect sitting in the
+# TRIGGER of the hard-fail gate above — `git diff --cached --name-only |
+# grep -qxF MAINTAINING.md`. The name list is index-sorted, so MAINTAINING.md
+# lands in the first few hundred bytes and grep short-circuits at once. On a
+# 501-path / 27,394-byte staged set it returned false 40/40, which means the map
+# self-consistency check — a gate that can exit 1 — SILENTLY DID NOT RUN and the
+# script still reported exit 0. That was strictly worse than the WARN
+# under-report: a blocking gate reporting clean because it never looked.
+#
+# THE EXIT TRAP IS STILL DELIBERATELY ABSENT, and the reason has changed.
+# TD-334's argument was "an EXIT trap stops bash dying on SIGPIPE, so every
+# `printf | grep -q` starts printing 'write error: Broken pipe' — 30+ lines of
+# noise in the pre-commit hook." THAT PREMISE IS DEAD; do not cite it as a live
+# reason. Note WHY it is dead, because the pipelines are still here: the noise
+# required a producer to be orphaned, and with `-q` gone grep reads to EOF, so
+# nothing ever receives SIGPIPE — with or without a trap. No pipeline in this
+# file can produce a Broken-pipe line any more.
+# What remains is only leak-vs-noise (two small temp files if the script is
+# SIGKILLed mid-run versus the cost of a trap), which is a separate decision and
+# out of TD-345's scope. The trap stays deliberately absent.
 cleanup_path_index() {
   [ -n "$CITE_FILE_INDEX" ] && rm -f "$CITE_FILE_INDEX"
   [ -n "$CITE_DIR_INDEX" ] && rm -f "$CITE_DIR_INDEX"
@@ -526,9 +576,20 @@ collect_changes() {
 }
 
 # Is MAINTAINING.md itself in the staged set (any status)?
+# TD-345: the `-q` is GONE and the pipe is KEPT, deliberately — see token_hit().
+# `git … --name-only | grep -qxF` was the same SIGPIPE-under-pipefail defect as
+# token_hit() had, and here it sat in the TRIGGER of the hard-fail gate: the
+# name list is index-sorted so MAINTAINING.md lands in the first few hundred
+# bytes, grep -q short-circuited immediately, git died of SIGPIPE, pipefail
+# promoted it, and the map self-consistency check silently did not run at all.
+# Measured on a 501-path / 27,394-byte staged set: false 40/40 with `-q`,
+# true 40/40 without it.
+# Without `-q`, grep reads to EOF, so git always finishes writing and its OWN
+# failure still propagates through pipefail — preserving the pre-existing
+# fail-open posture (git fails -> returns 1 -> the map check is skipped).
 map_is_staged() {
   git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null \
-    | grep -qxF "MAINTAINING.md"
+    | grep -xF "MAINTAINING.md" >/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -538,6 +599,39 @@ map_is_staged() {
 #   others      -> anchored / word-boundary identifier match in removed lines
 #                  (avoids `phase` matching `phaseout`).
 # Returns 0 (match) / 1 (no match).
+#
+# ###########################################################################
+# TD-345 — THE MISSING `-q` IS THE FIX. DO NOT "OPTIMISE" IT BACK IN.
+# ###########################################################################
+# The old shape was `printf '%s\n' "$BIG" | grep -q PAT` under `set -o
+# pipefail`: grep -q exits at the FIRST match, printf dies of SIGPIPE (141) with
+# the rest of the buffer unwritten, pipefail takes the max, and the caller reads
+# "no match" for something that MATCHED — a different subset each run.
+#
+# Dropping `-q` (and redirecting stdout) forces grep to read to EOF, so the
+# producer always finishes writing and can never be orphaned. The pipe is kept
+# ON PURPOSE: a herestring also fixes the bug, but on macOS bash 3.2 `<<<`
+# writes the whole buffer to a $TMPDIR file on EVERY call — and this script
+# sits in the pre-commit hook.
+#
+# ONE interleaved run, 5 repetitions each, medians, CORPUS-B below. The
+# BASELINE IS THE ORACLE (this script with pipefail off and `-q` kept) — the
+# only variant emitting identical output while differing in one thing. The
+# buggy `grep -q` variant is NOT a control: it emitted 127 warnings where the
+# others emitted 152, so it is doing strictly less work and can never be the
+# denominator.
+#   oracle (pipefail off, `-q` kept)  11.30 s   152 warnings   baseline
+#   `-q` dropped  (SHIPPED)           11.69 s   152 warnings   +3.5%
+#   herestring                        15.09 s   152 warnings   +33.5%
+#
+# So the invariant to preserve is "the reader must not short-circuit", NOT "no
+# pipe". Re-adding `-q` here (or `-m1`, or a `| head`) silently restores the
+# bug. Tests (v)/(w)/(x) in test/check_contract_consumers.test.bash are the
+# guard — they go RED on any such change.
+#
+# Also: do not convert the ERE arm to `[[ =~ ]]`. bash matches the buffer as ONE
+# string, so `^`/`$` would silently become buffer anchors instead of grep's line
+# anchors.
 # ---------------------------------------------------------------------------
 token_hit() {
   local type="$1" token="$2"
@@ -545,12 +639,12 @@ token_hit() {
     file)
       # Path literal in the delete/rename set.
       if [ -n "$CHANGED_PATHS" ] && printf '%s\n' "$CHANGED_PATHS" \
-          | grep -qF -- "$token"; then
+          | grep -F -- "$token" >/dev/null; then
         return 0
       fi
       # Or a removed diff line referencing the path literal.
       if [ -n "$REMOVED_LINES" ] && printf '%s\n' "$REMOVED_LINES" \
-          | grep -qF -- "$token"; then
+          | grep -F -- "$token" >/dev/null; then
         return 0
       fi
       ;;
@@ -560,7 +654,8 @@ token_hit() {
       # `-` per the locale; for dotted/dashed identifiers we anchor on the
       # surrounding non-identifier char set explicitly.
       if [ -n "$REMOVED_LINES" ] && printf '%s\n' "$REMOVED_LINES" \
-          | grep -qE "(^|[^A-Za-z0-9_])$(escape_ere "$token")([^A-Za-z0-9_]|\$)"; then
+          | grep -E "(^|[^A-Za-z0-9_])$(escape_ere "$token")([^A-Za-z0-9_]|\$)" \
+            >/dev/null; then
         return 0
       fi
       ;;

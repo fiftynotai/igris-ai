@@ -1591,7 +1591,14 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     while IFS= read -r _aid; do
       [ -z "$_aid" ] && continue
       TOTAL=$((TOTAL + 1))
-      if printf '%s\n' "$_agentid_supported" | grep -qxF "$_aid"; then
+      # TD-345: the missing `-q` is deliberate — do not add it back. Under this
+      # file's `set -euo pipefail` (line 39) a `printf | grep -q` reports a
+      # false "no match" when grep short-circuits with the producer still
+      # writing; without `-q` grep reads to EOF and printf can never be
+      # orphaned. The supported-agent list is short TODAY, but size-immunity is
+      # a snapshot, not an invariant — a false "no match" here would report a
+      # DRIFTED agent-id that is actually fine.
+      if printf '%s\n' "$_agentid_supported" | grep -xF "$_aid" >/dev/null; then
         # Silent MATCH (mirrors the grant invariant — loud only on drift).
         MATCH=$((MATCH + 1))
       else
