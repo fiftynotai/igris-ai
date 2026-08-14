@@ -1457,3 +1457,711 @@ EOF
   [[ "$output" == *"[indep/claude] DRIFTED"* ]]
   [[ "$output" == *"[indep/gemini] MATCH"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# TD-388: the sibling-worktree MCP exemption.
+#
+# MECHANISM UNDER TEST. The harness MCP configs (~/.claude.json and friends) are
+# HOME-anchored, so every worktree of a repo SHARES them; the projected entry
+# names a build artifact INSIDE one checkout. With N worktrees, the N-1 that did
+# not compile last each see `mcp/<name>/<harness>` DRIFTED on `args`, and the
+# gate's own remedy (`igris harness compile`) would re-point the shared config
+# away from the other worktree's live session. The wrapper therefore downgrades
+# EXACTLY that class to a non-fatal WORKTREE NOTICE.
+#
+# WHICH CONDITION EACH TEST ACTUALLY GUARDS — rewritten after mutation testing
+# refuted the first version of this map. Read the "guards" column as a claim
+# that a mutation of that condition turns the listed test RED, because that is
+# how each row was established.
+#
+#   1. >=1 LIVE sibling worktree  -> W2 (none), W3a (removed), W3b (prunable).
+#      GUARDED: mutating condition 1 reds these.
+#   2. block is `mcp/*`           -> NO TEST, and none is possible today.
+#      NOT GUARDED, deliberately. Condition 2 is REDUNDANT with condition 4:
+#      the clause condition 4 requires is emitted at exactly one line in the
+#      whole tree (`check_harness_drift.sh:845`, inside verify_mcp_entry_drift),
+#      so no non-mcp block can reach the branch anyway. Deleting condition 2
+#      alone reds NOTHING. It stays as defence-in-depth against a FUTURE
+#      surface that starts printing `differing key(s)`; it cannot be pinned
+#      until such an emitter exists. Do not claim W5/W5b cover it — they do not
+#      (though condition 2 IS one of the three that jointly hold the agent
+#      surface; see the lattice below).
+#   3. config is out-of-repo      -> W9 and W9b, one per CLAUSE.
+#      GUARDED, by two behavioural PAIRS, because the condition has two halves
+#      with different reachable red states:
+#        * W9  — the "outside REPO_ROOT" half. Identical args-only drift, same
+#          live sibling, config INSIDE vs OUTSIDE the repo. Hardwiring
+#          condition 3 to True reds the inside arm.
+#        * W9b — the "ABSOLUTE" half, which is the ONLY thing separating
+#          is_out_of_repo() from the naive `not is_project_relative(path)`:
+#          the two agree on every absolute path, so W9 alone cannot tell them
+#          apart. W9b names the same out-of-repo file by a RELATIVE path — an
+#          ACCEPTED INPUT class to the guard, not an observed operator practice
+#          (every default config path is absolute, and IGRIS_MCP_CLAUDE_CONFIG
+#          is documented only as the test-sandbox seam) — real wrapper FATAL,
+#          naive inversion exempt.
+#      Before these existed the condition had ZERO coverage: swapping in the
+#      naive inversion, hardwiring True, and deleting condition 2 alongside
+#      either, all survived the entire suite.
+#   4. only args|command differ   -> W4a (env only), W4b (args+env), W6 (a
+#      reason with no `differing key(s)` clause at all), W1c (command-only IS
+#      exempt). NOT W5/W5b — see the lattice below.
+#      GUARDED: deleting the whole condition reds W4a, W4b and W6.
+#
+# THE AGENT SURFACE IS HELD BY A SUFFICIENCY LATTICE, NOT BY ANY ONE ROW ABOVE.
+# Measured over every subset of {2,3,4}:
+#
+#     turned off:  {2} {3} {4} {2,3} {2,4} {3,4}  -> W5/W5b GREEN
+#     turned off:  {2,3,4}                        -> W5/W5b RED
+#
+# Conditions 2, 3 and 4 are EACH INDEPENDENTLY SUFFICIENT, because an agent
+# DRIFTED block fails all three simultaneously: it is named `forger/claude`
+# (no `mcp/` prefix, cond 2); it prints `target :` / `expected :` /
+# `symlink target:`, none of which pathline_re matches, so path="" and
+# is_out_of_repo("") is False (cond 3); and no agent reason carries a
+# `differing key(s)` clause (cond 4).
+#
+# METHOD NOTE — this is why two earlier versions of this map were wrong: in a
+# conjunction, SINGLE-CONDITION mutation cannot, on its own, establish which
+# condition guards a property. When MORE THAN ONE condition is independently
+# sufficient — as all three are here — NO singleton mutation can red the test,
+# so every singleton looks harmless and the exclusive story built from that is
+# false.
+# (With exactly one sufficient condition the singleton DOES red, and does
+# attribute; you cannot know which case you are in without measuring.)
+# Attribution needs the SUBSET LATTICE; singletons plus one triple will
+# fit an exclusive story that is false. Do not write a third exclusive claim.
+#
+# Plus W7 (IGRIS_DRIFT_STRICT_WORKTREE=1) and W8 (the pathline_re no-op).
+#
+# COVERAGE LIMIT, stated rather than implied: every fixture here drives the
+# CLAUDE harness. The predicate reads only the block-name prefix, the config
+# path and the reason text, so it is harness-agnostic by construction — but no
+# non-claude harness has been driven through the exemption by a test.
+#
+# HERMETIC BY CONSTRUCTION: every fixture is a synthetic git repo under
+# $TEST_TEMP_DIR with its own worktrees, an isolated IGRIS_BRAIN_DIR, and a
+# scratch MCP config reached through the documented IGRIS_MCP_CLAUDE_CONFIG
+# seam. No test reads or writes the operator's real ~/.claude.json, and no test
+# runs `igris harness compile` against a real harness config.
+#
+# IGRIS_CLI=false in every drift run: the guard's descriptor<->npx agent-id
+# probe (`igris loadout list-mcp-agents`) has no business running here, and its
+# documented graceful degradation is a stderr SKIP, not a verdict.
+# ---------------------------------------------------------------------------
+
+# The canonical MCP shape the fixture manifest declares. The claude expected
+# shape derived from it is {args, command, env, type} — so an on-disk entry that
+# differs ONLY in args[0] yields exactly `differing key(s): args`.
+TD388_CANON_ARG="/canonical/checkout/cli/dist/index.js"
+
+# build_mcp_repo <slug> [with_agent]
+#   Echoes the synthetic repo root. `with_agent` = "agent" also declares a
+#   project-relative claude AGENT target (used by the mixed-verdict tests).
+build_mcp_repo() {
+  local slug="$1"
+  local with_agent="${2:-}"
+  local root="$TEST_TEMP_DIR/td388_${slug}_$BATS_TEST_NUMBER"
+  mkdir -p "$root/core/scripts/cli-adapters" "$root/scripts" \
+           "$root/canon" "$root/.claude/agents"
+  (
+    cd "$root" || exit 1
+    git init -q
+    # `git worktree add` needs a born HEAD.
+    git -c user.email=td388@example.invalid -c user.name=td388 \
+        commit -q --allow-empty -m init
+  )
+
+  cp "$ADAPTERS"/*.sh "$root/core/scripts/cli-adapters/"
+  [ -d "$ADAPTERS/body-exceptions" ] \
+    && cp -R "$ADAPTERS/body-exceptions" "$root/core/scripts/cli-adapters/"
+
+  # The wrapper under test. TD388_WRAPPER_SRC is the red-first seam: point it at
+  # a pre-fix copy to reproduce the failure the exemption removes.
+  cp "${TD388_WRAPPER_SRC:-$WRAPPER}" "$root/scripts/validate_harness_drift.sh"
+
+  cat > "$root/canon/forger.md" <<'EOF'
+---
+name: forger
+description: synthetic canonical for the TD-388 worktree tests
+---
+
+# FORGER (synthetic)
+
+Canonical body the harness must match.
+EOF
+
+  local agents_json='[]'
+  if [ "$with_agent" = "agent" ]; then
+    agents_json='[
+    {
+      "name": "forger",
+      "canonical": { "dir": "canon", "file": "forger.md", "versioned": false },
+      "targets": [
+        { "type": "claude", "path": ".claude/agents/forger.md" }
+      ]
+    }
+  ]'
+  fi
+
+  cat > "$root/harness-manifest.json" <<EOF
+{
+  "version": 1,
+  "agents": $agents_json,
+  "surfaces": {
+    "mcp_servers": [
+      {
+        "name": "igris-brain",
+        "canonical": {
+          "command": "node",
+          "args": ["$TD388_CANON_ARG"],
+          "env": {},
+          "startup_timeout_sec": 30
+        },
+        "targets": [ { "type": "claude", "method": "merge" } ]
+      }
+    ]
+  }
+}
+EOF
+
+  if [ "$with_agent" = "agent" ]; then
+    # DANGER, LEARNED THE HARD WAY (TD-388 build incident): a bare
+    # `compile_harnesses.sh` runs the MCP projection pass too, and that pass
+    # writes the harness config at its DEFAULT home-anchored path. The
+    # IGRIS_MCP_*_CONFIG seams are DRIFT-SIDE ONLY — grep compile_harnesses.sh
+    # and the TS projector: neither reads them — so pointing them at a temp dir
+    # would have been a guard that proves nothing. The first version of this
+    # fixture therefore merged its own canonical `args` straight into the
+    # operator's REAL ~/.claude.json: the fixture performed the exact
+    # destructive act this brief exists to stop the gate from recommending.
+    #
+    # The guarantee is now STRUCTURAL, not an argument: compile is handed a
+    # SEPARATE, agents-only manifest that contains no `surfaces` key at all, so
+    # there is no MCP block for any pass to project, whatever flags it gets.
+    # `--surface agents` is kept as a second, weaker belt. The drift run still
+    # uses the full harness-manifest.json (with the MCP block), because drift
+    # DOES honour IGRIS_MCP_CLAUDE_CONFIG.
+    # Pinned by the "fixture safety" test below — do not fold the two manifests
+    # back together.
+    local compile_manifest="$root/.td388-compile-agents-only.json"
+    cat > "$compile_manifest" <<EOF
+{
+  "version": 1,
+  "agents": $agents_json
+}
+EOF
+    IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" \
+      bash "$root/core/scripts/cli-adapters/compile_harnesses.sh" \
+        --project-root "$root" \
+        --manifest "$compile_manifest" \
+        --surface agents \
+        --target claude >/dev/null
+  fi
+
+  echo "$root"
+}
+
+# add_sibling_worktree <repo_root> <slug>
+#   Sets TD388_SIBLING and returns NON-ZERO if the worktree is not live.
+#
+# It deliberately does NOT echo the path, so it cannot be called inside `$( )`
+# — a helper in a command substitution runs in a subshell and its failure is
+# invisible to the test. Every caller must write:
+#
+#     add_sibling_worktree "$root" <slug> || return 1
+#     sib="$TD388_SIBLING"
+#
+# WHY THE ASSERTION LIVES IN THE HELPER. A test whose premise is "a LIVE
+# sibling worktree exists" proves nothing if `git worktree add` silently
+# failed: W5b would quietly degrade into W2 (agent drift, NO sibling -> FATAL)
+# and still pass. That is not hypothetical — sentinel hit exactly this failure
+# mode from a concurrent bats run, because test_helper.bash uses
+# TEST_TEMP_DIR="$BATS_TMPDIR/igris-test-$$" with an rm -rf teardown, so two
+# runs delete each other's live fixtures (TD-387). Putting the check in one
+# place makes it impossible for a new test to forget it.
+add_sibling_worktree() {
+  local root="$1"
+  local sib="$TEST_TEMP_DIR/td388_sib_${2}_$BATS_TEST_NUMBER"
+  git -C "$root" worktree add -q -b "td388-$2-$BATS_TEST_NUMBER" "$sib" >/dev/null 2>&1
+  if [ ! -d "$sib" ]; then
+    echo "FIXTURE PRECONDITION FAILED: sibling worktree not live at $sib" >&2
+    return 1
+  fi
+  TD388_SIBLING="$sib"
+  return 0
+}
+
+# write_mcp_config <file> <args0> [extra_env_json]
+# Writes an on-disk claude entry that matches the expected shape EXCEPT for
+# args[0] (and, when given, an extra env key).
+write_mcp_config() {
+  local cfg="$1"
+  local args0="$2"
+  # NOT `${3:-{\}}` — bash 3.2 (the macOS system bash this suite runs under)
+  # leaves the backslash in, producing `{\}` and therefore an UNPARSEABLE
+  # config. Every 2-arg caller would then get a `config unparseable` DRIFTED
+  # and a FATAL, i.e. the negative tests would pass for the wrong reason.
+  local extra_env="$3"
+  [ -n "$extra_env" ] || extra_env='{}'
+  cat > "$cfg" <<EOF
+{
+  "mcpServers": {
+    "igris-brain": {
+      "args": ["$args0"],
+      "command": "node",
+      "env": $extra_env,
+      "type": "stdio"
+    }
+  }
+}
+EOF
+}
+
+# run_wrapper <repo_root> <config> [extra env assignments...]
+run_wrapper() {
+  local root="$1"
+  local cfg="$2"
+  shift 2
+  run bash -c "cd '$root' && IGRIS_BRAIN_DIR='$ISOLATED_BRAIN' IGRIS_CLI=false \
+    IGRIS_MCP_CLAUDE_CONFIG='$cfg' $* bash scripts/validate_harness_drift.sh"
+}
+
+# --- W1: the core case ------------------------------------------------------
+
+@test "TD-388 W1: args-only MCP drift + a live sibling worktree -> WORKTREE NOTICE, exit 0" {
+  local root sib cfg
+  root="$(build_mcp_repo w1)"
+  add_sibling_worktree "$root" w1 || return 1
+  sib="$TD388_SIBLING"
+  # The config lives OUTSIDE the repo (condition 3), like the real
+  # home-anchored ~/.claude.json it stands in for.
+  cfg="$TEST_TEMP_DIR/td388_cfg_w1_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  # The guard still renders the honest DRIFTED verdict — the exemption is a
+  # wrapper-level reclassification, never a rewritten guard verdict.
+  [[ "$output" == *"[mcp/igris-brain/claude] DRIFTED"* ]] || return 1
+  [[ "$output" == *"differing key(s): args"* ]] || return 1
+  # ...and the wrapper downgrades it, loudly.
+  [[ "$output" == *"WORKTREE NOTICE: 1 MCP entry/entries DRIFTED"* ]] || return 1
+  [[ "$output" != *"FATAL"* ]] || return 1
+  # The NOTICE names the config and BOTH worktrees (AC-4: never a green line).
+  [[ "$output" == *"$cfg"* ]] || return 1
+  [[ "$output" == *"$sib"* ]] || return 1
+  [[ "$output" == *"$root"* ]] || return 1
+  [[ "$output" == *"mcp-unregistered"* ]] || return 1
+}
+
+@test "TD-388 W1b: the NOTICE warns against the destructive remedy" {
+  # The gate used to RECOMMEND `igris harness compile`, which rewrites the
+  # SHARED config and re-points the other worktree's live MCP server. In the
+  # exempt state the wrapper must say the opposite.
+  local root sib cfg
+  root="$(build_mcp_repo w1b)"
+  add_sibling_worktree "$root" w1b || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w1b_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"DO NOT run"* ]] || return 1
+  [[ "$output" == *"whichever worktree wrote this config last"* ]] || return 1
+  [[ "$output" == *"IGRIS_DRIFT_STRICT_WORKTREE=1"* ]] || return 1
+}
+
+@test "TD-388 W1c: command-only drift is exempt too (add-mcp fuses the path into command)" {
+  # `add-mcp "node <path>"` registers the artifact path INSIDE `command`, and
+  # opencode's native shape does the same by design — so `command` is in the
+  # allowlist. This is the arm check for that half of PATH_KEYS.
+  local root sib cfg
+  root="$(build_mcp_repo w1c)"
+  add_sibling_worktree "$root" w1c || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w1c_$BATS_TEST_NUMBER.json"
+  cat > "$cfg" <<EOF
+{
+  "mcpServers": {
+    "igris-brain": {
+      "args": ["$TD388_CANON_ARG"],
+      "command": "node $sib/cli/dist/index.js",
+      "env": {},
+      "type": "stdio"
+    }
+  }
+}
+EOF
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"differing key(s): command"* ]] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+  [[ "$output" != *"FATAL"* ]] || return 1
+}
+
+# --- W2: the consumer / CI control ------------------------------------------
+
+@test "TD-388 W2: the SAME drift with NO sibling worktree is still FATAL -> exit 1" {
+  # Every consumer machine and every CI runner has exactly one worktree, so
+  # condition 1 is false there and behaviour is unchanged. This is the control
+  # that says the exemption is about worktree STATE, not about the drift shape.
+  local root cfg
+  root="$(build_mcp_repo w2)"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w2_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "/some/other/checkout/cli/dist/index.js"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"differing key(s): args"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W3: AC-6, a removed worktree cannot report exempt forever --------------
+
+@test "TD-388 W3a: removing the sibling worktree makes the same drift FATAL again" {
+  local root sib cfg
+  root="$(build_mcp_repo w3a)"
+  add_sibling_worktree "$root" w3a || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w3a_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  # Arm check: exempt BEFORE the removal, so the FATAL after it is attributable
+  # to the removal and not to a fixture that never qualified.
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+
+  git -C "$root" worktree remove --force "$sib" >/dev/null 2>&1
+  [ ! -d "$sib" ] || return 1
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+@test "TD-388 W3b: a PRUNABLE (dir deleted, still registered) sibling does not count" {
+  # git still LISTS the worktree here. The exemption is keyed on the isdir test
+  # rather than the porcelain `prunable` field, so a half-removed worktree stops
+  # counting immediately.
+  local root sib cfg
+  root="$(build_mcp_repo w3b)"
+  add_sibling_worktree "$root" w3b || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w3b_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+
+  rm -rf "$sib"
+  # Arm check on the fixture's premise: git must STILL list it, else this test
+  # would be W3a in disguise.
+  run git -C "$root" worktree list --porcelain
+  [[ "$output" == *"$sib"* ]] || return 1
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W4: condition 4, only build-artifact path keys ------------------------
+
+@test "TD-388 W4a: an env.* -only divergence is NOT excused -> FATAL" {
+  local root sib cfg
+  root="$(build_mcp_repo w4a)"
+  add_sibling_worktree "$root" w4a || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w4a_$BATS_TEST_NUMBER.json"
+  # args MATCH the canonical; only env diverges.
+  write_mcp_config "$cfg" "$TD388_CANON_ARG" '{"SOMETHING":"injected"}'
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"differing key(s): env.SOMETHING"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+@test "TD-388 W4b: args PLUS a shape key is NOT excused (subset, not intersection)" {
+  # The condition is `keys ⊆ {args, command}`. A drift that includes a path key
+  # AND a shape key must stay fatal — an implementation that merely asked
+  # "does args appear?" would pass W1/W4a and fail here.
+  local root sib cfg
+  root="$(build_mcp_repo w4b)"
+  add_sibling_worktree "$root" w4b || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w4b_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js" '{"SOMETHING":"injected"}'
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"args,env.SOMETHING"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W5: the agent surface stays fatal, held JOINTLY by conditions 2, 3, 4 ---
+
+@test "TD-388 W5: a real AGENT drift stays FATAL while the MCP NOTICE still prints" {
+  # WHAT THIS PINS: an agent DRIFTED block is never exempted. It does NOT pin
+  # any single condition, and two earlier versions of this comment claimed it
+  # did — first condition 3, then condition 4. Both were refuted by mutation.
+  #
+  # The measured attribution is a SUFFICIENCY LATTICE (full table in the block
+  # comment at the top of this section). Conditions 2, 3 and 4 are each
+  # independently sufficient to reject an agent block, so turning any ONE — or
+  # any TWO — of them off leaves this test GREEN; only {2,3,4} together reds it.
+  # Concretely — naming the mutation operator, because a reds set can depend on
+  # which one you use: DELETING CONDITION 4'S WHOLE CONJUNCT (both
+  # `keys is not None` and the subset test; the same operator named at :1509 and
+  # by "Deleting the whole condition" in validate_harness_drift.sh's
+  # per-condition population list) reds W4a/W4b/W6 and NOT this test;
+  # disabling conditions 2+3 reds W9/W9b and NOT this test. Those reds sets are
+  # measured for those operators and are not claimed for any narrower one. The
+  # half that holds regardless is "and NOT this test", which is what W5 is about.
+  #
+  # So do not read a green W5 as evidence for any one condition. Read it as
+  # what it is: the end-to-end assertion that the agent surface is not excused,
+  # plus the assertion below that neither signal eats the other — one FATAL for
+  # the agent, and the MCP row still reported as exempt.
+  local root sib cfg
+  root="$(build_mcp_repo w5 agent)"
+  add_sibling_worktree "$root" w5 || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w5_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  # Repoint the compiled agent symlink OUTSIDE the loadout -> genuine DRIFTED.
+  mkdir -p "$root/elsewhere"
+  echo "stale" > "$root/elsewhere/forger.md"
+  rm -f "$root/.claude/agents/forger.md"
+  ln -s "$root/elsewhere/forger.md" "$root/.claude/agents/forger.md"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[forger/claude] DRIFTED"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  # ...and the MCP row is STILL reported as exempt, not swallowed by the FATAL.
+  [[ "$output" == *"WORKTREE NOTICE: 1 MCP entry/entries DRIFTED"* ]] || return 1
+}
+
+@test "TD-388 W5b: an agent-ONLY drift with a live sibling worktree is FATAL" {
+  # W5 with the MCP variable removed, so the agent verdict is the only thing
+  # the exit code can be attributed to. Like W5, it pins the OUTCOME (an agent
+  # DRIFTED is never exempted) and not any single condition — conditions 2, 3
+  # and 4 are each independently sufficient to produce it; see W5's comment
+  # and the lattice at the top of this section.
+  #
+  # The `add_sibling_worktree … || return 1` above is load-bearing here:
+  # without a LIVE sibling this test silently degrades into W2 (agent drift,
+  # no sibling -> FATAL) and would pass while proving nothing.
+  local root sib cfg
+  root="$(build_mcp_repo w5b agent)"
+  add_sibling_worktree "$root" w5b || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w5b_$BATS_TEST_NUMBER.json"
+  # MCP entry matches canonical exactly -> the ONLY DRIFTED is the agent.
+  write_mcp_config "$cfg" "$TD388_CANON_ARG"
+
+  mkdir -p "$root/elsewhere"
+  echo "stale" > "$root/elsewhere/forger.md"
+  rm -f "$root/.claude/agents/forger.md"
+  ln -s "$root/elsewhere/forger.md" "$root/.claude/agents/forger.md"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[mcp/igris-brain/claude] MATCH"* ]] || return 1
+  [[ "$output" == *"[forger/claude] DRIFTED"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W6: a DRIFTED with no `differing key(s)` clause at all ----------------
+
+@test "TD-388 W6: an unparseable config DRIFTED has no key list -> FATAL" {
+  # parse_differing_keys returns None here (not the empty set), which fails
+  # condition 4. Same for `internal compare error` and MISSING_SECRET.
+  local root sib cfg
+  root="$(build_mcp_repo w6)"
+  add_sibling_worktree "$root" w6 || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w6_$BATS_TEST_NUMBER.json"
+  printf '{ this is not json' > "$cfg"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"config unparseable"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W7: the strict escape hatch -------------------------------------------
+
+@test "TD-388 W7: IGRIS_DRIFT_STRICT_WORKTREE=1 restores full strictness" {
+  local root sib cfg
+  root="$(build_mcp_repo w7)"
+  add_sibling_worktree "$root" w7 || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w7_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$sib/cli/dist/index.js"
+
+  # Arm check: exempt WITHOUT the flag, so the FATAL below is attributable to
+  # the flag rather than to a fixture that never qualified.
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+
+  run_wrapper "$root" "$cfg" "IGRIS_DRIFT_STRICT_WORKTREE=1"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- W8: the pathline_re no-op regression ----------------------------------
+
+@test "TD-388 W8: an ABSENT MCP entry is still an out-of-scope MISSING NOTICE" {
+  # TD-388 taught pathline_re the `config` label, which mcp/* blocks print.
+  # BEFORE the change an MCP MISSING classified with path="" ->
+  # is_project_relative("") is False -> oos_missing. AFTER it, the label
+  # resolves the out-of-repo config path -> still not under REPO_ROOT -> still
+  # oos_missing. This test exists solely to hold that no-op.
+  local root sib cfg
+  root="$(build_mcp_repo w8)"
+  add_sibling_worktree "$root" w8 || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w8_$BATS_TEST_NUMBER.json"
+  printf '{ "mcpServers": {} }' > "$cfg"
+
+  run_wrapper "$root" "$cfg"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"[mcp/igris-brain/claude] MISSING"* ]] || return 1
+  [[ "$output" == *"NOTICE: 1 out-of-scope"* ]] || return 1
+  [[ "$output" != *"FATAL"* ]] || return 1
+  # A MISSING is NOT a worktree exemption — it never reaches that branch.
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+# --- fixture safety (the TD-388 build incident) ----------------------------
+
+@test "TD-388 fixture safety: the compile-time manifest declares no MCP surface" {
+  # The incident: build_mcp_repo <slug> agent used to hand the FULL manifest to
+  # compile_harnesses.sh. Compile's MCP pass writes the harness config at its
+  # DEFAULT home path — the IGRIS_MCP_*_CONFIG seams are drift-side only — so
+  # the fixture's canonical `args` were merged into the operator's real
+  # ~/.claude.json. This test pins the structural fix: whatever manifest
+  # compile is handed must contain no MCP surface at all, so no flag, no
+  # refactor and no future pass can turn it into a real config write.
+  local root
+  root="$(build_mcp_repo fixsafe agent)"
+
+  local compile_manifest="$root/.td388-compile-agents-only.json"
+  [ -f "$compile_manifest" ] || return 1
+  run grep -c "mcp_servers" "$compile_manifest"
+  [ "$status" -ne 0 ] || return 1          # grep exits 1 on zero matches
+  run grep -c "surfaces" "$compile_manifest"
+  [ "$status" -ne 0 ] || return 1
+
+  # Arm check: the DRIFT manifest — a different file — DOES declare it, so the
+  # assertion above is about the compile input and not about an empty fixture.
+  run grep -c "mcp_servers" "$root/harness-manifest.json"
+  [ "$status" -eq 0 ] || return 1
+
+  # And the agent target really was compiled, so `--surface agents` did its job.
+  [ -L "$root/.claude/agents/forger.md" ] || return 1
+}
+
+# --- W9: condition 3, the ONLY test that guards it -------------------------
+
+@test "TD-388 W9: identical drift is exempt OUTSIDE the repo and FATAL INSIDE it" {
+  # CONDITION 3's behavioural pair. Everything is held constant — same
+  # args-only divergence, same live sibling worktree, same manifest, same
+  # canonical — and the ONLY variable is where the MCP config FILE lives.
+  #
+  # Why a pair and not a single assertion: an in-repo-config test on its own
+  # cannot tell "condition 3 rejected it" from "the fixture never qualified in
+  # the first place". The outside arm IS the arm check, and it runs first.
+  #
+  # This is the test that was missing. Before it existed, THREE mutations of
+  # condition 3 — swapping it for `not is_project_relative(path)`, hardwiring
+  # it True, and deleting condition 2 alongside either — all survived the
+  # complete suite. A condition with no reachable red state is not a guard.
+  local root sib cfg_out cfg_in
+  root="$(build_mcp_repo w9)"
+  add_sibling_worktree "$root" w9 || return 1
+  sib="$TD388_SIBLING"
+
+  # --- arm A: config OUTSIDE the repo -> exempt -----------------------------
+  cfg_out="$TEST_TEMP_DIR/td388_cfg_w9_out_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg_out" "$sib/cli/dist/index.js"
+  run_wrapper "$root" "$cfg_out"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"differing key(s): args"* ]] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+  [[ "$output" != *"FATAL"* ]] || return 1
+
+  # --- arm B: byte-identical config INSIDE the repo -> FATAL ----------------
+  mkdir -p "$root/inrepo"
+  cfg_in="$root/inrepo/claude.json"
+  write_mcp_config "$cfg_in" "$sib/cli/dist/index.js"
+  # Prove the two configs really are byte-identical, so the ONLY difference
+  # the wrapper can be reacting to is the path.
+  run cmp -s "$cfg_out" "$cfg_in"
+  [ "$status" -eq 0 ] || return 1
+
+  run_wrapper "$root" "$cfg_in"
+  [ "$status" -eq 1 ] || return 1
+  # Same guard verdict, same key list — only the classification changed.
+  [[ "$output" == *"differing key(s): args"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
+
+@test "TD-388 W9b: a RELATIVE config path is never exempt, even resolving outside the repo" {
+  # The second half of condition 3, and the half that separates is_out_of_repo
+  # from the naive `not is_project_relative(path)`: the ABSOLUTE clause.
+  #
+  # The two predicates agree on every ABSOLUTE path, so W9 alone cannot tell
+  # them apart — swapping in the naive inversion survives W9. They diverge on a
+  # path that is not absolute, and `../outside.json` is an ACCEPTED INPUT to
+  # the guard: IGRIS_MCP_CLAUDE_CONFIG is read as given, with no absoluteness
+  # check. Scope of that claim, measured: it is an input CLASS, not an observed
+  # operator practice — every default config path is absolute, no CLI verb or
+  # skill sets the var, and it is documented only as the test-sandbox seam.
+  #
+  # The mandated rule is NON-EMPTY *and* ABSOLUTE *and* outside the repo, i.e.
+  # a config the wrapper cannot resolve independently of the caller's cwd is
+  # deliberately NOT trusted to be out-of-repo, and stays FATAL. The naive
+  # inversion resolves it against cwd and exempts it — silent widening.
+  local root sib outside_dir cfg_abs
+  root="$(build_mcp_repo w9b)"
+  add_sibling_worktree "$root" w9b || return 1
+  sib="$TD388_SIBLING"
+
+  # The config file sits OUTSIDE the repo; only its NOTATION varies between the
+  # two arms below.
+  outside_dir="$(dirname "$root")"
+  cfg_abs="$outside_dir/td388_w9b_outside_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg_abs" "$sib/cli/dist/index.js"
+
+  # --- arm A (control): named ABSOLUTELY -> exempt --------------------------
+  run_wrapper "$root" "$cfg_abs"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
+
+  # --- arm B: the SAME FILE named RELATIVELY -> FATAL -----------------------
+  run_wrapper "$root" "../$(basename "$cfg_abs")"
+  [ "$status" -eq 1 ] || return 1
+  # Arm check on the fixture: the relative name really did reach the same file,
+  # so the guard produced the same drift and only the classification differs.
+  [[ "$output" == *"differing key(s): args"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+}
