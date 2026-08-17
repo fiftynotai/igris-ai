@@ -32,10 +32,71 @@ teardown() {
 
 # free_port — an OS-assigned free TCP port, so tests never squat 7317 (the
 # operator may have a real dashboard open).
+#
+# TD-355 — `process.stdout.write`, NOT `console.log`. This is a DATA channel
+# (the value is captured by `port="$(free_port)"` and passed to `--port`), and
+# `console.log` is a display API: it routes any non-string argument through
+# `util.inspect`, which colorizes. `s.address().port` is a NUMBER, so under
+# `FORCE_COLOR` (set in the operator's shell) node emitted colour even to a
+# pipe and the port reached the CLI as `<ESC>[33m55890<ESC>[39m`, which the
+# --port validator correctly rejected. Measured on node v22.23.2:
+#   FORCE_COLOR=3 node -e 'console.log(12345)'                 -> ^[[33m12345^[[39m
+#   FORCE_COLOR=3 node -e 'process.stdout.write(12345+"\n")'   -> 12345
+# `console.log(String(p))` is equally plain (measured). `process.stdout.write`
+# is used instead because it FAILS LOUD on the shape that caused this bug:
+#   node -e 'process.stdout.write(12345)'  -> TypeError [ERR_INVALID_ARG_TYPE]
+#   node -e 'console.log(12345)'           -> 12345, silently inspect-formatted
+# i.e. a future edit that hands `write()` a non-string ARGUMENT — one that
+# drops the `+ "\n"`, say — throws instead of quietly re-entering the
+# colouring path. Note `p` is itself a non-string TODAY (it is a number) and
+# this line does not throw, because `p + "\n"` coerces it; the loud-failure
+# property belongs to write()'s signature and is armed only when nothing
+# coerces. So the residual: if `s.address().port` ever yields an object, this
+# emits `[object Object]` silently. That residual is DETECTED — the regression
+# test's `[[ "$port" =~ ^[0-9]+$ ]]` assertion reddens on it.
+# That is a claim about THIS line only;
+# the regression test "TD-355: free_port emits a bare integer under
+# FORCE_COLOR" below is what actually re-checks the emitted bytes.
+#
+# SCOPE OF "one exposed site", so a reader is not surprised: one exposed DATA
+# channel. Colorized numbers DO still survive in this file — a dozen-ish
+# `console.log`/`console.error` diagnostics pass a number as an argument.
+# Enumerate them rather than trusting a count written here, which would rot at
+# the next edit with nothing to detect the rot:
+#   grep -nE "console\.(log|error)\(" dashboard.bats
+# The clearest example is `get_json`'s error path, `console.error('status',
+# r.statusCode, …)` — `r.statusCode` is a NUMBER, measured emitting
+# `status ^[[33m404^[[39m body` under FORCE_COLOR=3.
+#
+# WHY THEY CHANGE NO VERDICT — and NOT for the reason you might assume. They
+# are NOT "uncaptured": bats `run` MERGES stderr into `$output`, and this file
+# DEPENDS on that merge — the `--port` rejection test greps "must be an
+# integer" out of `$output`, and cli/src/lib/log.ts's `error()` writes it with
+# process.stderr.write. The actual mechanism is the STATUS GATE: every
+# `run get_json` call site is immediately followed by `[ "$status" -eq 0 ]`
+# and the error path exits 1, so a colorized diagnostic cannot reach an
+# assertion that a non-zero status has not already failed. Measured 8/8 at the
+# time of writing; re-check with
+#   grep -A1 -n "run get_json" dashboard.bats
+#
+# NOTE the whole-suite FORCE_COLOR=3-vs-unset name-set identity is only WEAK
+# support for this particular claim: under the standing better-sqlite3 ABI
+# breakage that error path plausibly never executes, so the equivalence is
+# CONSISTENT with the claim rather than a measurement of it. The status gate
+# is what makes it true.
+#
+# NEAR MISS, worth knowing before you tidy anything: the T4 probe-summary
+# helper emits numbers into a stream that IS asserted on (its "18 read paths
+# all 200, 1 write path 400" line is grepped), and is safe ONLY because it
+# builds that string by concatenation. Rewriting it to comma-separated console
+# arguments re-arms exactly this bug on an asserted channel.
+#
+# Left as-is deliberately; do not read "one exposed site" as "nothing in this
+# file ever colorizes a number".
 free_port() {
   node -e '
     const s = require("node:net").createServer();
-    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => console.log(p)); });
+    s.listen(0, "127.0.0.1", () => { const p = s.address().port; s.close(() => process.stdout.write(p + "\n")); });
   '
 }
 
@@ -52,6 +113,43 @@ wait_for_url() {
     sleep 0.2
   done
   return 1
+}
+
+# --- TD-355 — the helper's own regression gate -----------------------------
+
+@test "TD-355: free_port emits a bare integer under FORCE_COLOR" {
+  # SELF-ARMING. This test EXPORTS FORCE_COLOR itself rather than inheriting it,
+  # so it is the same verdict whether or not the caller's shell sets it — and so
+  # that a future central `unset FORCE_COLOR` in _helpers.bash could not turn
+  # `FORCE_COLOR=3 npm run test:bats` into a vacuous green.
+  #
+  # SCOPE — this asserts ONE helper, `free_port`. It says nothing about the
+  # other node invocations in this file or elsewhere in the test tree; those
+  # were classified by hand at TD-355 and are recorded in the brief, not here.
+  local esc; esc=$'\033'
+  export FORCE_COLOR=3
+
+  # ARM CHECK — prove colour actually reaches a child `node` in this
+  # environment. If this probe comes back plain, FORCE_COLOR is not taking
+  # effect and the assertion below would pass for the wrong reason, so treat a
+  # disarmed probe as a hard failure rather than a pass.
+  local probe; probe="$(node -e 'console.log(12345)')"
+  if [[ "$probe" != *"$esc"* ]]; then
+    echo "ARM CHECK FAILED: node emitted no ANSI escape for console.log(12345)" >&2
+    echo "  under FORCE_COLOR=3 (got '$probe'). This test cannot detect the" >&2
+    echo "  TD-355 defect in this environment." >&2
+    return 1
+  fi
+
+  # THE ASSERTION — free_port called exactly the way every test calls it.
+  local port; port="$(free_port)"
+  if [[ "$port" == *"$esc"* ]]; then
+    echo "free_port leaked an ANSI escape: $(printf '%s' "$port" | cat -v)" >&2
+    return 1
+  fi
+  [[ "$port" =~ ^[0-9]+$ ]] || return 1
+  [ "$port" -ge 1 ]
+  [ "$port" -le 65535 ]
 }
 
 # --- T1/T3 — smoke mode ----------------------------------------------------
