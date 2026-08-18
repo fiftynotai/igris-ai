@@ -44,10 +44,10 @@
  *                             class is still live — this detector reads STATE,
  *                             so it reports a duplicate whoever minted it, and
  *                             other writers that can set projects.path
- *                             still do not refuse one — including the boot-sync
- *                             pull merge, which can put a folded duplicate BACK
- *                             on the default /boot path, so this class is not
- *                             one-shot even after a fold (TD-404, open))
+ *                             still do not refuse one. The boot-sync pull merge
+ *                             refuses on INSERT since TD-404, but its lww UPDATE
+ *                             branch still can, so this class is NOT one-shot
+ *                             even after a fold)
  *   symlink-target          → row.path is itself a symlink
  *   clean                   → registered + path exists (the register-only happy path)
  *

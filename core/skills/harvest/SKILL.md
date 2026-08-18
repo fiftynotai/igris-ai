@@ -95,13 +95,14 @@ Present a short scan summary to the operator before proceeding.
    briefs and 7 learnings under slugs `igris detect` never produces. The brain now
    refuses a path another slug already holds on BOTH of its project tools — the
    register tool (its own args are named in step 4 below) and
-   `igris_project_update`, which can also set `path`. FOUR other writers still do
-   not refuse: `igris install --slug`, `igris import`'s auto-register, and the
-   pull merge on BOTH sides of sync — the brain's and the CLI's. The CLI one runs
-   on the default boot path and its sync key is the slug alone, so a pull can put
-   a folded duplicate BACK (TD-404, open). `igris doctor`'s `duplicate-path` class
-   is the detector that covers all six, because it reads state rather than gating
-   a write — which also means it is not a one-shot check after a fold.
+   `igris_project_update`, which can also set `path`. The CLI's boot-sync pull
+   merge refuses too, but only on its INSERT branch (TD-404); its lww UPDATE
+   branch does not, and neither do `igris install --slug`, `igris import`'s
+   auto-register, or the brain-side push handler (TD-407). Do not quote a count
+   here — derive the writer set from MAINTAINING.md's BR-080 strict-input row.
+   `igris doctor`'s `duplicate-path` class is the detector that covers them all,
+   because it reads state rather than gating a write — which also means it is
+   not a one-shot check after a fold.
 4. Persist via `igris_project_register`:
    ```
    igris_project_register({

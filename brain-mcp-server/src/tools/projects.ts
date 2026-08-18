@@ -407,7 +407,7 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
   //
   // Bounded: the other writers still do not refuse, and this is source-only
   // until the bundle is rebuilt. See MAINTAINING.md's BR-080 strict-input row (row 113), in its Notes cell and
-  // TD-404 (open).
+  // TD-404 (INSERT branch now refused; UPDATE branch and push side open).
   if (args.path !== undefined && typeof args.path === 'string') {
     const holder = findPathHolder(db, args.slug, args.path);
     if (holder) {

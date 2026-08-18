@@ -46,7 +46,7 @@
 
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, sep } from "node:path";
 import { openBrainReadonly } from "./brain-bridge.js";
@@ -1170,6 +1170,44 @@ function mergeTags(localTags: string, remoteTags: string): string {
 }
 
 /**
+ * TD-404 — resolve a path for identity comparison. Mirrors `resolveForCompare`
+ * (`brain-mcp-server/src/tools/projects.ts`, TD-402) so the pull-side refusal
+ * and the register/update-side refusal answer the same question.
+ *
+ * `realpathSync` THROWS for a directory absent from this disk, and a pulled row
+ * routinely names another machine's path. The raw string is therefore the
+ * fallback, which keeps such a row in the comparison instead of dropping it out.
+ */
+function resolveForCompare(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * TD-404 — the slug already holding `path`, or `undefined` when the directory is
+ * free. The pull-side twin of TD-402's `findPathHolder`.
+ *
+ * `stmt` selects every `projects` row; no `slug != ?` exclusion is needed because
+ * the only caller is `mergeRows`' INSERT branch, which runs only when the syncKey
+ * lookup found NO row for the incoming slug — so every row this sees already has
+ * a different slug. (An exclusion would also be a trap: `slug != NULL` matches
+ * nothing, silently disabling the guard.)
+ */
+function findPathHolderOnInsert(
+  stmt: Database.Statement,
+  path: string,
+): { slug: string; path: string } | undefined {
+  const incoming = resolveForCompare(path);
+  const rows = stmt.all() as { slug: string; path: unknown }[];
+  return rows
+    .filter((r): r is { slug: string; path: string } => typeof r.path === "string" && r.path !== "")
+    .find((r) => resolveForCompare(r.path) === incoming);
+}
+
+/**
  * Merge incoming rows into the local DB for one table config — the last-write-
  * wins upsert. Verbatim port of `mergeRows` (sync.ts):
  *   - manual `SELECT * WHERE syncKey = ?` lookup (NOT ON CONFLICT — syncKey
@@ -1188,6 +1226,14 @@ function mergeTags(localTags: string, remoteTags: string): string {
  * closed the door nobody walks through. Every inbound row for a table in
  * `SYNC_NORMALIZED_FIELDS` passes through the same write-boundary normalizers
  * (`normalizeSyncRow`, from the GENERATED mirror — never a hand copy).
+ *
+ * TD-404 — THE INSERT BRANCH IS ALSO A `projects.path` WRITER. `syncKey` is
+ * `["slug"]`, so a locally-DELETED slug is indistinguishable from a never-seen
+ * one and a cursor reset replays the remote row into a directory a local slug
+ * already holds. A `projects` INSERT therefore asks {@link findPathHolderOnInsert}
+ * first and throws when the directory is taken, landing in the per-row
+ * `try`/`catch` below: `failed++`, the key + reason recorded, loop continues.
+ * `syncKey` is deliberately NOT widened — BR-090 is why.
  *
  * `updated_at` is deliberately absent from that map, so the fold cannot bump
  * the LWW comparison column: a folded row produces no delta with a newer
@@ -1218,6 +1264,27 @@ function mergeRows(
   }
   const lookupStmt = handle.prepare(lookupSql);
   const existingColumns = tableColumns(handle, config.table);
+  // TD-404: prepared once, and only for the table + columns the guard reads. A
+  // local `projects` without a `path` column cannot be given one by the INSERT
+  // (the `cols` filter drops it), so there is nothing to guard.
+  //
+  // `config.table === "projects"` is REDUNDANT with the column check today:
+  // `projects` is the only BOOT_SYNC_PULL_TABLES member declaring both `slug`
+  // and `path` (`instances` carries `project_slug` / `project_path`, which this
+  // check does not match), so no real config reaches the column check with the
+  // term false. NO TEST ARMS IT — deleting it leaves boot-sync-project-path-guard.test.ts green, and arming
+  // it would take a fabricated config. Kept as defence in depth: the statement
+  // below names `projects` LITERALLY, so a future member that gained both columns
+  // would otherwise have its incoming path compared against PROJECTS rows. What
+  // is pinned instead is the PREMISE — the "only pull table declaring both" test
+  // in `cli/src/__tests__/boot-sync-project-path-guard.test.ts` reds the day it
+  // stops holding and the term becomes load-bearing.
+  const pathHolderStmt =
+    config.table === "projects" &&
+    existingColumns.has("path") &&
+    existingColumns.has("slug")
+      ? handle.prepare("SELECT slug, path FROM projects")
+      : undefined;
 
   for (const row of rows) {
     const keyValues = config.syncKey.map((k) => row[k]);
@@ -1245,6 +1312,17 @@ function mergeRows(
         | undefined;
 
       if (!existing) {
+        // TD-404: one directory keeps one project row. See the docblock.
+        const incomingPath = normRow.path;
+        if (pathHolderStmt && typeof incomingPath === "string") {
+          const holder = findPathHolderOnInsert(pathHolderStmt, incomingPath);
+          if (holder) {
+            throw new Error(
+              `refused: path ${JSON.stringify(incomingPath)} is already held by slug ` +
+                `${JSON.stringify(holder.slug)} (${holder.path}) — one directory keeps one project row`,
+            );
+          }
+        }
         const cols = config.columns.filter(
           (c) => normRow[c] !== undefined && existingColumns.has(c),
         );
