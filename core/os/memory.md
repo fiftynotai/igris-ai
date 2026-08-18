@@ -286,7 +286,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ### When to call
 
 - Before a cross-project recommendation: `igris_project_status` the target to verify tech stack and archetype match before suggesting reuse. (For new code prefer `igris_project_dashboard({ slug })` — same detail PLUS a `recent` block.)
-- When onboarding a new project: `igris_project_register` so its briefs and learnings can participate in cross-project recall and promotion.
+- When onboarding a new project: `igris_project_register` so its briefs and learnings can participate in cross-project recall and promotion. **Slug derivation rule (TD-402): `core/skills/harvest/SKILL.md` Phase 2.** One directory gets ONE row.
 - After registration, to flip `status` (e.g., archive a project) or correct `tech_stack` / `archetype`: `igris_project_update` (partial UPDATE — only the fields you pass are written). For brand-new projects use `igris_project_register`, not `_update`.
 - For a unified per-project / cross-project view: `igris_project_dashboard`. Set `slug` for one project's detail; omit `slug` and pass `status` / `archetype` / `tech_stack` filters for narrowed cross-project listings. `summary_only: true` for counts-only during `/scan`.
 - During the `/ops` skill flow.
@@ -294,7 +294,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ### Example invocation
 
 ```jsonc
-igris_project_status({ slug: "fifty-flutter-kit" })
+igris_project_status({ slug: "fifty_eco_system" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```

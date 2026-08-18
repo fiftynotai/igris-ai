@@ -66,12 +66,25 @@ named in `validate_brief_status_vocabulary.sh`'s own header, and it is the
 precondition the operator attached to landing this script at all.
 
 Ledger entries are keyed `(relative_path, tool, sorted(residual_keys))`.
-NEVER on line numbers. Three separate line-number drifts have been recorded in
-this contract's neighbourhood already: MAINTAINING row 113 records TD-321
-drifting a line form; TD-324's own brief cited `architecture_map.md:286-288`
-when the passage was at `:386`; and it cited `briefs/index.ts:487` for an empty
-`required: []` that was at `:491`. A line-keyed ledger silently goes blind the
-first time someone inserts a paragraph.
+NEVER on line numbers. Four separate line-number drifts have been recorded in
+this contract's neighbourhood: MAINTAINING row 113 records TD-321 drifting a
+line form; TD-324's own brief cited `architecture_map.md:286-288` when the
+passage was at `:386`; it cited `briefs/index.ts:487` for an empty
+`required: []` that was at `:491`; and TD-402 drifted BOTH of the line-form
+citations THIS FILE carried into `brain-mcp-server/src/tools/projects.ts`, by
+inserting prose above them. The fourth is the instructive one, because neither
+pointer went OUT OF BOUNDS — one came to name a DIFFERENT function's body and
+the other a doc comment, so both stayed plausible while pointing at the wrong
+code. Deliberately stated as a PROPERTY and carrying no line numbers or file
+length: a first draft of this very paragraph quoted the before/after lines and
+the file's line count, and the brief's own next round moved all three, so the
+paragraph diagnosing drift had drifted — plausibly, and still in bounds, which
+is the failure mode it describes one sentence up. NOTHING mechanical catches
+that: the ledger is
+deliberately not line-keyed, so a stale line inside a citation STRING is
+invisible to every check here. Both are now cited by SYMBOL, which survives an
+insertion above them. A line-keyed ledger silently goes blind the first time
+someone inserts a paragraph; a line-keyed citation lies instead.
 
 Each key carries an `expected_count`. A site whose key is in the ledger is
 subtracted; a site whose key is ABSENT is reported; and if a ledgered key is
@@ -219,8 +232,11 @@ EXPECTED_TOOL_COUNT = 75
 # entry here, because its shape is the trap this whole contract keeps setting.
 # The naive fix — "name the three required args" — would have made `/boot` pass
 # a slug-derived `name` into an UPSERT whose conflict arm is `name =
-# excluded.name` (projects.ts:86-91), silently overwriting the operator's
-# curated project name on EVERY session start.
+# excluded.name` (the `ON CONFLICT(slug) DO UPDATE SET` arm inside
+# `handleProjectRegister`, in `brain-mcp-server/src/tools/projects.ts` — cited by
+# symbol, not by line, because TD-402 already drifted the line form of this exact
+# citation), silently overwriting the operator's curated project name on EVERY
+# session start.
 #
 # AND THAT FIX, APPLIED TO ONE COLUMN, OPENED THE NEXT ONE. The same conflict
 # arm also carries `tech_stack = excluded.tech_stack`, and the handler binds
@@ -421,12 +437,22 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "results, which the same line names."),
     ("core/skills/scan/SKILL.md", "igris_project_status", ('slug',)): (
         "already-loud", 1,
-        "projects.ts:179-186 returns in-band 'Project \"undefined\" not found. "
-        "Use igris_project_register to register it first.' READ-only, and the "
-        "section states 'skip this step silently'. This is the principled twin "
-        "of the boot igris_project_register site that WAS fixed: same 'for the "
-        "current project' phrasing, but that one is an UPSERT behind a handler "
-        "with no validation at all, so it lands a NULL instead of a message."),
+        "handleProjectStatus's not-found branch in "
+        "brain-mcp-server/src/tools/projects.ts returns in-band 'Project "
+        "\"undefined\" not found. Use igris_project_register to register it "
+        "first.' (cited by symbol — TD-402 drifted this citation's line form). "
+        "READ-only, and the section states 'skip this step silently'. This is "
+        "the principled twin of the boot igris_project_register site that WAS "
+        "fixed: same 'for the current project' phrasing, but that one is an "
+        "UPSERT. What a MISSING slug does there was MEASURED on 2026-08-17 and "
+        "it is loud on both reachable paths, never a NULL: through the gateway "
+        "BR-080 refuses first with \"igris_project_register: missing required "
+        "argument 'slug'. Required: slug, name, path. (strict-input contract; "
+        "BR-080)\", and called in-process the INSERT dies on 'NOT NULL "
+        "constraint failed: projects.slug' (db.ts declares slug TEXT UNIQUE NOT "
+        "NULL on the projects table) with no row written. TD-402's own guard is "
+        "about the PATH, never slug presence, and is inert on a slug-less call "
+        "anyway — a NULL bind makes 'slug != ?' match no row."),
     ("core/skills/scan/SKILL.md", "igris_suggestion_dismiss", ('id',)): (
         "prose", 1,
         "Display text — a quoted hint string rendered TO the operator showing "

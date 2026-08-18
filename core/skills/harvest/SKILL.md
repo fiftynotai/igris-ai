@@ -78,18 +78,46 @@ Present a short scan summary to the operator before proceeding.
 1. From the Phase-1 scan, **suggest** an archetype (e.g. "enterprise mobile MVVM",
    "Flutter design kit", "marketing web", "AI platform").
 2. **Confirm with the operator** — never assume. Let them correct or replace it.
-3. Persist via `igris_project_register`:
+3. **Derive the slug — this is the rule, and it is not negotiable (TD-402).**
+   The slug is `basename(realpath(project_root))` **VERBATIM**: no case change,
+   no `-`/`_` normalisation, no substituting a package name for the directory
+   name. A root manifest whose package name disagrees with the directory
+   (e.g. `~/StudioProjects/fifty_eco_system/pubspec.yaml` declares
+   `name: fifty_flutter_kit`) puts that name in `name`, never in `slug`. A
+   monorepo gets ONE row for the repo root; sub-packages are not projects.
+   Why it is written here: this is the mint site. On 2026-07-04 one directory was
+   registered under three slugs inside 420 ms, and the three are NOT three
+   independent derivations — two of them share the same wrong step. They were the
+   directory basename verbatim (`fifty_eco_system`), that same basename
+   hyphen-normalised (`fifty-eco-system`), and the manifest package name
+   hyphen-normalised (`fifty-flutter-kit`, from `name: fifty_flutter_kit`). The
+   purely manifest-derived spelling was never registered at all. That stranded 36
+   briefs and 7 learnings under slugs `igris detect` never produces. The brain now
+   refuses a path another slug already holds on BOTH of its project tools — the
+   register tool (its own args are named in step 4 below) and
+   `igris_project_update`, which can also set `path`. FOUR other writers still do
+   not refuse: `igris install --slug`, `igris import`'s auto-register, and the
+   pull merge on BOTH sides of sync — the brain's and the CLI's. The CLI one runs
+   on the default boot path and its sync key is the slug alone, so a pull can put
+   a folded duplicate BACK (TD-404, open). `igris doctor`'s `duplicate-path` class
+   is the detector that covers all six, because it reads state rather than gating
+   a write — which also means it is not a one-shot check after a fold.
+4. Persist via `igris_project_register`:
    ```
    igris_project_register({
-     slug:       "<project-slug>",
+     slug:       "<basename of realpath(project_root), verbatim>",
      name:       "<project-name>",
      path:       "<absolute-project-path>",
      tech_stack: "<comma-separated stack from Phase 1, e.g. 'Flutter:3.9.2,GetX:4.6.6'>",
      archetype:  "<confirmed archetype>"
    })
    ```
-   (Register upserts by `slug` and COALESCEs `archetype`, so this is safe to
-   re-run; it also refreshes `last_session_at`.)
+   (Register upserts by `slug` and COALESCEs `archetype`, so re-running for the
+   SAME slug is safe; it also refreshes `last_session_at`. A DIFFERENT slug at an
+   already-registered path is refused — the response names the slug that holds
+   it. Correct that existing row with `igris_project_update`, never a second row;
+   note it refuses the same duplicate path, so it fixes a row's `name` or stack,
+   it does not let you point a second slug at one directory.)
 
 ## Phase 3 — Module identification (the lego catalog seed)
 

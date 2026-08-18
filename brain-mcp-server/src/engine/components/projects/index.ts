@@ -48,14 +48,14 @@ export function createProjectsComponent(): BrainComponent {
       return [
         {
           name: 'igris_project_register',
-          description: 'Register a project in the Igris brain. Creates or updates the project record. Call this when Igris is installed in a new project.',
+          description: 'Register a project in the Igris brain. Creates or updates the project record. Call this when Igris is installed in a new project. One directory gets ONE project row: registering a path that another slug already holds is refused (TD-402).',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               slug: {
                 type: 'string',
-                description: 'Unique project slug (e.g., "igris-ai", "my-flutter-app")',
+                description: 'Unique project slug — basename(realpath(project_root)) VERBATIM. No case change, no -/_ normalisation, no substituting a package name. A root package name that disagrees with the directory name (pubspec/package.json) goes in `name`, never in `slug`. A monorepo gets ONE row for the repo root; sub-packages are not projects.',
               },
               name: {
                 type: 'string',
@@ -63,7 +63,7 @@ export function createProjectsComponent(): BrainComponent {
               },
               path: {
                 type: 'string',
-                description: 'Absolute path to the project directory',
+                description: 'Absolute path to the project directory. Refused if a DIFFERENT slug already holds this directory (compared by resolved realpath, so a symlink and its target are one directory); the SAME slug re-registering its own path still upserts.',
               },
               tech_stack: {
                 type: 'string',
@@ -119,7 +119,7 @@ export function createProjectsComponent(): BrainComponent {
         // ---------------------------------------------------------------
         {
           name: 'igris_project_update',
-          description: 'Partial UPDATE of an existing project record. Only the explicitly provided fields are written; omitted fields retain their existing values. Rejects on missing slug — for new projects use igris_project_register.',
+          description: 'Partial UPDATE of an existing project record. Only the explicitly provided fields are written; omitted fields retain their existing values. Rejects on missing slug — for new projects use igris_project_register. One directory gets ONE project row: setting `path` to a directory another slug already holds is refused, and the refusal precedes the UPDATE, so no field in that call is written (TD-402).',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -129,7 +129,7 @@ export function createProjectsComponent(): BrainComponent {
                 description: 'Slug of the project to update (required)',
               },
               name: { type: 'string', description: 'New human-readable name' },
-              path: { type: 'string', description: 'New absolute path' },
+              path: { type: 'string', description: 'New absolute path. Refused if a DIFFERENT slug already holds this directory (compared by resolved realpath, so a symlink and its target are one directory); re-setting this row to its own path is a no-op success. Free the other row first, or correct that row instead.' },
               tech_stack: {
                 type: 'string',
                 description: 'New comma-separated tech stack',
@@ -205,8 +205,26 @@ export function createProjectsComponent(): BrainComponent {
     events(): { emits: EventDef[]; listens: EventDef[] } {
       return {
         emits: [
-          // Orphan: sync auto-push extension point — will be consumed when sync auto-push is implemented
-          { name: 'project.registered', description: 'A project was registered or updated' },
+          // NOT orphan (an older comment here said it was): two live subscribers
+          // consume this — `monitoring`'s onEventReceived and `sync`'s
+          // onBatchedEvent.
+          //
+          // The description says ATTEMPTED, not "was registered", because the
+          // emit above is UNCONDITIONAL: TD-402 added a refusal arm that returns
+          // before the upsert, and the emit fires on it too. Gating it was
+          // considered and DECLINED, with the blast radius measured rather than
+          // assumed: `sync`'s onBatchedEvent is TABLE-scoped, not slug-scoped —
+          // it ignores the payload, marks `projects` dirty and flushes an
+          // idempotent whole-table push (and returns immediately unless auto-push
+          // is configured), so a refusal cannot make it push a row that does not
+          // exist. The whole residual is therefore ONE spurious `monitoring`
+          // event row per refused register. Against that, the only refusal marker
+          // on the handler's return today is the `Error:` prefix of its prose, so
+          // a gate would couple a bus emit to a message's WORDING — a coupling
+          // that breaks silently on a reword. A real gate needs the handler to
+          // return a structured verdict alongside its envelope; that is a shape
+          // change to a shipped tool's contract, not a rename of this string.
+          { name: 'project.registered', description: 'A project registration was ATTEMPTED (register or upsert). Fires even when the call was refused — e.g. TD-402 duplicate-path — so a subscriber must not treat it as proof a row changed.' },
         ],
         listens: [],
       };

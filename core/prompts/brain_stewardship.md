@@ -421,7 +421,7 @@ archetype, status, last session. Drives the affinity boosts in recall.
 ### Example invocation
 
 ```jsonc
-igris_project_dashboard({ slug: "fifty-flutter-kit" })
+igris_project_dashboard({ slug: "fifty_eco_system" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```

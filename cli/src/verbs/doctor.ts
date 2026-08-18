@@ -38,7 +38,16 @@
  *   path-missing            → orphan (registry row points at deleted dir)
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
- *   duplicate-path          → multiple slugs with the same realpath (fifty_eco_system)
+ *   duplicate-path          → multiple slugs with the same realpath (the
+ *                             fifty_eco_system triple-slug case was the live
+ *                             example until TD-402 folded it on 2026-08-17; the
+ *                             class is still live — this detector reads STATE,
+ *                             so it reports a duplicate whoever minted it, and
+ *                             other writers that can set projects.path
+ *                             still do not refuse one — including the boot-sync
+ *                             pull merge, which can put a folded duplicate BACK
+ *                             on the default /boot path, so this class is not
+ *                             one-shot even after a fold (TD-404, open))
  *   symlink-target          → row.path is itself a symlink
  *   clean                   → registered + path exists (the register-only happy path)
  *

@@ -16,6 +16,8 @@
  * @author fifty.dev
  */
 
+import { existsSync, realpathSync } from 'node:fs';
+
 import { getDb } from '../db.js';
 
 /** Input shape for igris_project_register */
@@ -68,17 +70,110 @@ interface ProjectDashboardInput {
 }
 
 /**
+ * Resolve a path for identity comparison.
+ *
+ * Falls back to the raw string when `realpathSync` throws — which it does for a
+ * path that does not exist on disk, so a missing directory compares by string
+ * rather than dropping out of the comparison entirely.
+ */
+function resolveForCompare(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * The `projects` row OTHER THAN `slug` whose path resolves to the same directory
+ * as `path`, or `undefined` when the directory is free (the return value is
+ * `Array.prototype.find`'s, so it is `undefined` and never `null`).
+ *
+ * ONE DEFINITION, TWO CALLERS, on purpose (TD-402 retry 1). Both writes in this
+ * module that can set `projects.path` ask this same question, so the predicate
+ * cannot drift between them: `handleProjectRegister` before its upsert and
+ * `handleProjectUpdate` before its UPDATE. Excluding `slug` itself is what keeps
+ * a same-slug re-registration an upsert and lets a row re-set its own path.
+ *
+ * Note the comparison is `realpathSync`-resolved on BOTH sides, so a symlink and
+ * its target are one directory; `resolveForCompare` falls back to the raw string
+ * for a path that does not exist, so a machine that lacks the directory still
+ * compares.
+ */
+function findPathHolder(
+  db: ReturnType<typeof getDb>,
+  slug: string,
+  path: string,
+): { slug: string; path: string } | undefined {
+  const incoming = resolveForCompare(path);
+  const others = db
+    .prepare('SELECT slug, path FROM projects WHERE slug != ?')
+    .all(slug) as { slug: string; path: string }[];
+  return others.find((r) => resolveForCompare(r.path) === incoming);
+}
+
+/**
  * Register a project in the brain.
  *
  * Uses INSERT ... ON CONFLICT DO UPDATE to safely upsert without
  * destroying columns not included in the INSERT.
  * Automatically updates last_session_at to the current timestamp.
  *
+ * Refuses when a DIFFERENT slug already holds the same resolved path (TD-402).
+ * Same-slug re-registration stays an upsert — that is `/boot`'s per-session
+ * refresh.
+ *
+ * OTHER WRITERS EXIST AND DO NOT REFUSE. This handler and `handleProjectUpdate`
+ * are not the only paths that can set `projects.path`. The census, how to
+ * DERIVE it, and its limits live in MAINTAINING.md's BR-080 strict-input row (row 113), in its Notes cell —
+ * derive it there, never recall it.
+ * `igris doctor`'s `duplicate-path` class is the writer-agnostic detector: it
+ * reads STATE, so it reports a duplicate whoever minted it.
+ *
+ * SCOPE — SOURCE, NOT RUNTIME. This refusal is in source as of TD-402 and is
+ * NOT in the compiled bundle: `findPathHolder` appears 0 times in
+ * `brain-mcp-server/dist/` and in `cli/dist/brain-mcp-server/dist/` (measured
+ * 2026-08-17, both stale builds that still carry `handleProjectRegister`). It
+ * takes effect at the next bundle rebuild. Until then this path can still mint
+ * a duplicate, which is a second route into TD-404's hazard.
+ *
  * @param args - Project registration data
  * @returns MCP-formatted response with the project record
  */
 function handleProjectRegister(args: ProjectRegisterInput): { content: { type: string; text: string }[] } {
   const db = getDb();
+
+  const holder = findPathHolder(db, args.slug, args.path);
+  if (holder) {
+    return {
+      content: [{
+        type: 'text',
+        text: [
+          `Error: path already registered under slug "${holder.slug}".`,
+          '',
+          `Requested slug: ${args.slug}`,
+          `Requested path: ${args.path}`,
+          `Resolved path:  ${resolveForCompare(args.path)}`,
+          `Held by:        ${holder.slug} (${holder.path})`,
+          '',
+          'One directory gets ONE project row. The slug is basename(realpath(project_root))',
+          'verbatim — no case change, no -/_ normalisation, no substitution of a package name.',
+          // Deliberately NOT "use igris_project_update to point this slug at the
+          // path": that tool can set `path`, and until TD-402 retry 1 it did so
+          // unchecked, so the message was recommending its own bypass. It now
+          // refuses the same duplicate, which is why the remedies below are the
+          // only two that exist.
+          `Remedies, and there are two: correct the existing "${holder.slug}" row with`,
+          'igris_project_update (name, path, tech_stack, archetype, status — a path a THIRD',
+          'slug holds is refused there the same way), or register a different path. The slug',
+          'itself is not updatable: it is derived from the directory name, so a wrong slug is',
+          'a row to remove and re-register, not a field to edit.',
+        ].join('\n'),
+      }],
+    };
+  }
+
+  const pathMissing = !existsSync(args.path);
 
   db.prepare(`
     INSERT INTO projects (slug, name, path, tech_stack, archetype, last_session_at)
@@ -109,6 +204,10 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
         `Status: ${project.status}`,
         `Registered: ${project.registered_at}`,
         `Last Session: ${project.last_session_at}`,
+        ...(pathMissing
+          ? ['', `Warning: path does not exist on this machine: ${args.path}`,
+            'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as path-missing.']
+          : []),
       ].join('\n'),
     }],
   };
@@ -246,7 +345,13 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
 // igris_project_update (TD-171 M3)
 // ---------------------------------------------------------------------------
 
-/** Subset of ProjectUpdateInput fields that may be UPDATEd via this handler. */
+/**
+ * Subset of ProjectUpdateInput fields that may be UPDATEd via this handler.
+ *
+ * `path` is in this list, which is why `handleProjectUpdate` carries the same
+ * duplicate-path refusal as `handleProjectRegister` — see the DECISION comment
+ * in that handler.
+ */
 const PROJECT_UPDATABLE_FIELDS = [
   'name',
   'path',
@@ -287,6 +392,43 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
         text: `Error: project "${args.slug}" not found. Use igris_project_register to create it first.`,
       }],
     };
+  }
+
+  // TD-402 — duplicate-path refusal on the UPDATE path too.
+  //
+  // Guarded here because the register refusal's own message names this tool as
+  // the remedy, and `PROJECT_UPDATABLE_FIELDS` includes `path` — so before this,
+  // the guard advertised its own bypass. Measured: an unguarded
+  // `handleProjectUpdate({slug:'other', path:<a dir another slug held>})`
+  // returned `{"updated_fields":["path"]}` and left two rows on one directory.
+  //
+  // The self-exclusion is load-bearing at both callers: mutating it out reds
+  // exactly one test per caller.
+  //
+  // Bounded: the other writers still do not refuse, and this is source-only
+  // until the bundle is rebuilt. See MAINTAINING.md's BR-080 strict-input row (row 113), in its Notes cell and
+  // TD-404 (open).
+  if (args.path !== undefined && typeof args.path === 'string') {
+    const holder = findPathHolder(db, args.slug, args.path);
+    if (holder) {
+      return {
+        content: [{
+          type: 'text',
+          text: [
+            `Error: path already registered under slug "${holder.slug}".`,
+            '',
+            `Requested slug: ${args.slug}`,
+            `Requested path: ${args.path}`,
+            `Resolved path:  ${resolveForCompare(args.path)}`,
+            `Held by:        ${holder.slug} (${holder.path})`,
+            '',
+            'One directory gets ONE project row (TD-402). No field was written — this',
+            'refusal precedes the UPDATE, so the other fields in this call were not',
+            'applied either. Re-send them without `path`, or free the directory first.',
+          ].join('\n'),
+        }],
+      };
+    }
   }
 
   // Validate status if present.
