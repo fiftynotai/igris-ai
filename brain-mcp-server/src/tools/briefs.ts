@@ -559,16 +559,64 @@ function handleBriefList(args: BriefListInput): { content: { type: string; text:
 }
 
 /**
+ * The next unused id in a brief id's own prefix family, or null when the id is
+ * not of the form `PREFIX-NNN`.
+ *
+ * TD-395. The collision refusal below is only useful if it also hands back the
+ * id to re-mint on: a caller made to re-derive it re-runs the very read that
+ * lost the race. Counted over BOTH tables — a body-less `brief_status` row
+ * (what `igris_brief_sync` and a remote pull leave behind) still holds its id,
+ * and handing that id out as free would mint the next collision.
+ *
+ * The width of the incoming id is preserved, so `TD-0001` yields `TD-0002`.
+ * `Math.max(max, incoming)` keeps the helper total for a caller that asks
+ * about an id which is not stored at all; on the refusal path the colliding id
+ * is present by construction, so `max` already covers it.
+ *
+ * Exported for the unit tests in `__tests__/brief-create-collision.test.ts`.
+ */
+export function nextFreeBriefId(
+  db: DatabaseType.Database,
+  project: string,
+  briefId: string,
+): string | null {
+  const shape = /^([A-Za-z]+)-(\d+)$/.exec(briefId);
+  if (!shape) return null;
+  const [, prefix, digits] = shape;
+  const like = `${prefix}-%`;
+
+  const rows = db.prepare(`
+    SELECT brief_id FROM brief_status WHERE project = ? AND brief_id LIKE ?
+    UNION
+    SELECT brief_id FROM brief_files  WHERE project = ? AND brief_id LIKE ?
+  `).all(project, like, project, like) as { brief_id: string }[];
+
+  let max = 0;
+  for (const row of rows) {
+    const found = /^[A-Za-z]+-(\d+)$/.exec(row.brief_id);
+    if (found) max = Math.max(max, Number(found[1]));
+  }
+
+  const next = Math.max(max, Number(digits)) + 1;
+  return `${prefix}-${String(next).padStart(digits.length, '0')}`;
+}
+
+/**
  * Create a new brief with content and metadata.
  *
- * Atomically inserts/upserts into both brief_files and brief_status
- * within a transaction. Auto-embeds the brief for similarity search
- * and warns if similar briefs are detected (>= 0.85 cosine similarity).
+ * Inserts into both brief_files and brief_status inside ONE transaction, then
+ * auto-embeds the brief for similarity search and warns if similar briefs are
+ * detected (>= 0.85 cosine similarity).
+ *
+ * REFUSES (TD-395) when a row already exists for (project, brief_id) whose
+ * content hash DIFFERS — that is a minting collision, and both statements
+ * below are upserts, so without the refusal the existing brief is destroyed
+ * silently. An identical re-create still succeeds.
  *
  * @param args - Brief data including project, brief_id, title, content
- * @returns MCP-formatted response confirming creation
+ * @returns MCP-formatted response confirming creation, or the refusal
  */
-async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { type: string; text: string }[] }> {
+async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   if (!args.project || !args.brief_id || !args.title || !args.content) {
     return {
       content: [{
@@ -587,6 +635,52 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
   // omitted status still defaults exactly as before, then the default (which is
   // canonical) passes through the normalizer unchanged.
   const status = normalizeStatus(args.status ?? 'Ready') ?? 'Ready';
+
+  // TD-395 — the create-collision guard, and the ONLY early return between here
+  // and the transaction, so a refusal leaves both tables untouched.
+  //
+  // Keyed on CONTENT, deliberately: an identical re-create is a replay, not a
+  // collision, and `/register` plus the offline `sync data` drain depend on it
+  // succeeding. A matching hash with different metadata also upserts — that is
+  // the metadata-only repair path TD-402's recovery needed, and it can lose no
+  // content. A `brief_status` row with no `brief_files` row is likewise not
+  // guarded: it holds no content to destroy, and refusing there would break the
+  // legitimate "status arrived first (remote pull / `igris_brief_sync`), body
+  // follows" path.
+  const existingFile = db.prepare(
+    'SELECT content_hash FROM brief_files WHERE project = ? AND brief_id = ?',
+  ).get(args.project, args.brief_id) as { content_hash: string } | undefined;
+
+  if (existingFile && existingFile.content_hash !== contentHash) {
+    const existingStatus = db.prepare(
+      'SELECT title FROM brief_status WHERE project = ? AND brief_id = ?',
+    ).get(args.project, args.brief_id) as { title: string } | undefined;
+    const freeId = nextFreeBriefId(db, args.project, args.brief_id);
+
+    return {
+      isError: true,
+      content: [{
+        type: 'text',
+        text: [
+          `Refused: brief id collision. ${args.brief_id} already exists in ${args.project} with DIFFERENT content.`,
+          '',
+          `Existing title: ${existingStatus?.title ?? '(brief_status has no row for this id)'}`,
+          `Existing content hash: ${existingFile.content_hash.substring(0, 12)}`,
+          `Your content hash:     ${contentHash.substring(0, 12)}`,
+          '',
+          'Nothing was written. brief_files and brief_status both still hold the',
+          'existing brief. Another session minted this id between your read and',
+          'your write (TD-395).',
+          '',
+          freeId
+            ? `Re-mint on the next free id: ${freeId}`
+            : `${args.brief_id} is not a PREFIX-NNN id, so no successor can be derived — pick a free id yourself.`,
+          'Then call igris_brief_create again with that brief_id. Re-creating the',
+          'SAME content under this id is not a collision and still succeeds.',
+        ].join('\n'),
+      }],
+    };
+  }
 
   db.transaction(() => {
     // Upsert brief_files

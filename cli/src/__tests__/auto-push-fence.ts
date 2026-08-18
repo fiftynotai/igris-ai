@@ -12,7 +12,7 @@
  * FR-247 introduces a SECOND, worse failure mode that that fence cannot see.
  * The chain, read out of the shipped source rather than assumed:
  *
- *   1. `briefs/index.ts:398` — `igris_brief_update`'s registration emits
+ *   1. `briefs/index.ts:404` — `igris_brief_update`'s registration emits
  *      `brief.synced` on EVERY update, status or not. `set_priority` dispatches
  *      that tool, so the dashboard's first brief write is also the first
  *      dashboard mutation that emits this event at all (none of FR-241's five

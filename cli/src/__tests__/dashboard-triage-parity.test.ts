@@ -620,7 +620,7 @@ describe("G-EP-3 — the differ CAN fail: three injected differences, three catc
  *
  * `set_priority` does not have that problem, and the reason was traced rather
  * than hoped for:
- *   - `briefs/index.ts:398` — `igris_brief_update`'s registration emits
+ *   - `briefs/index.ts:404` — `igris_brief_update`'s registration emits
  *     `brief.synced` on EVERY update;
  *   - `monitoring/index.ts:56` — `EVENT_COMPONENT_MAP` carries
  *     `'brief.synced': 'briefs'`;

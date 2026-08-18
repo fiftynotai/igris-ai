@@ -61,6 +61,7 @@ Create MG-XXX briefs for each significant gap:
 - Consider dependencies (some migrations must happen before others)
 - Group related gaps into single briefs where logical
 - Create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/projects/{project}/briefs/MG-XXX-{name}.md`
+- If a create is answered `Refused: brief id collision` (TD-395), another session took that id and nothing was written — re-mint on the id the refusal names and call again. That is not an MCP failure, so do not take the cache fallback.
 
 ## Output Format
 

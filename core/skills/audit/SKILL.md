@@ -73,6 +73,7 @@ Comprehensive codebase audit workflow. Supports 7 audit types to detect quality,
 
 ### Step 4: Create Briefs
 - For Critical/High findings, create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/projects/{project}/briefs/`
+- If a create is answered `Refused: brief id collision` (TD-395), another session took that id and nothing was written — re-mint on the id the refusal names and call again. That is not an MCP failure, so do not take the cache fallback.
 - Use appropriate brief type (TD/BR/PI/DU/PF/AC)
 - Set priority based on severity
 

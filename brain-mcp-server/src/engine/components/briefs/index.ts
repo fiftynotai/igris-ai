@@ -236,7 +236,7 @@ export function createBriefsComponent(): BrainComponent {
         },
         {
           name: 'igris_brief_create',
-          description: 'Create a new brief with content and metadata. Atomically inserts into both brief_files and brief_status. Use this to store a complete brief in the brain.',
+          description: 'Create a new brief with content and metadata. Atomically inserts into both brief_files and brief_status. Use this to store a complete brief in the brain. REFUSES (TD-395) if that brief_id already holds DIFFERENT content — another session minted it first; the refusal names the next free id, so re-mint there and call again. Re-creating the SAME content under an existing id is not a collision and succeeds.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -293,7 +293,18 @@ export function createBriefsComponent(): BrainComponent {
             const typedArgs = args as Record<string, unknown>;
             const result = await handleBriefCreate(args as unknown as BriefCreateInput);
 
-            if (_ctx) {
+            // TD-395: a REFUSED create wrote nothing, so it must announce
+            // nothing. Do not quote a listener count here — derive it by
+            // grepping src/engine/components for a bus.on registration of this
+            // event (write the pattern yourself; a literal copy here would
+            // self-match this comment). At the time of writing that yields
+            // four registrations, and none of them is passive:
+            // `cache` warms the brief cache, `edges` writes a parent_of edge,
+            // `monitoring` INSERTs into event_log, and `sync` PUSHES the
+            // brief's rows to the remote brain. Emitting
+            // here would push the OTHER session's brief off the machine under
+            // the refused brief's event.
+            if (_ctx && result.isError !== true) {
               // FR-105: enrich payload with parent_brief_id so the edges
               // component can auto-create a parent_of edge. Prefer the
               // explicit field, fall back to scanning markdown content.

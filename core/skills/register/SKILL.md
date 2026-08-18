@@ -125,6 +125,12 @@ Call `igris_brief_list` to find next available number, fallback to cache glob at
 Find highest number, add 1.
 Example: If BR-007 exists, next is BR-008.
 
+This number is a CANDIDATE, not a reservation. A concurrent session reading at
+the same moment computes the same one, and the brain has minted a duplicate id
+on four separate occasions for exactly that reason (TD-395). `igris_brief_create` now REFUSES the
+second write instead of overwriting the first brief — §5 says what to do when
+it does.
+
 ### 3.5 Dup-check (enforcement gate)
 
 Before creating the brief, run the dup-check — the enforced form of brain
@@ -205,6 +211,16 @@ Call `igris_brief_create` with:
 - **status:** "Ready" (or "Draft" if info incomplete)
 - **priority:** the assigned priority (default "P2")
 - **effort:** the assigned effort if known
+
+**If the response starts with `Refused: brief id collision`** (TD-395):
+another session minted that id between your §3 read and this call, and NOTHING
+was written. Take the id from the refusal's `Re-mint on the next free id:` line
+— do not re-derive it, because re-deriving repeats the read that lost the race.
+Then call `igris_brief_create` again with the new `brief_id` and the same `project`, `title` and `content`.
+Use the new id in every later step (§6 BLOCKERS entry, §7
+confirmation) and anywhere you have already written the old one. A refusal is
+NOT an MCP failure: do not take the cache-fallback branch below, and do not
+queue the brief under the refused id.
 
 If `igris_brief_create` fails or MCP is unavailable:
 1. Write to `~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md` as fallback.

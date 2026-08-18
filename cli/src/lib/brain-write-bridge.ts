@@ -438,7 +438,7 @@ type BootEngineFn = (config: {
  * ───────────────────────────────────────────────────────────────────────────
  * The five FR-241 rows address a row by INTEGER id. A brief is not addressable
  * that way: `igris_brief_update` declares `required: ['project','brief_id']`
- * (`briefs/index.ts:377`), and although `brief_status.id` exists and is even on
+ * (`briefs/index.ts:383`), and although `brief_status.id` exists and is even on
  * the wire, NO brain tool accepts it — translating id -> (project, brief_id) in
  * this tier would mean a SQL lookup, which the zero-SQL scan forbids by
  * construction.

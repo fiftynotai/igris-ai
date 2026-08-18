@@ -261,19 +261,21 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
     ("core/skills/audit/SKILL.md", "igris_brief_create",
      ('brief_id', 'content', 'project', 'title')): (
         "already-loud", 1,
-        "briefs.ts:572-576 returns in-band 'Error: \"project\", \"brief_id\", "
+        "`handleBriefCreate`'s opening required-args check (briefs.ts, cited by "
+        "SYMBOL because the TD-395 guard moved it) returns in-band "
+        "'Error: \"project\", \"brief_id\", "
         "\"title\", and \"content\" are required.' The line also prescribes "
         "'fallback to cache write', so a rejection is fail-SAFE by design."),
     ("core/skills/ideate/SKILL.md", "igris_brief_create",
      ('brief_id', 'content', 'project', 'title')): (
         "already-loud", 1,
-        "briefs.ts:572-576, same in-band guard and same cache-fallback shape "
-        "as audit."),
+        "`handleBriefCreate`'s required-args check, same in-band guard and same "
+        "cache-fallback shape as audit."),
     ("core/skills/migrate-analyze/SKILL.md", "igris_brief_create",
      ('brief_id', 'content', 'project', 'title')): (
         "already-loud", 1,
-        "briefs.ts:572-576, same in-band guard and same cache-fallback shape "
-        "as audit."),
+        "`handleBriefCreate`'s required-args check, same in-band guard and same "
+        "cache-fallback shape as audit."),
 
     # --- boot ----------------------------------------------------------------
     ("core/skills/boot/SKILL.md", "igris_brain_pull",
@@ -375,10 +377,13 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "capability message ...)'. Describes the tool's absence, not a call."),
     ("core/skills/register/SKILL.md", "igris_brief_create",
      ('brief_id', 'content', 'project', 'title')): (
-        "prose", 2,
-        "A failure-branch header ('If ... fails or MCP is unavailable:') and a "
-        "scope rule under '## Important'. The real call is the argument list "
-        "earlier in the same file, which names all four and is NOT flagged."),
+        "prose", 3,
+        "Three narrations, none an imperative to call: the TD-395 note in §3 "
+        "that the number found there is a CANDIDATE and a colliding create is "
+        "refused, a failure-branch header ('If ... fails or MCP is "
+        "unavailable:'), and a scope rule under '## Important'. The two real "
+        "calls in §5 — the argument list, and the TD-395 re-mint line beside "
+        "it — each name all four and are NOT flagged."),
 
     # --- rest ----------------------------------------------------------------
     ("core/skills/rest/SKILL.md", "igris_memory_store",
