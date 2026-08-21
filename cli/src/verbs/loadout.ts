@@ -5314,6 +5314,34 @@ function runUnprojectMcp(opts: LoadoutOptions): number {
 }
 
 /**
+ * TD-408: resolve the claude `.claude/settings.json` target for a hook
+ * projection verb, or log the containment refusal and return null.
+ *
+ * Both hook verbs default this root to `process.cwd()`, and both then
+ * tmp-and-rename onto it — `.claude/settings.json` is TRACKED in this checkout,
+ * so under a test runner standing in the real repo that is the TD-406 write
+ * verbatim. `projectSettingsPath` refuses it; this turns the refusal into the
+ * verbs' exit-code contract (1 = write failure) rather than a silent skip.
+ *
+ * Only reached when the caller passed no `--hook-settings-path`; an explicit
+ * target is the caller naming its own file and is not cwd-derived.
+ */
+function containedClaudeSettingsPath(
+  verb: string,
+  projectRoot: string,
+): string | null {
+  const decided = projectSettingsPath(projectRoot);
+  if (decided.allowed) return decided.path;
+  logError(
+    `loadout ${verb}: refusing to write .claude/settings.json under ${projectRoot} — ` +
+      `a canonical repo write is not contained (${decided.refusal}; ` +
+      `IGRIS_REPO_DIR=${decided.declaredRoot ?? "<unset>"}). Declare IGRIS_REPO_DIR, ` +
+      `or pass an explicit settings path.`,
+  );
+  return null;
+}
+
+/**
  * FR-203: `igris loadout unproject-hook` — the INVERSE of `project-hook`.
  * Removes ONE hook block's GROUP from ONE harness's native hook surface:
  *
@@ -5365,10 +5393,19 @@ function runUnprojectHook(opts: LoadoutOptions): number {
 
   // The personal hook command path is provenance-derived from (name, event).
   const command = personalHookCommandPath(name, event);
-  const settingsPath =
-    harness === "antigravity"
-      ? opts.hookSettingsPath ?? antigravityHooksConfigPath()
-      : opts.hookSettingsPath ?? projectSettingsPath(opts.projectRoot ?? process.cwd());
+  let settingsPath: string;
+  if (harness === "antigravity") {
+    settingsPath = opts.hookSettingsPath ?? antigravityHooksConfigPath();
+  } else if (opts.hookSettingsPath !== undefined) {
+    settingsPath = opts.hookSettingsPath;
+  } else {
+    const contained = containedClaudeSettingsPath(
+      "unproject-hook",
+      opts.projectRoot ?? process.cwd(),
+    );
+    if (contained === null) return 1;
+    settingsPath = contained;
+  }
 
   if (!existsSync(settingsPath)) {
     // Nothing to un-merge — idempotent success.
@@ -6276,8 +6313,17 @@ function runProjectHook(opts: LoadoutOptions): number {
   }
 
   // --- claude: config-merge into .claude/settings.json. --------------------
-  const settingsPath =
-    opts.hookSettingsPath ?? projectSettingsPath(projectRoot);
+  // TD-408: `projectRoot` above is `opts.projectRoot ?? process.cwd()`, so this
+  // site is cwd-derived exactly like unproject-hook's — the local variable is
+  // what made it read as "already resolved" and get classified read-only twice.
+  let settingsPath: string;
+  if (opts.hookSettingsPath !== undefined) {
+    settingsPath = opts.hookSettingsPath;
+  } else {
+    const contained = containedClaudeSettingsPath("project-hook", projectRoot);
+    if (contained === null) return 1;
+    settingsPath = contained;
+  }
   return mergeHookGroupIntoFile(name, settingsPath, block, "claude");
 }
 

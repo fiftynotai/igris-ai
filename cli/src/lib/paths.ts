@@ -4,11 +4,19 @@
  * The brain root defaults to `~/.igris/` but honors `IGRIS_BRAIN_DIR` env
  * override (matches the existing shell convention from `igris_hooks_sync.sh`
  * and `verify_mirror.sh`). Tests sandbox the brain by setting that env var.
+ *
+ * `projectSettingsPath` is the one builder here that resolves into a repo
+ * CHECKOUT rather than the runtime tree, so it honours the twin `IGRIS_REPO_DIR`
+ * seam (TD-406/TD-408) and returns a decision instead of a bare string.
  */
 
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  resolveCanonicalRoot,
+  type CanonicalRootRefusal,
+} from "./canonical-root.js";
 
 /** Absolute path to the brain root (default: `~/.igris/`, override via IGRIS_BRAIN_DIR). */
 export function brainDir(): string {
@@ -157,9 +165,47 @@ export function loadoutOriginsPath(): string {
   return join(loadoutDirPath(), "origins.json");
 }
 
-/** Absolute path to a project's .claude/settings.json. */
-export function projectSettingsPath(projectPath: string): string {
-  return join(projectPath, ".claude", "settings.json");
+/**
+ * The outcome of resolving a project's `.claude/settings.json` — a path, or a
+ * refusal from the TD-406 containment seam.
+ */
+export type ProjectSettingsPathDecision =
+  | { allowed: true; path: string }
+  | {
+      allowed: false;
+      refusal: CanonicalRootRefusal;
+      declaredRoot: string | null;
+    };
+
+/**
+ * Absolute path to a project's `.claude/settings.json`, CONTAINED (TD-408).
+ *
+ * `.claude/settings.json` is tracked in this checkout, and its callers resolve
+ * the root from an `opts.projectRoot ?? process.cwd()` default — derive the
+ * current set with `grep -rn projectSettingsPath cli/src` — so the shape TD-406
+ * fixed for `core/SOUL.md` applies verbatim. The seam sits here, in the path
+ * builder, rather than at the call sites: the union return means a caller that
+ * ignores the refusal does not COMPILE, whereas a call-site guard is only as
+ * complete as the sweep that placed it, and TD-406's sweep — which read call
+ * sites — is the reason this brief exists. It also reads the way this module
+ * already reads: `brainDir()` at the top honours `IGRIS_BRAIN_DIR`, and
+ * `IGRIS_REPO_DIR` is its twin for the checkout half.
+ *
+ * Production (neither env var, no test context) always returns `allowed: true`
+ * with the byte-identical `join(projectPath, ".claude", "settings.json")`.
+ */
+export function projectSettingsPath(
+  projectPath: string,
+): ProjectSettingsPathDecision {
+  const decision = resolveCanonicalRoot(projectPath);
+  if (!decision.allowed) {
+    return {
+      allowed: false,
+      refusal: decision.reason,
+      declaredRoot: decision.declaredRoot,
+    };
+  }
+  return { allowed: true, path: join(decision.root, ".claude", "settings.json") };
 }
 
 /**
