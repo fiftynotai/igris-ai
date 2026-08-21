@@ -644,6 +644,8 @@ export async function runInit(opts: InitOptions): Promise<number> {
         `apply persona '${opts.persona}'`,
       );
     } else {
+      // Explicit target (TD-406): `--from-source` names the checkout; without
+      // it, `igris init` IS cwd-relative, so cwd is the stated correct target.
       const personaResult = applyPersona(
         opts.persona,
         opts.fromSource !== undefined
@@ -661,6 +663,12 @@ export async function runInit(opts: InitOptions): Promise<number> {
             `leaving the shipped SOUL.md.`,
         );
       } else {
+        if (personaResult.canonicalRefusal !== null) {
+          warn(
+            `persona '${opts.persona}': canonical core/SOUL.md NOT written ` +
+              `(${personaResult.canonicalRefusal}) — the runtime copy WAS written, so core/SOUL.md and its ~/.igris mirror now differ (TD-096). See IGRIS_REPO_DIR (TD-406).`,
+          );
+        }
         info(`Applied persona '${opts.persona}' (${personaResult.outcome}).`);
       }
     }

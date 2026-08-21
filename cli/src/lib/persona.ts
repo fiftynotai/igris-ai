@@ -17,6 +17,10 @@
  * also written so a contributor's working tree matches the runtime. At a
  * consumer install there is no checkout, so only the runtime copy is touched.
  *
+ * TD-406: that canonical write is CONTAINED by `canonical-root.ts` — under a
+ * test context it is refused unless `IGRIS_REPO_DIR` declares the subtree it may
+ * land in, the way `IGRIS_BRAIN_DIR` already contains the runtime write.
+ *
  * Nothing here reads or logs a secret; SOUL.md is non-secret persona text.
  */
 
@@ -28,6 +32,10 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import {
+  resolveCanonicalRoot,
+  type CanonicalRootRefusal,
+} from "./canonical-root.js";
 import { brainDir, soulMdPath, soulTemplatePath } from "./paths.js";
 
 /** The frontmatter keys `gen_os_index.sh` requires on a SOUL persona file. */
@@ -53,6 +61,12 @@ export interface ApplyPersonaResult {
   soulPath: string;
   /** The canonical core/SOUL.md path written when in a checkout, else null. */
   canonicalPath: string | null;
+  /**
+   * TD-406: why the canonical write was refused by the containment seam, or
+   * null when it was not refused. Disambiguates a null `canonicalPath`, which
+   * otherwise reads identically for "not a checkout" and "refused".
+   */
+  canonicalRefusal: CanonicalRootRefusal | null;
 }
 
 /**
@@ -106,10 +120,18 @@ export function hasRequiredFrontmatter(contents: string): boolean {
 /**
  * Detect a repo checkout: a `core/SOUL.md` exists under `repoRoot`. Mirrors the
  * `add` verb's core auto-detect (the igris-ai source tree carries `core/`).
+ *
+ * TD-406: containment is checked FIRST, so a refused target is never even
+ * stat'ed as a candidate.
  */
-function canonicalSoulPathFor(repoRoot: string): string | null {
-  const canonical = join(repoRoot, "core", "SOUL.md");
-  return existsSync(canonical) ? canonical : null;
+function canonicalSoulPathFor(repoRoot: string): {
+  path: string | null;
+  refusal: CanonicalRootRefusal | null;
+} {
+  const decision = resolveCanonicalRoot(repoRoot);
+  if (!decision.allowed) return { path: null, refusal: decision.reason };
+  const canonical = join(decision.root, "core", "SOUL.md");
+  return { path: existsSync(canonical) ? canonical : null, refusal: null };
 }
 
 /** Atomically write `contents` to `dest` (tmp file → rename). */
@@ -128,12 +150,15 @@ function writeAtomic(dest: string, contents: string): void {
  * the required frontmatter — installing it would break `gen_os_index.sh`.
  *
  * @param name      Persona name (`professional` | `character` | any shipped preset).
- * @param repoRoot  Repo root for the canonical-write checkout detection
- *                  (default: cwd). The runtime copy is always under brainDir().
+ * @param repoRoot  Repo root for the canonical-write checkout detection.
+ *                  REQUIRED (TD-406): a function that overwrites a tracked repo
+ *                  file must not infer its target from ambient process state, so
+ *                  a caller that wants cwd has to say so. The runtime copy is
+ *                  always under brainDir().
  */
 export function applyPersona(
   name: string,
-  repoRoot: string = process.cwd(),
+  repoRoot: string,
 ): ApplyPersonaResult {
   const soulPath = soulMdPath();
   const templatePath = soulTemplatePath(name);
@@ -144,6 +169,7 @@ export function applyPersona(
       name,
       soulPath,
       canonicalPath: null,
+      canonicalRefusal: null,
     };
   }
 
@@ -157,10 +183,12 @@ export function applyPersona(
       name,
       soulPath,
       canonicalPath: null,
+      canonicalRefusal: null,
     };
   }
 
-  const canonicalPath = canonicalSoulPathFor(repoRoot);
+  const { path: canonicalPath, refusal: canonicalRefusal } =
+    canonicalSoulPathFor(repoRoot);
 
   // Idempotence: if the runtime SOUL.md already matches the template AND (when
   // in a checkout) the canonical does too, this is a no-op.
@@ -172,7 +200,13 @@ export function applyPersona(
     (existsSync(canonicalPath) &&
       readFileSync(canonicalPath, "utf-8") === templateContents);
   if (runtimeMatches && canonicalMatches) {
-    return { outcome: "unchanged", name, soulPath, canonicalPath };
+    return {
+      outcome: "unchanged",
+      name,
+      soulPath,
+      canonicalPath,
+      canonicalRefusal,
+    };
   }
 
   writeAtomic(soulPath, templateContents);
@@ -180,7 +214,13 @@ export function applyPersona(
     writeAtomic(canonicalPath, templateContents);
   }
 
-  return { outcome: "applied", name, soulPath, canonicalPath };
+  return {
+    outcome: "applied",
+    name,
+    soulPath,
+    canonicalPath,
+    canonicalRefusal,
+  };
 }
 
 /**

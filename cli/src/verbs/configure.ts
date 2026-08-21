@@ -45,7 +45,12 @@ export interface ConfigureOptions {
   dryRun?: boolean;
   /** Accept current values; skip prompts (a no-op on values). */
   yes?: boolean;
-  /** Repo root for the persona canonical-write checkout detection (default: cwd). */
+  /**
+   * Repo root for the persona canonical-write checkout detection. Absent = cwd:
+   * `igris configure` is a cwd-relative verb (the operator runs it standing in
+   * the checkout they mean), so cwd is the correct production target — TD-406
+   * only requires that the site STATE it rather than inherit it silently.
+   */
   projectRoot?: string;
   /** Test seam: inject a fake prompt function. Production callers omit this. */
   prompt?: PromptFn;
@@ -108,7 +113,10 @@ export async function runConfigure(opts: ConfigureOptions): Promise<number> {
 
   // --- 4. Apply --------------------------------------------------------
   // 4a. Persona.
-  const personaResult = applyPersona(inputs.persona, opts.projectRoot);
+  const personaResult = applyPersona(
+    inputs.persona,
+    opts.projectRoot ?? process.cwd(),
+  );
   if (personaResult.outcome === "template_missing") {
     logError(
       `Persona template not found for '${inputs.persona}'. ` +
@@ -124,6 +132,12 @@ export async function runConfigure(opts: ConfigureOptions): Promise<number> {
         `the OS index generator). SOUL.md left unchanged.`,
     );
     return 1;
+  }
+  if (personaResult.canonicalRefusal !== null) {
+    warn(
+      `Persona: canonical core/SOUL.md NOT written ` +
+        `(${personaResult.canonicalRefusal}) — the runtime copy WAS written, so core/SOUL.md and its ~/.igris mirror now differ (TD-096). See IGRIS_REPO_DIR (TD-406).`,
+    );
   }
   info(`Persona: ${inputs.persona} (${personaResult.outcome})`);
 
