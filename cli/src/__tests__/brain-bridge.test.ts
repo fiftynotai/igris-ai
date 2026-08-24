@@ -41,6 +41,48 @@ import {
   resolveWholeGraphModulePath,
 } from "../lib/brain-bridge.js";
 
+/**
+ * Copy a compiled module and every module reachable from it by a STATIC
+ * SAME-DIRECTORY relative import (`from "./x.js"`), into `libDir`.
+ *
+ * The qualifier is exact, not decorative: the matcher is `./`-prefixed only,
+ * so a parent-relative `../` import is NOT followed, and the copy flattens
+ * every file into one `libDir` by basename, so a `./sub/x.js` import would be
+ * followed but land in the wrong place. Both are safe TODAY and only today:
+ * the bridge's measured closure is 3 files — `brain-bridge.js`, `paths.js`,
+ * `canonical-root.js` — all sited directly in `dist/lib/`, which itself is NOT
+ * flat (it has `sync/`, `drift/`, `dashboard/`, `init/`, `templates/`
+ * subdirectories). If a bridge module ever imports across a directory, this
+ * helper must grow rather than silently under-copy.
+ *
+ * The two isolated-root tests below need a `<tmp>/dist/lib/` that can actually
+ * import the bridge. Which files that takes is a property of the compiled
+ * output, so it is READ from the compiled output rather than restated here —
+ * a hand-list is a claim that goes stale silently (see the call site).
+ *
+ * `import()` expressions are not followed on purpose: the runtime-loaded
+ * engine modules are precisely what these tests need to be missing.
+ */
+function copyLocalClosure(
+  entry: string,
+  libDir: string,
+  copyStripped: (from: string, to: string) => void,
+  read: (p: string, enc: "utf-8") => string,
+): void {
+  const seen = new Set<string>();
+  const walk = (file: string): void => {
+    if (seen.has(file)) return;
+    seen.add(file);
+    copyStripped(file, join(libDir, file.split("/").pop() as string));
+    for (const m of read(file, "utf-8").matchAll(
+      /\bfrom\s+"(\.\/[^"]+\.js)"/g,
+    )) {
+      walk(join(dirname(file), m[1]));
+    }
+  };
+  walk(entry);
+}
+
 let sandbox: string;
 const prevBrain = process.env.IGRIS_BRAIN_DIR;
 
@@ -207,10 +249,24 @@ describe("bridge — degradation contract (never throws, and NAMES the cause)", 
     try {
       const libDir = join(isolated, "dist", "lib");
       mkdirSync(libDir, { recursive: true });
-      // The compiled bridge's entire import graph is `./paths.js` +
-      // `better-sqlite3` + node builtins (verified against dist/lib/brain-bridge.js).
-      copyStripped(compiledBridge, join(libDir, "brain-bridge.js"));
-      copyStripped(compiledPaths, join(libDir, "paths.js"));
+      // Copy the bridge's LOCAL (relative) import closure — DERIVED from the
+      // compiled sources, not hand-listed.
+      //
+      // It used to be hand-listed as "brain-bridge.js + paths.js", annotated
+      // "verified against dist/lib/brain-bridge.js". That verification went
+      // stale the moment `paths.ts` gained a `./canonical-root.js` import
+      // (commit 1eb88c5 — re-derived with `git log -S'canonical-root' --
+      // cli/src/lib/paths.ts`. This cited 174282f for a round, which is the
+      // sibling commit that CREATED `canonical-root.ts` and never touched
+      // `paths.ts` at all), and stayed invisible because a STALE `dist/`
+      // still had the old `paths.js`: the fixture only broke on the next
+      // full rebuild, in a file that has nothing to do with whatever caused
+      // it.
+      // Deriving the closure removes the class.
+      //
+      // Dynamic `import()` calls are deliberately NOT followed — the engine
+      // modules the bridge loads at runtime are exactly what must be absent.
+      copyLocalClosure(compiledBridge, libDir, copyStripped, readFileSync);
       // Resolve `better-sqlite3` from the repo's install. Workspaces hoist to
       // the monorepo root.
       for (const nm of [
@@ -472,8 +528,8 @@ describe("FR-240 bridge — loadLayerReaders()", () => {
     try {
       const libDir = join(isolated, "dist", "lib");
       mkdirSync(libDir, { recursive: true });
-      copyStripped(compiledBridge, join(libDir, "brain-bridge.js"));
-      copyStripped(compiledPaths, join(libDir, "paths.js"));
+      // Same derived closure as the `engine_unavailable` test above.
+      copyLocalClosure(compiledBridge, libDir, copyStripped, readFileSync);
       for (const nm of [
         join(cliRoot, "..", "node_modules"),
         join(cliRoot, "node_modules"),

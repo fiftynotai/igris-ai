@@ -360,19 +360,63 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
   let registration;
   try {
     const owner = resolveOwnerProcess();
-    const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+    const machineHostname = hostname();
+
+    // D-411-d — the `liveness_*` columns are a LAST-OBSERVED STAMP, never a
+    // source of truth. Every CLI-SIDE reader (`buildGatherDigest` here,
+    // `assess`, `instance`, and the /boot §4.1 display fed by gather's digest)
+    // re-derives liveness through `classifyInstanceLiveness` and ignores what
+    // is stored — and `runInstance`'s list action, the one that SPREADS THE DB
+    // ROW into its payload, additionally overwrites the three stamp keys with
+    // the derived values, so a downstream consumer naming `liveness_status`
+    // cannot resolve a stale one (round-2 review; it previously shipped both).
+    // The differentiator is the spread, NOT emitting a payload: `session
+    // gather` emits one too and its `crashed[]` entries carry `liveness_status`
+    // — but it builds an explicit literal from the DERIVED value, so it never
+    // had the leak. So the stamp is DERIVED through that same classifier,
+    // against the row about to be written, rather than hardcoded `'alive'`.
+    // Hardcoding is what let the 2026-08-21 row read `alive` while every CLI reader
+    // derived `dead` — a column and a classifier that disagree, only one of
+    // which is ever right.
+    //
+    // The CLI-side qualifier is load-bearing and NOT a hedge. `handleInstanceList`
+    // in `brain-mcp-server/src/tools/instances.ts` — behind the
+    // `igris_instance_list` MCP tool, called in the bodies of `/scan` §1.5 and
+    // `/ops` §3 and permitted in `/hunt`'s frontmatter — SELECTs this column
+    // and renders it verbatim into a `Liveness` table cell without ever
+    // calling the classifier (measured: zero occurrences of
+    // `classifyInstanceLiveness` in that file). Deriving the stamp here makes
+    // that surface correct at t=0 and no later: once the harness exits the row
+    // still reads `alive` while every CLI reader derives `dead`. That residual,
+    // and the second unconstrained writer beside it (`handleInstanceState`, behind
+    // `igris_instance_state`, which stores a caller-supplied `liveness_status`
+    // with no derivation), are TD-412's scope — deliberately untouched here.
+    //
+    // Cost note (/boot path, worst case): `resolveOwnerProcess` spends up to
+    // two `ps` calls (the tier-2 tree snapshot plus the owner's start time) and
+    // the classify below spends a third on its start-time comparison — three
+    // calls, 2s timeout each, every one of which degrades to `null` rather than
+    // throwing. So a pathological `ps` costs registration ~6s and still exits 0.
+    const liveness = classifyInstanceLiveness(
+      {
+        machine_hostname: machineHostname,
+        owner_pid: owner ? owner.pid : null,
+        owner_started_at: owner ? owner.started_at : null,
+      },
+      machineHostname,
+    );
     registration = registerOrUpdateInstanceState({
       instance_id: opts.selfInstanceId,
-      machine_hostname: hostname(),
+      machine_hostname: machineHostname,
       machine_os: process.platform,
       project_slug: slug,
       project_path: opts.projectPath ?? null,
       harness: caps.harness,
       owner_pid: owner ? owner.pid : null,
       owner_started_at: owner ? owner.started_at : null,
-      liveness_method: owner ? "pid_start_time" : "none",
-      liveness_status: owner ? "alive" : "unknown_no_metadata",
-      liveness_checked_at: now,
+      liveness_method: liveness.method,
+      liveness_status: liveness.status,
+      liveness_checked_at: liveness.checked_at,
     });
   } catch (err) {
     warn(

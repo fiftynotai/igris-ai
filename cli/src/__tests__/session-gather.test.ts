@@ -19,6 +19,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
 import type { GatherDigest } from "../types.js";
 
 let tmpRoot: string;
@@ -169,7 +170,14 @@ beforeEach(() => {
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
   // Force degraded-no-db OFF by default isn't possible without a DB; each test
   // that wants the local channel seeds the DB file. Clear harness markers.
-  for (const k of ["CLAUDECODE", "GEMINI_CLI", "CODEX_SESSION", "OPENCODE"]) {
+  //
+  // TD-299/TD-411: clear EVERY marker, derived from the table, not the partial
+  // hand-written set this used to carry. A partial set let the live harness's
+  // ambient marker (e.g. CLAUDE_CODE_ENTRYPOINT) leak in — which now matters
+  // more than it did, because `resolveOwnerProcess` branches on the inferred
+  // harness. `IGRIS_INSTANCE_OWNER_PID` goes with them: an ambient override
+  // would silently take tier 1 and make every tier-2/3 assertion vacuous.
+  for (const k of [...HARNESS_ENV_MARKERS, "IGRIS_INSTANCE_OWNER_PID"]) {
     delete process.env[k];
   }
 });
@@ -558,5 +566,113 @@ describe("session — unknown action", () => {
       process.stdout.write = origWrite as typeof process.stdout.write;
     }
     expect(code).toBe(0);
+  });
+});
+
+describe("TD-411 — register → gather owner-identity round-trip", () => {
+  /**
+   * READ THE TRAP BEFORE EDITING THESE.
+   *
+   * "the registered instance is absent from `crashed[]`" is GREEN ON THE
+   * BROKEN CODE here: under vitest the pool parent is long-lived, so the
+   * pre-fix `process.ppid` owner is alive and classifies `alive`. Asserting
+   * only that would be a false green covering the whole brief.
+   *
+   * The discriminating assertion at this layer is on the PERSISTED OWNER
+   * COLUMNS: with no override and no harness marker, the fix records NO owner
+   * (`owner_pid IS NULL`), where the pre-fix code recorded the parent shell's
+   * pid. The crashed/siblings assertions are kept as the D-411-c routing pin,
+   * not as the red.
+   *
+   * The end-to-end red — an instance genuinely landing in `crashed[]` — needs
+   * a parent that really exits, and lives in
+   * `cli/tests/integration/awaken-verbs.bats`.
+   */
+
+  async function register(): Promise<string> {
+    const { runSession } = await getSession();
+    const origWrite = process.stdout.write.bind(process.stdout);
+    let captured = "";
+    process.stdout.write = ((c: string | Uint8Array): boolean => {
+      captured += typeof c === "string" ? c : c.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    let code: number;
+    try {
+      code = runSession({ action: "register", project: "demo" });
+    } finally {
+      process.stdout.write = origWrite as typeof process.stdout.write;
+    }
+    expect(code).toBe(0);
+    const digest = JSON.parse(captured.trim()) as { instance_id: string };
+    expect(digest.instance_id).not.toBe("");
+    return digest.instance_id;
+  }
+
+  function readOwnerColumns(id: string): {
+    owner_pid: number | null;
+    owner_started_at: string | null;
+    liveness_status: string | null;
+    liveness_method: string | null;
+  } {
+    const db = new Database(dbFile(), { readonly: true });
+    try {
+      return db
+        .prepare(
+          `SELECT owner_pid, owner_started_at, liveness_status, liveness_method
+             FROM instances WHERE id = ?`,
+        )
+        .get(id) as ReturnType<typeof readOwnerColumns>;
+    } finally {
+      db.close();
+    }
+  }
+
+  it("with no harness marker, register records NO owner rather than the parent shell", async () => {
+    openSeed().close();
+
+    // Arm check: the parent this test refuses to record is real and, under
+    // vitest, is even ALIVE — which is precisely why the broken code looked
+    // fine here and why the assertion below has to be about the column.
+    expect(process.ppid).toBeGreaterThan(0);
+
+    const id = await register();
+    const row = readOwnerColumns(id);
+
+    expect(row.owner_pid).toBeNull();
+    expect(row.owner_pid).not.toBe(process.ppid);
+    expect(row.owner_started_at).toBeNull();
+
+    // D-411-d: the stamp is DERIVED through classifyInstanceLiveness against
+    // the row being written, never hardcoded 'alive'. A `null` owner must
+    // therefore stamp `unknown_no_metadata`/`none`, not `alive`.
+    expect(row.liveness_status).toBe("unknown_no_metadata");
+    expect(row.liveness_method).toBe("none");
+  });
+
+  it("an explicit IGRIS_INSTANCE_OWNER_PID is still honoured at registration", async () => {
+    openSeed().close();
+    process.env.IGRIS_INSTANCE_OWNER_PID = String(process.pid);
+
+    const id = await register();
+    const row = readOwnerColumns(id);
+
+    expect(row.owner_pid).toBe(process.pid);
+    expect(row.owner_started_at).not.toBeNull();
+    // Derived, not hardcoded — a live owner genuinely IS alive.
+    expect(row.liveness_status).toBe("alive");
+    expect(row.liveness_method).toBe("pid_start_time");
+  });
+
+  it("an unclassifiable instance renders as a SIBLING, never as crashed (D-411-c)", async () => {
+    openSeed().close();
+    const id = await register();
+
+    // Gather with no recovered self id, so the row is not excluded as self.
+    const d = await runGather();
+    expect(d.crashed.map((c) => c.instance_id)).not.toContain(id);
+    const self = d.siblings.find((s) => s.instance_id === id);
+    expect(self).toBeDefined();
+    expect(self?.liveness_status).toBe("unknown_no_metadata");
   });
 });

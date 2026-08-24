@@ -132,6 +132,7 @@ function readInstanceRow(
       owner_pid?: number | null;
       owner_started_at?: string | null;
       liveness_status?: string | null;
+      liveness_method?: string | null;
     }
   | undefined {
   const db = new Database(dbFile());
@@ -145,6 +146,7 @@ function readInstanceRow(
     "owner_pid",
     "owner_started_at",
     "liveness_status",
+    "liveness_method",
   ]) {
     if (names.has(name)) projections.push(name);
   }
@@ -158,6 +160,7 @@ function readInstanceRow(
         owner_pid?: number | null;
         owner_started_at?: string | null;
         liveness_status?: string | null;
+        liveness_method?: string | null;
       }
     | undefined;
   db.close();
@@ -189,7 +192,11 @@ beforeEach(() => {
   // partial set — otherwise a live harness's ambient marker (e.g.
   // CLAUDE_CODE_ENTRYPOINT when the suite runs inside a Claude Code session)
   // leaks in and the default-harness assertion below flips to `claude` (TD-299).
-  for (const k of HARNESS_ENV_MARKERS) {
+  //
+  // TD-411 adds IGRIS_INSTANCE_OWNER_PID to the same sandbox: it is tier 1 of
+  // owner resolution, so an ambient value would short-circuit the walk and make
+  // every owner assertion below report the environment rather than the code.
+  for (const k of [...HARNESS_ENV_MARKERS, "IGRIS_INSTANCE_OWNER_PID"]) {
     delete process.env[k];
   }
 });
@@ -221,9 +228,17 @@ describe("session register — §3.7", () => {
     expect(inst?.status).toBe("active");
     expect(inst?.project_slug).toBe("demo");
     expect(inst?.harness).toBe("unknown");
-    expect(inst?.owner_pid).toBeGreaterThan(0);
-    expect(inst?.owner_started_at).toBeTruthy();
-    expect(inst?.liveness_status).toBe("alive");
+
+    // TD-411 — this block used to assert `owner_pid > 0` and `liveness_status
+    // === 'alive'`, which PINNED THE DEFECT: with harness markers sandboxed
+    // there is no harness to own this session, and the pid that satisfied
+    // `> 0` was `process.ppid` — the transient shell that ran the CLI, dead by
+    // the time any reader checks it. The contract is now: no identifiable
+    // owner ⇒ record NO owner, and stamp the status the reader will re-derive.
+    expect(inst?.owner_pid).toBeNull();
+    expect(inst?.owner_started_at).toBeNull();
+    expect(inst?.liveness_status).toBe("unknown_no_metadata");
+    expect(inst?.liveness_method).toBe("none");
 
     // On-disk LIVE file exists and carries the MAINTAINING line shape.
     const fp = instanceFilePath("demo", d.instance_id);
@@ -238,6 +253,25 @@ describe("session register — §3.7", () => {
     const row = readSessionRow("demo", `instances/${d.instance_id}.md`);
     expect(row?.state).toBe("live");
     expect(row?.instance_id).toBe(d.instance_id);
+  });
+
+  it("records the owner when one CAN be identified (TD-411 tier 1)", async () => {
+    // The complement of the assertion above. Without this, the suite would only
+    // pin the DEGRADE, and a `resolveOwnerProcess` that returned null
+    // unconditionally would look perfectly healthy.
+    seedSchema();
+    process.env.IGRIS_INSTANCE_OWNER_PID = String(process.pid);
+
+    const d = await runRegister({ project: "demo" });
+    const inst = readInstanceRow(d.instance_id);
+
+    expect(inst?.owner_pid).toBe(process.pid);
+    expect(inst?.owner_started_at).toBeTruthy();
+    // D-411-d: the stamp is derived through classifyInstanceLiveness against
+    // the row being written, so a genuinely live owner stamps `alive` — but it
+    // is a LAST-OBSERVED value, and every reader re-derives it.
+    expect(inst?.liveness_status).toBe("alive");
+    expect(inst?.liveness_method).toBe("pid_start_time");
   });
 
   it("recovers (refreshes) an existing instance when --self-instance-id is given", async () => {

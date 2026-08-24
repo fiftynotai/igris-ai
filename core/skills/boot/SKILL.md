@@ -135,7 +135,7 @@ igris session gather --project <detect.project_slug> [--self-instance-id <recove
 
 **What the digest means for display (G5):**
 - `handoff.resume_point` / `handoff.next_steps` → feed §5's resume display (only when `handoff.mode == "REST MODE"`; see §5).
-- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} ({liveness_status}) on {current_brief}, last activity {last_active}"). Same-machine `alive` is process-proof; `unknown_remote` / `unknown_no_metadata` is a coordination fallback, not a liveness proof.
+- `siblings[]` → render a one-line-per-entry "Active siblings" list ("instance {short_id} ({liveness_status}) on {current_brief}, last activity {last_active}"). Same-machine `alive` means the harness process recorded at registration is still running under the same start time — it proves the harness, not the shell that ran the CLI. `unknown_remote` / `unknown_no_metadata` means liveness could not be measured at all (another machine, or a harness whose owning process could not be identified): treat it as a coordination hint, never as a crash. An unmeasurable instance deliberately lands here rather than in `crashed[]` — a false sibling is noise, a false crash invites reclaiming a live scratchpad.
 - `crashed[]` → render a one-line-per-entry "Crashed scratchpads" list ("instance {short_id} crashed mid-session — scratchpad at {scratchpad}"). This is the ABANDONED LIVE surface (§4.3.1 below is the same set — display only, NEVER destructive: no auto-archive, no ownership clear; Lock 1).
 - `self_instance_id` → carry to §4.4 (recovered id to reuse, or null to mint).
 

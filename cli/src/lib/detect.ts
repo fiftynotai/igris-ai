@@ -70,15 +70,57 @@ export const HARNESS_ENV_MARKERS: readonly string[] =
   HARNESS_MARKER_TABLE.flatMap(([markers]) => markers);
 
 /**
+ * The harness PROCESS table (TD-411): ordered [harness, `comm` matcher] pairs,
+ * sited next to {@link HARNESS_MARKER_TABLE} so the two harness tables stay
+ * adjacent. `resolveOwnerProcess` walks the process tree upward looking for the
+ * FIRST ancestor whose `ps -Ao comm=` string matches this harness's entry, and
+ * records that pid as the session's owner.
+ *
+ * This table is a MEASUREMENT, not a belief. Every entry below was observed on
+ * this machine; a harness that could not be observed gets NO entry and resolves
+ * to `null` (→ `unknown_no_metadata` → rendered as a sibling), because a wrong
+ * owner pid is worse than no owner pid.
+ *
+ * Measured 2026-08-21 on darwin 25.5.0 / arm64 (TD-411 phase 1.1):
+ *
+ * | harness      | binary kind                | observed `comm`               | table entry |
+ * |--------------|----------------------------|-------------------------------|-------------|
+ * | claude       | Mach-O executable          | `claude`                      | YES — the ancestor chain was walked from a live tool shell: `zsh` → `claude` → login `zsh`. |
+ * | codex        | `#!/usr/bin/env node`      | `node`                        | no — `node` is the igris CLI's OWN comm; the matcher would be ambiguous with every other node process. |
+ * | gemini       | `#!/usr/bin/env node`      | `node` (sampled `/usr/bin/env` mid-exec) | no — same ambiguity as codex. |
+ * | opencode     | Mach-O executable          | `/opt/homebrew/bin/opencode`  | no — the comm is distinctive, but its ancestry over a tool shell was NOT observed from inside the harness. |
+ * | cursor-agent | `#!/usr/bin/env bash` wrapper | `/usr/bin/env` (sampled mid-exec) | no — the wrapper re-execs; the final comm and the ancestry were not observed. |
+ * | antigravity  | Mach-O executable (`agy`)  | `/opt/homebrew/bin/agy`       | no — same as opencode: name observed, ancestry not. |
+ *
+ * A matcher is tested against the RAW comm string, which is a bare name on some
+ * platforms (`claude`) and an absolute path on others (`/opt/homebrew/bin/agy`),
+ * so every entry anchors on an optional trailing path segment. Do NOT give a
+ * matcher the `g` flag: a global RegExp carries `lastIndex` across `.test()`
+ * calls and would match intermittently while walking.
+ *
+ * To ADD a harness: run it, walk `ps -Ao pid=,ppid=,comm=` upward from a shell
+ * the harness spawned, confirm the harness process is genuinely an ancestor,
+ * and only then add the row (see MAINTAINING.md's owner-identity contract).
+ */
+export const HARNESS_PROCESS_TABLE: ReadonlyArray<
+  readonly [DetectResult["harness"], RegExp]
+> = [["claude", /(?:^|\/)claude$/]];
+
+/**
  * Infer the launching harness from environment markers.
  *
  * Best-effort and side-effect-free: each harness exports a distinctive env
  * var at session start. Unknown when no marker matches (e.g. a bare CLI run
  * outside any agent harness) — `unknown` is a valid, non-degrading value
  * (the harness identity does not gate any local read).
+ *
+ * `env` is injectable so a caller that already holds an environment (and every
+ * test that sandboxes {@link HARNESS_ENV_MARKERS}) infers from THAT env rather
+ * than from the ambient process env.
  */
-function inferHarness(): DetectResult["harness"] {
-  const env = process.env;
+export function inferHarness(
+  env: NodeJS.ProcessEnv = process.env,
+): DetectResult["harness"] {
   for (const [markers, harness] of HARNESS_MARKER_TABLE) {
     if (markers.some((m) => env[m] !== undefined)) {
       return harness;

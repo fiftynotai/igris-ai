@@ -58,6 +58,19 @@ CREATE TABLE IF NOT EXISTS instances (
   last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
   metadata TEXT DEFAULT '{}'
 );
+-- FR-190 liveness metadata. This DDL used to STOP at `metadata`, which meant
+-- `registerOrUpdateInstanceState` silently took its legacy-columns compat path
+-- here and wrote no owner metadata at all — so no liveness assertion in this
+-- file could ever be more than vacuous (TD-411).
+ALTER TABLE instances ADD COLUMN harness TEXT;
+ALTER TABLE instances ADD COLUMN harness_session_id TEXT;
+ALTER TABLE instances ADD COLUMN owner_pid INTEGER;
+ALTER TABLE instances ADD COLUMN owner_started_at TEXT;
+ALTER TABLE instances ADD COLUMN liveness_method TEXT;
+ALTER TABLE instances ADD COLUMN liveness_status TEXT;
+ALTER TABLE instances ADD COLUMN liveness_checked_at TEXT;
+ALTER TABLE instances ADD COLUMN lease_expires_at TEXT;
+ALTER TABLE instances ADD COLUMN state_updated_at TEXT;
 
 -- A genuine handoff: rested file whose owning instance is absent from the
 -- registry. content carries the resume fields the digest parses.
@@ -66,6 +79,24 @@ VALUES ('h1', 'demo', 'instances/i-gone.md',
         '**Mode:** REST MODE' || char(10) || '**Resume Point:** wire the gather verb',
         'hash-h1', '2026-06-09 12:00:00', 'i-gone', 'rested');
 SQL
+}
+
+# unset_harness_markers — clear EVERY env var `inferHarness` reads, plus the
+# owner-pid override, so a run hosted inside a live harness behaves exactly
+# like CI (TD-299 precedent, and TD-411 made it load-bearing: the owner-identity
+# walk branches on the inferred harness).
+#
+# The list is DERIVED from the shipped table rather than hand-copied here, so a
+# harness added to `HARNESS_MARKER_TABLE` cannot leave this fixture stale.
+unset_harness_markers() {
+  local marker
+  for marker in $(node -e '
+    import(process.argv[1] + "/lib/detect.js")
+      .then((d) => console.log(d.HARNESS_ENV_MARKERS.join(" ")));
+  ' "$CLI_DIST"); do
+    unset "$marker"
+  done
+  unset IGRIS_INSTANCE_OWNER_PID
 }
 
 setup() {
@@ -139,6 +170,118 @@ SQL
   run $CLI_BIN session bogus
   [ "$status" -eq 2 ]
   [[ "$output" == *"unknown session action"* ]] || [[ "$output" == *"Valid:"* ]]
+}
+
+# TD-411 — THE end-to-end red. This is the only layer where the DEAD-PARENT
+# CONDITION reproduces.
+#
+# Stated narrowly on purpose. It is NOT the only layer that would catch a
+# reintroduced `process.ppid` fallback. Re-measured 2026-08-21 by mutation
+# (replacing ALL THREE of tier 2's null-guards — `if (entry === undefined)`,
+# `if (table === null)` and `if (pid === null)` — with `walked ?? process.ppid`;
+# mutating only the last one measures 0 red, because under a live harness
+# `walked` is never null and the no-marker tests return at the FIRST guard), that defect also reddens 6 of the 56 vitest tests
+# across `process-liveness.test.ts`, `session-register.test.ts` and
+# `session-gather.test.ts`. What those 56 cannot reproduce is the CONDITION:
+# under vitest the test-pool parent is long-lived, so the pre-fix
+# `owner_pid = process.ppid` was ALIVE and every downstream liveness assertion
+# passed on the broken code. That is why the vitest reds sit on the RESOLVER's
+# return value, while the observable consequence — an instance landing in
+# `crashed[]` — can only be shown here.
+#
+# The condition needs a parent that really exits: the per-tool-call shell
+# every harness spawns. `bash -c` with TWO commands gives exactly that (a
+# single-command `bash -c` is exec-optimised into the CLI process itself,
+# which would silently destroy the fixture).
+@test "session register in a TRANSIENT shell: gather does NOT report it crashed (TD-411)" {
+  seed_brain_db
+  unset_harness_markers
+
+  local pidfile="$BATS_TEST_TMPDIR/parent.pid"
+  run env CLI_INNER="$CLI_BIN" PIDFILE="$pidfile" \
+    bash -c 'echo $$ > "$PIDFILE"; $CLI_INNER session register --project demo'
+  [ "$status" -eq 0 ]
+
+  local iid
+  iid="$(printf '%s' "$output" | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d));
+    process.stdin.on("end", () => process.stdout.write(JSON.parse(s.trim()).instance_id));
+  ')"
+  [ -n "$iid" ] || return 1
+
+  local parent_pid
+  parent_pid="$(cat "$pidfile")"
+  [ -n "$parent_pid" ] || return 1
+
+  # ARM CHECK. Everything below is vacuous unless that shell is genuinely gone;
+  # a fixture that quietly stopped being transient would turn this whole test
+  # into a false green, which is precisely how TD-411 survived until now.
+  run kill -0 "$parent_pid"
+  [ "$status" -ne 0 ] || return 1
+
+  # The load-bearing assertion: the dead shell was NOT recorded as the owner.
+  # Before the fix this row read "<parent_pid>|dead".
+  run sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" \
+    "SELECT ifnull(owner_pid,'NULL') || '|' || ifnull(liveness_status,'NULL')
+       FROM instances WHERE id = '$iid';"
+  [ "$status" -eq 0 ]
+  [ "$output" = "NULL|unknown_no_metadata" ]
+
+  # And the observable consequence the operator actually reads (D-411-c): an
+  # unclassifiable instance renders as a SIBLING, never as a crashed scratchpad
+  # an operator might reclaim.
+  run $CLI_BIN session gather --project demo
+  [ "$status" -eq 0 ]
+  printf '%s' "$output" | IGRIS_TEST_IID="$iid" node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d));
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s.trim());
+      const id = process.env.IGRIS_TEST_IID;
+      if (o.crashed.some((c) => c.instance_id === id)) {
+        console.error("REGRESSION: the live instance is in crashed[]: " + id);
+        process.exit(1);
+      }
+      const self = o.siblings.find((x) => x.instance_id === id);
+      if (!self) {
+        console.error("the instance is in neither list; siblings=" +
+          JSON.stringify(o.siblings.map((x) => x.instance_id)));
+        process.exit(1);
+      }
+      if (self.liveness_status !== "unknown_no_metadata") {
+        console.error("bad liveness_status: " + self.liveness_status);
+        process.exit(1);
+      }
+      process.exit(0);
+    });
+  '
+}
+
+# The tier-1 escape hatch, end-to-end: an explicit override still wins, so the
+# seam TD-411 kept (rather than deleted) is proven reachable and not dead code.
+@test "session register: IGRIS_INSTANCE_OWNER_PID overrides the walk (TD-411 tier 1)" {
+  seed_brain_db
+  unset_harness_markers
+
+  # $$ is this bats process — guaranteed alive for the duration of the test.
+  local owner="$$"
+  run env IGRIS_INSTANCE_OWNER_PID="$owner" CLI_INNER="$CLI_BIN" \
+    bash -c '$CLI_INNER session register --project demo; :'
+  [ "$status" -eq 0 ]
+
+  local iid
+  iid="$(printf '%s' "$output" | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d));
+    process.stdin.on("end", () => process.stdout.write(JSON.parse(s.trim()).instance_id));
+  ')"
+  [ -n "$iid" ] || return 1
+
+  run sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" \
+    "SELECT ifnull(owner_pid,'NULL') || '|' || ifnull(liveness_status,'NULL')
+       FROM instances WHERE id = '$iid';"
+  [ "$status" -eq 0 ]
+  # `alive` here is DERIVED (D-411-d), not stamped: the override names a pid
+  # that really is running with the recorded start time.
+  [ "$output" = "$owner|alive" ]
 }
 
 # seed_legacy_for_housekeeping — a legacy CURRENT_SESSION.md row + its on-disk
