@@ -147,6 +147,8 @@ File content:
 **Instance ID:** <instance_id>
 **Updated:** [current date]
 **Active Brief:** [current brief or None]
+**Resume Point:** [one line: brief + phase]
+**Next Steps:** [one line: the single next action]
 
 ---
 
@@ -168,6 +170,8 @@ File content:
 **Completed:** [list completed items]
 **Summary:** [brief summary of work done]
 ```
+
+The `**Resume Point:**` and `**Next Steps:**` lines in `## Status` are the MACHINE surface; the `##` sections below them are the HUMAN surface. `igris session gather` matches those two bold lines with a single-line regex and carries only their values into the boot digest that `/boot` §5 renders, so each must fit on ONE line. The `## Resume Point` and `## Next Session Instructions` sections may be as long as needed — they stay in the file (and in the stored `session_files` row) for whoever opens it, but they are not what the digest carries.
 
 ### 4. Confirm REST MODE
 

@@ -16,9 +16,10 @@
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
 import type { GatherDigest } from "../types.js";
 
@@ -674,5 +675,278 @@ describe("TD-411 — register → gather owner-identity round-trip", () => {
     const self = d.siblings.find((s) => s.instance_id === id);
     expect(self).toBeDefined();
     expect(self?.liveness_status).toBe("unknown_no_metadata");
+  });
+});
+
+/**
+ * TD-360 — the writer/reader shape, pinned against the SKILL FILE ITSELF.
+ *
+ * Every other fixture in this suite hand-types the inline `**Label:** value`
+ * form the parser prefers. That is precisely why TD-360 survived from
+ * 2026-08-07: six fixtures agreed with the parser, and not one of them was the
+ * shape `/rest` actually writes, so the disagreement between writer and reader
+ * had no test that could see it.
+ *
+ * These tests therefore build their fixture by READING
+ * `core/skills/rest/SKILL.md`, extracting its §3 fenced template, and
+ * instantiating the placeholders with sentinels that are DISTINCT per slot —
+ * so an assertion can say which line of the template a value came from, and
+ * the block goes red the next time the template and the parser drift apart.
+ */
+
+/** The real igris-ai checkout, resolved from THIS FILE — never from cwd. */
+const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
+const REST_SKILL = join(REPO_ROOT, "core", "skills", "rest", "SKILL.md");
+
+// One sentinel per template slot. The machine-line pair and the prose pair must
+// stay distinguishable: an assertion that only checked "non-empty" would be
+// satisfied by the D-360-b heading fallback reading the PROSE, which is exactly
+// the failure mode these tests exist to tell apart.
+const INLINE_RESUME = "TD-360-inline-resume-point";
+const INLINE_NEXT = "TD-360-inline-next-steps";
+const PROSE_LAST_ACTIVE = "TD-360-prose-last-active";
+const PROSE_PHASE = "TD-360-prose-phase";
+const PROSE_INSTRUCTIONS = "TD-360-prose-next-session-instructions";
+
+const TEMPLATE_SUBSTITUTIONS: ReadonlyArray<readonly [string, string]> = [
+  ["<instance_id>", "i-template"],
+  ["[one line: brief + phase]", INLINE_RESUME],
+  ["[one line: the single next action]", INLINE_NEXT],
+  ["[brief ID if any]", PROSE_LAST_ACTIVE],
+  ["[current phase]", PROSE_PHASE],
+  ["[Capture current context and next steps for resumption]", PROSE_INSTRUCTIONS],
+  ["[current brief or None]", "TD-360"],
+  ["[current date]", "2026-08-24"],
+  ["[today]", "2026-08-24"],
+  ["[list completed items]", "the parser fix"],
+  ["[brief summary of work done]", "one canonical shape"],
+];
+
+/** The §3 fenced template, verbatim from the skill file. */
+function readRestTemplate(): string {
+  const skill = readFileSync(REST_SKILL, "utf-8");
+  const start = skill.indexOf("### 3. Update Session File");
+  expect(
+    start,
+    "rest/SKILL.md no longer has a '### 3. Update Session File' heading — re-point this fixture",
+  ).toBeGreaterThan(-1);
+  const fromSection = skill.slice(start);
+  const end = fromSection.indexOf("\n### ", 1);
+  const section = end === -1 ? fromSection : fromSection.slice(0, end);
+  const fences = [...section.matchAll(/```markdown\n([\s\S]*?)\n```/g)];
+  expect(
+    fences.length,
+    "expected EXACTLY ONE fenced markdown template in rest/SKILL.md §3",
+  ).toBe(1);
+  return fences[0][1];
+}
+
+/** Instantiate the template — every placeholder replaced by a traceable value. */
+function instantiateRestTemplate(): string {
+  let body = readRestTemplate();
+  for (const [placeholder, value] of TEMPLATE_SUBSTITUTIONS) {
+    expect(
+      body,
+      `rest/SKILL.md §3 no longer carries the placeholder ${placeholder} — the substitution table is stale`,
+    ).toContain(placeholder);
+    body = body.split(placeholder).join(value);
+  }
+  // Fully instantiated: a NEW placeholder in the template must fail loudly here
+  // rather than ride into the fixture as literal bracket text.
+  expect(body).not.toMatch(/\[[^\]\n]*\]/);
+  return body;
+}
+
+/** Drop the two `## Status` machine lines — i.e. the pre-TD-360 file shape. */
+function stripMachineLines(body: string): string {
+  return body
+    .split("\n")
+    .filter((l) => !/^\*\*(Resume Point|Next Steps):\*\*/.test(l))
+    .join("\n");
+}
+
+/** Drop a whole `## <name>` section, up to the next `## ` heading. */
+function dropSection(body: string, heading: string): string {
+  const lines = body.split("\n");
+  const start = lines.findIndex((l) => l.trim() === heading);
+  expect(start, `fixture has no ${heading} section to drop`).toBeGreaterThan(-1);
+  let end = start + 1;
+  while (end < lines.length && !lines[end].startsWith("## ")) end++;
+  return [...lines.slice(0, start), ...lines.slice(end)].join("\n");
+}
+
+/** Seed one rested handoff row carrying `content`, then gather. */
+async function gatherHandoffFor(content: string): Promise<GatherDigest> {
+  const seed = openSeed();
+  insertSessionFile(seed, {
+    id: "tpl",
+    filename: "instances/i-template.md",
+    instance_id: "i-template",
+    state: "rested",
+    content,
+    updated_at: "2026-08-24 10:00:00",
+  });
+  seed.close();
+  return await runGather();
+}
+
+describe("TD-360 — a handoff built from rest/SKILL.md's own §3 template", () => {
+  it("ARM: the §3 template is extractable and carries BOTH surfaces", () => {
+    const template = readRestTemplate();
+    expect(template).toContain("## Status");
+    expect(template).toMatch(/^\*\*Mode:\*\* REST MODE$/m);
+    // The machine surface (TD-360 2.1). Without this arm, the round-trip test
+    // below could pass on the fallback alone and report the fix as landed.
+    expect(template).toMatch(/^\*\*Resume Point:\*\* .+$/m);
+    expect(template).toMatch(/^\*\*Next Steps:\*\* .+$/m);
+    // The human surface the fix must NOT trade away (D-360-a).
+    expect(template).toMatch(/^## Resume Point$/m);
+    expect(template).toMatch(/^## Next Session Instructions$/m);
+  });
+
+  it("yields non-empty resume_point AND next_steps, read from the MACHINE lines", async () => {
+    const d = await gatherHandoffFor(instantiateRestTemplate());
+
+    expect(d.handoff?.filename).toBe("instances/i-template.md");
+    expect(d.handoff?.mode).toBe("REST MODE");
+    expect(d.handoff?.resume_point).toBe(INLINE_RESUME);
+    expect(d.handoff?.next_steps).toBe(INLINE_NEXT);
+    // Provenance, not just non-emptiness: the prose sentinels are what the
+    // D-360-b fallback would have returned, and the next test proves this
+    // fixture genuinely yields them once the machine lines are removed.
+    expect(d.handoff?.resume_point).not.toContain(PROSE_LAST_ACTIVE);
+    expect(d.handoff?.next_steps).not.toContain(PROSE_INSTRUCTIONS);
+  });
+
+  it("D-360-b: the SAME template MINUS its machine lines (the pre-TD-360 shape) still resumes", async () => {
+    const old = stripMachineLines(instantiateRestTemplate());
+    // Arm the mutation: the two lines are really gone, and the prose remains.
+    expect(old).not.toMatch(/^\*\*Resume Point:\*\*/m);
+    expect(old).not.toMatch(/^\*\*Next Steps:\*\*/m);
+    expect(old).toMatch(/^## Resume Point$/m);
+    expect(old).toContain(PROSE_LAST_ACTIVE);
+
+    const d = await gatherHandoffFor(old);
+
+    // The heading fallback recovers the resume point — the whole point of
+    // D-360-b for the rows already sitting in session_files. What it recovers
+    // is the first LINE of the section verbatim, `**Last Active:** <id>` and
+    // not a bare value: the fallback reads a line, it does not re-parse it.
+    // That is a display string for `/boot` §5, which is what these rows need.
+    expect(d.handoff?.resume_point).toBe(`**Last Active:** ${PROSE_LAST_ACTIVE}`);
+    // Stated limit, not an oversight: the pre-TD-360 template had NO Next Steps
+    // label AND no `## Next Steps` heading, so there is nothing for the
+    // fallback to read. Old rows recover a resume point, not a next step.
+    expect(d.handoff?.next_steps).toBe("");
+  });
+
+  it("D-360-b: `## Next Session Instructions` resolves when there is no Resume Point at all", async () => {
+    const old = dropSection(
+      stripMachineLines(instantiateRestTemplate()),
+      "## Resume Point",
+    );
+    expect(old).not.toContain(PROSE_LAST_ACTIVE);
+    expect(old).toMatch(/^## Next Session Instructions$/m);
+
+    const d = await gatherHandoffFor(old);
+
+    // Verifies the gather call site's second label spelling (TD-360 step 2.5 —
+    // no edit was needed there, and this is the check that says so).
+    expect(d.handoff?.resume_point).toBe(PROSE_INSTRUCTIONS);
+  });
+});
+
+describe("TD-360 — parseField's heading fallback is bounded and loses to the machine line", () => {
+  it("the inline machine line WINS over a heading of the same label", async () => {
+    const d = await gatherHandoffFor(
+      [
+        "**Mode:** REST MODE",
+        "**Next Steps:** the machine line",
+        "",
+        "## Next Steps",
+        "",
+        "the heading line",
+        "",
+      ].join("\n"),
+    );
+    expect(d.handoff?.next_steps).toBe("the machine line");
+  });
+
+  it("ARM: the SAME fixture without the inline line resolves to the heading line", async () => {
+    // Without this, the test above could pass because the heading form is
+    // unreadable rather than because the inline form outranks it.
+    const d = await gatherHandoffFor(
+      ["**Mode:** REST MODE", "", "## Next Steps", "", "the heading line", ""].join(
+        "\n",
+      ),
+    );
+    expect(d.handoff?.next_steps).toBe("the heading line");
+  });
+
+  it("skips blank lines and a `---` rule beneath the heading", async () => {
+    const d = await gatherHandoffFor(
+      [
+        "**Mode:** REST MODE",
+        "",
+        "## Next Steps",
+        "",
+        "---",
+        "",
+        "the value after the rule",
+        "",
+      ].join("\n"),
+    );
+    expect(d.handoff?.next_steps).toBe("the value after the rule");
+  });
+
+  it("stops at the next `##` heading — an empty section yields '', never the next section's text", async () => {
+    const d = await gatherHandoffFor(
+      [
+        "**Mode:** REST MODE",
+        "",
+        "## Next Steps",
+        "",
+        "---",
+        "",
+        "## Last Session Summary",
+        "",
+        "this line belongs to another section",
+        "",
+      ].join("\n"),
+    );
+    expect(d.handoff?.next_steps).toBe("");
+    // Arm: the section that WOULD have leaked is present in the fixture.
+    expect(d.handoff?.mode).toBe("REST MODE");
+  });
+
+  // TD-360 review (warden m1): the OUTER `break` in parseField's heading loop
+  // encodes "the FIRST matching heading is authoritative" — nothing usable
+  // under it means the field is absent, not that a later heading of the same
+  // label should be tried. Before this test that rule was stated in a comment
+  // and killed by no mutation: removing the outer `break` redded 0 tests.
+  it("the FIRST matching heading is authoritative — a later heading of the same label is not tried", async () => {
+    const d = await gatherHandoffFor(
+      [
+        "**Mode:** REST MODE",
+        "",
+        "## Next Steps",
+        "",
+        "## Last Session Summary",
+        "",
+        "unrelated prose",
+        "",
+        "## Next Steps",
+        "",
+        "this second section must NOT be reached",
+        "",
+      ].join("\n"),
+    );
+    expect(d.handoff?.next_steps).toBe("");
+    // Arm: the fixture parsed as a handoff at all (a fixture that failed to
+    // parse would yield "" for reasons unrelated to the outer `break`). Note
+    // what this does NOT establish: that the second section is reachable. That
+    // property is established by the demonstrated kill — removing the outer
+    // `break` returns "this second section must NOT be reached".
+    expect(d.handoff?.mode).toBe("REST MODE");
   });
 });

@@ -23,7 +23,7 @@ import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { RegisterDigest } from "../types.js";
+import type { GatherDigest, RegisterDigest } from "../types.js";
 import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
 
 let tmpRoot: string;
@@ -119,6 +119,45 @@ async function runRegister(opts: {
   }
   expect(code).toBe(0);
   return JSON.parse(captured.trim()) as RegisterDigest;
+}
+
+/** Run gather, capturing the single JSON line on stdout (TD-360 round-trip). */
+async function runGather(project = "demo"): Promise<GatherDigest> {
+  const { runSession } = await import("../verbs/session.js");
+  const origWrite = process.stdout.write.bind(process.stdout);
+  let captured = "";
+  process.stdout.write = ((c: string | Uint8Array): boolean => {
+    captured += typeof c === "string" ? c : c.toString();
+    return true;
+  }) as typeof process.stdout.write;
+  let code: number;
+  try {
+    code = runSession({ action: "gather", project });
+  } finally {
+    process.stdout.write = origWrite as typeof process.stdout.write;
+  }
+  expect(code).toBe(0);
+  return JSON.parse(captured.trim()) as GatherDigest;
+}
+
+/**
+ * Flip the instance's session_files row to `rested` — what `/rest` does — so
+ * the NEXT gather classifies it as a GENUINE HANDOFF and parses its content.
+ * The brain handle is closed first so the update lands on a quiet DB.
+ */
+async function restTheRow(instanceId: string, project = "demo"): Promise<void> {
+  await closeBrainDb();
+  const db = new Database(dbFile());
+  const info = db
+    .prepare(
+      "UPDATE session_files SET state = 'rested' WHERE project = ? AND filename = ?",
+    )
+    .run(project, `instances/${instanceId}.md`);
+  db.close();
+  // Arm: the row the gather below reads really did flip. A 0-row UPDATE would
+  // leave a 'live' row, which gather classifies ABANDONED-LIVE and never parses
+  // — the assertions would then fail for a reason that is not the fix.
+  expect(info.changes).toBe(1);
 }
 
 /** Read an instances-table row (or undefined). */
@@ -389,5 +428,80 @@ describe("session register — §3.7", () => {
     const row = readSessionRow("demo", filename);
     expect(row?.state).toBe("live"); // explicit live re-affirm
     expect(row?.instance_id).toBe(id); // never nulled
+  });
+});
+
+/**
+ * TD-360 — the LIVE file's Next Steps round-trip.
+ *
+ * AC-2: `register --seed-next-steps "X"` followed by `gather` must return
+ * `next_steps == "X"`. Before TD-360 the writer emitted only a `## Next Steps`
+ * heading with the value on the line beneath, which `parseField`'s single-line
+ * inline match could not see, so the seed carried "" forward.
+ */
+describe("TD-360 — register's Next Steps round-trips through gather", () => {
+  it("AC-2: --seed-next-steps 'X' → gather returns next_steps === 'X'", async () => {
+    seedSchema();
+    const d = await runRegister({ project: "demo", seedNextSteps: "X" });
+
+    // The machine line is on disk beside the prose section, not instead of it.
+    // This on-disk assertion is what makes THIS test discriminate for the
+    // writer. Measured 2026-08-24 by deleting the machine line from
+    // `buildLiveFileContent` with the D-360-b fallback left in place. Under
+    // that mutation ALONE all three tests in this describe red at the ON-DISK
+    // assertion above and abort, so the gather layer is never reached — the
+    // gather observations below were taken with the on-disk assertions
+    // DISARMED. So measured: gather still returned "X" here (the fallback read
+    // `## Next Steps`'s first line), so the gather assertion below is a
+    // round-trip guard, not a writer guard; and the multi-line case in the next
+    // test is the one that discriminates at the gather layer — it alone red,
+    // returning only "finish the parser".
+    const body = readFileSync(instanceFilePath("demo", d.instance_id), "utf-8");
+    expect(body).toMatch(/^\*\*Next Steps:\*\* X$/m);
+    expect(body).toContain("## Next Steps");
+
+    await restTheRow(d.instance_id);
+    const g = await runGather();
+    expect(g.handoff?.filename).toBe(`instances/${d.instance_id}.md`);
+    expect(g.handoff?.next_steps).toBe("X");
+  });
+
+  it("a MULTI-LINE seed collapses onto the machine line and stays verbatim in the prose", async () => {
+    seedSchema();
+    // The discriminating fixture. With a single-line seed the D-360-b heading
+    // fallback would return the same string, so that case alone cannot tell the
+    // machine line from the prose section. A multi-line seed can: the fallback
+    // reads only the FIRST line, the machine line carries the whole thing.
+    const seed = "finish the parser\n\nthen run the bats suite";
+    const d = await runRegister({ project: "demo", seedNextSteps: seed });
+
+    const body = readFileSync(instanceFilePath("demo", d.instance_id), "utf-8");
+    expect(body).toMatch(
+      /^\*\*Next Steps:\*\* finish the parser then run the bats suite$/m,
+    );
+    // D-360-a: the prose section survives, whole and multi-line.
+    expect(body).toContain("## Next Steps");
+    expect(body).toContain(seed);
+
+    await restTheRow(d.instance_id);
+    const g = await runGather();
+    expect(g.handoff?.next_steps).toBe("finish the parser then run the bats suite");
+    // Explicitly NOT the first line alone — that is what the heading fallback
+    // would have produced, so this assertion reds if the machine line is lost.
+    expect(g.handoff?.next_steps).not.toBe("finish the parser");
+  });
+
+  it("no seed → the machine line carries the same `None yet` placeholder as the section", async () => {
+    seedSchema();
+    const d = await runRegister({ project: "demo" });
+    expect(d.seeded_from_handoff).toBe(false);
+
+    const body = readFileSync(instanceFilePath("demo", d.instance_id), "utf-8");
+    expect(body).toMatch(/^\*\*Next Steps:\*\* None yet$/m);
+
+    await restTheRow(d.instance_id);
+    const g = await runGather();
+    // A stable shape: never an empty label, never an empty digest field.
+    expect(g.handoff?.next_steps).toBe("None yet");
   });
 });
