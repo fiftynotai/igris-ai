@@ -677,9 +677,9 @@ function BriefListView({
    * The goal list, read ONCE per scope through the EXISTING `/api/goals`.
    *
    * No new endpoint — the whole point of FR-247's shape is that it needed no
-   * new path. (It left the surface at sixteen GET + one POST; FR-248 has since
-   * taken it to seventeen GET with `/api/search`. The principle is unchanged,
-   * the count is not this file's to carry.) Not on the 5-second beat either: there are 6
+   * new path. (It left the surface at sixteen GET + one POST; later briefs have
+   * added paths since. The principle is unchanged, and the count is not this
+   * file's to carry — which is why it is no longer written down here.) Not on the 5-second beat either: there are 6
    * goals on the operator brain and they are hand-created, so re-reading them
    * every tick would be four requests a minute for a list that changes monthly.
    *

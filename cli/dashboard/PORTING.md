@@ -29,7 +29,7 @@ it here.
 | `src/styles/base.css` | `src/app/globals.css` — the subset listed per-block in the file's own comments (`:163-181`, `:189-214`, `:216-226`, `:228-300`, `:332-340`, `:585-600`, `:1088-1115`, `:1167-1236`, `:1238-1288`, `:1289-1333`, `:1334-1376`, `:1377-1423`, `:1425-1458`, `:1559-1596`, `:6287-6430`, `:6461-6465`) | Class bodies **verbatim**; new `.shell-*` block is original (D3) |
 | `src/lib/cn.ts` | `src/lib/utils.ts#cn` | Signature identical; implementation diverges (D6) |
 | `src/components/ui/Card.tsx` | `src/components/ui/Card.tsx` | **Verbatim** except the `cn` import path |
-| `src/components/ui/Badge.tsx` | `src/components/ui/Badge.tsx` | **Verbatim** except the `cn` import path |
+| `src/components/ui/Badge.tsx` | `src/components/ui/Badge.tsx` | `cn` import path; **new `warn` variant** (D16) |
 | `src/components/ui/Button.tsx` | `src/components/ui/Button.tsx` | **Verbatim** except the `cn` import path |
 | `src/components/ui/Input.tsx` | `src/components/ui/Input.tsx` | **Verbatim** except the `cn` import path |
 | `src/components/ui/StatusPill.tsx` | `src/components/ui/StatusPill.tsx` | **Verbatim** except the `cn` import path |
@@ -126,6 +126,30 @@ and `usePalette.ts` read the same key — keep them in sync.
 
 **D11 — only the palette control is ported from `TweaksPanel`.** Density,
 motion, pose, grain-slider and display-swap controls are not.
+
+**D16 — `Badge` gains a fourth variant, `warn` (FR-266).** Upstream ships three
+(`muted` / `live` / `alarm`) plus the `default` accent fill. The diagnostics
+panel needs FOUR distinguishable status tones — `ok`, `alarm`, `attention`, `off`
+— and three of them already have a carrier: `live`, `alarm`, `muted`.
+
+`default` was REJECTED as the fourth, on a measured ground rather than a
+stylistic one: it paints `background: var(--accent)`, and on the `blood` palette
+the accent reads as red. ATTENTION would then look like ALARM, and AC-4's
+"a failing instance is visually distinct" would collapse **per palette** — green
+on `acid`, indistinguishable on `blood`. A distinction that holds in three of
+four palettes is not a distinction.
+
+`.badge-warn` therefore lives beside its three siblings in `base.css`'s ported
+Badge block (`globals.css:1334-1376` region), which is **before** the
+`FR-240 · the record layer` marker — so it may legitimately carry a colour
+literal, exactly as `.badge-live` (`#22c55e`) and `.badge-alarm`
+(`rgba(220,38,38,…)`, `#fca5a5`) already do. Those are SEMANTIC colours that
+deliberately do not swap, and amber-for-attention joins that family. Everything
+FR-266 adds AFTER the marker is token-only.
+
+This is the first divergence in `Badge.tsx` at all; the file was `Verbatim`
+before. Reconciling upstream means keeping the three ported variants byte-aligned
+and treating `warn` as additive.
 
 ---
 

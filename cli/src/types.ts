@@ -1894,6 +1894,44 @@ export interface TriageResultPayload {
   degraded: DashboardDegraded | null;
 }
 
+// ---------------------------------------------------------------------------
+// FR-266 — the diagnostics surface (`GET /api/cognition`)
+// ---------------------------------------------------------------------------
+
+/**
+ * `GET /api/cognition` — the cognition health digest, FORWARDED VERBATIM.
+ *
+ * THE DIGEST IS NOT RE-MAPPED, RE-NAMED OR SELECTED FROM. `cognition` is
+ * exactly what `verbs/cognition.ts#buildCognitionHealthDigest` returned, so a
+ * field added brain-side reaches the browser with zero edit to this tier. That
+ * is the same reason `facets.source_module` is counted from data rather than
+ * enumerated: a hand-list over an OPEN registry cannot report on the members
+ * nobody remembered to list (L-1126, and TD-327's whole premise).
+ *
+ * TWO `degraded` CONCEPTS LIVE HERE AT DIFFERENT DEPTHS, AND COLLAPSING THEM IS
+ * THE TRAP:
+ *
+ *  - `degraded` (this interface) is the FR-238 envelope every endpoint on the
+ *    surface carries: the builder threw, or there is no brain file at all.
+ *    `cognition` is `null` in that state.
+ *  - `cognition.degraded` + `.degraded_reason` is the DIGEST's own state: the
+ *    brain is readable but carries no `cognition_instances` table (an old brain
+ *    build). `cognition-health.test.ts` already treats the two as
+ *    distinguishable and says why — *"one means an old brain build, the other
+ *    means no brain. Collapsing them hides which remedy applies."*
+ *
+ * `hostname` rides along inside the digest and is NOT a new disclosure class:
+ * `/api/health` already returns `brain.path`, a home-directory path, on the
+ * same loopback-only no-auth origin.
+ */
+export interface CognitionPayload {
+  /** The digest, VERBATIM. `null` only when `degraded` is set. */
+  cognition: CognitionHealthDigest | null;
+  generated_at: string;
+  /** The ENDPOINT-level failure only. See the two-concepts note above. */
+  degraded: DashboardDegraded | null;
+}
+
 /** What `igris dashboard --smoke` prints to stdout. */
 export interface DashboardDigest {
   ok: boolean;

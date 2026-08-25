@@ -16,7 +16,7 @@
  * The server's SPA fallback (`static.ts`) still exists and is still correct —
  * it just means a hand-typed deep path lands on the shell instead of a 404.
  *
- * WHY NOT react-router: four routes and one sub-path grammar. A router
+ * WHY NOT react-router: a handful of routes and one sub-path grammar. A router
  * dependency would be ~10 KB packed against a cumulative ceiling FR-239 had
  * already spent 71% of AT THE TIME (+400 KB; TD-329 raised it to +550 KB on
  * 2026-08-02, making the same spend 51.5%). The argument holds either way —
@@ -51,8 +51,31 @@ import {
  * presentational. It sits at the end because the four before it are places you
  * BROWSE and this one is a place you ASK; putting it first would imply the
  * dashboard opens on a question.
+ *
+ * FR-266 adds `diagnostics` — the sixth route and the FIFTH lazy one — and puts
+ * it after `search` for the same grammar one step further on: the first four are
+ * places you BROWSE, `search` is where you ASK, and `diagnostics` is where you
+ * CHECK. First position was rejected explicitly rather than by default: it would
+ * make the dashboard OPEN ON AN ALARM, which trains an operator to dismiss the
+ * one surface whose whole job is to be believed.
+ *
+ * ⚠ THIS ARRAY HAS A HAND-WRITTEN MIRROR OUTSIDE THIS PACKAGE:
+ * `cli/scripts/browser-gate.mjs#APP_ROUTES`. `parse` below falls back to
+ * `overview` for an unrecognised segment rather than refusing, so a member added
+ * here and forgotten there does not raise anything — it silently predicts the
+ * WRONG route and every navigation to it hangs for 45 s on `routeReady`. FR-248
+ * shipped in exactly that state and NOTHING WAS RED. The gate's `15-mirror`
+ * check now compares the two, but only for routes the gate actually DRIVES, so a
+ * new member needs an entry in `TD347_TARGETS` as well as in `APP_ROUTES`.
  */
-export const ROUTES = ["overview", "graph", "layers", "triage", "search"] as const;
+export const ROUTES = [
+  "overview",
+  "graph",
+  "layers",
+  "triage",
+  "search",
+  "diagnostics",
+] as const;
 export type Route = (typeof ROUTES)[number];
 
 /**
@@ -74,6 +97,7 @@ export const ROUTE_LABELS: Record<Route, string> = {
   layers: "Layers",
   triage: "Triage",
   search: "Search",
+  diagnostics: "Diagnostics",
 };
 
 /** Everything the shell needs to know about the current location. */

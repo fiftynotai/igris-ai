@@ -111,6 +111,11 @@ const SMOKE_PROBE_PATHS: readonly string[] = [
   // FR-241 — the triage READ half. The WRITE half is probed separately below,
   // because a 200 is the WRONG expectation for it.
   "/api/suggestions",
+  // FR-266 — the diagnostics spine's one endpoint. Takes no parameters at all,
+  // so unlike the detail probes above there is nothing to omit: a brain with no
+  // `cognition_instances` table answers 200 with the digest's own `degraded`
+  // set, and no brain at all answers 200 with the envelope's.
+  "/api/cognition",
 ];
 
 /**

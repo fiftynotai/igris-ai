@@ -72,6 +72,7 @@ import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
 import { composeQueryTwin } from "./graph-query.js";
 import { grepDocs, readDoc, readInventory } from "./context-docs-read.js";
+import { readCognitionHealth } from "./cognition-read.js";
 import * as write from "../brain-write-bridge.js";
 import {
   BRIEF_FILTERS,
@@ -103,6 +104,8 @@ import type {
   BriefRetrievalPayload,
   BriefsPayload,
   BriefsSearchPayload,
+  CognitionHealthDigest,
+  CognitionPayload,
   ContextDocPayload,
   ContextDocRowPayload,
   ContextDocsPayload,
@@ -2038,6 +2041,38 @@ export async function suggestions(
   } finally {
     closeQuietly(ctx.db);
   }
+}
+
+// --- FR-266: cognition health (the diagnostics spine) ----------------------
+
+/**
+ * `GET /api/cognition` — per-instance cognition health.
+ *
+ * A THIN DISPATCH, like every handler in this file since FR-240. All of the
+ * work lives in `cognition-read.ts`, which in turn calls the EXISTING
+ * `verbs/cognition.ts#buildCognitionHealthDigest` — the same function
+ * `igris cognition health --json` prints. There is exactly one classifier in
+ * this repo and this endpoint is not a second one.
+ *
+ * IT OPENS NO HANDLE OF ITS OWN, so it does not use `openReadContext()`: the
+ * digest builder reaches the brain through `brain-db.ts#withReadonlyBrain` ->
+ * `brain-bridge.ts#openBrainReadonly`, which is the SAME read door
+ * (`{readonly:true, fileMustExist:true}` + `query_only = ON`) the other
+ * seventeen GETs rest on. That is what lets this path join
+ * `dashboard-readonly.test.ts`'s crawl and make the digest gate STRICTER rather
+ * than routing around it.
+ *
+ * THE DIGEST IS FORWARDED VERBATIM. No selection, no rename, no re-map — see
+ * `types.ts#CognitionPayload` for why, and for the two different `degraded`
+ * meanings this payload deliberately keeps at different depths.
+ */
+export async function cognition(): Promise<CognitionPayload> {
+  const base = { cognition: null as CognitionHealthDigest | null, generated_at: now() };
+  const read = readCognitionHealth();
+  if (!read.ok) {
+    return { ...base, degraded: { reason: read.reason } };
+  }
+  return { cognition: read.digest, generated_at: now(), degraded: null };
 }
 
 // --- FR-241: triage (the ONE write) ----------------------------------------

@@ -352,6 +352,30 @@ body[data-motion="low"] *::after {
   color: #fca5a5;
   border: 0.5px solid rgba(220, 38, 38, 0.4);
 }
+/* FR-266 · the FOURTH variant, and the ONLY colour literal this brief adds.
+   It belongs HERE, in the ported Badge block, with its three siblings: this
+   region is ABOVE the FR-240 record-layer marker, where semantic colours that
+   deliberately do NOT swap per palette legitimately live — its siblings just
+   below carry the same kind of literal. Everything FR-266 adds after that marker
+   is token-only, because the marker-to-EOF scan in
+   `dashboard-layers-source.test.ts` forbids a literal there.
+
+   ⚠ THIS COMMENT DELIBERATELY DOES NOT REPRODUCE THE MARKER STRING. The scan
+   locates its slice with `css.indexOf(<marker>)`, which cannot tell a QUOTATION
+   from the marker itself — so a comment above the real marker that spells it out
+   verbatim MOVES the scan's start ~900 lines earlier and silently swallows this
+   whole ported region, which carries dozens of legitimate literals. Measured
+   during FR-266: an earlier draft of this comment did exactly that and turned
+   two assertions red for a reason that had nothing to do with the rule.
+
+   Amber, not accent: `variant="default"` paints `var(--accent)`, which reads as
+   red on the `blood` palette — so ATTENTION would look like ALARM and AC-4's
+   distinction would hold on some palettes and not others. See PORTING.md D16. */
+.badge-warn {
+  background: rgba(217, 119, 6, 0.15);
+  color: #fcd34d;
+  border: 0.5px solid rgba(217, 119, 6, 0.4);
+}
 
 /* ─── StatusPill (globals.css:1377-1423) ─────────────────── */
 .status-pill {
@@ -2147,4 +2171,206 @@ h6.record-md-h {
   font-weight: 300;
   line-height: 1.5;
   color: var(--fg);
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   FR-266 · the diagnostics surface (`#/diagnostics`)
+
+   INSIDE THE FR-240 SCAN, like every block since it: the scan runs from
+   "FR-240 · the record layer" to EOF, so the four executable constraints hold
+   here — token-only colour, no custom property, no radius, hairline borders.
+   `design_system.md` records them and points at
+   `cli/src/__tests__/dashboard-layers-source.test.ts`, which is what actually
+   goes red.
+
+   SO WHERE IS THE STATUS COLOUR? NOT HERE, AND THAT IS THE DESIGN. Four tones
+   are needed and three already had a carrier — `.badge-live`, `.badge-alarm`,
+   `.badge-muted`. The fourth (`.badge-warn`) was added BESIDE them, ~1,000
+   lines up in the ported Badge block, where a semantic colour literal is
+   legitimate. This block styles LAYOUT and TYPE only, so it adds no literal at
+   all and needs no exemption.
+
+   NOTHING HERE HIDES AN INSTANCE. There is no `display: none` in this block and
+   there must not be one: AC-3's claim is that every registered instance is
+   REPORTED, and CSS is the last place that claim can be quietly undone after the
+   component has done it right. State is carried by the badge and by the row's
+   `data-tone`, never by removal.
+
+   THE ROW IS A LIST ITEM, NOT A TABLE ROW, for the reason `.search-layers` is:
+   every row carries a variable-length sentence (the classifier's own `reason`,
+   verbatim) plus an optional gate line, and a table would either clip them or
+   make a column's width a function of the worst failure.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+.diag {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+}
+
+/* --- the panel head ----------------------------------------------------- */
+
+.diag-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+.diag-eye {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.diag-title {
+  font-family: var(--display);
+  font-size: 28px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--fg);
+  margin: 0;
+}
+.diag-lede {
+  font-family: var(--ui);
+  font-size: 13px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0;
+  max-width: 68ch;
+}
+
+/* --- the tone counters -------------------------------------------------- */
+
+.diag-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+  padding: var(--s-1) 0;
+  border-top: 0.5px solid var(--line);
+  border-bottom: 0.5px solid var(--line);
+}
+.diag-count {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.diag-count b {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+/* --- the roster --------------------------------------------------------- */
+
+.diag-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+.diag-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+  padding: var(--s-2) 0;
+  border-bottom: 0.5px solid var(--line);
+}
+/* The ALARM rows get a left rule as a SECOND carrier beside the badge, so the
+   distinction survives a monochrome print, a colour-blind reader and the `mono`
+   palette. It is the accent token, never a literal. */
+.diag-row[data-tone="alarm"] {
+  border-left: 0.5px solid var(--accent);
+  padding-left: var(--s-2);
+}
+/* A DISABLED row is dimmed rather than ruled: an operator choice should recede,
+   not compete with a fault for the eye. This is the AC-4 distinction expressed a
+   second time, in weight rather than in hue. */
+.diag-row[data-tone="off"] {
+  opacity: 0.55;
+}
+
+.diag-row-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-1);
+  flex-wrap: wrap;
+}
+.diag-row-id {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg);
+}
+.diag-row-flag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* The classifier's own sentence, VERBATIM — so it is NOT uppercased here. Every
+   other mono line on this page is transformed; this one carries real run ids,
+   real table names and real gate keys, and shouting it would make it harder to
+   read at the exact moment it matters. Same rule `.search-layer-reason` follows. */
+.diag-row-reason {
+  font-family: var(--ui);
+  font-size: 12px;
+  font-weight: 300;
+  line-height: 1.5;
+  color: var(--fg);
+  margin: 0;
+  max-width: 84ch;
+}
+
+/* The gate key is a PATH INTO A FILE the operator is about to open, so it is
+   mono and it is not transformed: `config.json` keys are case-sensitive. */
+.diag-row-gate {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--muted);
+  margin: 0;
+}
+
+.diag-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-3);
+  margin: 0;
+}
+.diag-kv {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+.diag-kv dt {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.7;
+}
+.diag-kv dd {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--fg);
+  margin: 0;
+  word-break: break-word;
+}
+
+/* --- the footer, which is part of the honesty rather than decoration ----- */
+
+.diag-foot {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+  margin: 0;
+  word-break: break-word;
 }

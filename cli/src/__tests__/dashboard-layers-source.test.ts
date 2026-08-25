@@ -46,6 +46,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { COGNITION_FIXTURE } from "./dashboard-layers-fixture.js";
 import { PROJECT_SCOPES } from "../lib/dashboard/params.js";
 import { SLUG_RE } from "../lib/slug.js";
 
@@ -1070,6 +1071,252 @@ describe("the router uses the unit-tested codec", () => {
     const app = code(join(DASH_SRC, "App.tsx"));
     expect(app).toContain("PENDING_ROUTES[route]");
     expect(app).toContain("<Triage");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-266 T6 — the diagnostics roster is DERIVED, as a property of the FILES
+// ---------------------------------------------------------------------------
+
+/**
+ * A DATA-ONLY TEST CANNOT MAKE THIS CLAIM, which is why it is here.
+ *
+ * `dashboard-cognition-endpoint.test.ts` T3 and `panel.test.tsx` both assert
+ * that an eighth instance appears. Both would ALSO pass on a client carrying a
+ * hardcoded roster that happened to include the fixture's ids — the fixture
+ * would satisfy the hand-list rather than exposing it. The falsifiable version
+ * of AC-3 is a claim about the SOURCE: no shipped client file names an instance.
+ *
+ * This is the same defect class TD-327 was filed for, one tier up. `/boot` §4.10
+ * carried embedded SQL for two of seven instances BY NAME; five went silent for
+ * four weeks and nothing reported it, because a hand-list over an open registry
+ * cannot report on the members nobody remembered to list.
+ */
+describe("FR-266 AC-3 — no shipped client file names a cognition instance", () => {
+  /**
+   * The seven registered instances, spelled out.
+   *
+   * DELIBERATELY NOT imported from `dashboard-layers-fixture.ts#COGNITION_FIXTURE`.
+   * Reading the forbidden list out of the fixture would make this scan agree with
+   * whatever the fixture happened to contain — and the fixture is a TEST artifact
+   * that may legitimately change. These are the ids the BRAIN registers, and they
+   * are the population the claim is about.
+   */
+  const INSTANCE_IDS = [
+    "perception",
+    "subconscious",
+    "synapse",
+    "janitor",
+    "arbiter",
+    "curator",
+    "cartographer",
+  ];
+
+  /** Files allowed to name an instance id for reasons unrelated to a roster. */
+  function scannedClientFiles(): string[] {
+    return shipped();
+  }
+
+  it("the corpus includes the diagnostics files — the scan is not over nothing", () => {
+    const files = scannedClientFiles().map(rel);
+    for (const expected of [
+      "dashboard/src/pages/Diagnostics.tsx",
+      "dashboard/src/diagnostics/model.ts",
+      "dashboard/src/diagnostics/useCognition.ts",
+    ]) {
+      expect(files, `${expected} is not in the scanned corpus`).toContain(expected);
+    }
+  });
+
+  /**
+   * Every STANDALONE string literal in a file — a literal whose WHOLE content is
+   * one token, not a sentence containing it.
+   *
+   * THIS IS THE DISCRIMINATING SHAPE, and picking it took a measurement rather
+   * than a guess. A first draft flagged any word-bounded occurrence and found
+   * three real ones that are NOT hand-lists: `layers/model.ts:640` ("The
+   * subconscious files these on its own schedule.") and two sentences in
+   * `pages/Triage.tsx` naming which subsystem produced a suggestion. Those are
+   * operator PROSE — they render one fixed sentence whatever the roster
+   * contains, so they cannot go stale the way a list can.
+   *
+   * A hand-list cannot be prose. To enumerate or to compare, the id has to be
+   * its own literal: `["perception", …]`, `=== "janitor"`, `case "synapse":`,
+   * `{ perception: … }`. So the rule is scoped to the shape the defect actually
+   * takes, rather than widened until it catches sentences too.
+   */
+  function standaloneLiterals(src: string): string[] {
+    return [...src.matchAll(/["'`]([^"'`\n]*)["'`]/g)].map((m) => (m[1] as string).trim());
+  }
+
+  it("no shipped client file uses an instance id as a STANDALONE literal", () => {
+    const offenders: string[] = [];
+    for (const file of scannedClientFiles()) {
+      const literals = new Set(standaloneLiterals(code(file)));
+      for (const id of INSTANCE_IDS) {
+        if (literals.has(id)) offenders.push(`${rel(file)} enumerates or compares ${id}`);
+      }
+    }
+    expect(offenders, offenders.join(" · ")).toEqual([]);
+  });
+
+  it("the DIAGNOSTICS files name no instance AT ALL, in any form", () => {
+    /*
+     * The stronger claim, scoped to the files that actually render the roster.
+     * Prose naming a subsystem is defensible on a triage page, which is about
+     * suggestions; it is not defensible here, where the whole point is that this
+     * surface does not know what the instances are called.
+     */
+    const offenders: string[] = [];
+    const diagnosticsFiles = scannedClientFiles().filter(
+      (f) =>
+        f.startsWith(join(DASH_SRC, "diagnostics")) ||
+        f === join(DASH_SRC, "pages", "Diagnostics.tsx"),
+    );
+    expect(diagnosticsFiles.length, "no diagnostics files were scanned").toBeGreaterThan(2);
+    for (const file of diagnosticsFiles) {
+      const src = code(file);
+      for (const id of INSTANCE_IDS) {
+        if (new RegExp(`\\b${id}\\b`).test(src)) offenders.push(`${rel(file)} names ${id}`);
+      }
+    }
+    expect(offenders, offenders.join(" · ")).toEqual([]);
+  });
+
+  it("no shipped client file declares an array of STATUS literals outside its two owners", () => {
+    /*
+     * The second half of the hand-list family: a roster derived from the payload
+     * but with a locally enumerated status vocabulary is still a hand-list, and
+     * it would render a blank chip for the seventh status.
+     *
+     * TWO exemptions, and both are required to exist rather than tolerated:
+     *  - `diagnostics/model.ts` owns `KNOWN_STATUSES` and the tone map;
+     *  - `lib/api.ts` is the BROWSER MIRROR of `cli/src/types.ts`, which
+     *    MAINTAINING row 110 requires to be a hand-written copy — the two ends
+     *    compile separately with zero shared import, so the union has to be
+     *    spelled out there.
+     * A THIRD copy is the regression this catches.
+     */
+    const offenders: string[] = [];
+    const owners = [
+      join(DASH_SRC, "diagnostics", "model.ts"),
+      join(DASH_SRC, "lib", "api.ts"),
+    ];
+    for (const file of scannedClientFiles()) {
+      if (owners.includes(file)) continue;
+      const src = code(file);
+      // Two or more status literals adjacent in a list is the shape.
+      if (/"blocked_upstream"[\s\S]{0,120}"no_signal"/.test(src)) {
+        offenders.push(rel(file));
+      }
+    }
+    expect(offenders, `a second status vocabulary in ${offenders.join(", ")}`).toEqual([]);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the scans FIND a planted roster and a planted vocabulary", () => {
+    /*
+     * All three scans above report "nothing found", which is indistinguishable
+     * from a scan pointed at an empty directory (learning 1094). So: plant a file
+     * that violates all three, require every detector to fire on it, then delete
+     * it.
+     *
+     * The planted file lives INSIDE `diagnostics/`, so it is in the narrow
+     * corpus as well as the wide one.
+     */
+    const planted = join(DASH_SRC, "diagnostics", "__negative_control__.ts");
+    writeFileSync(
+      planted,
+      [
+        'export const ROSTER = ["perception", "synapse", "janitor"];',
+        'export const STATUSES = ["blocked_upstream", "no_signal"];',
+      ].join("\n"),
+      "utf-8",
+    );
+    try {
+      const src = code(planted);
+
+      // (1) the STANDALONE-literal detector.
+      const literals = new Set(standaloneLiterals(src));
+      expect(
+        INSTANCE_IDS.filter((id) => literals.has(id)),
+        "the standalone-literal detector did not fire on a planted roster",
+      ).toEqual(["perception", "synapse", "janitor"]);
+
+      // (2) the narrow diagnostics-file detector.
+      expect(
+        INSTANCE_IDS.filter((id) => new RegExp(`\\b${id}\\b`).test(src)),
+        "the diagnostics-file detector did not fire",
+      ).toEqual(["perception", "synapse", "janitor"]);
+
+      // (3) the status-vocabulary detector.
+      expect(
+        /"blocked_upstream"[\s\S]{0,120}"no_signal"/.test(src),
+        "the vocabulary detector did not fire on a planted list",
+      ).toBe(true);
+
+      // ...and the planted file really is inside the corpus the scans walk, so
+      // the detectors above would have SEEN it rather than merely being able to.
+      expect(scannedClientFiles().map(rel)).toContain(rel(planted));
+    } finally {
+      rmSync(planted, { force: true });
+    }
+    expect(existsSync(planted), "the planted control was not cleaned up").toBe(false);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — the standalone rule really is NARROWER than a word match", () => {
+    /*
+     * The scan was deliberately narrowed to a shape (see `standaloneLiterals`).
+     * A narrowing is only honest if it is measured: this asserts that a PROSE
+     * mention passes while an ENUMERATION fails, on two hand-made inputs. If both
+     * passed, the scan would be vacuous; if both failed, the narrowing never
+     * happened and three legitimate sentences would be blocked.
+     */
+    const prose = 'const m = "The subconscious files these on its own schedule.";';
+    const list = 'const R = ["subconscious"];';
+    expect(standaloneLiterals(prose)).not.toContain("subconscious");
+    expect(standaloneLiterals(list)).toContain("subconscious");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-266 — the panel render test mirrors the SERVER fixture's branch set
+// ---------------------------------------------------------------------------
+
+describe("FR-266 — every classifier branch the server fixture reaches is rendered", () => {
+  /*
+   * `panel.test.tsx` builds its payload by hand, because it compiles under
+   * `dashboard/tsconfig.json` (DOM lib, no node types) while the fixture imports
+   * `better-sqlite3`. So the two cannot share an import — and an unchecked hand
+   * mirror is exactly how a branch stops being rendered without anything going
+   * red.
+   *
+   * This scan is the check: every STATUS the server fixture produces must appear
+   * in the panel test's source. It runs HERE rather than in the client suite
+   * because this is the side that can import the fixture.
+   */
+  const panelTest = join(DASH_SRC, "diagnostics", "__tests__", "panel.test.tsx");
+
+  it("the panel test exists and was really read", () => {
+    expect(existsSync(panelTest), "panel.test.tsx is missing").toBe(true);
+    expect(readFileSync(panelTest, "utf-8")).toContain("CognitionPanel");
+  });
+
+  it("every status in COGNITION_FIXTURE.expected is exercised by the render test", () => {
+    const src = readFileSync(panelTest, "utf-8");
+    const missing = [
+      ...new Set(COGNITION_FIXTURE.expected.map((e) => e.status)),
+    ].filter((status) => !src.includes(`"${status}"`));
+    expect(
+      missing,
+      `the server fixture reaches ${missing.join(", ")} and the panel test never renders it`,
+    ).toEqual([]);
+  });
+
+  it("SELF-NEGATIVE-CONTROL — that comparison can report a MISS", () => {
+    // A status the server fixture does NOT produce and the panel test does not
+    // name. If this "passes", the `includes` matches anything.
+    const src = readFileSync(panelTest, "utf-8");
+    expect(src.includes('"a_status_no_fixture_produces"')).toBe(false);
   });
 });
 

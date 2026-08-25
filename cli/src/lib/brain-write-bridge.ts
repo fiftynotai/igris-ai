@@ -448,8 +448,9 @@ type BootEngineFn = (config: {
  * is unchanged as a PATH — FR-247 left the surface at sixteen GET + one POST,
  * which `dashboard.bats`'s exact-set string asserted byte-identically. That was
  * the payoff of refusing a new endpoint, and it was a measurement rather than a
- * claim. **Read that in the past tense: FR-248 added `/api/search`, so the live
- * surface is SEVENTEEN GET + one POST and the exact-set string moved with it.**
+ * claim. **Read that in the past tense: FR-248 added `/api/search` and FR-266
+ * added `/api/cognition`, so the live surface is EIGHTEEN GET + one POST and the
+ * exact-set string moved with each of them.**
  * FR-247's point survives — a mutation that needs no new path should not take
  * one — but the count it cited is no longer the count.
  *

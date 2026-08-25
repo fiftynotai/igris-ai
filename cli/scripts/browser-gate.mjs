@@ -1020,7 +1020,31 @@ function makeWorld(kind) {
         }
       `;
     }
+    /*
+     * FR-266 — the COGNITION world, seeded into every non-`missing` world.
+     *
+     * `seedCognitionBrain` reproduces the 2026-08-24 failure state: one
+     * `failing`, one `wedged`, two `blocked_upstream` behind it, one deliberate
+     * `disabled`, two `ok`, and an EIGHTH instance whose id appears in no shipped
+     * file. That last one is what makes the `#/diagnostics` target's roster
+     * assertion a claim about DERIVATION rather than about a hardcoded list.
+     *
+     * NO HOST ARGUMENT, deliberately. The seeder defaults to `os.hostname()`, and
+     * the server it is being read by runs on THIS machine — the digest's run
+     * signals are host-scoped (`event_log` is a sync table carrying
+     * `machine_hostname`), so a fixture host would make every instance read
+     * `no_signal` and collapse the whole tone spread the gate measures.
+     *
+     * It is added to `extra` rather than to the shared fixture's default world
+     * because it creates four new tables; `seedLayerBrain`'s default world stays
+     * byte-identical, which four suites' exact-count assertions depend on.
+     */
     extra += "\n      db2.close();\n";
+    // AFTER `db2.close()`: the seeder opens its own handle, and closing the
+    // first one keeps this to a single writer at a time rather than two
+    // concurrent connections against the same WAL.
+    extra += "\n      seedCognitionBrain(process.env.GATE_DB);\n";
+    extra += "\n      writeCognitionConfig(process.env.GATE_BRAIN);\n";
     /*
      * FR-248 — the ONLY difference the `nofts` world carries, and it is a
      * SEED-TIME one rather than a post-seed `DROP TABLE`.
@@ -1034,6 +1058,13 @@ function makeWorld(kind) {
     const seedOpts = kind === "nofts" ? `, { omit: ["briefs_fts"] }` : "";
     runSeedScript(`seedLayerBrain(process.env.GATE_DB${seedOpts});\n${extra}`, {
       GATE_DB: db,
+      // FR-266 — the BRAIN DIR, not the DB. `verbs/cognition.ts#readConfig`
+      // reads `configJsonPath()` = `brainDir()/config.json`, so the gates live
+      // beside `memory/knowledge.db` rather than inside it. Written by the
+      // fixture's own `writeCognitionConfig` so the browser gate and the vitest
+      // suites resolve the SAME gates — a second copy of that JSON here would
+      // drift, and the two harnesses would silently measure different worlds.
+      GATE_BRAIN: brain,
       GATE_VEC_ENTRY: join(
         CLI_ROOT,
         "dist",
@@ -1280,7 +1311,7 @@ const INSTRUMENT = `
  * drives. A member added to `router.tsx#ROUTES` and forgotten here is then a
  * named failure instead of a timeout.
  */
-const APP_ROUTES = ["overview", "graph", "layers", "triage", "search"];
+const APP_ROUTES = ["overview", "graph", "layers", "triage", "search", "diagnostics"];
 function routeOf(hashOrUrl) {
   const i = hashOrUrl.indexOf("#");
   const hash = i === -1 ? "" : hashOrUrl.slice(i);
@@ -7273,6 +7304,59 @@ const TD347_TARGETS = [
         ? "no reading"
         : `${v.rows} fused row(s) for "${FUSED_Q}" · layer block=${v.layers} · rank-basis readout=${v.readout}`,
   },
+  {
+    /*
+     * FR-266 — THE SIXTH ROUTE, and the one whose reading has to be about
+     * DISTINCTION rather than about presence.
+     *
+     * "Some rows appeared" is the vacuous form here, and unusually so: this
+     * panel's entire claim is that a failing instance LOOKS DIFFERENT from a
+     * healthy one and from a disabled one. A row count cannot see that, and
+     * neither can a check that only asserts the roster is non-empty — a renderer
+     * that emitted one tone for everything would satisfy both.
+     *
+     * So the reading is (a) the fixture's OWN instance ids, including the one no
+     * shipped file mentions, and (b) the SET of tones, which must contain at
+     * least three distinct members. The seeded world produces `ok`, `alarm`
+     * (synapse failing + janitor wedged), `attention` (arbiter + curator blocked)
+     * and `off` (cartographer disabled), so three is a floor with margin rather
+     * than an exact pin that would re-break on an unrelated fixture edit.
+     */
+    hash: "#/diagnostics",
+    sel: "[data-instance-row]",
+    read: `
+      const rows = [...document.querySelectorAll('[data-instance-row]')];
+      return {
+        ids: rows.map((r) => r.getAttribute('data-instance-row')),
+        tones: rows.map((r) => r.getAttribute('data-tone')),
+        statuses: rows.map((r) => r.getAttribute('data-status')),
+        gate: document.querySelector('[data-diag-gate]') === null
+          ? null
+          : document.querySelector('[data-diag-gate]').textContent.trim(),
+        foot: document.querySelector('[data-diag-foot]') !== null,
+      };`,
+    ok: (v) =>
+      v !== null &&
+      Array.isArray(v.ids) &&
+      // The fixture's own roster reached the document, INCLUDING the derived id.
+      v.ids.includes("janitor") &&
+      v.ids.includes("roadmap_drift") &&
+      // ...the failing, blocked and disabled rows are three DIFFERENT tones...
+      new Set(v.tones).size >= 3 &&
+      v.tones[v.ids.indexOf("synapse")] === "alarm" &&
+      v.tones[v.ids.indexOf("cartographer")] === "off" &&
+      v.tones[v.ids.indexOf("arbiter")] === "attention" &&
+      // ...and the disabled row carries its gate key verbatim, which is the one
+      // thing that turns a bare DISABLED into an action.
+      typeof v.gate === "string" &&
+      v.gate.includes("cognition.janitor.cluster.enabled") &&
+      v.foot === true,
+    say: (v) =>
+      v === null
+        ? "no reading"
+        : `${v.ids.length} instance row(s) · tones=${JSON.stringify([...new Set(v.tones)].sort())} · ` +
+          `statuses=${JSON.stringify([...new Set(v.statuses)].sort())} · gate=${JSON.stringify(v.gate)}`,
+  },
 ];
 
 /**
@@ -7382,6 +7466,35 @@ const TD347_GRAPH_ROUTE_CHUNKS = ["Graph", "neighbours", "Button"];
 const TD347_SEARCH_ROUTE_CHUNKS = ["Search", "SearchReadout"];
 
 /**
+ * FR-266 — THE CHUNKS THE DIAGNOSTICS ROUTE PULLS, and again the half that
+ * matters is the NEGATIVE one.
+ *
+ *   Diagnostics  its route chunk — `pages/Diagnostics.tsx`,
+ *                `diagnostics/model.ts`, `diagnostics/useCognition.ts`.
+ *   Badge        Rollup's hoist of `components/ui/Badge`. It used to sit INSIDE
+ *                `useQFilter` while two async chunks reached it; this route is
+ *                the THIRD importer, so Rollup split it out (`useQFilter` shrank
+ *                6_707 -> 6_490 by exactly that move). Nothing was duplicated —
+ *                the sharing set changed, so the partition did.
+ *
+ * DERIVED FROM THE BUILT ARTIFACT'S OWN IMPORT STATEMENTS, following 15d-graph's
+ * `Button` lesson —
+ * `grep -o 'from"\./[A-Za-z]*-[^"]*\.js"' dist/dashboard/assets/Diagnostics-*.js`
+ * reports exactly `api` and `Badge`, and `api` is in the INITIAL set (it is
+ * modulepreloaded since FR-266, see `dashboard-chunks.test.ts`), so it is not
+ * listed here. Not read off a group table, which is what got `Button` wrong the
+ * first time.
+ *
+ * WHAT THE NEGATIVE HALF ASSERTS: this route must NOT pull `useQFilter`,
+ * `Layers`, `Triage`, `Graph`, `Search`, `SearchReadout`, `neighbours` or
+ * `Button`. `useQFilter` is the trap here exactly as it is for `#/search` — the
+ * panel uses `ui/Badge`, and before the hoist that would have dragged the whole
+ * list-hook chunk onto a route with no list in it, while the BYTE gate stayed
+ * green because the total would not have moved.
+ */
+const TD347_DIAGNOSTICS_ROUTE_CHUNKS = ["Diagnostics", "Badge"];
+
+/**
  * G-BR-15 — TD-347, extended by FR-248.
  *
  * PROVES: every route reaches its DATA from a cold document and from an
@@ -7392,9 +7505,12 @@ const TD347_SEARCH_ROUTE_CHUNKS = ["Search", "SearchReadout"];
  *
  * THE CHUNK COUNT IS NOT WRITTEN DOWN HERE — the run prints
  * `bundleAssets().all.length` and the deferred names on every pass. It said
- * "seven chunks" through TD-347 and the split is nine after FR-248's fifth
- * route; a number in a docstring beside a number the run derives is the world-
- * count drift this file just finished removing, one file down.
+ * "seven chunks" through TD-347, and the split has grown at every route brief
+ * since. THE COUNT IS DELIBERATELY NOT RESTATED HERE — this sentence used to
+ * carry one ("nine after FR-248's fifth route") and FR-266 found it stale at
+ * twelve: a docstring number drifting from a number the run derives, inside the
+ * paragraph arguing against exactly that. Read `bundleAssets().all.length` off
+ * the run.
  *
  * DOES NOT PROVE: that the deferred bytes are the RIGHT ones, or that either
  * ceiling is correct — `cli/src/__tests__/dashboard-chunks.test.ts` owns the
@@ -7670,14 +7786,37 @@ async function gBr15(cdpPort, seeded) {
         assets.deferred.map(assets.chunkName).filter((n) => !searchExtra.includes(n)),
       )}`,
   );
+  // FR-266 — the sixth route. Its interesting half is the same as `#/search`'s:
+  // a panel that renders a roster and four badges must not drag the list-hook
+  // chunk along with it.
+  await coldGoto("#/diagnostics");
+  const diagJs = await tab.eval(TD347_READ_JS);
+  const diagExtra = diagJs
+    .map((e) => assets.chunkName(e.file))
+    .filter((n, i, a) => a.indexOf(n) === i)
+    .filter((n) => !assets.initial.map(assets.chunkName).includes(n))
+    .sort();
+  const wantDiag = [...TD347_DIAGNOSTICS_ROUTE_CHUNKS].sort();
+  check(
+    "15d-diagnostics",
+    JSON.stringify(diagExtra) === JSON.stringify(wantDiag),
+    `cold #/diagnostics fetched beyond the initial set: ${JSON.stringify(diagExtra)} · enumerated expectation ` +
+      `${JSON.stringify(wantDiag)} · and it did NOT fetch ${JSON.stringify(
+        assets.deferred.map(assets.chunkName).filter((n) => !diagExtra.includes(n)),
+      )}`,
+  );
   note(
-    "15d-overview, 15d-graph and 15d-search are a SET and none means much alone: 'no chunk was fetched' " +
+    "15d-overview, 15d-graph, 15d-search and 15d-diagnostics are a SET and none means much alone: 'no chunk was fetched' " +
       "is also true of a page that failed to load, and 'the graph chunk was fetched' is also true " +
       "of a bundle that fetches everything everywhere. Read beside each other they say the split " +
       "is a split. `td347-preload-the-lazy-chunk` is the demonstrated failing counterpart, and it " +
       "is deliberately a defect the BYTE gate cannot see. 15d-search adds the FR-248 half: the " +
       "shared record-tier chunk is fetched by THREE routes and is charged once, while `useQFilter` " +
-      "— which Layers and Triage fetch alongside it — must not follow it onto this route.",
+      "— which Layers and Triage fetch alongside it — must not follow it onto this route. " +
+      "15d-diagnostics adds the FR-266 half, which is the same shape one hoist further out: " +
+      "`ui/Badge` LEFT `useQFilter` for its own chunk when this route became its third importer, " +
+      "so the negative assertion here is that the list-hook chunk does not follow the badge onto a " +
+      "route with no list in it.",
   );
 
   // --- 15e · THE COLD COST, RECORDED (AC #5) --------------------------------

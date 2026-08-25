@@ -79,6 +79,29 @@ const Triage = lazy(() => import("./pages/Triage").then((m) => ({ default: m.Tri
  * critical path and re-bases both ceilings.
  */
 const Search = lazy(() => import("./pages/Search").then((m) => ({ default: m.Search })));
+/*
+ * FR-266 — THE FIFTH LAZY ROUTE, and the same argument as the block above rather
+ * than a habit.
+ *
+ * `pages/Diagnostics.tsx` exclusively owns `diagnostics/**` (the pure tone model
+ * and the read hook). Everything else it renders — `ui/Badge`, `ui/StatePage`,
+ * `lib/api` — is already in the entry or in a chunk another route fetches, so a
+ * new async importer of those duplicates nothing. The EAGER cost of this route is
+ * these three lines plus a `ROUTES` member and a nav label.
+ *
+ * IT IS ALSO THE ROUTE THAT WOULD BE MOST TEMPTING TO MAKE EAGER, because a
+ * "something is broken" indicator in the chrome would need the payload on every
+ * route. That was refused (D8): a count in the nav puts `/api/cognition` on the
+ * initial critical path and creates a second source of truth for the panel.
+ * Revisit when there are 2+ panels and a summary worth putting in the chrome.
+ *
+ * The obligation from the block above applies in full: making it eager (or
+ * static-importing `pages/Diagnostics` anywhere) pulls `diagnostics/**` back onto
+ * the critical path and re-bases BOTH ceilings.
+ */
+const Diagnostics = lazy(() =>
+  import("./pages/Diagnostics").then((m) => ({ default: m.Diagnostics })),
+);
 
 export function App() {
   const [palette, setPalette] = usePalette();
@@ -147,7 +170,7 @@ export function App() {
           />
         ) : (
           /*
-           * ONE boundary for all four routes, inside `<main>` — so the chrome,
+           * ONE boundary for every lazy route, inside `<main>` — so the chrome,
            * the nav and the search box never unmount while a route's chunk is
            * in flight. The fallback reuses `StatePage variant="loading"`, which
            * already has the spinner and already spreads `...props` onto its
@@ -184,6 +207,18 @@ export function App() {
                * exist". *Disabled, not broken.*
                */
               <Triage live={live} search={search} />
+            ) : route === "diagnostics" ? (
+              /*
+               * FR-266. It takes `live` for TWO reasons, and only one of them is
+               * the usual one: `live.tick` is the beat the panel refetches on,
+               * and `live.health.brain.path` is where the footer says the answer
+               * came from — read from the shell's EXISTING health poll rather
+               * than from a second request for the same fact.
+               *
+               * It takes NO `search` prop. The nav box is a MUTE over rows in
+               * memory, and a roster of seven is not a list you filter.
+               */
+              <Diagnostics live={live} />
             ) : route === "search" ? (
               /*
                * FR-248. It takes NO `search` prop, and the omission is the

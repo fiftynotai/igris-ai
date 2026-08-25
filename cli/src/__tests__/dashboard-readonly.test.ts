@@ -91,7 +91,12 @@ import {
 import { brainDbPath } from "../lib/paths.js";
 import { startServer, type DashboardServer } from "../lib/dashboard/server.js";
 import { resetWriteEngine, writeEngineState } from "../lib/brain-write-bridge.js";
-import { LAYER_PATHS, seedLayerBrain } from "./dashboard-layers-fixture.js";
+import {
+  LAYER_PATHS,
+  seedCognitionBrain,
+  seedLayerBrain,
+  writeCognitionConfig,
+} from "./dashboard-layers-fixture.js";
 import {
   TRIAGE_FIXTURE,
   countPendingWithProject,
@@ -245,6 +250,21 @@ async function crawl(): Promise<void> {
     "/api/summary",
     "/api/graph/stats?project=demo",
     "/api/graph?project=demo",
+    /*
+     * FR-266 — the diagnostics endpoint.
+     *
+     * It does NOT go through `openReadContext()` like the layer paths; it calls
+     * `verbs/cognition.ts#buildCognitionHealthDigest`, which opens and closes
+     * `brain-db.ts#withReadonlyBrain` once per reader per instance — ~20+ handle
+     * cycles for the seeded roster, against a fixture that is in WAL mode. That
+     * makes it the path with the most handle churn on this surface, and
+     * therefore the one with most to prove to a digest gate.
+     *
+     * A read-only suite that did not gain the new path would be the VACUOUS
+     * reading of AC-6: the GUARANTEE is unchanged, the COVERAGE grows. Row 110
+     * makes exactly this point about FR-241's `/api/suggestions`.
+     */
+    "/api/cognition",
     ...LAYER_PATHS,
   ];
   for (const p of paths) {
@@ -261,6 +281,21 @@ beforeEach(() => {
   resetBrainBridge();
   resetLayerReaders();
   seedLayerBrain(dbPath());
+  /*
+   * FR-266 — the cognition world is seeded HERE, not left to degrade.
+   *
+   * `/api/cognition` on a brain with no `cognition_instances` table
+   * short-circuits inside `readCognitionRoster` and never reaches the FOUR
+   * other readers behind the digest (run signals, schedules, the retention
+   * floor, output counts). Crawling that state would put the endpoint in the
+   * path list while proving nothing about the readers that actually run — a
+   * hash-stability gate over a code path the request did not take.
+   *
+   * Seeded before every snapshot in this file is taken, so G-RO-1's
+   * byte-identity claim covers these tables too.
+   */
+  seedCognitionBrain(dbPath());
+  writeCognitionConfig(sandbox);
 });
 
 afterEach(async () => {
@@ -1180,23 +1215,32 @@ describe("the tests are pointed at the SANDBOX, never the operator's brain", () 
     await start();
     // Belt on top of `server.ts`'s method guard: a layer endpoint added without
     // going through the router's GET/HEAD gate is the shape this catches.
-    for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
-      const status = await new Promise<number>((resolve, reject) => {
-        const r = httpGet(
-          {
-            host: "127.0.0.1",
-            port: srv?.port,
-            path: "/api/briefs",
-            method,
-            agent: false,
-            headers: { host: `127.0.0.1:${srv?.port ?? 0}` },
-          },
-          (res) => resolve(res.statusCode ?? 0),
-        );
-        r.on("error", reject);
-        r.end();
-      });
-      expect(status, `${method} /api/briefs`).toBe(405);
+    //
+    // FR-266 adds `/api/cognition` to the PATH axis, not just the method one.
+    // `/api/briefs` alone proves the guard fires for a path that existed when
+    // the guard was written; the claim AC-6 needs is that it fires for the path
+    // this brief ADDED — and it must, because the POST refusal is an exact-match
+    // comparison against `WRITE_PATH` that happens BEFORE any GET route arm is
+    // reached, so the new arm is never consulted for a POST.
+    for (const path of ["/api/briefs", "/api/cognition"]) {
+      for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+        const status = await new Promise<number>((resolve, reject) => {
+          const r = httpGet(
+            {
+              host: "127.0.0.1",
+              port: srv?.port,
+              path,
+              method,
+              agent: false,
+              headers: { host: `127.0.0.1:${srv?.port ?? 0}` },
+            },
+            (res) => resolve(res.statusCode ?? 0),
+          );
+          r.on("error", reject);
+          r.end();
+        });
+        expect(status, `${method} ${path}`).toBe(405);
+      }
     }
   });
 });

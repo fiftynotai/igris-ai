@@ -31,8 +31,9 @@
  */
 
 import Database from "better-sqlite3";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
+import { dirname, join } from "node:path";
 
 /** `projects` — db.ts:v1. */
 const DDL_PROJECTS = `
@@ -535,6 +536,320 @@ export function seedLayerBrain(
   }
 
   db.close();
+}
+
+// ---------------------------------------------------------------------------
+// FR-266 — the COGNITION world: a reproduction of the 2026-08-24 failure state
+// ---------------------------------------------------------------------------
+
+/**
+ * The four cognition tables, mirrored VERBATIM from `cognition-health.test.ts`.
+ *
+ * Two fixtures for the same tables that drifted into different shapes would be
+ * worse than one, so these strings are copied from that file rather than
+ * re-invented. `IF NOT EXISTS` throughout because `seedCognitionBrain` is called
+ * on a DB `seedLayerBrain` has already populated (the browser gate) as well as
+ * on a bare one (the endpoint suite).
+ *
+ * `suggestions` and `learnings` — the OUTPUT tables `readOutputCounts` reads —
+ * are deliberately NOT created here. `seedLayerBrain` already owns them, and
+ * `readOutputCounts` returns `null` for a table that is absent, so the endpoint
+ * suite gets a well-defined `output_rows: null` instead of a second, differently
+ * shaped `learnings`.
+ */
+const DDL_COGNITION = `
+  CREATE TABLE IF NOT EXISTS cognition_instances (
+    id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
+    gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
+    driver TEXT NOT NULL, driver_ref TEXT,
+    output TEXT NOT NULL, registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS event_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL,
+    component TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}',
+    machine_hostname TEXT, project_slug TEXT, instance_id TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS schedules (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL, description TEXT,
+    cron_expr TEXT NOT NULL, handler_type TEXT NOT NULL DEFAULT 'noop',
+    handler_config TEXT NOT NULL DEFAULT '{}', enabled INTEGER NOT NULL DEFAULT 1,
+    project_slug TEXT, tags TEXT DEFAULT '[]', max_retries INTEGER NOT NULL DEFAULT 0,
+    timeout_ms INTEGER NOT NULL DEFAULT 30000, next_run_at TEXT, last_run_at TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+  CREATE TABLE IF NOT EXISTS schedule_runs (
+    id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, status TEXT NOT NULL,
+    started_at TEXT NOT NULL DEFAULT (datetime('now')), finished_at TEXT,
+    duration_ms INTEGER, result TEXT, error TEXT, attempt INTEGER NOT NULL DEFAULT 1
+  );
+`;
+
+/**
+ * The host this fixture seeds `event_log` under, and WHY IT IS THE REAL ONE.
+ *
+ * `event_log` is a SYNC table carrying `machine_hostname`, and the digest's run
+ * signals are host-scoped on purpose: a VPS-born `run_succeeded` replicates
+ * here, so an unscoped read would render a locally-wedged instance green.
+ *
+ * `GET /api/cognition` calls `buildCognitionHealthDigest()` with NO options,
+ * because a health question is intrinsically about THIS machine and a hostname
+ * override on a production endpoint would be a test seam in shipped code. So a
+ * fixture whose events are to be VISIBLE to the endpoint must seed them under
+ * `os.hostname()`. Seeded under any other host, every instance reads
+ * `no_signal` and the whole failure reproduction collapses into one
+ * undifferentiated verdict — which is not a fixture bug but the host scoping
+ * working, and `dashboard-cognition-endpoint.test.ts` asserts exactly that with
+ * {@link COGNITION_FOREIGN_HOST}.
+ */
+export const COGNITION_HOST = hostname();
+
+/**
+ * A host that is NOT this machine — the negative control for the scoping above.
+ *
+ * Seeding under this makes every terminal event invisible to the digest, which
+ * is what proves {@link COGNITION_HOST} is load-bearing rather than incidental.
+ */
+export const COGNITION_FOREIGN_HOST = "vps-host-that-is-not-this-machine";
+
+/**
+ * FR-266 — what `seedCognitionBrain` builds, and what each row is FOR.
+ *
+ * Named so an assertion reads as a claim rather than as a magic string, and
+ * exported so the endpoint suite, the panel render test and the browser gate all
+ * assert against ONE table instead of three hand-copied ones.
+ */
+export const COGNITION_FIXTURE = {
+  host: COGNITION_HOST,
+  foreignHost: COGNITION_FOREIGN_HOST,
+  /**
+   * The EXPECTED verdict per instance, in projection order.
+   *
+   * This is the 2026-08-24 reading in the shape the CLASSIFIER actually
+   * produces: one `failing`, one `wedged`, and the two instances the wedged one
+   * drives reported as `blocked_upstream` rather than as silent. That is what
+   * "3 cognition instances failing" looks like once the driver relationship is
+   * resolved — and pointing an operator at `arbiter` instead of at `janitor` is
+   * the exact mistake `classify()` exists to prevent.
+   *
+   * `cartographer` is DELIBERATELY `disabled` so AC-4's both sides — a failure
+   * and an operator choice — live in ONE fixture and are compared in ONE render.
+   */
+  expected: [
+    { id: "perception", status: "ok" },
+    { id: "subconscious", status: "ok" },
+    { id: "synapse", status: "failing" },
+    { id: "janitor", status: "wedged" },
+    { id: "arbiter", status: "blocked_upstream" },
+    { id: "curator", status: "blocked_upstream" },
+    { id: "cartographer", status: "disabled" },
+    { id: "roadmap_drift", status: "ok" },
+  ],
+  /**
+   * The EIGHTH instance, and the reason it is in the DEFAULT world rather than
+   * behind a flag.
+   *
+   * `roadmap_drift` is an id no SHIPPED file in `cli/` or `cli/dashboard/`
+   * mentions — it exists only in fixtures (`cognition-health.test.ts` and
+   * `awaken-verbs.bats` already use it for the same purpose). A panel that
+   * renders it is a panel deriving its roster from the payload; a hardcoded
+   * roster of the seven real instances cannot render it, which is what makes
+   * AC-3 falsifiable rather than merely plausible.
+   */
+  derivedInstanceId: "roadmap_drift",
+  /** The gate that switches `cartographer` off — rendered VERBATIM by the panel. */
+  disabledGate: "cognition.janitor.cluster.enabled",
+  /** The schedule `janitor` is wedged on, and the id of the run wedging it. */
+  wedgedSchedule: "janitor_engine",
+  wedgedRunId: "run-open-janitor",
+} as const;
+
+/** ISO timestamp `n` days before now. */
+function cognitionDaysAgo(n: number): string {
+  return new Date(Date.now() - n * 86_400_000).toISOString();
+}
+
+/**
+ * Seed the FR-266 cognition world at `dbPath`.
+ *
+ * EVERY ROW LANDS ON A DIFFERENT CLASSIFIER BRANCH. That is the property that
+ * makes this fixture worth having: a seeder that produced the same verdict for
+ * any input would satisfy "no row is red" and every tone assertion built on it.
+ * The `un-wedge` control in the endpoint suite is the paired proof — flip
+ * `schedule_runs.status` off `'running'` and `janitor` must LEAVE `wedged` and
+ * the two co-driven rows must LEAVE `blocked_upstream`.
+ *
+ * ⚠ Callers MUST also write `config.json` — see {@link writeCognitionConfig}.
+ * The gates are resolved from that file, not from this DB, so a seeded roster
+ * with no config renders every instance `disabled` and nothing else.
+ */
+export function seedCognitionBrain(
+  dbPath: string,
+  host: string = COGNITION_HOST,
+): void {
+  mkdirSync(dirname(dbPath), { recursive: true });
+  const db = new Database(dbPath);
+  db.exec(DDL_COGNITION);
+
+  const instance = db.prepare(
+    `INSERT OR REPLACE INTO cognition_instances
+       (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+  );
+  const event = db.prepare(
+    `INSERT INTO event_log (event_name, component, machine_hostname, created_at)
+     VALUES (?, ?, ?, ?)`,
+  );
+  const schedule = db.prepare(
+    `INSERT INTO schedules (id, name, cron_expr, enabled, next_run_at)
+     VALUES (?, ?, '0 4 * * *', 1, ?)`,
+  );
+  const run = db.prepare(
+    `INSERT INTO schedule_runs (id, schedule_id, status, started_at) VALUES (?, ?, ?, ?)`,
+  );
+
+  // --- perception -> ok.
+  //
+  // Its `component` and `event_prefix` are the BARE literal `perception`, NOT
+  // `cognition.perception`, and `gate_default` is 1 — the one instance whose
+  // ABSENT key means ON. A digest that derived `cognition.${id}` would report
+  // the single healthiest instance as never having run (MAINTAINING's L-857
+  // rule), so the fixture carries the legacy shape rather than a tidy one.
+  instance.run(
+    "perception", "perception", "perception",
+    JSON.stringify(["cognition.perception.enabled"]), 1,
+    "session_hook", "session_end", "learnings[review_status='pending_review']",
+  );
+  event.run("perception.run_succeeded", "perception", host, cognitionDaysAgo(1));
+
+  // --- subconscious -> ok. Schedule-driven, fired, no open run.
+  instance.run(
+    "subconscious", "cognition.subconscious", "cognition.subconscious",
+    JSON.stringify(["cognition.subconscious.enabled"]), 0,
+    "schedule", "subconscious_engine", "suggestions[source_module='subconscious']",
+  );
+  schedule.run("sched-sub", "subconscious_engine", cognitionDaysAgo(-1));
+  event.run(
+    "cognition.subconscious.run_succeeded", "cognition.subconscious",
+    host, cognitionDaysAgo(1),
+  );
+
+  // --- synapse -> failing. A `run_failed` with NO LATER SUCCESS.
+  //
+  // The earlier success is seeded on purpose: "failing" must mean "the latest
+  // terminal is a failure", not "a failure exists anywhere in the window". With
+  // only the failure row, a classifier that answered on ANY failure would pass.
+  instance.run(
+    "synapse", "cognition.synapse", "cognition.synapse",
+    JSON.stringify(["cognition.synapse.enabled"]), 0,
+    "schedule", "synapse_engine", "suggestions[source_module='edge_inference']",
+  );
+  schedule.run("sched-syn", "synapse_engine", cognitionDaysAgo(-1));
+  event.run(
+    "cognition.synapse.run_succeeded", "cognition.synapse",
+    host, cognitionDaysAgo(5),
+  );
+  event.run(
+    "cognition.synapse.run_failed", "cognition.synapse",
+    host, cognitionDaysAgo(2),
+  );
+
+  // --- janitor -> wedged. An OPEN run plus an OVERDUE next_run_at.
+  //
+  // The daemon's overlap guard refuses to fire while any run is `'running'`, so
+  // this schedule cannot fire again until a human clears the row. `next_run_at`
+  // is in the PAST as well, so the reason sentence carries both halves.
+  instance.run(
+    "janitor", "cognition.janitor", "cognition.janitor",
+    JSON.stringify(["cognition.janitor.enabled"]), 0,
+    "schedule", COGNITION_FIXTURE.wedgedSchedule, "suggestions[source_module='janitor']",
+  );
+  schedule.run("sched-jan", COGNITION_FIXTURE.wedgedSchedule, cognitionDaysAgo(1));
+  run.run(COGNITION_FIXTURE.wedgedRunId, "sched-jan", "running", cognitionDaysAgo(14));
+
+  // --- arbiter + curator -> blocked_upstream, DERIVED from `driver_ref`.
+  //
+  // Neither declares a switch or a schedule of its own: they run only inside a
+  // janitor run. The classifier resolves the verdict by LOOKING UP `driver_ref`
+  // in the roster — there is no `if (id === 'arbiter')` anywhere — which is why
+  // both rows carry a healthy recent success and are STILL not `ok`. Painting
+  // them red would send the operator to the healthy instance.
+  for (const id of ["arbiter", "curator"]) {
+    instance.run(
+      id, `cognition.${id}`, `cognition.${id}`,
+      JSON.stringify(["cognition.janitor.enabled"]), 0,
+      "co_driven", "janitor", `suggestions[source_module='${id}']`,
+    );
+    event.run(`cognition.${id}.run_succeeded`, `cognition.${id}`, host, cognitionDaysAgo(1));
+  }
+
+  // --- cartographer -> disabled. A gate CONJUNCTION whose SECOND key is false.
+  //
+  // `disabled_by` therefore names `cognition.janitor.cluster.enabled` and not
+  // the first key, which is the whole point of reporting the first key that
+  // FAILED rather than the first key declared: the two gates mean two very
+  // different remedies. The panel renders that string verbatim beside the
+  // DISABLED chip (FR-266 D4).
+  instance.run(
+    "cartographer", "cognition.cartographer", "cognition.cartographer",
+    JSON.stringify(["cognition.janitor.enabled", COGNITION_FIXTURE.disabledGate]), 0,
+    "co_driven", "janitor", "suggestions[source_module='cartographer']",
+  );
+  event.run(
+    "cognition.cartographer.run_succeeded", "cognition.cartographer",
+    host, cognitionDaysAgo(1),
+  );
+
+  // --- roadmap_drift -> ok. THE DERIVATION PROOF (AC-3).
+  //
+  // An instance id that appears in NO shipped file. It is LAST so it also pins
+  // the ordering claim: the digest preserves the projection's `rowid` order,
+  // which is `registry.all()` insertion order, and is never sorted.
+  instance.run(
+    COGNITION_FIXTURE.derivedInstanceId,
+    `cognition.${COGNITION_FIXTURE.derivedInstanceId}`,
+    `cognition.${COGNITION_FIXTURE.derivedInstanceId}`,
+    JSON.stringify([`cognition.${COGNITION_FIXTURE.derivedInstanceId}.enabled`]), 0,
+    "manual", null,
+    `suggestions[source_module='${COGNITION_FIXTURE.derivedInstanceId}']`,
+  );
+  event.run(
+    `cognition.${COGNITION_FIXTURE.derivedInstanceId}.run_succeeded`,
+    `cognition.${COGNITION_FIXTURE.derivedInstanceId}`,
+    host, cognitionDaysAgo(1),
+  );
+
+  db.close();
+}
+
+/**
+ * Write the `config.json` the fixture's gates resolve against.
+ *
+ * `brainDir` — NOT the DB path. `verbs/cognition.ts#readConfig` reads
+ * `configJsonPath()`, which is `brainDir()/config.json`, so this lands beside
+ * `memory/knowledge.db` rather than inside it.
+ *
+ * Every gate is `true` EXCEPT `cognition.janitor.cluster.enabled`, which is
+ * explicitly `false` — the one deliberate operator choice in the world, and the
+ * `disabled` half of AC-4.
+ */
+export function writeCognitionConfig(brainDir: string): void {
+  mkdirSync(brainDir, { recursive: true });
+  writeFileSync(
+    join(brainDir, "config.json"),
+    JSON.stringify({
+      version: "7.0.0",
+      cognition: {
+        perception: { enabled: true },
+        subconscious: { enabled: true },
+        synapse: { enabled: true },
+        janitor: { enabled: true, cluster: { enabled: false } },
+        roadmap_drift: { enabled: true },
+      },
+    }),
+    "utf-8",
+  );
 }
 
 /**

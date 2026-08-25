@@ -457,6 +457,18 @@ async function handle(
     return;
   }
 
+  // FR-266 — the ONE path this brief adds, and the nineteenth on the surface.
+  // Exact-match like every route in this function, so nothing here can shadow
+  // anything. It takes NO query parameters: the digest is per-machine and
+  // per-registry, not per-project, so a `?project=` would be a filter with
+  // nothing to filter. POST is refused automatically — `WRITE_PATH` is an
+  // exact-match comparison earlier in this function, so a POST here 405s
+  // without this arm ever being reached.
+  if (pathname === "/api/cognition") {
+    sendJson(res, 200, await routes.cognition());
+    return;
+  }
+
   if (pathname.startsWith("/api/")) {
     sendJson(res, 404, { error: `no such endpoint: ${pathname}` });
     return;

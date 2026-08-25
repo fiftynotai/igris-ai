@@ -682,6 +682,66 @@ interface PackReport {
  *   with 10_169 B of slack. Kept as the provenance of that figure, not as the
  *   current one.)
  *
+ * FR-266 MEASURED LAST, after its final code-touching step:
+ *   packed              1_982_588    unpacked 7_634_086, 809 entries
+ *   FR-266's own share  +9_343 B     (9.12 KB) against HEAD's 1_973_245,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding both artifacts, packing, and
+ *                                    restoring — NOT by subtracting from the
+ *                                    previous ledger entry, which is several
+ *                                    briefs stale. The HEAD arm reproduced the
+ *                                    pre-change bundle figures exactly
+ *                                    (INITIAL 285_689 / TOTAL 573_322), which
+ *                                    is what says the stash was clean.
+ *   entries             +5           804 -> 809, and ALL FIVE are accounted for:
+ *                                    `dist/lib/dashboard/cognition-read.js` and
+ *                                    its `.js.map` (2), plus three new dashboard
+ *                                    assets (3) — the `Diagnostics` route chunk,
+ *                                    the hoisted `api` chunk and the hoisted
+ *                                    `Badge` chunk. The brief's four OTHER new
+ *                                    files are tests or client sources: two live
+ *                                    under a test glob and two are bundled into
+ *                                    the assets above.
+ *   cumulative delta    +116.4 KB    (119_168 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~33.6 KB     (34_432 B under TD-374's +150)
+ *
+ *   THIS ROW WAS RE-MEASURED IN A LATER REVIEW ROUND, AND THE MOVE IS THE
+ *   'MEASURE LAST' RULE BITING RATHER THAN AN ERROR. The first reading was
+ *   1_982_495. A subsequent round corrected two arithmetic claims, one of them
+ *   in `cli/CHANGELOG.md` — which `package.json` `files` NAMES, so it SHIPS —
+ *   and the packed total moved +92 B on prose alone. A THIRD round corrected
+ *   false COUNT-WORDS, two of them in `cli/src/lib/**` (`routes.ts` and
+ *   `brain-write-bridge.ts`), whose comments `tsc` preserves into `dist/`:
+ *   +1 B more, to 1_982_588. Entry count did not move on either occasion.
+ *   That is precisely why this file's head directive says the figure is stale
+ *   the moment another round touches the changelog: a review round is a
+ *   code-touching step for this measurement even when it changes no code.
+ *   `tarball.test.ts` itself is under a test glob `tsconfig` excludes from
+ *   `dist`, so writing THIS row cannot move the number it records — verified
+ *   by re-packing after the edit.
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_982_588 - 1_973_245 = 9_343; 1_982_588 - 1_863_420 = 119_168;
+ *   150*1024 - 119_168 = 34_432; 809 - 804 = 5.
+ *
+ *   WHERE THE 9_343 B WENT, and the split is the instructive part. This brief
+ *   added a whole route, a panel, an endpoint, four test files and a browser-gate
+ *   target — and most of that is unpacked surface: `cli/scripts/browser-gate.mjs`
+ *   is not in `files`; the four suites live under test globs `tsconfig` excludes
+ *   from `dist`; `docs/` and `MAINTAINING.md` are outside the package. What DID
+ *   cost is `cli/src/lib/**` (one new module plus a handler, and `tsc` PRESERVES
+ *   comments into `dist/` and pays for them TWICE, in `.js` and `.js.map`), the
+ *   three new minified dashboard assets, and `cli/CHANGELOG.md`, which SHIPS.
+ *   `brain-mcp-server/**` was not touched at all — the zero that keeps this row
+ *   small, exactly as it did for FR-247.
+ *
+ *   THE OTHER TWO CEILINGS ARE NOT THIS ONE, and FR-266 is the brief where the
+ *   difference bites. TOTAL JS came out at 580_979 B against a 586_923 B ceiling
+ *   — **5_944 B of slack**, versus 33.6 KB here. The JS ceiling is now the
+ *   binding budget for a dashboard brief by a factor of ~6, and it is the one to
+ *   plan against. See `dashboard-chunks.test.ts` for why `MEASURED_*` was NOT
+ *   re-based to make that number look better.
+ *
  * TD-333 MEASURED LAST, after its final code-touching step:
  *   packed              1_811_683    unpacked 7_138_039, 804 entries (UNCHANGED
  *                                    — TD-333's two new source files are a bash

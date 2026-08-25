@@ -752,6 +752,123 @@ export interface TriageResultPayload {
   degraded: DashboardDegraded | null;
 }
 
+// ---- FR-266 · the diagnostics surface -------------------------------------
+//
+// MIRROR CONTRACT, and this block is the one where it bites hardest. These
+// interfaces mirror `cli/src/types.ts`'s TD-327 cognition block, which
+// MAINTAINING row 122 governs: adding or renaming a digest FIELD is a sweep
+// that must land in one commit across the brain-side declaration, `types.ts`,
+// `verbs/cognition.ts`, both SKILL.md render rules with their TD-096 runtime
+// mirrors — and, since FR-266, THIS FILE. The two ends compile separately with
+// zero shared import, so nothing but a scan holds them together:
+// `dashboard-cognition-endpoint.test.ts` T1(c) asserts every field name below
+// appears here, with a self-negative-control proving the scan can miss.
+//
+// THE ENDPOINT FORWARDS THE DIGEST VERBATIM, so these names are the brain's
+// names. Do not "tidy" one — a rename here is a silent read of `undefined`.
+
+/**
+ * Mirrors `CognitionHealthStatus`.
+ *
+ * SIX MEMBERS, AND A RENDERER MUST NOT ASSUME THEY ARE THE ONLY ONES. The
+ * cognition registry is OPEN and the CLI/brain pair is not upgraded atomically
+ * on a running machine, so a newer brain's verdict can reach an older client.
+ * `diagnostics/model.ts#toneFor` is TOTAL over `string` for that reason — see
+ * its header. This union exists to make the KNOWN members legible, not to
+ * promise exhaustiveness.
+ */
+export type CognitionStatus =
+  | "disabled"
+  | "wedged"
+  | "blocked_upstream"
+  | "failing"
+  | "no_signal"
+  | "ok";
+
+/** Mirrors `CognitionScheduleSignal`. The schedule cross-check for one instance. */
+export interface CognitionScheduleSignal {
+  name: string;
+  /** How many `schedules` rows share this NAME. `>1` is a defect, and a warning. */
+  rows: number;
+  enabled: boolean;
+  next_run_at: string | null;
+  /** True when `next_run_at` is in the past — due, and it has not fired. */
+  overdue: boolean;
+  /** The id of an OPEN (`status='running'`) run. A stale one WEDGES the schedule. */
+  open_run_id: string | null;
+  open_run_started_at: string | null;
+  open_run_age_days: number | null;
+}
+
+/** Mirrors `CognitionInstanceHealth` — one row of the digest. */
+export interface CognitionInstanceHealth {
+  id: string;
+  /** The `event_log.component` LITERAL. `perception` is NOT `cognition.perception`. */
+  component: string;
+  event_prefix: string;
+  /** The CONJUNCTION of `config.json` keys gating it — all must be truthy. */
+  gate_keys: string[];
+  /** What an ABSENT gate key resolves to for THIS instance. `true` for perception. */
+  gate_default: boolean;
+  enabled: boolean;
+  /**
+   * The FIRST gate key that resolved false/absent; `null` when enabled.
+   *
+   * RENDERED VERBATIM beside the DISABLED chip (FR-266 D4). An ABSENT key and an
+   * EXPLICIT `false` both produce this same string, so the panel CANNOT tell
+   * "never enabled" from "deliberately disabled" — that distinction needs a new
+   * digest field and is deferred to its own brief. Showing the key is what makes
+   * the difference between a bare `DISABLED` and a remedy the operator can act
+   * on.
+   */
+  disabled_by: string | null;
+  /** `schedule` | `co_driven` | `session_hook` | `manual`. */
+  driver: string;
+  /** Schedule name / driving instance id / hook name / null. */
+  driver_ref: string | null;
+  status: CognitionStatus;
+  /** One operator-readable sentence explaining the verdict. Rendered verbatim. */
+  reason: string;
+  /** Latest terminal event on THIS host. */
+  last_run_at: string | null;
+  last_outcome: string | null;
+  /** Latest terminal on ANY host — `event_log` syncs, so this can disagree. */
+  last_run_any_host: string | null;
+  runs_today: number;
+  output: string;
+  output_rows: number | null;
+  schedule: CognitionScheduleSignal | null;
+}
+
+/** Mirrors `CognitionHealthDigest`. */
+export interface CognitionHealthDigest {
+  /**
+   * THE DIGEST'S OWN degraded flag, and it is NOT the envelope's.
+   *
+   * True when the brain is readable but carries no `cognition_instances` table
+   * — an old brain build. The envelope's `degraded` means there is no brain at
+   * all. The two have different remedies, so the panel renders them as
+   * different sentences rather than collapsing them.
+   */
+  degraded: boolean;
+  degraded_reason: string | null;
+  /** `os.hostname()` — the host every `last_run_at` is scoped to. */
+  hostname: string;
+  event_log_retention_days: number;
+  /** The OLDEST retained row. A `no_signal` means "silent since at least here". */
+  event_log_oldest_at: string | null;
+  /** One row per REGISTERED instance, in registry order. NEVER hand-listed. */
+  instances: CognitionInstanceHealth[];
+  warnings: string[];
+}
+
+/** Mirrors `CognitionPayload`. */
+export interface CognitionPayload {
+  cognition: CognitionHealthDigest | null;
+  generated_at: string;
+  degraded: DashboardDegraded | null;
+}
+
 /** A network/parse failure, distinct from a server-reported `degraded`. */
 export class ApiError extends Error {
   constructor(
@@ -960,6 +1077,20 @@ export const api = {
     signal?: AbortSignal,
   ): Promise<SuggestionsPayload> =>
     getJson<SuggestionsPayload>(`api/suggestions?${query.toString()}`, signal),
+
+  /**
+   * FR-266 — the diagnostics spine's one read. `GET api/cognition`.
+   *
+   * NO PARAMETERS AT ALL, and the omission is the decision: the digest is
+   * per-MACHINE and per-REGISTRY, so there is no project axis to scope it to.
+   * A `?project=` here would be a filter with nothing to filter, and offering
+   * one would imply cognition health differs per project. It does not.
+   *
+   * RELATIVE URL, like every other call — AC #4 stays mechanically greppable in
+   * the built bundle.
+   */
+  cognition: (signal?: AbortSignal): Promise<CognitionPayload> =>
+    getJson<CognitionPayload>("api/cognition", signal),
 
   /**
    * `POST api/triage` — the ONE mutating call in the client (FR-241 D3).

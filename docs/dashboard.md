@@ -71,7 +71,7 @@ The dashboard is the first network listener this CLI has ever opened, so:
 
 ## API surface
 
-**Seventeen GET paths and one POST path.** All same-origin. Every response carries
+**Eighteen GET paths and one POST path.** All same-origin. Every response carries
 a `degraded` field with the same shape. Every GET is a read; the single POST is
 the write path FR-241 added, and it is the only endpoint on this surface that
 changes a row.
@@ -95,6 +95,7 @@ changes a row.
 | `GET` | `/api/goals[&q=<text>]` | `{items, count, total, limit, offset, search, params, generated_at, degraded}` | `goals/read.ts#listGoals` |
 | `GET` | `/api/goal?id=<GL-XXX>` | `{goal, serving_briefs, serving_learnings_count, generated_at, degraded}` | `goals/read.ts#getGoal` |
 | `GET` | `/api/suggestions?project=<slug>` \| `project_scope=brain-level`, `&status=&priority=&source_module=&q=` | `{items, count, total, limit, offset, facets, search, params, generated_at, degraded}` | `suggestions-read.ts#listSuggestions` |
+| `GET` | `/api/cognition` | `{cognition, generated_at, degraded}` — `cognition` is the `igris cognition health` digest FORWARDED VERBATIM (`degraded`, `degraded_reason`, `hostname`, `event_log_retention_days`, `event_log_oldest_at`, `instances[]`, `warnings[]`) | `dashboard/cognition-read.ts` -> `verbs/cognition.ts#buildCognitionHealthDigest` — **FR-266, the one path it adds.** NO PARAMETERS: the digest is per-MACHINE and per-REGISTRY, so there is no project axis to scope it to. TWO `degraded` FIELDS AT DIFFERENT DEPTHS AND THEY ARE NOT SYNONYMS: the envelope's means there is no brain, `cognition.degraded` means the brain is readable but carries no `cognition_instances` table (an old build). Different remedies |
 | **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
 
@@ -234,7 +235,7 @@ component state, because `router.tsx` unmounts the page on a route change. A
 reload keeps it; a **new tab** opens on the list, which is what makes the choice
 session-scoped rather than permanent.
 
-**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, moved to seventeen at FR-246 (`/api/briefs/search`) and to eighteen at FR-248 (`/api/search`). The board composes two endpoints that
+**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, moved to seventeen at FR-246 (`/api/briefs/search`), to eighteen at FR-248 (`/api/search`) and to nineteen at FR-266 (`/api/cognition`). The board composes two endpoints that
 already exist:
 
 | What | Where it comes from | Why not somewhere else |
@@ -528,7 +529,7 @@ bottom because knowing what the fix was for is what stops it being undone.
 
 | Door | Endpoints | Connection |
 |---|---|---|
-| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, FR-248's `/api/search` (the first path to serve FIVE readers off ONE handle), both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, FR-248's `/api/search` (the first path to serve FIVE readers off ONE handle), FR-266's `/api/cognition` (the only path that reaches its data through a CLI VERB rather than through `brain-bridge.ts` — see the note below), both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
 | **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
 | *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
 
@@ -536,6 +537,32 @@ bottom because knowing what the fix was for is what stops it being undone.
 that structurally; the write door is a different module returning a different
 connection, which is exactly why FR-240's read-only pins stay green rather than
 being re-argued.
+
+**`/api/cognition` reaches the read door through a VERB, and that is the one
+shape difference worth naming (FR-266).** Every other GET calls
+`brain-bridge.ts` directly. This one calls
+`verbs/cognition.ts#buildCognitionHealthDigest` in-process — the same function
+`igris cognition health --json` prints — and *that* reaches the brain only
+through `brain-db.ts#withReadonlyBrain` -> `brain-bridge.ts#openBrainReadonly`.
+So it is the SAME door, one call further down.
+
+Three consequences, stated rather than implied:
+
+- **It inherits the structural guarantee rather than promising one.** The
+  endpoint opens no handle of its own, so `dashboard-readonly.test.ts`'s G-RO-3
+  claim about the in-process handle covers it by construction. `/api/cognition`
+  is in that suite's crawl.
+- **A subprocess would have broken that.** `spawn("igris", …)` was considered and
+  rejected: a child opens a handle the read-only suite cannot inspect, would read
+  the operator's REAL brain unless `IGRIS_BRAIN_DIR` were threaded in by hand at
+  every call site, and needs `igris` on the `PATH` of the serving process — which
+  neither the packed-tarball smoke test nor the browser gate can assume.
+- **It is the handle-churn heavyweight.** The digest opens and closes once per
+  reader per instance — ~20+ cycles per request for a seven-instance roster —
+  which is deliberate (`brain-db.ts`: *"so a `/hunt` writing to the brain is
+  visible on the next read"*). Measured on a real brain: p50 13.0 ms, p95
+  14.6 ms, so the panel follows the 5-second beat rather than needing a REFRESH
+  button. Re-measure if the roster grows an order of magnitude.
 
 **The layer readers (FR-240) — structurally read-only:**
 
@@ -631,12 +658,12 @@ and one POST **as of FR-247**, and that was a measurement rather than a claim:
 to their pre-FR-247 values. (**Past tense since FR-248**, which added
 `/api/search` and therefore edited both of those instruments. The claim was true
 when written; the paragraph is kept as FR-247's record, not as the live count —
-which is seventeen GET and one POST.) What widened is the request BODY.
+which is eighteen GET and one POST.) What widened is the request BODY.
 
 **The name is now wrong, and it stays.** `triage` no longer describes what this
 path carries. Renaming it would sweep MAINTAINING rows 109 and 110,
 `SMOKE_PROBE_PATHS`, `dashboard.bats`'s exact-set string *and* its
-`18 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
+`19 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
 document, the parity harness and the browser gate — for a noun. Read the path as
 **a stable identifier for the write door**; the MAP, not the path, is the
 vocabulary.
@@ -1128,7 +1155,7 @@ igris dashboard (verb)
   ├─ open-url.ts    cross-platform browser ladder
   └─ server.ts      node:http, 127.0.0.1, Host guard, traversal guard
        ├─ static.ts   dist/dashboard/** + SPA fallback
-       └─ routes.ts   the eighteen endpoints (17 GET + 1 POST) — CONTAINS ZERO SQL
+       └─ routes.ts   the nineteen endpoints (18 GET + 1 POST) — CONTAINS ZERO SQL
             ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
             ├─ registry.ts#listProjectsReadonly       (TD-319 read door)
             ├─ brain-db.ts#briefStatusSummaryReadonly / #listInstancesReadonly
@@ -1686,16 +1713,46 @@ Since **TD-347** the script also prints the two figures the byte gate asserts,
 so the safe build states them directly:
 
 ```
-build-dashboard: INITIAL SET 285390 bytes over 1 file(s) -- assets/index-BDfgS0f4.js
-build-dashboard: TOTAL JS    562923 bytes over 7 chunk(s), 6 deferred (277533 bytes off the critical path)
+build-dashboard: INITIAL SET 286070 bytes over 2 file(s) -- assets/index-C3rlMPd-.js, assets/api-iTPwGhDY.js
+build-dashboard: TOTAL JS    580979 bytes over 12 chunk(s), 10 deferred (294909 bytes off the critical path)
 ```
 
 **INITIAL SET is a LOAD, not a file** — the entry `<script type="module">` plus
 every `<link rel="modulepreload">` in `index.html`, i.e. everything the browser
-downloads before it can paint. Three of the four route pages are `React.lazy`, so
-`Graph` (which exclusively owns the vendored `force-graph`), `Layers` and
-`Triage` arrive on navigation; `Overview` stays eager because it is the router's
-fallback for `#/` and every unknown hash.
+downloads before it can paint. FIVE of the six route pages are `React.lazy`, so
+`Graph` (which exclusively owns the vendored `force-graph`), `Layers`, `Triage`,
+`Search` and `Diagnostics` arrive on navigation; `Overview` stays eager because
+it is the router's fallback for `#/` and every unknown hash.
+
+**AND SINCE FR-266 THAT DISTINCTION IS LOAD-BEARING RATHER THAN PEDANTIC.** The
+reading above is over TWO files, not one. Adding a fifth lazy route made
+`lib/api.ts` shared across enough boundaries that Rollup hoisted it out of the
+entry and Vite emitted a `modulepreload` link for it, so:
+
+```
+BEFORE FR-266   INITIAL SET 285_689 B over ONE file  (index only)
+AFTER  FR-266   INITIAL SET 286_070 B over TWO files (index + api)
+```
+
+The entry FILE shrank by 10_501 B while the initial LOAD grew by 381 B. A gate
+measuring the entry file would have recorded a 3.7% improvement for a brief that
+cost bytes. The figures are re-derived by the script on every run; do not quote
+them from here without re-running it.
+
+**The two ceilings are UNCHANGED and were not re-based.** They live in
+`cli/src/__tests__/dashboard-chunks.test.ts` as `measured + HEADROOM`, where
+`measured` is the TD-347 BASELINE and `HEADROOM` (24_000 B) is what briefs spend
+against it. Re-basing `measured` upward raises both ceilings by exactly the
+amount already spent, which is a ceiling raise wearing the words "re-measured".
+FR-266 fit — TOTAL 580_979 B against a 586_923 B ceiling — so it did not move
+them, and it left **5_944 B of slack** — 45 B MORE than FR-247's 5_899 B, the
+largest single-brief chunk spend the ledger records. So an FR-247-shaped brief
+would just fit, which is a coincidence rather than a margin; and that ledger only
+begins measuring chunk deltas at FR-246, while FR-240 spent ~+47_700 B in one
+brief (~8x FR-247's). The largest spend on record is therefore the largest in a
+sample that excludes the only brief big enough to bust this ceiling outright. The
+next brief adding a route should size its chunk spend BEFORE the work and take it
+to the operator with the estimate on the record.
 
 **ON THIS MACHINE `npm run build` IN `cli/` IS A LIVE DEPLOY** — the operator's
 MCP runs the brain server out of `cli/dist`, so a build ships to a running
@@ -2411,18 +2468,34 @@ And on `#/layers`, the two things the automated gate cannot judge:
 
 ### G-BR-15 — TD-347: every route reaches its data from cold (and only the routes that need them fetch their chunks)
 
-Added by **TD-347** when three of the four route pages became `React.lazy` (`Overview` stays eager — it is the router's fallback for `#/` and every unknown hash). It runs
+Added by **TD-347** when three of the four route pages became `React.lazy`, and extended by FR-248 and FR-266 as the lazy set grew (`Overview` stays eager — it is the router's fallback for `#/` and every unknown hash). It runs
 **FIRST** in `main()`, immediately after the tabs open — every later gate visits
 `#/graph` and warms that chunk's immutable HTTP cache, so first position is the
 only place `15d` and `15e` get a genuinely cold origin.
 
 | Check | Asserts |
 |---|---|
-| `15a` | all 8 route addresses reach a **data-bearing** selector from a cold document — not `#main`, the data |
-| `15b` | the same 8 through in-session navigation, which is the path that actually exercises Suspense |
+| `15-mirror` | **the harness's own route table agrees with the shell's.** `browser-gate.mjs#APP_ROUTES` is a HAND-WRITTEN mirror of `router.tsx#ROUTES`, and `parse` falls back to `overview` for an unknown segment rather than refusing — so a route added to the app and forgotten in the mirror predicts the WRONG route and every navigation to it hangs 45 s on `routeReady`, with nothing red. FR-248 shipped in exactly that state. This compares the prediction against the `data-route` the shell COMMITTED to, per route. |
+| `15a` | all route addresses reach a **data-bearing** selector from a cold document — not `#main`, the data |
+| `15b` | the same set through in-session navigation, which is the path that actually exercises Suspense |
 | `15c` | zero `window.onerror` / `unhandledrejection` across every navigation — *"Failed to fetch dynamically imported module"* is the signature failure of a botched split and it does not fail a build |
-| `15d` | **the deferral is real** — a cold `#/overview` fetches only the initial set; a cold `#/graph` fetches exactly `Graph`, `Button`, `neighbours` and *not* `Layers`, `Triage`, `useQFilter`. Enumerated, not hand-waved. |
+| `15d` | **the deferral is real** — a cold `#/overview` fetches only the initial set; a cold `#/graph` fetches exactly `Graph`, `Button`, `neighbours`; a cold `#/search` exactly `Search`, `SearchReadout`; a cold `#/diagnostics` exactly `Diagnostics`, `Badge` — and none of them fetches `useQFilter`. Enumerated, not hand-waved. |
 | `15e` | the cold cost is **recorded, not thresholded** — 20 readings with the cache disabled, min/median/max printed. A wall-clock threshold in this harness is a flake factory. |
+
+**The route count is NOT written down here.** It moves per brief and the run
+prints it (`N/N routes …` on `15-mirror`, `15a` and `15b`). A number in this
+table beside a number the run derives is the drift this file has already carried
+twice.
+
+**FR-266's target is about DISTINCTION, not presence**, and that is unusual
+enough to state. `#/diagnostics` asserts the fixture's own instance ids reached
+the document (including `roadmap_drift`, an id no shipped file mentions), that at
+least THREE distinct `data-tone` values are present, that `synapse` is `alarm`
+while `cartographer` is `off` and `arbiter` is `attention`, and that the disabled
+row carries its gate key verbatim. "Some rows appeared" would pass on a renderer
+that painted every row one colour — which is precisely the panel's whole claim
+falsified. Verified by mutation: a monochrome tone map reddens `15a` and `15b`
+with `tones=["ok"]` against five distinct statuses.
 
 Its mutations: `td347-read-before-ready` (skip the readiness wait),
 `td347-chunk-404` (block a route's chunk), `td347-preload-the-lazy-chunk` (the

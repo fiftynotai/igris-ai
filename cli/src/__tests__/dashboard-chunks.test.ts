@@ -117,15 +117,22 @@
  *                                  is deliberately TIGHTER than this gate so the
  *                                  build warns before the test reddens)
  *
- * ONE HONEST NOTE ABOUT THE MODULEPRELOAD HALF. At TD-347 the built
- * `index.html` carries NO `<link rel="modulepreload">`, because every shared
- * chunk here is reached only from ASYNC chunks — so today the initial set
- * happens to EQUAL the entry file, and a reader could conclude that half of
- * `initialSet()` is dead code. It is not — see the plant-C reading in
- * `tarball.test.ts`'s TD-347 ledger row, where a vendor `manualChunks` split
- * makes Vite emit the preload link and the two figures separate. The link
- * reader is what makes the metric a LOAD rather than a FILE, and the day it
- * starts matching is exactly the day it is load-bearing.
+ * ONE HONEST NOTE ABOUT THE MODULEPRELOAD HALF — **AND SINCE FR-266 IT IS NO
+ * LONGER HYPOTHETICAL.** At TD-347 the built `index.html` carried NO
+ * `<link rel="modulepreload">`, because every shared chunk was reached only from
+ * ASYNC chunks — so the initial set happened to EQUAL the entry file, and a
+ * reader could have concluded that half of `initialSet()` was dead code. It was
+ * not, and the day it started mattering was FR-266:
+ *
+ *   BEFORE FR-266   INITIAL SET 285_689 B over ONE file  (index only)
+ *   AFTER  FR-266   INITIAL SET 286_070 B over TWO files (index + api)
+ *
+ * Adding a fifth lazy route made `lib/api.ts` shared across enough boundaries
+ * that Rollup hoisted it out of the entry and Vite emitted a modulepreload link
+ * for it. THE ENTRY FILE SHRANK BY 10_501 B WHILE THE INITIAL LOAD GREW BY
+ * 381 B. A gate measuring the entry FILE would have recorded a 3.7% improvement
+ * for a brief that cost bytes. This is exactly the plant-C reading in
+ * `tarball.test.ts`'s TD-347 ledger row, arriving on its own.
  *
  * ─────────────────────────────────────────────────────────────────────────────
  * THE COMPOSITION — WHICH CHUNK IS YOUR CHANGE CHARGED AGAINST
@@ -134,9 +141,18 @@
  * into `dist/dashboard/.bundle-report.json`. The full table with per-package
  * bytes is in `tarball.test.ts`'s TD-347 ledger row.)
  *
+ * ⚠ THE TABLE THAT POINTER SENDS YOU TO IS STALE, and knowingly so. The TD-347
+ * composition block in `tarball.test.ts` still describes the seven-chunk,
+ * 562_923 B tree and lists no `Search` or `SearchReadout` — it was already
+ * behind at HEAD (it missed FR-248) and FR-266 puts it two briefs behind. It is
+ * the other half of MAINTAINING row 111's obligation and is FILED AS TD-418
+ * rather than folded in here, so the fix is scoped and reviewable.
+ * Until then: THIS table is the current one, and it is cross-checked row by row
+ * against the built artifact. Do not reconcile the two by copying upward.
+ *
  *   chunk            on disk   route it serves   what it is charged for
  *   ───────────────  ────────  ────────────────  ────────────────────────────
- *   index-<hash>     285_689   INITIAL / every   react-dom (459_831 rendered),
+ *   index-<hash>     275_188   INITIAL / every   react-dom (459_831 rendered),
  *                                                gsap (153_215 — see below),
  *                                                react, scheduler, `App.tsx`,
  *                                                `router.tsx`, `main.tsx`,
@@ -144,7 +160,7 @@
  *                                                `components/chrome/**`,
  *                                                `components/ui/**`, `lib/**`,
  *                                                `pages/Overview.tsx`
- *   Graph-<hash>     206_455   #/graph           `pages/Graph.tsx`, `graph/**`,
+ *   Graph-<hash>     206_481   #/graph           `pages/Graph.tsx`, `graph/**`,
  *                                                and the WHOLE force-graph + d3
  *                                                family: force-graph, bezier-js,
  *                                                tinycolor2, @tweenjs/tween.js,
@@ -152,9 +168,30 @@
  *                                                float-tooltip + its preact,
  *                                                canvas-color-tracker,
  *                                                accessor-fn, index-array-by
- *   Search-<hash>      7_364   #/search          FR-248: `pages/Search.tsx`,
+ *   api-<hash>        10_882   INITIAL / every   FR-266: `lib/api.ts`, hoisted
+ *                                                OUT of the entry by Rollup and
+ *                                                MODULEPRELOADED — so it is in
+ *                                                the initial LOAD despite being
+ *                                                a separate FILE. See the note
+ *                                                above; this row is why the link
+ *                                                reader exists.
+ *   Search-<hash>      7_390   #/search          FR-248: `pages/Search.tsx`,
  *                                                `search/model.ts`
- *   SearchReadout-<h>  6_181   layers + triage   FR-248 re-partition: Rollup
+ *   Diagnostics-<h>    6_980   #/diagnostics     FR-266: `pages/Diagnostics.tsx`,
+ *                                                `diagnostics/model.ts`,
+ *                                                `diagnostics/useCognition.ts`.
+ *                                                The whole panel, deferred.
+ *   Badge-<hash>         319   diagnostics +     FR-266 re-partition: `ui/Badge`
+ *                              layers + triage   was inside `useQFilter` while
+ *                                                TWO async chunks reached it; a
+ *                                                THIRD importer made Rollup
+ *                                                hoist it into its own chunk.
+ *                                                Nothing duplicated — the
+ *                                                sharing set changed, so the
+ *                                                partition did. `useQFilter`
+ *                                                shrank 6_707 -> 6_490 by
+ *                                                exactly that move.
+ *   SearchReadout-<h>  6_212   layers + triage   FR-248 re-partition: Rollup
  *                                + search        moved `components/record/**`
  *                                                (`RecordList`, `FilterBar`,
  *                                                `SearchReadout`) OUT of
@@ -166,11 +203,11 @@
  *                                                `15d-search` asserts the search
  *                                                route fetches THIS and NOT
  *                                                `useQFilter`.
- *   Layers-<hash>      46_789   #/layers          `pages/Layers.tsx`,
+ *   Layers-<hash>      46_845   #/layers          `pages/Layers.tsx`,
  *                                                `pages/layers/**`,
  *                                                `markdown/**`
- *   Triage-<hash>     12_721   #/triage          `pages/Triage.tsx`
- *   useQFilter-<h>     6_707   layers + triage   `triage/**` + the layer hooks
+ *   Triage-<hash>     12_780   #/triage          `pages/Triage.tsx`
+ *   useQFilter-<h>     6_490   layers + triage   `triage/**` + the layer hooks
  *                                                + `ui/Badge` — SHARED between
  *                                                two async chunks, so Rollup
  *                                                hoisted it and Vite fetches it
@@ -193,9 +230,23 @@
  *                                                that renders them is a briefs
  *                                                page. Layers took 45_577 ->
  *                                                46_789 for the form itself.
- *   neighbours-<h>     1_036   graph + layers    `graph/neighbours.ts`,
+ *                                                SHRANK again at FR-266
+ *                                                (6_707 -> 6_490) when
+ *                                                `ui/Badge` left for its own
+ *                                                chunk on gaining a THIRD async
+ *                                                importer. NOTE THE REGISTER:
+ *                                                every figure in this paragraph
+ *                                                is the DELTA of the brief that
+ *                                                caused it and is historical by
+ *                                                construction — `46_789` was
+ *                                                Layers at FR-249, not now. The
+ *                                                CURRENT size of any chunk is
+ *                                                the `on disk` column, and that
+ *                                                column is the only thing here
+ *                                                a later brief must re-measure.
+ *   neighbours-<h>     1_034   graph + layers    `graph/neighbours.ts`,
  *                                                `lib/graphCache.ts`
- *   Button-<hash>        380   graph + layers    `components/ui/Button.tsx`
+ *   Button-<hash>        378   graph + layers    `components/ui/Button.tsx`
  *                                + triage         (THREE routes — importers are
  *                                                 `pages/layers/Briefs.tsx`,
  *                                                 `components/triage/BulkBar.tsx`
@@ -259,6 +310,40 @@ const ASSETS = join(BUNDLE, "assets");
  * literal on purpose: the measurement and the allowance are two different
  * decisions, and collapsing them into one number is how a later brief widens
  * the allowance while appearing to record a new measurement.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * `MEASURED_*` IS THE TD-347 BASELINE. IT IS NOT "THE CURRENT MEASUREMENT".
+ * ─────────────────────────────────────────────────────────────────────────────
+ * These two numbers have not moved since `d50d373` and they are not supposed to
+ * move whenever a brief re-runs the build. `HEADROOM` is the allowance briefs
+ * SPEND against that baseline, and re-basing `MEASURED_*` upward raises both
+ * ceilings by exactly the amount spent — silently granting the next brief room
+ * that no operator decided to give it. That is the manoeuvre the paragraph above
+ * is warning about, wearing the words "re-measured".
+ *
+ * FR-266 measured the tree and DID NOT MOVE THEM, because it fits:
+ *
+ *   INITIAL  285_689 -> 286_070  (+381)     ceiling 309_390 · 23_320 B slack
+ *   TOTAL    573_322 -> 580_979  (+7_657)   ceiling 586_923 ·  5_944 B slack
+ *
+ * READ THE TOTAL SLACK BEFORE PLANNING THE NEXT UI BRIEF — AND READ IT AGAINST
+ * THE RIGHT COMPARATOR. 5_944 B is 45 B MORE than FR-247's 5_899 B, the largest
+ * single-brief chunk spend this ledger records, so an FR-247-shaped brief would
+ * JUST fit. Forty-five bytes is a coincidence, not a margin.
+ *
+ * AND "LARGEST ON RECORD" IS SCOPED TO A SHORT RECORD, which is the part worth
+ * carrying. `tarball.test.ts` only begins recording chunk deltas at FR-246, and
+ * the figure OUTSIDE that window is the one that decides this: `vite.config.ts`'s
+ * comment history puts FR-240 at ~+47_700 B in a single brief, ~8x FR-247's. One
+ * FR-240-shaped brief busts this ceiling outright, and nothing in the ledger
+ * would have predicted it — so sizing the next brief against the ledger's
+ * largest entry is sizing it against a sample that excludes the only brief big
+ * enough to matter.
+ *
+ * So: size the chunk spend BEFORE the work and take it to the operator with the
+ * estimate on the record (the TD-329 discipline). What this is guarding against
+ * is not "the next brief is 5_899 B" — it is a re-base discovered at the END of
+ * a hunt, when the only cheap move left is to move the ceiling.
  */
 const HEADROOM = 24_000;
 const MEASURED_INITIAL = 285_390;

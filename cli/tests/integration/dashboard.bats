@@ -86,7 +86,7 @@ teardown() {
 # is what makes it true.
 #
 # NEAR MISS, worth knowing before you tidy anything: the T4 probe-summary
-# helper emits numbers into a stream that IS asserted on (its "18 read paths
+# helper emits numbers into a stream that IS asserted on (its "19 read paths
 # all 200, 1 write path 400" line is grepped), and is safe ONLY because it
 # builds that string by concatenation. Rewriting it to comma-separated console
 # arguments re-arms exactly this bug on an asserted channel.
@@ -193,7 +193,12 @@ wait_for_url() {
   # which is what makes it a new path rather than a `&layers=` parameter on
   # `/api/briefs/search` — FR-246's own rule, applied. It sorts between
   # `/api/projects` and `/api/suggestions`.
-  local expected="/ /api/brief /api/briefs /api/briefs/search /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/search /api/suggestions /api/summary POST /api/triage"
+  # FR-266 adds exactly ONE more: `/api/cognition`, the diagnostics spine's read.
+  # It takes NO parameters at all — the digest is per-MACHINE and per-REGISTRY,
+  # so there is no project axis to scope it to — which is why it is a path rather
+  # than a parameter on anything. It sorts between `/api/briefs/search` and
+  # `/api/context-doc`.
+  local expected="/ /api/brief /api/briefs /api/briefs/search /api/cognition /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/search /api/suggestions /api/summary POST /api/triage"
   local actual
   actual="$(echo "$output" | node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
@@ -234,12 +239,12 @@ wait_for_url() {
     });
   " <<< "$output"
   [ "$status" -eq 0 ]
-  # 16 -> 17 -> 18: FR-246 added `/api/briefs/search` and FR-248 added
-  # `/api/search`, one path each. This count is the digest's OWN summary line,
-  # computed from `reads.length` above — so it is a SECOND place the endpoint
-  # count is spelled out, and the exact-set assertion earlier in this test does
-  # not cover it.
-  echo "$output" | grep '18 read paths all 200, 1 write path 400' >/dev/null
+  # 16 -> 17 -> 18 -> 19: FR-246 added `/api/briefs/search`, FR-248 added
+  # `/api/search` and FR-266 added `/api/cognition`, one path each. This count is
+  # the digest's OWN summary line, computed from `reads.length` above — so it is
+  # a SECOND place the endpoint count is spelled out, and the exact-set assertion
+  # earlier in this test does not cover it.
+  echo "$output" | grep '19 read paths all 200, 1 write path 400' >/dev/null
 }
 
 @test "dashboard --smoke releases the lock on exit" {

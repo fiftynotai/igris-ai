@@ -764,7 +764,7 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
    * required: SQL-free routes calling an impure reader would still mutate the
    * operator's brain.
    */
-  it("params.ts, context-docs-read.ts and search-fuse.ts hold no SQL", () => {
+  it("params.ts, context-docs-read.ts, search-fuse.ts and cognition-read.ts hold no SQL", () => {
     for (const rel of [
       "../lib/dashboard/params.ts",
       "../lib/dashboard/context-docs-read.ts",
@@ -773,6 +773,12 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       // Naming it here is what keeps the corpus claim ("every server-layer
       // file") true rather than "every server-layer file as of FR-241".
       "../lib/dashboard/search-fuse.ts",
+      // FR-266. `cognition-read.ts` is THIS brief's one new server-layer module.
+      // It takes no `db` either — it calls an existing VERB's digest builder and
+      // wraps the result, exactly as `context-docs-read.ts` two lines up does.
+      // The zero-SQL claim is what says the classifier was reused rather than
+      // re-implemented one tier out.
+      "../lib/dashboard/cognition-read.ts",
     ]) {
       const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
       const code = src
@@ -854,6 +860,7 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       "context-docs-read.ts",
       "graph-query.ts",
       "search-fuse.ts", // FR-248 — pure rank arithmetic; takes no `db`
+      "cognition-read.ts", // FR-266 — forwards the cognition verb's digest; no `db`
       // Not SQL-scanned above but deliberately so, and named here so the set is
       // a complete accounting rather than a partial one:
       "headers.ts", // constants only
