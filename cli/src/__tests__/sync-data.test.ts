@@ -9,7 +9,11 @@
  * endpoint: accepts JSON-RPC 2.0
  *
  *   { "jsonrpc": "2.0", "method": "tools/call",
- *     "params": { "name": "<tool>", "arguments": {...} }, "id": 1 }
+ *     "params": { "name": "<tool>", "arguments": {...} }, "id": "<uuid>" }
+ *
+ * The id is a FRESH uuid per call since BR-094 round 2, so a fixture that
+ * answers with an envelope has to echo `rpcRequestId(call)` rather than
+ * hardcode one.
  *
  * (See `brain-mcp-server/src/index.ts:1490` for the direct-dispatch
  * fallback that the CLI talks to.)
@@ -34,7 +38,13 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeLoopback, mcpOkEnvelope } from "./loopback.js";
+import {
+  makeLoopback,
+  mcpOkEnvelope,
+  rpcRequestId,
+  sseFrame,
+  type CapturedCall,
+} from "./loopback.js";
 
 let tmpBrain: string;
 const envBackup: Record<string, string | undefined> = {};
@@ -126,9 +136,9 @@ describe("sync data — runSyncData", () => {
 
   it("replays brief_sync entries before draining (per-entry dispatch contract)", async () => {
     // All calls succeed.
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -180,9 +190,9 @@ describe("sync data — runSyncData", () => {
   });
 
   it("queue with mixed entries: dispatches each then drains, clears local queue file", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -231,11 +241,11 @@ describe("sync data — runSyncData", () => {
 
   it("preserves queue when per-entry replay fails (HTTP 500); does NOT call drain", async () => {
     // First call (per-entry replay) returns 500. Drain must NOT be reached.
-    const lb = makeLoopback((_call, idx) => {
+    const lb = makeLoopback((call, idx) => {
       if (idx === 0) {
         return { status: 500, body: "brain server error" };
       }
-      return { status: 200, body: mcpOkEnvelope() };
+      return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -278,7 +288,7 @@ describe("sync data — runSyncData", () => {
       if (call.toolName === "igris_sync_queue_drain") {
         return { status: 500, body: "drain failed" };
       }
-      return { status: 200, body: mcpOkEnvelope() };
+      return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -354,9 +364,9 @@ describe("sync data — runSyncData", () => {
   // pin both the success and the missing-file branches.
   // ---------------------------------------------------------------------
   it("brief_create with cache_path: reads file and inlines as content; cache_path stripped (TD-119)", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -412,9 +422,9 @@ describe("sync data — runSyncData", () => {
   // substitution still works under the allow-list discipline.
   // ---------------------------------------------------------------------
   it("dispatchEntry strips queue-entry fields not in the tool's allow-list before mcpCall (TD-128 M3)", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -469,9 +479,9 @@ describe("sync data — runSyncData", () => {
   });
 
   it("dispatchEntry preserves cache_path→content substitution under strict allow-list (TD-128 M3)", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -550,13 +560,13 @@ describe("sync data — runSyncData", () => {
       resolveBarrier = resolve;
     });
 
-    const lb = makeLoopback(async (_call, idx) => {
+    const lb = makeLoopback(async (call, idx) => {
       if (idx === 0) {
         // First call = per-entry replay. Hold response until the test
         // simulates the sibling-harness append.
         await barrier;
       }
-      return { status: 200, body: mcpOkEnvelope() };
+      return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
     });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -632,9 +642,9 @@ describe("sync data — runSyncData", () => {
   });
 
   it("runSyncData recovers a stale .draining-* from a prior crashed drain (FR-128)", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -689,9 +699,9 @@ describe("sync data — runSyncData", () => {
   });
 
   it("brief_create with missing cache_path file: exit 1, queue preserved, drain NOT called (TD-119)", async () => {
-    const lb = makeLoopback(() => ({
+    const lb = makeLoopback((call) => ({
       status: 200,
-      body: mcpOkEnvelope(),
+      body: mcpOkEnvelope(rpcRequestId(call)),
     }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
@@ -860,10 +870,15 @@ describe("sync data — TD-252 transport guard (the 4-case matrix)", () => {
 // all three body shapes it can receive — error envelope, success envelope, and
 // a body that is not a JSON-RPC envelope at all.
 //
-// WHAT IT DOES NOT PROVE: that a real brain error is shaped this way when the
+// WHAT IT DOES NOT PROVE: that a real brain error carries this shape when the
 // response is routed through `StreamableHTTPServerTransport` (the HTTP
-// fallback-A path may emit SSE, not plain JSON). That shape lands in the
-// third — "indeterminate" — tier, which case 3 below pins directly.
+// fallback-A path emits SSE, not plain JSON). BR-094 corrected the previous
+// claim here that an SSE response "lands in the indeterminate tier": since
+// BR-094 `mcpCall` reads the `data:` frame, so an SSE 200 classifies by its
+// envelope like any other. Case 3d below pins that classification (3c pins the
+// outbound header and classifies nothing), and case 3b keeps the indeterminate
+// tier pinned with a body nothing can parse -- NOT case 3, whose `{drained:0}`
+// body parses fine and is indeterminate for a different reason (no envelope).
 //
 // The loopback is the same fake the rest of this file uses; it validates
 // nothing, so these cases are about the CLI's READING of a response, not about
@@ -871,12 +886,31 @@ describe("sync data — TD-252 transport guard (the 4-case matrix)", () => {
 // `brain-mcp-server/src/tools/__tests__/sync-queue-drain-contract.test.ts`.
 // -------------------------------------------------------------------------
 describe("sync data — remote drain result classification (BR-080)", () => {
-  /** Boot a loopback, point config at it, run drain-only, capture stdout+stderr. */
+  /**
+   * Boot a loopback, point config at it, run drain-only, capture stdout+stderr.
+   *
+   * `body` may be a builder taking the captured call (BR-094 round 2), because
+   * `mcpCall` now mints a fresh JSON-RPC id per call and an SSE fixture has to
+   * ECHO it to be this call's answer. A fixed string is still accepted for the
+   * cases whose whole point is a body no reader can correlate.
+   */
   async function runDrainAgainst(
-    body: string,
+    body: string | ((call: CapturedCall) => string),
     status = 200,
-  ): Promise<{ code: number; stdout: string; stderr: string; callCount: number }> {
-    const lb = makeLoopback(() => ({ status, body }));
+    contentType?: string,
+  ): Promise<{
+    code: number;
+    stdout: string;
+    stderr: string;
+    callCount: number;
+    /** Request headers of the FIRST captured call (BR-094). */
+    reqHeaders: Record<string, string | string[] | undefined>;
+  }> {
+    const lb = makeLoopback((call) => ({
+      status,
+      body: typeof body === "string" ? body : body(call),
+      contentType,
+    }));
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
     );
@@ -907,6 +941,7 @@ describe("sync data — remote drain result classification (BR-080)", () => {
         stdout: stdoutBuf.join(""),
         stderr: stderrBuf.join(""),
         callCount: lb.calls.length,
+        reqHeaders: lb.calls[0]?.headers ?? {},
       };
     } finally {
       outSpy.mockRestore();
@@ -916,7 +951,7 @@ describe("sync data — remote drain result classification (BR-080)", () => {
   }
 
   it("case 1 (R2): HTTP 200 carrying isError:true → exit 1 and NO 'drain OK' claim", async () => {
-    const { code, stdout, stderr, callCount } = await runDrainAgainst(
+    const { code, stdout, stderr, callCount } = await runDrainAgainst((call) =>
       JSON.stringify({
         jsonrpc: "2.0",
         result: {
@@ -928,7 +963,7 @@ describe("sync data — remote drain result classification (BR-080)", () => {
           ],
           isError: true,
         },
-        id: 1,
+        id: rpcRequestId(call),
       }),
     );
 
@@ -944,7 +979,7 @@ describe("sync data — remote drain result classification (BR-080)", () => {
   });
 
   it("case 2: HTTP 200 success envelope → exit 0, names the brain-side queue and echoes the summary", async () => {
-    const { code, stdout, callCount } = await runDrainAgainst(
+    const { code, stdout, callCount } = await runDrainAgainst((call) =>
       JSON.stringify({
         jsonrpc: "2.0",
         result: {
@@ -955,7 +990,7 @@ describe("sync data — remote drain result classification (BR-080)", () => {
             },
           ],
         },
-        id: 1,
+        id: rpcRequestId(call),
       }),
     );
 
@@ -971,8 +1006,18 @@ describe("sync data — remote drain result classification (BR-080)", () => {
   });
 
   it("case 3: HTTP 200 with a non-envelope body → exit 0 but reported as INDETERMINATE, never OK", async () => {
-    // This is the shape ~8 pre-existing loopbacks in this file return, and the
-    // shape the SSE/StreamableHTTP fallback can produce. It must neither fail
+    // This is the shape ~8 pre-existing loopbacks in this file return.
+    // BR-094 CORRECTED the second half of this sentence, which used to read
+    // "and the shape the SSE/StreamableHTTP fallback can produce". Two reasons
+    // THIS shape cannot arrive on the SSE arm, and the narrow one is the one
+    // that would survive a reader change: `{"drained":0}` carries no `id` at
+    // all, so no correlation can match it. The general claim — that an SSE 200
+    // reaches `classifyToolCallBody` as a JSON-RPC response or as `null` and
+    // never as some other object — is true only because `readSseJsonRpc` also
+    // requires `jsonrpc: "2.0"` and a `result`/`error` key (BR-094 round 2);
+    // it was FALSE for the round-1 reader, which validated the id alone and
+    // would have returned `{"id":<ours>,"junk":true}` verbatim. So
+    // this fixture models the legacy loopbacks only. It must neither fail
     // (that would break the legacy fixtures) nor claim success (that would
     // re-create the overclaim). Third tier, per L-1017: a valid-but-unreadable
     // response and a genuine error are DIFFERENT states.
@@ -988,14 +1033,16 @@ describe("sync data — remote drain result classification (BR-080)", () => {
   });
 
   it("case 3b: HTTP 200 with a body that is not JSON at all → indeterminate, exit 0", async () => {
-    // Any 200 whose body `JSON.parse` cannot read: an nginx/gateway error page,
-    // a truncated response, or an SSE frame. `mcpCall` sends NO `Accept` header
-    // (`cli/src/lib/mcp-client.ts` builds the request headers), so the brain's
-    // `StreamableHTTPServerTransport` answers 406 rather than an SSE 200 —
-    // this case is NOT a pin on that transport, it is the generic
-    // unparseable-200 shape. The body below is merely one concrete instance.
+    // Any 200 whose body no reader can interpret: an nginx/gateway error page
+    // or a truncated response. The fixture used to be an SSE frame, carried
+    // beside a comment recording that `mcpCall` sent NO `Accept` header — which
+    // is why the brain answered 406 and an SSE 200 could never arrive. BR-094
+    // replaced that comment with the header assertion below and moved the SSE
+    // frame to its own case (3c), because a frame `mcpCall` can now READ is no
+    // longer an instance of this class. The body here is an nginx 502 page,
+    // the shape a proxy in front of the brain actually returns.
     const { code, stdout, callCount } = await runDrainAgainst(
-      'event: message\ndata: {"jsonrpc":"2.0","result":{}}\n\n',
+      "<html><head><title>502 Bad Gateway</title></head><body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx/1.24.0 (Ubuntu)</center>\n</body></html>\n",
     );
 
     expect(callCount).toBe(1);
@@ -1004,15 +1051,416 @@ describe("sync data — remote drain result classification (BR-080)", () => {
     expect(stdout).toContain("could not be read");
   });
 
+  // ---------------------------------------------------------------------
+  // BR-094 — the outbound `Accept` header, and the SSE shape it unlocks.
+  //
+  // THE DEFECT: `mcpCall` sent Content-Type, Content-Length and Authorization
+  // and no `Accept`. The MCP Streamable HTTP transport rejects that at the
+  // transport layer, BEFORE dispatch, so every remote drain got
+  //   HTTP 406 {"jsonrpc":"2.0","error":{"code":-32000,"message":"Not
+  //   Acceptable: Client must accept both application/json and
+  //   text/event-stream"},"id":null}
+  // and the queue grew forever. Measured live against https://brain.fifty.dev
+  // on 2026-08-24: without the header 406, with it 200.
+  //
+  // WHY A HEADER TEST AND NOT ONLY A BEHAVIOUR TEST: the loopback validates
+  // nothing, so no response-shaped fixture in this file can go red on a missing
+  // request header. This whole defect shipped past a green suite for that
+  // reason. The assertion is on what the CLI SENDS.
+  // ---------------------------------------------------------------------
+  it("case 3c (BR-094): the outbound request carries Accept for BOTH MCP media types", async () => {
+    const { reqHeaders, callCount } = await runDrainAgainst((call) =>
+      mcpOkEnvelope(rpcRequestId(call)),
+    );
+
+    expect(callCount).toBe(1);
+    const accept = reqHeaders.accept;
+    expect(typeof accept).toBe("string");
+    // Asserted as the two tokens, not as one literal string: the server-side
+    // check is `includes('application/json') && includes('text/event-stream')`
+    // on the raw header (@modelcontextprotocol/sdk
+    // dist/esm/server/webStandardStreamableHttp.js:378), so the CONTRACT is the
+    // presence of both tokens — a reordering must not red this test, a dropped
+    // token must.
+    expect(accept as string).toContain("application/json");
+    expect(accept as string).toContain("text/event-stream");
+  });
+
+  it("case 3d (BR-094): a text/event-stream 200 is READ, not filed as unreadable", async () => {
+    // The wire shape the brain returns whenever an MCP session is active — the
+    // live case, not an edge case: `StreamableHTTPServerTransport` is
+    // constructed without `enableJsonResponse` (default false, and the brain
+    // never sets it), so the transport path ALWAYS answers a POST with SSE.
+    // Frame is the SDK's own `writeSSEEvent` output: `event: message\n`, an
+    // OPTIONAL `id: <eventId>\n` resumability cursor, then `data: <json>\n\n`.
+    // The `id:` LINE is included deliberately — it is not the JSON-RPC id, and
+    // a reader that confuses the two reads the wrong value.
+    const { code, stdout, callCount } = await runDrainAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: "Sync queue drain completed successfully.\nItems sent: 3",
+                },
+              ],
+            },
+            // Echoes what the CLI actually sent. A hardcoded id here would
+            // pin the round-1 module constant and go red on the real fix.
+            id: rpcRequestId(call),
+          }),
+          7,
+        ),
+      200,
+      "text/event-stream",
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(0);
+    // The discriminating assertion: BEFORE BR-094 this body reached
+    // `JSON.parse` and threw, so the drain reported the indeterminate tier.
+    expect(stdout).not.toContain("could not be read");
+    expect(stdout).toContain("Sync queue drain completed successfully.");
+    expect(stdout).toContain("Items sent: 3");
+  });
+
+  it("case 3e (BR-094): an SSE frame answering a DIFFERENT JSON-RPC id stays indeterminate", async () => {
+    // The defined unknown: a frame that is not this call's answer is not
+    // evidence of anything. `mcpCall` correlates on the id it sent and returns
+    // null otherwise, rather than reading "the last frame that looked like a
+    // reply" — a plausible-but-wrong verdict is what BR-080 removed.
+    //
+    // BR-094 round 2: the "different" id is DERIVED from the one the CLI sent
+    // rather than being a literal `99`. Under the round-1 module constant, `99`
+    // was different only because the constant happened to be `1`; derive it and
+    // the case stays a genuine non-answer whatever the id scheme becomes.
+    const { code, stdout, callCount } = await runDrainAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            result: {
+              content: [{ type: "text", text: "someone else's answer" }],
+            },
+            id: `${String(rpcRequestId(call))}-someone-else`,
+          }),
+        ),
+      200,
+      "text/event-stream",
+    );
+
+    expect(callCount).toBe(1);
+    expect(code).toBe(0);
+    expect(stdout).not.toContain("remote drain OK");
+    expect(stdout).not.toContain("someone else's answer");
+    expect(stdout).toContain("could not be read");
+  });
+
+  // -------------------------------------------------------------------------
+  // 3f-i and 3f-ii (BR-094 round 2) — the reader's SHAPE checks.
+  //
+  // The round-1 reader validated the id ALONE, so `{"id":<ours>,"junk":true}`
+  // was returned verbatim and reached `classifyToolCallBody` as a bare
+  // non-envelope object — falsifying the "never a bare non-envelope object"
+  // comments this file and `sync/data.ts` both carried. The reader now also
+  // requires `jsonrpc: "2.0"` AND one of `result`/`error`.
+  //
+  // TWO measured facts shape how these are written, and neither was obvious:
+  //
+  //   1. The conditions are a CONJUNCTION, so a single fixture violating BOTH
+  //      (warden's `{"id":1,"junk":true}`) arms NEITHER — deleting either check
+  //      alone left it green, because the other still refused the frame. Each
+  //      condition therefore gets a fixture violating exactly one of them, plus
+  //      a same-shape control with that one key restored.
+  //   2. The assertion has to be on `mcpCall`'s `json`, NOT on the drain's
+  //      stdout. `classifyToolCallBody` routes an object with no `result` to the
+  //      indeterminate tier anyway, so the drain prints "could not be read"
+  //      either way and a stdout assertion is VACUOUS for the result/error
+  //      check — measured: deleting it kept a drain-level case green. `json` is
+  //      the value the prose in `sync/data.ts` actually makes a claim about.
+  // -------------------------------------------------------------------------
+
+  /** Drive exactly ONE `mcpCall` against a loopback returning `buildBody`. */
+  async function mcpCallAgainst(
+    buildBody: (call: CapturedCall) => string,
+    contentType: string,
+  ): Promise<{ statusCode: number; json: unknown; callCount: number }> {
+    const lb = makeLoopback((call) => ({
+      status: 200,
+      body: buildBody(call),
+      contentType,
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    try {
+      const { mcpCall } = await import("../lib/mcp-client.js");
+      const r = await mcpCall(
+        { url: `http://127.0.0.1:${lb.port()}`, apiKey: "k" },
+        "igris_sync_queue_drain",
+        {},
+      );
+      return {
+        statusCode: r.statusCode,
+        json: r.json,
+        callCount: lb.calls.length,
+      };
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  }
+
+  it("case 3f-i (BR-094 round 2): a correlated frame with a result but NO jsonrpc is not read as this call's answer", async () => {
+    const bait = await mcpCallAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            // `jsonrpc` deliberately absent — everything else is a valid answer.
+            result: { content: [{ type: "text", text: "shape-check bait" }] },
+            id: rpcRequestId(call),
+          }),
+        ),
+      "text/event-stream",
+    );
+    // CONTROL — the SAME frame with only `jsonrpc` restored. Without it, a
+    // reader that refused every SSE frame would pass the assertion above.
+    const control = await mcpCallAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            result: { content: [{ type: "text", text: "shape-check bait" }] },
+            id: rpcRequestId(call),
+          }),
+        ),
+      "text/event-stream",
+    );
+
+    expect(bait.callCount).toBe(1);
+    expect(bait.statusCode).toBe(200);
+    expect(bait.json).toBeNull();
+
+    expect(control.statusCode).toBe(200);
+    expect(control.json).not.toBeNull();
+    expect(JSON.stringify(control.json)).toContain("shape-check bait");
+  });
+
+  it("case 3f-ii (BR-094 round 2): a correlated frame with jsonrpc but NEITHER result NOR error is not read as this call's answer", async () => {
+    // This is the shape that made the old "never a bare non-envelope object"
+    // claim false: an object, correlated, carrying no answer at all.
+    const bait = await mcpCallAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: rpcRequestId(call),
+            junk: true,
+          }),
+        ),
+      "text/event-stream",
+    );
+    // CONTROL — same frame with a `result` added, nothing else changed.
+    const control = await mcpCallAgainst(
+      (call) =>
+        sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: rpcRequestId(call),
+            junk: true,
+            result: { content: [{ type: "text", text: "now an answer" }] },
+          }),
+        ),
+      "text/event-stream",
+    );
+
+    expect(bait.callCount).toBe(1);
+    expect(bait.statusCode).toBe(200);
+    expect(bait.json).toBeNull();
+
+    expect(control.statusCode).toBe(200);
+    expect(control.json).not.toBeNull();
+    expect(JSON.stringify(control.json)).toContain("now an answer");
+  });
+
+  it("case 3h (BR-094 round 2, M4): a response body past the byte cap is aborted, not buffered", async () => {
+    // `timeout` on a node http request is a SOCKET IDLE timeout, so it never
+    // fires on a peer that keeps emitting — and `text/event-stream` is a media
+    // type designed to stay open, behind an nginx configured `proxy_buffering
+    // off` / `proxy_read_timeout 86400`. Unbounded accumulation was pre-existing
+    // for JSON and newly meaningful once SSE became reachable.
+    //
+    // The fixture size is DERIVED from the exported cap rather than quoted, so
+    // raising the cap cannot silently make this case stop testing it.
+    const { mcpCall, MCP_MAX_RESPONSE_BYTES } = await import(
+      "../lib/mcp-client.js"
+    );
+    const oversized = "x".repeat(MCP_MAX_RESPONSE_BYTES + 1024);
+
+    const lb = makeLoopback(() => ({
+      status: 200,
+      body: oversized,
+      contentType: "text/event-stream",
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+
+    try {
+      const remote = { url: `http://127.0.0.1:${lb.port()}`, apiKey: "k" };
+      const over = await mcpCall(remote, "igris_sync_queue_drain", {});
+
+      // The request DID go out — this is an abort, not a connection failure.
+      expect(lb.calls.length).toBe(1);
+      // `statusCode: 0` is this module's transport-failure convention, and it
+      // is the FAIL-SAFE verdict: `callRemoteDrain` exits 1 and `dispatchEntry`
+      // treats a non-200 as not-replayed, so no queue is unlinked on it.
+      expect(over.statusCode).toBe(0);
+      expect(over.body).toContain("exceeded");
+      expect(over.json).toBeNull();
+      // The oversized payload was NOT retained.
+      expect(over.body.length).toBeLessThan(200);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 3h-control (BR-094 round 2, M4): a body just UNDER the cap is still read normally", async () => {
+    // SELF-NEGATIVE-CONTROL for 3h. Without it, a cap of zero — or a reader
+    // that aborted every response — would satisfy 3h perfectly.
+    const { mcpCall, MCP_MAX_RESPONSE_BYTES } = await import(
+      "../lib/mcp-client.js"
+    );
+
+    const lb = makeLoopback((call) => {
+      const frame = sseFrame(mcpOkEnvelope(rpcRequestId(call), "under the cap"));
+      // Pad with SSE comment lines (`:` prefix) so the body is large but the
+      // frame is still the SDK's shape. Comments carry no `data:` line, so the
+      // reader skips them exactly as it would a keep-alive.
+      const padTo = MCP_MAX_RESPONSE_BYTES - 4096;
+      const pad = `: ${"y".repeat(padTo - frame.length - 4)}\n\n`;
+      return { status: 200, body: pad + frame, contentType: "text/event-stream" };
+    });
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+
+    try {
+      const remote = { url: `http://127.0.0.1:${lb.port()}`, apiKey: "k" };
+      const under = await mcpCall(remote, "igris_sync_queue_drain", {});
+
+      expect(lb.calls.length).toBe(1);
+      expect(under.body.length).toBeGreaterThan(MCP_MAX_RESPONSE_BYTES - 8192);
+      expect(under.body.length).toBeLessThanOrEqual(MCP_MAX_RESPONSE_BYTES);
+      expect(under.statusCode).toBe(200);
+      expect(under.json).not.toBeNull();
+      expect(JSON.stringify(under.json)).toContain("under the cap");
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("case 3g (BR-094 round 2): two concurrent calls sharing one transport cannot read each other's frames", async () => {
+    // THE CRITICAL DEFECT ROUND 1 OPENED. `mcpCall` used a MODULE-scope
+    // `MCP_REQUEST_ID = 1`, so the SSE correlation checked the call CLASS, not
+    // the call. Two facts make that a data-loss path:
+    //   - the SDK transport demultiplexes replies by JSON-RPC id per transport
+    //     (`_requestToStreamMapping.set(message.id, streamId)` in the vendored
+    //     `webStandardStreamableHttp.js`), so a second request carrying the SAME
+    //     id overwrites the first's mapping and the first answer is written into
+    //     the SECOND caller's body;
+    //   - the brain funnels every session-less POST into ONE session
+    //     (`activeSessions[activeSessions.length - 1]`), and SSE is only
+    //     reachable when that list is non-empty — so any run that sees SSE has
+    //     proved a co-tenant exists.
+    // A concurrent `igris sync data` / `boot-sync` would then read the other
+    // run's success envelope as its own, and `finalizeDrainSnapshot(_, true)`
+    // would unlink a queue whose entries the brain never received.
+    //
+    // The fixture reproduces the SERVER-SIDE SWAP directly: it holds both
+    // requests until both have arrived, then answers each one with the frame
+    // addressed to the OTHER. Under the module constant both frames carry id 1,
+    // the swap is invisible, and both calls read a success. With a per-call
+    // uuid each call sees a frame addressed to someone else and returns null.
+    const { mcpCall } = await import("../lib/mcp-client.js");
+
+    const sentIds: unknown[] = [];
+    let release!: () => void;
+    const bothArrived = new Promise<void>((r) => {
+      release = r;
+    });
+
+    const lb = makeLoopback(async (call, idx) => {
+      // Read the id out of the RAW body, so this fixture's evidence does not
+      // depend on the loopback's own JSON-RPC field parsing.
+      sentIds[idx] = (JSON.parse(call.rawBody) as { id?: unknown }).id;
+      if (idx === 1) release();
+      await bothArrived;
+      const otherId = sentIds[idx === 0 ? 1 : 0];
+      return {
+        status: 200,
+        body: sseFrame(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            result: {
+              content: [{ type: "text", text: `answer for ${String(otherId)}` }],
+            },
+            id: otherId,
+          }),
+        ),
+        contentType: "text/event-stream",
+      };
+    });
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+
+    try {
+      const remote = {
+        url: `http://127.0.0.1:${lb.port()}`,
+        apiKey: "k",
+      };
+      const [a, b] = await Promise.all([
+        mcpCall(remote, "igris_sync_queue_drain", {}),
+        mcpCall(remote, "igris_sync_queue_drain", {}),
+      ]);
+
+      // Both requests really went out and really carried an id — without this
+      // the assertions below could pass on a fixture that never ran.
+      expect(lb.calls.length).toBe(2);
+      expect(sentIds[0]).toBeTypeOf("string");
+      expect(sentIds[1]).toBeTypeOf("string");
+
+      // (1) The ids are per-CALL, not per-module. This is the assertion the
+      // round-1 constant fails outright.
+      expect(sentIds[0]).not.toBe(sentIds[1]);
+
+      // (2) And the consequence: neither call accepts the other's answer. Both
+      // reach HTTP 200 — this is a correlation verdict, not a transport
+      // failure — and both read as the defined unknown.
+      expect(a.statusCode).toBe(200);
+      expect(b.statusCode).toBe(200);
+      expect(a.json).toBeNull();
+      expect(b.json).toBeNull();
+      // Belt and braces: the swapped text must not have been read as ours.
+      expect(JSON.stringify(a.json)).not.toContain("answer for");
+      expect(JSON.stringify(b.json)).not.toContain("answer for");
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
   it("case 5 (D5): HTTP 200 carrying a JSON-RPC error envelope → exit 1, classified error not indeterminate", async () => {
     // A JSON-RPC `error` envelope has no `result` key, so without an explicit
     // branch it falls into the indeterminate tier — "unreadable" is provably
     // wrong for the one shape that states failure outright.
-    const { code, stdout, stderr, callCount } = await runDrainAgainst(
+    const { code, stdout, stderr, callCount } = await runDrainAgainst((call) =>
       JSON.stringify({
         jsonrpc: "2.0",
         error: { code: -32602, message: "Invalid params: remote_url" },
-        id: 1,
+        id: rpcRequestId(call),
       }),
     );
 
@@ -1061,19 +1509,20 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
   });
 
   /** The brain's real shape for a gateway guard throw: HTTP 200 + isError. */
-  const GUARD_THROW_BODY = JSON.stringify({
-    jsonrpc: "2.0",
-    result: {
-      content: [
-        {
-          type: "text",
-          text: "Error executing igris_brief_sync: igris_brief_sync: missing required argument 'title'. Required: project, brief_id, title, status. (strict-input contract; BR-080)",
-        },
-      ],
-      isError: true,
-    },
-    id: 1,
-  });
+  const guardThrowBody = (call: CapturedCall): string =>
+    JSON.stringify({
+      jsonrpc: "2.0",
+      result: {
+        content: [
+          {
+            type: "text",
+            text: "Error executing igris_brief_sync: igris_brief_sync: missing required argument 'title'. Required: project, brief_id, title, status. (strict-input contract; BR-080)",
+          },
+        ],
+        isError: true,
+      },
+      id: rpcRequestId(call),
+    });
 
   /**
    * Seed a one-entry queue and run the drain against a loopback that returns
@@ -1088,7 +1537,10 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
    * Reports both the pre-state and the post-state so a pass cannot come from a
    * queue that was never written or never read.
    */
-  async function replayAgainst(body: string): Promise<{
+  async function replayAgainst(
+    body: string | ((call: CapturedCall) => string),
+    contentType?: string,
+  ): Promise<{
     code: number;
     tools: (string | undefined)[];
     queueExistedBefore: boolean;
@@ -1098,13 +1550,30 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
     stdout: string;
     stderr: string;
   }> {
-    const lb = makeLoopback((call) => ({
-      status: 200,
-      body:
-        call.toolName === "igris_sync_queue_drain"
-          ? mcpOkEnvelope("Sync queue drain completed successfully.")
-          : body,
-    }));
+    const isSse = contentType === "text/event-stream";
+    const lb = makeLoopback((call) => {
+      // BR-094: when the arm is SSE, BOTH responses are SSE — a real transport
+      // session does not answer one call in JSON and the next in SSE, and a
+      // mixed fixture would leave the drain half untested on this wire shape.
+      // The entry body is passed already-framed by the caller, so only the
+      // drain body is wrapped here.
+      if (call.toolName === "igris_sync_queue_drain") {
+        const drainBody = mcpOkEnvelope(
+          rpcRequestId(call),
+          "Sync queue drain completed successfully.",
+        );
+        return {
+          status: 200,
+          body: isSse ? sseFrame(drainBody) : drainBody,
+          contentType,
+        };
+      }
+      return {
+        status: 200,
+        body: typeof body === "string" ? body : body(call),
+        contentType,
+      };
+    });
     await new Promise<void>((resolve) =>
       lb.server.listen(0, "127.0.0.1", resolve),
     );
@@ -1156,7 +1625,7 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
   }
 
   it("error tier: an entry the brain REJECTED at HTTP 200 is preserved, not replayed, and does not reach the drain", async () => {
-    const r = await replayAgainst(GUARD_THROW_BODY);
+    const r = await replayAgainst(guardThrowBody);
 
     // PRE-state — without this the post-state assertion could pass because the
     // queue was never written in the first place.
@@ -1199,9 +1668,36 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
     // SELF-NEGATIVE-CONTROL — same wake-up path, same fixture, same helper;
     // only the response tier differs. Without this, the two guards above would
     // also pass if `dispatchEntry` had simply been made to always fail.
-    const r = await replayAgainst(mcpOkEnvelope("Brief BR-080-E synced."));
+    const r = await replayAgainst((call) =>
+      mcpOkEnvelope(rpcRequestId(call), "Brief BR-080-E synced."),
+    );
 
     expect(r.queueExistedBefore).toBe(true);
+    expect(r.queueExistsAfter).toBe(false);
+    expect(r.code).toBe(0);
+    expect(r.tools).toEqual(["igris_brief_sync", "igris_sync_queue_drain"]);
+    expect(r.stdout).toContain("replayed via igris_brief_sync");
+  });
+
+  it("BR-094: a success envelope delivered as text/event-stream also replays and clears the queue", async () => {
+    // The wire shape a live brain session actually returns. The control above
+    // proves the queue clears on a JSON success; this proves the SAME outcome
+    // on the SSE success, which is the one every real drain gets. Before
+    // BR-094 the request never got this far (406 at the transport), and with
+    // only the Accept header added it got HTTP 200 and stalled here instead —
+    // the body was unreadable, so the entry stayed queued forever. Both halves
+    // of the fix are load-bearing and this case pins the second.
+    const r = await replayAgainst(
+      (call) =>
+        sseFrame(
+          mcpOkEnvelope(rpcRequestId(call), "Brief BR-080-E synced."),
+          1,
+        ),
+      "text/event-stream",
+    );
+
+    expect(r.queueExistedBefore).toBe(true);
+    expect(r.queueContentBefore).toContain("BR-080-E");
     expect(r.queueExistsAfter).toBe(false);
     expect(r.code).toBe(0);
     expect(r.tools).toEqual(["igris_brief_sync", "igris_sync_queue_drain"]);

@@ -18,7 +18,12 @@ import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeLoopback, mcpOkEnvelope, type CapturedCall } from "./loopback.js";
+import {
+  makeLoopback,
+  mcpOkEnvelope,
+  rpcRequestId,
+  type CapturedCall,
+} from "./loopback.js";
 import type { BootSyncDigest } from "../types.js";
 
 let tmpRoot: string;
@@ -105,7 +110,7 @@ function makePullLoopback(
     if (call.httpMethod === "GET" && (call.url ?? "").startsWith("/sync/pull")) {
       return { status: 200, body: JSON.stringify({ tables }) };
     }
-    return { status: 200, body: mcpOkEnvelope() };
+    return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
   });
 }
 

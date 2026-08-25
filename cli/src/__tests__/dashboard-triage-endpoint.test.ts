@@ -103,17 +103,38 @@ import { bundleStaged } from "./hermetic-embeddings.js";
  * the exact sentence BR-083's brief quotes as the DEFECT, arriving from a
  * stale artifact rather than from a real regression.
  *
- * The bundle is deliberately NOT refreshed by the BR-083 implementation:
- * `~/.claude.json` points the live `igris-brain` MCP server at that same path,
- * so rebuilding it ARMS the `edges@4` migration to run against the operator's
- * live brain on the next MCP restart — unattended, before the operator has
- * read the dry-run. That is the one thing this brief's migration posture
- * forbids.
+ * HISTORICAL POSTURE, NO LONGER THE STATE (measured 2026-08-25, BR-094 review).
+ * The paragraph that stood here said the bundle was deliberately NOT refreshed,
+ * because `~/.claude.json` points the live `igris-brain` MCP at this same path
+ * and rebuilding would ARM the `edges@4` migration against the operator's live
+ * brain, unattended, before the dry-run was read. That was true when written.
+ * It is not true now, and a guard docblock that describes a state the tree does
+ * not have is the failure this file exists to catch:
  *
- * REMEDIATION (operator, after reviewing the dry-run):
+ *   - the bundle IS qualifier-aware — `qualifyNodeProject` is present in
+ *     `dist/brain-mcp-server/dist/engine/components/edges/handlers.js`, so the
+ *     assertion below PASSES rather than reporting a stale artifact;
+ *   - both brains are already at `edges@4` — `entity_edges` carries
+ *     `from_project` and `to_project` on the local brain AND on the VPS
+ *     (12 columns each, measured directly), which matches TD-378's changelog
+ *     claim;
+ *   - so the migration this warning guarded is APPLIED, not armed, and the
+ *     refresh it forbade has already happened.
+ *
+ * Read the block below as VERIFICATION, not remediation: it confirms the
+ * bundle still carries the qualifier-aware handler. A future refresh needs the
+ * same operator care only if a brain is ever rolled BACK behind the bundle —
+ * the hazard is a bundle AHEAD of a brain, in either direction.
+ *
+ * VERIFICATION (rebuild only if the assertion below starts failing):
  *   cd brain-mcp-server && npx tsc
  *   bash cli/scripts/copy-templates.sh     # or the normal cli build
  * then re-run this suite.
+ *
+ * A CAVEAT THIS REVIEW COULD NOT CLOSE: the bundle was bulk re-vendored on
+ * 2026-08-24 at 14:00 (6,947 of 6,948 files) by nothing recorded in the tree.
+ * The resulting state is correct and consistent with both brains, but WHAT ran
+ * is unattributed. See TD-417.
  */
 function expectQualifierAwareBundle(): void {
   const bundled = join(
@@ -124,8 +145,9 @@ function expectQualifierAwareBundle(): void {
   expect(
     src.includes("qualifyNodeProject"),
     "STALE VENDORED BRAIN BUNDLE: cli/dist/brain-mcp-server predates BR-083, so " +
-      "igris_edge_create still refuses `from_project` (TD-128). Rebuild the bundle " +
-      "AFTER the operator has approved the edges@4 migration — see this helper's docblock.",
+      "igris_edge_create still refuses `from_project` (TD-128). As of 2026-08-25 both " +
+      "brains are at edges@4, so this firing means the BUNDLE regressed behind them — " +
+      "rebuild per this helper's docblock, which is verification, not remediation.",
   ).toBe(true);
 }
 import { armAutoPushFence, type AutoPushFence } from "./auto-push-fence.js";

@@ -539,9 +539,20 @@ function itemsSentLine(result: Record<string, unknown>): string | null {
  *
  * Which non-envelope 200s are actually reachable: a proxy or gateway answering
  * with an error page, a truncated body, and the plain `{"drained":0}` shape the
- * sync-data fixtures use. NOT the brain's SSE transport — `mcpCall` sends no
- * `Accept` header (see `cli/src/lib/mcp-client.ts`), so
- * `StreamableHTTPServerTransport` answers 406 rather than an SSE 200.
+ * sync-data fixtures use. All three arrive on the `application/json` arm, which
+ * hands `JSON.parse`'s output straight through without inspecting it.
+ *
+ * The SSE arm is narrower, and it is the READER that makes it so rather than
+ * anything about SSE itself. `readSseJsonRpc` (`lib/mcp-client.ts`) returns a
+ * frame only if it is a non-array object carrying `jsonrpc: "2.0"`, one of
+ * `result` / `error`, and an `id` equal to the per-call uuid this very call
+ * sent. So a `text/event-stream` 200 reaches this function as a JSON-RPC
+ * response or as `null`, and never as some other object shape — a frame that
+ * is malformed, is a notification, or answers a DIFFERENT call (a co-tenant
+ * sharing the brain's single injected session) is skipped, and a body with no
+ * qualifying frame arrives as `null` and lands in the indeterminate tier, by
+ * design. Weakening any of those three checks widens what reaches here, so this
+ * paragraph is a claim about `readSseJsonRpc` and must be re-read if it changes.
  */
 function classifyToolCallBody(json: unknown): ToolCallVerdict {
   if (json === null || typeof json !== "object" || Array.isArray(json)) {

@@ -18,6 +18,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { request as httpsRequest } from "node:https";
 import { request as httpRequest } from "node:http";
 import { URL as NodeURL } from "node:url";
@@ -34,7 +35,12 @@ export interface McpToolCallResult {
   statusCode: number;
   /** Response body (utf-8). May be JSON or plain text on error. */
   body: string;
-  /** Parsed JSON when statusCode == 200 and body is valid JSON; null otherwise. */
+  /**
+   * The JSON-RPC message read out of a 200 response by `readMcpResponseBody`
+   * — which reads a `text/event-stream` body as well as an `application/json`
+   * one (BR-094). Null on any other status, and null when a 200 body carries
+   * no answer to this call; the caller treats that null as indeterminate.
+   */
   json: unknown;
 }
 
@@ -310,6 +316,181 @@ export async function syncPull(
 }
 
 /**
+ * A fresh JSON-RPC `id` for ONE `mcpCall`, and the id a response frame must
+ * echo to be read as THAT call's answer (BR-094 round 2).
+ *
+ * It MUST be per-call unique, not a module constant. Two facts make a constant
+ * a data-loss path rather than a cosmetic wart:
+ *
+ *   1. The SDK's Streamable HTTP transport demultiplexes replies by JSON-RPC
+ *      id, PER TRANSPORT: `WebStandardStreamableHTTPServerTransport` keeps a
+ *      `_requestToStreamMapping` keyed on `message.id` and `.set()`s it on
+ *      every incoming request, then `.get()`s it to decide which SSE stream a
+ *      response is written to. (`StreamableHTTPServerTransport` is a thin
+ *      wrapper that delegates to it — verified in the vendored SDK 1.26.0 at
+ *      `dist/esm/server/webStandardStreamableHttp.js`.) A second request
+ *      carrying the SAME id OVERWRITES the first request's mapping, so the
+ *      first answer is written into the SECOND caller's response body.
+ *   2. The brain funnels every session-less POST into ONE transport:
+ *      `brain-mcp-server/src/index.ts` fallback A picks
+ *      `activeSessions[activeSessions.length - 1]` and injects it. SSE is only
+ *      reachable when that list is non-empty, so any run that observes SSE has
+ *      by definition proved a co-tenant session exists to collide with.
+ *
+ * Under a module constant the correlation below therefore checked the call
+ * CLASS, not the call: a concurrent `igris sync data` / `boot-sync` would read
+ * the OTHER run's success envelope as its own, `dispatchEntry` would count an
+ * entry the brain never received as replayed, and `finalizeDrainSnapshot(_,
+ * true)` would unlink the only copy of it. That is BR-080's loss class.
+ *
+ * `randomUUID()` also removes the server-side stream collision itself, for
+ * every client of this brain — not just for our reader.
+ */
+function newMcpRequestId(): string {
+  return randomUUID();
+}
+
+/**
+ * Byte cap on the response body `mcpCall` will accumulate (BR-094 round 2).
+ *
+ * `timeout` on a node http request is a SOCKET IDLE timeout, so it never fires
+ * on a peer that keeps emitting — and `text/event-stream` is a media type
+ * DESIGNED to stay open. The brain sits behind nginx with `proxy_buffering off`
+ * and `proxy_read_timeout 86400` (`scripts/igris_brain_deploy.sh`), so nothing
+ * between us and it bounds the stream either. Without this cap a chatty or
+ * hostile stream grows the buffer until the CLI is OOM-killed.
+ *
+ * 8 MiB is ~1000x the largest real `tools/call` answer on this path (a drain
+ * summary or a brief-write acknowledgement, both a few hundred bytes). Exceeding
+ * it settles as a transport failure (`statusCode: 0`), which is FAIL-SAFE on
+ * both callers: `callRemoteDrain` exits 1 and `dispatchEntry` treats a non-200
+ * as not-replayed, so the queue is preserved rather than unlinked.
+ *
+ * RESIDUAL, recorded rather than fixed: this bounds MEMORY, not TIME. A stream
+ * that trickles bytes slowly forever stays under the cap and under the idle
+ * timeout, so the call can still hang; there is no wall-clock deadline on the
+ * whole response. And `syncPull` / `healthCheck` still accumulate unbounded —
+ * deliberately, because a `/sync/pull` body legitimately carries brain deltas
+ * (nginx allows 128m on this vhost) and a cap sized for `tools/call` would
+ * refuse real pulls. Both are pre-existing and neither is on the SSE path.
+ */
+export const MCP_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+/**
+ * `Accept` for the MCP Streamable HTTP transport. The server-side check is a
+ * substring test for BOTH tokens against the raw header — see
+ * `@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js:378`
+ * — and a request without them is answered `406 Not Acceptable` at the
+ * transport, before any dispatch. BR-094: omitting this header 406'd every
+ * remote drain.
+ */
+const MCP_ACCEPT = "application/json, text/event-stream";
+
+/**
+ * Read a `tools/call` response body into its JSON-RPC message.
+ *
+ * TWO wire shapes are live on `/mcp`, decided by whether the brain has an
+ * active MCP session (BR-094, both observed against brain.fifty.dev):
+ *   - `application/json` — the direct-dispatch fallback (`res.json`, no active
+ *     session, `brain-mcp-server/src/index.ts`);
+ *   - `text/event-stream` — the transport path taken whenever a session IS
+ *     active. `enableJsonResponse` defaults to false and the brain never sets
+ *     it, so that path ALWAYS answers a POST with SSE, never with JSON.
+ *
+ * `expectedId` is the JSON-RPC id THIS call sent (see `newMcpRequestId`); the
+ * SSE reader accepts only a frame echoing it. The JSON arm does NOT correlate,
+ * and deliberately: the direct-dispatch fallback is a plain `res.json(...)` on
+ * the one socket that carried the request, so HTTP itself is the correlation
+ * and there is no multiplexer to confuse. Adding an id check there would be a
+ * new refusal class with no measured defect behind it.
+ *
+ * Returns `null` when the body carries no answer to THIS call. `null` is a
+ * DEFINED unknown here: `classifyToolCallBody` (`lib/sync/data.ts`) routes it
+ * to the `indeterminate` tier, which never authorises deleting a queue entry
+ * (BR-080). Never fall back to "the last frame that looked like a reply".
+ */
+export function readMcpResponseBody(
+  body: string,
+  contentType: string,
+  expectedId: unknown,
+): unknown {
+  if (contentType.toLowerCase().includes("text/event-stream")) {
+    return readSseJsonRpc(body, expectedId);
+  }
+  try {
+    return JSON.parse(body);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * First SSE frame whose `data:` payload is a JSON-RPC RESPONSE echoing
+ * `expectedId`. Frame shape is the SDK's own `writeSSEEvent`:
+ * `event: message\n` + optional `id: <eventId>\n` + `data: <json>\n\n`. The
+ * frame's `id:` line is a resumability cursor, NOT the JSON-RPC id — only
+ * `data:` lines are read here, and per the SSE spec several of them in one
+ * frame concatenate with `\n`.
+ *
+ * Three conditions, and the last two are what let downstream prose say an SSE
+ * 200 reaches `classifyToolCallBody` as a JSON-RPC response or as `null` and
+ * never as some other object: the payload must be a non-null non-array object,
+ * it must carry `jsonrpc: "2.0"` and one of `result` / `error`, and its `id`
+ * must equal `expectedId`. Anything else is skipped and the scan continues; if
+ * no frame qualifies the function returns `null`, which is the indeterminate
+ * tier — the fail-safe direction on every caller.
+ *
+ * That the checks do not refuse a REAL answer was measured on the wire, not
+ * assumed: a live `tools/list` POST to `brain.fifty.dev/mcp` carrying a uuid id
+ * came back `content-type: text/event-stream` with
+ * `data: {"result":{...},"jsonrpc":"2.0","id":"<that same uuid>"}` — so the
+ * brain does not constrain the id to an integer, and its frames satisfy all
+ * three conditions (2026-08-24).
+ *
+ * SCOPE OF THAT MEASUREMENT, stated because it is narrower than the claim it
+ * supports. `tools/list` on a session-less brain takes the AUTO-CREATE-SESSION
+ * branch (`brain-mcp-server/src/index.ts:1358-1381`). The `tools/call` this
+ * module actually sends takes the SESSION-INJECTION branch (`:1336-1343`) when
+ * a session already exists. The measurement therefore does not exercise this
+ * module's own request path. It generalises because the id echo is the SDK's
+ * response serialisation, which both branches share — but that is an argument,
+ * not the measurement, and a reader should not infer otherwise.
+ *
+ * A JSON-RPC NOTIFICATION is excluded TWICE over — it carries neither `result`
+ * nor `error`, and it carries no `id` — so keep-alive and progress frames on
+ * the same stream cannot be read as this call's answer. Do not read that as an
+ * attribution to either check on its own; the three are a conjunction, and any
+ * mutation census over them has to isolate one at a time.
+ */
+function readSseJsonRpc(body: string, expectedId: unknown): unknown {
+  for (const frame of body.split(/\r?\n\r?\n/)) {
+    const data = frame
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice("data:".length).replace(/^ /, ""))
+      .join("\n");
+    if (data.length === 0) continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(data);
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      continue;
+    }
+    const msg = parsed as Record<string, unknown>;
+    if (msg.jsonrpc !== "2.0") continue;
+    const hasResult = Object.prototype.hasOwnProperty.call(msg, "result");
+    const hasError = Object.prototype.hasOwnProperty.call(msg, "error");
+    if (!hasResult && !hasError) continue;
+    if (msg.id !== expectedId) continue;
+    return parsed;
+  }
+  return null;
+}
+
+/**
  * Invoke an MCP tool over HTTP against the configured remote brain.
  *
  * Posts to `<remote_brain.url>/mcp` with the canonical JSON-RPC 2.0
@@ -319,7 +500,7 @@ export async function syncPull(
  *     "jsonrpc": "2.0",
  *     "method":  "tools/call",
  *     "params":  { "name": "<tool>", "arguments": { ... } },
- *     "id":      1
+ *     "id":      "<a fresh uuid per call — see newMcpRequestId>"
  *   }
  *
  * The brain dispatches at `brain-mcp-server/src/index.ts:1490` (direct
@@ -352,11 +533,16 @@ export async function mcpCall(
     return { statusCode: 0, body: "malformed url", json: null };
   }
 
+  // Fresh per CALL, not per module — see `newMcpRequestId`. The same value is
+  // sent on the wire and handed to the reader below, so the outbound body and
+  // the SSE correlation cannot drift apart.
+  const requestId = newMcpRequestId();
+
   const body = JSON.stringify({
     jsonrpc: "2.0",
     method: "tools/call",
     params: { name: toolName, arguments: toolArgs },
-    id: 1,
+    id: requestId,
   });
 
   const isHttps = parsed.protocol === "https:";
@@ -379,22 +565,50 @@ export async function mcpCall(
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(body).toString(),
+          Accept: MCP_ACCEPT,
           Authorization: `Bearer ${remote.apiKey}`,
         },
         timeout: timeoutMs,
       },
       (res) => {
         const chunks: Buffer[] = [];
-        res.on("data", (c) => chunks.push(c as Buffer));
+        let received = 0;
+        let overflowed = false;
+        res.on("data", (c) => {
+          if (overflowed) return;
+          const chunk = c as Buffer;
+          received += chunk.length;
+          if (received > MCP_MAX_RESPONSE_BYTES) {
+            // Bounded buffering (BR-094 round 2). Drop what we have rather than
+            // hold it, kill the socket so the peer stops sending, and settle as
+            // a transport failure — the fail-safe verdict on both callers.
+            overflowed = true;
+            chunks.length = 0;
+            try {
+              res.destroy();
+            } catch {
+              // ignore
+            }
+            settle({
+              statusCode: 0,
+              body: `response body exceeded ${MCP_MAX_RESPONSE_BYTES} bytes; aborted`,
+              json: null,
+            });
+            return;
+          }
+          chunks.push(chunk);
+        });
         res.on("end", () => {
+          if (overflowed) return;
           const respBody = Buffer.concat(chunks).toString("utf-8");
           let parsedJson: unknown = null;
           if (res.statusCode === 200) {
-            try {
-              parsedJson = JSON.parse(respBody);
-            } catch {
-              parsedJson = null;
-            }
+            const ct = res.headers["content-type"];
+            parsedJson = readMcpResponseBody(
+              respBody,
+              typeof ct === "string" ? ct : "",
+              requestId,
+            );
           }
           settle({
             statusCode: res.statusCode ?? 0,

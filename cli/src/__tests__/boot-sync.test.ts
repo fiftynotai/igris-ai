@@ -24,7 +24,13 @@ import Database from "better-sqlite3";
 import { mkdtempSync, mkdirSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeLoopback, mcpOkEnvelope, type CapturedCall } from "./loopback.js";
+import {
+  makeLoopback,
+  mcpOkEnvelope,
+  rpcRequestId,
+  sseFrame,
+  type CapturedCall,
+} from "./loopback.js";
 import type { BootSyncDigest } from "../types.js";
 
 let tmpRoot: string;
@@ -135,7 +141,48 @@ function makePullLoopback(
     // carrying a real success envelope. BR-080: the CLI now READS this body —
     // a bare `{ok:true}` is classified INDETERMINATE and a replayed entry is
     // preserved rather than dropped, so the shorthand no longer means success.
-    return { status: 200, body: mcpOkEnvelope() };
+    return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
+  });
+}
+
+/**
+ * As `makePullLoopback`, but every POST is answered on the OTHER live wire
+ * shape: a `text/event-stream` frame (BR-094 round 2, M2).
+ *
+ * Why this exists: every `queue_drain` assertion in this file ran against the
+ * `application/json` arm, and BR-094 established that a brain holding an active
+ * MCP session ALWAYS answers a POST with SSE (`enableJsonResponse` defaults to
+ * false and the brain never sets it). So the file's `queue_drain.ok === true` /
+ * `drained === 1` digest — the exact pair BR-094's AC-4 names — was pinned only
+ * on the shape a live session never returns. `boot-sync` is a second `/mcp`
+ * consumer, and it had no SSE arm at all.
+ *
+ * `wire` records the content type of every POST answer so a test can assert the
+ * arm was actually taken rather than assume it: a fixture silently falling back
+ * to JSON would otherwise pass this file's assertions unchanged.
+ */
+function makeSsePullLoopback(
+  tables: Record<string, Record<string, unknown>[]>,
+  wire: string[],
+): ReturnType<typeof makeLoopback> {
+  return makeLoopback((call: CapturedCall) => {
+    if (call.httpMethod === "GET" && (call.url ?? "").startsWith("/sync/pull")) {
+      return { status: 200, body: JSON.stringify({ tables }) };
+    }
+    // ONE variable feeds both the recorded value and the header actually sent,
+    // so the arm check below cannot pass while the fixture answers something
+    // else — recording a literal beside a separate header would just record the
+    // fixture's intention.
+    const ct = "text/event-stream";
+    wire.push(ct);
+    return {
+      status: 200,
+      // Echoes the per-call uuid `mcpCall` sent; the SSE reader correlates on
+      // it, so a hardcoded id here would land in the indeterminate tier and
+      // the drain would report `ok: false` for a fixture reason.
+      body: sseFrame(mcpOkEnvelope(rpcRequestId(call))),
+      contentType: ct,
+    };
   });
 }
 
@@ -229,6 +276,46 @@ describe("boot-sync — queue drain reuses the `sync data` primitive (#253)", ()
       expect(drainCalls[0].method).toBe("tools/call");
       // The drain MUST NOT pass local_entries (the brain schema rejects it).
       expect(drainCalls[0].args?.local_entries).toBeUndefined();
+    } finally {
+      await close(lb);
+    }
+  });
+
+  it("BR-094 (M2): the same drain digest holds on the text/event-stream arm a LIVE session returns", async () => {
+    // The gap this closes: every other `queue_drain` assertion in this file
+    // runs against `application/json`, which is the brain's NO-SESSION
+    // direct-dispatch fallback. Whenever a session is active the transport
+    // answers SSE instead, and that is the shape every real boot-sync gets.
+    // AC-4's digest (`ok: true`, `drained: 1`) was therefore pinned only on the
+    // arm a live run never takes.
+    seedSchema();
+    const wire: string[] = [];
+    const lb = makeSsePullLoopback({}, wire);
+    await listen(lb);
+    const remoteUrl = `http://127.0.0.1:${lb.port()}`;
+    writeConfig(remoteUrl);
+    const queuePath = writeQueue([
+      JSON.stringify({ operation: "brief_sync", project: SLUG, brief_id: "TD-3", title: "t", status: "ACTIVE" }),
+    ]);
+    expect(existsSync(queuePath)).toBe(true);
+
+    try {
+      const { buildBootSyncDigest } = await import("../verbs/boot-sync.js");
+      const d = await buildBootSyncDigest(SLUG);
+
+      // ARM CHECK first: without it a fixture that quietly answered JSON would
+      // satisfy every assertion below and this case would prove nothing.
+      expect(wire.length).toBeGreaterThan(0);
+      expect([...new Set(wire)]).toEqual(["text/event-stream"]);
+      // Both POSTs — the entry replay and the brain-side drain — went out.
+      expect(lb.calls.filter((c) => c.httpMethod === "POST").length).toBe(2);
+
+      // The AC-4 digest, on the live wire shape.
+      expect(d.queue_drain.ok).toBe(true);
+      expect(d.queue_drain.drained).toBe(1);
+      // And the consequence: the queue is consumed, which only a READ success
+      // envelope authorises. An unreadable SSE body would leave it on disk.
+      expect(existsSync(queuePath)).toBe(false);
     } finally {
       await close(lb);
     }
@@ -429,7 +516,7 @@ describe("boot-sync — independence + skip-on-fail", () => {
       if (call.httpMethod === "GET" && (call.url ?? "").startsWith("/sync/pull")) {
         return { status: 500, body: JSON.stringify({ error: "boom" }) };
       }
-      return { status: 200, body: mcpOkEnvelope() };
+      return { status: 200, body: mcpOkEnvelope(rpcRequestId(call)) };
     });
     await listen(lb);
     const remoteUrl = `http://127.0.0.1:${lb.port()}`;

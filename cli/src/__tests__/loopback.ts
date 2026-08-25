@@ -28,6 +28,51 @@ export interface CapturedCall {
   httpMethod?: string;
   /** Raw request URL incl. query string (e.g. `/sync/pull?since_learnings=...`). */
   url?: string;
+  /**
+   * The request's own headers, lower-cased keys, exactly as node parsed them.
+   * Added (BR-094) so a test can assert what the CLI SENDS, not only what it
+   * does with the answer: the 406 that broke every remote drain was an
+   * outbound-header defect, and no fixture here could see one.
+   */
+  headers?: Record<string, string | string[] | undefined>;
+}
+
+/**
+ * One SSE frame in the SDK's own `writeSSEEvent` shape (BR-094):
+ * `event: message\n` + an OPTIONAL `id: <eventId>\n` resumability cursor +
+ * `data: <json>\n\n`. Transcribed from
+ * `@modelcontextprotocol/sdk/dist/esm/server/webStandardStreamableHttp.js`
+ * (`writeSSEEvent`) rather than hand-typed from the shape a reader would
+ * prefer — the frame's `id:` line is NOT the JSON-RPC id, and that is exactly
+ * the confusion a hand-written fixture would hide.
+ *
+ * Lives here rather than in one test file (BR-094 round 2) because the
+ * boot-sync suite needs the same shape: its `queue_drain` digest was pinned
+ * only on the `application/json` arm, which a live brain session never returns.
+ */
+export function sseFrame(json: string, eventId?: number): string {
+  const cursor = eventId === undefined ? "" : `id: ${eventId}\n`;
+  return `event: message\n${cursor}data: ${json}\n\n`;
+}
+
+/**
+ * The JSON-RPC id the CLI put on THIS request, read straight out of the raw
+ * captured body (BR-094 round 2).
+ *
+ * `mcpCall` mints a fresh uuid per call, so a fixture that hardcodes an id no
+ * longer speaks the protocol: on the SSE arm the reader correlates and would
+ * refuse the answer, and on the JSON arm it would be a standing lie that hides
+ * any future correlation there.
+ *
+ * Deliberately NOT wrapped in try/catch. If the captured body is not JSON this
+ * throws and reds the test, which is the honest outcome — swallowing it would
+ * yield `undefined`, and an envelope carrying `id: undefined` serialises with
+ * NO id at all, which the reader skips. Every such fixture would then quietly
+ * become an indeterminate-tier test that still passes its "queue preserved"
+ * assertions for entirely the wrong reason.
+ */
+export function rpcRequestId(call: CapturedCall): unknown {
+  return (JSON.parse(call.rawBody) as { id?: unknown }).id;
 }
 
 /**
@@ -41,12 +86,18 @@ export interface CapturedCall {
  * bodies these tests used are no longer "a success". Fixtures that need a
  * success must speak the real protocol; use this helper rather than hand-rolling
  * the shape per test.
+ *
+ * BR-094 round 2: `id` is the FIRST parameter and it is REQUIRED, so that every
+ * call site has to decide what it echoes rather than inherit a default. Pass
+ * `rpcRequestId(call)`. The forcing function is the point — the previous
+ * signature defaulted the id to `1`, which matched the CLI's then-constant id
+ * and so kept passing when the constant became the defect.
  */
-export function mcpOkEnvelope(text = "ok"): string {
+export function mcpOkEnvelope(id: unknown, text = "ok"): string {
   return JSON.stringify({
     jsonrpc: "2.0",
     result: { content: [{ type: "text", text }] },
-    id: 1,
+    id,
   });
 }
 
@@ -57,11 +108,16 @@ export function mcpOkEnvelope(text = "ok"): string {
  * `respond(call, callIndex)` returns `{ status, body }` where body is sent
  * verbatim as the response payload. The server must be `.listen()`-ed by
  * the caller and `.close()`-ed in cleanup.
+ *
+ * `contentType` is optional and defaults to `application/json` — the shape
+ * every pre-BR-094 fixture assumed. Pass `text/event-stream` to speak the
+ * brain's OTHER live wire shape (the transport path); `mcpCall` selects its
+ * reader off this header, so a fixture that omits it is not an SSE fixture.
  */
 export function makeLoopback(
   respond: (call: CapturedCall, callIndex: number) =>
-    | { status: number; body: string }
-    | Promise<{ status: number; body: string }>,
+    | { status: number; body: string; contentType?: string }
+    | Promise<{ status: number; body: string; contentType?: string }>,
 ): { server: ReturnType<typeof createServer>; calls: CapturedCall[]; port: () => number } {
   const calls: CapturedCall[] = [];
   const server = createServer(
@@ -75,6 +131,7 @@ export function makeLoopback(
           rawBody: buf,
           httpMethod: req.method,
           url: req.url,
+          headers: req.headers,
         };
         try {
           const parsed = JSON.parse(buf) as {
@@ -90,8 +147,13 @@ export function makeLoopback(
           // leave fields undefined
         }
         calls.push(call);
-        const { status, body } = await respond(call, calls.length - 1);
-        res.writeHead(status, { "Content-Type": "application/json" });
+        const { status, body, contentType } = await respond(
+          call,
+          calls.length - 1,
+        );
+        res.writeHead(status, {
+          "Content-Type": contentType ?? "application/json",
+        });
         res.end(body);
       });
     },
