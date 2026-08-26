@@ -214,14 +214,16 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     // ships. sessions ships 2 as of FR-130 (v1 = session_files DDL, v2 =
     // instance_id + state columns); briefs ships 2 as of FR-127 (v1 =
     // brief_files DDL, v2 = claimed_by + claimed_at on brief_status); the
-    // instances ships 2 as of FR-190 (v1 = agent_events DDL, v2 = instance
-    // liveness columns on the legacy instances table). The TD-277 activity
-    // timestamp rename is owned by legacy db.ts because the engine runs that
-    // chain before component migrations. The remaining components ship a single
-    // v1. The v1 migration of every component still owns
-    // the primary table-creation DDL, so the sub-tests below read migrations[0].
+    // instances ships 3 as of FR-267 (v1 = agent_events DDL, v2 = instance
+    // liveness columns on the legacy instances table, v3 = the hunt-cost
+    // record: model/round/project columns + hunt_runs view — 2026-08-26). The
+    // TD-277 activity timestamp rename is owned by legacy db.ts because the
+    // engine runs that chain before component migrations. The remaining
+    // components ship a single v1. The v1 migration of every component still
+    // owns the primary table-creation DDL, so the sub-tests below read
+    // migrations[0].
     const componentFactories = [
-      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 2 },
+      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 3 },
       { name: 'sync', factory: createSyncComponent, table: 'sync_queue', migrationCount: 1 },
       { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 2 },
       { name: 'sessions', factory: createSessionsComponent, table: 'session_files', migrationCount: 2 },
@@ -421,6 +423,11 @@ describe('Legacy Migration Bridge (BR-035)', () => {
       expect(cols).toContain('error_message');
       expect(cols).toContain('metadata');
       expect(cols).toContain('created_at');
+      // FR-267 (2026-08-26): instances v3 — the hunt-cost record columns.
+      expect(cols).toContain('model_requested');
+      expect(cols).toContain('model_resolved');
+      expect(cols).toContain('round');
+      expect(cols).toContain('project');
       db.close();
     });
 

@@ -365,7 +365,7 @@ function collapseToLine(value: string, fallback: string): string {
  *     reads the `**Mode:**` line of the chosen HANDOFF row, which is this same
  *     file only after `/rest` has re-authored it to `REST MODE`.
  *   - `**Active Brief:** <brief|None>` — grepped by the pre-commit phase guard
- *     (`scripts/git-hooks/pre-commit:212`, tier 2 of brief discovery) and
+ *     (`scripts/git-hooks/pre-commit:224`, tier 2 of brief discovery) and
  *     rewritten by `/hunt` step 7. No CLI code parses it.
  *   - `**Next Steps:** <one line>` — parsed by `parseField` at the gather call
  *     site into the digest's `handoff.next_steps`, which `/boot` §5 renders and

@@ -449,8 +449,8 @@ export function readMcpResponseBody(
  *
  * SCOPE OF THAT MEASUREMENT, stated because it is narrower than the claim it
  * supports. `tools/list` on a session-less brain takes the AUTO-CREATE-SESSION
- * branch (`brain-mcp-server/src/index.ts:1358-1381`). The `tools/call` this
- * module actually sends takes the SESSION-INJECTION branch (`:1336-1343`) when
+ * branch (`brain-mcp-server/src/index.ts:1033-1056`). The `tools/call` this
+ * module actually sends takes the SESSION-INJECTION branch (`:1011-1018`) when
  * a session already exists. The measurement therefore does not exercise this
  * module's own request path. It generalises because the id echo is the SDK's
  * response serialisation, which both branches share — but that is an argument,

@@ -222,6 +222,7 @@ light confirm.
    - instance_id: {Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`}
    - agent: "architect"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
@@ -311,6 +312,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "architect"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "PLANNING"
      - result: {brief summary of architect's output}
@@ -336,6 +340,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "forger"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
@@ -393,6 +398,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "forger"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "BUILDING"
      - result: {brief summary of forger's output}
@@ -409,6 +417,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
@@ -433,6 +442,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "stop" (if PASS) or "error" (if FAIL)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - result: "PASS" or "FAIL" with details
@@ -458,16 +470,37 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "retry"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
      Skip silently if unavailable.
+   - **Emit agent event (start):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "mender"
+     - event_type: "start"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     Skip silently if unavailable. Mender is a role the Agent Log names, so it
+     needs its own start/stop pair like every other agent (FR-267).
    - Delegate to mender agent for diagnosis. Include the sentinel failure output
      verbatim and instruct mender that its first diagnostic action MUST be
      `igris_error_lookup` with the canonical error message before parsing,
      grepping, hypothesizing, or inspecting files. Require mender to return an
      `Error Memory Handoff` block containing `Canonical Error Message`, `Root
      Cause`, and `Proposed Solution`.
+   - **Emit agent event (stop or error):** After mender returns, call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "mender"
+     - event_type: "stop" (if it returned the handoff) or "error" (if it did not)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     - result: {the handoff's Root Cause + Proposed Solution, one line}
+     Skip silently if unavailable.
    - Return to BUILDING with fix instructions
 
 8. **If FAIL and Retry Count >= 3:**
@@ -522,6 +555,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
@@ -562,6 +596,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "stop" (if APPROVE) or "error" (if REJECT)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - result: "APPROVE" or "REJECT" with feedback
@@ -580,6 +617,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "retry"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - metadata: '{"attempt": {retry_count}, "reason": "review rejection"}'
@@ -619,6 +657,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "start"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {current brief ID}
      - phase: "DOCUMENTING"
      Skip silently if MCP unavailable.
@@ -653,6 +692,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "DOCUMENTING"
      - result: {brief summary of documentation updates, or "Skipped - no docs needed"}
@@ -676,6 +718,13 @@ Agent tool parameters:
    hook enforces the same verdict mechanically. Reaching that hook by surprise
    means this step was skipped. `IGRIS_BYPASS_AC_GATE=1` exists for a genuine
    emergency and is one-shot — it is never the way to get past an open box.
+
+   The same footer triggers the hook's SECOND check (FR-267, agent-event
+   coverage): every role the Agent Log names must have at least one recorded
+   agent event (an `agent_events` row for this brief), or the close is refused
+   with the missing roles named. Emit the missing event before committing;
+   `IGRIS_BYPASS_EVENT_GATE=1` is the one-shot emergency hatch, never the
+   routine path.
 
 1. Update brief: Phase = COMMITTING, Active Agent = none
 2. Run git commands:
@@ -783,17 +832,31 @@ This ensures other machines can see that the work is still reserved without pret
 
 ## Agent Event Emission (Mandatory When Available)
 
-On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
+On each agent invocation, you MUST emit `igris_agent_event` calls — each naming `instance_id`, `agent`, `event_type` and `model_requested` — if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
 **Pattern for every agent.** Every call below passes `instance_id` (from the
-per-instance session file) and `agent` (the role being invoked) in addition to
-the fields named — all three of `instance_id`, `agent` and `event_type` are
-REQUIRED, and a call omitting any is rejected at the gateway (BR-080):
+per-instance session file), `agent` (the role being invoked) and
+`model_requested` (the model you chose for that role, or
+`inherit:<your own model id>` — an opaque string, never a guess about how the
+harness resolves it) in addition to the fields named — all FOUR of
+`instance_id`, `agent`, `event_type` and `model_requested` are REQUIRED, and a
+call omitting any is rejected at the gateway (BR-080, FR-267):
 
 1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
-2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary
+2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary; add `model_resolved` and the four token counts (`input_tokens`, `output_tokens`, `cache_read`, `cache_create`) only when the harness reports them — omit them otherwise, never pass 0
 3. **On agent failure:** Call `igris_agent_event` with event_type="error" and error_message
 4. **On retry:** Call `igris_agent_event` with event_type="retry" and metadata with attempt count and reason
+
+**Every invocation is a row.** A resumed, re-prompted or re-run agent is a NEW
+invocation: emit `start` before it and `stop`/`error` after it, every time.
+The brain assigns `round` and computes duration from its own clock — never
+pass either (`duration_ms` is not a tool argument any more; a call carrying it
+is rejected).
+
+**The gate.** Every role you name in the Agent Log must have at least one
+recorded event, or the closing commit is refused by the `commit-msg` hook
+(`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past it). The rule
+reads the log you wrote, so a phase you legitimately skipped demands nothing.
 
 All agent event emissions are **fire-and-forget**. If the MCP call fails, skip silently. Agent events must NEVER block or delay the hunt workflow.
 

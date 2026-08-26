@@ -95,12 +95,14 @@ import {
   handleBrainPull,
   handleSessionFilePull,
   processSyncPush,
+  mergeRows,
   scheduleLearningEmbedAfterMerge,
   runPostMergeEmbedPass,
   relativizeEgressPath,
   redactTablesForEgress,
   SYNC_TABLES,
 } from '../sync.js';
+import { createInstancesComponent } from '../../engine/components/instances/index.js';
 import {
   embeddingToBuffer,
   bufferToEmbedding,
@@ -920,5 +922,147 @@ describe('TD-253 — handleBrainPush redacts before egress AND before the retry 
     // BEFORE queueFailedRows, so retries never leak.
     expect(row.path).toBe('~/code/app');
     expect(row.path).not.toContain(os.homedir());
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-267 §4.4 — the push carries the hunt-cost record, and a v3 remote merges it
+// ---------------------------------------------------------------------------
+// The stub `agent_events` table `makeMinimalSyncDb` builds from SYNC_TABLES is
+// all-TEXT, which would turn `round: 2` into `'2'` on the wire; these tests
+// replace it with the REAL shape from the instances component's own v1 + v3
+// migrations (v2 is skipped: it ALTERs `instances`, which the stub already
+// carries at its SYNC_TABLES column set). Nothing here is hand-copied DDL.
+
+/** Real `agent_events` (v9 shape) on a DB that already has an `instances` stub. */
+function installAgentEventsV1(db: Database.Database): void {
+  db.exec('DROP TABLE IF EXISTS agent_events');
+  const migrations = createInstancesComponent().schema();
+  db.exec(migrations.find((m) => m.version === 1)!.sql);
+}
+
+/** Apply the FR-267 v3 migration on top of v1. */
+function installAgentEventsV3(db: Database.Database): void {
+  installAgentEventsV1(db);
+  const migrations = createInstancesComponent().schema();
+  db.exec(migrations.find((m) => m.version === 3)!.sql);
+}
+
+/** One post-v3 stop row, as the local brain writes it. */
+const FR267_ROW = {
+  instance_id: 'inst-1',
+  agent: 'forger',
+  event_type: 'stop',
+  phase: 'BUILDING',
+  brief_id: 'FR-267',
+  duration_ms: 1834000,
+  input_tokens: null,
+  output_tokens: null,
+  cache_read: null,
+  cache_create: null,
+  result: 'success',
+  error_message: null,
+  metadata: '{}',
+  created_at: '2026-08-26 17:00:00',
+  model_requested: 'claude-fable-5',
+  model_resolved: null,
+  round: 2,
+  project: 'igris-ai',
+};
+
+describe('FR-267 — agent_events sync carries model_requested / round / project', () => {
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    installAgentEventsV3(db);
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  it('SYNC_TABLES.agent_events names the four v3 columns and keeps its syncKey', () => {
+    const config = SYNC_TABLES.find((t) => t.table === 'agent_events');
+    expect(config).toBeDefined();
+    expect(config!.columns).toEqual(
+      expect.arrayContaining(['model_requested', 'model_resolved', 'round', 'project']),
+    );
+    expect(config!.syncKey).toEqual(['instance_id', 'agent', 'event_type', 'created_at']);
+    expect(config!.strategy).toBe('append');
+  });
+
+  it('handleBrainPush payload tables.agent_events[0] has model_requested, round and project', async () => {
+    const cols = Object.keys(FR267_ROW);
+    db.prepare(
+      `INSERT INTO agent_events (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+    ).run(...cols.map((c) => (FR267_ROW as Record<string, unknown>)[c]));
+
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, results: { agent_events: { inserted: 1 } } }),
+      text: async () => '',
+      status: 200,
+    })) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    const result = await handleBrainPush({
+      remote_url: 'http://test-remote.local',
+      api_key: 'test-key',
+    });
+    expect((result as { isError?: boolean }).isError).toBeFalsy();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const init = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as {
+      tables: Record<string, Array<Record<string, unknown>>>;
+    };
+
+    expect(body.tables).toHaveProperty('agent_events');
+    expect(body.tables.agent_events).toHaveLength(1);
+    const pushed = body.tables.agent_events[0];
+    expect(pushed).toHaveProperty('model_requested', 'claude-fable-5');
+    expect(pushed).toHaveProperty('round', 2);
+    expect(pushed).toHaveProperty('project', 'igris-ai');
+    expect(pushed).toHaveProperty('duration_ms', 1834000);
+    // NULL tokens travel as explicit nulls, so the remote never falls back to a DEFAULT 0.
+    expect(pushed).toHaveProperty('input_tokens', null);
+  });
+
+  it('mergeRows on a v3 remote inserts the row with its new columns; a pre-v3 remote fails it per-row', () => {
+    const config = SYNC_TABLES.find((t) => t.table === 'agent_events')!;
+
+    const remoteV3 = new Database(':memory:');
+    remoteV3.exec('CREATE TABLE instances (id TEXT PRIMARY KEY, project_slug TEXT)');
+    installAgentEventsV3(remoteV3);
+    const merged = mergeRows(remoteV3, config, [{ ...FR267_ROW }]);
+    expect(merged.inserted).toBe(1);
+    expect(merged.failed).toBe(0);
+    const stored = remoteV3.prepare('SELECT * FROM agent_events').get() as Record<string, unknown>;
+    expect(stored).toMatchObject({
+      model_requested: 'claude-fable-5',
+      model_resolved: null,
+      round: 2,
+      project: 'igris-ai',
+      duration_ms: 1834000,
+      input_tokens: null,
+    });
+    remoteV3.close();
+
+    // The deploy-first reason (plan §6.1): an un-migrated remote rejects the
+    // row per-row (BR-066). SQLite's INSERT wording is "has no column named",
+    // not the "no such column" a SELECT would say.
+    const remoteV1 = new Database(':memory:');
+    installAgentEventsV1(remoteV1);
+    const rejected = mergeRows(remoteV1, config, [{ ...FR267_ROW }]);
+    expect(rejected.inserted).toBe(0);
+    expect(rejected.failed).toBe(1);
+    expect(rejected.failures[0].error).toMatch(/table agent_events has no column named model_requested/);
+    remoteV1.close();
   });
 });

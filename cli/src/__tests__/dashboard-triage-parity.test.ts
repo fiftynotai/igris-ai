@@ -51,7 +51,7 @@
  *
  *   ARM A — the literal MCP path: `bootEngine(...).gateway.dispatch(tool, args)`.
  *           `createBrainServer()`'s `CallToolRequestSchema` handler
- *           (`brain-mcp-server/src/index.ts:231-247`) is a one-line wrapper
+ *           (`brain-mcp-server/src/index.ts:228-244`) is a one-line wrapper
  *           around exactly this call, so this IS the MCP path minus JSON-RPC.
  *   ARM B — the dashboard: `startServer()` + a real `POST /api/triage` over a
  *           real socket.

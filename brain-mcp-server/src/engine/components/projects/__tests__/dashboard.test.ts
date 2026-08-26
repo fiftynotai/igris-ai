@@ -25,7 +25,7 @@ vi.mock('../../../../db.js', () => ({
 }));
 
 import { getDb } from '../../../../db.js';
-import { handleProjectDashboard } from '../../../../tools/projects.js';
+import { handleProjectDashboard, handleProjectStatus } from '../../../../tools/projects.js';
 import { createGateway } from '../../../gateway.js';
 import { createProjectsComponent } from '../index.js';
 
@@ -82,15 +82,29 @@ function makeTestDb(): Database.Database {
       started_at TEXT NOT NULL DEFAULT (datetime('now')),
       ended_at TEXT
     );
-    CREATE TABLE agent_metrics (
+    -- FR-267: recent_metrics reads the agent_events hunt-cost record. v3 shape =
+    -- the legacy db.ts v9 CREATE + the four columns instances migration v3 adds
+    -- (model_requested / model_resolved / round / project).
+    CREATE TABLE agent_events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project TEXT NOT NULL,
+      instance_id TEXT NOT NULL,
       agent TEXT NOT NULL,
-      action TEXT NOT NULL,
-      result TEXT NOT NULL,
+      event_type TEXT NOT NULL CHECK (event_type IN ('start', 'stop', 'error', 'retry')),
+      phase TEXT,
+      brief_id TEXT,
       duration_ms INTEGER DEFAULT 0,
-      brief_id TEXT DEFAULT '',
-      recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      input_tokens INTEGER DEFAULT 0,
+      output_tokens INTEGER DEFAULT 0,
+      cache_read INTEGER DEFAULT 0,
+      cache_create INTEGER DEFAULT 0,
+      result TEXT,
+      error_message TEXT,
+      metadata TEXT DEFAULT '{}',
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      model_requested TEXT,
+      model_resolved TEXT,
+      round INTEGER NOT NULL DEFAULT 1,
+      project TEXT
     );
   `);
   return db;
@@ -161,9 +175,16 @@ describe('handleProjectDashboard (TD-171 M3 — operator override)', () => {
     db.prepare(`INSERT INTO sessions (project, summary, ended_at) VALUES (?, ?, datetime('now'))`).run(
       'igris-ai', 'session a',
     );
-    db.prepare(
-      `INSERT INTO agent_metrics (project, agent, action, result) VALUES (?, ?, ?, ?)`,
-    ).run('igris-ai', 'forger', 'write', 'success');
+    // FR-267: one paired stop (counted); one open start (not an invocation end,
+    // excluded by the event_type predicate); one stop under ANOTHER project
+    // (excluded by the project predicate — `project` is stamped on the row).
+    const insertEvent = db.prepare(
+      `INSERT INTO agent_events (instance_id, agent, event_type, result, project, model_requested, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    insertEvent.run('inst-1', 'forger', 'stop', 'success', 'igris-ai', 'claude-fable-5', 1834000);
+    insertEvent.run('inst-1', 'sentinel', 'start', null, 'igris-ai', 'claude-fable-5', null);
+    insertEvent.run('inst-2', 'forger', 'stop', 'success', 'other-project', 'claude-fable-5', 5000);
 
     const result = handleProjectDashboard({ slug: 'igris-ai' });
     const payload = parseJson(result);
@@ -184,8 +205,16 @@ describe('handleProjectDashboard (TD-171 M3 — operator override)', () => {
     expect(recent.sessions).toBe(1);
     expect(recent.brief_completions).toBe(1);
 
-    const recentMetrics = payload.recent_metrics as unknown[];
+    const recentMetrics = payload.recent_metrics as Record<string, unknown>[];
     expect(recentMetrics.length).toBe(1);
+    expect(recentMetrics[0]).toMatchObject({
+      agent: 'forger',
+      event_type: 'stop',
+      result: 'success',
+      duration_ms: 1834000,
+      model_requested: 'claude-fable-5',
+      round: 1,
+    });
   });
 
   it('errors when slug points at non-existent project', () => {
@@ -196,14 +225,37 @@ describe('handleProjectDashboard (TD-171 M3 — operator override)', () => {
   it('omits recent_metrics when summary_only=true (single-project mode)', () => {
     seedProject(db, { slug: 'p1' });
     db.prepare(
-      `INSERT INTO agent_metrics (project, agent, action, result) VALUES (?, ?, ?, ?)`,
-    ).run('p1', 'forger', 'write', 'success');
+      `INSERT INTO agent_events (instance_id, agent, event_type, result, project, model_requested) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('inst-1', 'forger', 'stop', 'success', 'p1', 'claude-fable-5');
 
     const result = handleProjectDashboard({ slug: 'p1', summary_only: true });
     const payload = parseJson(result);
     expect(payload.recent_metrics).toBeUndefined();
     // counts still computed
     expect((payload.totals as Record<string, unknown>).learnings).toBe(0);
+  });
+
+  it('igris_project_status text lists recent invocations from agent_events (FR-267)', () => {
+    seedProject(db, { slug: 'p2' });
+    db.prepare(
+      `INSERT INTO agent_events (instance_id, agent, event_type, phase, result, brief_id, project, model_requested, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run('inst-1', 'warden', 'stop', 'REVIEWING', 'success', 'FR-267', 'p2', 'claude-fable-5', 90000);
+    // An open start is not an invocation end — it must not be listed.
+    db.prepare(
+      `INSERT INTO agent_events (instance_id, agent, event_type, project, model_requested) VALUES (?, ?, ?, ?, ?)`,
+    ).run('inst-1', 'forger', 'start', 'p2', 'claude-fable-5');
+
+    const text = handleProjectStatus({ slug: 'p2' }).content[0].text;
+    expect(text).toContain('## Recent Agent Invocations (last 10)');
+    expect(text).toContain('warden/stop REVIEWING -> success (90000ms) [FR-267] model=claude-fable-5');
+    expect(text).not.toContain('forger/start');
+  });
+
+  it('igris_project_status says so when no agent event has been recorded (FR-267)', () => {
+    seedProject(db, { slug: 'p3' });
+    const text = handleProjectStatus({ slug: 'p3' }).content[0].text;
+    expect(text).toContain('(no agent events recorded)');
   });
 
   // -------------------------------------------------------------------------

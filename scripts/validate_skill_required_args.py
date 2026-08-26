@@ -101,7 +101,7 @@ Pass A - tool -> required map. Parse `engine/components/*/index.ts`. Bound each
   declares a NESTED `required: ['to_type','to_id','edge_type']` (the
   `edges[]` item schema) BEFORE its real one, so a first-match parser builds a
   wrong map and every conclusion downstream is noise. Tools with `required: []`
-  are dropped. COUNT SENTINEL: 75 (see below).
+  are dropped. COUNT SENTINEL: 74 (see below).
 
 Pass B - site scan. Every `.md` under `core/skills/`, recursive — not only
   `SKILL.md`. That restriction is precisely how `hunt/workflow-template.md`
@@ -147,12 +147,14 @@ Pass D - ledger subtraction (above).
 
 COUNT SENTINEL
 --------------
-The tool map must have exactly 75 entries on the real tree:
-    80 `required: [` literals
+The tool map must have exactly 74 entries on the real tree:
+    79 `required: [` literals
    -  4 empty `required: []`  (memory x2, errors, briefs)
    -  1 nested item schema    (memory `edges[]`)
-   = 75
-This is in-family with `gateway-tool-count.test.ts` pinning 112 registered
+   = 74
+Re-measured 2026-08-26 at FR-267: the metrics component (and its single
+`igris_metrics_record` literal) left the tree, so 80 -> 79 and 75 -> 74.
+This is in-family with `gateway-tool-count.test.ts` pinning 108 registered
 tools. When a tool is legitimately added the sentinel goes red on purpose: bump
 the constant AND re-read the ledger, because a new tool means new call sites.
 The sentinel is skipped when the components root is overridden for fixtures.
@@ -162,7 +164,7 @@ Discovers:
     `brain-mcp-server/src/engine/components/*/index.ts`.
   - SKILL_ARGS_SCAN_ROOT      env override -> alternate skills root (fixtures).
   - SKILL_ARGS_COMPONENTS_ROOT env override -> alternate components root; also
-    disables the 75 sentinel and the ledger (a fixture map has neither).
+    disables the 74 sentinel and the ledger (a fixture map has neither).
 
 Usage:
     python3 scripts/validate_skill_required_args.py
@@ -202,7 +204,7 @@ DEFAULT_COMPONENTS_ROOT = (
 # Count sentinel — see COUNT SENTINEL in the module docstring for the
 # arithmetic. Bumping this is a conscious act that must be paired with a ledger
 # review, because a new tool means new (unclassified) call sites.
-EXPECTED_TOOL_COUNT = 75
+EXPECTED_TOOL_COUNT = 74  # FR-267 (2026-08-26): metrics component retired, 75 -> 74
 
 
 # --- The disposition ledger (explicit constant — L-448) ----------------------
@@ -344,14 +346,12 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "MENDER what its first diagnostic action must be; the orchestrator's "
         "own call in the same phase names project, message and solution and is "
         "NOT flagged."),
-    ("core/skills/hunt/SKILL.md", "igris_agent_event",
-     ('agent', 'event_type', 'instance_id')): (
-        "prose", 1,
-        "The section's topic sentence ('you MUST emit ... calls if ...'). The "
-        "argument contract is the scoped preamble immediately below it, which "
-        "names all three required keys and covers the four numbered calls "
-        "that follow — TD-323's fix, and the reason this instrument reads a "
-        "list's introducer."),
+    # FR-267 (2026-08-26) REMOVED the ('agent','event_type','instance_id')
+    # entry for igris_agent_event that sat here: the `## Agent Event Emission`
+    # topic sentence now names all four required keys itself (model_requested
+    # joined the tool's `required` list), so the site no longer exists and an
+    # entry observed 0 times must not stay. The scoped preamble below that
+    # sentence still names all four and covers the four numbered calls.
 
     # --- promote (read-only, fail-open — warden's TD-323 disposition) ---------
     ("core/skills/promote/SKILL.md", "igris_memory_recall",
@@ -690,9 +690,10 @@ def list_start(lines: list[str], start: int) -> int:
     """Index of the FIRST item of the contiguous list `start` belongs to.
 
     A preamble introduces the whole list, not only its first item, so the
-    introducer lookup has to run from the list's head. Without this,
-    `hunt/SKILL.md:787` would be covered by the `:782-785` preamble but
-    `:788-790` — the same list, the same preamble — would not.
+    introducer lookup has to run from the list's head. Without this, the FIRST
+    numbered call under hunt/SKILL.md's `## Agent Event Emission` preamble
+    would be covered by it but the second, third and fourth — the same list,
+    the same preamble — would not.
     """
     if not RE_BULLET.match(lines[start]):
         return start
@@ -729,10 +730,11 @@ def introducer_range(lines: list[str], start: int) -> tuple[int, int] | None:
     An introducer is the contiguous non-blank block immediately above (at most
     one blank line between) whose last line ends in `:` or an em dash. This is
     the second remediation idiom TD-323 established: a scoped preamble that
-    names the required keys once for a whole following list, as at
-    `hunt/SKILL.md:782-785` ("all three of `instance_id`, `agent` and
-    `event_type` are REQUIRED") covering the four numbered calls at `:787-790`.
-    Without this rule the instrument penalises the repo's own fix pattern.
+    names the required keys once for a whole following list, as in
+    hunt/SKILL.md's `## Agent Event Emission` section ("all FOUR of
+    `instance_id`, `agent`, `event_type` and `model_requested` are REQUIRED"
+    since FR-267) covering the four numbered calls beneath it. Without this
+    rule the instrument penalises the repo's own fix pattern.
     """
     j = start - 1
     if j >= 0 and not lines[j].strip():
@@ -926,7 +928,7 @@ def main(argv: list[str]) -> int:
     components_root = pathlib.Path(components_override or str(DEFAULT_COMPONENTS_ROOT))
     fixture_map = components_override is not None
     if fixture_map:
-        # A fixture map has neither the real 75 tools nor the real ledger.
+        # A fixture map has neither the real 74 tools nor the real ledger.
         use_ledger = False
 
     if not components_root.is_dir():
@@ -958,8 +960,8 @@ def main(argv: list[str]) -> int:
         print(
             f"Error: tool -> required map has {len(tool_map)} entries, "
             f"expected {EXPECTED_TOOL_COUNT}.\n"
-            "  Arithmetic: 80 `required: [` literals - 4 empty `required: []` "
-            "- 1 nested item schema (memory `edges[]`) = 75.\n"
+            "  Arithmetic: 79 `required: [` literals - 4 empty `required: []` "
+            "- 1 nested item schema (memory `edges[]`) = 74.\n"
             "  A different number means either the block-bounding / "
             "shallowest-indent rule broke, or a tool was legitimately added.\n"
             "  If a tool was added: bump EXPECTED_TOOL_COUNT *and* re-read the "

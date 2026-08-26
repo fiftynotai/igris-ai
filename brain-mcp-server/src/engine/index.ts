@@ -27,7 +27,6 @@ import type { StorageAdapter, EventBus } from './types.js';
 import { createMemoryComponent } from './components/memory/index.js';
 import { createErrorsComponent } from './components/errors/index.js';
 import { createProjectsComponent } from './components/projects/index.js';
-import { createMetricsComponent } from './components/metrics/index.js';
 import { createSessionsComponent } from './components/sessions/index.js';
 import { createBriefsComponent } from './components/briefs/index.js';
 import { createEdgesComponent } from './components/edges/index.js';
@@ -85,9 +84,10 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (16 — perception + subconscious collapsed
+  // 6. Register domain components (15 — perception + subconscious collapsed
   //    into one cognition component in FR-118 M4a; tasks + coordination removed
-  //    in TD-265 full worker-subsystem teardown).
+  //    in TD-265 full worker-subsystem teardown; metrics retired in FR-267,
+  //    2026-08-26: its table is frozen history, agent_events is the record).
   // FR-109/FR-118: cognition is registered AFTER memory because the perception
   // instance depends on the memory schema (learnings.review_status, db.ts v15).
   const componentFactories = [
@@ -95,7 +95,6 @@ export function bootEngine(config: EngineConfig): Engine {
     createErrorsComponent,
     createProjectsComponent,
     createContextComponent,
-    createMetricsComponent,
     createSessionsComponent,
     createBriefsComponent,
     createEdgesComponent,

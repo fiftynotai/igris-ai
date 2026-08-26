@@ -119,6 +119,18 @@ set -e
 #       one parser: the audit population and the refusal set are then identical
 #       by construction. WARN only — surfaces the report, does NOT block. It
 #       deliberately never touches the cognition candidate queue (TD-325 AC #7).
+#   - validate_hunt_agent_event_sites.sh  (FR-267)
+#       Triggers if: core/skills/hunt/SKILL.md OR
+#                    brain-mcp-server/src/engine/components/instances/index.ts
+#                    is staged.
+#       Derivation guard over the hunt skill's igris_agent_event call sites:
+#       every window names instance_id / agent / event_type / model_requested
+#       (the gateway REQUIRES the fourth since FR-267), no window passes
+#       duration_ms or round (the brain computes both), the start sites cover
+#       architect/forger/sentinel/warden/document/mender, and at least 13
+#       sites exist. The COMPONENT trigger is the load-bearing half: the tool's
+#       `required` list lives there, and widening it is what silently breaks
+#       skill prose. HARD-fails — clean-tree output is one `OK: <n> sites`.
 #   - validate_harness_tier_claims.sh  (TD-367)
 #       Triggers if: harness-manifest.json OR README.md OR cli/README.md OR
 #                    docs/multi-cli.md OR docs/SETUP_GUIDE.md OR
@@ -161,11 +173,11 @@ set -e
 # Bypass: `git commit --no-verify` (use sparingly; CI will catch it)
 # Bypass phase guard only: `IGRIS_BYPASS_PHASE_GUARD=1 git commit ...`
 #   (orchestrator-only — used by /hunt Phase 7 COMMITTING)
-# NB the AC gate's bypass, `IGRIS_BYPASS_AC_GATE=1`, belongs to
-#   scripts/git-hooks/commit-msg, NOT to this file. The two are deliberately
-#   separate: /hunt's COMMITTING step sets IGRIS_BYPASS_PHASE_GUARD on the exact
-#   commit the AC gate must inspect, so an AC check placed inside the phase
-#   guard's block below would be bypassed by construction on every close.
+# NB the closing-commit gates' bypasses — `IGRIS_BYPASS_AC_GATE=1` (TD-325) and
+#   `IGRIS_BYPASS_EVENT_GATE=1` (FR-267) — belong to scripts/git-hooks/commit-msg,
+#   NOT to this file. Deliberately separate: /hunt's COMMITTING step sets
+#   IGRIS_BYPASS_PHASE_GUARD on the exact commit those gates must inspect, so a
+#   check placed inside the phase guard's block below would be bypassed on every close.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
@@ -311,6 +323,7 @@ needs_brief_type_check=0
 needs_brief_priority_check=0
 needs_brief_status_check=0
 needs_ac_completion_check=0
+needs_agent_event_sites_check=0
 needs_harness_tier_check=0
 needs_error_loop_check=0
 
@@ -431,6 +444,18 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_brief_ac_completion.sh" ]; then
   if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|core/scripts/brief_ac_check\.sh|scripts/git-hooks/commit-msg|brain-mcp-server/src/tools/briefs\.ts|MAINTAINING\.md)$'; then
     needs_ac_completion_check=1
+  fi
+fi
+
+# FR-267: trigger the hunt-skill agent-event site guard on the two surfaces
+# that define the call contract — the skill that makes the calls, and the
+# instances component whose `igris_agent_event` schema declares what the
+# gateway REQUIRES. The second trigger is the one that matters: adding a key
+# to `required` there is what silently invalidates every call site in the
+# skill, and no compiler sees skill markdown.
+if [ -f "$REPO_ROOT/scripts/validate_hunt_agent_event_sites.sh" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|brain-mcp-server/src/engine/components/instances/index\.ts)$'; then
+    needs_agent_event_sites_check=1
   fi
 fi
 
@@ -642,6 +667,22 @@ if [ "$needs_ac_completion_check" = "1" ]; then
   # five files rather than run on every commit.
   if ! bash "$REPO_ROOT/scripts/validate_brief_ac_completion.sh"; then
     echo "[pre-commit] Briefs closed with unmet criteria surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_agent_event_sites_check" = "1" ]; then
+  echo "[pre-commit] Checking hunt-skill agent-event call sites (FR-267)..."
+  # HARD-FAIL, unlike the TD-324 required-args observer beside it. That one
+  # reports across every skill and every tool, where a new site needs a human
+  # verdict; this one guards ONE file's call sites against a contract the
+  # brain enforces mechanically (a missing model_requested is a gateway
+  # rejection, a caller-supplied duration_ms is rejected by
+  # additionalProperties:false). There is no judgement call to leave to a
+  # human — the site is either whole or it is not — so blocking is right.
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed.
+  if ! bash "$REPO_ROOT/scripts/validate_hunt_agent_event_sites.sh"; then
+    failed=1
   fi
 fi
 

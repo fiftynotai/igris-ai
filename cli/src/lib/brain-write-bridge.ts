@@ -32,7 +32,7 @@
  *
  * So the dashboard's write path is not *like* the MCP path. It **is** the MCP
  * path with the JSON-RPC framing removed: `createBrainServer()`'s
- * `CallToolRequestSchema` handler (`brain-mcp-server/src/index.ts:231-247`) is a
+ * `CallToolRequestSchema` handler (`brain-mcp-server/src/index.ts:228-244`) is a
  * one-line wrapper around the same `gateway.dispatch(name, args)` call this
  * module makes. Audit parity, validation parity and event parity are
  * CONSEQUENCES of that shape, not features implemented here.
@@ -316,7 +316,7 @@ type DispatchFn = (
   args: Record<string, unknown>,
 ) => Promise<ToolResult>;
 
-/** engine/index.ts:48 — `Engine`, narrowed to what this bridge uses. */
+/** engine/index.ts:47 — `Engine`, narrowed to what this bridge uses. */
 interface EngineHandle {
   gateway: {
     dispatch: DispatchFn;
@@ -325,11 +325,11 @@ interface EngineHandle {
     /** `toolCount` in `engine/gateway.ts` */
     toolCount: () => number;
   };
-  /** engine/index.ts:136 */
+  /** engine/index.ts:135 — `shutdown()` */
   shutdown: () => void;
 }
 
-/** engine/index.ts:68 — `bootEngine(config)`. THROWS; see Phase-0 step 8c. */
+/** engine/index.ts:67 — `bootEngine(config)`. THROWS; see Phase-0 step 8c. */
 type BootEngineFn = (config: {
   dbPath: string;
   components: Record<string, { enabled: boolean }>;

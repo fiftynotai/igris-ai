@@ -294,22 +294,24 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     'SELECT COUNT(*) as count FROM errors WHERE project = ?'
   ).get(args.slug) as { count: number };
 
-  // Get recent agent metrics
+  // Recent agent invocations. FR-267: read from the agent_events hunt-cost
+  // record (the retired metrics table is frozen history, unread); `project` is stamped on
+  // the row at write time, so no join to `instances` (removed on /rest).
   const recentMetrics = db.prepare(`
-    SELECT agent, action, result, duration_ms, brief_id, recorded_at
-    FROM agent_metrics
-    WHERE project = ?
-    ORDER BY recorded_at DESC
+    SELECT agent, event_type, phase, result, duration_ms, brief_id, round, model_requested, created_at
+    FROM agent_events
+    WHERE project = ? AND event_type IN ('stop', 'error')
+    ORDER BY created_at DESC
     LIMIT 10
   `).all(args.slug) as Record<string, unknown>[];
 
-  // Format metrics
+  // Format invocations
   let metricsSection: string;
   if (recentMetrics.length === 0) {
-    metricsSection = '(no metrics recorded)';
+    metricsSection = '(no agent events recorded)';
   } else {
     metricsSection = recentMetrics.map((m, i) =>
-      `  ${i + 1}. [${m.recorded_at}] ${m.agent}/${m.action} -> ${m.result}${m.duration_ms ? ` (${m.duration_ms}ms)` : ''}${m.brief_id ? ` [${m.brief_id}]` : ''}`
+      `  ${i + 1}. [${m.created_at}] ${m.agent}/${m.event_type}${m.phase ? ` ${m.phase}` : ''} -> ${m.result ?? '-'}${m.duration_ms ? ` (${m.duration_ms}ms)` : ''}${m.brief_id ? ` [${m.brief_id}]` : ''}${m.model_requested ? ` model=${m.model_requested}` : ''}`
     ).join('\n');
   }
 
@@ -329,7 +331,7 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     `Learnings: ${learningCount.count}`,
     `Errors: ${errorCount.count}`,
     '',
-    '## Recent Agent Metrics (last 10)',
+    '## Recent Agent Invocations (last 10)',
     metricsSection,
   ].join('\n');
 
@@ -591,15 +593,18 @@ function handleProjectDashboard(args: ProjectDashboardInput): { content: { type:
       // brief_status table absent — leave at 0.
     }
 
+    // FR-267: `recent_metrics` keeps its TD-171 key name but is read from the
+    // agent_events hunt-cost record (the retired metrics table is frozen history, unread);
+    // `project` is stamped on the row at write time — no `instances` join.
     let recentMetrics: Record<string, unknown>[] = [];
     if (!summaryOnly) {
       try {
         recentMetrics = db
           .prepare(
-            `SELECT agent, action, result, duration_ms, brief_id, recorded_at
-             FROM agent_metrics
-             WHERE project = ?
-             ORDER BY recorded_at DESC
+            `SELECT agent, event_type, phase, result, duration_ms, brief_id, round, model_requested, created_at
+             FROM agent_events
+             WHERE project = ? AND event_type IN ('stop', 'error')
+             ORDER BY created_at DESC
              LIMIT 10`,
           )
           .all(args.slug) as Record<string, unknown>[];

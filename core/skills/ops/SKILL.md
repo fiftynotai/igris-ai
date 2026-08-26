@@ -173,21 +173,20 @@ sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors;"
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors WHERE COALESCE(solution, '') != '';"
 ```
 
-Agent metrics, if the table exists:
+Hunt cost per agent and per model (FR-267), from the brain-timed `hunt_runs` view — skip if the view does not exist yet (it arrives with the instances migration v3):
 
 ```bash
 sqlite3 ~/.igris/memory/knowledge.db "
   PRAGMA trusted_schema=ON;
-  SELECT agent,
-         COUNT(*) as total,
-         SUM(CASE WHEN result='success' THEN 1 ELSE 0 END) as successes,
-         ROUND(AVG(duration_ms), 0) as avg_ms
-  FROM agent_metrics
-  GROUP BY agent
-  ORDER BY total DESC
-  LIMIT 8;
+  SELECT agent, model_requested, COUNT(*) AS n, ROUND(AVG(duration_ms)/60000.0,1) AS avg_minutes
+  FROM hunt_runs
+  GROUP BY agent, model_requested
+  ORDER BY agent, model_requested
+  LIMIT 16;
 "
 ```
+
+The same role on two models is comparable row-to-row; add `WHERE project='<slug>'` to scope one project. Per-phase and per-hunt totals are GROUP BYs over the same view, never stored.
 
 ### 7. Display
 

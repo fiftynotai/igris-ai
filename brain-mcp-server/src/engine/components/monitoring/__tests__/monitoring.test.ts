@@ -705,11 +705,11 @@ describe('Monitoring Component', () => {
       comp.destroy();
     });
 
-    it('metrics.recorded logged with correct component name', () => {
+    it('agent_event.recorded logged with correct component name (FR-267: instances owns the emit)', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('metrics.recorded', { metric: 'tokens', value: 100 });
+      bus.emit('agent_event.recorded', { instance_id: 'inst-1', agent: 'forger', event_type: 'stop', brief_id: 'FR-267', project: 'igris-ai' });
 
       const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
         event_name: string;
@@ -717,7 +717,7 @@ describe('Monitoring Component', () => {
       }[];
 
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({ event_name: 'metrics.recorded', component: 'metrics' });
+      expect(rows[0]).toEqual({ event_name: 'agent_event.recorded', component: 'instances' });
 
       comp.destroy();
     });

@@ -1,215 +1,40 @@
-# Igris AI — Hook Event Schema (v1)
+# Igris AI — Hook Event Schema (RETIRED)
 
-Reference documentation for the HTTP hook event pipeline. Defines the JSON
-schema that CLI adapters must implement to send events to the Igris brain.
+**Status:** RETIRED 2026-08-26 by FR-267. This path is kept so inbound links
+resolve; the contract it described no longer exists.
 
-**Version:** 1.0.0
-**Created:** 2026-03-10 (FR-088)
-**Target:** FR-066 cross-CLI adapters (Gemini CLI, Codex CLI, etc.)
+The HTTP hook-event receiver this document specified — `POST /api/hooks/event`
+(FR-088) — was deleted from `brain-mcp-server/src/index.ts` by FR-267, together
+with `POST /api/metrics` and the five `"type": "http"` hook groups in
+`.claude/settings.json` (`Stop`, `SubagentStart`, `SubagentStop`,
+`TaskCompleted`, `TeammateIdle`) that posted to it. Measured 2026-08-26:
+nothing listened on `localhost:3001` (`curl` → HTTP 000, connection refused),
+so those hooks had exited 0 and landed nothing since the local HTTP brain was
+retired — the L-1248 class ("reports success without having checked") in
+config form. FR-089, which shipped the wiring and was marked Done, is the
+cautionary tale.
 
----
+## What replaced it
 
-## Endpoint
+- **The record:** `agent_events` — brain-timed, brief-keyed, one row per agent
+  invocation (`model_requested`, `model_resolved`, `round`, `project`;
+  `duration_ms` computed by the brain from its own start/stop timestamps;
+  tokens NULL when unknown), plus the `hunt_runs` view that derives the
+  per-agent / per-phase / per-hunt shape. Owner:
+  `brain-mcp-server/src/engine/components/instances/index.ts` (migration v3).
+  Durable — no purge.
+- **The carrier:** the orchestrator, through the `igris_agent_event` MCP tool
+  (harness-agnostic — R6 of FR-267). Harness hooks are not a carrier.
+- **The control:** the `commit-msg` hook refuses a `closes #X` commit when a
+  role named in X's Agent Log has no recorded agent event
+  (`IGRIS_BYPASS_EVENT_GATE=1` is the one-shot escape hatch) — FR-267 Phase 5.
+- **The reference:** `docs/reference/hunt-cost-record.md` (retention decision,
+  schema, the R2 queries, known biases) — FR-267 Phase 6.
 
-```
-POST /api/hooks/event?project=<slug>
-Content-Type: application/json
-```
+## Where the old contract went
 
-- **Local brain:** `http://localhost:3001/api/hooks/event?project=<slug>`
-- **VPS brain:** `http://<vps-host>:3001/api/hooks/event?project=<slug>`
-  - VPS requires `Authorization: Bearer <api_key>` header
-
-### Query Parameters
-
-| Param | Required | Description |
-|-------|----------|-------------|
-| `project` | Recommended | Project slug (e.g., `igris-ai`). Used for event_log and metrics. |
-
----
-
-## Event Types
-
-### `SubagentStart` — Agent Invocation Start
-
-Sent when a subagent (Task tool) is invoked.
-
-```json
-{
-  "hook_event_name": "SubagentStart",
-  "agent_type": "forger",
-  "agent_id": "unique-agent-id"
-}
-```
-
-**Brain actions:**
-- Inserts into `agent_events` table (event_type: start)
-- Inserts into `event_log` table (event_name: agent.start, component: hooks)
-
----
-
-### `SubagentStop` — Agent Invocation Complete
-
-Sent when a subagent finishes execution.
-
-```json
-{
-  "hook_event_name": "SubagentStop",
-  "agent_type": "forger",
-  "agent_id": "unique-agent-id",
-  "agent_transcript_path": "/path/to/transcript.jsonl",
-  "last_assistant_message": "Implementation complete. All files updated."
-}
-```
-
-**Brain actions:**
-- Inserts into `agent_events` table (event_type: stop, result parsed from last_assistant_message)
-- Inserts into `agent_metrics` table (project, agent, action, result)
-- Inserts into `event_log` table (event_name: agent.stop, component: hooks)
-
-**Result parsing:** The brain parses `last_assistant_message` for success/failure indicators:
-- Failure: "fail", "failed", "reject", "rejected", "error", "blocked", "tests failing"
-- Success: "pass", "passed", "success", "approve", "complete", "lgtm"
-
----
-
-### `Stop` — Session End
-
-Sent when the main Claude Code session ends.
-
-```json
-{
-  "hook_event_name": "Stop",
-  "session_id": "session-uuid",
-  "transcript_path": "/path/to/transcript.jsonl"
-}
-```
-
-**Brain actions:**
-- Inserts into `event_log` table (event_name: session.stop, component: hooks)
-
-**Note:** Transcript token parsing requires local file access and is handled
-separately by the `main_agent_metrics.sh` command hook. The HTTP hook records
-the session end event only.
-
----
-
-> **SkillInvoke telemetry retired in FR-202 M7; restore portably via TD-260.**
-> The per-skill emitter (`emit_skill_event.sh`) was Claude-specific
-> (`$CLAUDE_PROJECT_DIR`) and had no in-repo consumer. TD-260 will reintroduce
-> skill-invocation telemetry as a harness-agnostic surface.
-
----
-
-## Agent Name Normalization
-
-The brain normalizes Claude Code built-in agent names to Igris canonical names:
-
-| Claude Code Name | Igris Name |
-|-----------------|------------|
-| planner | architect |
-| coder | forger |
-| tester | sentinel |
-| reviewer | warden |
-| debugger | mender |
-| explorer | seeker |
-| Explore | seeker |
-| claude-code-guide | seeker |
-| documenter | forger |
-| releaser | forger |
-| auditor | warden |
-| ideator | architect |
-
-If the agent name is not in the map, it is used as-is.
-
----
-
-## Agent-to-Action Mapping
-
-For `agent_metrics` recording, agents are mapped to actions:
-
-| Agent | Action |
-|-------|--------|
-| architect | plan |
-| forger | implement |
-| sentinel | test |
-| warden | review |
-| mender | debug |
-| seeker | research |
-| sage | advise |
-| (other) | execute |
-
----
-
-## Response Format
-
-### Success (201)
-
-```json
-{
-  "ok": true,
-  "hook": "SubagentStop",
-  "agent": "forger",
-  "result": "success",
-  "results": [
-    { "table": "agent_events", "id": 42 },
-    { "table": "agent_metrics", "id": 15 },
-    { "table": "event_log", "id": 301 }
-  ]
-}
-```
-
-### Error (400)
-
-```json
-{
-  "error": "Missing hook_event_name field"
-}
-```
-
-### Error (500)
-
-```json
-{
-  "error": "Database error message"
-}
-```
-
----
-
-## Graceful Degradation
-
-HTTP hooks must fail silently. When the brain is unreachable:
-- Claude Code's HTTP hook timeout fires (default: 5s)
-- No error is displayed to the user
-- Workflow continues uninterrupted
-
-This is enforced by Claude Code's hook system -- HTTP hook failures do not
-block the main agent.
-
----
-
-## Cross-CLI Adapter Guide (FR-066)
-
-To implement this event pipeline in another CLI:
-
-1. **Identify hook points** in your CLI that correspond to SubagentStart/Stop/Stop
-2. **POST the JSON payload** to `POST /api/hooks/event?project=<slug>`
-3. **Include at minimum:** `hook_event_name` and agent information
-4. **Set timeout to 5 seconds** and fail silently on errors
-5. **Use the agent name map** to normalize your CLI's agent names
-
-### Example: Gemini CLI Adapter
-
-```python
-# On agent invocation
-requests.post(
-    "http://localhost:3001/api/hooks/event?project=my-project",
-    json={"hook_event_name": "SubagentStart", "agent_type": "coder"},
-    timeout=5
-)
-```
-
----
-
-**Maintained by:** Igris AI (fifty.dev)
+The v1 payload schema (the `hook_event_name` routing into `agent_events`,
+`agent_metrics` and `event_log`, the agent-name and action maps, the adapter
+recipe) lives in git history: `git log --follow -- docs/HOOK_EVENT_SCHEMA.md`
+and read the revision before the FR-267 commit. Do not rebuild it — nothing
+should listen on port 3001 again (FR-267 Direction, row 5).

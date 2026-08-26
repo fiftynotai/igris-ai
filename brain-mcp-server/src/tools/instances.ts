@@ -173,11 +173,6 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
   const db = getDb();
   const columns = ensureInstancesActivityColumn();
 
-  // Purge agent_events older than 7 days
-  db.prepare(
-    "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
-  ).run();
-
   // Build dynamic WHERE clause
   const conditions: string[] = [];
   const params: string[] = [];

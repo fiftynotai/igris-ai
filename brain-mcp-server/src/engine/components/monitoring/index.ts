@@ -15,7 +15,7 @@
  *          brief.synced, brief.created,
  *          brief.completed, session.synced, session.file.updated,
  *          instance.state_updated, memory.stored, error.stored,
- *          project.registered, metrics.recorded,
+ *          project.registered, agent_event.recorded,
  *          subconscious.bootstrap_failed,
  *          perception.run_started, perception.run_succeeded,
  *          perception.run_failed, perception.run_skipped
@@ -62,7 +62,7 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   'memory.stored': 'memory',
   'error.stored': 'errors',
   'project.registered': 'projects',
-  'metrics.recorded': 'metrics',
+  'agent_event.recorded': 'instances',
   // FR-118 M2: the subconscious run-lifecycle + per-suggestion + verifier
   // events are no longer bus-emitted (the live path is the cognition engine,
   // which writes `cognition.subconscious.*` directly to event_log). Only the
@@ -239,7 +239,7 @@ export function createMonitoringComponent(): BrainComponent {
           { name: 'memory.stored', description: 'Log memory storage events' },
           { name: 'error.stored', description: 'Log error storage events' },
           { name: 'project.registered', description: 'Log project registration events' },
-          { name: 'metrics.recorded', description: 'Log metrics recording events' },
+          { name: 'agent_event.recorded', description: 'Log agent lifecycle event rows (FR-267)' },
           { name: 'subconscious.bootstrap_failed', description: 'Log subconscious schedule bootstrap failures (TD-053)' },
           { name: 'perception.run_started', description: 'Log perception extraction run start events (TD-074)' },
           { name: 'perception.run_succeeded', description: 'Log perception extraction run success events (TD-074)' },
@@ -278,7 +278,7 @@ export function createMonitoringComponent(): BrainComponent {
       ctx.bus.on('memory.stored', onEventReceived);
       ctx.bus.on('error.stored', onEventReceived);
       ctx.bus.on('project.registered', onEventReceived);
-      ctx.bus.on('metrics.recorded', onEventReceived);
+      ctx.bus.on('agent_event.recorded', onEventReceived);
       ctx.bus.on('subconscious.bootstrap_failed', onEventReceived);
       ctx.bus.on('perception.run_started', onEventReceived);
       ctx.bus.on('perception.run_succeeded', onEventReceived);
@@ -327,7 +327,7 @@ export function createMonitoringComponent(): BrainComponent {
         _ctx.bus.off('memory.stored', onEventReceived);
         _ctx.bus.off('error.stored', onEventReceived);
         _ctx.bus.off('project.registered', onEventReceived);
-        _ctx.bus.off('metrics.recorded', onEventReceived);
+        _ctx.bus.off('agent_event.recorded', onEventReceived);
         _ctx.bus.off('subconscious.bootstrap_failed', onEventReceived);
         _ctx.bus.off('perception.run_started', onEventReceived);
         _ctx.bus.off('perception.run_succeeded', onEventReceived);

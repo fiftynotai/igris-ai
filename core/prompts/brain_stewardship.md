@@ -539,41 +539,53 @@ igris_goal_list({ project: "igris-ai", status: "active" })
 igris_goal_dashboard({ project: "igris-ai" })
 ```
 
-## 8. Metrics (`igris_metrics_*`)
+## 8. Hunt cost record (`igris_agent_event`, `hunt_runs`)
 
-**Tools:** `igris_metrics_record`, `igris_metrics_query`,
-`igris_metrics_dashboard`, `igris_metrics_velocity`.
+**Tools:** `igris_agent_event` (write). There is no read tool — read the
+`hunt_runs` view with `sqlite3` (FR-268 owns any future read tool). The
+former metrics tools (record / query / velocity / dashboard) are retired;
+this record replaced them (FR-267).
 
-**What's there:** time-series of agent invocations, token spend, brief
-throughput, error rates. Source for agent activity dashboards.
+**What's there:** one row per agent invocation — `project`, `brief_id`,
+`agent`, `phase`, `round`, `model_requested` / `model_resolved`,
+`event_type` (`start` / `stop` / `error` / `retry`), `duration_ms`,
+tokens. The brain stamps every timestamp, computes `duration_ms` from
+its own clock when a `stop`/`error` pairs with the open `start`, and
+assigns `round` — a resumed, re-prompted or re-run agent is a NEW
+invocation with its own row. You never pass duration or round (the
+schema rejects them). Tokens are recorded when the harness reports them
+and are NULL — never 0 — when it does not. Durable: no purge, no TTL;
+the table syncs to the remote brain.
 
 ### When to call
 
-- During `/scan` or `/ops`: pull recent metric snapshots.
-- When the user asks "is this getting faster/slower?": query velocity over
-  the relevant window.
-- Before refactoring a hot path: check the current cost so you can measure
-  the win.
-
-### When to Inspect (Dashboard)
-
-Use `igris_metrics_dashboard` during `/scan` or `/ops` for a
-one-shot agent-utilization view. The canonical `_dashboard` shape
-returns `totals.by_agent` (invocations / success_rate / avg_duration_ms
-/ retries per agent), `totals.by_action`, `totals.by_result` (the four
-CHECK-constraint outcomes — `success`, `failure`, `partial`, `blocked`
-— always present), `recent.invocations` over the last N days (default
-30) plus `week_over_week_delta_pct`, and `samples.top_durations` (top
-10 longest-running invocations). Pair with `igris_brief_velocity` for
-completion-rate context. Optional `agent` filter scopes everything to
-one agent (combinable with `project`); `summary_only: true` drops the
-samples block when you only need the headline counters.
+- Before and after every agent you delegate to during `/hunt`:
+  `igris_agent_event` with `instance_id`, `agent`, `event_type` and
+  `model_requested` (the model you chose, or `inherit:<your own model
+  id>`) — all four are required; add `model_resolved` and token counts
+  on `stop` only when the harness reports them. A role named in a
+  brief's Agent Log with no recorded event is refused at the closing
+  commit (`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past
+  it).
+- When the user asks "how long did brief X take, and where did it go?",
+  "is this model slower?", or "where is the pain point?": query
+  `hunt_runs`. Per-invocation grain; per-agent, per-phase and per-hunt
+  totals are GROUP BYs, never stored.
+- During `/ops`: the per-agent / per-model view (the `/ops` skill
+  carries the query).
 
 ### Example invocation
 
 ```jsonc
-igris_metrics_velocity({ project: "igris-ai", days: 30 })
-igris_metrics_dashboard({ project: "igris-ai", agent: "forger" })
+igris_agent_event({ instance_id: "<id>", agent: "forger", event_type: "start", brief_id: "FR-267", phase: "BUILDING", model_requested: "inherit:claude-fable-5" })
+```
+
+```sql
+-- one brief, per agent and per model (sqlite3 ~/.igris/memory/knowledge.db)
+SELECT brief_id, size, agent, model_requested, COUNT(*) AS rounds,
+       ROUND(SUM(duration_ms)/60000.0,1) AS minutes
+FROM hunt_runs WHERE project='igris-ai' AND brief_id='FR-267'
+GROUP BY brief_id, size, agent, model_requested ORDER BY MIN(ended_at);
 ```
 
 <!-- /SECTION: brain_stewardship -->

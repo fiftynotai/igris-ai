@@ -7,7 +7,7 @@
  *
  * Conflict resolution uses last-write-wins (LWW) based on timestamps,
  * with special merge strategies for tags (union) and counts (max).
- * Append-only tables (sessions, agent_metrics) use composite key
+ * Append-only tables (sessions, agent_metrics, agent_events) use composite key
  * deduplication instead of LWW.
  *
  * Tools:
@@ -245,6 +245,10 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'instance_id', 'agent', 'event_type', 'phase', 'brief_id',
       'duration_ms', 'input_tokens', 'output_tokens', 'cache_read', 'cache_create',
       'result', 'error_message', 'metadata', 'created_at',
+      // FR-267 hunt-cost record (instances migration v3); syncKey unchanged.
+      // A remote that has not applied v3 fails these rows per-row (BR-066
+      // queue) — deploy the remote before the first push.
+      'model_requested', 'model_resolved', 'round', 'project',
     ],
   },
   {

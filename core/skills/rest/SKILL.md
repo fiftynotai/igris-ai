@@ -67,7 +67,6 @@ If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do N
 If the `igris-brain` MCP server is available:
 - Read `~/.igris/projects/{project}/session/LEARNINGS.md` -- if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
 - Read `~/.igris/projects/{project}/session/DECISIONS.md` -- if it has new content, store each decision via `igris_memory_store` with category="decision" and the current project slug
-- Call `igris_metrics_record` with session summary: project=current project slug, agent="session", action="rest", result="success"
 - Call `igris_session_sync` with:
   - project = current project slug (basename of project directory)
   - brief_id = active brief ID from CURRENT_SESSION.md (if any)

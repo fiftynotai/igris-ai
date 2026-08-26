@@ -27,7 +27,6 @@ import type { ToolDefinition, ToolResult } from '../types.js';
 import { createMemoryComponent } from '../components/memory/index.js';
 import { createErrorsComponent } from '../components/errors/index.js';
 import { createProjectsComponent } from '../components/projects/index.js';
-import { createMetricsComponent } from '../components/metrics/index.js';
 import { createSessionsComponent } from '../components/sessions/index.js';
 import { createBriefsComponent } from '../components/briefs/index.js';
 import { createEdgesComponent } from '../components/edges/index.js';
@@ -164,7 +163,6 @@ const COMPONENT_FACTORIES = [
   createErrorsComponent,
   createProjectsComponent,
   createContextComponent,
-  createMetricsComponent,
   createSessionsComponent,
   createBriefsComponent,
   createEdgesComponent,
@@ -372,10 +370,11 @@ describe('BR-080 gateway missing-required contract', () => {
     // TypeError class BR-080 exists to eliminate.
     //
     // SCOPE (TD-321): the fixture below DECLARES `required`, so this case can
-    // only ever prove the required-declaring half of the corpus — 75 of the 112
-    // registered tools. The title said "an MCP call that omits
-    // params.arguments" and read as a system-wide property; it was not one. The
-    // other 37 tools are covered by the TD-321 block at the bottom of this file.
+    // only ever prove the required-declaring half of the corpus — 74 of the 108
+    // registered tools (re-measured at FR-267, 2026-08-26; 75 of 112 at TD-321).
+    // The title said "an MCP call that omits params.arguments" and read as a
+    // system-wide property; it was not one. The other 34 tools are covered by
+    // the TD-321 block at the bottom of this file.
     const gateway = createGateway();
     gateway.register([
       {
@@ -498,17 +497,20 @@ describe('BR-080 missing-required contract — every registered tool that declar
   // WHAT THE FLOOR IS COMPARED AGAINST (TD-321 corrected the referent): the
   // floor guards `requiring.length` — the number of REGISTERED tools whose
   // `listTools()` schema carries a non-empty `required` list. Re-measured at
-  // TD-321: 75, out of 112 registered tools.
+  // TD-321: 75, out of 112 registered tools. Re-measured at FR-267 (2026-08-26,
+  // metrics component retired — `igris_metrics_record` was its one
+  // required-declaring tool): 74, out of 108.
   //
   // The BR-080 comment here named a different population: the 80
   // `required: [...]` source literals across the 16 component files that carry
-  // one. Both numbers are right in isolation, and the two do not reconcile 1:1
-  // — 4 of the 80 are `required: []` and 1 is a NESTED schema (the edge-spec
-  // array item in `components/memory/index.ts`), which is why 80 - 5 = 75. The
-  // floor clears both counts, so this was a wrong-referent sentence and never a
-  // wrong gate.
+  // one (79 across 15 files since FR-267). Both numbers are right in isolation,
+  // and the two do not reconcile 1:1 — 4 of the literals are `required: []`
+  // and 1 is a NESTED schema (the edge-spec array item in
+  // `components/memory/index.ts`), which is why 80 - 5 = 75 and 79 - 5 = 74.
+  // The floor clears both counts, so this was a wrong-referent sentence and
+  // never a wrong gate.
   //
-  // The floor sits deliberately BELOW the measured 75 so a legitimate tool
+  // The floor sits deliberately BELOW the measured 74 so a legitimate tool
   // removal does not false-fail; it is a non-vacuity check, not a pin.
   it('the swept corpus is non-empty and at least 60 tools deep', () => {
     expect(requiring.length).toBeGreaterThanOrEqual(60);
@@ -527,7 +529,7 @@ describe('BR-080 missing-required contract — every registered tool that declar
 });
 
 // ---------------------------------------------------------------------------
-// TD-321 omitted-`params.arguments` normalisation — the other 37 tools.
+// TD-321 omitted-`params.arguments` normalisation — the other 34 tools (37 at TD-321).
 // ---------------------------------------------------------------------------
 //
 // The MCP spec makes `params.arguments` OPTIONAL, and both brain entrypoints
@@ -546,7 +548,7 @@ describe('BR-080 missing-required contract — every registered tool that declar
 //
 // which is the exact symptom class BR-080 exists to eliminate. TD-321
 // normalises the omitted-arguments case ONCE at the top of `dispatch()`, so an
-// absent `arguments` is exactly equivalent to `{}` for all 112 tools.
+// absent `arguments` is exactly equivalent to `{}` for all 108 tools (FR-267).
 //
 // WHAT THIS BLOCK PROVES:
 //   - `undefined` AND `null` args normalise, on both schema shapes that produce
@@ -569,7 +571,7 @@ describe('BR-080 missing-required contract — every registered tool that declar
 //     that declares no `required` key is advertising that `{}` is a legal call,
 //     and if that advertisement is wrong the defect is in the schema, which is
 //     the same residual the BR-080 ledger above already records.
-//   - anything about the 75 required-declaring tools; that half is the BR-080
+//   - anything about the 74 required-declaring tools; that half is the BR-080
 //     sweep above.
 
 describe('TD-321 omitted-arguments normalisation — fixtures', () => {
@@ -730,9 +732,12 @@ describe('TD-321 omitted-arguments normalisation — every registered tool that 
   // empty array passes while reporting zero cases. The floor guards
   // `nonRequiring.length` — registered tools whose `required` list is absent or
   // empty. Measured at TD-321: 37, the complement of BR-080's 75, summing to
-  // the 112 registered tools that `gateway-tool-count.test.ts` pins. The floor
-  // sits below 37 so a legitimate tool removal (or a tool GAINING a required
-  // key, which moves it into the other sweep) does not false-fail.
+  // the 112 registered tools that `gateway-tool-count.test.ts` pins. Re-measured
+  // at FR-267 (2026-08-26): 34, the complement of 74, summing to 108 — the three
+  // `igris_metrics_query` / `_velocity` / `_dashboard` tools that left declared
+  // no `required`. The floor sits below 34 so a legitimate tool removal (or a
+  // tool GAINING a required key, which moves it into the other sweep) does not
+  // false-fail.
   it('the swept corpus is non-empty and at least 25 tools deep', () => {
     expect(nonRequiring.length).toBeGreaterThanOrEqual(25);
   });

@@ -7,11 +7,12 @@ Igris ships local git hooks that catch drift between the brain stewardship doc (
 Two hook types:
 
 - A `pre-commit` dispatcher (`scripts/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area.
-- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) carrying two independent checks. This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change).
+- A `commit-msg` hook (`scripts/git-hooks/commit-msg`) carrying three independent checks. This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change).
   1. **Summary length (TD-180).** Hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters. The limit matches `core/os/standards.md` and `core/templates/commit_message.md`.
-  2. **Acceptance-criteria gate (TD-325).** Hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no `DEFERRED` reason or no follow-up brief. It reads `brief_files.content` read-only from the brain and delegates the verdict to `core/scripts/brief_ac_check.sh`, the one shared parser. **This hook, and not `pre-commit`, is where the gate belongs:** the closing commit is *defined* by that footer, so the check needs no phase heuristic and a WIP commit is untouched; and `pre-commit`'s phase-guard block is wrapped in `IGRIS_BYPASS_PHASE_GUARD != 1`, a flag `/hunt` sets on the exact commit that must be gated. Fail-open at every tier (no brain DB, no `sqlite3`, no stored content, no parser → silent exit 0). Bypass this half only with `IGRIS_BYPASS_AC_GATE=1`.
+  2. **Acceptance-criteria gate (TD-325).** Hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no `DEFERRED` reason or no follow-up brief. It reads `brief_files.content` read-only from the brain and delegates the verdict to `core/scripts/brief_ac_check.sh`, the one shared parser. **This hook, and not `pre-commit`, is where the gate belongs:** the closing commit is *defined* by that footer, so the check needs no phase heuristic and a WIP commit is untouched; and `pre-commit`'s phase-guard block is wrapped in `IGRIS_BYPASS_PHASE_GUARD != 1`, a flag `/hunt` sets on the exact commit that must be gated. Fail-open at every tier (no brain DB, no `sqlite3`, no stored content, no parser → silent exit 0). Bypass this check only with `IGRIS_BYPASS_AC_GATE=1`.
+  3. **Agent-event coverage gate (FR-267).** On the same closing footer, hard-fails when a role the brief's Agent Log names has no recorded agent event — no `agent_events` row with `event_type` start/stop/error for that brief (and that project, NULL-project legacy rows counting). The roles come from `core/scripts/brief_agent_log_roles.sh`, the one Agent-Log parser; a role with a start but no stop/error is a `WARN unpaired` line, not a refusal. Same fail-open tiers as check 2, plus: no `agent_events` table (a brain older than FR-267) → skip; a bullet-list Agent Log (the v4 template) parses to no roles → nothing demanded. Bypass this check only with `IGRIS_BYPASS_EVENT_GATE=1`. Checks 2 and 3 share the footer parse and the brain access but each has its own section skip, so a bypass of one never silences the other (`test/agent_event_gate.test.bash` G6 pins both directions). Shown red-first on a real omission — see `test/fixtures/event-gate/README.md`.
 
-  Bypass both with `git commit --no-verify`.
+  Bypass all three with `git commit --no-verify`.
 
 The `pre-commit` dispatcher's validators:
 
@@ -19,13 +20,15 @@ The `pre-commit` dispatcher's validators:
 |---|---|---|
 | `scripts/validate_brain_stewardship_enums.sh` | Every enum value declared on `memory_store` (`category`, `scope`, `provenance`) appears in backticks somewhere inside the `<!-- SECTION: brain_stewardship -->` region of `core/prompts/brain_stewardship.md`. Also asserts schema-shrinkage: enum-shaped backticked tokens in the docs must still exist in the schema. Overridable via `SCHEMA_FILE` / `PROMPT_FILE` env vars. | TD-070 / DRIFT-1, TD-072, TD-092 (renamed in TD-148) |
 | `scripts/validate_lockfile_in_sync.sh` | `npm ci --dry-run --ignore-scripts` from repo root succeeds (workspace-aware lockfile is in sync with all `package.json` files). Catches the drift class where a workspace package was renamed or version-bumped without regenerating `package-lock.json`. | TD-134 |
+| `scripts/validate_hunt_agent_event_sites.sh` | Every `igris_agent_event` call site in `core/skills/hunt/SKILL.md` names `instance_id`, `agent`, `event_type` and `model_requested` as arguments; no site passes `duration_ms` or `round` (the brain computes both); the start sites cover architect/forger/sentinel/warden/document/mender; at least 13 sites exist. Triggers when the hunt skill or the instances component (where the tool's `required` list lives) is staged. HARD-fails. | FR-267 |
 | `gitleaks protect --staged --config .gitleaks.toml` | No secret-shaped string reaches a commit (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family). **Runs unconditionally** (gitleaks scans the staged set itself — no file trigger). HARD-fails on any finding; degrades gracefully (WARN + skip) if `gitleaks` is absent so a contributor without it isn't blocked. Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md). | TD-159 |
 
 > The full validator roster lives in the dispatcher's header comment
 > (`scripts/git-hooks/pre-commit`); this table summarizes the load-bearing
 > ones. Several validators (TD-219 SKILL.md YAML, TD-248 harness-leak, FR-135
 > harness drift, FR-186 contract consumers, TD-257 brief-state reconciliation,
-> TD-325 AC completion) are wired in addition to the rows above.
+> TD-325 AC completion, TD-324 required args, TD-367 harness-tier claims,
+> TD-240 error-fingerprint loop) are wired in addition to the rows above.
 
 Both core validators are also runnable standalone:
 

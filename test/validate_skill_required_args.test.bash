@@ -22,8 +22,12 @@
 #                         must be ZERO; a standing WARN trains --no-verify).
 #   T1  known_positive  - all 11 pre-fix flags re-found.
 #   T1b known_positive_named_sites - each of the 7 TD-323 sites BY NAME.
-#   T2  known_negative  - none of the 7 flagged after TD-323's fix.
-#   T3  count_sentinel  - the real map has exactly 75 tools.
+#   T2  known_negative  - none of the 7 flagged after TD-323's fix. Since
+#                         FR-267 widened igris_agent_event's required list
+#                         (model_requested), the fixture's scoped preamble
+#                         names it too, so the four list items stay clear and
+#                         the topic sentence is still the ONE residual.
+#   T3  count_sentinel  - the real map has exactly 74 tools (75 before FR-267).
 #   T4  nested_required - the outer list wins over the edges[] item schema.
 #   T5  empty_required  - `required: []` drops the tool from the map.
 #   T6  multiline_required - a wrapped array does not parse as empty.
@@ -61,9 +65,10 @@ setup() {
 @test "T1 known_positive: the pre-fix corpus re-flags all 11 sites" {
   # 11 = archive(1) + hunt:79(1) + reclaim release/claim(2) + Phase7 sync(1)
   #      + Phase8 sync(1) + agent-event items(4) + workflow-template(1).
-  # The 12th flag is the agent-event SECTION TOPIC SENTENCE, an un-fixed prose
-  # carryover that is ledgered on the real tree. Its presence here is what
-  # proves the fixture is a faithful slice and not a scrubbed corpus.
+  # The 12th flag is the agent-event SECTION TOPIC SENTENCE, a prose carryover
+  # that was ledgered on the real tree until FR-267 made the sentence name all
+  # four required keys. Its presence here is what proves the fixture is a
+  # faithful slice and not a scrubbed corpus.
   run env SKILL_ARGS_SCAN_ROOT="$FIX/known_positive" python3 "$VALIDATOR" --no-ledger
 
   [ "$status" -eq 1 ] || return 1
@@ -83,20 +88,23 @@ setup() {
   [[ "$output" == *"igris_brief_claim -> missing: brief_id, project"* ]] || return 1
   # /hunt Phase 7 step 5 and Phase 8 step 2 — the upsert pair.
   [[ "$output" == *"igris_brief_sync -> missing: brief_id, project, title"* ]] || return 1
-  # /hunt agent-event list items.
-  [[ "$output" == *"igris_agent_event -> missing: agent, instance_id"* ]] || return 1
+  # /hunt agent-event list items (model_requested joined the required list in
+  # FR-267, so the pre-fix items now miss three keys, not two).
+  [[ "$output" == *"igris_agent_event -> missing: agent, instance_id, model_requested"* ]] || return 1
   # hunt/workflow-template.md — the file that stayed invisible while sweeps
   # looked only at SKILL.md.
   [[ "$output" == *"hunt/workflow-template.md:3: igris_brief_get -> missing: brief_id, project"* ]] || return 1
 }
 
-@test "T2 known_negative: TD-323's fix clears all 7; only the ledgered prose carryover remains" {
+@test "T2 known_negative: TD-323's fix clears all 7; only the prose topic sentence remains" {
   run env SKILL_ARGS_SCAN_ROOT="$FIX/known_negative" python3 "$VALIDATOR" --no-ledger
 
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"Residual sites (1)"* ]] || return 1
-  # The single remaining flag is the section topic sentence, NOT a fixed site.
-  [[ "$output" == *"igris_agent_event -> missing: agent, event_type, instance_id"* ]] || return 1
+  # The single remaining flag is the section topic sentence, NOT a fixed site
+  # (and NOT one of the four list items, which the preamble covers).
+  [[ "$output" == *"igris_agent_event -> missing: agent, event_type, instance_id, model_requested"* ]] || return 1
+  [[ "$output" != *"known_negative/hunt/SKILL.md:6"* ]] || return 1
   # None of the seven fixed sites may reappear.
   [[ "$output" != *"igris_brief_update"* ]] || return 1
   [[ "$output" != *"igris_brief_get"* ]] || return 1
@@ -105,13 +113,16 @@ setup() {
   [[ "$output" != *"igris_brief_sync"* ]] || return 1
 }
 
-@test "T3 count_sentinel: the real components tree yields exactly 75 tools" {
-  # 80 `required: [` literals - 4 empty - 1 nested item schema = 75.
-  # In-family with gateway-tool-count.test.ts pinning 112 registered tools.
+@test "T3 count_sentinel: the real components tree yields exactly 74 tools" {
+  # 79 `required: [` literals - 4 empty - 1 nested item schema = 74.
+  # FR-267 (2026-08-26) retired the metrics component and its one literal
+  # (igris_metrics_record): 80 -> 79, 75 -> 74. Moved together with
+  # EXPECTED_TOOL_COUNT in the validator.
+  # In-family with gateway-tool-count.test.ts pinning 108 registered tools.
   run python3 "$VALIDATOR" --dump-tool-map
 
   [ "$status" -eq 0 ] || return 1
-  [ "$(printf '%s\n' "$output" | grep -c '^igris_')" -eq 75 ] || return 1
+  [ "$(printf '%s\n' "$output" | grep -c '^igris_')" -eq 74 ] || return 1
 }
 
 @test "T4 nested_required: the edges[] item schema does NOT shadow the real list" {

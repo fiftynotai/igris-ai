@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Igris commit-msg hook. Two checks, in this order:
+# Description: Igris commit-msg hook. Three checks, in this order:
 #
 #   1. SUMMARY LENGTH (TD-180) — hard-fails a commit whose summary (the first
 #      non-comment, non-blank line) exceeds 72 characters. The locked
@@ -13,8 +13,23 @@
 #      unticked acceptance criterion, or a deferral without a reason and a
 #      follow-up brief. Bypass: IGRIS_BYPASS_AC_GATE=1.
 #
-#   The two are independent: the length check runs first and is unchanged, so
-#   test/commit_msg_length.test.bash is the regression control for it.
+#   3. AGENT-EVENT COVERAGE GATE (FR-267) — hard-fails a CLOSING commit when a
+#      role named in that brief's Agent Log has NO recorded agent event (no
+#      `agent_events` row with event_type start/stop/error for the brief).
+#      The Agent Log is the brief's own statement of who worked on it; the
+#      hunt-cost record (`agent_events`, brain-timed) is what makes that
+#      statement measurable, and emission was 31% compliant while it was
+#      prose (L-1402). A role with a start but no stop/error is a WARN, not a
+#      refusal — a crashed agent still ran. Bypass: IGRIS_BYPASS_EVENT_GATE=1.
+#
+#   The three are independent: the length check runs first and is unchanged
+#   (test/commit_msg_length.test.bash is its regression control). §2 and §3
+#   share one PRELUDE — the closing-footer parse and the brain-DB access — but
+#   each has its OWN bypass and its OWN parser resolution, so a bypass of one
+#   gate never silences the other (test/agent_event_gate.test.bash G6 pins
+#   both directions; before FR-267 the AC bypass was a bare `exit 0`, which
+#   would have disabled §3 by construction). Both verdict blocks print before
+#   the single exit, and the bypass hint names only the gate(s) that refused.
 #
 # Usage: git invokes this as `.git/hooks/commit-msg <msg-file>`.
 #   Argument $1 is the path to the file holding the pending commit message.
@@ -38,7 +53,7 @@
 #   key makes the store LESS truthful. The brain gets the OBSERVER role instead
 #   (the `nonCanonical*Note` pattern: informs, never rejects).
 #
-#   NOT in the pre-commit phase guard. `scripts/git-hooks/pre-commit:146` wraps
+#   NOT in the pre-commit phase guard. `scripts/git-hooks/pre-commit` wraps
 #   that whole guard in `IGRIS_BYPASS_PHASE_GUARD != 1`, and /hunt's COMMITTING
 #   step SETS that flag on the exact commit we need to gate. A check inside
 #   that block is bypassed by construction on every closing commit.
@@ -53,21 +68,32 @@
 #   entanglement with IGRIS_BYPASS_PHASE_GUARD and no dependence on the
 #   `instances` registry (no stale-instance failure mode, the G-01R class).
 #
-# WHAT THIS GATE DOES NOT COVER — named, because an unnamed gap is worse than a
+#   The event gate (§3) inherits every one of those reasons: it is a check on
+#   the same footer, against the same stored brief, and it too would be
+#   bypassed by construction inside the phase guard.
+#
+# WHAT THESE GATES DO NOT COVER — named, because an unnamed gap is worse than a
 #   known one:
 #     - a close with NO commit: /archive, a direct igris_brief_sync, the
 #       dashboard, or remote sync. Refusing those is the C1/C3 manufacture
 #       argued above, so they are OBSERVED instead — by the acGateNote in
 #       brain-mcp-server/src/tools/briefs.ts at the moment of the sync, and by
 #       scripts/validate_brief_ac_completion.sh on the next brief-state commit.
+#       (§3 has no observer yet; FR-268 owns any OS-wide roll-up.)
 #     - `git commit --no-verify` (git skips every hook natively).
 #     - a checkout without the hooks installed, or a project whose briefs live
 #       in a different brain.
+#     - §3 only: a brain older than the FR-267 schema (no `agent_events`
+#       table → skip), an Agent Log written as a bullet list (the v4 template
+#       parses to no roles → nothing demanded), and roles the log does NOT
+#       name (the gate reads the log you wrote; a skipped phase demands
+#       nothing).
 #   All of those land in the same L3 accumulation net.
 #
 # Bypass: `git commit --no-verify` (git skips this hook entirely — native, no
 #   code here). Use sparingly.
-# Bypass the AC gate only: `IGRIS_BYPASS_AC_GATE=1 git commit ...`
+# Bypass the AC gate only:    `IGRIS_BYPASS_AC_GATE=1 git commit ...`
+# Bypass the event gate only: `IGRIS_BYPASS_EVENT_GATE=1 git commit ...`
 #   One-shot, never `export`ed — same posture as IGRIS_BYPASS_PHASE_GUARD and
 #   IGRIS_BYPASS_BRIEF_GATE.
 
@@ -101,16 +127,13 @@ if [ "$len" -gt 72 ]; then
 fi
 
 # =============================================================================
-# 2. Acceptance-criteria gate (TD-325)
+# Shared prelude for the two closing-commit gates (§2 and §3)
 # =============================================================================
 # FAIL-OPEN AT EVERY TIER. This hook runs on every commit in every repo that
 # installs it; a missing brain DB, a missing sqlite3, a brief with no stored
-# content, or a missing parser must never block a commit. The ONLY exit-1 path
-# below is the parser returning FAIL on a brief this commit claims to close.
-
-if [ "${IGRIS_BYPASS_AC_GATE:-0}" = "1" ]; then
-  exit 0
-fi
+# content, or a missing parser must never block a commit. The ONLY exit-1
+# paths below are a parser returning FAIL (§2) or a named role with no event
+# (§3) on a brief this commit claims to close.
 
 # --- Is this a CLOSING commit? -----------------------------------------------
 # Comment lines are stripped first, so a `closes #` appearing in git's own
@@ -130,22 +153,11 @@ brief_ids="$(printf '%s\n' "$msg_body" \
   | grep -oE '[A-Z]{2,3}-[0-9]+' 2>/dev/null \
   | sort -u)"
 
-# No footer -> not a closing commit -> the gate is silent. This is why mid-hunt
-# WIP commits need no phase heuristic to be exempt.
+# No footer -> not a closing commit -> both gates are silent. This is why
+# mid-hunt WIP commits need no phase heuristic to be exempt.
 [ -n "$brief_ids" ] || exit 0
 
-# --- Resolve the shared parser (repo first, runtime mirror second) ------------
-# core/scripts/brief_ac_check.sh is the ONE checkbox parser; /hunt and the L3
-# validator read the same file. Preferring the repo copy means a change to the
-# parser is gated by the parser as edited, not by a stale mirror.
 REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"
-AC_CHECK=""
-if [ -n "$REPO_ROOT" ] && [ -f "$REPO_ROOT/core/scripts/brief_ac_check.sh" ]; then
-  AC_CHECK="$REPO_ROOT/core/scripts/brief_ac_check.sh"
-elif [ -f "$HOME/.igris/core/scripts/brief_ac_check.sh" ]; then
-  AC_CHECK="$HOME/.igris/core/scripts/brief_ac_check.sh"
-fi
-[ -n "$AC_CHECK" ] || exit 0
 [ -n "$REPO_ROOT" ] || exit 0
 
 BRAIN_DB="$HOME/.igris/memory/knowledge.db"
@@ -155,41 +167,178 @@ command -v sqlite3 >/dev/null 2>&1 || exit 0
 # $PROJECT is basename(repo) and each id matched ^[A-Z]{2,3}-[0-9]+$ above —
 # neither is user-controlled free text. Both are still single-quote-escaped
 # (doubling any embedded quote) before interpolation, matching the
-# pre-commit:171-172 idiom. The DB is opened -readonly: this hook never writes.
+# pre-commit idiom. The DB is opened -readonly: this hook never writes.
 PROJECT="$(basename "$REPO_ROOT")"
 PROJECT_SQL="${PROJECT//\'/\'\'}"
 
+# =============================================================================
+# 2. Acceptance-criteria gate (TD-325)
+# =============================================================================
+# The bypass is a SECTION skip, not an exit: §3 still runs (FR-267).
 ac_failed=0
-for BRIEF_ID in $brief_ids; do
-  BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
-  brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
-    "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
-    2>/dev/null)"
-
-  # No stored content for this project+brief -> nothing to read -> stay silent.
-  # (A brief tracked in another project's brain, or one that predates
-  # brief_files, must not block this repo's commits.)
-  [ -n "$brief_content" ] || continue
-
-  if ac_out="$(printf '%s\n' "$brief_content" \
-                 | bash "$AC_CHECK" --brief-id "$BRIEF_ID" --guidance - 2>/dev/null)"; then
-    # PASS / NO_AC / NO_ITEMS / DEGRADED — all exit 0 by contract.
-    continue
+if [ "${IGRIS_BYPASS_AC_GATE:-0}" != "1" ]; then
+  # --- Resolve the shared parser (repo first, runtime mirror second) ----------
+  # core/scripts/brief_ac_check.sh is the ONE checkbox parser; /hunt and the L3
+  # validator read the same file. Preferring the repo copy means a change to
+  # the parser is gated by the parser as edited, not by a stale mirror.
+  AC_CHECK=""
+  if [ -f "$REPO_ROOT/core/scripts/brief_ac_check.sh" ]; then
+    AC_CHECK="$REPO_ROOT/core/scripts/brief_ac_check.sh"
+  elif [ -f "$HOME/.igris/core/scripts/brief_ac_check.sh" ]; then
+    AC_CHECK="$HOME/.igris/core/scripts/brief_ac_check.sh"
   fi
 
-  if [ "$ac_failed" -eq 0 ]; then
-    echo ""
-    echo "[commit-msg] TD-325 AC gate: refusing to close a brief with unmet criteria"
-    echo ""
-  fi
-  printf '%s\n' "$ac_out"
-  ac_failed=1
-done
+  if [ -n "$AC_CHECK" ]; then
+    for BRIEF_ID in $brief_ids; do
+      BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
+      brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
+        "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
+        2>/dev/null)"
 
-if [ "$ac_failed" -eq 1 ]; then
+      # No stored content for this project+brief -> nothing to read -> stay
+      # silent. (A brief tracked in another project's brain, or one that
+      # predates brief_files, must not block this repo's commits.)
+      [ -n "$brief_content" ] || continue
+
+      if ac_out="$(printf '%s\n' "$brief_content" \
+                     | bash "$AC_CHECK" --brief-id "$BRIEF_ID" --guidance - 2>/dev/null)"; then
+        # PASS / NO_AC / NO_ITEMS / DEGRADED — all exit 0 by contract.
+        continue
+      fi
+
+      if [ "$ac_failed" -eq 0 ]; then
+        echo ""
+        echo "[commit-msg] TD-325 AC gate: refusing to close a brief with unmet criteria"
+        echo ""
+      fi
+      printf '%s\n' "$ac_out"
+      ac_failed=1
+    done
+  fi
+fi
+
+# =============================================================================
+# 3. Agent-event coverage gate (FR-267)
+# =============================================================================
+# [[ FR-267 EVENT GATE BEGIN ]]  (the bats self-negative control G10 deletes
+#                                 this block by its markers — keep them intact)
+#
+# For every brief this commit closes: read its stored content, ask the ONE
+# Agent-Log parser (core/scripts/brief_agent_log_roles.sh) which roles the log
+# names, and require at least one start/stop/error row per role in
+# `agent_events` for that brief. The `project` predicate is applied only when
+# the column exists (FR-267 schema v3); rows with a NULL project — written
+# before the column — still count, because they were the record at the time.
+#
+# Fail-open tiers, in order: no parser anywhere → skip; no `agent_events`
+# table (a brain older than FR-267) → skip; no stored content → skip that
+# brief; a log that parses to no roles (NO_LOG / NO_ROWS) → nothing demanded;
+# a read that errors → WARN and skip that role.
+event_failed=0
+if [ "${IGRIS_BYPASS_EVENT_GATE:-0}" != "1" ]; then
+  ROLES_CHECK=""
+  if [ -f "$REPO_ROOT/core/scripts/brief_agent_log_roles.sh" ]; then
+    ROLES_CHECK="$REPO_ROOT/core/scripts/brief_agent_log_roles.sh"
+  elif [ -f "$HOME/.igris/core/scripts/brief_agent_log_roles.sh" ]; then
+    ROLES_CHECK="$HOME/.igris/core/scripts/brief_agent_log_roles.sh"
+  fi
+
+  if [ -n "$ROLES_CHECK" ]; then
+    has_table="$(sqlite3 -readonly "$BRAIN_DB" \
+      "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_events';" 2>/dev/null)"
+    if [ "$has_table" = "1" ]; then
+      has_project="$(sqlite3 -readonly "$BRAIN_DB" \
+        "SELECT COUNT(*) FROM pragma_table_info('agent_events') WHERE name='project';" 2>/dev/null)"
+      project_pred=""
+      if [ "$has_project" = "1" ]; then
+        project_pred=" AND (project='$PROJECT_SQL' OR project IS NULL)"
+      fi
+
+      for BRIEF_ID in $brief_ids; do
+        BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
+        brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
+          "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
+          2>/dev/null)"
+        [ -n "$brief_content" ] || continue
+
+        roles="$(printf '%s\n' "$brief_content" \
+                   | bash "$ROLES_CHECK" --brief-id "$BRIEF_ID" --roles - 2>/dev/null)"
+        [ -n "$roles" ] || continue
+
+        all_roles=""
+        missing=""
+        unpaired=""
+        while IFS= read -r role; do
+          [ -n "$role" ] || continue
+          ROLE_SQL="${role//\'/\'\'}"
+          all_roles="${all_roles:+$all_roles,}$role"
+
+          n_any="$(sqlite3 -readonly "$BRAIN_DB" \
+            "SELECT COUNT(*) FROM agent_events WHERE brief_id='$BRIEF_SQL' AND agent='$ROLE_SQL' AND event_type IN ('start','stop','error')$project_pred;" \
+            2>/dev/null)"
+          case "$n_any" in
+            ''|*[!0-9]*)
+              echo "EVENT-GATE $BRIEF_ID: WARN could not read agent_events for role '$role' (skipped, fail-open)"
+              continue
+              ;;
+          esac
+          if [ "$n_any" -eq 0 ]; then
+            missing="${missing:+$missing,}$role"
+            continue
+          fi
+
+          n_end="$(sqlite3 -readonly "$BRAIN_DB" \
+            "SELECT COUNT(*) FROM agent_events WHERE brief_id='$BRIEF_SQL' AND agent='$ROLE_SQL' AND event_type IN ('stop','error')$project_pred;" \
+            2>/dev/null)"
+          if [ "${n_end:-0}" = "0" ]; then
+            unpaired="${unpaired:+$unpaired,}$role"
+          fi
+        done <<< "$roles"
+
+        if [ -n "$missing" ]; then
+          if [ "$event_failed" -eq 0 ]; then
+            echo ""
+            echo "[commit-msg] FR-267 event gate: refusing to close a brief whose Agent Log names a role with no recorded agent event"
+            echo ""
+          fi
+          echo "EVENT-GATE $BRIEF_ID: VERDICT=FAIL roles=$all_roles missing=$missing"
+          echo "  every role the Agent Log names must have at least one igris_agent_event"
+          echo "  row (start, stop or error) for this brief — that row IS the hunt-cost"
+          echo "  record. Emit the missing event, or correct the log if it names"
+          echo "  something that is not an agent."
+          event_failed=1
+        fi
+
+        if [ -n "$unpaired" ]; then
+          # A start with no stop/error: the agent ran but never reported back.
+          # Not a refusal — a crashed agent is still a real invocation — but
+          # the duration for that round is NULL, so say so.
+          _rest="$unpaired"
+          while [ -n "$_rest" ]; do
+            _one="${_rest%%,*}"
+            if [ "$_one" = "$_rest" ]; then _rest=""; else _rest="${_rest#*,}"; fi
+            echo "EVENT-GATE $BRIEF_ID: WARN unpaired: $_one (start recorded, no stop/error — duration NULL)"
+          done
+        fi
+      done
+    fi
+  fi
+fi
+# [[ FR-267 EVENT GATE END ]]
+
+# =============================================================================
+# Single exit: both verdict blocks are already printed; the hint names only
+# the gate(s) that refused.
+# =============================================================================
+if [ "$ac_failed" -eq 1 ] || [ "$event_failed" -eq 1 ]; then
   echo ""
   echo "  One-shot bypass (leaves a trail in this terminal, never export it):"
-  echo "    IGRIS_BYPASS_AC_GATE=1 git commit ..."
+  if [ "$ac_failed" -eq 1 ]; then
+    echo "    IGRIS_BYPASS_AC_GATE=1 git commit ..."
+  fi
+  if [ "$event_failed" -eq 1 ]; then
+    echo "    IGRIS_BYPASS_EVENT_GATE=1 git commit ..."
+  fi
   echo ""
   exit 1
 fi

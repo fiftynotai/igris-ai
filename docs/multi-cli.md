@@ -1104,7 +1104,7 @@ across all three supported CLIs (Claude, OpenCode, Codex):
 
 | CLI | Wired events | Mechanism | Notes |
 |-----|--------------|-----------|-------|
-| Claude Code | All 6 portable + Claude-only (SubagentStop, Stop, TaskCompleted, TeammateIdle, Notification) | `.claude/settings.json` entries point directly at shared script paths | Claude-only events continue to use project-local `.claude/hooks/` since no other CLI has an equivalent. |
+| Claude Code | All 6 portable + Claude-only (Stop, TaskCompleted, TeammateIdle, Notification) — `SubagentStart`/`SubagentStop` are NO LONGER wired: FR-267 removed the five `"type": "http"` groups that posted agent telemetry to a dead receiver | `.claude/settings.json` entries point directly at shared script paths | Claude-only events continue to use project-local `.claude/hooks/` since no other CLI has an equivalent. Agent cost now rides `igris_agent_event` (harness-agnostic), not hooks — see `docs/reference/hunt-cost-record.md`. |
 | OpenCode | All 6 portable | TypeScript plugin at `~/.config/opencode/plugins/igris-bridge.ts` | Auto-loaded by Bun at startup; raw `.ts` — no build step. |
 | Codex CLI | `session_end` only | `notify` program wrapper at `~/.igris/core/hooks/bridges/codex-notify.sh` | Codex exposes only post-turn notification. The user's original `notify` program is backed up to `~/.igris/config.json → cli_targets.codex.user_notify_backup` and invoked first. |
 | Gemini CLI | None (NOT projected — FR-182) | Not yet wired | gemini-cli 0.45.0 NOW has a `gemini hooks` subcommand (the old "no hook API" claim is stale) — full onboarding is tracked under FR-182. Igris does not yet project gemini hooks. |
@@ -1277,7 +1277,7 @@ Skips with exit code 77 when `opencode`, `bun`, or `ZAI_API_KEY` are unavailable
       "hooks": {
         "settings_file": "$CLAUDE_PROJECT_DIR/.claude/settings.json",
         "events_covered": ["session_start","session_end","pre_tool_use","post_tool_use","pre_compact","post_compact"],
-        "claude_only_events": ["SubagentStop","Stop","Notification","TaskCompleted","TeammateIdle"]
+        "claude_only_events": ["Stop","Notification","TaskCompleted","TeammateIdle"]
       }
     },
     "opencode": {

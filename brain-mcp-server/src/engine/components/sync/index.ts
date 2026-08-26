@@ -113,7 +113,7 @@ const BATCH_EVENT_TABLE_MAP: Record<string, string[]> = {
   'memory.stored': ['learnings'],
   'error.stored': ['errors'],
   'project.registered': ['projects'],
-  'metrics.recorded': ['agent_metrics'],
+  'agent_event.recorded': ['agent_events'],
 };
 
 // ---------------------------------------------------------------------------
@@ -450,7 +450,7 @@ export function createSyncComponent(): BrainComponent {
       return [
         {
           name: 'igris_brain_push',
-          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_metrics changed since last push. Uses last-write-wins for conflict resolution.',
+          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_events changed since last push. Uses last-write-wins for conflict resolution.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -706,7 +706,7 @@ export function createSyncComponent(): BrainComponent {
           { name: 'memory.stored', description: 'Batch-push learnings table' },
           { name: 'error.stored', description: 'Batch-push errors table' },
           { name: 'project.registered', description: 'Batch-push projects table' },
-          { name: 'metrics.recorded', description: 'Batch-push agent_metrics table' },
+          { name: 'agent_event.recorded', description: 'Batch-push agent_events table (FR-267)' },
         ],
       };
     },
@@ -726,7 +726,7 @@ export function createSyncComponent(): BrainComponent {
       ctx.bus.on('memory.stored', onBatchedEvent);
       ctx.bus.on('error.stored', onBatchedEvent);
       ctx.bus.on('project.registered', onBatchedEvent);
-      ctx.bus.on('metrics.recorded', onBatchedEvent);
+      ctx.bus.on('agent_event.recorded', onBatchedEvent);
 
       const status = _autoPushConfig
         ? `enabled, remote: ${_autoPushConfig.remoteUrl}`
@@ -751,7 +751,7 @@ export function createSyncComponent(): BrainComponent {
         _ctx.bus.off('memory.stored', onBatchedEvent);
         _ctx.bus.off('error.stored', onBatchedEvent);
         _ctx.bus.off('project.registered', onBatchedEvent);
-        _ctx.bus.off('metrics.recorded', onBatchedEvent);
+        _ctx.bus.off('agent_event.recorded', onBatchedEvent);
       }
 
       _ctx = null;

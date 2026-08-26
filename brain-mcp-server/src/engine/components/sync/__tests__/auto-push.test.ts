@@ -562,7 +562,7 @@ describe('Sync Auto-Push', () => {
       const comp = createSyncComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('metrics.recorded', { project: 'p' });
+      bus.emit('agent_event.recorded', { project: 'p' });
 
       // Not fired yet at 9.9s
       await vi.advanceTimersByTimeAsync(9_999);
@@ -681,7 +681,7 @@ describe('Sync Auto-Push', () => {
       bus.emit('memory.stored', { project: 'p' });
       bus.emit('error.stored', { project: 'p' });
       bus.emit('project.registered', { slug: 's' });
-      bus.emit('metrics.recorded', { project: 'p' });
+      bus.emit('agent_event.recorded', { project: 'p' });
 
       // No DB calls or fetch calls should have been made
       expect(fetchWithRetry).not.toHaveBeenCalled();
@@ -745,7 +745,7 @@ describe('Sync Auto-Push', () => {
         'memory.stored',
         'error.stored',
         'project.registered',
-        'metrics.recorded',
+        'agent_event.recorded',
       ];
 
       const listenNames = listens.map((e) => e.name);

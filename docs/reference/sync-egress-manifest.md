@@ -195,6 +195,10 @@ is annotated inline.
 - `error_message`
 - `metadata`
 - `created_at`
+- `model_requested`
+- `model_resolved`
+- `round`
+- `project`
 
 #### `event_log` — append-only
 

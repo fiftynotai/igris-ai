@@ -98,6 +98,53 @@ export function createInstancesComponent(): BrainComponent {
             CREATE INDEX IF NOT EXISTS idx_instances_lease ON instances(lease_expires_at);
           `,
         },
+        {
+          version: 3,
+          // Base CREATEs (legacy db.ts v9 and v1 above) stay FROZEN at the v9
+          // shape: evolution is ALTER-only here, or a fresh DB's CREATE would
+          // carry the columns and this ADD COLUMN would abort the chain (L-53).
+          // `model_requested` is NULLABLE at the DDL (SQLite cannot ADD COLUMN
+          // NOT NULL without a default, and a sentinel would contradict the
+          // NULL-when-unknown rule); the REQUIREMENT is enforced at the
+          // gateway `required` list and in the handler.
+          // `hunt_runs` LEFT JOINs the legacy `brief_status` table (created by
+          // db.ts v2, always before this chain in production); a fixture that
+          // applies v3 without it can still boot but must not RENAME a column
+          // afterwards — SQLite re-parses views on RENAME.
+          description: 'FR-267 hunt-cost record: model/round/project columns, hunt_runs view, 0->NULL fold',
+          sql: `
+            ALTER TABLE agent_events ADD COLUMN model_requested TEXT;
+            ALTER TABLE agent_events ADD COLUMN model_resolved TEXT;
+            ALTER TABLE agent_events ADD COLUMN round INTEGER NOT NULL DEFAULT 1;
+            ALTER TABLE agent_events ADD COLUMN project TEXT;
+            CREATE INDEX IF NOT EXISTS idx_agent_events_brief ON agent_events(brief_id, agent);
+            -- 0 was never a measurement: measured 2026-08-26, 0 of 244 rows carried a
+            -- duration or a token count (FR-267). Exactly reversible (NULL -> 0), so no
+            -- snapshot is taken.
+            UPDATE agent_events SET duration_ms = NULL WHERE duration_ms = 0;
+            UPDATE agent_events
+               SET input_tokens = NULL, output_tokens = NULL, cache_read = NULL, cache_create = NULL
+             WHERE COALESCE(input_tokens, 0) = 0 AND COALESCE(output_tokens, 0) = 0
+               AND COALESCE(cache_read, 0) = 0 AND COALESCE(cache_create, 0) = 0;
+            -- One-time archaeology backfill; rows whose instance was removed on /rest
+            -- stay NULL, which is honest.
+            UPDATE agent_events
+               SET project = (SELECT i.project_slug FROM instances i WHERE i.id = agent_events.instance_id)
+             WHERE project IS NULL;
+            CREATE VIEW IF NOT EXISTS hunt_runs AS
+              SELECT e.project, e.brief_id, bs.effort AS size, e.agent, e.round, e.phase,
+                     e.model_requested, e.model_resolved, e.event_type AS ended_with, e.result,
+                     e.duration_ms, ROUND(e.duration_ms / 60000.0, 1) AS minutes,
+                     CASE WHEN e.duration_ms IS NULL THEN NULL
+                          ELSE datetime(e.created_at, '-' || (e.duration_ms / 1000) || ' seconds') END AS started_at,
+                     e.created_at AS ended_at,
+                     e.input_tokens, e.output_tokens, e.cache_read, e.cache_create,
+                     e.instance_id, e.id AS event_id
+              FROM agent_events e
+              LEFT JOIN brief_status bs ON bs.project = e.project AND bs.brief_id = e.brief_id
+              WHERE e.event_type IN ('stop', 'error');
+          `,
+        },
       ];
     },
 
@@ -229,7 +276,7 @@ export function createInstancesComponent(): BrainComponent {
         },
         {
           name: 'igris_agent_event',
-          description: 'Record an agent lifecycle event for live dashboard tracking. Called during /hunt workflow at each agent phase transition.',
+          description: 'Record one agent lifecycle event in the durable hunt-cost record (FR-267). One start/stop pair = one agent invocation: emit start before delegating to an agent and stop (or error) after it returns — every time, including a resumed, re-prompted or re-run agent. The brain stamps both timestamps, computes duration_ms on the stop/error row from its own clock and assigns round; never pass either. Called during /hunt at each agent phase transition.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -247,6 +294,14 @@ export function createInstancesComponent(): BrainComponent {
                 enum: ['start', 'stop', 'error', 'retry'],
                 description: 'Event lifecycle type',
               },
+              model_requested: {
+                type: 'string',
+                description: 'The model you chose for this agent, or `inherit:<your own model id>` — opaque string, required on every event',
+              },
+              model_resolved: {
+                type: 'string',
+                description: 'The model the harness reports the agent actually ran on — stop/error only, omit when unknown',
+              },
               phase: {
                 type: 'string',
                 description: 'Hunt phase: PLANNING, BUILDING, TESTING, REVIEWING, DOCUMENTING',
@@ -255,25 +310,21 @@ export function createInstancesComponent(): BrainComponent {
                 type: 'string',
                 description: 'Active brief ID',
               },
-              duration_ms: {
-                type: 'number',
-                description: 'Elapsed time in milliseconds (for stop/error events)',
-              },
               input_tokens: {
                 type: 'number',
-                description: 'Input tokens consumed',
+                description: 'Input tokens consumed — omit when unknown, never 0',
               },
               output_tokens: {
                 type: 'number',
-                description: 'Output tokens consumed',
+                description: 'Output tokens consumed — omit when unknown, never 0',
               },
               cache_read: {
                 type: 'number',
-                description: 'Cache read tokens consumed',
+                description: 'Cache read tokens consumed — omit when unknown, never 0',
               },
               cache_create: {
                 type: 'number',
-                description: 'Cache create tokens consumed',
+                description: 'Cache create tokens consumed — omit when unknown, never 0',
               },
               result: {
                 type: 'string',
@@ -288,9 +339,24 @@ export function createInstancesComponent(): BrainComponent {
                 description: 'Additional metadata as JSON string (default: "{}")',
               },
             },
-            required: ['instance_id', 'agent', 'event_type'],
+            // FR-267: `duration_ms` is deliberately NOT a property — the brain
+            // computes it, and `additionalProperties: false` makes a caller
+            // passing it a loud gateway rejection.
+            required: ['instance_id', 'agent', 'event_type', 'model_requested'],
           },
-          handler: (args) => handleAgentEvent(args as unknown as AgentEventInput),
+          handler: (args) => {
+            // `event` is the structured record; it feeds the bus and is
+            // stripped from the MCP envelope.
+            const { event, ...envelope } = handleAgentEvent(args as unknown as AgentEventInput);
+            _ctx?.bus.emit('agent_event.recorded', {
+              instance_id: event.instance_id,
+              agent: event.agent,
+              event_type: event.event_type,
+              brief_id: event.brief_id,
+              project: event.project,
+            });
+            return envelope;
+          },
         },
       ];
     },
@@ -299,6 +365,7 @@ export function createInstancesComponent(): BrainComponent {
       return {
         emits: [
           { name: 'instance.state_updated', description: 'An instance state row was updated' },
+          { name: 'agent_event.recorded', description: 'An agent lifecycle event row was written' },
         ],
         listens: [],
       };

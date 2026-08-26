@@ -58,9 +58,10 @@
 On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
 **Pattern for every agent.** Every call below passes `instance_id` (from the
-per-instance session file) and `agent` (the role being invoked) in addition to
-the fields named — all three of `instance_id`, `agent` and `event_type` are
-REQUIRED, and a call omitting any is rejected at the gateway (BR-080):
+per-instance session file), `agent` (the role being invoked) and
+`model_requested` (the model chosen for that role) in addition to the fields
+named — all four of `instance_id`, `agent`, `event_type` and `model_requested`
+are REQUIRED, and a call omitting any is rejected at the gateway (BR-080):
 
 1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
 2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary
