@@ -17,7 +17,7 @@
  * `GROUP BY status` over the same project scope the board uses. That IS the
  * derived column set, exact and complete, with zero server work — so the board
  * adds no endpoint, no payload, no brain reader, no `params.ts` vocabulary and
- * no smoke-probe path. A `/api/briefs/board` would have been endpoint #17 and
+ * no smoke-probe path. A `/api/briefs/board` would have been endpoint #17 (count:record FR-245) and
  * would have swept two MAINTAINING rows, the bats exact-set assertion, the
  * shared types, the browser mirror and the docs, plus a new reader vendored
  * into the packed brain bundle — all for an ARRANGEMENT of rows the client can

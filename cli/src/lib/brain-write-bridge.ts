@@ -73,8 +73,14 @@
  *   - `gateway.toolCount()` = **105**.
  *   - `registry.getBootOrder()` = [memory, errors, projects, context, metrics,
  *     sessions, briefs, edges, goals, instances, sync, cache, cognition,
- *     monitoring, catalog] — **15**, i.e. the 16-component set MINUS
- *     `schedules`. `registry.ts:99-104` skips a disabled component entirely.
+ *     monitoring, catalog] — **15**, i.e. `componentFactories` MINUS
+ *     `schedules` (count:record FR-241 — a reading of THAT run, not a live
+ *     claim). The marker is one line BELOW the figure it describes, so it
+ *     exempts nothing: the guard's scan is line-scoped and this figure is not
+ *     reported by it in the first place (`componentFactories` is not a bare
+ *     set-noun). It is here for the enumerability L2 describes — so that
+ *     `grep -rn 'count:record'` lists this sentence — and for no other reason.
+ *     `registry.ts:99-104` skips a disabled component entirely.
  *   - No tool matching /schedule/i is registered. All five triage tools are:
  *     `igris_suggestion_dismiss|_acted|_apply_action`,
  *     `igris_perception_approve|_reject` all report `hasTool = true`.
@@ -445,14 +451,19 @@ type BootEngineFn = (config: {
  *
  * So the ROW SHAPE widens once, additively: `target` says whether the caller
  * supplies `ids: number[]` or `refs: {project, brief_id}[]`. `POST /api/triage`
- * is unchanged as a PATH — FR-247 left the surface at sixteen GET + one POST,
+ * is unchanged as a PATH — FR-247 left the surface at sixteen GET (count:record FR-247) + one POST,
  * which `dashboard.bats`'s exact-set string asserted byte-identically. That was
  * the payoff of refusing a new endpoint, and it was a measurement rather than a
- * claim. **Read that in the past tense: FR-248 added `/api/search` and FR-266
- * added `/api/cognition`, so the live surface is EIGHTEEN GET + one POST and the
- * exact-set string moved with each of them.**
+ * claim. **Read that in the past tense: later briefs added paths and the
+ * exact-set string moved with each of them.** The LIVE surface is not written
+ * down here; it is `server.ts`'s arms, and every instrument that mirrors them —
+ * `dashboard.bats`'s exact-set string, `SMOKE_PROBE_PATHS`, `routes.ts`'s
+ * exported handlers — is compared against them AS A SET by
+ * `cli/src/__tests__/dashboard-count-derivation.test.ts`. Which instruments
+ * those are is that test's business, not this comment's.
  * FR-247's point survives — a mutation that needs no new path should not take
- * one — but the count it cited is no longer the count.
+ * one — but the count it cited is no longer the count, which is the whole
+ * reason this tier stopped carrying one.
  *
  * `refKeys` and `fixed` are what keep a `brief-ref` row honest:
  *   - `fixed` values come from the MAP, never from the caller. If
@@ -930,10 +941,21 @@ export interface WriteProbe {
  * `engineFailure` is sticky.
  *
  * WHY NOT IMPORT: `/api/health` is the shell's 5-second liveness beat.
- * Importing `engine/index.js` pulls in all sixteen components on every beat's
+ * Importing `engine/index.js` pulls in every component
+ * `engine/index.ts#componentFactories` registers on every beat's
  * first call, and — more to the point — a health probe that touched the write
  * door would make FR-241's G-RO-6 ("a read-only session never opens it")
  * unassertable, since `/api/health` is in the read sequence.
+ *
+ * THE COUNT THAT USED TO BE IN THAT SENTENCE WAS RIGHT, AND IT STILL WENT.
+ * TD-420 re-derived it on 2026-08-26 against `componentFactories` and the
+ * quoted SIXTEEN was correct (count:record TD-420) — the value was never the
+ * defect, the FORM was.
+ * Nothing made it fail on the day it stopped being right, and the 23
+ * directories under `engine/components/` are the WRONG denominator for it
+ * (FR-118 M4a collapsed perception + subconscious into one `cognition`
+ * component and several dirs register nothing), so the next reader who
+ * "corrects" it from the filesystem makes it worse. The array is the answer.
  */
 export function writeProbe(): WriteProbe {
   const actions = [...TRIAGE_ACTION_NAMES];

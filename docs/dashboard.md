@@ -71,7 +71,10 @@ The dashboard is the first network listener this CLI has ever opened, so:
 
 ## API surface
 
-**Eighteen GET paths and one POST path.** All same-origin. Every response carries
+**Read paths and exactly one write path.** The table below is the enumeration —
+do not restate its size here; `server.ts`'s route arms are the source of truth
+and `cli/src/__tests__/dashboard-count-derivation.test.ts` pins the three
+instruments that mirror them. All same-origin. Every response carries
 a `degraded` field with the same shape. Every GET is a read; the single POST is
 the write path FR-241 added, and it is the only endpoint on this surface that
 changes a row.
@@ -145,9 +148,12 @@ spec is `allowed: null` — any non-empty string is accepted verbatim, because t
 value space is the registry rather than a fixed vocabulary. A magic slug there
 would be bound literally by every other project-bearing endpoint that does **not** implement this
 scope and would silently match nothing. An **undeclared** param is reported
-(`unknown filter: project_scope` in `params`) by the 4 endpoints that route
-through `parseFilters`, and merely IGNORED by the 6 that hand-parse or take
-`project` as an argument. Partial reporting, total safety: the posture that
+(`unknown filter: project_scope` in `params`) by the endpoints that route
+through `parseFilters` — `/api/briefs`, `/api/briefs/search`, `/api/search`,
+`/api/learnings`, `/api/learnings/search`, `/api/goals` — and merely IGNORED
+by the rest, which hand-parse it or take `project` as an argument. The
+enumeration is the derivation; its size is not written down anywhere on this
+surface. Partial reporting, total safety: the posture that
 matters is that no endpoint BINDS it. `project_scope`'s own vocabulary is CLOSED
 (`PROJECT_SCOPES`), so a near miss like `?project_scope=everything` — the other
 scope name in this product — is dropped and **named** rather than guessed at.
@@ -235,7 +241,7 @@ component state, because `router.tsx` unmounts the page on a route change. A
 reload keeps it; a **new tab** opens on the list, which is what makes the choice
 session-scoped rather than permanent.
 
-**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen through it, moved to seventeen at FR-246 (`/api/briefs/search`), to eighteen at FR-248 (`/api/search`) and to nineteen at FR-266 (`/api/cognition`). The board composes two endpoints that
+**FR-245 ITSELF ADDED NO ENDPOINT** — the count stayed sixteen <!-- count:record FR-245 --> through it, moved to seventeen at FR-246 (`/api/briefs/search`), to eighteen at FR-248 (`/api/search`) and to nineteen at FR-266 (`/api/cognition`). The board composes two endpoints that
 already exist:
 
 | What | Where it comes from | Why not somewhere else |
@@ -251,7 +257,7 @@ with `briefs.total` — `G-BR-12b` asserts the equality, which is what makes "no
 brief is hidden" mechanical rather than asserted.
 
 A `/api/briefs/board` endpoint was costed and rejected: it would have been
-endpoint #17, sweeping two MAINTAINING rows, `SMOKE_PROBE_PATHS`, the
+endpoint #17 <!-- count:record FR-245 -->, sweeping two MAINTAINING rows, `SMOKE_PROBE_PATHS`, the
 `dashboard.bats` exact-set assertion, `cli/src/types.ts`, `lib/api.ts` and this
 file, and vendoring a new reader into the packed brain bundle — all for an
 arrangement of rows the client can already ask for.
@@ -529,7 +535,7 @@ bottom because knowing what the fix was for is what stops it being undone.
 
 | Door | Endpoints | Connection |
 |---|---|---|
-| **Read** | **every GET**: the seven FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, FR-248's `/api/search` (the first path to serve FIVE readers off ONE handle), FR-266's `/api/cognition` (the only path that reaches its data through a CLI VERB rather than through `brain-bridge.ts` — see the note below), both graph endpoints, and the four FR-238-era paths `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc` | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
+| **Read** | **every GET**: the FR-240 layer endpoints (`/api/briefs`, `/api/brief`, `/api/learnings`, `/api/learnings/search`, `/api/learning`, `/api/context-docs`, `/api/context-doc`, `/api/goals`, `/api/goal`), FR-241's `/api/suggestions`, FR-246's `/api/briefs/search`, FR-248's `/api/search` (the first path to serve FIVE readers off ONE handle), FR-266's `/api/cognition` (the only path that reaches its data through a CLI VERB rather than through `brain-bridge.ts` — see the note below), both graph endpoints, and `/api/projects` plus `/api/summary`. **The word is ACCESSOR, not path.** TD-319's exception set was the paths that reach the door through a SECOND door on an FR-238-era accessor MODULE (`registry.ts`, `brain-db.ts`) — `/api/projects`, `/api/summary`, `/api/context-docs`, `/api/context-doc`. The last two are FR-240 D8 PATHS (`context-docs-read.ts`'s own header says so, and commit `fc738b8` adds both that module and the `server.ts` arms in one go); it is their ACCESSOR that is FR-238-era, which is why they are listed in the FR-240 group above. "The FR-238-era accessors (TD-319)" below is the module-by-module map | `brain-bridge.ts#openBrainReadonly()` / `#openBrainReadonlyWithVec()` — `{readonly: true}` **and** `query_only = ON`, opened per request and closed after |
 | **Write (FR-241)** | `POST /api/triage`, and nothing else | a **separately booted in-process brain engine** holding its own read-write connection, opened lazily and never by a browsing session |
 | *No brain handle at all* | `/api/health` and the static paths | an `existsSync` and a module-resolution probe; nothing is opened |
 
@@ -652,18 +658,21 @@ it is deliberately **one** endpoint with an `action` discriminator rather than
 five verb endpoints. That shape is what makes the whole delegation rule a single
 table a reviewer reads in one glance.
 
-**FR-247 added two mutations and NO endpoint.** The path set was still sixteen GET
+**FR-247 added two mutations and NO endpoint.** The path set was still sixteen GET <!-- count:record FR-247 -->
 and one POST **as of FR-247**, and that was a measurement rather than a claim:
 `dashboard.bats`'s exact-set string and `SMOKE_PROBE_PATHS` were byte-identical
 to their pre-FR-247 values. (**Past tense since FR-248**, which added
 `/api/search` and therefore edited both of those instruments. The claim was true
-when written; the paragraph is kept as FR-247's record, not as the live count —
-which is eighteen GET and one POST.) What widened is the request BODY.
+when written; the paragraph is kept as FR-247's record, not as the live count,
+which is not written down here at all — read it off `server.ts`'s arms.) What
+widened is the request BODY.
 
 **The name is now wrong, and it stays.** `triage` no longer describes what this
 path carries. Renaming it would sweep MAINTAINING rows 109 and 110,
 `SMOKE_PROBE_PATHS`, `dashboard.bats`'s exact-set string *and* its
-`19 read paths all 200, 1 write path 400` line, `types.ts`, `api.ts`, this
+`N read paths all 200, M write path 400` summary line (named by SHAPE — the
+figure lives in the assertion, which `dashboard-count-derivation.test.ts`
+re-derives from `SMOKE_PROBE_PATHS`), `types.ts`, `api.ts`, this
 document, the parity harness and the browser gate — for a noun. Read the path as
 **a stable identifier for the write door**; the MAP, not the path, is the
 vocabulary.
@@ -924,7 +933,8 @@ the parity gate runs in two processes.
 **A boot creates zero rows.** Measured against a `VACUUM INTO` snapshot of the
 real brain by diffing all 66 plain tables: no schema objects added or removed and
 no row created. Its single side effect is the `journal_mode` flip described in
-"Two doors" above — which, since TD-319 closed the four FR-238-era GET paths, is
+"Two doors" above — which, since TD-319 closed the last GET paths reaching a
+second door on an FR-238-era ACCESSOR, is
 the **only** way this surface can still cause one.
 
 #### Reject is a three-tier outcome, and the confirmation says which
@@ -1155,7 +1165,7 @@ igris dashboard (verb)
   ├─ open-url.ts    cross-platform browser ladder
   └─ server.ts      node:http, 127.0.0.1, Host guard, traversal guard
        ├─ static.ts   dist/dashboard/** + SPA fallback
-       └─ routes.ts   the nineteen endpoints (18 GET + 1 POST) — CONTAINS ZERO SQL
+       └─ routes.ts   every endpoint handler — CONTAINS ZERO SQL
             ├─ params.ts             pure clamp + filter allowlist + parseTriageBody
             ├─ registry.ts#listProjectsReadonly       (TD-319 read door)
             ├─ brain-db.ts#briefStatusSummaryReadonly / #listInstancesReadonly
@@ -1789,7 +1799,7 @@ the server is `node:http`.
 | `cli/src/__tests__/dashboard-learnings-search.test.ts` | FR-240 AC #2 — recall semantics (hybrid / `bm25_only` / `vector_only` / `none`), the `retrieval` block field by field, and the hermetic-by-construction guard that asserts **itself** armed |
 | `cli/src/__tests__/dashboard-learnings-search-params.test.ts` | BR-085 — what the handler FORWARDS, asserted at the seam with a recording reader: the whole key set of the options object, the derived rule that every allow-listed filter is forwarded OR named, and the version-skew case where an older vendored reader has no review axis and the payload must refuse to claim the scope. The endpoint suites cannot see this class: a dropped filter returns a plausible list |
 | `cli/src/__tests__/dashboard-context-docs.test.ts` | FR-240 D8 — the inventory is forwarded not recomputed; traversal slug, traversal `type`, unregistered slug and a planted symlink are all refused; the lens does not CREATE the brain |
-| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness. **TD-319 rewrote G-RO-5**: it converts the fixture to `journal_mode = delete` and drives the WHOLE tier — layer readers and the four FR-238-era paths alike — asserting no journal flip, no `-wal` sidecar, no `.db` rewrite and no DDL. Its four predecessor pins recorded the OPPOSITE (they characterised the residual so it could not drift into an unqualified doc claim) and carried their own delete-me instruction; landing the fix executed it. The payloads-are-real companion is what stops the stillness being satisfied by a reader that returned nothing |
+| `cli/src/__tests__/dashboard-readonly.test.ts` | FR-240 AC #7 — a full crawl of every endpoint against a snapshot, compared by logical dump **and** file digest, with a deliberate-writer negative control proving the comparison can report a mutation. FR-241 added **G-RO-6**: after the same request sequence `writeEngineState()` must still read `"not-booted"` and the digest must be unchanged, with a self-negative-control in the same test where one `POST /api/triage` flips it to `"booted"` and *does* change the digest. Stillness is not liveness. **TD-319 rewrote G-RO-5**: it converts the fixture to `journal_mode = delete` and drives the WHOLE tier — layer readers and the four paths on an FR-238-era accessor alike — asserting no journal flip, no `-wal` sidecar, no `.db` rewrite and no DDL. Its four predecessor pins recorded the OPPOSITE (they characterised the residual so it could not drift into an unqualified doc claim) and carried their own delete-me instruction; landing the fix executed it. The payloads-are-real companion is what stops the stillness being satisfied by a reader that returned nothing |
 | `cli/src/__tests__/dashboard-triage-endpoint.test.ts` | FR-241 — the sandbox fence first (the real brain's digest is unchanged at suite end, and a poison `IGRIS_DB_PATH` does not move the writes); each of the five actions end to end with its pre-state asserted; bulk-dismiss 12 of a seeded 17 with the surviving 5 named; partial failure and the `MAX_BULK` clamp; the degraded write surface **with its negative control**; delegation proven behaviourally as well as by scan; and gateway validation reported in the **gateway's own** message text. **G-TR-7 (TD-326)** bulk-dismisses the project-less cohort and asserts BOTH directions of non-interference — the projects are unmoved by a brain-level bulk, and the brain-level rows are unmoved by a project bulk **FR-247 adds G-TR-8..G-TR-14**: the forbidden build-state fields refused at the door and the `ids` versus `refs` exclusivity refused by name (G-TR-8); the built argument key SET with the parser BYPASSED, including `attach_goal` forwarding both halves of the ref since BR-083 (G-TR-9); the args the resolved `handleBriefUpdate` actually RECEIVED, by call trace, plus the row read back field by field (G-TR-10); **AC-4 RED-FIRST against the SHIPPED handler** — the `brief_files`-only brief is dispatched unguarded and the invented `status='Ready'` and blanked `title` are OBSERVED, then the same write through the endpoint is refused and the damage is absent, with the `igris_brief_sync` contrast and the live NOT NULL constraint the guard's predicate depends on (G-TR-11); a bulk over 12 of 17 briefs with the other 5 asserted byte-identical and an empty `refs` refused with a 400 (G-TR-12); **the auto-push egress fence PROVEN in both arms** — zero blocked requests with no config, and an observed blocked POST to a fictional remote when auto-push is on (G-TR-13); and the degraded surface with its negative control (G-TR-14) |
 | `cli/src/__tests__/auto-push-fence.ts` | FR-247 — the R4 egress fence every mutating suite arms. TWO independent layers, both read back before a single write: `HOME` is pointed at the sandbox so `loadAutoPushConfig` reads a config the test owns, and `globalThis.fetch` is replaced by a RECORDING THROWER so even a config that said `auto_push: true` cannot reach the network. It is PROVEN rather than asserted by G-TR-13's second arm — a fence over a machine where auto-push is already off proves nothing, since zero requests is equally what a broken fence and an unwired listener produce |
 | `cli/src/__tests__/dashboard-triage-parity.test.ts` (FR-247) | **G-EP-4 is this family's first genuinely NON-EMPTY parity control.** FR-241's differ compared `[]` with `[]` for four of five actions; `brief.synced` is in `EVENT_COMPONENT_MAP` and monitoring subscribes it, so a priority write through MCP and through the dashboard each produce exactly one identical `event_log` row — asserted as literals (`brief.synced` / `briefs` / the project slug / the payload), not assumed. **G-EP-5** is the declared-EMPTY complement: `edge.created` is in neither the map nor the listen list, so an attach is event-silent BY CONSTRUCTION and `entity_edges` carries the something-happened half. **G-EP-6** flips four ways against G-EP-4's non-empty rows, including a `brief_status`-ONLY difference with `event_log` still matching — the failure an event-only differ cannot see, and the reason `brief_status` joined the domain set |

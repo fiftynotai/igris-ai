@@ -1,8 +1,9 @@
 /**
- * FR-240 — the layer endpoints, over real HTTP. (Was "the nine"; `LAYER_PATHS`
- * is 23 URLs across 10 endpoints since FR-246 added `/api/briefs/search`. A
- * bare count in a header is a figure with no gate, so it is stated where it is
- * measured instead — see `dashboard-layers-fixture.ts`.)
+ * FR-240 — the layer endpoints, over real HTTP. (Was "the nine". A bare count in
+ * a header is a figure with no gate, so there is none here: `LAYER_PATHS` in
+ * `dashboard-layers-fixture.ts` IS the enumeration, and it has grown twice
+ * since this header first tried to summarise it. TD-420 deleted the summary
+ * rather than incrementing it a third time.)
  *
  * Nothing is mocked. The server binds a real loopback port, the brain is a real
  * SQLite file in a sandboxed `IGRIS_BRAIN_DIR`, and the readers are the REAL
@@ -680,10 +681,13 @@ describe("G-EP-4 — TD-326: brain-level scope on /api/suggestions", () => {
     // value: `project`'s spec accepts any string, so a sentinel there would be
     // bound verbatim by every other project-bearing endpoint and match nothing,
     // silently. As an UNDECLARED param it is instead dropped, and REPORTED by the
-    // 4 of the 10 others that route through `parseFilters` (this test drives 3 of
-    // those 4); the other 6 hand-parse or take `project` as an argument and are
-    // silent — an ignore, never a bind. The safety does not depend on the
-    // reporting being total.
+    // OTHER project-bearing endpoints whose handler routes its query through
+    // `parseFilters`; the rest hand-parse or take `project` as a function
+    // argument and are silent — an ignore, never a bind. The loop below drives a
+    // SUBSET of the reporting set, which is why it asserts nothing about the
+    // size of either: `params.ts` declares the filter specs and
+    // `dashboard-count-derivation.test.ts` pins the enumeration against the
+    // call sites. The safety does not depend on the reporting being total.
     for (const path of [
       "/api/briefs?project_scope=brain-level",
       "/api/learnings?project_scope=brain-level",

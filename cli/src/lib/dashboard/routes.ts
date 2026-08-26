@@ -448,8 +448,19 @@ export async function graph(project: string | null): Promise<BrainGraphPayload> 
 // ---------------------------------------------------------------------------
 // FR-240 — the four layer views.
 //
-// SHAPE SHARED BY ALL NINE HANDLERS
-// ---------------------------------
+// THE SHARED SHAPE, AND WHO ACTUALLY SHARES IT
+// --------------------------------------------
+// This block used to say "all nine handlers" (count:record TD-420 — a quotation
+// of the retracted claim, not a live one), meaning FR-240's nine paths. That
+// was wrong in BOTH directions and nothing caught it, because the figure was a
+// count rather than a derivation: `/api/context-docs` and `/api/context-doc` do
+// zero brain work and open no handle, `/api/learnings/search` goes through the
+// vec door instead, and FR-241's `/api/suggestions` — not an FR-240 path at all
+// — does share it. The set is `openReadContext`'s call sites; the enumeration
+// below is pinned against them by
+// `cli/src/__tests__/dashboard-count-derivation.test.ts`, so it cannot drift
+// silently the way the number did.
+//
 // Each one is: (1) brain-present check, (2) load the pure readers, (3) open a
 // read-only handle, (4) call ONE reader, (5) map to the wire shape, (6) close
 // the handle in a `finally`. No branching on query logic, because there is
@@ -461,14 +472,20 @@ export async function graph(project: string | null): Promise<BrainGraphPayload> 
 // visible on the next reload because no connection is cached across requests.
 // ---------------------------------------------------------------------------
 
-/** Reason string for a brain that is not on disk. Used by all nine. */
+/** Reason string for a brain that is not on disk. Used by every handler above. */
 function brainMissingReason(): string {
   return `brain database not found at ${brainDbPath()}`;
 }
 
 /**
- * Everything the nine handlers need before they can read: the reader module set
- * and an armed read-only handle.
+ * Everything the shared-preamble handlers need before they can read: the reader
+ * module set and an armed read-only handle.
+ *
+ * SHARED READ PREAMBLE: `/api/briefs`, `/api/brief`, `/api/learnings`,
+ * `/api/learning`, `/api/goals`, `/api/goal`, `/api/suggestions`.
+ * That list is the DERIVATION, not a description of one — it is pinned against
+ * this function's own call sites, so adding a caller without extending it fails
+ * CI. Do not replace it with how many there are.
  *
  * Returns a DISCRIMINATED failure for the same reason `buildGraph` does — the
  * two ways this fails send an operator to completely different places. A
@@ -573,8 +590,10 @@ export async function briefs(search: URLSearchParams): Promise<BriefsPayload> {
  * candidates take a `q` PARAMETER on paths that already exist, which is what
  * keeps MAINTAINING row 109's sweep to one addition instead of five.
  *
- * Like `/api/learnings/search`, this is one of only TWO endpoints that need
- * `openBrainReadonlyWithVec`: `isVectorSearchAvailable(db)` probes
+ * Like `/api/learnings/search`, this is one of the endpoints that need
+ * `openBrainReadonlyWithVec` — derive the set from this file's
+ * `bridge.openBrainReadonlyWithVec()` call sites, never from a figure written
+ * here: `isVectorSearchAvailable(db)` probes
  * `SELECT vec_version()` on THAT connection, so a plain read-only handle would
  * make the reader take its BM25-only arm SILENTLY.
  *
@@ -1407,10 +1426,12 @@ const SEARCH_PREVIEW_CHARS = 300;
 /**
  * `GET /api/learnings/search?q=<query>` — hybrid BM25 + vector recall (AC #2).
  *
- * THIS IS ONE OF TWO ENDPOINTS THAT NEED `openBrainReadonlyWithVec` — the
- * other is `briefsSearch` (see its docstring above, which says so too).
- * FR-246 made it two; this line said ONE for one review round while the
- * docstring 290 lines up already said TWO, so the file argued both ways.
+ * THIS IS ONE OF THE ENDPOINTS THAT NEED `openBrainReadonlyWithVec` — derive
+ * the set from this file's `bridge.openBrainReadonlyWithVec()` call sites.
+ * It has grown twice since FR-240 and BOTH times a sentence in this file kept
+ * the superseded figure while another sentence in the same file carried the
+ * new one, so the file argued with itself. That is why the number is gone:
+ * a count rots silently, a derivation does not.
  * `isVectorSearchAvailable(db)` is a `SELECT vec_version()` probe on THAT
  * connection, so a plain read-only handle would make the reader take its
  * BM25-only arm SILENTLY — returning plausible results while AC #2 was false.
@@ -2057,8 +2078,12 @@ export async function suggestions(
  * IT OPENS NO HANDLE OF ITS OWN, so it does not use `openReadContext()`: the
  * digest builder reaches the brain through `brain-db.ts#withReadonlyBrain` ->
  * `brain-bridge.ts#openBrainReadonly`, which is the SAME read door
- * (`{readonly:true, fileMustExist:true}` + `query_only = ON`) the other
- * seventeen GETs rest on. That is what lets this path join
+ * (`{readonly:true, fileMustExist:true}` + `query_only = ON`) every OTHER
+ * brain-reading GET on this surface rests on. `/api/health` is the one GET
+ * that opens no handle at all, so it sits outside that set rather than in it —
+ * and the set itself is a DERIVATION, not a figure to quote here: walk
+ * `server.ts`'s arms and follow each handler to `openBrainReadonly` or
+ * `openBrainReadonlyWithVec`. That is what lets this path join
  * `dashboard-readonly.test.ts`'s crawl and make the digest gate STRICTER rather
  * than routing around it.
  *

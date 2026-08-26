@@ -6,9 +6,12 @@
  * by `dashboard-server.test.ts`'s scope scan, which FR-240 extends to cover it —
  * a new server-layer file outside that scan is an unguarded file.
  *
- * WHY A SEPARATE MODULE. Nine endpoints each need the same four decisions:
- * clamp `limit`, floor `offset`, accept-or-drop an enum filter, and refuse an
- * unknown one. Inlining that in `routes.ts` would add ~40 branches to a file
+ * WHY A SEPARATE MODULE. Every endpoint routing through `parseFilters` needs the
+ * same four decisions: clamp `limit`, floor `offset`, accept-or-drop an enum
+ * filter, and refuse an unknown one. (That set is enumerated in `MAINTAINING.md`
+ * row 110 and pinned against this module's call sites by
+ * `cli/src/__tests__/dashboard-count-derivation.test.ts` — it was written here
+ * as a figure for four briefs, and the figure was stale for two of them.) Inlining that in `routes.ts` would add ~40 branches to a file
  * whose whole justification is that it has none — and none of them would be
  * unit-testable without starting a server. Here they are pure functions over
  * `URLSearchParams`, so the edge cases (`limit=abc`, `limit=-1`,
@@ -261,14 +264,18 @@ export const SUGGESTION_PRIORITIES = ["high", "medium", "low"] as const;
  * the drop-and-report posture above: `project`'s spec is `allowed: null`, so a
  * magic slug would be accepted verbatim by every OTHER endpoint and silently
  * match no row. An undeclared param IS reported (`unknown filter:
- * project_scope`), so 4 of the 10 OTHER project-bearing endpoints say so —
- * `/api/briefs`, `/api/learnings`, `/api/learnings/search`, `/api/goals`, the
- * ones routing through `parseFilters`. The other 6 are SILENT: `/api/summary`,
- * `/api/graph`, `/api/graph/stats` take `project` as a function argument, and
- * `/api/brief`, `/api/context-docs`, `/api/context-doc` hand-parse it — none
- * carries a `params` field. `/api/learning` and `/api/goal` are `id`-only and
- * not project-bearing at all. Enumerated against the router, endpoint by
- * endpoint. A silent IGNORE is still strictly better than the silent BIND a
+ * project_scope`), so the OTHER project-bearing endpoints routing through
+ * `parseFilters` say so — `/api/briefs`, `/api/briefs/search`, `/api/search`,
+ * `/api/learnings`, `/api/learnings/search`, `/api/goals`. The REST are
+ * SILENT: `/api/summary`, `/api/graph`, `/api/graph/stats` take `project` as a
+ * function argument, and `/api/brief`, `/api/context-docs`, `/api/context-doc`
+ * hand-parse it — none carries a `params` field. `/api/learning` and
+ * `/api/goal` are `id`-only and not project-bearing at all. Enumerated against
+ * the router, endpoint by endpoint — the ENUMERATION is the derivation, and
+ * quoting its size instead is what let this carve-out ship four copies with
+ * three different figures (TD-420).
+ *
+ * A silent IGNORE is still strictly better than the silent BIND a
  * magic `project` slug would get — that is the argument, and it does not
  * depend on the reporting being total.
  *

@@ -742,6 +742,83 @@ interface PackReport {
  *   plan against. See `dashboard-chunks.test.ts` for why `MEASURED_*` was NOT
  *   re-based to make that number look better.
  *
+ * TD-420 MEASURED LAST, after its final code-touching step:
+ *   packed              1_983_869    unpacked 7_637_162, 809 entries (UNCHANGED
+ *                                    — the brief's one new file is
+ *                                    `src/__tests__/dashboard-count-derivation.test.ts`,
+ *                                    which `tsconfig` excludes from `dist`, and
+ *                                    every other edit is to a file that already
+ *                                    packed)
+ *   TD-420's own share  +1_281 B     (1.25 KB) against HEAD's 1_982_588,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding both artifacts, packing, and
+ *                                    restoring — NOT by subtracting from the
+ *                                    previous ledger entry. The HEAD arm
+ *                                    reproduced FR-266's recorded figures
+ *                                    EXACTLY (1_982_588 packed / 7_634_086
+ *                                    unpacked / 809 entries, bundle INITIAL
+ *                                    286_070 / TOTAL 580_979), which is what
+ *                                    says the stash was clean.
+ *   cumulative delta    +117.6 KB    (120_449 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~32.4 KB     (33_151 B under TD-374's +150)
+ *
+ *   THE SIGN IS THE INTERESTING PART, AND IT IS POSITIVE. TD-420 is a DELETION
+ *   brief — it removes quoted counts from prose — so the plan predicted a
+ *   NEGATIVE own share, and this ledger still has no negative row. It came out
+ *   **+1_281 B**, and the reason is structural rather than an error: deleting the
+ *   word "SIXTEEN" buys a handful of bytes, while replacing it with the citation
+ *   that keeps the sentence meaningful ("derive it from `server.ts`'s arms")
+ *   costs an order of magnitude more. A DERIVATION IS LONGER THAN THE NUMBER IT
+ *   REPLACES; budget for that rather than for the deletion.
+ *
+ *   WHERE THE 1_281 B WENT. Almost all of it is `cli/src/lib/**` — `routes.ts`,
+ *   `params.ts` and `brain-write-bridge.ts`, whose comments `tsc` preserves into
+ *   `dist/` and pays for TWICE (`.js` + `.js.map`). Everything else the brief
+ *   touched is free: `MAINTAINING.md` and `docs/**` are outside `files`; the new
+ *   gate and the two edited suites are under test globs `tsconfig` excludes; the
+ *   one `cli/dashboard/**` edit was a comment and Vite minified it to nothing —
+ *   PROVEN rather than assumed, by the bundle figures coming out byte-identical
+ *   in BOTH arms (INITIAL 286_070 / TOTAL 580_979 each time).
+ *   `brain-mcp-server/**` was not touched at all.
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_983_869 - 1_982_588 = 1_281; 1_983_869 - 1_863_420 = 120_449;
+ *   150*1024 - 120_449 = 33_151; 809 - 809 = 0.
+ *
+ *   THE UNPACKED DELTA RECONCILES EXACTLY, which is the check worth doing when
+ *   the packed figure is small enough to be argued with. +3_076 B unpacked,
+ *   accounted for by SIX dist files and nothing else — `routes.js` +1_317 and
+ *   its map +148, `params.js` +464 and its map +7, `brain-write-bridge.js`
+ *   +1_123 and its map +17. Residual ZERO. Both arms were packed three times
+ *   in one session and neither moved.
+ *
+ *   RE-MEASURED AFTER EACH REVIEW ROUND, AND THE MOVE IS THE 'MEASURE LAST'
+ *   RULE BITING RATHER THAN AN ERROR. Readings were 1_983_284, then 1_983_726,
+ *   then this one — a review round is a code-touching step for this figure even
+ *   when it changes no code.
+ *
+ *   THE WARDEN ROUND EDITED A SHIPPING FILE AND MOVED THIS FIGURE BY ZERO, AND
+ *   THE REASON IS WORTH KNOWING BEFORE YOU BUDGET A DOC BRIEF. It rewrote a
+ *   docblock in `cli/src/lib/brain-write-bridge.ts` — a file that certainly
+ *   ships — and `dist/lib/brain-write-bridge.js` did not move one byte. That
+ *   block documents `export type TriageExtraKey` / `export interface BriefRef`,
+ *   and `tsc` ERASES a type-only declaration together with its JSDoc: neither
+ *   the old sentence nor the new one appears in `dist` at all. So the rule is
+ *   sharper than "comments in `cli/src/lib/**` cost bytes twice" — a comment on
+ *   a FUNCTION or a CONST costs twice, a comment on a TYPE costs nothing.
+ *   VERIFIED rather than inferred: `touch` + rebuild, then grep `dist` for both
+ *   the old and the new wording; both absent, size byte-identical. Closing
+ *   sentinel's F1/F2/F3 added a fourth scan arm and a second part-1 pin (both
+ *   tsc-excluded, both free) but ALSO rewrote three `cli/src/lib/**` comment
+ *   blocks — the shared-read-preamble enumeration in `routes.ts`, the
+ *   `parseFilters` sentence in `params.ts`, and two relocated `count:record`
+ *   markers in `brain-write-bridge.ts` — for +442 B on prose alone. Entry count
+ *   did not move.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit.
+ *
  * TD-333 MEASURED LAST, after its final code-touching step:
  *   packed              1_811_683    unpacked 7_138_039, 804 entries (UNCHANGED
  *                                    — TD-333's two new source files are a bash

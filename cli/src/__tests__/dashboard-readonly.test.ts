@@ -678,9 +678,10 @@ describe("G-RO-5 — no endpoint on this tier writes to a `delete`-mode brain", 
    * "THE LAYER ENDPOINTS".
    *
    * It used to say the latter, and that claim exceeded what the test asserts:
-   * `LAYER_PATHS` covers 23 URLs across 10 endpoints INCLUDING
+   * `LAYER_PATHS` covers strictly more URLs than this list does, INCLUDING
    * `/api/context-docs`, while this list is the subset served purely by the
-   * read-only bridge. There is no coverage gap — `/api/context-docs` is driven
+   * read-only bridge. (Neither size is written down — `LAYER_PATHS` is its own
+   * enumeration, and the one that used to be quoted here was two briefs stale.) There is no coverage gap — `/api/context-docs` is driven
    * by the very next test, from the opposite direction — but a title that names
    * a superset is the failure class this backlog exists to close: a guard whose
    * stated claim is wider than its assertion.

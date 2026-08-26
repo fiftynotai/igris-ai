@@ -86,8 +86,10 @@ teardown() {
 # is what makes it true.
 #
 # NEAR MISS, worth knowing before you tidy anything: the T4 probe-summary
-# helper emits numbers into a stream that IS asserted on (its "19 read paths
-# all 200, 1 write path 400" line is grepped), and is safe ONLY because it
+# helper emits numbers into a stream that IS asserted on (its "N read paths
+# all 200, M write path 400" summary line is grepped — quoted by SHAPE, so
+# this comment is not a second, ungated mirror of the figure the assertion
+# below carries), and is safe ONLY because it
 # builds that string by concatenation. Rewriting it to comma-separated console
 # arguments re-arms exactly this bug on an asserted channel.
 #
