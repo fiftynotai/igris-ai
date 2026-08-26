@@ -41,7 +41,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpCall, readRemoteBrainConfig, type RemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
-import { brainDir } from "../paths.js";
+import { brainDir, expandTilde } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
 import {
   acquireDrainSnapshot,
@@ -419,12 +419,25 @@ async function dispatchEntry(
   const resolved: QueueEntry = { ...entry };
   if (op === "brief_create" && typeof resolved.cache_path === "string") {
     const cachePath = resolved.cache_path;
+    // BR-096: a queued cache_path may be in the portable `~/…` form — the
+    // /register MCP-unavailable fallback minted exactly that — and
+    // readFileSync treats a leading tilde as a literal directory name, so the
+    // read ENOENTs and this entry is preserved for a retry that fails
+    // identically forever. `expandTilde` is THE expansion in this codebase
+    // (lib/paths.ts) and returns a non-tilde path unchanged, so the absolute
+    // case is byte-for-byte untouched.
+    const readPath = expandTilde(cachePath);
     try {
-      resolved.content = readFileSync(cachePath, "utf-8");
+      resolved.content = readFileSync(readPath, "utf-8");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logError(
-        `sync data: entry ${index} (brief_create) cache_path=${cachePath} unreadable: ${msg}; preserving queue.`,
+        // Both spellings, with NO branch between them: `cache_path=` is what
+        // to fix in the queue file, `read as` is what to look for on disk.
+        // Unconditional so the attempted path is present for every input —
+        // the pre-BR-096 message printed the literal alone and sent readers
+        // to a directory named `~`.
+        `sync data: entry ${index} (brief_create) cache_path=${cachePath} (read as ${readPath}) unreadable: ${msg}; preserving queue.`,
       );
       return 1;
     }

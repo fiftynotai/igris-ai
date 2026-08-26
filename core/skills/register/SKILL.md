@@ -224,11 +224,23 @@ queue the brief under the refused id.
 
 If `igris_brief_create` fails or MCP is unavailable:
 1. Write to `~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md` as fallback.
+   Keep the ABSOLUTE path you actually wrote to — with `~` expanded to the home
+   directory — because step 3 records it.
 2. Display: `WARNING: Brain MCP unavailable — brief {PREFIX}-{XXX} saved to local cache only. Queued for sync on next /boot or /sync data.`
 3. Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
    ```json
-   {"timestamp":"{ISO-8601 now}","operation":"brief_create","project":"{project}","brief_id":"{PREFIX}-{XXX}","title":"{title}","status":"Ready","priority":"{priority}","brief_type":"{type}","cache_path":"~/.igris/projects/{project}/briefs/{PREFIX}-{XXX}-{slug}.md"}
+   {"timestamp":"{ISO-8601 now}","operation":"brief_create","project":"{project}","brief_id":"{PREFIX}-{XXX}","title":"{title}","status":"Ready","priority":"{priority}","brief_type":"{type}","cache_path":"{the ABSOLUTE path written in step 1}"}
    ```
+   `cache_path` is the ONE field here that must be absolute: copy the expanded
+   path from step 1 (`/Users/<you>/.igris/…` or `/home/<you>/.igris/…`), never
+   the `~/.igris/…` spelling this document uses elsewhere. `igris sync data`
+   read that value verbatim, and a leading `~` was a literal directory name to
+   the file reader — so a tilde-form path never resolved, the entry was
+   preserved, and every later drain failed identically. That was BR-096: one
+   entry stuck for six days, printing a drain failure on every `/boot`. The
+   drain now expands a legacy tilde on read, so old queues recover from the
+   TILDE — not from a dead cache file or a transport error — but a NEW entry
+   must not need rescuing.
 
 **DO NOT write brief files to the repo.** Briefs live in the brain DB only.
 

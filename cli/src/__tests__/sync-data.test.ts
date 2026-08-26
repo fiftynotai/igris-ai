@@ -36,8 +36,8 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import {
   makeLoopback,
   mcpOkEnvelope,
@@ -48,6 +48,8 @@ import {
 
 let tmpBrain: string;
 const envBackup: Record<string, string | undefined> = {};
+/** BR-096: tmp HOME roots minted by `useTmpHome`, removed in afterEach. */
+let tmpHomes: string[] = [];
 
 function writeConfig(content: Record<string, unknown>): void {
   writeFileSync(
@@ -64,10 +66,37 @@ function writeQueue(slug: string, lines: string[]): string {
   return queuePath;
 }
 
+/**
+ * BR-096: mint a fresh tmp HOME and point the process at it.
+ *
+ * A tilde-form `cache_path` is expanded through `expandTilde` (lib/paths.ts),
+ * which calls `homedir()` — so the fixture has to move HOME, not just build a
+ * string. Callers MUST assert `homedir()` back rather than the env var they
+ * just set: reading back the variable you wrote proves nothing about what the
+ * code under test resolves, and a worker pool that copies `process.env`
+ * instead of sharing it would leave the assertion green and the seam dead.
+ *
+ * Deliberately a SECOND tmp root, not `tmpBrain`. The queue is located via
+ * IGRIS_BRAIN_DIR while the tilde is expanded via HOME; collapsing the two
+ * would let a fix that (wrongly) resolved `~` against the brain dir pass.
+ *
+ * Restoration is afterEach's job, not the caller's — an arm check that throws
+ * before a `finally` would otherwise leak HOME into every later test in the
+ * file.
+ */
+function useTmpHome(): string {
+  const home = mkdtempSync(join(tmpdir(), "igris-cli-sync-data-home-"));
+  tmpHomes.push(home);
+  process.env.HOME = home;
+  return home;
+}
+
 beforeEach(() => {
   tmpBrain = mkdtempSync(join(tmpdir(), "igris-cli-sync-data-"));
   envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
   envBackup.IGRIS_ALLOW_INSECURE_SYNC = process.env.IGRIS_ALLOW_INSECURE_SYNC;
+  envBackup.HOME = process.env.HOME;
+  tmpHomes = [];
   process.env.IGRIS_BRAIN_DIR = tmpBrain;
   // TD-252: start each test from the refuse-default (override UNSET).
   delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
@@ -75,7 +104,16 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(tmpBrain, { recursive: true, force: true });
+  for (const home of tmpHomes) {
+    rmSync(home, { recursive: true, force: true });
+  }
+  tmpHomes = [];
   process.env.IGRIS_BRAIN_DIR = envBackup.IGRIS_BRAIN_DIR;
+  if (envBackup.HOME === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = envBackup.HOME;
+  }
   if (envBackup.IGRIS_ALLOW_INSECURE_SYNC === undefined) {
     delete process.env.IGRIS_ALLOW_INSECURE_SYNC;
   } else {
@@ -358,7 +396,9 @@ describe("sync data — runSyncData", () => {
   // ---------------------------------------------------------------------
   // TD-119: cache_path resolution branch coverage.
   //
-  // dispatchEntry (data.ts:240-254) handles brief_create + cache_path by
+  // `dispatchEntry`'s cache_path branch (cited by SYMBOL: the line form here
+  // read `data.ts:240-254` and was ~180 lines stale before BR-096 touched the
+  // block) handles brief_create + cache_path by
   // reading the file from disk and inlining its contents as `content`,
   // then stripping `cache_path` before forwarding. The two cases below
   // pin both the success and the missing-file branches.
@@ -725,11 +765,220 @@ describe("sync data — runSyncData", () => {
       const code = await runSyncData({ projectSlug: "demo" });
       expect(code).toBe(1);
       // No HTTP call should have been made — readFileSync threw before
-      // mcpCall was reached (data.ts:243-252 catch returns 1 directly).
+      // mcpCall was reached (the cache_path catch inside `dispatchEntry`
+      // returns 1 directly; cited by symbol, the old `data.ts:243-252` form
+      // was ~180 lines stale).
       expect(lb.calls.length).toBe(0);
       // Queue file MUST remain (preserve-on-failure contract).
       expect(existsSync(queuePath)).toBe(true);
     } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  // ---------------------------------------------------------------------
+  // BR-096: a TILDE-form cache_path.
+  //
+  // `/register`'s MCP-unavailable fallback (core/skills/register/SKILL.md)
+  // minted `"cache_path":"~/.igris/projects/{project}/briefs/…"`. Node's
+  // `readFileSync` never expands `~` — it treats the tilde as a literal
+  // directory name — so the read ENOENTs, `dispatchEntry` returns 1, and
+  // the queue is preserved for a retry that fails identically forever. The
+  // live `igris-ai` queue sat stuck on exactly this from 2026-08-20, and
+  // every `/boot` since reported a drain failure. No test here covered the
+  // tilde notation, which is precisely why it shipped.
+  //
+  // The three cases below are a matched set and are only meaningful read
+  // together:
+  //
+  //   (a) the tilde form drains — the fix;
+  //   (b) the SAME fixture with an absolute cache_path drains — the
+  //       CONTROL. It is green before AND after the fix, so (a)'s red is
+  //       attributable to the tilde NOTATION rather than to this fixture's
+  //       harness, its loopback, or its tmp HOME;
+  //   (c) an UNREADABLE tilde path names the path actually attempted, so
+  //       the next debugger is not sent to a literal `~`.
+  //
+  // (a) and (b) differ in exactly one character sequence: the `cache_path`
+  // string. Same file on disk, same contents, same queue shape, same HOME.
+  // ---------------------------------------------------------------------
+  const BR096_REL = ".igris/projects/demo/briefs/BR-096-cache.md";
+  const BR096_CONTENTS = "# BR-096 cache fixture\n\nbody.";
+
+  it("BR-096: brief_create with a TILDE-form cache_path drains (the /register fallback shape)", async () => {
+    const lb = makeLoopback((call) => ({
+      status: 200,
+      body: mcpOkEnvelope(rpcRequestId(call)),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const home = useTmpHome();
+    const tildePath = `~/${BR096_REL}`;
+    const absPath = join(home, BR096_REL);
+
+    try {
+      mkdirSync(dirname(absPath), { recursive: true });
+      writeFileSync(absPath, BR096_CONTENTS);
+
+      // Arm checks. Without these, a green below could mean the wrong thing:
+      //  1. the HOME seam is LIVE in this worker — read through homedir(),
+      //     which is the call the code under test makes;
+      //  2. the literal string is NOT a path that exists from the test's
+      //     cwd, so nothing but expansion can reach the fixture;
+      //  3. the file the expansion targets does exist.
+      expect(homedir()).toBe(home);
+      expect(existsSync(tildePath)).toBe(false);
+      expect(existsSync(absPath)).toBe(true);
+
+      const queuePath = writeQueue("demo", [
+        JSON.stringify({
+          operation: "brief_create",
+          project: "demo",
+          brief_id: "BR-096",
+          title: "tilde-cache",
+          cache_path: tildePath,
+        }),
+      ]);
+
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+
+      // 1 per-entry replay + 1 drain — the entry reached the wire at all,
+      // which the unfixed consumer never managed (it returned 1 before any
+      // HTTP call).
+      expect(lb.calls.length).toBe(2);
+      const replay = lb.calls[0];
+      expect(replay.toolName).toBe("igris_brief_create");
+      // Read through the EXPANSION: byte-for-byte the file under tmp HOME.
+      expect(replay.args?.content).toBe(BR096_CONTENTS);
+      expect(replay.args?.cache_path).toBeUndefined();
+      // The operator-visible symptom was a queue that never emptied.
+      expect(existsSync(queuePath)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("BR-096 control: the SAME fixture with an ABSOLUTE cache_path drains (green before AND after the fix)", async () => {
+    const lb = makeLoopback((call) => ({
+      status: 200,
+      body: mcpOkEnvelope(rpcRequestId(call)),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const home = useTmpHome();
+    const absPath = join(home, BR096_REL);
+
+    try {
+      mkdirSync(dirname(absPath), { recursive: true });
+      writeFileSync(absPath, BR096_CONTENTS);
+      expect(homedir()).toBe(home);
+      expect(existsSync(absPath)).toBe(true);
+
+      const queuePath = writeQueue("demo", [
+        JSON.stringify({
+          operation: "brief_create",
+          project: "demo",
+          brief_id: "BR-096",
+          title: "tilde-cache",
+          // The ONE variable versus the case above.
+          cache_path: absPath,
+        }),
+      ]);
+
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(0);
+      expect(lb.calls.length).toBe(2);
+      const replay = lb.calls[0];
+      expect(replay.toolName).toBe("igris_brief_create");
+      expect(replay.args?.content).toBe(BR096_CONTENTS);
+      expect(replay.args?.cache_path).toBeUndefined();
+      expect(existsSync(queuePath)).toBe(false);
+    } finally {
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  });
+
+  it("BR-096: an unreadable TILDE cache_path reports the path actually ATTEMPTED, not just the queued literal", async () => {
+    const lb = makeLoopback((call) => ({
+      status: 200,
+      body: mcpOkEnvelope(rpcRequestId(call)),
+    }));
+    await new Promise<void>((resolve) =>
+      lb.server.listen(0, "127.0.0.1", resolve),
+    );
+    writeConfig({
+      remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: "k" },
+    });
+
+    const home = useTmpHome();
+    const rel = ".igris/projects/demo/briefs/BR-096-absent.md";
+    const tildePath = `~/${rel}`;
+    const absPath = join(home, rel);
+
+    const stderrBuf: string[] = [];
+    const errSpy = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation((chunk: unknown) => {
+        stderrBuf.push(typeof chunk === "string" ? chunk : String(chunk));
+        return true;
+      });
+
+    try {
+      // Deliberately NOT created — this is the failure path.
+      expect(homedir()).toBe(home);
+      expect(existsSync(absPath)).toBe(false);
+
+      const queuePath = writeQueue("demo", [
+        JSON.stringify({
+          operation: "brief_create",
+          project: "demo",
+          brief_id: "BR-096",
+          title: "absent-cache",
+          cache_path: tildePath,
+        }),
+      ]);
+
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "demo" });
+      expect(code).toBe(1);
+      expect(lb.calls.length).toBe(0);
+      expect(existsSync(queuePath)).toBe(true);
+
+      const out = stderrBuf.join("");
+
+      // Assert on the CLI-AUTHORED head of the line only — everything before
+      // ` unreadable:`. Asserting `out` as a whole is VACUOUS here, and that
+      // is measured, not suspected: with the read fixed but the message left
+      // in its pre-BR-096 form, Node's own ENOENT text embeds the resolved
+      // path (`… open '/var/folders/…/BR-096-absent.md'`), so a whole-string
+      // `toContain(absPath)` passes while the CLI still prints the literal
+      // alone. That route is an accident of ONE errno's wording — a throw
+      // that is not an fs error, or is not an Error at all, carries no path —
+      // so the guarantee has to live in the slot the CLI controls.
+      const cut = out.indexOf(" unreadable:");
+      expect(cut).toBeGreaterThan(0);
+      const authored = out.slice(0, cut);
+      // The queued literal — what to fix in the queue file.
+      expect(authored).toContain(`cache_path=${tildePath}`);
+      // The path actually ATTEMPTED — what to look for on disk. Before the
+      // fix the message carried only the literal, so a reader chasing this
+      // ENOENT was sent to a directory named `~`.
+      expect(authored).toContain(absPath);
+    } finally {
+      errSpy.mockRestore();
       await new Promise<void>((resolve) => lb.server.close(() => resolve()));
     }
   });
