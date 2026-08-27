@@ -127,6 +127,7 @@ If the `igris-brain` MCP server is available AND a remote brain URL is configure
   - remote_url = the configured URL
   - api_key = the configured API key
 - Display sync result summary (e.g., "Pushed 3 learnings, 1 error, 2 sessions to remote brain")
+- If the output names SKIPPED, ERROR or UNACKNOWLEDGED tables, surface those lines verbatim — the rows are retained locally and travel on the next push once the remote is deployed (BR-097).
 
 If remote brain is not configured or push fails, skip with one-line notice: "Brain push skipped ([reason])." Do NOT block session end.
 

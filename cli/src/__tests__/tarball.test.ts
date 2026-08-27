@@ -1557,6 +1557,28 @@ interface PackReport {
  *   headroom remaining  ~37.7 KB     (37_739 B under TD-374's +150 —
  *                                    153_600 − 115_861)
  *
+ * BR-097 MEASURED LAST (2026-08-27 10:48 UTC), `cd brain-mcp-server && npm run
+ * build && cd ../cli && npm run build` then `npm pack --dry-run --json`, same
+ * node_modules as FR-268's reading:
+ *   packed              1_999_932    807 entries (re-measured after warden r1:
+ *                                    +93 B over the 1_999_839 first reading —
+ *                                    one comment in the vendored sync
+ *                                    component and the scoped B3 sentence in
+ *                                    `cli/CHANGELOG.md`, which SHIPS; no new
+ *                                    entry — the change is two vendored files:
+ *                                    `sync.js` (the `skipped[]` field, the
+ *                                    acknowledgement stamp rule and the
+ *                                    held-table text in `handleBrainPush`) and
+ *                                    the vendored sync component's `index.js`
+ *                                    (the same rule in `pushTables`), plus one
+ *                                    line in the route)
+ *   cumulative delta    +133.3 KB    (136_512 B over PACK_BASELINE_PACKED)
+ *   BR-097's own share  +2_774 B     (1_999_932 − 1_997_158) against its plan's
+ *                                    <= 3_072 B budget, which HELD
+ *   headroom remaining  ~16.7 KB     (17_088 B under TD-374's +150 —
+ *                                    153_600 − 136_512)
+ *   browser surfaces    +0 B — no dashboard file changed
+ *
  * FR-268 MEASURED LAST (2026-08-27), both trees built the same way with the
  * same node_modules, so the two readings are comparable to the byte:
  *   packed              1_997_158    807 entries (re-measured after warden r1:

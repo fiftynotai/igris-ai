@@ -1158,14 +1158,17 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // table's transaction — sibling tables in the same chunk still merge.
   // The response carries `results` for successful tables and `errors` for
   // failed ones, plus a per-table `failures` array of row-level errors
-  // bubbled up from mergeRows. Status code is 207 Multi-Status when any
-  // table errored, 200 OK otherwise — both are 2xx so existing callers
-  // that check `response.ok` continue to work.
+  // bubbled up from mergeRows. Status code is 207 Multi-Status when NOT
+  // everything merged (a table errored OR is absent here), 200 OK otherwise
+  // — both are 2xx so existing callers that check `response.ok` continue to
+  // work.
   //
   // BR-064 (defense-in-depth): if a SYNC_TABLES entry's table is missing
   // from the local schema (partial migration), skip it with a stderr log
   // rather than throwing. Mirrors the activeSyncTables filter in
-  // handleBrainPush.
+  // handleBrainPush. BR-097: the skipped table is named in `skipped[]`
+  // (always present) and is NOT in `errors`, so pre-BR-097 clients do not
+  // queue it; clients hold that table's watermark instead.
   app.post('/sync/push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
     try {
       const db = getDb();
@@ -1178,12 +1181,12 @@ async function runHttp(config: ServerConfig): Promise<void> {
         return;
       }
 
-      const { results, errors, ok } = processSyncPush(db, tables);
-      // 207 Multi-Status when any table errored; still in 2xx range so
+      const { results, errors, skipped, ok } = processSyncPush(db, tables);
+      // 207 Multi-Status when anything was not merged; still in 2xx range so
       // `response.ok` is true — internal callers (handleBrainPush,
       // handleSyncQueueDrain, pushTables auto-push) inspect the body.
       const status = ok ? 200 : 207;
-      res.status(status).json({ ok, results, errors });
+      res.status(status).json({ ok, results, errors, skipped });
       // FR-220: fire the fire-and-forget post-merge embed pass AFTER the
       // response is queued. Non-blocking (setImmediate inside), so it never
       // delays the sync response; a no-op when the merge touched no learnings.

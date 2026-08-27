@@ -346,6 +346,7 @@ describe('BR-066 /sync/push per-table isolation', () => {
 
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual({});
+    expect(result.skipped).toEqual([]); // BR-097: always present
     expect(result.results.event_log.inserted).toBe(2);
     expect(result.results.event_log.failed).toBe(0);
     expect(result.results.event_log.failures).toBeUndefined();
@@ -372,8 +373,17 @@ describe('BR-066 /sync/push per-table isolation', () => {
     // event_log went through; goals was skipped with a stderr log.
     expect(result.results.event_log.inserted).toBe(1);
     expect(result.results.goals).toBeUndefined();
+    // BR-097 (2026-08-27): a skipped table is now VISIBLE — `ok` false (the
+    // route answers 207) and `skipped` names it; `errors.goals` stays
+    // undefined so a pre-BR-097 client never queues a skip. Pinned `ok: true`
+    // before this brief — the skip was invisible, so FR-268's early push could
+    // not tell a skipped table from a merged one; the stamp itself was
+    // `handleBrainPush`'s unconditional loop (T1 in sync.test.ts pins that
+    // half; this pin covers visibility — plan M2 reds this and T6 while T1
+    // stays green).
     expect(result.errors.goals).toBeUndefined();
-    expect(result.ok).toBe(true);
+    expect(result.skipped).toEqual(['goals']);
+    expect(result.ok).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -385,6 +395,7 @@ describe('BR-066 /sync/push per-table isolation', () => {
     expect(result.ok).toBe(true);
     expect(result.results).toEqual({});
     expect(result.errors).toEqual({});
+    expect(result.skipped).toEqual([]); // BR-097: always present
   });
 });
 

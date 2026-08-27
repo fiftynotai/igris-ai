@@ -171,8 +171,11 @@ skill carries the third as its "hunt cost" block — unfiltered by project and `
   every column the payload carries; before the VPS runs migration v3 each
   `agent_events` row fails per-row with SQLite's
   `table agent_events has no column named model_requested`, the batch answers
-  HTTP 207 and the rows are queued for retry (BR-066). Rows are delayed, not
-  lost — which is why Phase 6 deploys the VPS *before* the first push.
+  HTTP 207 and the auto-push path queues the rows for retry (BR-066); since
+  BR-097 `igris_brain_push` does not advance an errored table's watermark
+  either, so its rows are re-selected by the next push rather than queued.
+  Rows are delayed, not lost — which is why Phase 6 deploys the VPS *before*
+  the first push.
 - **Concurrent same-role agents** may mis-pair (§2).
 - **The bracket bias** of 1–6 min per invocation (§2; TD-420: 0.9–2.1 over five pairs; no FR-266 bracket-vs-active pair exists in the record (`SELECT COUNT(*) FROM agent_events WHERE brief_id='FR-266' AND json_extract(metadata,'$.harness_duration_ms') IS NOT NULL` → 0, 2026-08-26 22:02 UTC),
   FR-267: 1.0–6.2 over its eleven pairs, median 2.2 — §7 table) is stated, not corrected.

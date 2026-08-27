@@ -246,17 +246,17 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'duration_ms', 'input_tokens', 'output_tokens', 'cache_read', 'cache_create',
       'result', 'error_message', 'metadata', 'created_at',
       // FR-267 hunt-cost record (instances migration v3); syncKey unchanged.
-      // A remote that has not applied v3 fails these rows per-row (BR-066
-      // queue) — deploy the remote before the first push.
+      // A remote without v3 fails these rows per-row (HTTP 207) and the local
+      // watermark is held (BR-097) — deploy the remote first.
       'model_requested', 'model_resolved', 'round', 'project',
     ],
   },
   {
     table: 'ceremony_events',
     // FR-268 (2026-08-27). Hostname is in the key so two machines' same-second
-    // rows never collide. A remote that has not applied instances v4 SKIPS the
-    // whole table (processSyncPush `continue`s over an absent table, not a
-    // per-row 207) — deploy the remote before the first push.
+    // rows never collide. A remote without instances v4 SKIPS the whole table
+    // (named in `skipped[]`, HTTP 207) and the local watermark is held
+    // (BR-097) — deploy first; the held rows travel on the next push.
     syncKey: ['machine_hostname', 'project', 'ceremony', 'event_type', 'created_at'],
     timestampCol: 'created_at',
     strategy: 'append',
@@ -1055,11 +1055,16 @@ export function mergeRows(
 
 /** Result of processSyncPush — mirrors the JSON body of POST /sync/push. */
 export interface SyncPushResult {
-  /** Per-table merge counts. Tables in `errors` are absent here. */
+  /** Per-table merge counts. Tables in `errors` or `skipped` are absent here. */
   results: Record<string, MergeRowsResult>;
   /** Per-table fatal errors (table-level, not row-level). */
   errors: Record<string, string>;
-  /** True iff `errors` is empty — drives 200 vs 207 status code. */
+  /**
+   * Tables the payload named that this DB lacks (BR-097). ALWAYS present —
+   * its absence tells a client the remote predates BR-097. Never in `errors`.
+   */
+  skipped: string[];
+  /** True iff `errors` and `skipped` are both empty — drives 200 vs 207. */
   ok: boolean;
 }
 
@@ -1070,8 +1075,8 @@ export interface SyncPushResult {
  * its OWN try/catch. A row-level crash inside mergeRows is now caught at
  * row level (see mergeRows itself); this outer per-table guard handles
  * table-level errors (e.g. prepare() failures, schema mismatches). A
- * missing table on the local schema is skipped with a stderr log
- * (defense-in-depth carry-over from BR-064).
+ * missing table on the local schema is skipped with a stderr log and named
+ * in `skipped` (BR-064 carry-over; BR-097 makes the skip visible).
  *
  * @param db - The database to merge into
  * @param tables - Wire-format payload from POST /sync/push
@@ -1088,12 +1093,14 @@ export function processSyncPush(
 
   const results: Record<string, MergeRowsResult> = {};
   const errors: Record<string, string> = {};
+  const skipped: string[] = [];
 
   for (const config of SYNC_TABLES) {
     const rows = tables[config.table];
     if (!rows || rows.length === 0) continue;
     if (!localTables.has(config.table)) {
       console.error(`[brain] /sync/push skip: table '${config.table}' not present locally`);
+      skipped.push(config.table);
       continue;
     }
     try {
@@ -1106,7 +1113,12 @@ export function processSyncPush(
     }
   }
 
-  return { results, errors, ok: Object.keys(errors).length === 0 };
+  return {
+    results,
+    errors,
+    skipped,
+    ok: Object.keys(errors).length === 0 && skipped.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1206,7 +1218,9 @@ export async function runPostMergeEmbedPass(db: Database.Database): Promise<void
  * Push local brain changes to a remote brain server.
  *
  * For each sync table, queries rows changed since the last push timestamp,
- * POSTs them to the remote server, and updates the local sync_state on success.
+ * POSTs them to the remote server, and advances `sync_state` only for the
+ * tables the remote acknowledged in `results` and not in `errors` (BR-097);
+ * a held table is re-selected in full by the next push.
  *
  * @param args - Remote URL and API key
  * @returns MCP-formatted response with push summary
@@ -1289,6 +1303,12 @@ async function handleBrainPush(
   // Chunk and POST to remote
   const chunks = chunkTablesForPush(tables);
 
+  // BR-097: stamp a table iff the remote named it in `results` (any chunk)
+  // and never in `errors`. `skipped` is absent on a pre-BR-097 remote.
+  const acked = new Set<string>();
+  const failed = new Map<string, string>();
+  const skippedByRemote = new Set<string>();
+
   try {
     for (let i = 0; i < chunks.length; i++) {
       const chunkPayload = {
@@ -1317,13 +1337,18 @@ async function handleBrainPush(
         console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
         throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
+      for (const t of Object.keys(result.results as Record<string, unknown>)) acked.add(t);
       const remoteErrors = (result.errors ?? {}) as Record<string, string>;
       for (const [tableName, errMessage] of Object.entries(remoteErrors)) {
         console.error(`[brain] Remote sync table=${tableName} error: ${errMessage}`);
+        if (!failed.has(tableName)) failed.set(tableName, errMessage);
+      }
+      if (Array.isArray(result.skipped)) {
+        for (const t of result.skipped) skippedByRemote.add(String(t));
       }
     }
 
-    // Update sync_state for each pushed table only after ALL chunks succeed
+    // Advance sync_state only for acknowledged tables, after ALL chunks succeed
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_push_at)
       VALUES (?, ?, ?)
@@ -1331,22 +1356,54 @@ async function handleBrainPush(
       DO UPDATE SET last_push_at = excluded.last_push_at
     `);
 
+    const notMerged = new Set<string>();
     db.transaction(() => {
       for (const tableName of Object.keys(tables)) {
+        if (!acked.has(tableName) || failed.has(tableName)) {
+          notMerged.add(tableName);
+          continue;
+        }
         upsertState.run(remoteUrl, tableName, pushedAt);
       }
     })();
 
+    // One line per held table (skipped / errored / unacknowledged), for /scan.
+    const holdReason = (name: string): [string, string] => {
+      if (failed.has(name)) {
+        return [
+          `ERROR — ${failed.get(name)} (rows retained locally)`,
+          `${name}: remote error ${failed.get(name)}; rows retained locally`,
+        ];
+      }
+      if (skippedByRemote.has(name)) {
+        return [
+          'SKIPPED — not on remote yet (deploy first; rows retained locally)',
+          `${name} not on remote yet — deploy first; rows retained locally`,
+        ];
+      }
+      return [
+        'UNACKNOWLEDGED — remote returned no result (pre-BR-097 remote?); rows retained locally',
+        `${name} sent but not acknowledged by the remote (pre-BR-097 remote?); rows retained locally`,
+      ];
+    };
+    for (const name of notMerged) console.error(`[brain] sync: ${holdReason(name)[1]}`);
+
     // Format summary
     const tablesSummary = Object.entries(tables)
-      .map(([name, rows]) => `  - ${name}: ${rows.length} row(s)`)
+      .map(([name, rows]) =>
+        notMerged.has(name)
+          ? `  - ${name}: ${holdReason(name)[0]}`
+          : `  - ${name}: ${rows.length} row(s)`)
       .join('\n');
+    const headline = notMerged.size === 0
+      ? 'Brain push completed successfully.'
+      : `Brain push completed — ${notMerged.size} table(s) not merged by the remote (rows retained locally).`;
 
     return {
       content: [{
         type: 'text',
         text: [
-          'Brain push completed successfully.',
+          headline,
           '',
           `Remote: ${remoteUrl}`,
           `Total rows pushed: ${totalRows}`,

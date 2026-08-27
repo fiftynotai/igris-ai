@@ -11,8 +11,9 @@
  *   ones) and never queued the failed rows. Result: silent data loss for
  *   the exact class BR-066 was meant to fix.
  *
- * Fix:
- *   pushTables now reads `response.json()`, branches on `body.ok`:
+ * BR-066 fix (superseded in part by BR-097 — see the block before T7):
+ *   BR-097 (2026-08-27): pushTables no longer branches on body.ok; a table advances iff it is named in body.results and not in body.errors (T7/T8 below).
+ *   (BR-066) pushTables read `response.json()` and branched on `body.ok`:
  *     - body.ok=true                                    → advance every table
  *     - body.ok=false with body.errors populated        → advance only OK
  *                                                          tables, queue
@@ -321,7 +322,7 @@ describe('BR-066 auto-push HTTP 207 partial-success handling', () => {
   // nothing enters sync_queue.
   // -------------------------------------------------------------------------
 
-  it('on plain HTTP 200 with body.ok=true, advances every table and queues nothing', async () => {
+  it('on plain HTTP 200 with every table named in results, advances every table and queues nothing', async () => {
     db.prepare(`
       INSERT INTO brief_status (id, project, brief_id, status, updated_at)
       VALUES (?, ?, ?, ?, ?)
@@ -412,6 +413,116 @@ describe('BR-066 auto-push HTTP 207 partial-success handling', () => {
     const tables = queue.map((r) => r.table_name).sort();
     expect(tables).toEqual(['brief_files', 'brief_status']);
     expect(queue.every((r) => r.status === 'pending')).toBe(true);
+
+    comp.destroy();
+  });
+
+  // -------------------------------------------------------------------------
+  // BR-097 — the auto-push client stamps a table only when the remote named
+  // it in `results` and not in `errors`. A table the remote SKIPS (it lacks
+  // the table — named in `skipped[]`, HTTP 207, NOT in `errors`) is held: not
+  // stamped and NOT queued (queue + re-select would double-send). An old
+  // remote (no `skipped` field, table absent from `results`) is held the same
+  // way. Same read-back idiom as the 207 case above.
+  // -------------------------------------------------------------------------
+
+  it('BR-097 T7: a remote-skipped table (skipped[], not in errors) is neither stamped nor queued, and is warned once', async () => {
+    db.prepare(`
+      INSERT INTO brief_status (id, project, brief_id, status, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('bs-4', 'p', 'BR-097', 'In Progress', '2026-08-27 07:00:00');
+    db.prepare(`
+      INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('bf-4', 'p', 'BR-097', 'BR-097.md', '# brief', 'c0ffee', '2026-08-27 07:00:00');
+
+    const fetchSpy = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { tables: Record<string, unknown[]> };
+      const results: Record<string, unknown> = {};
+      const skipped: string[] = [];
+      for (const t of Object.keys(body.tables)) {
+        if (t === 'brief_files') skipped.push(t);
+        else results[t] = { inserted: 1, updated: 0, skipped: 0, failed: 0 };
+      }
+      return {
+        ok: true,
+        status: 207,
+        json: async () => ({ ok: false, results, errors: {}, skipped }),
+        text: async () => '',
+      } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    const comp = createSyncComponent();
+    const ctx = makeCtx(bus);
+    comp.init(ctx);
+
+    bus.emit('brief.synced', { project: 'p', brief_id: 'BR-097' });
+    await flushAsync();
+
+    const stateRows = db.prepare(`
+      SELECT table_name, last_push_at FROM sync_state WHERE remote_url = ?
+    `).all('https://brain.example.com') as Array<{ table_name: string; last_push_at: string }>;
+    const stateMap = Object.fromEntries(stateRows.map((r) => [r.table_name, r.last_push_at]));
+    expect(stateMap.brief_status).toMatch(/^\d{4}-\d{2}-\d{2}/);
+    expect(stateMap.brief_files).toBeUndefined();
+
+    // NOT queued — a skip is a deploy state, not a failure.
+    const queueCount = db.prepare('SELECT COUNT(*) as c FROM sync_queue').get() as { c: number };
+    expect(queueCount.c).toBe(0);
+
+    // Exactly one warn line names the held table.
+    const warns = vi.mocked(ctx.log.warn).mock.calls.map((c) => String(c[0]));
+    const held = warns.filter((w) => /table=brief_files not on remote yet/.test(w));
+    expect(held).toHaveLength(1);
+    expect(held[0]).toMatch(/deploy first; rows retained locally/);
+
+    comp.destroy();
+  });
+
+  it('BR-097 T8: an old-remote body (no skipped field, table absent from results) holds the table: not stamped, not queued', async () => {
+    db.prepare(`
+      INSERT INTO brief_status (id, project, brief_id, status, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('bs-5', 'p', 'BR-098', 'In Progress', '2026-08-27 07:00:00');
+    db.prepare(`
+      INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('bf-5', 'p', 'BR-098', 'BR-098.md', '# brief', 'd00d', '2026-08-27 07:00:00');
+
+    const fetchSpy = vi.fn(async (_url: unknown, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { tables: Record<string, unknown[]> };
+      const results: Record<string, unknown> = {};
+      for (const t of Object.keys(body.tables)) {
+        if (t !== 'brief_files') results[t] = { inserted: 1, updated: 0, skipped: 0, failed: 0 };
+      }
+      // Pre-BR-097 remote: `ok: true`, no `skipped`, the absent table simply unnamed.
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, results, errors: {} }),
+        text: async () => '',
+      } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+
+    const comp = createSyncComponent();
+    const ctx = makeCtx(bus);
+    comp.init(ctx);
+
+    bus.emit('brief.synced', { project: 'p', brief_id: 'BR-098' });
+    await flushAsync();
+
+    const stateTables = (db.prepare(`
+      SELECT table_name FROM sync_state WHERE remote_url = ?
+    `).all('https://brain.example.com') as Array<{ table_name: string }>).map((r) => r.table_name);
+    expect(stateTables).toEqual(['brief_status']);
+
+    const queueCount = db.prepare('SELECT COUNT(*) as c FROM sync_queue').get() as { c: number };
+    expect(queueCount.c).toBe(0);
+
+    const warns = vi.mocked(ctx.log.warn).mock.calls.map((c) => String(c[0]));
+    expect(warns.filter((w) => /table=brief_files sent but not acknowledged by the remote/.test(w))).toHaveLength(1);
 
     comp.destroy();
   });

@@ -141,7 +141,7 @@ async function pushTables(
   if (totalRows === 0) return;
 
   // TD-253: relativize local FS paths IN PLACE at entry — before both chunking
-  // and the failure-path `queueFailedRows` (lines ~224/~246) — so the auto-push
+  // and the failure-path `queueFailedRows` (the 207 per-table block and the catch below) — so the auto-push
   // retry queue never carries absolute paths.
   redactTablesForEgress(tables);
 
@@ -161,6 +161,10 @@ async function pushTables(
     // can split into multiple HTTP requests, and we want sync_state to
     // advance for a table iff every chunk that touched it succeeded.
     const failedTables: Record<string, string> = {};
+    // BR-097: a table advances only when the remote named it in `results`.
+    // `skipped` names tables the remote lacks — held, never queued.
+    const acked = new Set<string>();
+    const skippedByRemote = new Set<string>();
 
     for (const chunk of chunks) {
       const payload = {
@@ -182,6 +186,7 @@ async function pushTables(
         ok?: boolean;
         results?: Record<string, unknown>;
         errors?: Record<string, string>;
+        skipped?: string[];
       };
 
       // Truly broken response: no `results` field at all. Existing catch
@@ -190,10 +195,15 @@ async function pushTables(
         throw new Error('malformed sync push response');
       }
 
+      if (body.results && typeof body.results === 'object') {
+        for (const t of Object.keys(body.results)) acked.add(t);
+      }
+
       // HTTP 207 partial: collect per-table errors. The chunk may have
       // touched only a subset of `tables`; only the keys present here
-      // are blocked from advancing sync_state.
-      if (body.ok === false && body.errors && typeof body.errors === 'object') {
+      // are blocked from advancing sync_state. `errors` is authoritative
+      // (`ok` is derived from it and from `skipped`).
+      if (body.errors && typeof body.errors === 'object') {
         for (const [tableName, errMessage] of Object.entries(body.errors)) {
           // First failure wins; subsequent chunks for the same table do
           // not overwrite — keeps the queue's error_message stable.
@@ -201,6 +211,9 @@ async function pushTables(
             failedTables[tableName] = errMessage;
           }
         }
+      }
+      if (Array.isArray(body.skipped)) {
+        for (const t of body.skipped) skippedByRemote.add(String(t));
       }
     }
 
@@ -212,13 +225,25 @@ async function pushTables(
       DO UPDATE SET last_push_at = excluded.last_push_at
     `);
 
-    // Advance sync_state ONLY for tables that didn't error in any chunk.
+    // Advance sync_state ONLY for tables the remote acknowledged in some
+    // chunk and that didn't error in any chunk (BR-097).
     db.transaction(() => {
       for (const tableName of Object.keys(tables)) {
-        if (tableName in failedTables) continue;
+        if (!acked.has(tableName) || tableName in failedTables) continue;
         upsertState.run(config.remoteUrl, tableName, pushedAt);
       }
     })();
+
+    // One warn per held table that is not an error (errors are logged below
+    // when queued). Held rows are re-selected in full by the next push.
+    for (const tableName of Object.keys(tables)) {
+      if (acked.has(tableName) || tableName in failedTables) continue;
+      log.warn(
+        skippedByRemote.has(tableName)
+          ? `Auto-push: table=${tableName} not on remote yet — deploy first; rows retained locally`
+          : `Auto-push: table=${tableName} sent but not acknowledged by the remote (pre-BR-097 remote?); rows retained locally`,
+      );
+    }
 
     // Queue the failed-table rows with their SPECIFIC error message so
     // the next drain has actionable diagnostics (not a generic "HTTP 500").

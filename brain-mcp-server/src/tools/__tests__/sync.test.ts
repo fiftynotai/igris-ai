@@ -101,6 +101,7 @@ import {
   relativizeEgressPath,
   redactTablesForEgress,
   SYNC_TABLES,
+  type SyncPushResult,
 } from '../sync.js';
 import { createInstancesComponent } from '../../engine/components/instances/index.js';
 import {
@@ -1064,5 +1065,298 @@ describe('FR-267 — agent_events sync carries model_requested / round / project
     expect(rejected.failed).toBe(1);
     expect(rejected.failures[0].error).toMatch(/table agent_events has no column named model_requested/);
     remoteV1.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-097 — a push advances a table's watermark only on remote acknowledgement
+// ---------------------------------------------------------------------------
+// FR-268 shipped `ceremony_events` and the perception extractor pushed before
+// the VPS had the table: the remote `continue`d over it (no `results`, no
+// `errors`, HTTP 200) and `handleBrainPush` stamped `sync_state.last_push_at`
+// for every table it SENT — the rows were never re-selected (L-1366's class).
+// T1–T3 and T6 drive the REAL `processSyncPush` over a second in-memory DB
+// built by the same `makeMinimalSyncDb()` (the live `SYNC_TABLES` shape on
+// both sides — L-849), through the fetch boundary; T4/T5 hand-shape the body
+// because they are about the CLIENT's reading of an old remote / of `errors`.
+
+/** The fixture remote: the full SYNC_TABLES shape, optionally missing one real table. */
+function makeFixtureRemote(dropTable?: string): Database.Database {
+  const remote = makeMinimalSyncDb();
+  if (dropTable) remote.exec(`DROP TABLE ${dropTable}`);
+  return remote;
+}
+
+/** A fetch whose `json()` is the real `/sync/push` body computed over `remote`. */
+function fetchViaRemote(
+  remote: Database.Database,
+  captured: SyncPushResult[],
+): typeof globalThis.fetch {
+  return vi.fn(async (_url: unknown, init: RequestInit) => {
+    const payload = JSON.parse(init.body as string) as {
+      tables: Record<string, Record<string, unknown>[]>;
+    };
+    const r = processSyncPush(remote, payload.tables);
+    captured.push(r);
+    // The route: `status = ok ? 200 : 207`; both are 2xx so fetchWithRetry resolves.
+    return { ok: true, status: r.ok ? 200 : 207, json: async () => r, text: async () => '' };
+  }) as unknown as typeof globalThis.fetch;
+}
+
+/** A hand-shaped response body (old remote / explicit 207), one per call. */
+function fetchWithBody(body: Record<string, unknown>, status = 200): typeof globalThis.fetch {
+  return vi.fn(async () => ({
+    ok: true,
+    status,
+    json: async () => body,
+    text: async () => '',
+  })) as unknown as typeof globalThis.fetch;
+}
+
+const CEREMONY_ROW = {
+  project: 'igris-ai',
+  ceremony: 'boot',
+  event_type: 'start',
+  machine_hostname: 'host-a',
+  instance_id: 'inst-1',
+  brief_id: null,
+  duration_ms: null,
+  metadata: '{}',
+  created_at: '2026-08-27 07:00:00',
+};
+
+describe("BR-097 — a push advances a table's watermark only on remote acknowledgement", () => {
+  const REMOTE = 'http://test-remote.local';
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    errSpy.mockRestore();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  function seedLearning(title = 'br097 learning'): void {
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, review_status,
+         provenance, source_extractor, created_at)
+       VALUES (?, ?, ?, ?, 'approved', 'observed', 'manual', ?)`,
+    ).run('p', 'pattern', title, 'body', '2026-08-27 07:00:00');
+  }
+
+  function seedCeremonyEvent(): void {
+    const cols = Object.keys(CEREMONY_ROW);
+    db.prepare(
+      `INSERT INTO ceremony_events (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`,
+    ).run(...cols.map((c) => (CEREMONY_ROW as Record<string, unknown>)[c]));
+  }
+
+  function seedGoal(): void {
+    db.prepare(
+      `INSERT INTO goals (goal_id, project_slug, title, status, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run('g-br097', 'p', 'goal', 'pending', '2026-08-27 07:00:00', '2026-08-27 07:00:00');
+  }
+
+  /** `sync_state.last_push_at` per table for the test remote (absent key = never stamped). */
+  function stamps(): Record<string, string> {
+    const rows = db
+      .prepare('SELECT table_name, last_push_at FROM sync_state WHERE remote_url = ?')
+      .all(REMOTE) as { table_name: string; last_push_at: string }[];
+    return Object.fromEntries(rows.map((r) => [r.table_name, r.last_push_at]));
+  }
+
+  function stderrLines(): string {
+    return errSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
+  }
+
+  async function push(): Promise<{ text: string; isError?: boolean }> {
+    const result = await handleBrainPush({ remote_url: REMOTE, api_key: 'k' });
+    return {
+      text: (result.content?.[0]?.text as string) ?? '',
+      isError: (result as { isError?: boolean }).isError,
+    };
+  }
+
+  // T1 — the AC-1 red: the remote lacks `ceremony_events`; its watermark must NOT move.
+  it('T1: a table the fixture remote lacks is NOT stamped (its sync_state row stays absent)', async () => {
+    seedLearning();
+    seedCeremonyEvent();
+    const remote = makeFixtureRemote('ceremony_events');
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    const { isError } = await push();
+    expect(isError).toBeFalsy();
+
+    // The sibling table merged and was acknowledged.
+    expect((remote.prepare('SELECT COUNT(*) AS c FROM learnings').get() as { c: number }).c).toBe(1);
+    expect(captured).toHaveLength(1);
+    expect(captured[0].results).toHaveProperty('learnings');
+    expect(captured[0].results).not.toHaveProperty('ceremony_events');
+
+    const st = stamps();
+    expect(st.learnings).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+    // THE assertion: no acknowledgement → no watermark. On HEAD this stamped.
+    expect(st).not.toHaveProperty('ceremony_events');
+    remote.close();
+  });
+
+  // T2 — positive control for the stamp: a full remote acknowledges both.
+  it('T2: a remote that has every table acknowledges both, skipped is [], headline unchanged', async () => {
+    seedLearning();
+    seedCeremonyEvent();
+    const remote = makeFixtureRemote();
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    const { text, isError } = await push();
+    expect(isError).toBeFalsy();
+    expect(captured[0].skipped).toEqual([]);
+    expect(captured[0].ok).toBe(true);
+    expect(text.split('\n')[0]).toBe('Brain push completed successfully.');
+    expect(text).toMatch(/- ceremony_events: 1 row\(s\)/);
+
+    const st = stamps();
+    expect(Object.keys(st).sort()).toEqual(['ceremony_events', 'learnings']);
+    remote.close();
+  });
+
+  // T3 — recovery WITHOUT the DELETE: deploy the table, push again, the row arrives.
+  it('T3: after the remote gains the table, the next push carries the held rows and stamps it', async () => {
+    seedLearning();
+    seedCeremonyEvent();
+    const remote = makeFixtureRemote('ceremony_events');
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    await push();
+    expect(stamps()).not.toHaveProperty('ceremony_events');
+
+    // "Deploy": the same stub shape makeMinimalSyncDb builds from SYNC_TABLES.
+    const cfg = SYNC_TABLES.find((t) => t.table === 'ceremony_events')!;
+    remote.exec(`CREATE TABLE ceremony_events (${cfg.columns.map((c) => `${c} TEXT`).join(', ')})`);
+
+    const { text, isError } = await push();
+    expect(isError).toBeFalsy();
+    expect(text.split('\n')[0]).toBe('Brain push completed successfully.');
+
+    // The second push re-selected ONLY the held table (learnings' watermark held it back).
+    expect(captured).toHaveLength(2);
+    expect(Object.keys(captured[1].results)).toEqual(['ceremony_events']);
+    expect((remote.prepare('SELECT COUNT(*) AS c FROM ceremony_events').get() as { c: number }).c).toBe(1);
+    expect((remote.prepare('SELECT COUNT(*) AS c FROM learnings').get() as { c: number }).c).toBe(1);
+    expect(stamps()).toHaveProperty('ceremony_events');
+    remote.close();
+  });
+
+  // T4 — compat: new client ↔ old remote (no `skipped` field at all).
+  it('T4: an old remote body (no skipped field) stamps only the results names and reports UNACKNOWLEDGED', async () => {
+    seedLearning();
+    seedCeremonyEvent();
+    globalThis.fetch = fetchWithBody({ ok: true, results: { learnings: { inserted: 1 } } });
+
+    const { text, isError } = await push();
+    expect(isError).toBeFalsy();
+
+    const st = stamps();
+    expect(st).toHaveProperty('learnings');
+    expect(st).not.toHaveProperty('ceremony_events');
+    expect(text.split('\n')[0]).toBe(
+      'Brain push completed — 1 table(s) not merged by the remote (rows retained locally).',
+    );
+    expect(text).toMatch(/- ceremony_events: UNACKNOWLEDGED — remote returned no result \(pre-BR-097 remote\?\); rows retained locally/);
+    expect(text).toMatch(/- learnings: 1 row\(s\)/);
+    expect(stderrLines()).toMatch(/ceremony_events sent but not acknowledged by the remote/);
+  });
+
+  // T5 — an errored table on a 207 is NOT stamped (and never was queued: this path has no catch).
+  it('T5: a 207 with errors.goals leaves goals unstamped, stamps learnings, isError stays falsy', async () => {
+    seedLearning();
+    seedGoal();
+    globalThis.fetch = fetchWithBody(
+      { ok: false, results: { learnings: { inserted: 1 } }, errors: { goals: 'boom' }, skipped: [] },
+      207,
+    );
+
+    const { text, isError } = await push();
+    expect(isError).toBeFalsy();
+
+    const st = stamps();
+    expect(st).toHaveProperty('learnings');
+    expect(st).not.toHaveProperty('goals');
+    expect(text.split('\n')[0]).toMatch(/^Brain push completed — 1 table\(s\) not merged/);
+    expect(text).toMatch(/- goals: ERROR — boom \(rows retained locally\)/);
+    expect(stderrLines()).toMatch(/goals: remote error boom; rows retained locally/);
+  });
+
+  // T5b — the union rule's conjunction: acked in one chunk AND errored in another → NOT stamped.
+  // (A real split needs > 5 MB; the body carries both keys to pin `acked && !failed`.)
+  it('T5b: a table named in BOTH results and errors is not stamped', async () => {
+    seedLearning();
+    seedGoal();
+    globalThis.fetch = fetchWithBody(
+      {
+        ok: false,
+        results: { learnings: { inserted: 1 }, goals: { inserted: 1 } },
+        errors: { goals: 'boom' },
+        skipped: [],
+      },
+      207,
+    );
+
+    const { isError } = await push();
+    expect(isError).toBeFalsy();
+    const st = stamps();
+    expect(st).toHaveProperty('learnings');
+    expect(st).not.toHaveProperty('goals');
+  });
+
+  // T6 — visibility is a separate property from the stamp (M2 kills this, not T1).
+  it('T6: the response names the skipped table and the text carries the SKIPPED line', async () => {
+    seedLearning();
+    seedCeremonyEvent();
+    const remote = makeFixtureRemote('ceremony_events');
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    const { text, isError } = await push();
+    expect(isError).toBeFalsy();
+
+    expect(captured[0].skipped).toEqual(['ceremony_events']);
+    expect(captured[0].ok).toBe(false);
+    expect(captured[0].errors).toEqual({});
+    expect(text.split('\n')[0]).toBe(
+      'Brain push completed — 1 table(s) not merged by the remote (rows retained locally).',
+    );
+    expect(text).toMatch(/- ceremony_events: SKIPPED — not on remote yet \(deploy first; rows retained locally\)/);
+    expect(text).toMatch(/- learnings: 1 row\(s\)/);
+    // One operator-visible line per unstamped table.
+    const lines = stderrLines().split('\n').filter((l) => /ceremony_events not on remote yet/.test(l));
+    expect(lines).toHaveLength(1);
+    remote.close();
+  });
+
+  // T9 — L-1366 by construction: a table with nothing to send is never stamped.
+  it('T9: a table the client did not send (0 rows) gets no sync_state row', async () => {
+    seedLearning();
+    const remote = makeFixtureRemote();
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    await push();
+    expect(Object.keys(captured[0].results)).toEqual(['learnings']);
+    expect(captured[0].skipped).toEqual([]);
+    expect(Object.keys(stamps())).toEqual(['learnings']);
+    remote.close();
   });
 });
