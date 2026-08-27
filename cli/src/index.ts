@@ -57,6 +57,8 @@ import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import { runCognition } from "./verbs/cognition.js";
+import { runCeremony } from "./verbs/ceremony.js";
+import { runKpi } from "./verbs/kpi.js";
 import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
@@ -1184,6 +1186,54 @@ async function main(argv: string[]): Promise<void> {
       process.exitCode = runCognition({
         action,
         json: opts.json !== false,
+      });
+    });
+
+  program
+    .command("ceremony <action>", { hidden: true })
+    .description(
+      "FR-268: brain-timed ceremony stamps. Actions: start, stop. Writes ceremony_events through the local write door (create-never); created_at is the DB clock and duration_ms is SQL-computed on stop from the paired open start — never caller-supplied. The four ceremony skills call this as their first and last executable step. Prints a JSON digest. Exit 0 even when degraded; unknown action/name → exit 2.",
+    )
+    .option("--name <ceremony>", "boot | rest | register | hunt-init")
+    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .option("--instance-id <id>", "instance id when known (boot's start predates the mint — omit there)")
+    .option("--brief <id>", "brief id (register / hunt-init)")
+    .option("--json", "emit the digest as JSON to stdout (default)", true)
+    .action(
+      (
+        action: string,
+        opts: { name?: string; project?: string; instanceId?: string; brief?: string; json?: boolean },
+      ): void => {
+        process.exitCode = runCeremony({
+          action,
+          name: opts.name,
+          project: opts.project,
+          instanceId: opts.instanceId,
+          brief: opts.brief,
+          json: opts.json !== false,
+        });
+      },
+    );
+
+  // FR-268 — a REPORTING verb (markdown by default), visible: the operator
+  // asks it directly; /ops renders it whole and /scan renders its --alarm line.
+  program
+    .command("kpi")
+    .description(
+      "FR-268: the seven OS KPIs (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost) computed on read from the brain's records — hunt_runs, brief_status, ceremony_runs. Weeks are Monday–Sunday UTC. Read-only. --sql prints the derivations for sqlite3; --alarm prints the one-line week-over-week reading /scan shows. Exit 0 even when degraded.",
+    )
+    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the cwd basename)")
+    .option("--weeks <n>", "how many UTC weeks back, counting the current partial one", "4")
+    .option("--json", "emit the digest as JSON", false)
+    .option("--sql", "print the seven derivations verbatim and exit", false)
+    .option("--alarm", "print the one-line alarm: last complete week vs the one before", false)
+    .action((opts: { project?: string; weeks?: string; json?: boolean; sql?: boolean; alarm?: boolean }): void => {
+      process.exitCode = runKpi({
+        project: opts.project,
+        weeks: opts.weeks === undefined ? undefined : Number.parseInt(opts.weeks, 10),
+        json: opts.json === true,
+        sql: opts.sql === true,
+        alarm: opts.alarm === true,
       });
     });
 

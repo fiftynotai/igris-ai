@@ -131,6 +131,17 @@ set -e
 #       sites exist. The COMPONENT trigger is the load-bearing half: the tool's
 #       `required` list lives there, and widening it is what silently breaks
 #       skill prose. HARD-fails — clean-tree output is one `OK: <n> sites`.
+#   - validate_ceremony_sites.sh  (FR-268)
+#       Triggers if: core/skills/boot/SKILL.md OR core/skills/rest/SKILL.md OR
+#                    core/skills/register/SKILL.md OR core/skills/hunt/SKILL.md
+#                    is staged.
+#       Authoring control over the four ceremony skills' `igris ceremony
+#       start|stop --name <n>` call sites: exactly one start and one stop per
+#       skill, named for that skill's ceremony, the start above the first
+#       executable step and the stop below the last (heading-anchored), and
+#       never inside an igris_agent_event window. A ceremony's cost is a
+#       brain-timed pair written by a VERB; this keeps the skill calling it.
+#       HARD-fails — clean-tree output is `OK: 4 skills, 8 sites`.
 #   - validate_harness_tier_claims.sh  (TD-367)
 #       Triggers if: harness-manifest.json OR README.md OR cli/README.md OR
 #                    docs/multi-cli.md OR docs/SETUP_GUIDE.md OR
@@ -324,6 +335,7 @@ needs_brief_priority_check=0
 needs_brief_status_check=0
 needs_ac_completion_check=0
 needs_agent_event_sites_check=0
+needs_ceremony_sites_check=0
 needs_harness_tier_check=0
 needs_error_loop_check=0
 
@@ -456,6 +468,17 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_hunt_agent_event_sites.sh" ]; then
   if echo "$staged" | grep -qE '^(core/skills/hunt/SKILL\.md|brain-mcp-server/src/engine/components/instances/index\.ts)$'; then
     needs_agent_event_sites_check=1
+  fi
+fi
+
+# FR-268: trigger the ceremony-site guard on the four skills that carry a
+# ceremony pair. The verb's allowlist (cli/src/verbs/ceremony.ts) and this
+# validator's rule table are the two places a ceremony is named; a skill that
+# loses or moves a site would otherwise ship green and the record would gain
+# a silent gap (visible only a week later as `unpaired` in `igris kpi`).
+if [ -f "$REPO_ROOT/scripts/validate_ceremony_sites.sh" ]; then
+  if echo "$staged" | grep -qE '^core/skills/(boot|rest|register|hunt)/SKILL\.md$'; then
+    needs_ceremony_sites_check=1
   fi
 fi
 
@@ -682,6 +705,17 @@ if [ "$needs_agent_event_sites_check" = "1" ]; then
   # set -e is intentionally bypassed here (if-condition exits set -e scope)
   # so multiple validator failures are aggregated into $failed.
   if ! bash "$REPO_ROOT/scripts/validate_hunt_agent_event_sites.sh"; then
+    failed=1
+  fi
+fi
+
+if [ "$needs_ceremony_sites_check" = "1" ]; then
+  echo "[pre-commit] Checking ceremony-skill start/stop sites (FR-268)..."
+  # HARD-FAIL, the FR-267 site guard's posture: the site is either whole or
+  # it is not, and there is no judgement call to leave to a human. A missing
+  # stamp is not caught anywhere else at commit time — the runtime layer
+  # (`igris kpi` unpaired counts) is an observer, not a refusal.
+  if ! bash "$REPO_ROOT/scripts/validate_ceremony_sites.sh"; then
     failed=1
   fi
 fi

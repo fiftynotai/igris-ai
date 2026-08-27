@@ -83,6 +83,7 @@ const TABLE_CATEGORY: Record<string, string> = {
   definition_files: 'Session, brief & task content',
   agent_metrics: 'Session, brief & task content',
   agent_events: 'Session, brief & task content',
+  ceremony_events: 'Session, brief & task content',
   event_log: 'Session, brief & task content',
   instances: 'Instance & host metadata',
   entity_edges: 'Knowledge graph',

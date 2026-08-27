@@ -547,3 +547,31 @@ demand:
 
 If an operator asks "what did the last maintenance run actually do", call
 `igris_brain_maintenance_history`. Do not block `/scan` on it.
+
+### 6.10. OS KPI line (FR-268)
+
+ONE line, for the current project, from the OS's own records — never a second
+line and never a table here (`/ops` renders the full digest cross-project).
+
+Run:
+
+```bash
+igris kpi --project <slug> --alarm --json 2>/dev/null || true
+```
+
+The verb owns every derivation: weeks are Monday–Sunday **UTC**; the line
+compares the last COMPLETE week with the one before it for Done per active
+day and median hunt minutes (`!` marks a |Δ| > 30 % move), then lists each
+ceremony's runs and median minutes for that week and the `unpaired` count
+(ceremony starts without a stop — the runtime observer of the FR-268 stamp
+contract). `/scan` reads `alarm.line` only and never re-derives a number.
+
+Render, when the digest has `degraded: false` and a non-null `alarm`:
+
+```
+### KPI
+<alarm.line>
+```
+
+If the verb is unavailable, errors, or returns `degraded: true`, omit the
+section entirely. Do NOT block `/scan`, do NOT print an error.

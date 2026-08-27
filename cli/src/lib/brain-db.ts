@@ -55,6 +55,9 @@ import { brainDbPath } from "./paths.js";
 // hand-edited — `npm run gen:brief-normalize-mirror` in brain-mcp-server/ writes
 // it, and a brain-side parity test byte-locks it. See coding_guidelines §13.
 import { normalizeSyncRow } from "./brief-normalize.generated.js";
+// FR-268: the PURE KPI reader (db-param, SELECT-only). This module is its
+// wrapper — the only place that opens a door for it.
+import { absentKpiDigest, buildKpiDigest, type KpiReadOptions } from "./kpi-read.js";
 import type {
   SessionFileRow,
   InstanceRow,
@@ -70,6 +73,7 @@ import type {
   ImportAncestorUpdate,
   ImportStoreResult,
   ImportResult,
+  KpiDigest,
 } from "../types.js";
 
 let db: Database.Database | null = null;
@@ -2883,4 +2887,142 @@ export function readOutputCounts(outputExpr: string): number | null {
       .get(value) as { n: number };
     return row.n;
   });
+}
+
+// ---------------------------------------------------------------------------
+// FR-268 — the ceremony record: WRITE door (`igris ceremony`) and the KPI READ
+// door (`igris kpi`). Two doors, not a flipped one (TD-319).
+// ---------------------------------------------------------------------------
+
+/** Input for {@link ceremonyEventWrite}. No timestamp: `created_at` is the DB clock. */
+export interface CeremonyEventWriteInput {
+  project: string;
+  ceremony: string;
+  event_type: "start" | "stop";
+  machine_hostname: string;
+  instance_id?: string | null;
+  brief_id?: string | null;
+}
+
+/** What {@link ceremonyEventWrite} returns — every field READ BACK from the row. */
+export interface CeremonyEventWriteResult {
+  id: number;
+  created_at: string;
+  /** stop: whether an open start was found; start: null. */
+  paired: boolean | null;
+  paired_start_id: number | null;
+  /** SQL-computed on a paired stop; NULL otherwise — never 0. */
+  duration_ms: number | null;
+}
+
+/**
+ * Duration computed IN SQL from the brain's own clock — a verbatim mirror of
+ * `brain-mcp-server/src/tools/agent_events.ts:269-270` (`DURATION_FROM_START_SQL`)
+ * with the table renamed. One clock for both ends of the bracket; binds the
+ * start id.
+ */
+const CEREMONY_DURATION_FROM_START_SQL =
+  "CAST((julianday('now') - julianday((SELECT created_at FROM ceremony_events WHERE id = ?))) * 86400000 AS INTEGER)";
+
+/**
+ * The latest open `start` for `(project, ceremony, machine_hostname)` — the
+ * start no later `stop` of the same key has closed. Mirror of
+ * `brain-mcp-server/src/tools/agent_events.ts:172-189` (`findOpenStart`), keyed
+ * by host rather than instance because `boot`'s start predates the instance
+ * mint. Any later stop closes EVERY earlier start of the key, so an orphaned
+ * start is never paired with a much later stop.
+ *
+ * Known limitation (the FR-267 class): two concurrent same-ceremony runs for
+ * one project on one host may mis-pair — counts stay right, durations may swap.
+ */
+function findOpenCeremonyStart(
+  handle: Database.Database,
+  project: string,
+  ceremony: string,
+  machineHostname: string,
+): { id: number; created_at: string } | undefined {
+  return handle
+    .prepare(
+      `SELECT s.id, s.created_at FROM ceremony_events s
+        WHERE s.event_type = 'start' AND s.project = ? AND s.ceremony = ? AND s.machine_hostname = ?
+          AND NOT EXISTS (SELECT 1 FROM ceremony_events e
+                           WHERE e.event_type = 'stop' AND e.project = s.project AND e.ceremony = s.ceremony
+                             AND e.machine_hostname = s.machine_hostname AND e.id > s.id)
+        ORDER BY s.id DESC LIMIT 1`,
+    )
+    .get(project, ceremony, machineHostname) as { id: number; created_at: string } | undefined;
+}
+
+/**
+ * Write one ceremony stamp (FR-268). The WRITE door: `getDb()`, create-never —
+ * a brain without `ceremony_events` (older than instances v4) throws
+ * {@link BrainTableMissingError} and the verb degrades; it never CREATEs.
+ *
+ * `created_at` is the row default (`datetime('now')`, the DB clock, UTC);
+ * `duration_ms` on a stop is computed IN SQL from the paired open start's
+ * `created_at` and NULL when no start is open (never 0 — §18.12). The caller
+ * supplies only what it alone knows: the names, the host, an instance id and
+ * a brief id when it has them.
+ */
+export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEventWriteResult {
+  const handle = getDb();
+  if (!tableExists(handle, "ceremony_events")) {
+    throw new BrainTableMissingError("ceremony_events");
+  }
+  const instanceId = input.instance_id ?? null;
+  const briefId = input.brief_id ?? null;
+
+  let id: number;
+  let paired: boolean | null = null;
+  let pairedStartId: number | null = null;
+  if (input.event_type === "start") {
+    const info = handle
+      .prepare(
+        `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id)
+         VALUES (?, ?, 'start', ?, ?, ?)`,
+      )
+      .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId);
+    id = Number(info.lastInsertRowid);
+  } else {
+    const open = findOpenCeremonyStart(handle, input.project, input.ceremony, input.machine_hostname);
+    paired = open !== undefined;
+    pairedStartId = open?.id ?? null;
+    const info = open
+      ? handle
+          .prepare(
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?, ${CEREMONY_DURATION_FROM_START_SQL})`,
+          )
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, open.id)
+      : handle
+          .prepare(
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?, NULL)`,
+          )
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId);
+    id = Number(info.lastInsertRowid);
+  }
+
+  // Read back (L-1248): the digest echoes the ROW, not what we meant to write.
+  const row = handle
+    .prepare("SELECT id, created_at, duration_ms FROM ceremony_events WHERE id = ?")
+    .get(id) as { id: number; created_at: string; duration_ms: number | null };
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    paired,
+    paired_start_id: pairedStartId,
+    duration_ms: row.duration_ms,
+  };
+}
+
+/**
+ * The KPI digest through the READ-ONLY door (`openBrainReadonly`,
+ * `query_only = ON`). An absent brain file yields the absent digest; a brain
+ * missing `hunt_runs` / `ceremony_events` degrades inside `buildKpiDigest`
+ * with the missing object named. Never writes — `kpi-read.test.ts` pins the
+ * file's sha256 / mtime / size across a full read.
+ */
+export function readKpiDigest(opts: KpiReadOptions): KpiDigest {
+  return withReadonlyBrain<KpiDigest>(absentKpiDigest(opts), (handle) => buildKpiDigest(handle, opts));
 }

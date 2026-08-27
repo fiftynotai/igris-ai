@@ -200,6 +200,18 @@ is annotated inline.
 - `round`
 - `project`
 
+#### `ceremony_events` — append-only
+
+- `project`
+- `ceremony`
+- `event_type`
+- `machine_hostname`
+- `instance_id`
+- `brief_id`
+- `duration_ms`
+- `metadata`
+- `created_at`
+
 #### `event_log` — append-only
 
 - `id`

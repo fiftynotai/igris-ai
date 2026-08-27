@@ -1943,3 +1943,173 @@ export interface DashboardDigest {
   brain_present: boolean;
   bridge_available: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// FR-268 — the ceremony record and the OS KPI digest
+// ---------------------------------------------------------------------------
+
+/** The four ceremonies `igris ceremony` accepts — a CLI allowlist, not a DDL CHECK. */
+export type CeremonyName = "boot" | "rest" | "register" | "hunt-init";
+
+/** What `igris ceremony start|stop` prints — every value READ BACK from the row. */
+export interface CeremonyDigest {
+  degraded: boolean;
+  ceremony: CeremonyName;
+  event_type: "start" | "stop";
+  project: string;
+  /** Row id; null when degraded (no row written). */
+  id: number | null;
+  /** The DB clock (`datetime('now')`, UTC) — never caller-supplied. */
+  created_at: string | null;
+  /** stop: true when an open start was found; start: null. */
+  paired: boolean | null;
+  paired_start_id: number | null;
+  /** SQL-computed on a paired stop; NULL on start and on an unpaired stop — never 0. */
+  duration_ms: number | null;
+  warnings: string[];
+  skipped: string[];
+}
+
+/** One UTC week (Monday–Sunday) in the KPI window. */
+export interface KpiWeek {
+  week_start: string;
+  week_end: string;
+  /** The current, incomplete week. The alarm never reads it. */
+  partial: boolean;
+}
+
+export interface KpiCapacityRow {
+  project: string;
+  week_start: string;
+  /** Brain-bracket minutes (overshoots active time by 1–6 min per invocation). */
+  agent_minutes: number;
+  invocations: number;
+  briefs: number;
+}
+
+export interface KpiThroughputRow {
+  project: string;
+  week_start: string;
+  done: number;
+  active_days: number;
+  /** NULL when the week has no active day. */
+  done_per_active_day: number | null;
+}
+
+export interface KpiEffortMixRow {
+  project: string;
+  week_start: string;
+  /** XS | S | M | L | XL | (other) | (none) — the leading size token of `brief_status.effort`. */
+  effort: string;
+  done: number;
+  /** XS+S over the week's Done for the project. */
+  xs_s_share: number;
+}
+
+export interface KpiHuntMinutesRow {
+  project: string;
+  week_start: string;
+  hunts: number;
+  median_min: number | null;
+  p75_min: number | null;
+  architect_share: number | null;
+  forger_share: number | null;
+  sentinel_share: number | null;
+  warden_share: number | null;
+  mender_share: number | null;
+  document_share: number | null;
+}
+
+export interface KpiHuntRoundsRow {
+  project: string;
+  week_start: string;
+  hunts: number;
+  hunts_resumed: number;
+  resumed_share: number;
+  avg_extra_rounds: number;
+}
+
+export interface KpiModelPerRoleRow {
+  agent: string;
+  model_requested: string | null;
+  n: number;
+  median_min: number | null;
+  p75_min: number | null;
+  /** NULL until rows carry `metadata.tool_calls`. */
+  tool_calls_median: number | null;
+  tool_calls_n: number;
+}
+
+export interface KpiCeremonyCostRow {
+  project: string;
+  ceremony: string;
+  week_start: string;
+  runs: number;
+  median_min: number | null;
+  p75_min: number | null;
+}
+
+export interface KpiCeremonyCoverageRow {
+  project: string;
+  ceremony: string;
+  week_start: string;
+  starts: number;
+  stops: number;
+  /** starts − stops (the plan's definition); goes red in `/scan` when non-zero. */
+  unpaired: number;
+  /** Stops that found no open start (duration NULL) — a same-week unpaired start would cancel one in `unpaired`. */
+  unpaired_stops: number;
+}
+
+/** One week-over-week comparison in the alarm. */
+export interface KpiAlarmMetric {
+  w0: number | null;
+  w1: number | null;
+  /** Percent change W0→W1; null when either side is NULL or W0 is 0. */
+  delta_pct: number | null;
+  /** |delta_pct| > 30. */
+  flag: boolean;
+}
+
+export interface KpiAlarm {
+  project: string;
+  /** The last COMPLETE UTC week (W1) and the one before it (W0). */
+  w0_week_start: string;
+  w1_week_start: string;
+  done_per_active_day: KpiAlarmMetric;
+  hunt_median_min: KpiAlarmMetric;
+  /** W1 ceremony runs + median per ceremony name. */
+  ceremonies: Array<{ ceremony: string; runs: number; median_min: number | null }>;
+  /** W1 unpaired starts, summed over ceremonies. */
+  unpaired: number;
+  /** The ONE line `/scan` renders. */
+  line: string;
+}
+
+/** What `igris kpi` prints — computed on read, never stored. */
+export interface KpiDigest {
+  degraded: boolean;
+  tz: "UTC";
+  /** The DB clock at read time. */
+  generated_at: string | null;
+  /** Monday of the oldest requested week (UTC). */
+  since: string | null;
+  /** The slug filter, or null for every project. */
+  project: string | null;
+  /** The record's first activity day (UTC); weeks starting before it read NULL per active day. */
+  activity_floor: string | null;
+  weeks: KpiWeek[];
+  capacity: KpiCapacityRow[];
+  throughput: KpiThroughputRow[];
+  effort_mix: KpiEffortMixRow[];
+  hunt_minutes: KpiHuntMinutesRow[];
+  hunt_rounds: KpiHuntRoundsRow[];
+  model_per_role: KpiModelPerRoleRow[];
+  ceremony_cost: KpiCeremonyCostRow[];
+  ceremony_coverage: KpiCeremonyCoverageRow[];
+  alarm: KpiAlarm | null;
+  /** What could not be computed and why (missing DB / view / table). */
+  skipped: string[];
+  /** Stated conventions and residuals the reader must know. */
+  notes: string[];
+}

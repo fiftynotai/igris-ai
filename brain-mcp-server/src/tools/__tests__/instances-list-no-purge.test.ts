@@ -108,15 +108,23 @@ function listTsFiles(dir: string): string[] {
 }
 
 /**
- * The purge statement, matched loosely (any whitespace, any case). Assembled
+ * The purge statements, matched loosely (any whitespace, any case). Assembled
  * from two halves so THIS file's own source never matches its own scanner.
+ * FR-268 (2026-08-27) widened the scan to `ceremony_events` — the ceremony
+ * record shares `agent_events`' retention decision (durable, no purge).
  */
-const PURGE_PATTERN = new RegExp('DELETE' + '\\s+FROM\\s+agent_events', 'i');
+const PURGE_PATTERNS: RegExp[] = [
+  new RegExp('DELETE' + '\\s+FROM\\s+agent_events', 'i'),
+  new RegExp('DELETE' + '\\s+FROM\\s+ceremony_events', 'i'),
+];
 
-/** Count files under `dir` whose source matches the purge pattern. */
+/** Count files under `dir` whose source matches any purge pattern. */
 function scanForPurge(dir: string): { visited: number; offenders: string[] } {
   const files = listTsFiles(dir);
-  const offenders = files.filter((f) => PURGE_PATTERN.test(readFileSync(f, 'utf8')));
+  const offenders = files.filter((f) => {
+    const src = readFileSync(f, 'utf8');
+    return PURGE_PATTERNS.some((p) => p.test(src));
+  });
   return { visited: files.length, offenders };
 }
 
@@ -175,7 +183,7 @@ describe('FR-267 — listing instances does not purge agent_events', () => {
   });
 });
 
-describe('FR-267 — no purge statement anywhere under src/', () => {
+describe('FR-267 / FR-268 — no purge statement anywhere under src/ (agent_events, ceremony_events)', () => {
   // __tests__ → tools → src
   const SRC_DIR = resolve(import.meta.dirname, '../..');
 
@@ -186,10 +194,15 @@ describe('FR-267 — no purge statement anywhere under src/', () => {
         join(dir, 'planted.ts'),
         `db.prepare("DELETE FROM` + ` agent_events WHERE created_at < datetime('now', '-7 days')").run();\n`,
       );
+      // FR-268: the second arm — a ceremony_events purge is flagged on its own.
+      writeFileSync(
+        join(dir, 'planted-ceremony.ts'),
+        `db.prepare("DELETE FROM` + ` ceremony_events WHERE created_at < datetime('now', '-7 days')").run();\n`,
+      );
       writeFileSync(join(dir, 'clean.ts'), `db.prepare('SELECT 1').run();\n`);
       const { visited, offenders } = scanForPurge(dir);
-      expect(visited).toBe(2);
-      expect(offenders.map((f) => f.endsWith('planted.ts'))).toEqual([true]);
+      expect(visited).toBe(3);
+      expect(offenders.map((f) => f.split('/').pop()).sort()).toEqual(['planted-ceremony.ts', 'planted.ts']);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **The OS measures itself: `igris kpi` and `igris ceremony` (FR-268)** — seven OS KPIs computed on read from the brain's own records, and one NEW record: the brain-timed ceremony stamp.
+  - **`igris kpi [--project <slug>] [--weeks N] [--json] [--sql] [--alarm]`** — capacity (brain-bracket agent minutes per project per week), throughput (Done per week and per active day), effort mix of Done, minutes per hunt by phase (nearest-rank median / p75), rounds per hunt, model per role, and ceremony cost — all from `hunt_runs`, `brief_status` and the new `ceremony_runs`. Weeks are **Monday–Sunday UTC**; the current partial week is included and marked. Read-only door only (`query_only = ON`); `--sql` prints the seven derivations plus the KPI 7 coverage sub-query (8 statements) verbatim for `sqlite3`; `--alarm` prints the one week-over-week line `/scan` renders (`!` when |Δ| > 30 %). Nothing is stored — the rows are the record, the rollups are SQL.
+  - **`igris ceremony start|stop --name boot|rest|register|hunt-init`** — writes `ceremony_events` (instances migration **v4**, with the `ceremony_runs` view) through the CLI's local write door; `created_at` is the DB clock and `duration_ms` is SQL-computed on stop from the paired open start — the verb never passes a timestamp. `/boot`, `/rest`, `/register` and `/hunt` INIT call it as their first and last executable step; `scripts/validate_ceremony_sites.sh` hard-fails in `pre-commit` when a skill loses a site, and `igris kpi` reports unpaired starts per week.
+  - **`ceremony_events` joins `SYNC_TABLES`** (append; key `machine_hostname, project, ceremony, event_type, created_at`) and the egress manifest. **Deploy the remote FIRST:** a remote without instances v4 SKIPS the table on push (not a per-row 207), and the local `sync_state` watermark still advances — see `docs/reference/os-kpis.md` § residuals for the recovery.
+  - Durable like `agent_events`: no purge, no TTL, no cap (the no-purge scan now covers both tables). `igris export` lists it under the deliberate exclusions.
+  - **Filed from this hunt:** **BR-097** — the push-watermark skip above (a push should refuse to stamp a table the remote did not acknowledge). **TD-431** — the first FULL post-ship UTC week is 2026-08-31 → 09-06; `igris kpi --weeks 1` and the `--alarm` line are read on or after 2026-09-07 UTC and appended to `docs/reference/os-kpis.md` §9.
+
 ### Fixed
 
 - **The VPS brain was four schema versions behind, and is now current (TD-378)** — BR-083's qualifiers join `SYNC_TABLES`' `syncKey`, so the remote had to reach `edges@4` before any push. Measuring first found the gap was larger than filed: **`schema_version` 21 (not 24), `edges@3`, no qualifier columns** — TD-338's recorded v22/v23 gap PLUS v24 and v25, which nobody had listed.

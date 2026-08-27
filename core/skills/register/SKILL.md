@@ -7,6 +7,7 @@ allowed-tools:
   - Read
   - Write
   - Glob
+  - Bash
   - mcp__igris-brain__igris_brief_sync
   - mcp__igris-brain__igris_brief_create
   - mcp__igris-brain__igris_brief_list
@@ -61,6 +62,10 @@ copies of one mapping and are pinned against each other by
 - `architecture` → AC-XXX
 
 ## Execution
+
+### 0. Ceremony start (FR-268)
+
+Run `igris ceremony start --name register --project {project} 2>/dev/null || true` — the brain-timed start of this ceremony (FR-268). Never blocks; §7 writes the matching stop.
 
 ### 1. Parse Arguments
 
@@ -262,6 +267,8 @@ Status: Ready
 To implement: /hunt {PREFIX}-{XXX}
 To change priority: "change {PREFIX}-{XXX} priority to P0"
 ```
+
+Then run `igris ceremony stop --name register --project {project} --brief {PREFIX}-{XXX} 2>/dev/null || true` — the brain-timed end of this ceremony (FR-268); the brain computes the duration from the §0 start it pairs with. Never blocks.
 
 ## Important
 

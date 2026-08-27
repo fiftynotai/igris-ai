@@ -541,10 +541,12 @@ igris_goal_dashboard({ project: "igris-ai" })
 
 ## 8. Hunt cost record (`igris_agent_event`, `hunt_runs`)
 
-**Tools:** `igris_agent_event` (write). There is no read tool — read the
-`hunt_runs` view with `sqlite3` (FR-268 owns any future read tool). The
-former metrics tools (record / query / velocity / dashboard) are retired;
-this record replaced them (FR-267).
+**Tools:** `igris_agent_event` (write). Read with `igris kpi` (the seven OS
+KPIs, computed on read; `--sql` prints the queries) or the `hunt_runs` view
+with `sqlite3`; the ceremony record is `ceremony_events` / `ceremony_runs`,
+written by `igris ceremony start|stop` from the four ceremony skills
+(FR-268). The former metrics tools (record / query / velocity / dashboard)
+are retired; this record replaced them (FR-267).
 
 **What's there:** one row per agent invocation — `project`, `brief_id`,
 `agent`, `phase`, `round`, `model_requested` / `model_resolved`,

@@ -252,6 +252,20 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     ],
   },
   {
+    table: 'ceremony_events',
+    // FR-268 (2026-08-27). Hostname is in the key so two machines' same-second
+    // rows never collide. A remote that has not applied instances v4 SKIPS the
+    // whole table (processSyncPush `continue`s over an absent table, not a
+    // per-row 207) — deploy the remote before the first push.
+    syncKey: ['machine_hostname', 'project', 'ceremony', 'event_type', 'created_at'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'project', 'ceremony', 'event_type', 'machine_hostname', 'instance_id', 'brief_id',
+      'duration_ms', 'metadata', 'created_at',
+    ],
+  },
+  {
     table: 'schedules',
     syncKey: ['id'],
     timestampCol: 'updated_at',

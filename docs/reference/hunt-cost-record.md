@@ -93,7 +93,9 @@ CREATE VIEW IF NOT EXISTS hunt_runs AS
 One row per *completed* invocation (grain = the stop/error row); `size` comes
 from `brief_status.effort`. Why a view and no new MCP tool: R5 (records, not a
 dashboard), harness-agnostic (`sqlite3` reads it on any harness, including a
-future Igris harness), zero tool-count churn. FR-268 owns any read tool.
+future Igris harness), zero tool-count churn. The read verb is `igris kpi`
+(FR-268 — the seven OS KPIs over this view, `brief_status` and the ceremony
+record; `docs/reference/os-kpis.md` carries the derivations).
 
 ---
 
@@ -151,7 +153,7 @@ skill carries the third as its "hunt cost" block — unfiltered by project and `
 | Tool calls per invocation, tool calls per active minute, opus-4-8 / opus-5 / fable-5 comparison table, Claude Code version series, the 1,119-segment / 432-invocation reconstruction | **One-time archaeology** — NOT re-derivable from what ships; the tooling was deliberately not kept (claude-only, R6) | Brief §Corrected measurements |
 | Feb-2026 `agent_metrics` averages (2.8 / 5.0 / 5.3 / 1.6 min, 48 rows) | **Archaeology** — the 276 rows (measured 2026-08-26 21:34 UTC) stay in the table as history, unread by any surface | Decision 6 |
 | Throughput from `closes #` footers (Aug 04–26 series; 4.6 → 2.2/day; 191 briefs Jun 29–Jul 5) | **Reproducible from git, not from this record** (`git log --grep 'closes #'`) | Not this brief's contract |
-| Done per active day, XS+S share, capacity share by project, hunt wall-clock median/p75, "19 of 62 hunts > 4 h" | **Reproducible from `brief_status` + `hunt_runs` for hunts that emitted** (FR-268 owns the OS-wide roll-up); the filed values are archaeology because pre-ship hunts have no durations | FR-268 |
+| Done per active day, XS+S share, capacity share by project, hunt wall-clock median/p75, "19 of 62 hunts > 4 h" | **Reproducible from `brief_status` + `hunt_runs` for hunts that emitted** — the OS-wide roll-up is `igris kpi` (`docs/reference/os-kpis.md`, FR-268); the filed values are archaeology because pre-ship hunts have no durations | `igris kpi` / `docs/reference/os-kpis.md` (FR-268) |
 | Review-floor table (TD-425: forger 29/67/119 → sentinel 23/30/45.5) | **Reproducible going forward** (per-brief forger vs sentinel minutes from `hunt_runs`) | TD-425 depends on it |
 | "opus-5 hunts median active 112.5 before / 112.0 after f578dd2" | **Archaeology** (transcript-timed "active" minutes; the record has brain brackets, not active time) | Different quantity — say so in the doc |
 
@@ -186,8 +188,10 @@ skill carries the third as its "hunt cost" block — unfiltered by project and `
 - **Token totals are opaque on this harness.** The harness reports a single `total_tokens`
   figure per agent completion, not the four-way split the columns model; the orchestrator
   records it in `metadata.total_tokens` and the four columns stay NULL. `hunt_runs` does not
-  read metadata, so per-agent token cost is not queryable from the view yet — a candidate
-  column for FR-268, not a fake split.
+  read metadata, so per-agent token cost is not queryable from the view — FR-268 declined a
+  token column (tokens are recorded when the harness reports them, never a headline;
+  `igris kpi` KPI 6 reads `metadata.tool_calls` only); a candidate for a follow-up brief,
+  not a fake split.
 - **`DEFAULT 0` stays in the frozen DDL** for `duration_ms` and the four token columns (`db.ts`
   base CREATE and the component's v1 CREATE are frozen by the §2.1 rule; SQLite cannot alter a
   default in place). The handler writes explicit NULLs, so its rows are correct; any OTHER writer

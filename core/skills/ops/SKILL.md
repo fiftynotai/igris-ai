@@ -188,6 +188,14 @@ sqlite3 ~/.igris/memory/knowledge.db "
 
 The same role on two models is comparable row-to-row; add `WHERE project='<slug>'` to scope one project. Per-phase and per-hunt totals are GROUP BYs over the same view, never stored.
 
+OS KPIs (FR-268) — the seven cross-project weekly readings (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost), computed on read from the same records plus `brief_status` and the ceremony record:
+
+```bash
+igris kpi --weeks 4 2>/dev/null || true
+```
+
+Render the verb's markdown WHOLE under `### OS KPIs (FR-268)` in §7. The verb owns every derivation (Monday–Sunday UTC weeks, nearest-rank medians, the current week marked partial; `igris kpi --sql` prints the queries for `sqlite3`). If the verb is unavailable or prints nothing, omit the section.
+
 ### 7. Display
 
 Format as:
@@ -217,6 +225,9 @@ Format as:
 - Journal mode: WAL / other
 - DB size: X KB
 - Knowledge: X learnings (Y global), X errors (Y solved)
+
+### OS KPIs (FR-268)
+<the `igris kpi --weeks 4` markdown, whole — omit the section when the verb is unavailable>
 
 ### Projects
 | Project | Status | Archetype | Stack | Last Session | Path |

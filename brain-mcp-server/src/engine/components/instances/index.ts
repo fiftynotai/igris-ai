@@ -145,6 +145,40 @@ export function createInstancesComponent(): BrainComponent {
               WHERE e.event_type IN ('stop', 'error');
           `,
         },
+        {
+          version: 4,
+          // FR-268 ceremony record (2026-08-27). A NEW table, so its CREATE lives
+          // here only — do NOT add it to db.ts's legacy CREATEs (the two-registry
+          // rule protects agent_events; a brand-new table has one registry). No
+          // CHECK on `ceremony`: SQLite cannot widen a CHECK, so the vocabulary is
+          // the CLI verb's allowlist (cli/src/verbs/ceremony.ts). `created_at` is
+          // the DB clock (UTC) and `duration_ms` is SQL-computed on stop by the
+          // writer — never caller-supplied (coding_guidelines §18.10).
+          description: 'FR-268 ceremony record: ceremony_events table, ceremony_runs view',
+          sql: `
+            CREATE TABLE IF NOT EXISTS ceremony_events (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project TEXT NOT NULL,
+              ceremony TEXT NOT NULL,
+              event_type TEXT NOT NULL CHECK (event_type IN ('start','stop')),
+              machine_hostname TEXT NOT NULL,
+              instance_id TEXT,
+              brief_id TEXT,
+              duration_ms INTEGER,
+              metadata TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE INDEX IF NOT EXISTS idx_ceremony_events_key
+              ON ceremony_events(project, ceremony, event_type, created_at);
+            CREATE VIEW IF NOT EXISTS ceremony_runs AS
+              SELECT e.project, e.ceremony, e.machine_hostname, e.instance_id, e.brief_id,
+                     e.duration_ms, ROUND(e.duration_ms / 60000.0, 1) AS minutes,
+                     CASE WHEN e.duration_ms IS NULL THEN NULL
+                          ELSE datetime(e.created_at, '-' || (e.duration_ms / 1000) || ' seconds') END AS started_at,
+                     e.created_at AS ended_at, e.id AS event_id
+              FROM ceremony_events e WHERE e.event_type = 'stop';
+          `,
+        },
       ];
     },
 

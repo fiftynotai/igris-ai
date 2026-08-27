@@ -33,6 +33,10 @@ Initialize Igris AI and resume any pending work.
 
 ## Execution
 
+### 0. Ceremony start (FR-268)
+
+Run `igris ceremony start --name boot 2>/dev/null || true` — the brain-timed start of this ceremony (FR-268). The verb derives the slug from the working directory the same way §1's detection verb does, writes `ceremony_events` through the CLI's local write door (`created_at` is the brain's clock), and never blocks boot: a missing brain or an older schema degrades silently. Read nothing from its digest here; §7 writes the matching stop.
+
 ### 1. Detect — L0
 
 Run the detection verb first and read its JSON digest:
@@ -667,5 +671,7 @@ If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — s
 `igris session register` (§4.4) already wrote this instance's LIVE per-instance file `~/.igris/projects/{project}/session/instances/<instance_id>.md` at `state='live'` (where `<instance_id>` is `register.instance_id` from the §4.4 digest), seeded from the handoff. §7 is the end-of-boot confirm/refresh of THAT file — if the booting surfaced anything that should land in the LIVE scratchpad (or once a hunt starts and `**Mode:**` flips to `HUNT MODE`), update it directly via `igris_session_file_update` with `project`, `filename=instances/<instance_id>.md`, `content`, `instance_id=<instance_id>`, `state='live'`. On a plain boot with no further edits the register write already stands — no extra write is required.
 
 The per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
+
+Run `igris ceremony stop --name boot --project <detect.project_slug> --instance-id <register.instance_id> 2>/dev/null || true` — the brain-timed end of this ceremony (FR-268); the brain computes the duration from the §0 start it pairs with. Never blocks.
 
 Display: "Igris AI initialized. System ready."

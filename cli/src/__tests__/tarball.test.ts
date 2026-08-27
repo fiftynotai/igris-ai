@@ -1546,8 +1546,51 @@ interface PackReport {
  *   costs seconds as well as bytes** — worth knowing before the next brief
  *   plans a spend.
  *
+ * FR-267 (2026-08-26) shipped WITHOUT a row, so its share is recovered here
+ * from a clean worktree build of its commit (`edf4497`, the TD-373 method:
+ * `git worktree add … HEAD`, node_modules symlinked, `rm -rf dist` + build,
+ * `npm pack --dry-run --json`):
+ *   packed              1_979_281    801 entries (+46_523 B over TD-378, all
+ *                                    of it `brain-mcp-server` prose + the
+ *                                    hunt-cost handler; the entry count did
+ *                                    not move)
+ *   headroom remaining  ~37.7 KB     (37_739 B under TD-374's +150 —
+ *                                    153_600 − 115_861)
+ *
+ * FR-268 MEASURED LAST (2026-08-27), both trees built the same way with the
+ * same node_modules, so the two readings are comparable to the byte:
+ *   packed              1_997_158    807 entries (re-measured after warden r1:
+ *                                    +146 B over the 1_997_012 first reading —
+ *                                    the `throughputSql` export, the `||` slug
+ *                                    fallback and two comments)
+ *   cumulative delta    +130.6 KB    (133_738 B over PACK_BASELINE_PACKED)
+ *   FR-268's own share  +17_877 B    (1_997_158 − 1_979_281) against its plan's
+ *                                    <= 20 KB budget, which
+ *                                    HELD. The six new entries are
+ *                                    `dist/lib/kpi-read.js` (21_546 B
+ *                                    unpacked — the seven SQL derivations and
+ *                                    their doc comments, which `tsc` keeps)
+ *                                    + its map, `dist/verbs/{ceremony,kpi}.js`
+ *                                    + maps; the changed ones are
+ *                                    `brain-db.js` (+4_941, the two doors),
+ *                                    `index.js` (+2_688, two registrations),
+ *                                    the vendored instances component
+ *                                    (+2_068, migration v4) and `sync.js`
+ *                                    (+697, one SYNC_TABLES entry).
+ *   headroom remaining  ~19.4 KB     (19_862 B under TD-374's +150 —
+ *                                    153_600 − 133_738)
+ *   browser surfaces    +0 B — no dashboard file changed (INITIAL 286_070,
+ *                       TOTAL 580_979 over 12 chunks, identical before/after)
+ *
+ *   **~19.4 KB IS WHAT IS LEFT.** The next brief that touches `cli/src` or
+ *   `brain-mcp-server/src` must measure before it plans, and a brief of
+ *   FR-267's shape (+46.5 KB) no longer fits. The answer is still to cut or
+ *   to vendor less, not to raise `PACK_HARD_CEILING_DELTA` — but the
+ *   operator conversation that TD-374 had is now one brief away.
+ *
  * READ THAT BEFORE PLANNING THE NEXT ONE. **~82.3 KB (84_262 B) is what is
- * left on PACKED** — FR-249's row below is the live reading. **But packed is
+ * left on PACKED** — FR-249's row below is the live reading. *(SUPERSEDED by
+ * the FR-268 row directly above: ~19.4 KB is the live reading.)* **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the
  * packed GRANT is +150 KB and the headroom is what remains under it, and

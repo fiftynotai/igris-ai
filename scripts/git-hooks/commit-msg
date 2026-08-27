@@ -79,7 +79,8 @@
 #       argued above, so they are OBSERVED instead — by the acGateNote in
 #       brain-mcp-server/src/tools/briefs.ts at the moment of the sync, and by
 #       scripts/validate_brief_ac_completion.sh on the next brief-state commit.
-#       (§3 has no observer yet; FR-268 owns any OS-wide roll-up.)
+#       (§3 has no observer yet; the OS-wide roll-up is `igris kpi` —
+#       docs/reference/os-kpis.md, FR-268.)
 #     - `git commit --no-verify` (git skips every hook natively).
 #     - a checkout without the hooks installed, or a project whose briefs live
 #       in a different brain.

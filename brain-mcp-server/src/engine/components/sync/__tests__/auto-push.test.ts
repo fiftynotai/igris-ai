@@ -276,11 +276,13 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 20 entries', () => {
+    it('has exactly 21 entries', () => {
       // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
       // task_assignments, agent_capabilities, autonomous_decisions,
       // coordination_config) removed with the worker subsystem teardown.
-      expect(SYNC_TABLES).toHaveLength(20);
+      // FR-268 (2026-08-27): +1 `ceremony_events` (the ceremony record,
+      // instances migration v4), 20→21.
+      expect(SYNC_TABLES).toHaveLength(21);
     });
 
     it('EXCLUDES cognition_instances — the roster is per-machine derived state (TD-327)', () => {
@@ -289,7 +291,7 @@ describe('Sync Auto-Push', () => {
       // one machine's roster onto another — the same class of mistake that put
       // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
       // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
-      // wrong to merge, so it stays out and the count above stays 20.
+      // wrong to merge, so it stays out and the count above stays 21 (FR-268).
       expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
     });
 

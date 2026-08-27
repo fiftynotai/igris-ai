@@ -12,7 +12,8 @@
  *     absent one;
  *   - the `hunt_runs` view yields `size` from `brief_status`, `minutes` and
  *     `started_at` from `duration_ms`, and stop/error rows only;
- *   - idempotency: a second boot leaves `engine_migrations` at exactly 1,2,3;
+ *   - idempotency: a second boot leaves `engine_migrations` at exactly 1,2,3,4
+ *     (v4 = FR-268's ceremony record; the v3 assertions are unchanged);
  *   - the §2.1 rule (L-53): BOTH base creators — legacy `db.ts` v9 and the
  *     component's v1 — stay a strict subset of the post-v3 column set, and
  *     v3 itself never CREATEs the table (evolution is ALTER-only).
@@ -107,7 +108,8 @@ describe('instances migration v3 — agent_events hunt-cost record (FR-267)', ()
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_events'",
     ).all() as { name: string }[]).map((r) => r.name);
     expect(indexes).toContain('idx_agent_events_brief');
-    expect(appliedVersions(db)).toEqual([1, 2, 3]);
+    // FR-268 (2026-08-27): the chain now ends at v4 (ceremony_events), 1,2,3 -> 1,2,3,4.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
   });
 
   it('round defaults to 1 for a row that does not set it', () => {
@@ -224,12 +226,13 @@ describe('instances migration v3 — agent_events hunt-cost record (FR-267)', ()
     });
   });
 
-  it('is idempotent: a second boot leaves engine_migrations for instances at exactly 1,2,3', () => {
+  it('is idempotent: a second boot leaves engine_migrations for instances at exactly 1,2,3,4', () => {
     const path = tmpDbPath();
     bootInstances(path).close();
 
     const db = bootInstances(path).rawConnection; // must not throw `duplicate column`
-    expect(appliedVersions(db)).toEqual([1, 2, 3]);
+    // FR-268 (2026-08-27): v4 (ceremony_events) joined the chain, 1,2,3 -> 1,2,3,4.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
     expect(columnsOf(db, 'agent_events')).toEqual(expect.arrayContaining(V3_COLUMNS));
     const view = db.prepare("SELECT name FROM sqlite_master WHERE type = 'view' AND name = 'hunt_runs'").get();
     expect(view).toBeDefined();

@@ -76,6 +76,7 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 ### Phase 1: INIT
 
+0. **Ceremony start (FR-268):** run `igris ceremony start --name hunt-init --project {project} --brief {BRIEF_ID} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed start of INIT; never blocks. The matching stop follows the Instance State line below.
 1. Load brief via `igris_brief_get` with `project` (the current project slug) and
    `brief_id` (`$ARGUMENTS`) — both are REQUIRED — falling back to cache at
    `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
@@ -180,6 +181,8 @@ Enter the state machine at {RECORDED_PHASE}.
 ```
 
 **Instance State:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, run `igris instance state --project {project} --instance-id {instance_id} --current-brief {brief_id} --current-phase {RECORDED_PHASE} --current-task "loading brief" (on a resumed hunt, `--current-task "resuming at {RECORDED_PHASE}"`) --lease-minutes 120`. See "Instance State and Work Lease" below.
+
+**Ceremony stop (FR-268):** run `igris ceremony stop --name hunt-init --project {project} --brief {BRIEF_ID} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed end of INIT (the brain computes the duration from the step-0 start it pairs with); never blocks. This closes the INIT bracket before the phase machine is entered.
 
 **Phase-machine entry (FR-189 — resume-aware):**
 INIT above always ran (re-claim, session update, status sync, heartbeat). Now
@@ -843,7 +846,7 @@ harness resolves it) in addition to the fields named — all FOUR of
 call omitting any is rejected at the gateway (BR-080, FR-267):
 
 1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
-2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary; add `model_resolved` and the four token counts (`input_tokens`, `output_tokens`, `cache_read`, `cache_create`) only when the harness reports them — omit them otherwise, never pass 0
+2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary; add `model_resolved` and the four token counts (`input_tokens`, `output_tokens`, `cache_read`, `cache_create`) only when the harness reports them — omit them otherwise, never pass 0; and `metadata` as `{"tool_calls": N, "total_tokens": T}` only when the harness reports them (omit the key otherwise, never 0 — `igris kpi` reads `metadata.tool_calls` for KPI 6 and stays NULL until rows carry it, FR-268)
 3. **On agent failure:** Call `igris_agent_event` with event_type="error" and error_message
 4. **On retry:** Call `igris_agent_event` with event_type="retry" and metadata with attempt count and reason
 

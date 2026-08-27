@@ -7,6 +7,7 @@ allowed-tools:
   - Read
   - Write
   - Edit
+  - Bash
   - mcp__igris-brain__igris_session_file_update
   - mcp__igris-brain__igris_instance_remove
   - mcp__igris-brain__igris_brief_release
@@ -23,6 +24,10 @@ triggers:
 Safely pause or end the current session, saving state for later resumption.
 
 ## Execution
+
+### 0. Ceremony start (FR-268)
+
+Run `igris ceremony start --name rest --project {project} 2>/dev/null || true` — the brain-timed start of this ceremony (FR-268). Never blocks `/rest`; §3.5 writes the matching stop.
 
 ### 1. Read Current Session
 
@@ -171,6 +176,10 @@ File content:
 ```
 
 The `**Resume Point:**` and `**Next Steps:**` lines in `## Status` are the MACHINE surface; the `##` sections below them are the HUMAN surface. `igris session gather` matches those two bold lines with a single-line regex and carries only their values into the boot digest that `/boot` §5 renders, so each must fit on ONE line. The `## Resume Point` and `## Next Session Instructions` sections may be as long as needed — they stay in the file (and in the stored `session_files` row) for whoever opens it, but they are not what the digest carries.
+
+### 3.5. Ceremony stop (FR-268)
+
+Run `igris ceremony stop --name rest --project {project} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed end of this ceremony (FR-268); the brain computes the duration from the §0 start it pairs with. Never blocks. (The row is written after §2.7's push, so it travels on the NEXT push — the record is complete on the machine and one push behind on the remote.)
 
 ### 4. Confirm REST MODE
 
