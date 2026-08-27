@@ -472,9 +472,10 @@ export function parseCliArgs(argv: string[]): CliArgs {
 /**
  * Resolve the DB path WITHOUT importing `getDb()`.
  *
- * Mirrors `src/db.ts#resolveDbPath` (which is not exported): explicit `--db`
- * wins, then `IGRIS_DB_PATH`, then the default brain path. Reproduced here on
- * purpose — importing `getDb()` for its path resolution would drag in the
+ * Mirrors the first, second and last tiers of `src/db.ts#resolveDbPath`
+ * (exported since TD-426; the `IGRIS_BRAIN_DIR` tier is not needed by a `--db`
+ * script): explicit `--db` wins, then `IGRIS_DB_PATH`, then the default brain
+ * path. Reproduced here on purpose — importing from `db.ts` would drag in the
  * migration side effect this script exists to avoid.
  */
 export function resolveDbPath(explicit?: string): string {

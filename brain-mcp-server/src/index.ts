@@ -44,7 +44,7 @@ import { handleBriefVelocity } from './tools/briefs.js';
 import { SYNC_TABLES, processSyncPush, scheduleLearningEmbedAfterMerge } from './tools/sync.js';
 
 // Database lifecycle
-import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
+import { getDb, closeDb, resolveDbPath, BRAIN_DIR } from './db.js';
 
 // stdio lifecycle — teardown, per-client pidfile registry, stale-instance reaper (BR-067)
 import {
@@ -137,13 +137,30 @@ function parseConfig(): ServerConfig {
 let _engine: Engine | null = null;
 
 /**
+ * The DB path the engine singleton booted with (TD-426). Resolved ONCE via
+ * `resolveDbPath()` and reused by every site that reports "the" DB — the
+ * pidfile record and the HTTP /health size probe — so they cannot disagree
+ * with what the engine actually opened.
+ */
+let _engineDbPath: string | null = null;
+
+/** The active brain DB path: the one the engine opened, or a fresh resolution before boot. */
+function activeDbPath(): string {
+  return _engineDbPath ?? resolveDbPath();
+}
+
+/**
  * Get or boot the engine singleton.
- * Lazily initializes on first call with the default DB path.
+ * Lazily initializes on first call with `resolveDbPath()` — NOT a static
+ * constant (TD-426: the static site is what let the build smoke guard open
+ * the live brain). Prints the resolved path so a spawner can verify it.
  */
 function getEngine(): Engine {
   if (!_engine) {
+    _engineDbPath = resolveDbPath();
+    console.error(`[brain] db: ${_engineDbPath}`);
     const config: EngineConfig = {
-      dbPath: DB_PATH,
+      dbPath: _engineDbPath,
       components: {
         memory: { enabled: true },
         errors: { enabled: true },
@@ -296,7 +313,7 @@ async function runStdio(): Promise<void> {
     pid: process.pid,
     ppid,
     started_at: new Date().toISOString(),
-    db_path: DB_PATH,
+    db_path: activeDbPath(), // TD-426: the path the engine opened, never a static default
   });
 
   // BR-067 Phase 2: one idempotent shutdown wired to stdin EOF/close AND
@@ -622,7 +639,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       let dbSizeBytes = 0;
       try {
-        dbSizeBytes = statSync(DB_PATH).size;
+        dbSizeBytes = statSync(activeDbPath()).size; // TD-426: the DB the engine opened
       } catch {
         // DB file may not be accessible; default to 0
       }

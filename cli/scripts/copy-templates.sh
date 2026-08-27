@@ -280,41 +280,10 @@ fi
 echo "copy-templates: bundled brain-mcp-server -> $MCP_DEST"
 
 # --- Post-build spawn smoke guard (BR-068 acceptance criterion) ------
-# Spawn the bundled entrypoint and assert it boots without a
-# module-resolution error. The brain MCP is a stdio server that idles
-# until killed, so this is a spawn-wait-kill check: a process still alive
-# after the wait booted cleanly; ERR_MODULE_NOT_FOUND / "Cannot find
-# package" in stderr fails the build. macOS-safe — no GNU-only `timeout`.
+# Spawn the bundled entrypoint in a throwaway sandbox and assert it boots
+# without a module-resolution error AND opened its DB inside that sandbox —
+# never the operator's live ~/.igris/memory/knowledge.db. The guard lives in
+# scripts/smoke-bundled-mcp.sh (TD-426; also run by .github/workflows/
+# npm-publish.yml; twin: tests/integration/build-smoke-sandbox.bats).
 echo "copy-templates: smoke-testing bundled MCP spawn..."
-smoke_brain_dir="$(mktemp -d "${TMPDIR:-/tmp}/igris-mcp-smoke.XXXXXX")"
-smoke_stderr="$(mktemp "${TMPDIR:-/tmp}/igris-mcp-smoke-err.XXXXXX")"
-smoke_cleanup() { rm -rf "$smoke_brain_dir" "$smoke_stderr"; }
-trap smoke_cleanup EXIT
-
-IGRIS_BRAIN_DIR="$smoke_brain_dir" node "$MCP_DEST/dist/index.js" >/dev/null 2>"$smoke_stderr" &
-smoke_pid=$!
-sleep 2
-
-smoke_alive=0
-if kill -0 "$smoke_pid" 2>/dev/null; then
-  smoke_alive=1
-  kill "$smoke_pid" 2>/dev/null || true
-  wait "$smoke_pid" 2>/dev/null || true
-else
-  wait "$smoke_pid" 2>/dev/null
-fi
-
-if grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find package' "$smoke_stderr"; then
-  echo "copy-templates: bundled MCP smoke test FAILED — module resolution error:" >&2
-  cat "$smoke_stderr" >&2
-  exit 1
-fi
-
-if [ "$smoke_alive" -eq 1 ]; then
-  echo "copy-templates: bundled MCP smoke test passed (server booted and idled)"
-else
-  echo "copy-templates: bundled MCP smoke test passed (server exited cleanly)"
-fi
-
-smoke_cleanup
-trap - EXIT
+bash "$ROOT/scripts/smoke-bundled-mcp.sh" "$MCP_DEST/dist/index.js"

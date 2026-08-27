@@ -57,27 +57,15 @@ jobs:
 
       # BR-068: the bundled igris-brain MCP must spawn without
       # ERR_MODULE_NOT_FOUND. `npm run build` (copy-templates.sh) already
-      # vendors node_modules and runs a spawn smoke guard; this explicit
+      # vendors node_modules and runs the spawn smoke guard; this explicit
       # step surfaces a guard failure unambiguously in the Actions log
-      # rather than burying it inside the build step.
-      - name: Smoke-test bundled MCP (BR-068 guard)
+      # rather than burying it inside the build step. TD-426: the SAME script
+      # as the build (no inline duplicate to drift), which also asserts the
+      # bundle opened its DB inside the guard's mktemp sandbox — the
+      # `[brain] db: <path>` boot line — and never the runner's ~/.igris.
+      - name: Smoke-test bundled MCP (BR-068 guard, TD-426 sandbox assertion)
         working-directory: cli
-        run: |
-          IGRIS_BRAIN_DIR="$(mktemp -d)" node dist/brain-mcp-server/dist/index.js > /dev/null 2> mcp-smoke-err.log &
-          PID=$!
-          sleep 3
-          if kill -0 "$PID" 2>/dev/null; then
-            kill "$PID" 2>/dev/null || true
-            wait "$PID" 2>/dev/null || true
-          else
-            wait "$PID" 2>/dev/null || true
-          fi
-          if grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find package' mcp-smoke-err.log; then
-            echo "::error::bundled igris-brain MCP failed to resolve dependencies"
-            cat mcp-smoke-err.log
-            exit 1
-          fi
-          echo "bundled igris-brain MCP spawns OK"
+        run: bash scripts/smoke-bundled-mcp.sh dist/brain-mcp-server/dist/index.js 15
 
       # BR-070: the bundled igris-brain MCP must vendor the embeddings
       # backend (@huggingface/transformers) so semantic/vector search works

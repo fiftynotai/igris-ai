@@ -40,39 +40,40 @@ const requireCjs = createRequire(import.meta.url);
 /** Whether sqlite-vec extension loaded successfully */
 let _vecAvailable = false;
 
-/** Root directory for the Igris brain */
+/**
+ * Root directory for the Igris brain — module-load static, used for NON-DB
+ * brain-dir paths only (starter patterns, sync-ingest file mapping). The DB
+ * path is resolved exclusively through {@link resolveDbPath}, at call time.
+ */
 const BRAIN_DIR = path.join(os.homedir(), '.igris');
 
-/** Default path to the SQLite knowledge database. */
-const DEFAULT_DB_PATH = path.join(BRAIN_DIR, 'memory', 'knowledge.db');
-
 /**
- * Resolve the active DB path. Honors `IGRIS_DB_PATH` env var (if set and
- * non-empty) so test harnesses and CLI scripts (e.g. backfill_brief_edges
- * with `--db /tmp/sandbox.db`) can sandbox writes without touching the
- * production brain DB. Falls back to the default `~/.igris/memory/knowledge.db`.
+ * Resolve the active brain DB path — the ONE resolver (TD-426, re-landing
+ * TD-387). Precedence, highest first; empty strings fall through:
  *
- * Resolved at call time, not module load time, so a script can set the
- * env var before its first `getDb()` call.
+ *   1. `explicit` arg      — a caller that resolved its own path (CLI verbs via
+ *                            `paths.ts#brainDbPath`, scripts with `--db`).
+ *                            Env vars never move it (the FR-241 poison fence).
+ *   2. `IGRIS_DB_PATH`     — full-path override for processes that pass none.
+ *   3. `IGRIS_BRAIN_DIR`   — sandbox dir → `<dir>/memory/knowledge.db`. The
+ *                            seam a sandbox sets; the build guard relies on it.
+ *   4. default             — `~/.igris/memory/knowledge.db`, `os.homedir()`
+ *                            read at CALL time (a fake `HOME` moves it).
+ *
+ * Origin: the stdio boot used a static `DB_PATH` constant, so the build
+ * smoke's `IGRIS_BRAIN_DIR=<tmpdir>` was ignored and `cd cli && npm run
+ * build` migrated the live brain. Never re-introduce a static DB constant.
  */
-function resolveDbPath(): string {
-  const override = process.env.IGRIS_DB_PATH;
-  if (override && override.length > 0) return override;
-  return DEFAULT_DB_PATH;
+export function resolveDbPath(explicit?: string): string {
+  if (explicit && explicit.length > 0) return explicit;
+  const dbOverride = process.env.IGRIS_DB_PATH;
+  if (dbOverride && dbOverride.length > 0) return dbOverride;
+  const brainDirOverride = process.env.IGRIS_BRAIN_DIR;
+  if (brainDirOverride && brainDirOverride.length > 0) {
+    return path.join(brainDirOverride, 'memory', 'knowledge.db');
+  }
+  return path.join(os.homedir(), '.igris', 'memory', 'knowledge.db');
 }
-
-/**
- * Path to the SQLite knowledge database.
- *
- * Kept as a const for backwards compatibility with existing imports
- * (src/index.ts uses it for startup banner + size reporting). The
- * env-var override is honored by `getDb()` at runtime, not by this
- * constant — callers that read DB_PATH at module load time will get
- * the default path. That's acceptable because the override is only
- * meant for CLI/test sandboxing, where the importer (the script) is
- * what holds the connection.
- */
-const DB_PATH = DEFAULT_DB_PATH;
 
 /** Singleton database instance */
 let _db: Database.Database | null = null;
@@ -2327,4 +2328,4 @@ function closeDb(): void {
   }
 }
 
-export { getDb, closeDb, setAdapter, migrateSchema, loadSqliteVec, isVecAvailable, BRAIN_DIR, DB_PATH };
+export { getDb, closeDb, setAdapter, migrateSchema, loadSqliteVec, isVecAvailable, BRAIN_DIR };

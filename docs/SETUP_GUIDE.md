@@ -212,6 +212,49 @@ igris init --upgrade --dev --from-source /path/to/igris-ai
 edit-rebuild-test loop is not broken by a repoint to the stale bundled
 copy. `--dev` requires `--from-source`.
 
+### Sandboxing the brain — the env seams
+
+Anything that boots the brain server outside your real `~/.igris` — a test, a
+build step, a maintenance script — must point it at a throwaway tree, or it
+opens **and migrates** the live `~/.igris/memory/knowledge.db`. The server
+resolves its DB through ONE function, `brain-mcp-server/src/db.ts#resolveDbPath(explicit?)`,
+highest tier first (empty strings fall through to the next tier):
+
+1. **explicit path** — CLI verbs (`cli/src/lib/paths.ts#brainDbPath`) and
+   maintenance scripts (`--db`) pass one; env vars never move it.
+2. **`IGRIS_DB_PATH`** — full-path override for a process that passes none
+   (the standalone `dist/index.js` boot, `brain-mcp-server/scripts/*`).
+3. **`IGRIS_BRAIN_DIR`** → `<dir>/memory/knowledge.db`.
+4. **default** — `~/.igris/memory/knowledge.db`, with `os.homedir()` read at
+   call time.
+
+**A sandbox sets `IGRIS_BRAIN_DIR`.** It is the one seam that moves everything
+together: the CLI helpers' brain root, the server's DB (tier 3) and its pidfile
+registry (`brain-mcp-server/src/stdio-lifecycle.ts#pidsDir`: `IGRIS_PIDS_DIR` >
+`IGRIS_BRAIN_DIR/brain-mcp-server.pids` > `~/.igris/brain-mcp-server.pids`).
+Create `<dir>/memory/` first — better-sqlite3 creates the DB file, never its
+parent directory, and a missing parent crashes the boot.
+
+`IGRIS_DB_PATH` is a server/scripts override only. CLI verbs and the dashboard
+IGNORE it by design (the FR-241 poison fence:
+`cli/src/__tests__/dashboard-triage-endpoint.test.ts` asserts that a poison
+value does not move their writes); never add it to `paths.ts`.
+
+Neither seam moves `os.homedir()`: anything that reads `~/.claude.json` or
+`~/.igris/config.json` still sees your real home. A hermetic spawn sets a fake
+`HOME` as well (tier 4 follows it).
+
+The server prints the DB it opened on boot — `[brain] db: <path>` on stderr.
+`cli/scripts/smoke-bundled-mcp.sh` (run by `cd cli && npm run build` and by
+the publish workflow) sets tiers 2 and 3 to a `mktemp` sandbox, parses that
+line, and fails the build unless the path is inside the sandbox and the sandbox
+DB exists non-empty; `cli/tests/integration/build-smoke-sandbox.bats` proves it against
+a decoy brain under a fake `HOME`. Before TD-426 the build booted the bundle
+against the live brain and applied whatever migration was pending (instances
+v3 on 2026-08-26, v4 on 2026-08-27).
+
+Model-cache location for the embeddings backend after a rebuild: TD-429.
+
 ---
 
 ## Configuration

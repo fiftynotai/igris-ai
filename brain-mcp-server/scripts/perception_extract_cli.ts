@@ -585,8 +585,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
   //
   // dbPath honors the --db override (already set on env above) so the
   // existing test suite's IGRIS_DB_PATH sandboxing still works. Otherwise
-  // default to the canonical ~/.igris/memory/knowledge.db path
-  // (matches db.ts:resolveDbPath).
+  // default to the canonical ~/.igris/memory/knowledge.db path (tiers 2 and
+  // 4 of db.ts:resolveDbPath; this explicit-path caller skips its
+  // IGRIS_BRAIN_DIR tier — TD-426).
   const dbPath = process.env.IGRIS_DB_PATH
     ?? path.join(os.homedir(), '.igris', 'memory', 'knowledge.db');
   let engine: Engine;

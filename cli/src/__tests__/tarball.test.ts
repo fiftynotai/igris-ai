@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createReadStream,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -338,41 +339,93 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // error. The brain MCP is a stdio server that idles until killed, so a
   // `timeout`-kill is treated as PASS (server booted OK) and any
   // ERR_MODULE_NOT_FOUND in stderr is FAIL.
-  it("bundled entry spawns clean — no ERR_MODULE_NOT_FOUND (BR-068)", async () => {
+  //
+  // TD-426 HARDENING (re-lands TD-387's, whose commit 8d66b44 never reached
+  // develop) — this test previously spawned the child with the REAL `HOME`
+  // and only `IGRIS_BRAIN_DIR`, which the bundled server ignored for its DB
+  // path: every `cd cli && npm test` on a machine with a pending migration
+  // migrated the operator's live `~/.igris/memory/knowledge.db`, exactly like
+  // the build smoke guard did (instances v3 on 2026-08-26, v4 on 2026-08-27).
+  // It is now hermetic — a fake `HOME` plus an `IGRIS_BRAIN_DIR` sandbox, with
+  // `IGRIS_DB_PATH` stripped so this is a probe of the IGRIS_BRAIN_DIR tier
+  // ALONE (the build guard sets both seams; the tier is held here) — and it
+  // asserts WHERE the DB landed:
+  //   - the sandbox DB was created (the child honoured IGRIS_BRAIN_DIR),
+  //   - the fake-HOME default path was NOT touched (no escape), and
+  //   - the child PRINTED the sandbox path (`[brain] db: <path>`), the line
+  //     cli/scripts/smoke-bundled-mcp.sh parses.
+  // Pre-created `memory/` parents on BOTH paths: better-sqlite3 creates the DB
+  // file but never its parent directory, and a missing parent makes bootEngine
+  // throw — which would masquerade as a clean early exit here. POSIX-only
+  // seam: `os.homedir()` follows `$HOME` on darwin/linux.
+  //
+  // Red-first against HEAD 812ae57's bundle (2026-08-27): `[brain] db:` absent
+  // from stderr, the sandbox DB absent, the fake-HOME DB created.
+  //
+  // SPAWN SHAPE (TD-426, measured 2026-08-27): with a piped or /dev/null stdin
+  // the child sees EOF at once and BR-067's stdin teardown exits it 0 within
+  // ~1 s, AFTER the engine boot (getEngine() runs before the teardown is
+  // installed) — so the healthy path is a clean exit, not a timeout kill, and
+  // the previous `execFileSync` version only read `stderr` inside its `catch`,
+  // i.e. it was the empty string on every healthy run (harmless for the
+  // BR-068 negative match, fatal for a positive one). `spawnSync` returns
+  // stderr on BOTH paths. TD-336: `options.timeout` still SIGTERMs a hung
+  // child; the per-test PACK_TIMEOUT_MS is the outer half.
+  it("bundled entry spawns clean and stays in its sandbox — no ERR_MODULE_NOT_FOUND, no live-brain escape, prints the DB it opened (BR-068 + TD-426)", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
-    const os = await import("node:os");
 
+    const fakeHome = mkdtempSync(join(tmpdir(), "igris-mcp-spawn-home-"));
     const brainDir = mkdtempSync(join(tmpdir(), "igris-mcp-spawn-test-"));
+    const fakeDefaultDb = join(fakeHome, ".igris", "memory", "knowledge.db");
+    const sandboxDb = join(brainDir, "memory", "knowledge.db");
     try {
-      let stderr = "";
-      let timedOut = false;
-      try {
-        cp.execFileSync("node", [bundledEntry], {
-          timeout: 4000,
-          encoding: "utf-8",
-          env: { ...process.env, IGRIS_BRAIN_DIR: brainDir },
-        });
-      } catch (err) {
-        const e = err as {
-          signal?: string;
-          killed?: boolean;
-          stderr?: string;
-        };
-        // A timeout-kill means the server booted and idled — that is the
-        // expected healthy outcome for a stdio server with no stdin.
-        timedOut = e.killed === true || e.signal === "SIGTERM";
-        stderr = e.stderr ?? "";
-      }
+      // Pre-create BOTH memory/ parents (see docblock).
+      mkdirSync(join(fakeHome, ".igris", "memory"), { recursive: true });
+      mkdirSync(join(brainDir, "memory"), { recursive: true });
+
+      // Hermetic child env: fake HOME + sandbox brain dir; IGRIS_DB_PATH and
+      // IGRIS_PIDS_DIR stripped (IGRIS_DB_PATH outranks IGRIS_BRAIN_DIR by
+      // contract — an ambient value would silently retarget the child and
+      // turn this tier probe into a probe of the wrong tier).
+      const childEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: fakeHome,
+        IGRIS_BRAIN_DIR: brainDir,
+      };
+      delete childEnv.IGRIS_DB_PATH;
+      delete childEnv.IGRIS_PIDS_DIR;
+
+      const res = cp.spawnSync("node", [bundledEntry], {
+        timeout: 4000,
+        encoding: "utf-8",
+        env: childEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stderr = res.stderr ?? "";
+      // Healthy outcomes: exited 0 on stdin EOF, or idled until the timeout
+      // kill. Anything else (a crash exit code) is a failed boot.
+      expect(
+        res.status === 0 || res.signal === "SIGTERM",
+        `bundle boot failed: status=${res.status} signal=${res.signal}\n${stderr}`,
+      ).toBe(true);
       expect(stderr).not.toMatch(
         /ERR_MODULE_NOT_FOUND|Cannot find package/,
       );
-      // It either idled until the timeout kill, or exited cleanly — both
-      // are acceptable; what is NOT acceptable is a resolution failure.
-      void timedOut;
-      void os;
+      // TD-426: the child must SAY which DB it opened, and it must be the
+      // sandbox — this is the line the build guard parses.
+      expect(stderr).toContain(`[brain] db: ${sandboxDb}`);
+      // …the boot must have used the SANDBOX brain dir…
+      expect(existsSync(sandboxDb)).toBe(true);
+      // …and must NOT have touched the (fake-)HOME default path. Before the
+      // resolveDbPath() fix this is exactly where the child wrote — this
+      // assertion is the red-then-green pivot.
+      expect(existsSync(fakeDefaultDb)).toBe(false);
+      // pidsDir() mirrors the middle tier: no registry under the fake HOME.
+      expect(existsSync(join(fakeHome, ".igris", "brain-mcp-server.pids"))).toBe(false);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
+      rmSync(fakeHome, { recursive: true, force: true });
     }
   }, PACK_TIMEOUT_MS);
 
@@ -1556,6 +1609,28 @@ interface PackReport {
  *                                    not move)
  *   headroom remaining  ~37.7 KB     (37_739 B under TD-374's +150 —
  *                                    153_600 − 115_861)
+ *
+ * TD-426 MEASURED LAST (2026-08-27 14:02 UTC), the same build sequence and the
+ * same node_modules as BR-097's reading:
+ *   packed              2_001_634    807 entries (no new entry — the change is
+ *                                    three vendored files: `db.js` (the
+ *                                    four-tier `resolveDbPath` and its
+ *                                    docblock, the deleted `DB_PATH` const),
+ *                                    `index.js` (`_engineDbPath`, the
+ *                                    `[brain] db:` line, two re-pointed sites)
+ *                                    and `stdio-lifecycle.js` (the `pidsDir`
+ *                                    middle tier), plus their maps; two comment
+ *                                    fixes in the staged `scripts/`; and the
+ *                                    `cli/CHANGELOG.md` entry, which SHIPS.
+ *                                    `scripts/smoke-bundled-mcp.sh` and the
+ *                                    bats twin are outside `files`, and this
+ *                                    file is packed-free — the two largest
+ *                                    diffs of the brief cost 0 B)
+ *   cumulative delta    +135.0 KB    (138_214 B over PACK_BASELINE_PACKED)
+ *   TD-426's own share  +1_702 B     (2_001_634 − 1_999_932)
+ *   headroom remaining  ~15.0 KB     (15_386 B under TD-374's +150 —
+ *                                    153_600 − 138_214)
+ *   browser surfaces    +0 B — no dashboard file changed
  *
  * BR-097 MEASURED LAST (2026-08-27 10:48 UTC), `cd brain-mcp-server && npm run
  * build && cd ../cli && npm run build` then `npm pack --dry-run --json`, same
