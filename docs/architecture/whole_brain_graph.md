@@ -497,7 +497,7 @@ dashboard must render an empty brain, not an error envelope.
 | **Retiring the single-project HTML renderer** | TD-308 owns `igris_brief_graph_render` / `/visualize`. |
 | **New edge inference** | FR-211 (Archived). This layer reads `entity_edges`; it writes nothing and infers nothing. |
 | **Rendering, layout, styling** | FR-238 (dashboard server) and FR-239 (graph view). |
-| **CI coverage for `brain-mcp-server` vitest** | No GitHub workflow runs this suite — `test.yml` runs the two bats suites and `npm-publish.yml`'s vitest step is `working-directory: cli`. The FR-237 test surface is a **local gate**. Tracked separately. |
+| **CI coverage for `brain-mcp-server` vitest** | **DONE — TD-312 (2026-08-31).** `test.yml`'s `brain-vitest` job runs the whole suite on push + PR (node 20, nested-lockfile npm cache, `npm ci` + `npm test` in `working-directory: brain-mcp-server`). The FR-237 test surface is CI-gated. |
 
 ---
 

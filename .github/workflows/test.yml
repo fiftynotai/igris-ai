@@ -212,7 +212,7 @@ jobs:
       # triggers on version tags. So a cli vitest file was not gated on push or
       # PR at all — a new test could be red for weeks and only surface at
       # release. Same gap class TD-303 closed for the bats suite above and
-      # TD-312 records for brain-mcp-server.
+      # TD-312 closed for brain-mcp-server (the `brain-vitest` job below).
       #
       # PLACED IN THIS JOB DELIBERATELY: `cli-bats` already does `npm ci` +
       # `npm run build`, which is everything the vitest suite needs (several
@@ -240,3 +240,70 @@ jobs:
       - name: Typecheck dashboard app
         working-directory: cli
         run: npm run typecheck:dashboard
+
+  # ---------------------------------------------------------------------------
+  # TD-312 — brain-mcp-server vitest suite.
+  #
+  # WHAT IT GUARDS: the brain's entire test surface — every vitest file under
+  # brain-mcp-server's src|scripts|eval `__tests__` globs (vitest.config.ts):
+  # the graph engine, cognition, perception, sync, embeddings guards, and
+  # every MCP handler. Measured locally 2026-08-31 at 3d7d59a: 171 files,
+  # 2785 passed | 1 skipped, ~36 s — re-derive with
+  # `cd brain-mcp-server && npm test`, do not trust these numerals.
+  #
+  # WHY IT EXISTS: the suite ran in NO workflow — a local-only gate, enforced
+  # by developer discipline. Same gap class TD-303 closed for the cli bats
+  # suite (after BR-077 escaped through it) and FR-238 closed for the cli
+  # vitest suite.
+  #
+  # DETERMINISM: embeddings are mocked at the utils/embeddings.js seam in
+  # every test file that touches them (no HF model fetch — deliberately NO
+  # model cache step, so a fetch regression is loud, not masked); engine
+  # tests use `:memory:`/mkdtemp DBs; exactly 2 tests self-skip HERE via the
+  # documented capability predicate `it.skipIf(!haveDb)` (the graph-traversal
+  # "real DB smoke" pair, which needs a live ~/.igris/memory/knowledge.db) —
+  # a 3rd skip in this job's log is environment-independent, the
+  # RUN_LLM_INTEGRATION=1-gated real-harness smoke (subconscious
+  # engine-integration.test.ts), which skips on a dev machine too;
+  # the four wall-clock P95 benchmarks stay ARMED under a documented
+  # BENCH_SLACK x4 CI headroom factor (graph-traversal.integration.test.ts,
+  # TD-312) sized for this 2-core runner.
+  # ---------------------------------------------------------------------------
+  brain-vitest:
+    name: Brain vitest suite
+    runs-on: ubuntu-latest
+
+    # Least privilege: this job only reads the checkout. Deliberate here —
+    # `npm ci` executes third-party package install scripts (better-sqlite3,
+    # sqlite-vec native prebuilds), and the PR trigger covers every base
+    # branch, so this runs on untrusted PR contributions.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        # Node "20": parity with the cli-bats and npm-publish.yml pins and
+        # with engines `>=20 <27`. Own cache key: the cli-bats job's cache
+        # keys off the REPO-ROOT lockfile only (see its setup-node comment);
+        # this job installs from the NESTED brain-mcp-server/package-lock.json,
+        # so the cache is keyed off that file instead.
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: brain-mcp-server/package-lock.json
+
+      - name: Install dependencies (nested lockfile)
+        working-directory: brain-mcp-server
+        run: npm ci
+
+      - name: Run brain vitest suite
+        # Invoke the npm script, never an inlined `vitest run`, so the CI
+        # command and the local/sentinel command cannot drift — the
+        # MAINTAINING.md `test:bats` row's rule; the brain `test` script name
+        # has its own row there for the same reason.
+        working-directory: brain-mcp-server
+        run: npm test

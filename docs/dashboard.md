@@ -1253,8 +1253,9 @@ committed list). So
 `brain-mcp-server/src/tools/__tests__/wrapper-wire-parity.test.ts` snapshots all
 six over fixtures captured **before** the extraction. Re-recording those
 snapshots to make a change pass is the one move that defeats the file's purpose.
-**No CI workflow runs `brain-mcp-server` vitest** (TD-312 is open), so
-`cd brain-mcp-server && npm test` by hand is the only gate on them.
+**The `brain-vitest` job CI-gates `brain-mcp-server` vitest on push + PR**
+(TD-312, 2026-08-31); `cd brain-mcp-server && npm test` by hand is the fast
+local arm of the same gate.
 
 ### The brain bridge
 
@@ -1827,10 +1828,10 @@ JSX. So `Markdown`, the record family, `NodeInspector` and the retrieval banner
 are all gated at unit level — including the XSS tag-allowlist — and the browser
 budget below is spent only on what a real browser can prove.
 
-**`brain-mcp-server` vitest is NOT run by any CI workflow** (TD-312, open). The
-FR-240 pure-reader suites and the wrapper wire-parity goldens therefore have
-**exactly one gate: a local `cd brain-mcp-server && npm test`.** Run it before
-claiming the extraction is safe.
+**The `brain-vitest` job CI-gates `brain-mcp-server` vitest on push + PR**
+(TD-312, 2026-08-31). The FR-240 pure-reader suites and the wrapper wire-parity
+goldens are gated there; `cd brain-mcp-server && npm test` is the fast local
+arm. Run it before claiming the extraction is safe.
 
 The `cli` vitest run and bats run in CI on push and PR via
 `.github/workflows/test.yml`'s `cli-bats` job, alongside

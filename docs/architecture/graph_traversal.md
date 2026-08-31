@@ -474,6 +474,6 @@ If the label table is missing (e.g. `goals` before FR-110 lands), the tool falls
 - `brain-mcp-server/src/engine/components/edges/__tests__/node-project.test.ts` — resolver + hop-rule units
 - `brain-mcp-server/src/engine/__tests__/graph-traversal.integration.test.ts` — MCP roundtrip, cross-tool consistency, perf benchmarks
 
-> No CI workflow runs `brain-mcp-server` vitest (TD-312) — these suites are a
-> **local gate**. Run them and read the output; do not treat "tests written" as
-> "tests passing".
+> Since TD-312 (2026-08-31) the `brain-vitest` job in `test.yml` runs these
+> suites on push + PR. Still run them locally and read the output; do not
+> treat "tests written" as "tests passing".

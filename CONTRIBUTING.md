@@ -129,12 +129,25 @@ Follow the coding guidelines:
 shellcheck scripts/*.sh
 
 # Suite 1 — repo shell/script tests (test/*.test.bash)
-bats test/
+# Name the files explicitly: `bats test/` (directory mode) globs *.bats only,
+# so on this suite's .test.bash files it runs ZERO tests and exits green
+# (measured 2026-08-31: `bats --count test/` = 0).
+bats test/*.test.bash
 
 # Suite 2 — CLI integration tests (cli/tests/integration/*.bats)
 # Requires a built cli/dist/ — see "Testing" below for why.
 npm ci                       # repo root (workspaces)
 cd cli && npm run build && npm run test:bats && cd ..
+
+# Suite 3 — CLI vitest (cli/src/__tests__/*.test.ts; also needs cli/dist/)
+cd cli && npm test && cd ..
+
+# Suite 4 — brain vitest (brain-mcp-server; no build step needed — the root
+# `npm ci` above already installed its deps)
+cd brain-mcp-server && npm test && cd ..
+
+# All four in one go (needs bats >= 1.7 on PATH; builds the cli first):
+npm run test:all
 
 # TypeScript (if modifying MCP server)
 cd brain-mcp-server && npm run build
@@ -145,9 +158,13 @@ mkdir -p /tmp/test-project
 node cli/dist/index.js install /tmp/test-project
 ```
 
-Both suites are CI-enforced by `.github/workflows/test.yml` — on pushes to
-`main`/`develop` and on every pull request regardless of base branch. Run both
-before opening a PR.
+run `npm ci` at the REPO ROOT — running it inside a workspace member
+reinstalls the root tree and empties the sibling workspaces' `node_modules`
+(observed 2026-08-31; restore with a root `npm ci`).
+
+All four suites are CI-enforced by `.github/workflows/test.yml` — on pushes to
+`main`/`develop` and on every pull request regardless of base branch. Run them
+before opening a PR (`npm run test:all` is the one-shot local equivalent).
 
 ### 3.1 Brief-gate escape hatch (emergency only)
 
@@ -282,14 +299,18 @@ How was this tested?
 
 ### Automated Testing
 
-Igris AI has **two** bats suites. They are separate on purpose — different
-extensions, different roots, different prerequisites — and **both are gated by
-CI** (`.github/workflows/test.yml`).
+Igris AI has **four** test suites — two bats, two vitest (TD-312 corrected
+this section from two). They are separate on purpose — different extensions,
+different roots, different prerequisites — and **all four are gated by CI**
+(`.github/workflows/test.yml`). `npm run test:all` at the repo root fans out
+to all four locally.
 
 | Suite | Root | Extension | Run with | CI job |
 |---|---|---|---|---|
-| Repo shell/script tests | `test/` | `.test.bash` | `bats test/` | `test` (ubuntu + macOS matrix) |
+| Repo shell/script tests | `test/` | `.test.bash` | `bats test/*.test.bash` | `test` (ubuntu + macOS matrix) |
 | CLI integration tests | `cli/tests/integration/` | `.bats` | `cd cli && npm run test:bats` | `cli-bats` (ubuntu) |
+| CLI vitest | `cli/src/__tests__/` | `.test.ts` | `cd cli && npm test` | `cli-bats` (ubuntu — FR-238 step; also at tag time in `npm-publish.yml`) |
+| Brain vitest | `brain-mcp-server/` (`src`/`scripts`/`eval` `__tests__/`) | `.test.ts` | `cd brain-mcp-server && npm test` | `brain-vitest` (ubuntu — TD-312) |
 
 **Test Framework:** [bats-core](https://github.com/bats-core/bats-core)
 
@@ -311,10 +332,11 @@ sudo apt install bats
 
 #### Suite 1 — repo shell/script tests
 
-**Run all tests:**
+**Run all tests** (name the files — `bats test/` directory mode globs `*.bats`
+only and silently runs zero of this suite's `.test.bash` files):
 
 ```bash
-bats test/
+bats test/*.test.bash
 ```
 
 **Run specific test file:**
@@ -326,7 +348,7 @@ bats test/verify_mirror.test.bash
 **Run with verbose output:**
 
 ```bash
-bats test/ --tap
+bats test/*.test.bash --tap
 ```
 
 #### Suite 2 — CLI integration tests
@@ -383,6 +405,44 @@ environment-coupled, isolate it with the `stage_home()` helper in
 > `~/.claude/skills` + `~/.claude/agents` roots. That is why every test in
 > `doctor.bats` and `doctor-drift-classes.bats` sandboxes `$HOME` — never add a
 > `doctor --fix` test that does not.
+
+#### Suite 3 — CLI vitest
+
+`cli/src/__tests__/*.test.ts`, run with `cd cli && npm test`. Several tests
+assert against `cli/dist/`, so it needs the same `npm ci` + `cd cli && npm run
+build` prerequisites as Suite 2. CI runs it as a step inside the `cli-bats`
+job (FR-238) and again at tag time in `npm-publish.yml`.
+
+#### Suite 4 — brain vitest (TD-312)
+
+The brain server's entire test surface — graph engine, cognition, perception,
+sync, embeddings guards, every MCP handler. Measured 2026-08-31 at `3d7d59a`:
+171 files, 2785 passed | 1 skipped, ~36 s locally. No build step needed —
+and no `npm ci` here either: run `npm ci` at the REPO ROOT (a member-dir
+`npm ci` reinstalls the root tree and empties the sibling workspaces'
+`node_modules`; observed 2026-08-31, restored with a root `npm ci`). CI's
+dedicated job is the one place that installs from the nested lockfile,
+on a clean runner with no siblings to empty:
+
+```bash
+# npm ci at the REPO ROOT only — a member-dir npm ci empties sibling workspaces
+cd brain-mcp-server && npm test
+```
+
+CI runs it in the dedicated `brain-vitest` job. Determinism notes (the TD-312
+isolation audit):
+
+- Embeddings are **mocked at the `utils/embeddings.js` seam** in every test
+  file that touches them — no HF model fetch, and the CI job deliberately has
+  no model cache so a fetch regression is loud rather than masked.
+- Engine tests use `:memory:`/`mkdtemp` databases, never your live `~/.igris`.
+- Exactly **2 tests** self-skip on CI via a documented capability predicate:
+  the `it.skipIf(!haveDb)` "real DB smoke" pair in
+  `graph-traversal.integration.test.ts`, which needs a live
+  `~/.igris/memory/knowledge.db`.
+- The four wall-clock P95 benchmarks stay **armed** on CI under the
+  documented `BENCH_SLACK` ×4 headroom factor (same file, TD-312) — sized for
+  GitHub's 2-core runners, never a skip.
 
 ### Writing Tests
 
@@ -447,7 +507,14 @@ Tests run automatically on:
 - Every push to `main` and `develop`
 - Every pull request (any target branch)
 - `test` job: repo shell suite, Ubuntu **and** macOS
-- `cli-bats` job: CLI integration suite, Ubuntu only
+- `cli-bats` job: CLI integration suite + CLI vitest suite (FR-238) +
+  dashboard typecheck, Ubuntu only
+- `brain-vitest` job: brain-mcp-server vitest suite, Ubuntu only (TD-312)
+
+At tag time, `npm-publish.yml` additionally gates publishing on the bundled-MCP
+spawn smoke (`smoke-bundled-mcp.sh`, BR-068/TD-426), the BR-070
+embeddings-resolve check, and a second run of the CLI vitest suite. It runs
+neither bats suite nor the brain suite — those gate upstream on push/PR here.
 
 See `.github/workflows/test.yml` for CI configuration.
 
