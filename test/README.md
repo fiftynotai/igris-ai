@@ -14,9 +14,17 @@ test/
 │   └── mock_project/                      # Sample project for testing
 ├── validate_brain_stewardship_enums.test.bash  # Tests for the enum-drift validator
 ├── verify_mirror.test.bash                # Tests for core/scripts/verify_mirror.sh
-├── edge_cases.test.bash                   # Edge-case tests
 └── error_handling.test.bash               # Error handling tests
 ```
+
+> **No zero-test files (TD-434, 2026-08-31).** `edge_cases.test.bash` was
+> deleted: TD-148 had removed its last test (slug-validation edge cases moved
+> to `cli/src/__tests__/install.test.ts`), leaving a 0-test stub. CI runs
+> bats PER FILE, and bats ≥ 1.11 hard-errors on an empty suite
+> (`ERROR: Found no tests.`) — locally the whole-glob invocation
+> `bats test/*.test.bash` masked it because the combined suite is non-empty.
+> New top-level-script edge-case tests get a NEW file; never commit a
+> @test-less `.test.bash`.
 
 ---
 

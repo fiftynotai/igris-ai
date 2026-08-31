@@ -231,19 +231,15 @@ PY
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
   local agents_inode_before claude_inode_before
-  agents_inode_before="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
-                       || stat -c '%i' "$PROJ/.agents/skills/alpha")"
-  claude_inode_before="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
-                        || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  agents_inode_before="$(file_inode "$PROJ/.agents/skills/alpha")"
+  claude_inode_before="$(file_inode "$PROJ/.claude/skills/alpha")"
 
   run bash "$COMPILE" --project-root "$PROJ"
   [ "$status" -eq 0 ]
 
   local agents_inode_after claude_inode_after
-  agents_inode_after="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
-                      || stat -c '%i' "$PROJ/.agents/skills/alpha")"
-  claude_inode_after="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
-                       || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  agents_inode_after="$(file_inode "$PROJ/.agents/skills/alpha")"
+  claude_inode_after="$(file_inode "$PROJ/.claude/skills/alpha")"
   [ "$agents_inode_before" = "$agents_inode_after" ]
   [ "$claude_inode_before" = "$claude_inode_after" ]
 }
@@ -670,16 +666,14 @@ EOF
   [[ "$output" == *"creating claude skill symlink"* ]]
   # Capture the inode so we can prove no churn.
   local inode_before
-  inode_before="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
-                 || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  inode_before="$(file_inode "$PROJ/.claude/skills/alpha")"
   # Second compile: no create log, no migrate log, symlink unchanged.
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
   [[ "$output" != *"creating claude skill symlink"* ]]
   [[ "$output" != *"migrating legacy claude skill symlink"* ]]
   local inode_after
-  inode_after="$(stat -f '%i' "$PROJ/.claude/skills/alpha" 2>/dev/null \
-                || stat -c '%i' "$PROJ/.claude/skills/alpha")"
+  inode_after="$(file_inode "$PROJ/.claude/skills/alpha")"
   [ "$inode_before" = "$inode_after" ]
 }
 
@@ -744,15 +738,13 @@ EOF
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
   local inode_before
-  inode_before="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
-                 || stat -c '%i' "$PROJ/.agents/skills/alpha")"
+  inode_before="$(file_inode "$PROJ/.agents/skills/alpha")"
   run bash "$COMPILE" --project-root "$PROJ" --surface skills
   [ "$status" -eq 0 ]
   [[ "$output" != *"creating agents skill symlink"* ]]
   [[ "$output" != *"migrating legacy agents skill symlink"* ]]
   local inode_after
-  inode_after="$(stat -f '%i' "$PROJ/.agents/skills/alpha" 2>/dev/null \
-                || stat -c '%i' "$PROJ/.agents/skills/alpha")"
+  inode_after="$(file_inode "$PROJ/.agents/skills/alpha")"
   [ "$inode_before" = "$inode_after" ]
 }
 

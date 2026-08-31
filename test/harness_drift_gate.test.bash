@@ -266,59 +266,52 @@ EOF
 }
 
 @test "wrapper: home-path MISSING target does NOT hard-fail the gate (FR-138 scoping)" {
-  # The dominant FR-138 risk: the guard always checks BOTH surfaces and the
-  # skills surface includes a HOME-PATH gemini target (~/.gemini/commands). On
-  # a machine that never projected gemini TOMLs that target is MISSING, but it
-  # must NOT hard-fail the commit gate — it is out of the gate's scope. Build a
-  # repo whose project-relative agent is in sync (MATCH) and whose ONLY MISSING
-  # verdict is a home-path skills target.
+  # The dominant FR-138 risk: the guard checks every declared target, and
+  # home-anchored targets (e.g. ~/.gemini/agents/*.md) are MISSING on any
+  # machine that never projected them; that must NOT hard-fail the commit
+  # gate — it is out of the gate's scope. Build a repo whose project-relative
+  # agent is in sync (MATCH) and whose ONLY MISSING verdict is a home-path
+  # agent target.
+  #
+  # TD-434 (2026-08-31): the original fixture injected a skills surface with a
+  # `gemini` converter target — a shape the surfaces schema has since RETIRED
+  # (enum is now agents/claude/opencode), so validate_manifest refused the
+  # manifest and the wrapper fail-opened (exit 0, ZERO verdicts). Every
+  # assertion here except the final `!= *FATAL*` was a non-final bare [[ ]] —
+  # vacuous under Bats >= 1.12 (TD-341's class) — which is how a dead fixture
+  # stayed "green" on dev machines while ubuntu's bats 1.10 failed it armed
+  # (run 33404539413). Re-pinned on a home-anchored AGENT target (the same
+  # class the real repo's NOTICE names), under a sandboxed HOME so the target
+  # is deterministically MISSING.
   local root
   root="$(build_wrapper_repo match)"
 
-  # Point the gemini skills source at a guaranteed-empty temp skills root so the
-  # converter finds zero SKILL.md files and the artifact dir is a home path that
-  # is reported MISSING (no projected {name}.toml). Inject a skills surface into
-  # the project manifest with a ~-path target.
-  local empty_skills="$TEST_TEMP_DIR/empty_skills_$BATS_TEST_NUMBER"
-  mkdir -p "$empty_skills/placeholder"
-  cat > "$empty_skills/placeholder/SKILL.md" <<'EOF'
----
-name: placeholder
-description: a placeholder skill so the converter has one target
----
-body
-EOF
-
-  python3 - "$root/harness-manifest.json" "$empty_skills" <<'PY'
+  python3 - "$root/harness-manifest.json" <<'PY'
 import json
 import sys
 
 path = sys.argv[1]
-skills_src = sys.argv[2]
 with open(path, "r", encoding="utf-8") as fh:
     m = json.load(fh)
-m["surfaces"] = {
-    "skills": {
-        "source": skills_src,
-        "layer": "core",
-        "targets": [
-            {"type": "gemini", "method": "converter", "path": "~/.gemini/commands"}
-        ],
-    }
-}
+m["agents"][0]["targets"].append(
+    {"type": "gemini", "path": "~/.gemini/agents/forger.md"}
+)
 with open(path, "w", encoding="utf-8") as fh:
     json.dump(m, fh, indent=2)
 PY
+  local sandbox_home="$TEST_TEMP_DIR/wrap_home_$BATS_TEST_NUMBER"
+  mkdir -p "$sandbox_home"
 
-  run bash -c "cd '$root' && IGRIS_BRAIN_DIR='$ISOLATED_BRAIN' bash scripts/validate_harness_drift.sh"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"[forger/claude] MATCH"* ]]
-  # The home-path gemini target is reported MISSING by the guard...
-  [[ "$output" == *"[skills/gemini] MISSING"* ]]
+  run bash -c "cd '$root' && HOME='$sandbox_home' IGRIS_BRAIN_DIR='$ISOLATED_BRAIN' bash scripts/validate_harness_drift.sh"
+  echo "status=$status output: $output" >&2
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"[forger/claude] MATCH"* ]] || return 1
+  # The home-path gemini agent target is reported MISSING by the guard...
+  [[ "$output" == *"[forger/gemini] MISSING"* ]] || return 1
   # ...but the wrapper classifies it OUT OF SCOPE: NOTICE, never FATAL.
-  [[ "$output" == *"NOTICE:"* ]]
-  [[ "$output" == *"out-of-scope"* ]]
-  [[ "$output" != *"FATAL"* ]]
+  [[ "$output" == *"NOTICE:"* ]] || return 1
+  [[ "$output" == *"out-of-scope"* ]] || return 1
+  [[ "$output" != *"FATAL"* ]] || return 1
 }
 
 @test "wrapper: all-MATCH compiled harness -> exit 0, no NOTICE, no FATAL" {
@@ -804,9 +797,9 @@ assert_gemini_hardlink() {
   [ -f "$target" ]
   [ ! -L "$target" ]
   local tgt_inode src_inode src_nlink
-  tgt_inode=$(stat -f %i "$target")
-  src_inode=$(stat -f %i "$source")
-  src_nlink=$(stat -f %l "$source")
+  tgt_inode=$(file_inode "$target")
+  src_inode=$(file_inode "$source")
+  src_nlink=$(file_nlink "$source")
   [ "$tgt_inode" = "$src_inode" ]
   [ "$src_nlink" -ge 2 ]
 }
@@ -958,22 +951,33 @@ EOF
 @test "TD-208: gemini AGENT drift DRIFTED (legacy symlink — any symlink is drift under hard-link primitive)" {
   local root
   root="$(build_fr152_agent_project demo gemini)"
-  # Pre-create a symlink pointing OUTSIDE the loadout — simulates pre-TD-208
-  # legacy state. Under TD-208, ANY symbolic link at the gemini target is
-  # DRIFTED (the primitive is hard link; Gemini loader does not follow
-  # symlinks). The non-loadout-anchored detail is irrelevant — even a
-  # loadout-anchored symlink would be drift.
+  # TD-434 (2026-08-31): compile FIRST so the loadout harness.gemini.md
+  # exists. Without it the guard early-returns on the absent-loadout branch
+  # ("[absent in loadout]") and the symlink branch under test is UNREACHABLE —
+  # this test asserted that branch's text vacuously for its whole life
+  # (non-final bare [[ ]], TD-341's class; armed ubuntu bats 1.10 failed it,
+  # run 33404539413). Hence the `|| return 1` arms below.
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ] || return 1
+  # Now replace the compiled hard link with a symlink pointing OUTSIDE the
+  # loadout — simulates pre-TD-208 legacy state. Under TD-208, ANY symbolic
+  # link at the gemini target is DRIFTED (the primitive is hard link; Gemini
+  # loader does not follow symlinks). The non-loadout-anchored detail is
+  # irrelevant — even a loadout-anchored symlink would be drift.
   mkdir -p "$root/consumer-side"
   echo "stale" > "$root/consumer-side/demo.md"
+  rm "$root/.gemini/agents/demo.md"
   ln -s "$root/consumer-side/demo.md" "$root/.gemini/agents/demo.md"
 
   run bash "$GUARD" --project-root "$root" \
                       --manifest "$root/harness-manifest.json"
-  [ "$status" -eq 1 ]
-  [[ "$output" == *"[demo/gemini] DRIFTED"* ]]
-  [[ "$output" == *"symbolic link"* ]]
-  [[ "$output" == *"legacy pre-TD-208 emit"* ]]
-  [[ "$output" == *"igris harness compile"* ]]
+  echo "status=$status output: $output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[demo/gemini] DRIFTED"* ]] || return 1
+  [[ "$output" == *"symbolic link"* ]] || return 1
+  [[ "$output" == *"legacy pre-TD-208 emit"* ]] || return 1
+  [[ "$output" == *"igris harness compile"* ]] || return 1
 }
 
 # TD-208 supersedes the FR-152 "gemini real-file target refuses-to-clobber"
@@ -992,7 +996,7 @@ EOF
   [ "$status" -eq 0 ]
   local loadout_path="$IGRIS_BRAIN_DIR/loadout/agents/demo/harness.gemini.md"
   local first_inode
-  first_inode=$(stat -f %i "$loadout_path")
+  first_inode=$(file_inode "$loadout_path")
   # Hard link established after first compile.
   assert_gemini_hardlink "$root/.gemini/agents/demo.md" "$loadout_path"
 
@@ -1010,7 +1014,7 @@ EOF
                       --manifest "$root/harness-manifest.json" --target gemini
   [ "$status" -eq 0 ]
   local second_inode
-  second_inode=$(stat -f %i "$loadout_path")
+  second_inode=$(file_inode "$loadout_path")
   [ "$first_inode" != "$second_inode" ]
   # Hard link re-established against the new inode.
   assert_gemini_hardlink "$root/.gemini/agents/demo.md" "$loadout_path"
@@ -1041,8 +1045,8 @@ EOF
   rm "$target"
   cp "$loadout_path" "$target"
   # Sanity: byte content matches but inodes diverge.
-  [ "$(md5 -q "$target")" = "$(md5 -q "$loadout_path")" ]
-  [ "$(stat -f %i "$target")" != "$(stat -f %i "$loadout_path")" ]
+  [ "$(file_md5 "$target")" = "$(file_md5 "$loadout_path")" ]
+  [ "$(file_inode "$target")" != "$(file_inode "$loadout_path")" ]
 
   run bash "$GUARD" --project-root "$root" \
                     --manifest "$root/harness-manifest.json"
@@ -1069,8 +1073,8 @@ EOF
 # DEMO (operator hand-edited; content diverged from loadout)
 EOF
   # Sanity: content differs AND inodes diverge.
-  [ "$(md5 -q "$target")" != "$(md5 -q "$loadout_path")" ]
-  [ "$(stat -f %i "$target")" != "$(stat -f %i "$loadout_path")" ]
+  [ "$(file_md5 "$target")" != "$(file_md5 "$loadout_path")" ]
+  [ "$(file_inode "$target")" != "$(file_inode "$loadout_path")" ]
 
   run bash "$GUARD" --project-root "$root" \
                     --manifest "$root/harness-manifest.json"

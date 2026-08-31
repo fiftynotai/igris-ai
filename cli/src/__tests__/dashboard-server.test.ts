@@ -1039,26 +1039,60 @@ describe("G-SEC-1 — the write surface's fences", () => {
    * `spawnSync … ETIMEDOUT` on both the oversize AND the small case, which is
    * the tell that the harness, not the server, was at fault. The same artifact
    * produced an earlier false reading of "the 413 path hangs".
+   *
+   * TD-434 (2026-08-31): the child is `curl`, no longer a node `fetch` child.
+   * The paragraph below the G-SEC-1 test ("`fetch` (undici) behaves like curl
+   * here") was measured on a dev machine and REFUTED on the 2-core ubuntu CI
+   * runner: with the 1 MB upload still in flight when the server answers,
+   * undici raised `TypeError: fetch failed … cause: write EPIPE` and discarded
+   * the already-sent 413 (rehearsal run 33398567719, the first time this test
+   * ever executed in CI — the cli-bats job never reached its vitest step
+   * before TD-434). curl is the instrument the fence's own FR-241 transcript
+   * verified against this exact server shape (`CODE=413`, exit 0): it keeps
+   * reading the response after a send-side error, on loopback on both OSes.
    */
   async function postFromChild(
     port: number,
     bytes: number,
   ): Promise<{ status: number; body: string }> {
-    const program = `
-      const body = JSON.stringify({ action: "dismiss", ids: [1], reason: "x".repeat(${bytes}) });
-      const res = await fetch("http://127.0.0.1:${port}/api/triage", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body,
-      });
-      process.stdout.write(JSON.stringify({ status: res.status, body: await res.text() }));
-    `;
-    const { stdout } = await execFileAsync(
-      process.execPath,
-      ["--input-type=module", "-e", program],
-      { encoding: "utf-8", timeout: 20_000 },
+    const dir = mkdtempSync(join(tmpdir(), "gsec1-body-"));
+    const bodyFile = join(dir, "body.json");
+    writeFileSync(
+      bodyFile,
+      JSON.stringify({ action: "dismiss", ids: [1], reason: "x".repeat(bytes) }),
     );
-    return JSON.parse(stdout) as { status: number; body: string };
+    let stdout: string;
+    try {
+      ({ stdout } = await execFileAsync(
+        "curl",
+        [
+          "--silent",
+          "--show-error",
+          "--max-time",
+          "15",
+          "-X",
+          "POST",
+          "-H",
+          "content-type: application/json",
+          "--data-binary",
+          `@${bodyFile}`,
+          "-o",
+          "-",
+          "-w",
+          "|CODE=%{http_code}",
+          `http://127.0.0.1:${port}/api/triage`,
+        ],
+        { encoding: "utf-8", timeout: 20_000 },
+      ));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    const marker = stdout.lastIndexOf("|CODE=");
+    if (marker < 0) throw new Error(`curl probe: no |CODE= marker in: ${stdout}`);
+    return {
+      status: Number(stdout.slice(marker + "|CODE=".length)),
+      body: stdout.slice(0, marker),
+    };
   }
 
   it("BASELINE — a well-formed POST from no Origin CLEARS every fence", async () => {
@@ -1175,7 +1209,10 @@ describe("G-SEC-1 — the write surface's fences", () => {
      *   curl --data-binary @1MB.json  ->  {"error":"body too large (1000048
      *   bytes; max 65536)"}|CODE=413      (curl exit 0)
      *
-     * `fetch` (undici) behaves like curl here: it surfaces the early response.
+     * TD-434 (2026-08-31): an earlier revision closed with "`fetch` (undici)
+     * behaves like curl here" — true on a dev machine, refuted on the CI
+     * runner (write EPIPE, run 33398567719). `postFromChild` IS curl now; see
+     * its header.
      */
     await start();
     const r = await postFromChild(srv!.port, 1_000_000);

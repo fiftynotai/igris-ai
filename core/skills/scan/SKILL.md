@@ -575,3 +575,36 @@ Render, when the digest has `degraded: false` and a non-null `alarm`:
 
 If the verb is unavailable, errors, or returns `degraded: true`, omit the
 section entirely. Do NOT block `/scan`, do NOT print an error.
+
+### 6.11. CI status line (TD-434)
+
+ONE line, only when the repo's default-branch CI is RED — a green pipeline
+prints nothing (silence is the healthy state; this line exists because a red
+default branch went unnoticed across every push run for weeks, TD-352's
+class).
+
+Run (guarded — degrade silently when `gh` is absent, unauthenticated, the
+directory is not a repo with GitHub Actions, or no workflow named `test.yml`
+exists). `<default-branch>` is the repo's default working branch (`develop`
+here). The `--workflow test.yml` filter is load-bearing, not decoration: the
+latest run of ANY workflow can be a green run of some other pipeline sitting
+on top of a red test run (measured during TD-434's own demo — an unfiltered
+query answered a green `Secret Scan` while `test.yml` was red).
+
+```bash
+gh run list --branch <default-branch> --workflow test.yml --limit 1 \
+  --json conclusion,workflowName,displayTitle,url 2>/dev/null || true
+```
+
+Render, ONLY when the command returned a run whose `conclusion` is non-empty
+and not `success`:
+
+```
+### CI
+RED on <default-branch>: <workflowName> — "<displayTitle>" — <url>
+```
+
+If the command errors, prints nothing, returns `[]`, or the latest run's
+conclusion is `success` or empty (a run still in progress), omit the section
+entirely. Do NOT block `/scan`, do NOT print an error. Exactly one line —
+never a table, never a second line (the run URL is where the detail lives).

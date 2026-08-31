@@ -4661,12 +4661,24 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
       // Run the REAL compiler restricted to the skills surface. It auto-discovers
       // the personal overlay, concatenates blocks (core + personal), and DELEGATES
       // each distinct source root to `skills add` (HOME is sandboxed).
+      //
+      // TD-434 (2026-08-31): IGRIS_CLI is pinned to THIS repo's built dist,
+      // exactly as the FR-218 tests below do. Without it the compiler falls
+      // back to a bare `igris` on PATH — which resolved to whatever global
+      // install the dev machine had (testing the wrong artifact) and was
+      // `igris: command not found` ×3 on the CI runner (rehearsal run
+      // 33398567719, the first time this test ever executed in CI).
       execFileSync(
         "bash",
         [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
         {
           encoding: "utf-8",
-          env: { ...process.env, IGRIS_BRAIN_DIR: brainDir, HOME: homeSandbox },
+          env: {
+            ...process.env,
+            IGRIS_BRAIN_DIR: brainDir,
+            HOME: homeSandbox,
+            IGRIS_CLI: `node ${join(REPO_ROOT, "cli", "dist", "index.js")}`,
+          },
         },
       );
 

@@ -320,6 +320,11 @@ EOF
   bash "$COMPILE" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json" --target codex  >/dev/null
 
   run bash "$GUARD" --project-root "$PROJ" --manifest "$PROJ/harness-manifest.json"
+  # TD-434 (2026-08-31): print the guard's verdict lines so a CI failure names
+  # itself — this test failed `[ "$status" -eq 0 ]` on the ubuntu runner
+  # (2026-06-04 run 26973181843 AND rehearsal run 33400968683) with no output
+  # in the log to diagnose from. Bats prints this only when the test fails.
+  echo "guard status=$status output: $output" >&2
   [ "$status" -eq 0 ]
   # ONE tree verdict, not three.
   local tree_count

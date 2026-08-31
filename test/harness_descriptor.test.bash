@@ -212,10 +212,17 @@ PY
 }
 EOF
   run bash "$GUARD" --project-root "$PROJ" --surface agents
-  [ "$status" -ne 0 ]
-  [[ "$output" == *"[forger/gemini] PARITY"* ]]
-  [[ "$output" != *"[architect/"*"PARITY"* ]]
-  [[ "$output" == *"parity violation"* ]]
+  [ "$status" -ne 0 ] || return 1
+  [[ "$output" == *"[forger/gemini] PARITY"* ]] || return 1
+  # TD-434 (2026-08-31): line-scoped negative. The old cross-line glob
+  # `!= *"[architect/"*"PARITY"*` matched ANY architect verdict line followed
+  # by forger's later PARITY line — e.g. on a CI runner, where the ~-anchored
+  # targets are MISSING, "[architect/gemini] MISSING … [forger/gemini] PARITY"
+  # satisfied the glob and failed the test (ubuntu run 33403567637). It looked
+  # green everywhere else only because a non-final bare [[ ]] is vacuous under
+  # Bats >= 1.12 (TD-341's class) — hence the `|| return 1` arms too.
+  if printf '%s\n' "$output" | grep -q '\[architect/.*PARITY'; then return 1; fi
+  [[ "$output" == *"parity violation"* ]] || return 1
 }
 
 @test "parity (intentional single-row project): a codex-only agent is NOT flagged" {

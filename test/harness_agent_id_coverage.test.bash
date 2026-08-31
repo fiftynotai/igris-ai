@@ -115,7 +115,9 @@ run_drift() {
     claude-desktop cline goose > "$STUB_AGENTS_FILE"
   run_drift
   [ "$status" -eq 0 ]
-  [[ "$output" != *"[mcp-agents/"*"DRIFTED"* ]]
+  # TD-434 (2026-08-31): line-scoped + armed (the cross-line glob shape
+  # and non-final bare [[ ]] are both hazards — see harness_descriptor #12).
+  if printf '%s\n' "$output" | grep -q '\[mcp-agents/.*DRIFTED'; then return 1; fi
   # The summary counts the agent-id targets as in-sync (no drift/parity).
   [[ "$output" == *"in sync, 0 drifted/missing"* ]]
 }
@@ -130,7 +132,9 @@ run_drift() {
   run_drift
   [ "$status" -eq 0 ]
   [[ "$output" == *"[mcp-agents] SKIP"* ]]
-  [[ "$output" != *"[mcp-agents/"*"DRIFTED"* ]]
+  # TD-434 (2026-08-31): line-scoped + armed (the cross-line glob shape
+  # and non-final bare [[ ]] are both hazards — see harness_descriptor #12).
+  if printf '%s\n' "$output" | grep -q '\[mcp-agents/.*DRIFTED'; then return 1; fi
 }
 
 # --- (c') empty probe output also SKIPs ------------------------------------

@@ -43,6 +43,21 @@ jobs:
         run: |
           brew install bats-core
 
+      - name: Set up Python (managed toolchain)
+        # TD-434 (2026-08-31): macos-latest's system python3 is PEP 668
+        # externally-managed, so the old `pip install --user pyyaml` fallback
+        # died with `error: externally-managed-environment` — every macOS run
+        # since 27154151180 (2026-06-08, the first run carrying the PyYAML
+        # step) failed here in ~17 s. setup-python's toolchain is NOT
+        # externally-managed and prepends PATH, so every later `python3`
+        # (including scripts/validate_skill_frontmatter_yaml.py via its bats
+        # test) resolves to this same interpreter. Ubuntu is kept symmetric
+        # on purpose: it happens to preinstall PyYAML today (6.0.1 at run
+        # 33388050967) — exactly the image-drift exposure this step removes.
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Verify Python3 installed
         run: |
           python3 --version
@@ -50,9 +65,12 @@ jobs:
       - name: Verify PyYAML installed (TD-219 strict-YAML SKILL.md guard)
         # The SKILL.md frontmatter validator (and its bats test) needs PyYAML
         # to run. Without this the bats test would skip silently and the
-        # recurrence guard would be a no-op in CI. Install on miss.
+        # recurrence guard would be a no-op in CI. Installed unconditionally
+        # into the managed setup-python env (TD-434 — the old import-or-
+        # `--user`-install fallback targeted the system python and hit
+        # PEP 668 on macOS).
         run: |
-          python3 -c "import yaml" || python3 -m pip install --user pyyaml
+          python3 -m pip install pyyaml
           python3 -c "import yaml, sys; print('PyYAML', yaml.__version__)"
 
       - name: Verify jq installed
@@ -78,23 +96,38 @@ jobs:
         run: |
           # Run test files sequentially to avoid parallel execution issues
           # See: test/README.md for details on known bats parallel execution issue
+          #
+          # TD-434 (2026-08-31): the L-552-guarded files (those matching
+          # `grep -l "cli/dist/index.js missing" test/*.test.bash`) SKIP here
+          # by documented design — this job has no Node build, so cli/dist is
+          # absent. Their CI home is the cli-bats job's "Run cli-dist-dependent
+          # root suites" step, which runs them against a built cli/dist. Do
+          # not add a cli build here (TD-303 recorded the ubuntu-only-build
+          # rationale).
           for test_file in test/*.test.bash; do
             echo "Running $(basename $test_file)..."
             bats "$test_file" || exit 1
           done
 
-      - name: Check agent-prompt harness drift (FR-135)
-        # Belt-and-suspenders behind the pre-commit hook (scripts/git-hooks/
-        # pre-commit -> validate_harness_drift.sh). Surfaces drift between the
-        # canonical core/agents/*.md prompts and their generated harnesses.
-        #
-        # HARD step: the wrapper exits 1 on real DRIFTED but exits 0 (with a
-        # loud NOTICE) on the gated-codex MISSING-only state. The 7 core agents
-        # declare only codex targets, whose .codex/agents/*.toml are not built
-        # yet (codex emit gated until FR-138). STOPGAP: FR-138 un-gates codex
-        # and must flip MISSING back to fatal in the wrapper.
-        run: |
-          bash scripts/validate_harness_drift.sh
+      # -----------------------------------------------------------------------
+      # TD-434 (2026-08-31): the FR-135 "Check agent-prompt harness drift" step
+      # was REMOVED from this job — an explicit re-scope, not a silent skip.
+      #
+      # The step (added 2026-05-21, 3549b0c) had NEVER once executed in CI:
+      # every run since then failed earlier in this job. Its first-ever
+      # execution (rehearsal run 33402042908) showed it CANNOT pass on a clean
+      # runner by design: the gate's fatal surface is machine state a checkout
+      # does not have — the project-relative .codex/agents/*.toml harnesses are
+      # gitignored (compiled per machine, "9 project-relative harness(es)
+      # MISSING"), and the skills-surface re-check delegates to the `igris`
+      # CLI (exit 127 here; the matrix job has no Node build BY DESIGN —
+      # TD-303's recorded rationale). The drift gate's enforcement point is
+      # and remains the pre-commit hook (scripts/git-hooks/pre-commit ->
+      # validate_harness_drift.sh) on the machine that owns the compiled
+      # state. A CI-meaningful variant (compile-in-CI with IGRIS_CLI pinned
+      # to a built dist, then verify) needs the cli build and belongs to a
+      # follow-up brief — see the TD-434 report's residuals.
+      # -----------------------------------------------------------------------
 
       - name: Test results summary
         if: always()
@@ -189,6 +222,22 @@ jobs:
         # sequence (it also vendors the brain MCP bundle).
         working-directory: cli
         run: npm run build
+
+      - name: Run cli-dist-dependent root suites (TD-434)
+        # The root suite's L-552-guarded files skip in the matrix job (no
+        # Node build there by design — see that job's "Run test suite"
+        # comment). They run HERE, right after `Build CLI` produced cli/dist —
+        # before TD-434 they had NEVER executed in any CI job. The list is
+        # DERIVED from the L-552 skip-message needle so a future guarded file
+        # auto-joins; the emptiness guard makes a reworded skip message loud
+        # instead of silently emptying this leg. MAINTAINING.md maps the
+        # needle: rewording the skip message MUST update this grep in the
+        # same commit. Measured 2026-08-31 locally: 2 files, 34 tests
+        # (12 documented per-test skips, FR-212d class), ~22 s.
+        run: |
+          files=$(grep -l "cli/dist/index.js missing" test/*.test.bash)
+          [ -n "$files" ] || { echo "TD-434 guard: skip-needle derivation matched 0 files"; exit 1; }
+          bats $files
 
       - name: Run CLI bats integration suite
         # Invoke the npm script, never an inlined `bats tests/integration`, so

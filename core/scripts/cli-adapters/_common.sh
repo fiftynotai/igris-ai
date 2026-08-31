@@ -2339,3 +2339,41 @@ export -f normalize_mcp_shape
 # and is pinned by a TS-only golden; it has no bash counterpart by design.
 export -f flatten_hook_rows
 export -f verify_hook_entry_present
+
+# ---------------------------------------------------------------------------
+# TD-434 (2026-08-31): portable stat/md5 helpers.
+#
+# BSD stat formats with `-f FORMAT`; GNU stat formats with `-c FORMAT` — and
+# GNU `stat -f` "succeeds" printing FILESYSTEM status, so the once-conventional
+# `stat -f %i FILE 2>/dev/null || stat -c %i FILE` fallback is broken on GNU:
+# the first arm exits ~0-or-1 while printing multi-line fs-status text (which
+# embeds the file path and MUTATING free-block counts), and command
+# substitution concatenates BOTH arms' stdout. Measured live: the gemini
+# hard-link verdict in check_harness_drift.sh was 100 % false-DRIFTED on the
+# ubuntu CI runner ("different bytes AND different inode" about byte-identical
+# hard links — rehearsal run 33402042908), because the fs-status strings never
+# compare equal and `md5 -q` does not exist on Linux (both hashes empty, the
+# content-equality arm silently skipped). Detect the stat dialect ONCE; never
+# call `stat -f` / `md5 -q` / `md5sum` directly — call these.
+# ---------------------------------------------------------------------------
+if stat -c %i / >/dev/null 2>&1; then _IGRIS_STAT_DIALECT=gnu; else _IGRIS_STAT_DIALECT=bsd; fi
+
+file_inode() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %i "$1" 2>/dev/null || echo ""
+  else stat -f %i "$1" 2>/dev/null || echo ""; fi
+}
+
+file_nlink() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %h "$1" 2>/dev/null || echo "0"
+  else stat -f %l "$1" 2>/dev/null || echo "0"; fi
+}
+
+file_md5() {
+  if command -v md5 >/dev/null 2>&1; then md5 -q "$1" 2>/dev/null || echo ""
+  else md5sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}
+
+export _IGRIS_STAT_DIALECT
+export -f file_inode   # TD-434
+export -f file_nlink   # TD-434
+export -f file_md5     # TD-434

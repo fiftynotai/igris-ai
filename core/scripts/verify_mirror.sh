@@ -127,14 +127,22 @@ check_pair() {
   echo "PAIR $idx: $a <-> $b"
 
   # Resolve realpaths. `|| true` so set -e does not abort on missing files.
+  # TD-434 (2026-08-31): existence is checked EXPLICITLY (`[ -e ]`) rather
+  # than inferred from realpath failure — BSD/macOS realpath fails on a
+  # nonexistent final component, but GNU realpath RESOLVES it (exit 0, only
+  # the parent must exist), so on Linux a missing file sailed past this
+  # branch into a diff error instead of the MISSING verdict
+  # (test_missing_file_reported red on the ubuntu runner, run 33406019583).
   local realpath_a realpath_b
   realpath_a=$(realpath "$a" 2>/dev/null || true)
   realpath_b=$(realpath "$b" 2>/dev/null || true)
+  [ -e "$a" ] || realpath_a=""
+  [ -e "$b" ] || realpath_b=""
 
   echo "  realpath A: ${realpath_a:-<unresolved>}"
   echo "  realpath B: ${realpath_b:-<unresolved>}"
 
-  # MISSING: one or both paths could not be resolved.
+  # MISSING: one or both paths absent (or unresolvable — symlink loops).
   if [ -z "$realpath_a" ] || [ -z "$realpath_b" ]; then
     local which_missing=""
     [ -z "$realpath_a" ] && which_missing="A"

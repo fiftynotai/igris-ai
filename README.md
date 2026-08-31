@@ -1,5 +1,7 @@
 ![igris — the engineering OS for AI coding agents](docs/images/igris-banner.png)
 
+[![tests](https://github.com/fiftynotai/igris-ai/actions/workflows/test.yml/badge.svg?branch=develop)](https://github.com/fiftynotai/igris-ai/actions/workflows/test.yml)
+
 # IGRIS
 
 they resume your chat — IGRIS resumes your work.

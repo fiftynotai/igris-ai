@@ -148,8 +148,8 @@ atomic_symlink() {
 #
 # Precondition: $target exists as a regular file in the loadout (assembled
 # by assemble_agent_harness_into_loadout immediately prior).
-# Postcondition: stat -f %i "$link_path" == stat -f %i "$target" AND
-# stat -f %l "$target" >= 2.
+# Postcondition: file_inode "$link_path" == file_inode "$target" AND
+# file_nlink "$target" >= 2 (portable helpers, _common.sh — TD-434).
 # ---------------------------------------------------------------------------
 emit_md_hardlink() {
   local link_path="$1"
@@ -753,8 +753,11 @@ compile_md_agent_target() {
       # mismatching = stale orphan from re-vendor / operator `cp` / hand-edit
       # → re-emit. We OWN this path; re-emit is the contract.
       local tgt_inode src_inode
-      tgt_inode=$(stat -f %i "$target_abs" 2>/dev/null || echo "")
-      src_inode=$(stat -f %i "$harness_target" 2>/dev/null || echo "")
+      # TD-434 (2026-08-31): portable file_inode from _common.sh (raw
+      # `stat -f %i` returned fs-status text on GNU → the no-op check never
+      # matched and every Linux compile re-emitted the hard link).
+      tgt_inode=$(file_inode "$target_abs")
+      src_inode=$(file_inode "$harness_target")
       if [ -n "$tgt_inode" ] && [ "$tgt_inode" = "$src_inode" ]; then
         return 0  # already correctly hard-linked — silent no-op
       fi

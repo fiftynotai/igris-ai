@@ -420,9 +420,10 @@ verify_md_agent_symlink_drift() {
 #   5. inode mismatch AND byte-content differs → DRIFTED (target diverged
 #      from loadout; recompile re-establishes).
 #
-# Note: BSD `stat -f` and macOS `md5 -q` are darwin-only flags. TD-096 mirror
-# is darwin-only per current ops; Linux portability is a future brief if
-# needed (gate via `case "$(uname -s)" in Darwin) ...; *) ...; esac`).
+# Note: inode/nlink/md5 reads go through the portable `file_inode` /
+# `file_nlink` / `file_md5` helpers in _common.sh (TD-434, 2026-08-31 — the
+# raw darwin-only `stat -f` / `md5 -q` calls made this verdict 100 %
+# false-DRIFTED on the ubuntu CI runner).
 # ---------------------------------------------------------------------------
 verify_gemini_agent_hardlink_drift() {
   local name="$1"
@@ -448,9 +449,12 @@ verify_gemini_agent_hardlink_drift() {
   fi
 
   local tgt_inode src_inode src_nlink
-  tgt_inode=$(stat -f %i "$target_abs" 2>/dev/null || echo "")
-  src_inode=$(stat -f %i "$expected_target" 2>/dev/null || echo "")
-  src_nlink=$(stat -f %l "$expected_target" 2>/dev/null || echo "0")
+  # TD-434 (2026-08-31): portable helpers from _common.sh — the raw
+  # `stat -f %i` here made this verdict 100 % false-DRIFTED on Linux
+  # (GNU stat -f prints filesystem status; see the _common.sh block).
+  tgt_inode=$(file_inode "$target_abs")
+  src_inode=$(file_inode "$expected_target")
+  src_nlink=$(file_nlink "$expected_target")
 
   if [ -n "$tgt_inode" ] && [ "$tgt_inode" = "$src_inode" ]; then
     # Defensive nlink check: a same-inode hit on a single-link file should be
@@ -473,8 +477,8 @@ verify_gemini_agent_hardlink_drift() {
   # Inode mismatch — fall through to content-equality check for the
   # DRIFT-WARN case (operator replaced the hard link with a `cp` copy).
   local tgt_md5 src_md5
-  tgt_md5=$(md5 -q "$target_abs" 2>/dev/null || echo "")
-  src_md5=$(md5 -q "$expected_target" 2>/dev/null || echo "")
+  tgt_md5=$(file_md5 "$target_abs")
+  src_md5=$(file_md5 "$expected_target")
   if [ -n "$tgt_md5" ] && [ "$tgt_md5" = "$src_md5" ]; then
     echo "  [$name/gemini] DRIFT-WARN"
     echo "      target    : $target_abs [inode $tgt_inode, real-file copy]"
