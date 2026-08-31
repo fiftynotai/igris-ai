@@ -654,6 +654,144 @@ KPI (UTC weeks 2026-08-10 → 2026-08-17): Done/active-day n/a → 6.5 (n/a) · 
 undercounted pre-gate denominator — §7. No flag can fire honestly before
 2026-09-07.)
 
+
+### Interim reading — 2026-08-31 03:10:36 UTC (week 2026-08-24 → 30 complete; NOT the TD-431 reading)
+
+Taken the morning the first FULL post-ship week (2026-08-31 → 09-06) began, at the operator's request — the week 2026-08-24 → 30 had just completed. This is informational: TD-431's own reading stays due on/after 2026-09-07 UTC. Derivations unchanged (`igris kpi --sql` sha256 `c48cc5fa4eecf782…`, re-hashed at capture).
+
+## OS KPIs (FR-268) — tz: UTC, weeks 2026-08-24 → 2026-09-06 (current week 2026-08-31 partial), project: all, generated 2026-08-31 03:11:17 UTC
+
+### 1. Capacity — brain-bracket agent minutes per project per week
+| project | week | agent_min | invocations | briefs |
+|---|---|---|---|---|
+| igris-ai | 2026-08-24 | 592 | 39 | 4 |
+| mbrgea-ai | 2026-08-24 | 90 | 4 | 3 |
+| moca-ai-agent | 2026-08-24 | 262 | 10 | 3 |
+
+### 2. Throughput — Done per week / per active day
+| project | week | done | active_days | done/active_day |
+|---|---|---|---|---|
+| fifty-dev | 2026-08-24 | 4 | 0 | — |
+| igris-ai | 2026-08-24 | 9 | 3 | 3.00 |
+| mbrgea-ai | 2026-08-24 | 12 | 3 | 4.00 |
+| moca-ai-agent | 2026-08-24 | 8 | 2 | 4.00 |
+
+### 3. Effort mix of Done (XS+S share per project-week)
+| project | week | effort | done | xs_s_share |
+|---|---|---|---|---|
+| fifty-dev | 2026-08-24 | (none) | 4 | 0% |
+| igris-ai | 2026-08-24 | L | 2 | 22% |
+| igris-ai | 2026-08-24 | M | 5 | 22% |
+| igris-ai | 2026-08-24 | S | 2 | 22% |
+| mbrgea-ai | 2026-08-24 | (none) | 1 | 50% |
+| mbrgea-ai | 2026-08-24 | L | 1 | 50% |
+| mbrgea-ai | 2026-08-24 | M | 4 | 50% |
+| mbrgea-ai | 2026-08-24 | S | 6 | 50% |
+| moca-ai-agent | 2026-08-24 | (none) | 4 | 38% |
+| moca-ai-agent | 2026-08-24 | M | 1 | 38% |
+| moca-ai-agent | 2026-08-24 | S | 3 | 38% |
+
+### 4. Minutes per hunt — median / p75, phase shares (week of the hunt's last row)
+| project | week | hunts | median | p75 | architect | forger | sentinel | warden | mender | document |
+|---|---|---|---|---|---|---|---|---|---|---|
+| igris-ai | 2026-08-24 | 4 | 82.2 | 149.6 | 13% | 41% | 19% | 21% | 0% | 6% |
+| mbrgea-ai | 2026-08-24 | 3 | 22.4 | 45.8 | 39% | 61% | 0% | 0% | 0% | 0% |
+| moca-ai-agent | 2026-08-24 | 3 | 92.9 | 130.3 | 18% | 46% | 6% | 29% | 0% | 0% |
+
+### 5. Rounds per hunt — resumed / retry rounds
+| project | week | hunts | resumed | resumed_share | avg_extra_rounds |
+|---|---|---|---|---|---|
+| igris-ai | 2026-08-24 | 4 | 4 | 100% | 4.75 |
+| mbrgea-ai | 2026-08-24 | 3 | 0 | 0% | 0.00 |
+| moca-ai-agent | 2026-08-24 | 3 | 0 | 0% | 0.00 |
+
+### 6. Model per role — per-invocation minutes (window), tool calls when reported
+| agent | model_requested | n | median | p75 | tool_calls_median | tool_calls_n |
+|---|---|---|---|---|---|---|
+| architect | claude-opus-5 | 2 | 9.2 | 20.6 | — | 0 |
+| architect | inherit:claude-fable-5 | 4 | 13.8 | 18.4 | — | 0 |
+| architect | inherit:claude-opus-5 | 1 | 18.3 | 18.3 | — | 0 |
+| architect | opus | 2 | 12.4 | 22.4 | — | 0 |
+| document | inherit:claude-fable-5 | 4 | 6.5 | 10.8 | — | 0 |
+| forger | claude-opus-5 | 2 | 19.9 | 54.3 | — | 0 |
+| forger | inherit:claude-fable-5 | 12 | 19.3 | 28.8 | — | 0 |
+| forger | inherit:claude-opus-5 | 1 | 46.8 | 46.8 | — | 0 |
+| forger | opus | 2 | 21.4 | 33.3 | — | 0 |
+| sentinel | inherit:claude-fable-5 | 9 | 9.3 | 14.8 | — | 0 |
+| sentinel | inherit:claude-opus-5 | 1 | 16.7 | 16.7 | — | 0 |
+| sentinel | sonnet | 1 | 10.2 | 10.2 | — | 0 |
+| warden | claude-opus-5 | 2 | 9.8 | 55.4 | — | 0 |
+| warden | inherit:claude-fable-5 | 8 | 11.5 | 15.0 | — | 0 |
+| warden | inherit:claude-opus-5 | 1 | 11.1 | 11.1 | — | 0 |
+| warden | sonnet | 1 | 11.9 | 11.9 | — | 0 |
+
+### 7. Ceremony cost — runs, median / p75 minutes; coverage (unpaired goes red)
+| project | ceremony | week | runs | median | p75 |
+|---|---|---|---|---|---|
+| igris-ai | boot | 2026-08-24 | 1 | 0.0 | 0.0 |
+| igris-ai | hunt-init | 2026-08-24 | 2 | 0.0 | 0.3 |
+
+| project | ceremony | week | starts | stops | unpaired | unpaired_stops |
+|---|---|---|---|---|---|---|
+| igris-ai | boot | 2026-08-24 | 1 | 1 | 0 | 0 |
+| igris-ai | hunt-init | 2026-08-24 | 2 | 2 | 0 | 0 |
+
+### Notes
+- weeks are Monday–Sunday UTC; the operator's local clock is never used
+- capacity is brain-bracket minutes (overshoots agent-active time by 1–6 min per invocation — FR-267 §7)
+- Done date = brief_status.updated_at of a Done row (no completed-at column); a post-Done edit moves the brief's week
+- a week that starts before the record's first activity day (activity_floor) reads NULL per active day — its denominator is not covered
+- KPIs 1/4/5/6 read rows with a non-NULL duration_ms only (brain-timed since 2026-08-26); earlier weeks are empty for them, not zero
+- the local series is per-machine: BOOT_SYNC_PULL_TABLES pulls neither event table; the VPS holds the union
+
+```
+{
+    "degraded": false,
+    "project": "igris-ai",
+    "tz": "UTC",
+    "generated_at": "2026-08-31 03:11:18",
+    "alarm": {
+        "project": "igris-ai",
+        "w0_week_start": "2026-08-17",
+        "w1_week_start": "2026-08-24",
+        "done_per_active_day": {
+            "w0": 6.5,
+            "w1": 3,
+            "delta_pct": -53.8,
+            "flag": true
+        },
+        "hunt_median_min": {
+            "w0": null,
+            "w1": 82.2,
+            "delta_pct": null,
+            "flag": false
+        },
+        "ceremonies": [
+            {
+                "ceremony": "boot",
+                "runs": 1,
+                "median_min": 0
+            },
+            {
+                "ceremony": "hunt-init",
+                "runs": 2,
+                "median_min": 0
+            }
+        ],
+        "unpaired": 0,
+        "line": "KPI (UTC weeks 2026-08-17 \u2192 2026-08-24): Done/active-day 6.5 \u2192 3.0 (-54% !) \u00b7 hunt median n/a \u2192 82 min (n/a) \u00b7 boot 1 (0.0 min) \u00b7 hunt-init 2 (0.0 min) \u00b7 unpaired 0"
+    },
+    "skipped": []
+}
+```
+
+What this reading can and cannot say:
+- **The alarm fired for the first time — and its −54 % flag is a coverage artefact, not a slowdown.** W0 (2026-08-17) is the pre-gate week whose active-day denominator is undercounted (§7: prose-era emission ≈ 31 %, 2 counted days) — §8 already marks its per-active-day as not comparable. The first honest week-over-week comparison is 2026-08-31 vs 2026-08-24, readable from 2026-09-07.
+- Week 2026-08-24 → 30 is the first COMPLETE week in the record with brain-timed durations: igris-ai 592 agent-min / 39 invocations / 4 hunts (FR-267, FR-268, BR-097, TD-426), median hunt 82.2 min, p75 149.6; ceremony coverage boot 1 + hunt-init 2, unpaired 0. FR-268 shipped mid-week (08-27), so the ceremony series covers only the back half.
+- `resumed_share` 100 % / `avg_extra_rounds` 4.75 for igris-ai counts review retry/fix rounds (the FR-267 `round` semantics), not context-loss resumes — all four hunts had prose-reject rounds.
+- KPI 6 carries the first two `sonnet` rows (sentinel 10.2, warden 11.9 — the TD-425 trial #1 rounds); cross-model medians there mix r1 and narrow rounds, so the trial's own table in TD-425 is the comparison to trust.
+- KPI 6 `tool_calls_n` is still 0 on every row — no harness has reported `metadata.tool_calls` yet.
+
 ### Follow-up reading — due on or after 2026-09-07 UTC
 
 _Append `igris kpi --weeks 1` and `igris kpi --project igris-ai --alarm --json` here, with the brain's `generated_at`._
