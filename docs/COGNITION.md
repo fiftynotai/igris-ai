@@ -122,6 +122,157 @@ Two more things the digest reports that a naive read would miss:
   de-duplicates by NAME while the table replicates by a per-machine random id,
   so two brains can each keep their own row under one name.
 
+## how much is any of it worth
+
+```bash
+igris cognition yield
+```
+
+The sibling question, and the harder one. `health` answers *is this instance
+running?*; `yield` answers *is what it produces worth anything?* — per instance:
+rows produced, rows a human judged, rows kept, the share of the pending queue,
+and the share that expired unjudged.
+
+The roster is derived the same way — from `cognition_instances` — so an instance
+added tomorrow is SCORED here with no edit, not merely listed. What makes that
+possible is a second declaration alongside `output`.
+
+### `output` and `produced` are different questions
+
+Every instance declares both, and conflating them is the mistake this verb was
+built to stop making.
+
+| | answers | example (perception) |
+|---|---|---|
+| `output` | *where does an operator look for actionable results?* | `learnings[review_status='pending_review']` — the review INBOX |
+| `produced` | *which rows did this instance ever write?* | `learnings[source_extractor='llm']` |
+
+`output` is legitimately a STATE predicate. Perception's selects **zero** rows
+the moment its queue is drained — which is exactly what happened on 2026-09-01 —
+while perception had in fact authored 569. A yield reading built on `output`
+would report the highest-scoring instance in the brain as having produced
+nothing.
+
+`produced` uses a grammar with one special token:
+
+```
+table[col='literal']
+table[col=literal, col2=OTHER]
+```
+
+`OTHER` means *the complement of every literal any OTHER instance declares for
+this same table and column*, computed from the roster. That is how the
+subconscious — whose `source_module` is chosen by the LLM, and which had **196
+distinct values** across 360 rows on 2026-09-01 — reports as ONE instance rather
+than 196 tiny detectors. Register an eighth instance that claims a literal
+`source_module` tomorrow and the complement shrinks on its own.
+
+### expiry is not judgment
+
+The governing defect. `review_status='rejected'` on a learning has two completely
+different causes and they were indistinguishable:
+
+| cause | what writes it | how you tell |
+|---|---|---|
+| **bulk expiry** — the janitor's stale-pending sweep | `review_status='rejected'`, `updated_at`. **`deleted_at` untouched.** No event. | `rejected` **AND** `deleted_at IS NULL` |
+| **human judgment** — a reviewer rejected a recurring candidate | `review_status='rejected'` **AND** `deleted_at`, plus a `perception.rejected_pattern_recurring` event | `rejected` **AND** `deleted_at IS NOT NULL` |
+
+The verb counts the first as `expired`, never as a rejection. That is not a
+detail: on 2026-08-26 the naive reading scored perception at 23 kept of 69
+(**33%**) because it counted 40 expiry-flipped rows as human rejections, while
+the only review that had actually happened scored it 23 of 29 (**79%**).
+
+Suggestions behave differently and are handled differently: nothing ever flips a
+lapsed suggestion to `dismissed`, so it stays `pending` and is counted as
+`pending_expired` — unjudged, and never a rejection either.
+
+**This compensation happens at the READER. No writer changed.** A distinct
+`expired` status would have been a new member of a vocabulary that readers
+across BOTH packages select on — written as `review_status = 'approved'`, as
+`COALESCE(review_status, 'approved') = 'approved'`, and as a bound
+`review_status = ?` — and a new status value falls silently outside every one of
+those forms. It would also have perturbed the very population being measured.
+
+**No count of those readers is given, and that is deliberate.** Two exactly
+re-derivable populations exist, run from the repo root (both measured
+2026-09-01):
+
+```bash
+# files that NAME the column
+grep -rl review_status brain-mcp-server/src cli/src | grep -v __tests__ | wc -l
+# -> 35
+
+# files where it sits next to a comparison operator
+grep -rlE "review_status[[:space:]]*(=|!=|<>|IS|IN|LIKE)" \
+  brain-mcp-server/src cli/src | grep -v __tests__ | wc -l
+# -> 21
+```
+
+Neither is the answer to "how many filter on it", and nothing in between is
+mechanical. The first mixes DDL, writes (`SET review_status = ...`),
+TypeScript-level comparisons, the roster's own
+`learnings[review_status='pending_review']` predicate string and doc comments in
+with the SQL filters. The second admits files that match only inside a docblock
+QUOTING a predicate, and it cannot see a `COALESCE(review_status, 'approved')`
+filter at all, because the column is followed by a comma there rather than an
+operator. That third population has its own re-runnable command —
+`grep -rn "COALESCE(review_status" brain-mcp-server/src cli/src | grep -v __tests__`
+— which on 2026-09-01 returned eight lines: seven SQL filters spread over five
+files, plus one docblock in `cli/src/types.ts`. Three of the five
+(`arbiter/candidates.ts`, `cartographer/candidates.ts`, `subconscious/digest.ts`)
+match the operator regex nowhere and are missed outright. The other two are
+re-admitted for the wrong reason, which is the sharper failure because the file
+count then looks right: `janitor/candidates.ts` matches on one docblock line
+quoting `review_status='merged'`, and `janitor/hygiene.ts` on
+`rejectStalePending`'s `SET review_status = 'rejected' … WHERE review_status =
+'pending_review'` — a write and its predicate — plus two more docblock lines.
+Neither matches on any `COALESCE` filter it actually contains, so both are
+counted for text that is not the filter being counted. Separating the populations
+takes a comment-stripping parser and a judgement call per file, which is not a
+method a reader can re-run. An earlier draft of this paragraph carried a cardinal
+that could not be re-derived from its own stated method, which is precisely the
+instrument defect this verb exists to stop.
+
+### three bounds the numbers carry, because without them they lie
+
+- **A `learnings` `produced` count is a SURVIVING-row count, not a lifetime
+  one.** The common perception reject path HARD-deletes: the row is gone from
+  `learnings` entirely, so it is missing from `produced` as well as from
+  `judged`. Measured 2026-09-01: seven rejection events exist and exactly one
+  rejected row survives. Not fixable — the rows are gone — so it is named
+  instead, on the field itself.
+- **The `event_log` judgment counts are a LOWER BOUND.** `event_log` is purged at
+  30 days, and these emits went nowhere at all before FR-241 Phase 6b, so the
+  record starts when the listener did. They are reported ALONGSIDE the row-state
+  counts and never reconciled into one number; a divergence in the informative
+  direction becomes a warning that names its cause.
+- **The derivation is TOTAL over instances; the judgment model is a CLOSED SET
+  over tables.** Adding an instance costs nothing. Adding a new output table
+  costs one edit in the reader, and until it is made that instance reports
+  `unmeasured` with a named reason — never a number.
+
+### unmeasured is not zero
+
+Every rate is an object, not a number: `{numerator, denominator,
+denominator_label, value}`. `value` is `null` — never `0` — whenever the
+denominator is empty, and the instance carries `measured: false` with a reason.
+
+A rate cannot be rendered without its denominator because the denominator is
+structurally part of the field. An instance nobody has reviewed has not been
+scored badly; it has not been scored. The janitor writes no suggestions of its
+own, so it reports `unmeasured` rather than `0/10` — absence of verdicts is not a
+verdict.
+
+Rows that belong to NO registered instance get their own derived
+`(unclaimed:<table>)` entry, found as a complement rather than by naming
+anything: that is where the 844 legacy `gap`/`stalled`/`pattern`/`conflict` rows
+from the engine FR-118 deleted show up, and where the next orphaned population
+will. Every channel reports `claimed + unclaimed === total`, and says so when it
+does not.
+
+`/scan --yield` renders the table. Without the token, `/scan` prints one pointer
+line.
+
 ## the instances
 
 Seven instances, one host. Each block answers what it does, what gates it, what drives it, and where its
@@ -147,6 +298,7 @@ memory until you approve it.
 | **gate** | `cognition.perception.enabled` — **absent means ON here**, unlike every other instance |
 | **driver** | session hook — spawned detached at session end / pre-compact, not by a cron row |
 | **output** | `learnings` rows with `review_status='pending_review'` |
+| **produced** | `learnings[source_extractor='llm']` — every row its LLM extractor wrote (SURVIVING rows: the common reject path hard-deletes) |
 
 > **It writes under a LEGACY event namespace.** Every other instance logs to
 > `event_log` under `component='cognition.<id>'`. Perception logs under the bare
@@ -168,6 +320,7 @@ names it, so the categories are not a fixed list.
 | **gate** | `cognition.subconscious.enabled` |
 | **driver** | the `subconscious_engine` schedule (every 6 hours) |
 | **output** | `suggestions` rows with an LLM-chosen `source_module` and `type_inferred=1` |
+| **produced** | `suggestions[type_inferred=1, source_module=OTHER]` — the complement of every literal sibling, which is what makes it ONE instance and not 196 |
 
 ### synapse
 
@@ -180,6 +333,7 @@ contradicts that one. It is how the brain becomes a graph rather than a list.
 | **gate** | `cognition.synapse.enabled` |
 | **driver** | the `synapse_engine` schedule (daily, 03:00 UTC) |
 | **output** | `suggestions` rows with `source_module='edge_inference'` |
+| **produced** | `suggestions[source_module='edge_inference']` — under-reports while `synapse.auto_approve` is on, because the edge is then written directly instead of queued |
 
 ### janitor
 
@@ -198,6 +352,7 @@ instances stop together and only one of them has a schedule you can look at.
 | **gate** | `cognition.janitor.enabled` |
 | **driver** | the `janitor_engine` schedule (daily, 04:00 UTC — offset from synapse) |
 | **output** | `suggestions` rows with `source_module='janitor'`; audit rows in `brain_maintenance_runs` |
+| **produced** | `suggestions[source_module='janitor']` — zero rows today, so its yield reports `unmeasured`, not a zero score |
 
 ### arbiter
 
@@ -210,6 +365,7 @@ than deleted, so the lineage survives.
 | **gate** | `cognition.janitor.enabled` — **it has no switch of its own** |
 | **driver** | co-driven by the `janitor` instance |
 | **output** | `suggestions` rows with `source_module='arbiter'` |
+| **produced** | `suggestions[source_module='arbiter']` |
 
 ### curator
 
@@ -222,6 +378,7 @@ pre-state, so it can be undone by run.
 | **gate** | `cognition.janitor.enabled` — **it has no switch of its own** |
 | **driver** | co-driven by the `janitor` instance |
 | **output** | `suggestions` rows with `source_module='curator'` |
+| **produced** | `suggestions[source_module='curator']` |
 
 ### cartographer
 
@@ -234,6 +391,7 @@ into one thing you can actually recall.
 | **gate** | `cognition.janitor.enabled` **AND** `cognition.janitor.cluster.enabled` |
 | **driver** | co-driven by the `janitor` instance, additionally throttled to once per `cluster.cadence_days` (7) |
 | **output** | `suggestions` rows with `source_module='cartographer'` |
+| **produced** | `suggestions[source_module='cartographer']` |
 
 > **The only double-gated instance.** `cluster.enabled` ships OFF because the
 > community-detection pass is expensive. Both keys must be `true`. When the

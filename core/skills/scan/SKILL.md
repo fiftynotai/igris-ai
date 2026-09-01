@@ -38,6 +38,7 @@ Display comprehensive status of the Igris AI system.
 - `P0` or `P1`: Filter by priority
 - `bugs` or `features`: Filter by type
 - `--suggestions`: Append a "Subconscious Suggestions" section (FR-106) below the regular report
+- `--yield`: Append a "Cognition Yield" table (TD-423) under the Cognition Roster — per-instance produced/judged/kept with every denominator named
 
 ## Execution
 
@@ -349,6 +350,101 @@ Read the statuses as declared:
 If the verb is unavailable or the digest is `degraded`, render the single line
 `Cognition roster unavailable (<degraded_reason>).` and move on. Do NOT block
 `/scan`.
+
+**When `$ARGUMENTS` does NOT contain `--yield`**, render exactly ONE line under
+the roster table and nothing else:
+
+```
+Per-instance yield: igris cognition yield --json
+```
+
+That is the whole unconditional cost of the yield surface. The table below is
+opt-in for the same reason the suggestions table is: `/scan` runs every session
+and a table nobody asked for is a token tax on all of them.
+
+#### Cognition yield (opt-in, TD-423)
+
+Rendered ONLY when `$ARGUMENTS` contains the literal token `--yield`. The
+liveness roster above answers *"is this instance running?"*; this answers
+*"is what it produces worth anything?"*.
+
+Run the deterministic verb. Do NOT run SQL here and do NOT compute a rate
+yourself — every rate the digest returns already carries its own numerator,
+denominator and denominator LABEL, and re-deriving one loses exactly the part
+that makes it honest.
+
+```bash
+igris cognition yield --json 2>/dev/null || true
+```
+
+Render every entry of `instances[]`, in the order the digest returns them, under
+a `### Cognition Yield` heading. The list includes derived `(unclaimed:<table>)`
+buckets — rows no registered instance claims — and those are rendered like any
+other row, because an orphaned population is exactly what an operator needs to
+see:
+
+```
+### Cognition Yield
+| Instance | Produced | Judged | Kept | Keep rate (judged only) | Pending share | Expired |
+|---|---|---|---|---|---|---|
+| perception | 569 (surviving) | 224 | 223 | 99.6% (of 224 judged) | unmeasured (0 pending) | 345 |
+| subconscious | 360 | 360 | 186 | 51.7% (of 360 judged) | unmeasured (0 pending) | 0 |
+| synapse | 450 | 450 | 133 | 29.6% (of 450 judged) | unmeasured (0 pending) | 0 |
+| janitor | 0 | 0 | 0 | unmeasured (no verdicts) | unmeasured (0 pending) | 0 |
+| (unclaimed:suggestions) | 844 | 844 | 2 | 0.2% (of 844 judged) | unmeasured (0 pending) | 0 |
+```
+
+Column rules — **every one of them is about not overstating a number**:
+
+- **Every count column obeys the same rule, and it cuts BOTH ways.** Render the
+  number, or `—` when the field is `null`. `null` means the reading could not be
+  made; it does NOT mean zero and must never render as `0`. The converse binds
+  just as hard: a MEASURED `0` renders as `0`, never as `—`, or the table claims
+  a reading was unavailable when it was taken and came back empty. The janitor
+  row above is that case — it produced nothing, so every count on it is a
+  measured zero.
+- **Produced** — `produced_rows`. Append ` (surviving)` when
+  `produced_is_surviving_count` is true: that channel hard-deletes on a reject
+  path, so the count is what SURVIVES, not what the instance ever wrote.
+- **Judged** — `judged`. This is `kept + rejected_judged` and it deliberately
+  EXCLUDES expired and lapsed rows: nobody looked at those.
+- **Kept** — `kept`.
+- **Keep rate (judged only)** — `keep_rate_of_judged`. When `value` is `null`
+  render `unmeasured (no verdicts)` — **never `0%`**. When it is a number, render
+  the percentage AND the denominator: `79.3% (of 29 judged)`. A percentage
+  without its denominator is the defect this whole surface exists to fix.
+- **Pending share** — `pending_share_of_queue`, same rule: `null` renders
+  `unmeasured (0 pending)`, a number renders `28.4% (of 1554 pending)`.
+- **Expired** — `expired_not_judged` + `pending_expired`. Rows that LAPSED
+  instead of being judged. Never describe these as rejections.
+
+Below the table:
+
+- Render each entry's `unmeasured_reason` as a bullet when `measured` is false.
+  An unmeasured instance is a finding about the REVIEW RECORD, not a bad score.
+- Render every entry of `warnings[]` as a bullet, verbatim. Those carry the
+  standing bounds — what `kept` means on each channel, the 30-day `event_log`
+  window, and any auto-apply switch that makes a produced count under-report.
+- Render `channels[]` as one line each:
+  `<table>: <total_rows> rows — <claimed_rows> claimed, <unclaimed_rows> unclaimed`.
+  If `reconciled` is false, say so loudly: the shares above were computed over a
+  population that is not the table.
+
+Read the numbers as declared:
+
+- **`unmeasured` is not zero.** An instance with no verdicts has not been scored
+  badly; it has not been scored. Do not rank it, do not average it in, and do
+  not describe it as underperforming.
+- **A keep rate is a JUDGED-SUBSET rate.** It says nothing about the rows nobody
+  reviewed, and on a large pending queue that is most of them.
+- **An expired row is not a rejection.** Bulk expiry and human judgment write
+  different things; the digest separates them and so must the rendering.
+- **The judgment-event counts are a LOWER BOUND**, bounded by the 30-day
+  `event_log` purge. Never reconcile them against the row-state counts — report
+  the divergence if the digest does.
+
+If the verb is unavailable or the digest is `degraded`, render the single line
+`Cognition yield unavailable (<degraded_reason>).` and move on.
 
 ### 6.6. Perception Engine (TD-074, TD-080)
 

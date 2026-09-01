@@ -534,6 +534,248 @@ export interface CognitionHealthDigest {
   warnings: string[];
 }
 
+// ---------------------------------------------------------------------------
+// TD-423 — cognition instance YIELD
+//
+// A SEPARATE digest from `CognitionHealthDigest`, and the separation is
+// load-bearing rather than tidy. `GET /api/cognition` forwards the HEALTH digest
+// VERBATIM to a browser whose mirror (`cli/dashboard/src/lib/api.ts`) compiles
+// with zero shared import, so a `--yield` flag that made
+// `CognitionInstanceHealth` polymorphic would reach that mirror as a union it
+// cannot express. A second ACTION returns a second type, and
+// `readCognitionHealth()` calls `buildCognitionHealthDigest()` BY NAME — so the
+// dashboard tier is untouched by CONSTRUCTION, not by promise. Nothing below is
+// reachable from `CognitionPayload`.
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-423 — a rate that CANNOT be rendered without its denominator, because the
+ * denominator is structurally part of the field.
+ *
+ * That is the whole mechanism behind the brief's AC-3. A bare `keep_rate: 0.79`
+ * invites the reading "perception is 79% good"; the real claim is "23 of the 29
+ * rows a human actually looked at were kept", and the 29 is the part that makes
+ * it honest. `value` is `null` — never `0` — whenever `denominator` is `0`,
+ * because a rate over an empty set is not zero, it is unmeasured.
+ */
+export interface CognitionRate {
+  numerator: number;
+  denominator: number;
+  /** What the denominator IS, in operator words. Never empty. */
+  denominator_label: string;
+  /** `numerator / denominator`, or `null` when `denominator === 0`. */
+  value: number | null;
+}
+
+/**
+ * TD-423 — the SECOND judgment record, reported ALONGSIDE the row-state counts
+ * and deliberately never reconciled into one number.
+ *
+ * It is a LOWER BOUND on judgments, bounded twice over, and both bounds ride in
+ * the object so the number cannot be read as a population:
+ *
+ *  1. `event_log` is purged at `window_days` on every engine init, so anything
+ *     before `window_floor` is unknowable rather than absent.
+ *  2. These emits went NOWHERE before FR-241 Phase 6b — nobody was listening —
+ *     so the record starts when the listener did, not when the feature did.
+ *
+ * A third bound applies to `learnings` specifically: the common perception
+ * reject path HARD-deletes its row, so a `rejected` event can outnumber the
+ * surviving `rejected_judged` rows. That is expected, and it is why the two
+ * records are printed side by side instead of being averaged.
+ */
+export interface CognitionJudgmentEvents {
+  /** The `event_log.component` LITERAL read from the roster — never derived. */
+  component: string;
+  /** The event name counted as an approval. */
+  approved_event: string;
+  /** The event name counted as a rejection. */
+  rejected_event: string;
+  approved: number;
+  rejected: number;
+  /** Latest of the two, or null when neither exists. */
+  last_at: string | null;
+  /** The `event_log` retention window, in days. */
+  window_days: number;
+  /** The oldest retained `event_log` row — the floor this count is bounded by. */
+  window_floor: string | null;
+  /** The bounds, in one operator-readable sentence. */
+  note: string;
+}
+
+/** TD-423 — the output tables the judgment model is defined over. */
+export type CognitionYieldChannel = string;
+
+/** TD-423 — one output channel's whole-table denominators + reconciliation. */
+export interface CognitionYieldChannelSummary {
+  /** The output table. */
+  table: CognitionYieldChannel;
+  /** Every row in it, or null when the table is unreadable. */
+  total_rows: number | null;
+  /** Rows some roster row's `produced` predicate selects. */
+  claimed_rows: number | null;
+  /** Rows NO roster row claims — D8, derived as a complement, never hand-listed. */
+  unclaimed_rows: number | null;
+  /** Rows still awaiting a verdict — the `pending_share_of_queue` denominator. */
+  pending_rows: number | null;
+  /**
+   * `claimed + unclaimed === total`. False is a real finding (two instances
+   * claiming the same rows, or a predicate the reader could not compile), and it
+   * is surfaced as a digest warning rather than thrown.
+   */
+  reconciled: boolean;
+}
+
+/** TD-423 — one instance's yield, or the derived `(unclaimed:<table>)` bucket. */
+export interface CognitionInstanceYield {
+  /** The instance id, or `(unclaimed:<table>)` for a derived bucket. */
+  id: string;
+  /** The registered instance id; `null` for a derived bucket. */
+  instance_id: string | null;
+  /** The `produced` declaration VERBATIM — prose an operator can act on. */
+  produced_predicate: string;
+  /** The output table, or null when the declaration could not be parsed. */
+  channel: CognitionYieldChannel | null;
+  /**
+   * TRUE only when there is at least one JUDGED row to compute a rate from.
+   * This is the brief's AC-7 in one boolean: absence of verdicts is not a
+   * verdict, so an instance nobody has reviewed reports `unmeasured` rather than
+   * a zero score.
+   */
+  measured: boolean;
+  /** Why it is unmeasured — which of the four reasons. Null when measured. */
+  unmeasured_reason: string | null;
+  /**
+   * Rows attributable to this instance. `null` — NEVER `0` — when the predicate
+   * could not be read at all, so "I could not look" stays distinguishable from
+   * "I looked and there were none".
+   */
+  produced_rows: number | null;
+  /**
+   * TRUE when this channel HARD-deletes on some verdict path, which makes
+   * `produced_rows` a SURVIVING-row count rather than a lifetime one. True for
+   * `learnings`: the common perception reject (`seen_again_count === 0`) removes
+   * the row entirely, so it is absent from `produced` as well as from `judged`.
+   */
+  produced_is_surviving_count: boolean;
+  /** Judged and kept. Null when unreadable. */
+  kept: number | null;
+  /** Judged and rejected by a HUMAN — expiry is excluded by construction. */
+  rejected_judged: number | null;
+  /** `kept + rejected_judged`. The denominator of `keep_rate_of_judged`. */
+  judged: number | null;
+  /** Unjudged, still inside its TTL. */
+  pending_live: number | null;
+  /** Unjudged and lapsed. NEVER counted as a rejection (AC-4). */
+  pending_expired: number | null;
+  /**
+   * Rows a BULK EXPIRY flipped into a rejected-looking state. NEVER a judgment
+   * (AC-4). For `learnings` this is `review_status='rejected' AND deleted_at IS
+   * NULL` — the janitor's `rejectStalePending` writes the status and never
+   * touches `deleted_at`, while the human reject path writes both.
+   *
+   * THE DISCRIMINATOR'S SOUNDNESS IS A CLAIM ABOUT THE WHOLE WRITER SET, so the
+   * set is enumerated rather than sampled. SIX statements assign
+   * `learnings.deleted_at`. Four stamp a timestamp
+   * (`perception/handlers.ts:682`; `subconscious/actions/kinds.ts:630`, `:743`,
+   * `:1079`) and two write it back to NULL (`janitor/undo.ts:243`, `:264`).
+   * The two NULL-writers are the only ones that could mint a
+   * `rejected AND deleted_at IS NULL` row without an expiry. Each restores
+   * `review_status = COALESCE(prior_review_status, review_status)` in the SAME
+   * statement, so it can only do so from an undo entry that captured
+   * `prior_review_status='rejected'` — and every candidate scan feeding a
+   * `deleted_at`-stamping action selects approved rows only
+   * (`janitor/candidates.ts:154`, `janitor/hygiene.ts:274`,
+   * `arbiter/candidates.ts:218`, `cartographer/candidates.ts:149` — all
+   * `COALESCE(review_status, 'approved') = 'approved'`).
+   *
+   * WHAT THAT ARGUMENT DOES NOT COVER, stated rather than rounded off: the
+   * actions re-read the row by id at apply time (`kinds.ts:528`, `:534`,
+   * `:708`, `:1054`) without re-checking the status, so a row rejected BETWEEN
+   * proposal and apply would be captured as `prior_review_status='rejected'`.
+   * That window is not closed here and is not TD-423's to close — a reader-side
+   * brief changes no writer. Its whole effect would be to move one row from
+   * `rejected_judged` into `expired_not_judged`; it cannot change which bucket
+   * an expiry lands in, which is the discrimination AC-4 is about.
+   */
+  expired_not_judged: number | null;
+  /** Earliest row this instance produced — makes a triaged population visible. */
+  first_produced_at: string | null;
+  /** Latest row this instance produced. */
+  last_produced_at: string | null;
+  /**
+   * DISTINCT values of the channel's free-text label column. A LABEL-DRIFT /
+   * emission-cadence PROXY, not a count of distinct findings: the dedup key that
+   * would answer "how many findings" lives inside the brain package and this
+   * reader cannot reach it.
+   *
+   * THE WHOLE 2026-09-01 CENSUS, because a per-instance reading must not be
+   * generalised from its neighbours — synapse 1, arbiter 1, curator 1,
+   * cartographer 1 (one literal each, as their `produced` predicates force),
+   * subconscious 196, `(unclaimed:suggestions)` 4, **janitor 0**, perception
+   * and `(unclaimed:learnings)` `null`. An earlier draft read "1 for every
+   * literal instance", which was false for the janitor — it wrote no rows, so
+   * there are no labels to be distinct over, and 0 is what it MEASURES.
+   *
+   * The three readings are not interchangeable. `null` means the reading was
+   * never available: `learnings` declares no label column (`JUDGMENT_MODELS` in
+   * `brain-db.ts`), so both entries on that channel carry no value at all. `0`
+   * means the query ran and found none. Pinned row by row in
+   * `cognition-yield.test.ts` ("the label census `types.ts` cites is reproduced
+   * ROW BY ROW"), which also asserts the census covers every instance the
+   * digest emits — so a row added later cannot re-generalise this sentence.
+   */
+  distinct_label_values: number | null;
+  /** What {@link distinct_label_values} counts, and what it does NOT mean. */
+  distinct_label_note: string | null;
+  /** judged / produced. */
+  judged_share_of_produced: CognitionRate | null;
+  /** kept / judged — a JUDGED-SUBSET rate, never a population rate. */
+  keep_rate_of_judged: CognitionRate | null;
+  /** this instance's pending rows / all pending rows in its channel. */
+  pending_share_of_queue: CognitionRate | null;
+  /** The table {@link pending_share_of_queue}'s denominator is taken over. */
+  queue_table: string | null;
+  /** (expired + pending_expired) / produced — rows that lapsed instead of being judged. */
+  expiry_share_of_produced: CognitionRate | null;
+  /** The parallel `event_log` record. Null for a derived bucket. */
+  judgment_events: CognitionJudgmentEvents | null;
+}
+
+/**
+ * TD-423 — the `igris cognition yield` digest.
+ *
+ * THE STATED BOUND, carried on the digest itself because a reader deserves to
+ * see it without opening the source: **the roster derivation is TOTAL over
+ * instances** (an instance registered tomorrow appears here with no edit) **and
+ * the judgment model is a CLOSED SET over tables** (`judged_channels`). An
+ * instance whose output lands somewhere else reports `unmeasured` with a named
+ * reason — never a number.
+ */
+export interface CognitionYieldDigest {
+  degraded: boolean;
+  /** Why it degraded; null when it did not. */
+  degraded_reason: string | null;
+  /** `os.hostname()`. Reported for symmetry with health; no rate is host-scoped. */
+  hostname: string;
+  /** The `event_log` retention window the judgment-event counts are bounded by. */
+  event_log_retention_days: number;
+  /** The oldest retained `event_log` row. */
+  event_log_oldest_at: string | null;
+  /** The output tables a judgment model exists for — the CLOSED half of the bound. */
+  judged_channels: CognitionYieldChannel[];
+  /** Per-channel totals and the reconciliation check. */
+  channels: CognitionYieldChannelSummary[];
+  /**
+   * One row per REGISTERED instance in registry order, then one derived
+   * `(unclaimed:<table>)` bucket per channel any instance declared. Never
+   * hand-listed, and never one row per `source_module`.
+   */
+  instances: CognitionInstanceYield[];
+  /** Digest-level anomalies and stated bounds. */
+  warnings: string[];
+}
+
 /** FR-209 — project profile fields read from the local brain `projects` row. */
 export interface ProjectProfile {
   slug: string;

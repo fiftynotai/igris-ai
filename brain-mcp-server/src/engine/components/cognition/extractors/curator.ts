@@ -291,6 +291,8 @@ export function createCuratorInstance(
       driver: 'co_driven',
       driver_ref: 'janitor',
       output: "suggestions[source_module='curator']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='curator']",
     },
 
     async buildContext(

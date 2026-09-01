@@ -562,7 +562,8 @@ const DDL_COGNITION = `
     id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
     gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
     driver TEXT NOT NULL, driver_ref TEXT,
-    output TEXT NOT NULL, registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+    output TEXT NOT NULL, produced TEXT NOT NULL DEFAULT '',
+    registered_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
   CREATE TABLE IF NOT EXISTS event_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL,

@@ -1179,7 +1179,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("cognition <action>", { hidden: true })
     .description(
-      "TD-327: per-instance health for the cognition subsystem. Action: health. The roster is DERIVED from the brain's projected extractor registry (cognition_instances), never hand-listed — a new extractor appears here with no edit. Reads are strictly read-only and LOCAL (event_log/schedules/schedule_runs on THIS machine; igris_event_log routes to the remote and would miss local-only runs). Prints a JSON digest. Exit 0 even when degraded; unknown action → exit 2.",
+      "TD-327 / TD-423: per-instance liveness and yield for the cognition subsystem. Actions: health, yield. BOTH derive their roster from the brain's projected extractor registry (cognition_instances), never a hand-list — a new extractor appears in each with no edit. health answers \"is it running?\"; yield answers \"is what it produces worth anything?\" from each instance's declared `produced` identity predicate: rows produced, judged, kept, and the pending-queue share. Every yield rate carries its numerator, denominator and a denominator LABEL, and reads null — never 0 — over an empty denominator; an instance with no verdicts reports unmeasured. Expiry is separated from judgment, so an expired row is never a rejection. Reads are read-only and LOCAL (igris_event_log routes to the remote and would miss local-only runs). Full account: docs/COGNITION.md. Prints a JSON digest. Exit 0 even when degraded; unknown action → exit 2.",
     )
     .option("--json", "emit the digest as JSON to stdout (default; on for the boot path)", true)
     .action((action: string, opts: { json?: boolean }): void => {

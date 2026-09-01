@@ -258,6 +258,8 @@ export function createJanitorInstance(
       driver: 'schedule',
       driver_ref: 'janitor_engine',
       output: "suggestions[source_module='janitor']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='janitor']",
     },
 
     async buildContext(

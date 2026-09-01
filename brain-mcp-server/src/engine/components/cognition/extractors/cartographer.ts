@@ -271,6 +271,8 @@ export function createCartographerInstance(
       driver: 'co_driven',
       driver_ref: 'janitor',
       output: "suggestions[source_module='cartographer']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='cartographer']",
     },
 
     async buildContext(

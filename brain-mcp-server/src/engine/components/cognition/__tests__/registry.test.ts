@@ -30,6 +30,7 @@ function dummy(id: string): CognitionInstance {
       driver: 'manual',
       driver_ref: null,
       output: 'nothing (test dummy)',
+      produced: 'nothing (test dummy)',
     },
     buildContext: async () => ({}),
     promptBuilder: () => ({ system: 's', user: 'u' }),

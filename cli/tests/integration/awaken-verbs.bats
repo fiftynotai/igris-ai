@@ -19,6 +19,10 @@
 #   TD-327: 8. `igris cognition health` on a brain with no roster → degraded, exit 0.
 #           9. `igris cognition health` renders an instance the CLI never heard of.
 #          10. `igris cognition bogus` → exit 2.
+#   TD-423: 11. `igris cognition yield` on a brain with no roster → degraded, exit 0.
+#           12. `igris cognition yield` scores an instance the CLI never heard of,
+#               and reports one with no verdicts as unmeasured rather than zero.
+#           13. `igris cognition bogus` names BOTH actions in its exit-2 message.
 
 load _helpers.bash
 
@@ -441,15 +445,18 @@ SQL
 -- Mitigated rather than solved: readCognitionRoster reads tolerantly and
 -- withReadonlyBrain degrades, so a shape change surfaces as a degraded digest
 -- rather than a crash. If this drifts often enough to hurt, export the DDL.
+-- `produced` is migration v2 (TD-423).
 CREATE TABLE IF NOT EXISTS cognition_instances (
   id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
   gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
   driver TEXT NOT NULL, driver_ref TEXT,
-  output TEXT NOT NULL, registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+  output TEXT NOT NULL, produced TEXT NOT NULL DEFAULT '',
+  registered_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-INSERT INTO cognition_instances (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output)
+INSERT INTO cognition_instances (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output, produced)
 VALUES ('roadmap_drift', 'cognition.roadmap_drift', 'cognition.roadmap_drift',
         '["cognition.roadmap_drift.enabled"]', 0, 'manual', NULL,
+        'suggestions[source_module=''roadmap_drift'']',
         'suggestions[source_module=''roadmap_drift'']');
 SQL
   printf '{"cognition":{"roadmap_drift":{"enabled":true}}}\n' > "$IGRIS_BRAIN_DIR/config.json"
@@ -472,7 +479,119 @@ SQL
   '
 }
 
-@test "cognition <unknown>: returns exit 2" {
+@test "cognition yield: no roster projection → degraded, valid JSON, exit 0" {
+  # TD-423. Same posture as its liveness sibling: a yield question is still a
+  # question, and a question never blocks session start.
+  run $CLI_BIN cognition yield
+  [ "$status" -eq 0 ]
+  echo "$output" | node -e '
+    let s = ""; process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      for (const k of ["degraded","degraded_reason","hostname","judged_channels","channels","instances","warnings"]) {
+        if (!(k in o)) { console.error("missing key: " + k); process.exit(1); }
+      }
+      if (o.degraded !== true) { console.error("expected degraded=true"); process.exit(1); }
+      if (o.instances.length !== 0) { console.error("expected an empty roster"); process.exit(1); }
+      // The CLOSED half of the stated bound reaches the wire even when degraded:
+      // a reader must be able to see WHICH tables a judgment model exists for.
+      if (!Array.isArray(o.judged_channels) || o.judged_channels.length === 0) {
+        console.error("judged_channels absent from the degraded digest"); process.exit(1);
+      }
+      process.exit(0);
+    });
+  '
+}
+
+@test "cognition yield: scores an instance the CLI has never heard of" {
+  # THE DERIVATION PROOF for yield, end-to-end through the built CLI.
+  # `roadmap_drift` appears nowhere in cli/src; its `produced` predicate is read
+  # out of the brain's own projection, so a new extractor is SCORED with no CLI
+  # edit — not merely listed.
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" <<'SQL'
+-- DUPLICATED DDL — schema.ts#cognitionMigrations v1 + v2 is the SOURCE OF TRUTH.
+CREATE TABLE IF NOT EXISTS cognition_instances (
+  id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
+  gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
+  driver TEXT NOT NULL, driver_ref TEXT,
+  output TEXT NOT NULL, produced TEXT NOT NULL DEFAULT '',
+  registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS suggestions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, source_module TEXT NOT NULL,
+  project_slug TEXT, title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','dismissed','acted')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  expires_at TEXT, dismissed_at TEXT, acted_at TEXT,
+  type_inferred INTEGER NOT NULL DEFAULT 0
+);
+INSERT INTO cognition_instances (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output, produced)
+VALUES ('roadmap_drift', 'cognition.roadmap_drift', 'cognition.roadmap_drift',
+        '["cognition.roadmap_drift.enabled"]', 0, 'manual', NULL,
+        'suggestions[source_module=''roadmap_drift'']',
+        'suggestions[source_module=''roadmap_drift'']'),
+       ('quiet_one', 'cognition.quiet_one', 'cognition.quiet_one',
+        '["cognition.quiet_one.enabled"]', 0, 'manual', NULL,
+        'suggestions[source_module=''quiet_one'']',
+        'suggestions[source_module=''quiet_one'']');
+-- roadmap_drift: 2 rows, both acted. quiet_one: 1 row, nobody has looked at it.
+INSERT INTO suggestions (source_module, title, status, type_inferred)
+VALUES ('roadmap_drift','a','acted',1), ('roadmap_drift','b','acted',1),
+       ('quiet_one','c','pending',1), ('legacy_orphan','d','pending',0);
+SQL
+  printf '{"cognition":{"roadmap_drift":{"enabled":true}}}\n' > "$IGRIS_BRAIN_DIR/config.json"
+
+  run $CLI_BIN cognition yield
+  [ "$status" -eq 0 ]
+  echo "$output" | node -e '
+    let s = ""; process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      if (o.degraded !== false) { console.error("expected degraded=false"); process.exit(1); }
+
+      const drift = o.instances.find(i => i.id === "roadmap_drift");
+      if (!drift) { console.error("roadmap_drift absent from the digest"); process.exit(1); }
+      if (drift.produced_rows !== 2) { console.error("produced_rows: " + drift.produced_rows); process.exit(1); }
+      if (drift.kept !== 2) { console.error("kept: " + drift.kept); process.exit(1); }
+      if (drift.measured !== true) { console.error("expected measured=true"); process.exit(1); }
+
+      // AC-7 end-to-end: rows produced, no verdicts, so the RATE is unmeasured
+      // and null — never a zero score.
+      const quiet = o.instances.find(i => i.id === "quiet_one");
+      if (!quiet) { console.error("quiet_one absent"); process.exit(1); }
+      if (quiet.produced_rows !== 1) { console.error("quiet produced: " + quiet.produced_rows); process.exit(1); }
+      if (quiet.measured !== false) { console.error("expected quiet_one unmeasured"); process.exit(1); }
+      if (quiet.keep_rate_of_judged.value !== null) { console.error("expected a null keep rate"); process.exit(1); }
+
+      // AC-3 structurally: every rate names its denominator.
+      for (const inst of o.instances) {
+        for (const k of ["judged_share_of_produced","keep_rate_of_judged","pending_share_of_queue","expiry_share_of_produced"]) {
+          const r = inst[k];
+          if (r === null) continue;
+          if (typeof r.denominator_label !== "string" || r.denominator_label.length === 0) {
+            console.error(inst.id + "." + k + " has no denominator_label"); process.exit(1);
+          }
+        }
+      }
+
+      // D8: the row no roster predicate claims is found as a COMPLEMENT — the
+      // bats fixture never names `legacy_orphan` to the verb.
+      const unclaimed = o.instances.find(i => i.id === "(unclaimed:suggestions)");
+      if (!unclaimed) { console.error("no unclaimed bucket"); process.exit(1); }
+      if (unclaimed.produced_rows !== 1) { console.error("unclaimed: " + unclaimed.produced_rows); process.exit(1); }
+
+      const ch = o.channels.find(c => c.table === "suggestions");
+      if (!ch || ch.reconciled !== true) { console.error("suggestions did not reconcile"); process.exit(1); }
+      process.exit(0);
+    });
+  '
+}
+
+@test "cognition <unknown>: returns exit 2, and the message names both actions" {
   run $CLI_BIN cognition bogus
   [ "$status" -eq 2 ]
+  # The message is the only discovery surface for a HIDDEN command, so it must
+  # name every action rather than just refusing.
+  [[ "$output" == *"health, yield"* ]] || return 1
 }

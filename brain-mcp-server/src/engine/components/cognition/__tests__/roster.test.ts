@@ -52,6 +52,7 @@ function throwaway(id: string): CognitionInstance {
       driver: 'manual',
       driver_ref: null,
       output: `suggestions[source_module='${id}']`,
+      produced: `suggestions[source_module='${id}']`,
     },
     buildContext: async () => ({}),
     promptBuilder: () => ({ system: 's', user: 'u' }),
@@ -115,6 +116,12 @@ describe('buildRoster — DERIVED from the registry, never hand-listed (TD-327 A
       driver: 'manual',
       driver_ref: null,
       output: "suggestions[source_module='roadmap_drift']",
+      // TD-423 — the IDENTITY predicate travels with the rest of the
+      // declaration. An instance registered tomorrow is countable by
+      // `igris cognition yield` without a CLI edit ONLY because this field
+      // rides the same derivation seam; asserting it here is what stops a
+      // future `buildRoster` from quietly dropping it.
+      produced: "suggestions[source_module='roadmap_drift']",
     });
   });
 
@@ -140,6 +147,18 @@ describe('the health contract is COMPLETE for every registered instance (TD-327 
       expect(ALLOWED_DRIVERS).toContain(row.driver);
       // Every instance must say where its output lands — the brief's question 3.
       expect(row.output.length).toBeGreaterThan(0);
+      // TD-423 — and every instance must say which rows are ATTRIBUTABLE to it,
+      // which `output` cannot answer: perception's `output` is a STATE
+      // predicate that selects 0 the moment its queue is drained. An instance
+      // that ships without `produced` reports `unmeasured` forever in
+      // `igris cognition yield`, so the omission fails HERE rather than
+      // presenting as a permanent blank in the surface.
+      expect(row.produced.length).toBeGreaterThan(0);
+      // The grammar the CLI parses (brain-db.ts#parseProducedPredicate):
+      // `table[clause, ...]` over an allowlisted table. Pinned here so a
+      // declaration the reader cannot parse is red in the brain suite, not
+      // silently `unmeasured` three packages away.
+      expect(row.produced).toMatch(/^[a-z_]+\[[^\]]+\]$/);
       // Every instance must name at least one gate; an instance with no gate
       // cannot be reported as `disabled` and would render permanently green.
       expect(row.gate_keys.length).toBeGreaterThan(0);
@@ -252,6 +271,53 @@ describe('projectRoster — the registry→CLI bridge', () => {
     // Stored 0/1, and perception is the 1.
     expect(perception.gate_default).toBe(1);
     expect(projected.find((r) => r.id === 'janitor')!.gate_default).toBe(0);
+
+    // TD-423 — `produced` survives the round trip, and it is NOT `output`.
+    // Perception is the discriminating row: an implementation that projected
+    // `output` into both columns would pass every other assertion here.
+    expect(perception.produced).toBe("learnings[source_extractor='llm']");
+    expect(perception.output).toBe("learnings[review_status='pending_review']");
+    expect(perception.produced).not.toBe(perception.output);
+    expect(projected.find((r) => r.id === 'subconscious')!.produced).toBe(
+      'suggestions[type_inferred=1, source_module=OTHER]',
+    );
+    // Every projected row carries a non-empty declaration — the CLI reads `''`
+    // as "no declaration" and reports `unmeasured`, so an empty projection is
+    // an invisible loss rather than a loud one.
+    for (const row of projected) {
+      expect(String(row.produced).length).toBeGreaterThan(0);
+    }
+    db.close();
+  });
+
+  it('TD-423 — migration v2 adds `produced` to a table created by v1 alone', () => {
+    // The UPGRADE path, not the fresh-install one: a brain that already
+    // recorded ('cognition', 1) runs ONLY v2, so v2 must be a standalone
+    // ALTER over the v1 table rather than a rewrite of the CREATE.
+    const db = new Database(':memory:');
+    const v1 = cognitionMigrations.find((m) => m.version === 1)!;
+    db.exec(v1.sql);
+    const before = (db.prepare('PRAGMA table_info(cognition_instances)').all() as Array<{
+      name: string;
+    }>).map((c) => c.name);
+    // NEGATIVE CONTROL — v1 alone must NOT have the column, or the assertion
+    // below would pass on a v2 that does nothing.
+    expect(before).not.toContain('produced');
+
+    const v2 = cognitionMigrations.find((m) => m.version === 2)!;
+    db.exec(v2.sql);
+    const after = (db.prepare('PRAGMA table_info(cognition_instances)').all() as Array<{
+      name: string;
+      notnull: number;
+      dflt_value: string | null;
+    }>);
+    const col = after.find((c) => c.name === 'produced');
+    expect(col).toBeDefined();
+    expect(col!.notnull).toBe(1);
+    expect(col!.dflt_value).toBe("''");
+
+    // And the projector writes through the upgraded table.
+    expect(projectRoster(db, buildRoster(productionRegistry())).error).toBeNull();
     db.close();
   });
 

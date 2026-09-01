@@ -233,6 +233,8 @@ export function createSynapseInstance(
       driver: 'schedule',
       driver_ref: 'synapse_engine',
       output: "suggestions[source_module='edge_inference']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='edge_inference']",
     },
 
     async buildContext(

@@ -365,6 +365,10 @@ export function createPerceptionInstance(
       driver: 'session_hook',
       driver_ref: 'session_end',
       output: "learnings[review_status='pending_review']",
+      // TD-423. `output` above is the INBOX and reads 0 on a drained queue;
+      // this is the identity tag `llm_via_claude_code.ts` stamps. See
+      // types.ts#produced for the grammar and the hard-delete bound.
+      produced: "learnings[source_extractor='llm']",
     },
 
     async buildContext(

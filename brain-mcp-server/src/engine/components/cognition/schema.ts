@@ -49,6 +49,14 @@ import type { Migration } from '../../types.js';
  *   for a truly ABSENT key (not its shipped posture; install writes it false,
  *   FR-191) — and a reader that hard-codes the convention reports a config the
  *   installer never touched as `disabled` while it is extracting.
+ *
+ * Version 2 (TD-423): `produced` — the IDENTITY predicate. A SECOND column
+ *   rather than a repurposing of `output`, because the two answer different
+ *   questions and perception proves they diverge: its `output`
+ *   (`learnings[review_status='pending_review']`) is an inbox that reads 0 the
+ *   moment the queue is drained, while it has authored 569 rows. Repurposing
+ *   `output` would also silently change `/scan`'s rendered "Output rows" column
+ *   for perception from 0 to ~569 with no brief saying so.
  */
 export const cognitionMigrations: Migration[] = [
   {
@@ -67,6 +75,18 @@ export const cognitionMigrations: Migration[] = [
         output TEXT NOT NULL,
         registered_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `,
+  },
+  {
+    version: 2,
+    description:
+      'TD-423: cognition_instances.produced — the IDENTITY predicate (which rows an instance ever wrote), distinct from `output` (where an operator looks for actionable results)',
+    // O(1): `ADD COLUMN` with a CONSTANT default rewrites the table header, not
+    // the rows. `DEFAULT ''` makes NOT NULL legal on an existing table AND is
+    // the value the CLI reads as "no declaration" -> `unmeasured`, never zero.
+    sql: `
+      ALTER TABLE cognition_instances
+        ADD COLUMN produced TEXT NOT NULL DEFAULT '';
     `,
   },
 ];

@@ -23,6 +23,7 @@ import { describe, it, expect } from 'vitest';
 import { createSqliteAdapter } from '../../../storage/sqlite.js';
 import { createCognitionComponent } from '../index.js';
 import { EXTRACTOR_INSTANCES } from '../extractors/index.js';
+import { cognitionMigrations } from '../schema.js';
 import type { ComponentContext, StorageAdapter } from '../../../types.js';
 
 /**
@@ -90,12 +91,23 @@ describe('createCognitionComponent().init() projects the roster (TD-327)', () =>
     // free (the merged factory's schema() returns [] and the inherited
     // perception/subconscious/janitor migrations run under their ORIGINAL keys),
     // so claiming it collides with nothing.
+    //
+    // PIN MOVED 2026-09-01 (TD-423): [1] → [1, 2]. `cognitionMigrations` gained
+    // v2 (`ALTER TABLE cognition_instances ADD COLUMN produced`), so a fresh
+    // brain now applies BOTH versions under this key. Derived from the
+    // declaration rather than restated as a second literal, so the next version
+    // does not have to edit this line again — but the LENGTH is still asserted
+    // against a literal, because "every declared migration ran" is vacuous if
+    // the declaration list is what is broken.
     const applied = storage.rawConnection
       .prepare(
         `SELECT version FROM engine_migrations WHERE component = 'cognition' ORDER BY version`,
       )
       .all() as Array<{ version: number }>;
-    expect(applied.map((r) => r.version)).toEqual([1]);
+    expect(applied.map((r) => r.version)).toEqual(
+      cognitionMigrations.map((m) => m.version).sort((a, b) => a - b),
+    );
+    expect(applied).toHaveLength(2);
 
     component.destroy();
     storage.close();

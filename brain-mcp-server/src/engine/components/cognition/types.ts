@@ -251,6 +251,32 @@ export interface CognitionInstanceHealth {
    * queries when they want to see whether a run produced anything.
    */
   readonly output: string;
+  /**
+   * TD-423 — the IDENTITY predicate: which rows are attributable to THIS
+   * instance, regardless of review state.
+   *
+   * DISTINCT FROM `output`, DELIBERATELY. `output` is "where an operator looks
+   * for actionable results" and is legitimately a STATE predicate — perception
+   * declares its INBOX, which selects ZERO rows once the queue is drained even
+   * though it has authored 569. `produced` is "which rows did this instance ever
+   * write". Do NOT collapse the two.
+   *
+   * GRAMMAR — `table[col='literal']` or `table[col=literal, col2=OTHER]`, where
+   * `OTHER` is the complement of every literal ANY OTHER roster row declares for
+   * the same table+column. The reader resolves it FROM THE ROSTER, so an eighth
+   * literal instance shrinks the complement with no code edit; that is what
+   * makes the subconscious ONE entry rather than one per LLM-minted label.
+   *
+   * REQUIRED, so `tsc` enumerates every declaration site. An optional field with
+   * a fallback to `output` would hand an instance that forgot one a silently
+   * WRONG number presented as a population count.
+   *
+   * Full account, including the surviving-vs-lifetime bound on `learnings`:
+   * `docs/COGNITION.md` (this docblock is emitted into a `.d.ts` that SHIPS in
+   * the npm tarball, so prose here is charged against the packed-size ceiling —
+   * unlike `cli/src`, which compiles with `declaration: false`).
+   */
+  readonly produced: string;
 }
 
 // ---------------------------------------------------------------------------

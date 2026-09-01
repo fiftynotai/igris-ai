@@ -1685,9 +1685,83 @@ interface PackReport {
  *   to vendor less, not to raise `PACK_HARD_CEILING_DELTA` — but the
  *   operator conversation that TD-374 had is now one brief away.
  *
+ * TD-423 MEASURED LAST, after its final code-touching step. Both trees rebuilt
+ * from the same node_modules on both arms, so the readings are comparable:
+ *   packed              2_015_140    unpacked 7_739_090, 807 entries (UNCHANGED
+ *                                    — every new source file is a test or a
+ *                                    fixture under a glob `tsconfig` excludes
+ *                                    from `dist`)
+ *   TD-423's own share  +13_487 B    (13.17 KB) against HEAD's 2_001_653,
+ *                                    MEASURED by stashing the working tree
+ *                                    (`git stash push -u`), rebuilding BOTH
+ *                                    artifacts, packing, restoring, and
+ *                                    verifying every restored file `cmp`-equal
+ *                                    to a pre-stash copy — NOT by subtracting
+ *                                    from the previous ledger row. The HEAD arm
+ *                                    reproduced the recorded bundle figures
+ *                                    EXACTLY (INITIAL 286_070 / TOTAL 580_979),
+ *                                    which is what says the stash was clean.
+ *   cumulative delta    +148.2 KB    (151_720 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~1.8 KB      (1_880 B under TD-374's +150 —
+ *                                    153_600 − 151_720)
+ *   browser surfaces    +0 B — no `cli/dashboard/**` file changed
+ *
+ *   **IT DID NOT FIT ON THE FIRST READING, AND THE CEILING DID NOT MOVE.** The
+ *   first measurement was 2_017_493 — 473 B OVER. Per this file's own
+ *   instruction the answer was to cut, not to re-base: 2_567 B was recovered
+ *   by RELOCATING comment prose, not deleting it, to surfaces that are free
+ *   (2_017_493 → 2_014_926), and a later correctness fix in the same brief —
+ *   a channel warning that named the wrong reason — spent 214 B of it back.
+ *   Where the recovery came from is the reusable part.
+ *
+ *   THE RULE "A COMMENT ON A TYPE COSTS NOTHING" IS TRUE FOR `cli/src` AND
+ *   FALSE FOR `brain-mcp-server/src`, and that had not been recorded here. It
+ *   is true in `cli/src` because that build sets `declaration: false`, so a
+ *   type-only declaration and its JSDoc are erased entirely — verified: the new
+ *   `CognitionYieldDigest` family is ~9 KB of source and `dist/types.js` is 95 B.
+ *   It is FALSE across the package boundary: `brain-mcp-server` EMITS `.d.ts`,
+ *   `copy-templates.sh` vendors `dist/brain-mcp-server/dist/**` wholesale, and
+ *   `npm pack` carries 138 `.d.ts` entries totalling 693_914 B. A docblock on an
+ *   INTERFACE FIELD in the brain therefore ships. Trimming the `produced`
+ *   docblock in `cognition/types.ts` from 2_267 B to 1_421 B moved the packed
+ *   total on its own. Budget brain-side type prose; cli-side type prose is free.
+ *
+ *   WHERE THE 13_487 B WENT, and none of it is decoration. The two new reader
+ *   modules dominate: `dist/verbs/cognition.js` +17_114 B and
+ *   `dist/lib/brain-db.js` +16_272 B unpacked, plus +11_181 and +10_983 in
+ *   their maps — 55.5 KB of the 59.2 KB unpacked delta, for ~600 lines of new
+ *   TypeScript. `brain-mcp-server/**` contributed ~2.7 KB across the migration,
+ *   the roster projection and seven one-line extractor declarations. `docs/`,
+ *   `MAINTAINING.md` and `core/skills/**` are outside `files` and cost nothing,
+ *   which is exactly why the long-form account of the yield surface lives in
+ *   `docs/COGNITION.md` and the shipped docblocks point at it.
+ *
+ *   **~1.8 KB IS WHAT IS LEFT, AND THAT IS THE HEADLINE.** HEAD already had
+ *   only 15_367 B before this brief spent 13_487 of it. The next brief that
+ *   touches `cli/src` or `brain-mcp-server/src` cannot fit a feature at all —
+ *   even a pure comment round in a shipped file has moved this number by
+ *   +442 B before now. This is the state TD-374's own text anticipated: "the
+ *   operator conversation that TD-374 had is now one brief away." It has
+ *   arrived. Raising `PACK_HARD_CEILING_DELTA` is an OPERATOR decision with a
+ *   named date, taken BEFORE the work that needs it and with an estimate on the
+ *   record — not something a failing assertion licenses.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit.
+ *
  * READ THAT BEFORE PLANNING THE NEXT ONE. **~82.3 KB (84_262 B) is what is
- * left on PACKED** — FR-249's row below is the live reading. *(SUPERSEDED by
- * the FR-268 row directly above: ~19.4 KB is the live reading.)* **But packed is
+ * left on PACKED** — FR-249's row below is the live reading. *(SUPERSEDED —
+ * AND NOT BY POSITION. `f8ea15b` re-pointed this parenthetical at "the FR-268
+ * row directly above"; TD-423 then appended its own row between the two, which
+ * falsified the direction and the figure in one edit and left the sentence that
+ * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
+ * than 10x. A direction word cannot survive an append, so this copy carries a
+ * BRIEF, a DATE and no direction: **as of TD-423, measured 2026-09-01, ~1.8 KB
+ * (1_880 B) is what is left on PACKED.** Grep `TD-423 MEASURED LAST` in this
+ * file for that reading and the method behind it, and treat the 84_262 B above
+ * as TD-378's historical figure, not a budget. Whoever appends the next row
+ * re-points THIS sentence at their own brief id, date and figure.)* **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the
  * packed GRANT is +150 KB and the headroom is what remains under it, and

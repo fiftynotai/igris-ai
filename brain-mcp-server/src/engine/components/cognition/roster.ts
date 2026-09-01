@@ -49,6 +49,12 @@ export interface RosterRow {
   driver_ref: string | null;
   /** Where this instance's output lands. */
   output: string;
+  /**
+   * TD-423 — the IDENTITY predicate: which rows THIS instance ever wrote,
+   * regardless of review state. See `types.ts:CognitionInstanceHealth#produced`
+   * for the grammar and the `OTHER` complement semantics.
+   */
+  produced: string;
 }
 
 /** What {@link projectRoster} reports back. Never throws — see module header. */
@@ -83,6 +89,7 @@ export function buildRoster(registry: CognitionRegistry): RosterRow[] {
     driver: instance.health.driver,
     driver_ref: instance.health.driver_ref,
     output: instance.health.output,
+    produced: instance.health.produced,
   }));
 }
 
@@ -107,8 +114,8 @@ export function projectRoster(
   try {
     const upsert = db.prepare(`
       INSERT INTO cognition_instances
-        (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output)
-      VALUES (@id, @component, @event_prefix, @gate_keys, @gate_default, @driver, @driver_ref, @output)
+        (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output, produced)
+      VALUES (@id, @component, @event_prefix, @gate_keys, @gate_default, @driver, @driver_ref, @output, @produced)
       ON CONFLICT(id) DO UPDATE SET
         component    = excluded.component,
         event_prefix = excluded.event_prefix,
@@ -116,7 +123,8 @@ export function projectRoster(
         gate_default = excluded.gate_default,
         driver       = excluded.driver,
         driver_ref   = excluded.driver_ref,
-        output       = excluded.output
+        output       = excluded.output,
+        produced     = excluded.produced
     `);
 
     let removed = 0;
@@ -131,6 +139,7 @@ export function projectRoster(
           driver: row.driver,
           driver_ref: row.driver_ref,
           output: row.output,
+          produced: row.produced,
         });
       }
       // Reconcile: drop rows for instances this build no longer registers.

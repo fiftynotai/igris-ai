@@ -30,13 +30,21 @@ let savedEnv: NodeJS.ProcessEnv;
 const HOST = "test-host";
 const FOREIGN = "vps-host";
 
-/** Mirrors `brain-mcp-server/.../cognition/schema.ts` v1. */
+/**
+ * Mirrors `brain-mcp-server/.../cognition/schema.ts` v1 + v2.
+ *
+ * `produced` is v2 (TD-423). Carried here even though NOTHING in this file
+ * reads it: `readCognitionRoster` reports a roster missing the column as a
+ * fidelity WARNING, so a fixture stuck at v1 would add a warning to every
+ * health digest below and make this suite assert a shape no real brain has.
+ */
 const COGNITION_INSTANCES_DDL = `
   CREATE TABLE IF NOT EXISTS cognition_instances (
     id TEXT PRIMARY KEY, component TEXT NOT NULL, event_prefix TEXT NOT NULL,
     gate_keys TEXT NOT NULL, gate_default INTEGER NOT NULL DEFAULT 0,
     driver TEXT NOT NULL, driver_ref TEXT,
-    output TEXT NOT NULL, registered_at TEXT NOT NULL DEFAULT (datetime('now'))
+    output TEXT NOT NULL, produced TEXT NOT NULL DEFAULT '',
+    registered_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 `;
 
@@ -108,6 +116,8 @@ interface RosterSeed {
   driver?: string;
   driver_ref?: string | null;
   output?: string;
+  /** TD-423 — the IDENTITY predicate. Defaults to the `output` shape. */
+  produced?: string;
 }
 
 /** Insert one roster row, defaulting to the `cognition.<id>` convention. */
@@ -115,8 +125,8 @@ function seedInstance(s: RosterSeed): void {
   withDb((db) => {
     db.prepare(
       `INSERT INTO cognition_instances
-         (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+         (id, component, event_prefix, gate_keys, gate_default, driver, driver_ref, output, produced)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       s.id,
       s.component ?? `cognition.${s.id}`,
@@ -126,6 +136,7 @@ function seedInstance(s: RosterSeed): void {
       s.driver ?? "manual",
       s.driver_ref ?? null,
       s.output ?? `suggestions[source_module='${s.id}']`,
+      s.produced ?? `suggestions[source_module='${s.id}']`,
     );
   });
 }

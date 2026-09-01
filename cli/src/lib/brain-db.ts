@@ -2571,6 +2571,17 @@ export interface CognitionRosterRow {
   driver_ref: string | null;
   /** `cognition_instances.output`. */
   output: string;
+  /**
+   * `cognition_instances.produced` (TD-423) — the IDENTITY predicate: which rows
+   * are attributable to this instance regardless of review state.
+   *
+   * DISTINCT from `output`, which is legitimately a STATE predicate (perception
+   * declares its INBOX and therefore reads 0 the moment the queue is drained).
+   * `''` means the roster was projected by a brain build predating the column,
+   * and the yield digest reports that instance `unmeasured` with a named reason
+   * — never as a zero.
+   */
+  produced: string;
 }
 
 /** TD-327 — outcome of {@link readCognitionRoster}. */
@@ -2614,10 +2625,17 @@ export function readCognitionRoster(): CognitionRosterResult {
       const gateDefaultSelect = hasGateDefault
         ? "gate_default"
         : "0 AS gate_default";
+      // TD-423, the same tolerance for the same reason. `produced` arrived in
+      // cognition migration v2; a roster projected by an older build has no such
+      // column and SELECTing it would throw and take the whole digest with it.
+      // The absent column degrades to `''`, which the yield reader reports as
+      // `unmeasured` with a named reason — never as a zero.
+      const hasProduced = columns.has("produced");
+      const producedSelect = hasProduced ? "produced" : "'' AS produced";
       const raw = handle
         .prepare(
           `SELECT id, component, event_prefix, gate_keys, ${gateDefaultSelect},
-                  driver, driver_ref, output
+                  driver, driver_ref, output, ${producedSelect}
              FROM cognition_instances ORDER BY rowid`,
         )
         .all() as Array<{
@@ -2629,6 +2647,7 @@ export function readCognitionRoster(): CognitionRosterResult {
         driver: string;
         driver_ref: string | null;
         output: string;
+        produced: string;
       }>;
 
       const rows: CognitionRosterRow[] = raw.map((r) => ({
@@ -2640,12 +2659,24 @@ export function readCognitionRoster(): CognitionRosterResult {
         driver: r.driver,
         driver_ref: r.driver_ref,
         output: r.output,
+        produced: r.produced ?? "",
       }));
+      // Both fidelity notes are reported, not just the first — an older brain is
+      // missing BOTH columns and a reader that reported one would hide the other.
+      const notes: string[] = [];
+      if (!hasGateDefault) {
+        notes.push(
+          "cognition_instances predates the gate_default column — every instance is read as absent-key-means-off, which is wrong for perception",
+        );
+      }
+      if (!hasProduced) {
+        notes.push(
+          "cognition_instances predates the produced column (TD-423, cognition migration v2) — every instance reports yield as unmeasured until this brain boots a build that projects it",
+        );
+      }
       return {
         degraded: false,
-        reason: hasGateDefault
-          ? null
-          : "cognition_instances predates the gate_default column — every instance is read as absent-key-means-off, which is wrong for perception",
+        reason: notes.length === 0 ? null : notes.join("; "),
         rows,
       };
     },
@@ -2886,6 +2917,613 @@ export function readOutputCounts(outputExpr: string): number | null {
       .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`)
       .get(value) as { n: number };
     return row.n;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TD-423 — cognition YIELD readers (READ-ONLY door only)
+//
+// The yield question is "is what this instance produces worth anything", and it
+// needs a predicate `output` cannot supply. `output` is legitimately a STATE
+// expression — perception declares its INBOX — so after a queue drain it selects
+// zero rows for the instance with the highest measured validity in the brain.
+// The instance therefore declares a SECOND, IDENTITY predicate (`produced`), and
+// everything below parses and counts exactly that.
+//
+// Three rules hold all of this together and none of them is optional:
+//   1. NOTHING here enumerates instance ids. The complement that isolates the
+//      subconscious is computed from the ROSTER's own sibling declarations, so
+//      an eighth instance registered tomorrow shrinks it with zero edit.
+//   2. Table names go through an ALLOWLIST and column names through a strict
+//      identifier regex before either is interpolated; every VALUE is bound.
+//   3. Every predicate is built NULL-SAFE (`IS` / `IS NOT`, never `=` / `NOT
+//      IN`), because the unclaimed bucket is the NEGATION of the union of every
+//      instance predicate — and a three-valued disjunct would make rows with a
+//      NULL key vanish from BOTH sides of a reconciliation that claims to be
+//      total.
+//
+// The `(unclaimed)` bucket is therefore DERIVED as "rows no roster row claims",
+// never as a list of retired detector names — which is what lets it find the
+// 844 legacy `gap`/`stalled`/`pattern`/`conflict` rows, and whatever the next
+// orphaned population turns out to be, without either being named here.
+//
+// A NOTE ON WHERE THE PROSE LIVES IN THIS FILE, because it looks uneven and is
+// not. `tsc` ERASES a type-only declaration together with its JSDoc but
+// PRESERVES a comment on a function or a const into `dist/` — and `cli/dist` is
+// packed, so a function docblock is paid for TWICE (`.js` and `.js.map`)
+// against `tarball.test.ts`'s asserted packed-size ceiling. TD-423 trimmed the
+// function docblocks below and moved their content up here and onto the
+// interfaces, where it is free. Read the interfaces for the argument; the
+// functions carry the pointer.
+// ---------------------------------------------------------------------------
+
+/** One parsed clause of a `produced` predicate. */
+export interface ProducedClause {
+  /** The column, already checked against a strict identifier regex. */
+  column: string;
+  /**
+   * `literal` — this exact value. `other` — the COMPLEMENT of every literal any
+   * OTHER roster row declares for this same table+column, resolved by the
+   * caller from the roster.
+   */
+  kind: "literal" | "other";
+  /** Present only for `literal`. A bound value, never interpolated. */
+  value?: string | number;
+}
+
+/**
+ * A parsed `produced` declaration.
+ *
+ * GRAMMAR, mirrored from
+ * `brain-mcp-server/.../cognition/types.ts:CognitionInstanceHealth#produced`:
+ *
+ *   `table[col='literal']`
+ *   `table[col=123, col2=OTHER]`
+ *
+ * A clause value is a QUOTED string, a bare integer, or the bare token `OTHER`.
+ * `OTHER` means "the complement of every literal any OTHER roster row declares
+ * for this same table+column", resolved from the ROSTER by
+ * {@link ProducedSiblingLiterals} — so registering an eighth literal instance
+ * shrinks the complement with zero code edit here. That is what makes the
+ * subconscious ONE digest entry instead of one per LLM-minted `source_module`.
+ *
+ * A declaration this cannot parse is refused WHOLE. Counting the clauses we
+ * happened to understand would produce a number whose label is a lie.
+ */
+export interface ProducedPredicate {
+  /** The output table, already checked against {@link OUTPUT_TABLE_ALLOWLIST}. */
+  table: string;
+  /** The clause CONJUNCTION. Never empty (an empty bracket fails the parse). */
+  clauses: ProducedClause[];
+}
+
+/**
+ * Parse a `produced` declaration into a bindable predicate, or `null`.
+ * Grammar + `OTHER` semantics: {@link ProducedPredicate}. PURE; exported for
+ * tests. `null` rather than a throw is the degrade-to-a-DEFINED-unknown
+ * posture — the caller reports `unmeasured`, which is not `zero`.
+ */
+export function parseProducedPredicate(expr: string): ProducedPredicate | null {
+  const outer = /^([a-z_]+)\[([^\]]+)\]$/.exec(expr.trim());
+  if (outer === null) return null;
+  const [, table, body] = outer;
+  if (!OUTPUT_TABLE_ALLOWLIST.has(table)) return null;
+
+  const clauses: ProducedClause[] = [];
+  for (const raw of body.split(",")) {
+    const m = /^\s*([a-z_][a-z0-9_]*)\s*=\s*(.+?)\s*$/.exec(raw);
+    if (m === null) return null;
+    const [, column, token] = m;
+
+    if (token === "OTHER") {
+      clauses.push({ column, kind: "other" });
+      continue;
+    }
+    const quoted = /^'([^']*)'$/.exec(token);
+    if (quoted !== null) {
+      clauses.push({ column, kind: "literal", value: quoted[1] });
+      continue;
+    }
+    if (/^-?\d+$/.test(token)) {
+      clauses.push({ column, kind: "literal", value: Number(token) });
+      continue;
+    }
+    // Anything else — the subconscious's LEGACY `output` token `LLM-named`, a
+    // function call, a bare identifier — is not countable. Refuse the whole
+    // declaration rather than counting the clauses we happened to understand.
+    return null;
+  }
+  if (clauses.length === 0) return null;
+  return { table, clauses };
+}
+
+/**
+ * The sibling literals that resolve an `OTHER` clause, keyed `table.column`.
+ * Built by the caller from the WHOLE roster — that is the AC-5 seam.
+ */
+export type ProducedSiblingLiterals = Map<string, Array<string | number>>;
+
+/** `table.column` — the key shape of {@link ProducedSiblingLiterals}. */
+export function siblingKey(table: string, column: string): string {
+  return `${table}.${column}`;
+}
+
+/** A bindable SQL fragment plus its parameters. Never interpolates a value. */
+interface BoundPredicate {
+  sql: string;
+  params: unknown[];
+}
+
+/** `col IS ?` / `col IS CAST(? AS INTEGER)` — NULL-safe, affinity-explicit. */
+function equalityFragment(column: string, value: string | number, negate: boolean): BoundPredicate {
+  const op = negate ? "IS NOT" : "IS";
+  return typeof value === "number"
+    ? { sql: `${column} ${op} CAST(? AS INTEGER)`, params: [value] }
+    : { sql: `${column} ${op} ?`, params: [value] };
+}
+
+/**
+ * Compile a parsed predicate into a NULL-SAFE boolean SQL expression. `null`
+ * when a declared column is absent — reported as unmeasured, never counted
+ * around.
+ */
+function compileProducedPredicate(
+  parsed: ProducedPredicate,
+  siblings: ProducedSiblingLiterals,
+  columns: Set<string>,
+): BoundPredicate | null {
+  const parts: string[] = [];
+  const params: unknown[] = [];
+
+  for (const clause of parsed.clauses) {
+    if (!columns.has(clause.column)) return null;
+
+    if (clause.kind === "literal") {
+      const frag = equalityFragment(clause.column, clause.value as string | number, false);
+      parts.push(frag.sql);
+      params.push(...frag.params);
+      continue;
+    }
+
+    // OTHER — subtract every literal any sibling roster row declared here. An
+    // EMPTY sibling set means the complement of nothing, i.e. everything: that
+    // is the honest reading and it is still bounded by the conjunction's other
+    // clauses. It is not silently narrowed to "no rows".
+    const values = siblings.get(siblingKey(parsed.table, clause.column)) ?? [];
+    if (values.length === 0) {
+      parts.push("1");
+      continue;
+    }
+    const subs: string[] = [];
+    for (const v of values) {
+      const frag = equalityFragment(clause.column, v, true);
+      subs.push(frag.sql);
+      params.push(...frag.params);
+    }
+    parts.push(`(${subs.join(" AND ")})`);
+  }
+
+  return { sql: parts.join(" AND "), params };
+}
+
+/**
+ * The judgment model, keyed on the TABLE rather than on the instance.
+ *
+ * THE STATED BOUND, and it is in the code because it belongs next to the thing
+ * it bounds: **the roster derivation is TOTAL over instances; the judgment model
+ * is a CLOSED SET over tables.** Six instances share the `suggestions` channel
+ * and therefore share its status vocabulary, so keying this on the instance
+ * would be six copies of one fact. Adding an instance costs nothing. Adding a
+ * new OUTPUT TABLE costs one edit here, and until it is made that instance
+ * reports `unmeasured` with a named reason — never a number.
+ *
+ * `expired` vs `rejected_judged` is the TD-423 AC-4 compensation, and it is
+ * READER-SIDE by choice (no writer is touched by this brief). The discriminator
+ * was verified against the live brain before it was written down:
+ *
+ *   - `learnings`: `rejectStalePending` (`janitor/hygiene.ts`) bulk-flips stale
+ *     pending rows to `review_status='rejected'` and NEVER touches `deleted_at`;
+ *     the judgment path (`perception/handlers.ts#handlePerceptionReject`,
+ *     recurring branch) sets BOTH. So `rejected AND deleted_at IS NULL` is
+ *     EXPIRY and `rejected AND deleted_at IS NOT NULL` is a human verdict.
+ *   - `suggestions`: no writer flips an expired suggestion to `dismissed` —
+ *     `expires_at` is a soft column — so a lapsed row stays `pending` and is
+ *     counted as `pending_expired`, which is UNJUDGED and never a rejection.
+ *
+ * `kept` for `learnings` is deliberately BROADER than `='approved'`: a row
+ * approved at review time and later merged/superseded/pruned by the janitor was
+ * still KEPT when it was judged, so counting only `approved` under-reports.
+ */
+interface JudgmentModel {
+  /** Columns without which the model cannot discriminate. Absent → unmeasured. */
+  required: string[];
+  kept: string;
+  rejected_judged: string;
+  pending_live: string;
+  pending_expired: string;
+  expired: string;
+  /** The whole-table pending predicate — the `pending_share_of_queue` denominator. */
+  queue_pending: string;
+  /** A free-text label column counted DISTINCT, or null when the table has none. */
+  label_column: string | null;
+  /**
+   * What `kept` on this channel DOES and DOES NOT mean, in operator words.
+   *
+   * Carried per-model rather than written once in the digest builder because it
+   * is a property OF THE MODEL: a new channel arrives with its own bound, and a
+   * bound stated in the consumer would be a hand-list of table names one layer
+   * away from the table it describes. Surfaced on every run — it is a standing
+   * BOUND, not an anomaly.
+   */
+  stated_bound: string;
+}
+
+const JUDGMENT_MODELS: Record<string, JudgmentModel> = {
+  suggestions: {
+    required: ["status"],
+    kept: "status = 'acted'",
+    rejected_judged: "status = 'dismissed'",
+    pending_live:
+      "status = 'pending' AND (expires_at IS NULL OR datetime(expires_at) >= datetime('now'))",
+    pending_expired:
+      "status = 'pending' AND expires_at IS NOT NULL AND datetime(expires_at) < datetime('now')",
+    // No suggestion is ever expiry-FLIPPED into a verdict-looking state, so this
+    // bucket is structurally empty here. Declared rather than omitted so the
+    // per-channel shape is uniform and the reconciliation sum is comparable.
+    expired: "0",
+    queue_pending: "status = 'pending'",
+    label_column: "source_module",
+    stated_bound:
+      "suggestions: every row is BORN 'pending', so `kept` here does mean a human marked it acted. `expires_at` is a soft column — no writer flips a lapsed suggestion to 'dismissed' — so a lapsed row stays pending and is counted as pending_expired, never as a rejection.",
+  },
+  learnings: {
+    required: ["review_status", "deleted_at"],
+    kept: "review_status NOT IN ('pending_review', 'rejected')",
+    rejected_judged: "review_status = 'rejected' AND deleted_at IS NOT NULL",
+    pending_live: "review_status = 'pending_review'",
+    pending_expired: "0",
+    expired: "review_status = 'rejected' AND deleted_at IS NULL",
+    queue_pending: "review_status = 'pending_review'",
+    label_column: null,
+    stated_bound:
+      "learnings: a row can be BORN 'approved' — a direct memory_store, a /distill import, or an extractor running with auto-approve on — so `kept` on this channel means 'never rejected', NOT 'approved by a reviewer'. Read a keep rate here alongside judged_share_of_produced. And the common reject path HARD-deletes, so produced is a surviving-row count.",
+  },
+};
+
+/** The output tables this reader carries a judgment model for. */
+export const JUDGED_CHANNELS: string[] = Object.keys(JUDGMENT_MODELS);
+
+/** What `kept` means on one channel — see {@link JudgmentModel}. */
+export function judgmentModelBound(table: string): string | null {
+  return JUDGMENT_MODELS[table]?.stated_bound ?? null;
+}
+
+/** TD-423 — one instance's (or the unclaimed bucket's) raw disposition counts. */
+export interface CognitionProducedDisposition {
+  /** Rows the predicate selects. `null` when the read could not be made. */
+  produced: number | null;
+  /** Judged and kept. */
+  kept: number;
+  /** Judged and rejected — a HUMAN verdict, never an expiry. */
+  rejected_judged: number;
+  /** Unjudged and still inside its TTL. */
+  pending_live: number;
+  /** Unjudged and lapsed. NOT a rejection. */
+  pending_expired: number;
+  /** Expiry-flipped into a rejected-looking state. NOT a rejection. */
+  expired: number;
+  /** Earliest `created_at` in the selected set. */
+  first_produced_at: string | null;
+  /** Latest `created_at` in the selected set. */
+  last_produced_at: string | null;
+  /**
+   * DISTINCT values of the channel's free-text label column across the selected
+   * set. A LABEL-DRIFT / emission-cadence proxy, NOT a count of distinct
+   * findings — see the field's own label in the digest.
+   */
+  distinct_label_values: number | null;
+  /**
+   * True when the bucket sum equals `produced`. False means a row carries a
+   * status outside the model's vocabulary, which the digest surfaces as a
+   * warning rather than silently absorbing.
+   */
+  buckets_reconcile: boolean;
+  /** Why the read degraded; null on success. */
+  reason: string | null;
+}
+
+const EMPTY_DISPOSITION: CognitionProducedDisposition = {
+  produced: null,
+  kept: 0,
+  rejected_judged: 0,
+  pending_live: 0,
+  pending_expired: 0,
+  expired: 0,
+  first_produced_at: null,
+  last_produced_at: null,
+  distinct_label_values: null,
+  buckets_reconcile: true,
+  reason: null,
+};
+
+function degraded(reason: string): CognitionProducedDisposition {
+  return { ...EMPTY_DISPOSITION, reason };
+}
+
+/** Read the disposition of the rows ONE predicate selects. */
+export function readProducedDisposition(
+  parsed: ProducedPredicate,
+  siblings: ProducedSiblingLiterals,
+): CognitionProducedDisposition {
+  return withReadonlyBrain<CognitionProducedDisposition>(
+    degraded("brain DB not readable"),
+    (handle) => {
+      const model = JUDGMENT_MODELS[parsed.table];
+      if (model === undefined) {
+        return degraded(
+          `no judgment model for output table ${parsed.table} — the model is a CLOSED set over tables (${JUDGED_CHANNELS.join(", ")})`,
+        );
+      }
+      if (!tableExists(handle, parsed.table)) {
+        return degraded(`${parsed.table} is not present in this brain`);
+      }
+      const columns = tableColumns(handle, parsed.table);
+      const missing = model.required.filter((c) => !columns.has(c));
+      if (missing.length > 0) {
+        return degraded(
+          `${parsed.table} is missing the column(s) the judgment model discriminates on: ${missing.join(", ")}`,
+        );
+      }
+      const where = compileProducedPredicate(parsed, siblings, columns);
+      if (where === null) {
+        return degraded(
+          `the declared predicate names a column absent from ${parsed.table}`,
+        );
+      }
+
+      const hasCreatedAt = columns.has("created_at");
+      const labelColumn =
+        model.label_column !== null && columns.has(model.label_column)
+          ? model.label_column
+          : null;
+
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*)                                        AS produced,
+                  SUM(CASE WHEN ${model.kept}            THEN 1 ELSE 0 END) AS kept,
+                  SUM(CASE WHEN ${model.rejected_judged} THEN 1 ELSE 0 END) AS rejected_judged,
+                  SUM(CASE WHEN ${model.pending_live}    THEN 1 ELSE 0 END) AS pending_live,
+                  SUM(CASE WHEN ${model.pending_expired} THEN 1 ELSE 0 END) AS pending_expired,
+                  SUM(CASE WHEN ${model.expired}         THEN 1 ELSE 0 END) AS expired,
+                  ${hasCreatedAt ? "MIN(created_at)" : "NULL"}    AS first_produced_at,
+                  ${hasCreatedAt ? "MAX(created_at)" : "NULL"}    AS last_produced_at,
+                  ${labelColumn === null ? "NULL" : `COUNT(DISTINCT ${labelColumn})`} AS distinct_label_values
+             FROM ${parsed.table}
+            WHERE ${where.sql}`,
+        )
+        .get(...where.params) as {
+        produced: number;
+        kept: number | null;
+        rejected_judged: number | null;
+        pending_live: number | null;
+        pending_expired: number | null;
+        expired: number | null;
+        first_produced_at: string | null;
+        last_produced_at: string | null;
+        distinct_label_values: number | null;
+      };
+
+      const kept = row.kept ?? 0;
+      const rejected_judged = row.rejected_judged ?? 0;
+      const pending_live = row.pending_live ?? 0;
+      const pending_expired = row.pending_expired ?? 0;
+      const expired = row.expired ?? 0;
+
+      return {
+        produced: row.produced,
+        kept,
+        rejected_judged,
+        pending_live,
+        pending_expired,
+        expired,
+        first_produced_at: row.first_produced_at,
+        last_produced_at: row.last_produced_at,
+        distinct_label_values: row.distinct_label_values,
+        buckets_reconcile:
+          kept + rejected_judged + pending_live + pending_expired + expired ===
+          row.produced,
+        reason: null,
+      };
+    },
+  );
+}
+
+/**
+ * The COMPLEMENT of a set of predicates over one table — the `(unclaimed)`
+ * bucket, DERIVED rather than hand-listed. Every fragment is NULL-safe by
+ * construction, so `NOT (p1 OR ...)` is exact and
+ * `sum(produced) + unclaimed === total` is an invariant, not a hope.
+ */
+export function readUnclaimedDisposition(
+  table: string,
+  claimed: ProducedPredicate[],
+  siblings: ProducedSiblingLiterals,
+): CognitionProducedDisposition {
+  return withReadonlyBrain<CognitionProducedDisposition>(
+    degraded("brain DB not readable"),
+    (handle) => {
+      const model = JUDGMENT_MODELS[table];
+      if (model === undefined) return degraded(`no judgment model for ${table}`);
+      if (!tableExists(handle, table)) {
+        return degraded(`${table} is not present in this brain`);
+      }
+      const columns = tableColumns(handle, table);
+      const missing = model.required.filter((c) => !columns.has(c));
+      if (missing.length > 0) {
+        return degraded(
+          `${table} is missing the column(s) the judgment model discriminates on: ${missing.join(", ")}`,
+        );
+      }
+
+      const parts: string[] = [];
+      const params: unknown[] = [];
+      for (const p of claimed) {
+        if (p.table !== table) continue;
+        const frag = compileProducedPredicate(p, siblings, columns);
+        if (frag === null) continue;
+        parts.push(`(${frag.sql})`);
+        params.push(...frag.params);
+      }
+      // No claim at all → every row is unclaimed. That is the honest answer, and
+      // it is what a brain whose roster predates `produced` reports.
+      const whereSql = parts.length === 0 ? "1" : `NOT (${parts.join(" OR ")})`;
+
+      const hasCreatedAt = columns.has("created_at");
+      const labelColumn =
+        model.label_column !== null && columns.has(model.label_column)
+          ? model.label_column
+          : null;
+
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*)                                        AS produced,
+                  SUM(CASE WHEN ${model.kept}            THEN 1 ELSE 0 END) AS kept,
+                  SUM(CASE WHEN ${model.rejected_judged} THEN 1 ELSE 0 END) AS rejected_judged,
+                  SUM(CASE WHEN ${model.pending_live}    THEN 1 ELSE 0 END) AS pending_live,
+                  SUM(CASE WHEN ${model.pending_expired} THEN 1 ELSE 0 END) AS pending_expired,
+                  SUM(CASE WHEN ${model.expired}         THEN 1 ELSE 0 END) AS expired,
+                  ${hasCreatedAt ? "MIN(created_at)" : "NULL"}    AS first_produced_at,
+                  ${hasCreatedAt ? "MAX(created_at)" : "NULL"}    AS last_produced_at,
+                  ${labelColumn === null ? "NULL" : `COUNT(DISTINCT ${labelColumn})`} AS distinct_label_values
+             FROM ${table}
+            WHERE ${whereSql}`,
+        )
+        .get(...params) as {
+        produced: number;
+        kept: number | null;
+        rejected_judged: number | null;
+        pending_live: number | null;
+        pending_expired: number | null;
+        expired: number | null;
+        first_produced_at: string | null;
+        last_produced_at: string | null;
+        distinct_label_values: number | null;
+      };
+
+      const kept = row.kept ?? 0;
+      const rejected_judged = row.rejected_judged ?? 0;
+      const pending_live = row.pending_live ?? 0;
+      const pending_expired = row.pending_expired ?? 0;
+      const expired = row.expired ?? 0;
+
+      return {
+        produced: row.produced,
+        kept,
+        rejected_judged,
+        pending_live,
+        pending_expired,
+        expired,
+        first_produced_at: row.first_produced_at,
+        last_produced_at: row.last_produced_at,
+        distinct_label_values: row.distinct_label_values,
+        buckets_reconcile:
+          kept + rejected_judged + pending_live + pending_expired + expired ===
+          row.produced,
+        reason: null,
+      };
+    },
+  );
+}
+
+/** TD-423 — the whole-table denominators one channel's rates are computed over. */
+export interface CognitionChannelTotals {
+  /** Every row in the table. */
+  total: number | null;
+  /** Rows still awaiting a verdict — the `pending_share_of_queue` denominator. */
+  pending: number | null;
+}
+
+/** One channel's whole-table totals. Degrades to nulls, never throws. */
+export function readChannelTotals(table: string): CognitionChannelTotals {
+  return withReadonlyBrain<CognitionChannelTotals>(
+    { total: null, pending: null },
+    (handle) => {
+      const model = JUDGMENT_MODELS[table];
+      if (model === undefined) return { total: null, pending: null };
+      if (!tableExists(handle, table)) return { total: null, pending: null };
+      const columns = tableColumns(handle, table);
+      if (model.required.some((c) => !columns.has(c))) {
+        return { total: null, pending: null };
+      }
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN ${model.queue_pending} THEN 1 ELSE 0 END) AS pending
+             FROM ${table}`,
+        )
+        .get() as { total: number; pending: number | null };
+      return { total: row.total, pending: row.pending ?? 0 };
+    },
+  );
+}
+
+/** TD-423 — the SECOND judgment record, read from `event_log`. */
+export interface CognitionJudgmentEventCounts {
+  approved: number;
+  rejected: number;
+  /** The event names counted, so a `0` reads as "no such rows", not "no judgments". */
+  approved_event: string;
+  rejected_event: string;
+  /** Latest `created_at` across the two, for the divergence note. */
+  last_at: string | null;
+}
+
+/**
+ * Count an instance's review-path verdict events. `component`/`eventPrefix` are
+ * roster LITERALS, never `cognition.${id}` — perception writes under the bare
+ * `perception`, so a derived namespace finds zero rows for the one instance
+ * with a review path (L-857). WHOLE-BRAIN, not host-scoped: a RUN belongs to a
+ * machine, a JUDGMENT belongs to whoever made it.
+ */
+export function readJudgmentEventCounts(
+  component: string,
+  eventPrefix: string,
+): CognitionJudgmentEventCounts {
+  const approvedEvent = `${eventPrefix}.candidate_approved`;
+  const rejectedEvent = `${eventPrefix}.candidate_rejected`;
+  const empty: CognitionJudgmentEventCounts = {
+    approved: 0,
+    rejected: 0,
+    approved_event: approvedEvent,
+    rejected_event: rejectedEvent,
+    last_at: null,
+  };
+  return withReadonlyBrain<CognitionJudgmentEventCounts>(empty, (handle) => {
+    if (!tableExists(handle, "event_log")) return empty;
+    const cols = tableColumns(handle, "event_log");
+    if (!cols.has("component") || !cols.has("event_name")) return empty;
+    const row = handle
+      .prepare(
+        `SELECT SUM(CASE WHEN event_name = ? THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN event_name = ? THEN 1 ELSE 0 END) AS rejected,
+                ${cols.has("created_at") ? "MAX(created_at)" : "NULL"} AS last_at
+           FROM event_log
+          WHERE component = ? AND event_name IN (?, ?)`,
+      )
+      .get(
+        approvedEvent,
+        rejectedEvent,
+        component,
+        approvedEvent,
+        rejectedEvent,
+      ) as { approved: number | null; rejected: number | null; last_at: string | null };
+    return {
+      approved: row.approved ?? 0,
+      rejected: row.rejected ?? 0,
+      approved_event: approvedEvent,
+      rejected_event: rejectedEvent,
+      last_at: row.last_at,
+    };
   });
 }
 

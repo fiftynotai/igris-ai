@@ -249,6 +249,10 @@ export function createSubconsciousInstance(
       driver: 'schedule',
       driver_ref: 'subconscious_engine',
       output: 'suggestions[source_module=LLM-named, type_inferred=1]',
+      // TD-423. `type_inferred=1` alone is NOT unique to this instance — all
+      // six suggestions-writers set it — so the complement is what isolates it.
+      // See types.ts#produced for the OTHER semantics.
+      produced: 'suggestions[type_inferred=1, source_module=OTHER]',
     },
 
     async buildContext(
