@@ -858,7 +858,13 @@ interface PackReport {
  *   and `tsc` ERASES a type-only declaration together with its JSDoc: neither
  *   the old sentence nor the new one appears in `dist` at all. So the rule is
  *   sharper than "comments in `cli/src/lib/**` cost bytes twice" — a comment on
- *   a FUNCTION or a CONST costs twice, a comment on a TYPE costs nothing.
+ *   a FUNCTION or a CONST costs ONCE, a comment on a TYPE costs nothing.
+ *   (TD-443 CORRECTED THE "twice" HALF OF THAT SENTENCE, and the refutation was
+ *   already in this same row: see its THE UNPACKED DELTA RECONCILES EXACTLY
+ *   paragraph, where `routes.js` moved +1_317 B against its map's +148. The
+ *   sharpening was right about WHICH comments cost and wrong about HOW MUCH.
+ *   Grep `CHARGED ONCE PLUS A MAPPINGS SHIFT` in this file for the mechanism and
+ *   the whole-tree census of the sentences that still say twice.)
  *   VERIFIED rather than inferred: `touch` + rebuild, then grep `dist` for both
  *   the old and the new wording; both absent, size byte-identical. Closing
  *   sentinel's F1/F2/F3 added a fourth scan arm and a second part-1 pin (both
@@ -1518,9 +1524,12 @@ interface PackReport {
  *     - `scripts/**`                  FREE. Outside `package.json` `files`.
  *     - `docs/**`, `MAINTAINING.md`   FREE. Same reason.
  *     - `cli/CHANGELOG.md`            CHARGED, verbatim — `files` ships it.
- *     - a comment on RUNTIME code     CHARGED TWICE (`.js` + `.js.map`).
+ *     - a comment on RUNTIME code     CHARGED ONCE in the `.js`, plus a small
+ *                                     `mappings` shift in the `.js.map`.
  *                                     Verified: TD-373's note on `RSYNC_EXCLUDES`
  *                                     (a `const`) appears in `dist/lib/sync/code.js`.
+ *                                     (READ TWICE UNTIL TD-443 — grep
+ *                                     `CHARGED ONCE PLUS A MAPPINGS SHIFT`.)
  *     - a comment on a TYPE-ONLY      **FREE.** TypeScript ERASES `type` and
  *       declaration                   `interface` entirely, and the docblock
  *                                     above them goes with it. Verified: FR-248
@@ -1533,6 +1542,80 @@ interface PackReport {
  *                                     file WAS re-emitted).
  *   So "it is in `cli/src`, therefore it ships" is too coarse, and so is "it is
  *   a comment, therefore it is free". Check what the comment sits on.
+ *
+ *   CHARGED ONCE PLUS A MAPPINGS SHIFT — TD-443's correction to the RUNTIME row
+ *   of the `WHICH PROSE COSTS IS A PROPERTY OF WHAT IT IS ATTACHED TO` table
+ *   (grep it; it is in FR-249's row), and it is a CLASS, not a line. Nothing
+ *   here depends on the two staying adjacent. "Charged twice (`.js` + `.js.map`)"
+ *   was never true in either package, and two independent measurements refute
+ *   it. (a) A `.js.map` carries NO `sourcesContent` — the keys are version,
+ *   file, sourceRoot, sources, names, mappings — so the prose is in the map
+ *   nowhere and only the VLQ `mappings` move:
+ *     python3 -c "import json;print(sorted(json.load(open('cli/dist/lib/slug.js.map'))))"
+ *   (b) The shift was measured directly, and it is in TD-420's own row in this
+ *   file — grep `THE UNPACKED DELTA RECONCILES EXACTLY`: `routes.js` +1_317 B
+ *   against its map's +148, `params.js` +464 against +7, `brain-write-bridge.js`
+ *   +1_123 against +17. A few percent, not a second copy. The brain side is
+ *   identical: all 138 vendored `.d.ts.map` carry that same six-key set and no
+ *   `sourcesContent`, so the 138 TD-443 dropped from `files` were pointer files
+ *   rather than a second copy of the prose.
+ *
+ *   THE CENSUS, KEYED TO HEAD SO IT CANNOT COUNT ITSELF. This correction block
+ *   adds occurrences of the phrase it is about, so every figure in THIS BLOCK is
+ *   taken against `1e48af5`, where it is frozen. Strip the leading " * " and run:
+ *
+ *   rm -rf /tmp/h && mkdir /tmp/h && git archive HEAD | tar -x -C /tmp/h && (cd /tmp/h && find . -type f ! -name '*.png' ! -name '*.jpg' -print0 | xargs -0 perl -0777 -ne 's/\s+/ /g; while (/(.{0,170}(?:twice|second time|doubl[ey]).{0,170})/gi) { my $h=$1; print "$ARGV\n  $h\n\n" if $h =~ /tsc|dist\/|comment|docblock|prose|\.js\.map|\.d\.ts\.map/i && $h =~ /charg|cost|pay|paid|spend|spent|byte|packed|tarball/i }')
+ *
+ *   The subshell is load-bearing — a bare `cd` leaves the caller in /tmp/h. Pipe
+ *   the output through `grep -c '^  '` for the window count; it prints 21.
+ *
+ *   MEASURED 2026-09-02: 21 windows over 7 files, adjudicated to 17 MEMBERS and
+ *   4 non-members. COLLAPSE FIRST — the same predicate run line-oriented misses
+ *   every wrap-crossing member, including the rule sentence in TD-420's row,
+ *   whose "cost bytes twice" and its verdict sit on opposite sides of a comment
+ *   wrap. The four non-members are named so nobody re-opens them: FR-245's row
+ *   "at twice the size" (a size comparison), MAINTAINING row 110's "moved the
+ *   packed total TWICE, recorded as a chain" (a count of readings),
+ *   `browser-gate.mjs`'s "the payload is paid for twice" (a network fetch), and
+ *   `npm-publish.yml`'s "double-booking a second build" (a CI job).
+ *
+ *   THE 17, WITH DISPOSITIONS:
+ *     - 3 LIVE RULE SITES, all in this file, all CORRECTED by TD-443: the
+ *       RUNTIME row of the `WHICH PROSE COSTS` table in FR-249's row, the rule
+ *       sharpening in TD-420's row, and TD-374's ceiling derivation under
+ *       `THE CEILING — +150 KB`. Every one is grep-addressable on purpose.
+ *       Two MORE live sites sit
+ *       OUTSIDE THE REPO and were corrected in the same pass: §13's table row
+ *       and its `.d.ts` clause in
+ *       `~/.igris/projects/igris-ai/context/coding_guidelines.md`. `git
+ *       ls-files` CANNOT SEE that file. Run the same perl over `~/.igris` as a
+ *       second pass, or the sweep reports the class clean while the doc every
+ *       brief consults before budgeting prose still states it.
+ *     - 9 HISTORICAL PER-BRIEF NARRATIVES IN THIS FILE, LEFT AS WRITTEN AND
+ *       COVERED BY THIS ENTRY — the rows of FR-266, TD-420, TD-333, FR-247,
+ *       FR-246 (twice), TD-373, BR-089 and BR-083 — plus MAINTAINING row 110
+ *       twice and the root `CHANGELOG.md` TD-374 entry. Each records what its
+ *       brief BELIEVED while measuring, and no FIGURE in any of them depends on
+ *       the belief: every one is a measured packed delta, never an estimate
+ *       arrived at by doubling. Rewriting frozen narrative would put new prose
+ *       into records whose numbers are right; correcting the RULE and
+ *       enumerating the copies is the proportionate half.
+ *     - 2 DECLINED BECAUSE THEY ARE PACKED SURFACES, and the decline is the
+ *       answer rather than an oversight: `cli/CHANGELOG.md`'s TD-374 entry, and
+ *       the `openBrainReadonly` docblock in `cli/src/lib/brain-db.ts`. Both
+ *       ship — the changelog verbatim, the docblock through
+ *       `dist/lib/brain-db.js` — so editing either moves the very total this
+ *       ledger records, and TD-443's round-3 scope forbids the re-pack that
+ *       would be needed to state the new one. The changelog copy has a second
+ *       reason that outlives the scope: it is the verbatim twin of the root
+ *       `CHANGELOG.md` entry, so correcting the free copy alone would DIVERGE
+ *       two changelogs meant to match. Whoever next re-packs for another reason
+ *       should take both in one pass, and re-measure after.
+ *   EIGHT MORE COPIES live in closed briefs and plans under
+ *   `~/.igris/projects/igris-ai/` — the FR-247, FR-248, FR-249, FR-260 and
+ *   FR-268 plans, TD-420's plan, and the TD-373 and TD-374 briefs. They record
+ *   what those briefs planned against and are left for the same reason as the
+ *   ledger rows.
  *
  *   THE LAST TWO DIGITS CHASE THEMSELVES, and this row is where that is stated.
  *   `cli/CHANGELOG.md` SHIPS, so writing the exact byte count into the entry
@@ -1750,6 +1833,282 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-443 MEASURED LAST (2026-09-02), after its final code-touching step. The
+ * FIRST ROW IN THIS LEDGER WHOSE OWN SHARE IS NEGATIVE — it is a RECOVERY, not
+ * a typo and not a re-base. No build was run: `npm pack` reads whatever is in
+ * `cli/dist`, and this brief never changed `cli/dist`.
+ *   packed              1_983_914    unpacked 7_581_990, 669 entries (807 → 669,
+ *                                    −138: the whole `.d.ts.map` population)
+ *   TD-443's own share  −31_226 B    (−30.5 KB) against HEAD `1e48af5`'s
+ *                                    2_015_140. Composition, measured in two
+ *                                    steps rather than derived: the packlist
+ *                                    change is −31_426 B (which already pays
+ *                                    the +27 raw B of the new `files` line),
+ *                                    and `cli/CHANGELOG.md`'s 587 raw B of new
+ *                                    prose adds +200 B back. −31_426 + 200 =
+ *                                    −31_226.
+ *   cumulative delta    +117.7 KB    (120_494 B over PACK_BASELINE_PACKED,
+ *                                    78.4% of TD-374's grant — the gate is
+ *                                    still live, not slack)
+ *   headroom remaining  ~32.3 KB     (33_106 B under TD-374's +150 —
+ *                                    153_600 − 120_494). TD-440's worst case
+ *                                    is +20_275 B, which leaves 12_831 B.
+ *   browser surfaces    +0 B — no `cli/dashboard/**` file changed
+ *
+ *   THE CHANGE IS ONE LINE, and it is a PACKLIST change, not a compiler-flag
+ *   change. `cli/package.json` `files` gains a negation matching `.d.ts.map` at
+ *   any depth under `dist`. The literal glob is in that file and in the failure
+ *   message of the TD-443 pin in this file; it is not reproduced in this
+ *   comment because it contains the two-character block-comment terminator.
+ *   `brain-mcp-server/tsconfig.json:15` keeps `declarationMap: true`, nothing
+ *   was deleted from the working tree, and `files` only selects tar members.
+ *   Round 2 turned that from an ASSERTION into a GATE: the third test in the
+ *   TD-443 describe reads the brain tsconfig and pins `declarationMap` and
+ *   `declaration` to true. Both packlist pins are OUTCOME pins and neither can
+ *   see the flag — flip it, rebuild, drop the negation, and every one of them
+ *   stays green while the shipped sentence goes false. Cost: 0 packed B, the
+ *   same reason this row is free.
+ *
+ *   METHOD, and the control that makes these numbers a measurement.
+ *   `npm pack --dry-run --json --ignore-scripts` from `cli/`, four readings.
+ *   NAME THE ALGORITHM: the checksum column is npm's own `shasum` field, which
+ *   is **SHA-1** (40 hex, verified by length on this tree); the `integrity`
+ *   field beside it is `sha512-`. It is NOT a `shasum -a 256` of the tarball,
+ *   and a verifier who assumes otherwise chases a phantom divergence — one
+ *   did.
+ *     A  untouched HEAD          2_015_140 / 807   sha1 6b122d90…
+ *     B  after the `files` line  1_983_714 / 669   sha1 f9a7bb5e…
+ *     C  after reverting it      2_015_140 / 807   sha1 6b122d90…  ← the control
+ *     D  MEASURED LAST           1_983_914 / 669   sha1 fc4d8d20…
+ *   D was taken twice in a row, byte- and sha-identical, after the last edit to
+ *   `cli/CHANGELOG.md` — the only shipped surface this brief touched.
+ *   C reproduced A on size, entry count, unpacked size AND tarball sha — a
+ *   measurement whose control does not restore is not a measurement, and the
+ *   sha is a stricter identity than size + count. Reading B was reproduced
+ *   twice more, byte- and sha-identical each time, after each of the two option
+ *   probes in this row's OPTION NOT TAKEN paragraph — that is what says the
+ *   probes left no residue. `--ignore-scripts` is belt-and-braces:
+ *   `cli/package.json` has no
+ *   `prepack` and no `prepare`, so nothing fires (this is also why `packReport()`
+ *   in this file is safe without it — do not "fix" that).
+ *
+ *   THE DEFECT, since a recovery row has to say what was recovered FROM. Every
+ *   `.d.ts.map` under `dist/brain-mcp-server/dist/` carries a `sources` entry
+ *   like `["../../src/engine/bus.ts"]` and NO `sourcesContent`, while `files`
+ *   ships `dist` only — `dist/brain-mcp-server/src` does not exist in the
+ *   tarball. All 138 were pointers a consumer could not follow. Sharper than
+ *   the brief expected, and worth recording because it removes the last doubt:
+ *   the VENDORED copies are dangling IN THE REPO TOO. `copy-templates.sh`
+ *   stages `dist/**` only. The staging block is `copy-templates.sh:172-173` —
+ *   `mkdir -p "$MCP_DEST/dist"` then `cp -R "$MCP_SRC/dist/."` — and no `cp`
+ *   IN THAT BLOCK has a `src` counterpart: its four are `dist/.`,
+ *   `package.json`, `package-lock.json` and `scripts`. SCOPE THE CARDINAL —
+ *   the script holds SIX `cp` in total (`grep -n 'cp -' copy-templates.sh` →
+ *   `:26`, `:44`, `:173`, `:174`, `:176`, `:178`); the two outside the block
+ *   are `cli`'s own `src/lib/templates` → `dist/lib/templates` walk and the
+ *   harness-manifest copy, neither of which can create
+ *   `dist/brain-mcp-server/src`. What carries the claim is not the count but
+ *   the reference set: the only two `$MCP_SRC/src` references in the file are
+ *   a staleness check and an orphan check, both READS
+ *   (`grep -n 'MCP_SRC/src' copy-templates.sh` → 2 hits). Grep
+ *   `MCP_DEST/dist` if those line numbers move. So
+ *   `cli/dist/brain-mcp-server/src` never exists either — walked and checked,
+ *   0 of 138 vendored maps resolve locally, while
+ *   138 of 138 under `brain-mcp-server/dist/` do. The maps that serve IDE
+ *   go-to-definition are a DIFFERENT SET OF FILES, in the authoring package,
+ *   and a `cli` packlist entry cannot reach them.
+ *
+ *   AC-3 — WHICH OPTION SHIPPED, AND THE ARGUMENT FOR THE ONE NOT TAKEN. The
+ *   narrow one shipped: declaration maps only, not every map. The reason is the
+ *   ASSERTION it makes available, not the bytes it leaves behind.
+ *   `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
+ *   declarations of its own and the staged `dist/brain-mcp-server/scripts/`
+ *   holds `.ts` sources rather than compiled output (12 entries, zero maps).
+ *   THE 12 IS A PRUNED 19, and the pruning is what makes it re-derivable —
+ *   `copy-templates.sh:178` copies `scripts/` WHOLESALE, so the count is not
+ *   the copy, it is the two `rm` that follow it:
+ *     find brain-mcp-server/scripts -maxdepth 1 -type f | wc -l   # 19
+ *     :183  rm -rf .../scripts/__tests__ .../scripts/fixtures     # TD-298,
+ *           the only two subdirectories, so they move no top-level file
+ *     :199  a `for dev_script in` list of SEVEN named files        # TD-299
+ *           (recall_bench.ts, dedup_corpus_eval.ts, td087_check_pair.ts,
+ *            td087_e2e_deterministic.ts, td087_label_pairs.py,
+ *            td087_corpus_pairs_labeled.csv, td285_dedup_recall_audit.ts)
+ *   19 − 7 = 12, confirmed on the staged tree with
+ *   `find cli/dist/brain-mcp-server/scripts -type f | wc -l`. "Zero maps"
+ *   needs no count and does not depend on any of this: nothing in that
+ *   directory is compiled, so nothing there can emit one.
+ *   The tarball's ENTIRE `.d.ts.map` population was therefore the brain's 138,
+ *   and the pin can be stated unscoped — "no packed entry ends in `.d.ts.map`",
+ *   true of the whole tarball with zero exceptions. A `.js.map` pin could not
+ *   be written that way: MEASURED on the same manifest, 246 `.js.map` ship and
+ *   only 138 are the brain's, because `cli/tsconfig.json:15` sets
+ *   `sourceMap: true` and the 108 cli-own maps carry the identical defect
+ *   (`dist/lib/slug.js.map` reads `"sources":["../../src/lib/slug.ts"]`, and
+ *   `src` is not in `files`). Such a pin would have to be path-scoped, and a
+ *   later reader would take it for a whole-tarball guarantee it is not. The
+ *   NARROWER change buys the STRONGER invariant; that inversion is the reason.
+ *
+ *   THE OPTION NOT TAKEN WAS PRICED, IN BOTH OF ITS SHAPES, rather than quoted
+ *   — and the brief's single figure turned out to name only one of them:
+ *     brain-scoped map exclusion   1_829_779 / 531   cumulative −33_641 B
+ *     unscoped map exclusion       1_668_956 / 423   cumulative −194_464 B
+ *   The unscoped shape also takes the 108 cli-own maps, which is why it drops
+ *   384 entries rather than 276. Either puts the tree BELOW
+ *   PACK_BASELINE_PACKED, so the ceiling assertion in this file would pass on a
+ *   NEGATIVE number and stay green through 182.9 KB (187_241 B) or 339.9 KB
+ *   (348_064 B) of unmeasured growth — the headroom each option would leave
+ *   under the same +150 KB grant, which is the measure of how far the gate
+ *   would stop reporting. It would not break; it would go QUIET, which is
+ *   worse, and quiet is the harder failure to notice. The shipped
+ *   option leaves the delta at 78% of the grant, so the gate keeps biting and
+ *   the "cut or vendor less" instruction keeps its teeth.
+ *
+ *   AC-4 — PACK_BASELINE_PACKED AND PACK_HARD_CEILING_DELTA ARE UNCHANGED, and
+ *   that is a decision, not an omission. This brief recovers headroom; it does
+ *   not re-base. Note the shape of it: the option that WOULD have forced a
+ *   re-base conversation is precisely the one not taken, because a ceiling that
+ *   has gone slack is the state in which re-basing becomes the honest
+ *   bookkeeping. If the operator later wants that runway, the re-base is
+ *   THEIRS to decide, before the work, on the record. This row carries the
+ *   numbers that decision needs, and every one of them is re-derivable from the
+ *   four readings and the two option probes it records.
+ *
+ *   THE TRAILERS STAY, AND THAT WAS ESTABLISHED BY MEASUREMENT WITH A PAIRED
+ *   CONTROL rather than assumed. The shipped `.d.ts` keep their
+ *   `sourceMappingURL` trailer (`tools/sync.d.ts` and every sibling) pointing
+ *   at a map that is now absent from the tarball. Extracted the real tarball,
+ *   pointed a consumer project at it through `node_modules` and deep-imported
+ *   `dist/brain-mcp-server/dist/engine/bus.js`: `tsc --noEmit` exit 0, ZERO
+ *   BYTES of diagnostic output. The identical run against a tarball packed WITH
+ *   the maps produced byte-identical (empty) output, so this brief adds no
+ *   diagnostic. Three tool classes answer this question differently and only
+ *   one of them is a consumer, which is why one reading would not have settled
+ *   it: `tsc`/tsserver fall back silently to the `.d.ts` position; `node` is
+ *   silent too (verified — this row's EVIDENCE FOR THE FOLLOW-ON paragraph has
+ *   the reading); vite's SSR loader is NOISY — one ENOENT
+ *   per unresolvable map, recorded at `brain-bridge.test.ts:228-229`, which is
+ *   why that fixture strips the trailer before copying. The `files` route never
+ *   creates that condition anywhere, because every map stays ON DISK.
+ *
+ *   EVIDENCE FOR THE FOLLOW-ON, RECORDED AND NOT ACTED ON. For the `.js.map`
+ *   class this brief did NOT touch, `node --enable-source-maps` importing a
+ *   `.js` whose map is absent while the trailer remains: exit 0, stdout 0 B,
+ *   stderr 0 B. So the cost of dropping them is not noise; it is a thin
+ *   FORENSIC path, and here it is, measured on `utils/fts5.js` by calling it
+ *   with `null` to force a TypeError from inside the module:
+ *     map PRESENT  at Module.sanitizeFts5Query (…/src/utils/fts5.ts:33:25)
+ *     map ABSENT   at Module.sanitizeFts5Query (…/dist/utils/fts5.js:32:27)
+ *   Node reports the ORIGINAL name and line even though it cannot read the
+ *   source — and note the first path does not exist on a consumer machine
+ *   either, though it IS resolvable against the GitHub tag. That is the whole
+ *   of the value, stated at its real size.
+ *
+ *   THE PIN IS A RELATION, NOT A COUNT, which is a deliberate choice against
+ *   `test_standards` rule 4's shape (a hard-coded count pinned with a dated
+ *   reason). `brain-artifact.test.ts` argues the general case and it applies
+ *   here: a count goes green on a delete-plus-add and needs re-blessing every
+ *   time the brain gains a module. The second assertion is a PRESENCE relation
+ *   for the same reason — it exists because a glob typo would also drop the
+ *   138 `.d.ts`, and those are 693_030 B unpacked at THIS tree — re-derivable
+ *   without a pack or a build, because the vendored copies ARE the packed
+ *   copies:
+ *     find cli/dist/brain-mcp-server/dist -name '*.d.ts' -type f | wc -l
+ *     find cli/dist/brain-mcp-server/dist -name '*.d.ts' -type f -exec cat {} + | wc -c
+ *   → 138 and 693030 exactly, run 2026-09-02.
+ *
+ *   TD-423 READ 693_914 FOR THE SAME 138 ENTRIES, AND THE 884 B IS
+ *   UNEXPLAINED. An earlier draft of this paragraph said "the brain has moved
+ *   884 B since", which rejected an alternative nobody had tested — and it is
+ *   refuted by the interval being EMPTY. TD-423's closing commit IS `1e48af5`
+ *   (`git log --oneline --all --grep=TD-423`), and `1e48af5` is the same HEAD
+ *   readings A and C in this row's four-reading table were taken against, so
+ *   `git log 1e48af5..1e48af5 -- brain-mcp-server/src` names no commit at all.
+ *   No COMMIT moved brain source between the two readings; two tarballs of
+ *   identical size and entry count could not have contained 138 shared
+ *   `.d.ts` differing by 884 B anyway. What differs is not the commit but the
+ *   WORKING TREE: both are TD-423's, and only the later one still exists. The
+ *   leading candidate is TD-423's own mid-brief `produced` trim in
+ *   `cognition/types.ts` (2_267 B → 1_421 B, 846 B), which `1e48af5` records
+ *   only as a net +26 lines because both of its states collapse into one
+ *   commit. That is NAMED, NOT ASSERTED: it leaves 38 B unaccounted, and the
+ *   pre-trim `.d.ts` cannot be re-emitted without a build, which this round's
+ *   scope forbids. Re-read the figure rather than carrying it — that lesson
+ *   holds under either explanation, and it is the whole reason this ledger
+ *   records a date beside every figure.
+ *
+ *   SWEEP OF THE CLAIM THIS FALSIFIES, AND THE CENSUS IS A COMMAND RATHER
+ *   THAN AN ARITHMETIC. "The ONE exclusion is
+ *   `dist/brain-mcp-server/node_modules`" became false the moment a second
+ *   exclusion existed. The plan named ONE line; the class has SEVEN members,
+ *   and a line-oriented grep under-reads it by more than half — collapse
+ *   whitespace first. Strip the leading " * " from the next line and run it
+ *   from the repo root:
+ *
+ *   git ls-files -z ':!cli/src/__tests__/tarball.test.ts' | xargs -0 perl -0777 -ne 's/\s+/ /g; while (/(.{0,60}the one[ *]*(?:exclusion|(?:excluded[ *]+)?direc)[a-z*]{0,12}.{0,90})/gi) { my $h=$1; print "$ARGV\n  $h\n" if $h =~ /`files`|package\.json|tarball/i }'
+ *
+ *   MEASURED 2026-09-02: 7 hits against HEAD `1e48af5`, 6 against this tree,
+ *   ZERO false positives in either run. The co-occurrence filter is what earns
+ *   that, and it is not decoration: drop it and the anchor alone returns 9 at
+ *   HEAD and 8 here. The two extra are instructive — MAINTAINING row 93's
+ *   "antigravity is the ONE exclusion" (harness projection, a different sense
+ *   of the word) and `verbs/cognition.ts`'s "in the one direction no stated
+ *   bound explains", where `direc` matched DIRECTION. A third near-miss never
+ *   reaches the anchor at all: `igris doctor`'s "the ONE documented exclusion"
+ *   puts a word between "one" and "exclusion". Widen either half and you
+ *   inherit all three.
+ *   THE COLLAPSE IS LOAD-BEARING, and here is its price: the IDENTICAL regex
+ *   run line-oriented (`perl -ne` instead of `perl -0777 -ne`) finds 3 of the
+ *   7 — row 109 twice and `paths.ts` — and misses `docs/dashboard.md` twice,
+ *   `brain-bridge.ts` and `Learnings.tsx`. The command LOCATES the class; it
+ *   does not adjudicate it, and a member that has been TIGHTENED still
+ *   matches. The seven, with dispositions:
+ *     [1] MAINTAINING row 109, CONSUMERS column: "the ONE exclusion is
+ *         `dist/…/node_modules`". FALSE. Rewritten to name both exclusions and
+ *         their different kinds. This is the one member that LEAVES the class,
+ *         which is the whole of the 7 → 6.
+ *     [2] MAINTAINING row 109, CHANGE-PROCEDURE column: "live in the ONE
+ *         excluded directory". TRUE on a technicality — there is still exactly
+ *         one excluded DIRECTORY. Tightened so "directory" is load-bearing.
+ *         Round 1 rewrote [1] and missed [2]: ONE ROW, TWO COLUMNS, and a
+ *         census that trusted its own reading of the row it had just edited.
+ *         A line-oriented grep DOES find this one — it was a reading miss,
+ *         not a notation miss, and that is the more embarrassing kind.
+ *     [3] and [4] `docs/dashboard.md`, twice. TRUE on the same technicality;
+ *         tightened the same way. 0 packed B — `docs/` is outside `files`.
+ *     [5] `paths.ts#bundledBrainNodeModulesDir` and
+ *     [6] `brain-bridge.ts#loadSqliteVecModule`. TRUE as written, in docblocks
+ *         that SHIP: `tsc` keeps comments, so both sentences are in
+ *         `dist/lib/paths.js` and `dist/lib/brain-bridge.js` right now
+ *         (grepped, 1 each). Correcting an earlier draft of this row, which
+ *         said editing them would charge the tarball "twice over via `.js` and
+ *         `.js.map`": their maps carry NO `sourcesContent` — the keys are
+ *         version, file, sourceRoot, sources, names, mappings — so the prose
+ *         is charged ONCE, in the `.js`, and only the VLQ `mappings` would
+ *         shift. Left alone anyway, and this is the binding reason: a
+ *         `cli/src` edit cannot reach `cli/dist` without a build, so it would
+ *         leave the source and the artifact this row measures out of sync.
+ *     [7] `cli/dashboard/src/pages/layers/Learnings.tsx`. TRUE as written.
+ *         NEW in round 2, named by neither the plan nor round 1 nor the round
+ *         1 review; the line break falls INSIDE the phrase ("the one" /
+ *         "directory"), which is why only a collapsed sweep reaches it. Its
+ *         cost is DIFFERENT from [5] and [6] and the difference was measured:
+ *         the dashboard bundler strips block comments, so this docblock is in
+ *         no shipped asset (zero occurrences of "the one" across all 12
+ *         `dist/dashboard/assets/*.js`, and zero block-comment openers in the
+ *         `Layers-<hash>.js` chunk — `Layers-BIDq1jxt.js` at this tree, and
+ *         the hash moves on every build — which DOES carry the component: its
+ *         `LEARNINGS DEGRADED` string is in there). It would be free even
+ *         after a build; it is left alone for the build reason alone.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit, the same way TD-423 verified it. Verified a SECOND way in
+ *   round-1 review, and by a different hand: reverting this file alone and
+ *   re-packing reproduced D byte-identically, which is what establishes that
+ *   the whole of B → D is `cli/CHANGELOG.md` and none of it is this row or the
+ *   pin below.
+ *
  * READ THAT BEFORE PLANNING THE NEXT ONE. **~82.3 KB (84_262 B) is what is
  * left on PACKED** — FR-249's row below is the live reading. *(SUPERSEDED —
  * AND NOT BY POSITION. `f8ea15b` re-pointed this parenthetical at "the FR-268
@@ -1757,11 +2116,21 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-423, measured 2026-09-01, ~1.8 KB
- * (1_880 B) is what is left on PACKED.** Grep `TD-423 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-443, measured 2026-09-02, ~32.3 KB
+ * (33_106 B) is what is left on PACKED.** Grep `TD-443 MEASURED LAST` in this
  * file for that reading and the method behind it, and treat the 84_262 B above
- * as TD-378's historical figure, not a budget. Whoever appends the next row
- * re-points THIS sentence at their own brief id, date and figure.)* **But packed is
+ * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
+ * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
+ * does not cover: it is INTRA-PARAGRAPH — it names the 84_262 B in this same
+ * paragraph's own opening sentence, so separating the pointer from its referent
+ * would take an insertion INSIDE the paragraph, not an append after it. That is
+ * the whole test. A direction word is safe exactly when nothing can be placed
+ * between it and what it names; "the FR-268 row directly above" failed that test
+ * because a row could be, and was. Whoever appends the next row
+ * re-points THIS sentence at their own brief id, date and figure. TD-443 is
+ * also the reason the figure went UP rather than down — it is a recovery row,
+ * so do not read the jump from TD-423's 1_880 B as a ceiling change; both
+ * constants are untouched.)* **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the
  * packed GRANT is +150 KB and the headroom is what remains under it, and
@@ -1858,7 +2227,13 @@ interface PackReport {
  *   TD-369/370/371/372 follow-ups    ~5 KB  ESTIMATE, all S-Small
  *   changelog + docstring overhead  ~24 KB (this session measured 2.5-4.4 KB
  *                                    per brief, and prose in shipped files is
- *                                    charged twice via .js + .js.map)
+ *                                    charged ONCE via .js plus a small
+ *                                    .js.map mappings shift — TD-443
+ *                                    corrected "twice" here. THE GRANT DOES
+ *                                    NOT MOVE WITH THE CORRECTION: the
+ *                                    2.5-4.4 KB was MEASURED per brief, not
+ *                                    derived by doubling anything, so the
+ *                                    ~24 KB input stands as taken.)
  *                                   ───────
  *                                    ~85 KB, so +150 KB is ~76% margin.
  *
@@ -2126,4 +2501,132 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
       "the hashed dashboard chunk that carries it is missing",
     ).toBe(true);
   }, PACK_TIMEOUT_MS);
+});
+
+/**
+ * TD-443 — no declaration map ships, and the pin is UNSCOPED because it can be.
+ *
+ * Every `.d.ts.map` under `dist/brain-mcp-server/dist/` carries a `sources`
+ * array like `["../../src/engine/bus.ts"]` with no `sourcesContent`, while
+ * `files` ships `dist` only — `dist/brain-mcp-server/src` does not exist in the
+ * tarball. Each one is therefore a dangling pointer on a consumer machine: the
+ * path resolves to nothing and there is no inlined fallback. 138 entries,
+ * 31_426 packed B, measured 2026-09-02. They are NOT dead in the repo, where
+ * `dist/` and `src/` are siblings and the maps drive go-to-definition — which
+ * is why the fix is `package.json` `files` and NOT `declarationMap: false`.
+ * `brain-mcp-server/tsconfig.json:15` is untouched, no file left the tree, and
+ * the third test below PINS that flag so this stays true by gate rather than
+ * by claim.
+ *
+ * WHY THIS PIN CARRIES NO PATH SCOPE, and why the `.js.map` class cannot have
+ * one. `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
+ * declarations of its own, and the staged `dist/brain-mcp-server/scripts/`
+ * holds `.ts` sources rather than compiled output (12 entries, zero maps). The
+ * tarball's ENTIRE `.d.ts.map` population was the brain's 138 — measured
+ * directly off the pack manifest, and corroborated by 807 − 138 = 669 entries
+ * after the exclusion. So "no packed entry ends in `.d.ts.map`" is true of the
+ * whole tarball with zero exceptions. A `.js.map` pin could not be written that
+ * way: 246 `.js.map` ship and only 138 are the brain's, because
+ * `cli/tsconfig.json:15` sets `sourceMap: true` and the 108 cli-own maps carry
+ * the identical defect (`dist/lib/slug.js.map` reads
+ * `"sources":["../../src/lib/slug.ts"]`, and `src` is not in `files`). Such a
+ * pin would have to be path-scoped, and a later reader would take a scoped pin
+ * for a whole-tarball guarantee it is not. The narrower exclusion buys the
+ * stronger invariant, and that inversion is the reason it is the one taken.
+ * The full argument, including the option NOT taken, is in this file's pack
+ * ledger — grep `TD-443 MEASURED LAST`.
+ *
+ * RELATION, NOT COUNT. `brain-artifact.test.ts` states the rule this follows:
+ * "It does not assert a file COUNT … The orphan scan asserts the RELATION."
+ * A count goes green on a delete-plus-add and needs re-blessing every time the
+ * brain gains a module. `toEqual([])` rather than a length check, so a
+ * regression PRINTS the offending paths instead of a bare number.
+ */
+describe("TD-443 — no dangling declaration maps ship", () => {
+  it("packs no .d.ts.map at all — whole tarball, no path scope", () => {
+    const stray = [...packedPaths()].filter((p) => p.endsWith(".d.ts.map"));
+    expect(
+      stray,
+      "declaration maps are back in the published tarball (TD-443). Their " +
+        "`sources` point at `brain-mcp-server/src`, which `files` does not " +
+        "ship, and there is no `sourcesContent` — so every one is weight no " +
+        "consumer can resolve. The 138 of them cost 31_426 packed B. Restore " +
+        'the `"!dist/**/*.d.ts.map"` negation in cli/package.json `files`.',
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships the vendored .d.ts those maps described", () => {
+    // The inverse guard, and the reason it is a PRESENCE relation rather than a
+    // count: a glob typo — `!dist/**/*.d.ts*` — would also drop the 138 `.d.ts`
+    // (693_030 B unpacked, measured 2026-09-02) and the assertion above would
+    // stay green on a far LARGER regression. A count would additionally need
+    // re-blessing whenever the brain gains or loses a module.
+    const declarations = [...packedPaths()].filter(
+      (p) => p.startsWith("dist/brain-mcp-server/dist/") && p.endsWith(".d.ts"),
+    );
+    expect(
+      declarations.length,
+      "the vendored brain declarations are gone from the tarball. TD-443 " +
+        "excluded declaration MAPS only; if this is red, the exclusion glob " +
+        "widened past the maps and took the declarations with it.",
+    ).toBeGreaterThan(0);
+  }, PACK_TIMEOUT_MS);
+
+  it("keeps `declarationMap` ON in the brain's tsconfig — AC-2's mechanism", () => {
+    // BOTH assertions above are OUTCOME pins on the packlist, and neither can
+    // see the mechanism AC-2 actually requires. Flip `declarationMap` to
+    // false, rebuild, and delete the `files` negation: no `.d.ts.map` is
+    // emitted, so none can pack and the first assertion stays green; the
+    // `.d.ts` keep shipping, so the inverse guard stays green too. The tarball
+    // would still be CORRECT — this is not a defect in the fix — but the
+    // shipped sentence in cli/CHANGELOG.md, "`declarationMap` stays on and
+    // every map stays on disk", would be FALSE with the whole suite passing.
+    // This pin is the gate for that sentence. It reads SOURCE, so it fires
+    // without a build, which is the only way it could run in this brief at
+    // all.
+    //
+    // The on-disk half of the claim is deliberately NOT pinned here:
+    // `brain-mcp-server/dist` is gitignored (.gitignore:41), so a clean
+    // checkout has no maps to count and the assertion would be measuring
+    // whether someone had built the brain. The flag is the durable half.
+    //
+    // `declaration` is asserted alongside it because `declarationMap` emits
+    // nothing when declarations are off — the flag would read true and the
+    // claim would still be false.
+    const tsconfigPath = join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "brain-mcp-server",
+      "tsconfig.json",
+    );
+    const raw = readFileSync(tsconfigPath, "utf8");
+    let opts: Record<string, unknown>;
+    try {
+      opts = (JSON.parse(raw) as { compilerOptions: Record<string, unknown> })
+        .compilerOptions;
+    } catch {
+      throw new Error(
+        "brain-mcp-server/tsconfig.json is no longer plain JSON (a comment or " +
+          "a trailing comma would do it) and this pin parses it with " +
+          "JSON.parse. Teach it a tolerant parser — do not delete it.",
+      );
+    }
+    expect(
+      opts.declarationMap,
+      "brain-mcp-server/tsconfig.json no longer sets `declarationMap: true`. " +
+        "TD-443 excluded declaration maps from the PACKLIST and left the " +
+        "compiler alone on purpose, so that in-repo go-to-definition keeps " +
+        "working; turning the flag off is a DIFFERENT change with a different " +
+        "blast radius, and on its own it would leave every packlist assertion " +
+        "in this file green while making the shipped TD-443 CHANGELOG entry " +
+        "false.",
+    ).toBe(true);
+    expect(
+      opts.declaration,
+      "brain-mcp-server/tsconfig.json no longer sets `declaration: true`, so " +
+        "no `.d.ts` is emitted and `declarationMap` has nothing to describe.",
+    ).toBe(true);
+  });
 });

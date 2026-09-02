@@ -403,8 +403,10 @@ degradation into a reported one, and `reason` carries the cause verbatim.
 
 `bm25_only` is a **legitimate** state, not a bug: `sqlite-vec` and the
 embeddings backend are production dependencies of `brain-mcp-server` and live in
-`cli/dist/brain-mcp-server/node_modules/`, the one directory the published
-tarball excludes and `scripts/postinstall.mjs` restores. A first embedding call
+`cli/dist/brain-mcp-server/node_modules/`, the one **directory** the published
+tarball excludes and `scripts/postinstall.mjs` restores. Read "directory"
+literally: since TD-443 `files` carries a second exclusion of a different kind,
+the `.d.ts.map` file class, which nothing restores. A first embedding call
 also downloads ~25 MB of MiniLM weights into `~/.cache/huggingface`, and an
 offline host raises `EmbeddingsUnavailableError`. All three degrade to
 `bm25_only` with a reason; none may fail the request. The UI renders a visible
@@ -1298,10 +1300,12 @@ artifacts are actually in the published package, because a module that resolves
 in the repo but is excluded from the pack fails only on a consumer machine.
 
 `sqlite-vec` and the embeddings backend are reached separately, at
-`paths.ts#bundledBrainNodeModulesDir()`. That is the ONE directory
+`paths.ts#bundledBrainNodeModulesDir()`. That is the ONE **directory**
 `cli/package.json` `files` excludes, so between tarball extraction and
 `postinstall` they are genuinely absent — which is why the vector arm degrades to
-a reported `bm25_only` rather than throwing.
+a reported `bm25_only` rather than throwing. It is not the only exclusion:
+TD-443 added the `.d.ts.map` file class, which is dropped from the packlist and
+never restored, because a consumer could not resolve those maps anyway.
 
 This is a **path-literal dependency on a build artifact**. If the staging layout
 moves, the import fails and the bridge degrades to `null` rather than throwing —

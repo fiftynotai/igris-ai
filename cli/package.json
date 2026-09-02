@@ -10,6 +10,7 @@
   "files": [
     "dist",
     "!dist/brain-mcp-server/node_modules",
+    "!dist/**/*.d.ts.map",
     "scripts/postinstall.mjs",
     "README.md",
     "CHANGELOG.md"
