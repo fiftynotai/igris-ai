@@ -51,7 +51,7 @@ flowchart TB
 | 9 | `tasks` | Autonomous task queue (v3 schema with retry + capability gates) |
 | 10 | `instances` | Agent instance lifecycle (run ID, hostname, model, tokens) |
 | 11 | `sync` | VPS sync queue & replication state |
-| 12 | `cache` | Brain-to-filesystem cache (v6 read-only backup) |
+| 12 | `cache` | Guarded projection of `brief_files` / `session_files` to `~/.igris/projects/{project}/` (TD-414: a local brief file newer than the brain copy is never overwritten; `igris_cache_rebuild force:true` is the only override) |
 | 13 | `schedules` | Cron schedule + event-based triggers |
 | 14 | `coordination` | Autonomous decision rules & coordination config |
 | 15 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
@@ -68,7 +68,7 @@ _2026-08-26 UTC — Rows other than the metrics removal were not re-verified by 
 | Table | Purpose |
 |-------|---------|
 | `brief_status` | Canonical brief catalog (id, project, type, status, priority, effort, phase, timestamps) |
-| `brief_files` | Brief markdown archive (immutable audit trail) |
+| `brief_files` | Brief markdown store — the RECORD the gates read; upserted by `igris_brief_create`, `igris_brief_update` and `igris_brief_file_sync`, projected to disk by the cache component (TD-414) |
 | `learnings` + `learnings_fts` + `learnings_vec` | Auto-extracted knowledge with BM25 ranking & 384-D vectors |
 | `errors` | Error catalog & RCA |
 | `event_log` | Audit trail of all events (used for perception extraction) |

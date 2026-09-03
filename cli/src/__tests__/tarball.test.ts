@@ -1833,6 +1833,53 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-414 MEASURED LAST (2026-09-04), after its final SHIPPED code-touching
+ * step (the runtime context docs that closed the hunt ship no bytes).
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-447's method, taken
+ * twice: once before and once after the shipped-comment trim (the first
+ * reading, +1_759 packed, is void; only the second is the row). Both packages
+ * compiled inertly with `npx tsc --outDir <scratch>` and NO other flag; the
+ * staged set was DERIVED by `cmp` of every inert-compile artifact against its
+ * vendored twin (brain: 409 unchanged, 136 of them `.js.map` whose `sources`
+ * rewrite came out `cmp`-identical BEFORE any changed map was staged; cli:
+ * 216 unchanged, 0 changed — this brief edits no `cli/src` runtime file).
+ * `cli/dist` and `brain-mcp-server/dist` were never written; no file under
+ * either dist is newer than the edited sources. The three brain sources newer
+ * than the vendored `index.js` are exactly this brief's `cache/handlers.ts`,
+ * `cache/index.ts` and `tools/briefs.ts` (plus its two test files, excluded
+ * from dist).
+ *   packed              2_010_385    unpacked 7_663_285, 672 entries (UNCHANGED —
+ *                                    no new module; the classifier lives in
+ *                                    cache/handlers.ts)
+ *   TD-414's own share  +1_334 B     (1.3 KB) against HEAD `a3d8a4a`'s 2_009_051
+ *                                    (+5_219 unpacked, reconciling EXACTLY to the
+ *                                    eight staged files' size deltas — all eight
+ *                                    non-zero; the SHA control on the untouched
+ *                                    copy reproduced 2_009_051 / 7_658_066 / 672 /
+ *                                    shasum `0494960fd0874ac5a17a8321e78f874a4c408b2a`
+ *                                    twice, before each staging)
+ *   cumulative delta    +146_965 B   (143.5 KB over PACK_BASELINE_PACKED,
+ *                                    95.7% of TD-374's grant)
+ *   headroom remaining  ~6.5 KB      (6_635 B — 153_600 − 146_965)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 1_334 B WENT. Brain side only, charged three ways:
+ *   `cache/handlers.ts` +3_324 unpacked (.js +1_409 — `cacheRoot`, `dbTimeMs`,
+ *   `briefCachePath`, `diskEditState`, `projectBriefFile`, the `force` and
+ *   `briefs_skipped` plumbing; .js.map +1_367; .d.ts +548 — three new exports
+ *   and two exported string unions), `cache/index.ts` +963 (.js +656 — the
+ *   warn branch, the `force` schema entry and two reworded listen
+ *   descriptions; .js.map +259; .d.ts +48), `tools/briefs.ts` +932 (.js +628 —
+ *   the widened SELECT and the decline note; .js.map +304; .d.ts +0 — the
+ *   signature did not change). 0.26 packed bytes per unpacked byte on this
+ *   mix. New shipped comment prose across the three files: +290 B (measured
+ *   against `git show HEAD:`; the first draft was +996 and was trimmed to the
+ *   plan's ≤ 400 B budget — the reasoning moved to the unshipped test docblock
+ *   and to `docs/architecture/brief-state-source-of-truth.md`).
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
  * TD-447 MEASURED LAST (2026-09-03), after its final code-touching step.
  * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-440 round 4's method,
  * adopted as that row instructs: both packages compiled inertly with
@@ -2282,8 +2329,8 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-447, measured 2026-09-03,
- * ~7.8 KB (7_969 B) is what is left on PACKED.** Grep `TD-447 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-414, measured 2026-09-04,
+ * ~6.5 KB (6_635 B) is what is left on PACKED.** Grep `TD-414 MEASURED LAST` in this
  * file for that reading and the method behind it, and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban

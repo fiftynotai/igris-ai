@@ -1,7 +1,7 @@
 /**
  * Brain Engine v7.0 -- Cache Component Handlers
  *
- * Handler functions for filesystem cache generation. Writes markdown
+ * Handler functions for the filesystem projection. Writes markdown
  * files from brain DB into ~/.igris/projects/{project}/ so that agents
  * can read briefs/sessions without querying the MCP server.
  *
@@ -9,7 +9,7 @@
  * @author fifty.dev
  */
 
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { getDb } from '../../../db.js';
@@ -38,8 +38,53 @@ function safePath(base: string, ...segments: string[]): string {
   return resolved;
 }
 
-/** Root cache directory: ~/.igris/projects (v6: renamed from cache) */
-const CACHE_ROOT = path.join(os.homedir(), '.igris', 'projects');
+/** Projection root at call time: $IGRIS_BRAIN_DIR/projects, else ~/.igris/projects. */
+export function cacheRoot(): string {
+  const dir = process.env.IGRIS_BRAIN_DIR;
+  return dir ? path.join(dir, 'projects') : path.join(os.homedir(), '.igris', 'projects');
+}
+
+/** `YYYY-MM-DD HH:MM:SS` (UTC) or ISO → epoch ms; NaN when unparseable. */
+function dbTimeMs(stamp: string): number {
+  return Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(stamp) ? `${stamp.replace(' ', 'T')}Z` : stamp);
+}
+
+export function briefCachePath(project: string, filename: string): string {
+  return safePath(safePath(cacheRoot(), project), 'briefs', filename);
+}
+
+export type DiskEditState = 'absent' | 'same' | 'local-newer' | 'brain-newer';
+
+/** Disk copy vs brain row (TD-414); an unparseable stamp reads 'local-newer'. */
+export function diskEditState(
+  project: string,
+  filename: string,
+  row: { content: string; updated_at: string },
+): DiskEditState {
+  const file = briefCachePath(project, filename);
+  if (!existsSync(file)) return 'absent';
+  if (readFileSync(file, 'utf-8') === row.content) return 'same';
+  const brainMs = dbTimeMs(row.updated_at);
+  return Number.isNaN(brainMs) || statSync(file).mtimeMs > brainMs ? 'local-newer' : 'brain-newer';
+}
+
+export type ProjectionOutcome = 'written' | 'skipped-same' | 'refused-local-newer' | 'no-row';
+
+interface BriefFileRow {
+  filename: string;
+  content: string;
+  updated_at: string;
+}
+
+/** The ONE brain→disk brief writer. `force` is the only override. */
+function projectBriefFile(project: string, row: BriefFileRow, force = false): ProjectionOutcome {
+  const state = force ? 'brain-newer' : diskEditState(project, row.filename, row);
+  if (state === 'same') return 'skipped-same';
+  if (state === 'local-newer') return 'refused-local-newer';
+  ensureCacheDir(project);
+  writeFileSync(briefCachePath(project, row.filename), row.content, 'utf-8');
+  return 'written';
+}
 
 // ---------------------------------------------------------------------------
 // ensureCacheDir
@@ -55,7 +100,7 @@ const CACHE_ROOT = path.join(os.homedir(), '.igris', 'projects');
  * @returns The project cache root path
  */
 export function ensureCacheDir(project: string): string {
-  const projectCacheRoot = safePath(CACHE_ROOT, project);
+  const projectCacheRoot = safePath(cacheRoot(), project);
   mkdirSync(path.join(projectCacheRoot, 'briefs'), { recursive: true });
   mkdirSync(path.join(projectCacheRoot, 'session'), { recursive: true });
   return projectCacheRoot;
@@ -66,25 +111,19 @@ export function ensureCacheDir(project: string): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Write a single brief from the DB to the filesystem cache.
- *
- * Queries brief_files for the given project+briefId. Writes content
- * to ~/.igris/projects/{project}/briefs/{filename}. Skips silently
- * if no row is found.
+ * Project one brief from the DB to the filesystem (guarded, TD-414).
  *
  * @param project - Project slug
  * @param briefId - Brief ID (e.g. "BR-008")
  */
-export function cacheBrief(project: string, briefId: string): void {
+export function cacheBrief(project: string, briefId: string): ProjectionOutcome {
   const db = getDb();
   const row = db.prepare(
-    'SELECT filename, content FROM brief_files WHERE project = ? AND brief_id = ?'
-  ).get(project, briefId) as { filename: string; content: string } | undefined;
+    'SELECT filename, content, updated_at FROM brief_files WHERE project = ? AND brief_id = ?'
+  ).get(project, briefId) as BriefFileRow | undefined;
 
-  if (!row) return;
-
-  const cacheRoot = ensureCacheDir(project);
-  writeFileSync(safePath(cacheRoot, 'briefs', row.filename), row.content, 'utf-8');
+  if (!row) return 'no-row';
+  return projectBriefFile(project, row);
 }
 
 // ---------------------------------------------------------------------------
@@ -109,8 +148,8 @@ export function cacheSessionFile(project: string, filename: string): void {
 
   if (!row) return;
 
-  const cacheRoot = ensureCacheDir(project);
-  writeFileSync(safePath(cacheRoot, 'session', filename), row.content, 'utf-8');
+  const projectRoot = ensureCacheDir(project);
+  writeFileSync(safePath(projectRoot, 'session', filename), row.content, 'utf-8');
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +160,8 @@ export function cacheSessionFile(project: string, filename: string): void {
  * Rebuild the filesystem cache for a project.
  *
  * Required: project (string)
- * Optional: scope ('briefs' | 'sessions' | 'all', default 'all')
+ * Optional: scope ('briefs' | 'sessions' | 'all', default 'all'),
+ *           force (boolean: overwrite local brief files even when newer)
  *
  * Queries all brief_files and/or session_files for the project
  * and writes each to the cache directory.
@@ -138,21 +178,22 @@ export function handleCacheRebuild(args: Record<string, unknown>): ToolResult {
     return errorResult(`Invalid scope: ${scope}. Must be one of: ${validScopes.join(', ')}`);
   }
 
+  const force = args.force === true;
   const db = getDb();
   ensureCacheDir(project);
 
   let briefsCached = 0;
+  let briefsSkipped = 0;
   let sessionsCached = 0;
 
   if (scope === 'briefs' || scope === 'all') {
     const briefs = db.prepare(
-      'SELECT brief_id, filename, content FROM brief_files WHERE project = ?'
-    ).all(project) as { brief_id: string; filename: string; content: string }[];
+      'SELECT brief_id, filename, content, updated_at FROM brief_files WHERE project = ?'
+    ).all(project) as (BriefFileRow & { brief_id: string })[];
 
-    const cacheRoot = safePath(CACHE_ROOT, project);
     for (const brief of briefs) {
-      writeFileSync(safePath(cacheRoot, 'briefs', brief.filename), brief.content, 'utf-8');
-      briefsCached++;
+      if (projectBriefFile(project, brief, force) === 'refused-local-newer') briefsSkipped++;
+      else briefsCached++;
     }
   }
 
@@ -161,9 +202,9 @@ export function handleCacheRebuild(args: Record<string, unknown>): ToolResult {
       'SELECT filename, content FROM session_files WHERE project = ?'
     ).all(project) as { filename: string; content: string }[];
 
-    const cacheRoot = safePath(CACHE_ROOT, project);
+    const projectRoot = safePath(cacheRoot(), project);
     for (const session of sessions) {
-      writeFileSync(safePath(cacheRoot, 'session', session.filename), session.content, 'utf-8');
+      writeFileSync(safePath(projectRoot, 'session', session.filename), session.content, 'utf-8');
       sessionsCached++;
     }
   }
@@ -172,6 +213,7 @@ export function handleCacheRebuild(args: Record<string, unknown>): ToolResult {
     project,
     scope,
     briefs_cached: briefsCached,
+    briefs_skipped: briefsSkipped,
     sessions_cached: sessionsCached,
   }, null, 2));
 }
@@ -193,7 +235,7 @@ export function handleCacheClean(args: Record<string, unknown>): ToolResult {
     return errorResult('Required parameter "project" is missing');
   }
 
-  const projectCachePath = safePath(CACHE_ROOT, project);
+  const projectCachePath = safePath(cacheRoot(), project);
   rmSync(projectCachePath, { recursive: true, force: true });
 
   return successResult(JSON.stringify({

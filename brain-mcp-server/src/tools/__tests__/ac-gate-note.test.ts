@@ -33,8 +33,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach, beforeAll } from 'vitest';
 import Database from 'better-sqlite3';
-import { existsSync } from 'node:fs';
-import { resolve, dirname } from 'node:path';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 vi.mock('../../db.js', () => ({
@@ -135,6 +136,21 @@ beforeAll(() => {
     existsSync(AC_CHECK),
     `the shared parser must exist at ${AC_CHECK}; without it every note below is vacuously null`,
   ).toBe(true);
+});
+
+// TD-414: acGateNote now consults the DISK projection (`diskEditState`), whose
+// root is the `IGRIS_BRAIN_DIR` seam. Fence it for the whole file so no case —
+// including the pre-TD-414 ones above — ever stats a path under the real home.
+let brainDir: string;
+const savedBrainDir = process.env.IGRIS_BRAIN_DIR;
+beforeEach(() => {
+  brainDir = mkdtempSync(join(tmpdir(), 'td414-gate-'));
+  process.env.IGRIS_BRAIN_DIR = brainDir;
+});
+afterEach(() => {
+  rmSync(brainDir, { recursive: true, force: true });
+  if (savedBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
+  else process.env.IGRIS_BRAIN_DIR = savedBrainDir;
 });
 
 describe('isTerminalBriefStatus (the shared terminal-set predicate)', () => {
@@ -302,5 +318,95 @@ describe('handleBriefSync: the /hunt double sync (AC #4)', () => {
       .prepare('SELECT content FROM brief_files WHERE brief_id = ?')
       .get('TD-900') as { content: string };
     expect(stored.content).toBe(UNTICKED_BRIEF);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1-G4 — TD-414: the observer DECLINES when the local file is newer.
+// ---------------------------------------------------------------------------
+//
+// The brain copy is the RECORD (the commit-msg gate reads it too), but a local
+// edit the operator has not pushed yet is not "unmet criteria" — it is an
+// un-pushed edit. Ruling FAIL on the stale brain copy an instant before the
+// projection clobbers the disk was the bug's second half. The decline names the
+// remedy (push with igris_brief_update, then re-sync) and is about the PREMISE,
+// not the verdict: G4 shows it fires even when the brain copy would PASS.
+describe('acGateNote — local file newer (TD-414)', () => {
+  let db: Database.Database;
+
+  function seedContentAt(briefId: string, content: string, updatedAt: string): void {
+    db.prepare(
+      `INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+       VALUES (?, 'p', ?, ?, ?, 'h', ?)`,
+    ).run(`f-${briefId}`, briefId, `${briefId}.md`, content, updatedAt);
+  }
+
+  function diskPath(briefId: string): string {
+    return join(brainDir, 'projects', 'p', 'briefs', `${briefId}.md`);
+  }
+
+  function putDisk(briefId: string, text: string, mtime?: Date): void {
+    const p = diskPath(briefId);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text, 'utf-8');
+    if (mtime) utimesSync(p, mtime, mtime);
+  }
+
+  const BRAIN_STAMP = '2026-09-01 10:00:00';
+  const OLDER = new Date('2026-09-01T09:00:00Z');
+  const TICKED_LOCALLY = UNTICKED_BRIEF.replace('- [ ]', '- [x]');
+
+  beforeEach(() => {
+    db = makeTestDb();
+    mockedGetDb.mockReturnValue(db);
+    process.env.IGRIS_AC_CHECK = AC_CHECK;
+  });
+
+  afterEach(() => {
+    db.close();
+    delete process.env.IGRIS_AC_CHECK;
+    vi.clearAllMocks();
+  });
+
+  it('G1 — declines instead of ruling FAIL when the disk file is newer and different', () => {
+    seedContentAt('TD-900', UNTICKED_BRIEF, BRAIN_STAMP);
+    putDisk('TD-900', TICKED_LOCALLY); // mtime now > BRAIN_STAMP
+    const note = acGateNote(db, 'p', 'TD-900', 'Done');
+    expect(note).not.toBeNull();
+    expect(note).toContain('not ruling');
+    expect(note).toContain('TD-900');
+    expect(note).toContain('igris_brief_update');
+    expect(note).not.toContain('VERDICT=FAIL');
+  });
+
+  it('G2 — an OLDER, different disk file does not suppress the FAIL note', () => {
+    seedContentAt('TD-900', UNTICKED_BRIEF, BRAIN_STAMP);
+    putDisk('TD-900', TICKED_LOCALLY, OLDER);
+    const note = acGateNote(db, 'p', 'TD-900', 'Done');
+    expect(note).toContain('VERDICT=FAIL');
+    expect(note).not.toContain('not ruling');
+  });
+
+  it('G3 — an absent disk file rules on the brain copy exactly as before', () => {
+    seedContentAt('TD-900', UNTICKED_BRIEF, BRAIN_STAMP);
+    expect(existsSync(diskPath('TD-900'))).toBe(false);
+    const note = acGateNote(db, 'p', 'TD-900', 'Done');
+    expect(note).toContain('VERDICT=FAIL');
+    expect(note).not.toContain('not ruling');
+  });
+
+  it('G4 — the decline is about the premise: it fires even when the brain copy would PASS', () => {
+    seedContentAt('TD-901', COMPLETE_BRIEF, BRAIN_STAMP);
+    putDisk('TD-901', COMPLETE_BRIEF + '\n- [ ] a criterion added locally\n');
+    const note = acGateNote(db, 'p', 'TD-901', 'Done');
+    expect(note).not.toBeNull();
+    expect(note).toContain('not ruling');
+    expect(note).not.toContain('VERDICT=');
+  });
+
+  it('G5 — identical disk content is "same": the brain copy is ruled on (silent for a PASS)', () => {
+    seedContentAt('TD-901', COMPLETE_BRIEF, BRAIN_STAMP);
+    putDisk('TD-901', COMPLETE_BRIEF);
+    expect(acGateNote(db, 'p', 'TD-901', 'Done')).toBeNull();
   });
 });

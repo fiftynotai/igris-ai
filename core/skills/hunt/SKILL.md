@@ -760,6 +760,16 @@ EOF
      {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMMITTING"}
      ```
    - Do NOT block the hunt workflow — continue to COMPLETE.
+
+   **The brief file on disk is a projection (TD-414).** The file under
+   `~/.igris/projects/{project}/briefs/` is the brain's `brief_files` row
+   projected to disk. A status sync carries no content and never overwrites a
+   local file that is newer than the brain copy — but the acceptance-criteria
+   gate above and the commit-msg gate read the BRAIN record, so a disk-only
+   edit is invisible to both. If you edited the file on disk, push it FIRST:
+   call `igris_brief_update` with `project`, `brief_id` and the file's text as `content`, then sync.
+   A sync that answers `not ruling on acceptance criteria` means that push was
+   skipped — push, then sync again.
 5.5. **Release the brief claim (FR-127):** Call `igris_brief_release` with
    `project` = current project slug, `brief_id` = the brief ID, and
    `instance_id` = the stored Instance ID. The brief is Done — its claim must
@@ -872,7 +882,10 @@ All agent event emissions are **fire-and-forget**. If the MCP call fails, skip s
 
 ## Agent Log Format
 
-Maintain in brief file under Workflow State:
+Maintain in brief file under Workflow State. The disk file is a projection of
+the brain's `brief_files` row (TD-414): a later brain-side content write
+replaces a local edit, so write the log back first —
+call `igris_brief_update` with `project`, `brief_id` and the whole file as `content` before any brain-side content write.
 
 ```markdown
 ### Agent Log

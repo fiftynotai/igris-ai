@@ -25,6 +25,7 @@ import { getDb } from '../db.js';
 // lets the FR-238 dashboard reach the same queries with its own read-only
 // handle. Do not move query logic back up here.
 import { listBriefs, getBrief, searchBriefsByVector } from './briefs-read.js';
+import { diskEditState } from '../engine/components/cache/handlers.js';
 import {
   normalizePhase,
   normalizePriority,
@@ -207,15 +208,25 @@ export function acGateNote(
     // Wrapped separately: a brain without `brief_files` (an old schema, a
     // partially-migrated remote) must be silent, not throw.
     let content: string | null = null;
+    let row: { filename?: string; content?: string; updated_at?: string } | undefined;
     try {
-      const row = db
-        .prepare('SELECT content FROM brief_files WHERE project = ? AND brief_id = ? LIMIT 1')
-        .get(project, briefId) as { content?: string } | undefined;
+      row = db
+        .prepare('SELECT filename, content, updated_at FROM brief_files WHERE project = ? AND brief_id = ? LIMIT 1')
+        .get(project, briefId) as typeof row;
       content = row?.content ?? null;
     } catch {
       return null;
     }
     if (!content) return null;
+
+    // TD-414: a newer local file is an un-pushed edit — decline, do not FAIL.
+    if (diskEditState(project, row?.filename ?? `${briefId}.md`, { content, updated_at: row?.updated_at ?? '' }) === 'local-newer') {
+      return (
+        `NOTE: ${briefId} reached a terminal status but the local brief file is newer than\n` +
+        '      the brain copy — not ruling on acceptance criteria. Push it with\n' +
+        '      igris_brief_update (project, brief_id, content) and re-sync.'
+      );
+    }
 
     // The parser exits 1 on FAIL, which makes execFileSync throw; its stdout is
     // carried on the error object. Both paths are read the same way.

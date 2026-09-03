@@ -274,6 +274,37 @@ matching read-side vocabulary validator plus the widened terminal arm in the
 reconciler. It changed **no column, no DDL and no CHECK constraint**, and it did
 not widen the documented six.
 
+## The disk projection (TD-414)
+
+Three copies of a brief exist, and only one is the record:
+
+| Copy | What it is | Who writes it |
+|---|---|---|
+| `brief_status` row | build-state METADATA (status, phase, priority, …) | `igris_brief_sync` and its siblings |
+| `brief_files.content` | the RECORD — the markdown the AC gate and the commit-msg gate read | `igris_brief_create`, `igris_brief_update`, `igris_brief_file_sync` |
+| `~/.igris/projects/{project}/briefs/{ID}.md` | a PROJECTION of `brief_files.content`, written by the cache component on `brief.created` / `brief.synced` | ONE guarded writer (`brain-mcp-server/src/engine/components/cache/handlers.ts`) |
+
+`igris_brief_sync` writes `brief_status` only; the disk write it appears to
+cause is the projection listener re-materialising `brief_files.content`.
+Before TD-414 that write was unconditional, so a status sync destroyed every
+local edit (BR-095 measured 8 ticked criteria → 0, 12324 → 7872 bytes) an
+instant after `acGateNote` had ruled FAIL on the stale brain copy.
+
+Since TD-414 the projection is guarded by one classifier (`diskEditState`):
+identical content is not rewritten; a local file that is newer than
+`brief_files.updated_at` and differs is KEPT and the refusal is logged; only an
+absent or older disk copy is overwritten. `igris_cache_rebuild` uses the same
+writer and takes the only override, `force`. `acGateNote` consults the same
+classifier and DECLINES to rule (`not ruling on acceptance criteria`) when the
+local file is newer — it does not reconcile from disk, because the record is
+the brain and a verdict on content the brain does not hold is the TD-311 class.
+
+The consumption rule that follows: **an edit made on disk must be pushed with
+`igris_brief_update` (`project`, `brief_id`, `content`) before any sync**, or
+the gates cannot see it. `core/skills/hunt/SKILL.md` states this at Phase 7
+step 5 and under Agent Log Format. Session files are out of this scope
+(pinned by the projection-guard test's T8).
+
 ## See also
 
 - `scripts/validate_brief_state_reconciliation.sh` — the validator.

@@ -229,9 +229,13 @@ highest tier first (empty strings fall through to the next tier):
    call time.
 
 **A sandbox sets `IGRIS_BRAIN_DIR`.** It is the one seam that moves everything
-together: the CLI helpers' brain root, the server's DB (tier 3) and its pidfile
+together: the CLI helpers' brain root, the server's DB (tier 3), its pidfile
 registry (`brain-mcp-server/src/stdio-lifecycle.ts#pidsDir`: `IGRIS_PIDS_DIR` >
-`IGRIS_BRAIN_DIR/brain-mcp-server.pids` > `~/.igris/brain-mcp-server.pids`).
+`IGRIS_BRAIN_DIR/brain-mcp-server.pids` > `~/.igris/brain-mcp-server.pids`) and,
+since TD-414, the brief/session projection root
+(`brain-mcp-server/src/engine/components/cache/handlers.ts#cacheRoot`:
+`<dir>/projects/` > `~/.igris/projects/`, read at call time) — so a sandboxed
+brain never projects brief files into your real `~/.igris/projects/`.
 Create `<dir>/memory/` first — better-sqlite3 creates the DB file, never its
 parent directory, and a missing parent crashes the boot.
 
