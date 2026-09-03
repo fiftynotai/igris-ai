@@ -243,7 +243,8 @@ set -euo pipefail
 #     oos_missing. W8 measures exactly that. The no-op is scoped to out-of-repo
 #     configs, which is every config a real checkout has: all 6 `mcp.config_path`
 #     values in harness-manifest.json are `~`-anchored (measured). An IN-REPO
-#     mcp config is reachable only through the IGRIS_MCP_*_CONFIG test seam.
+#     mcp config is reachable only through the IGRIS_MCP_*_CONFIG test seam
+#     (read-only, drift-side: compile refuses its MCP pass under it — TD-390).
 # =========================================================================
 #
 # Fail-open on a fresh clone WITHOUT the adapter layer:

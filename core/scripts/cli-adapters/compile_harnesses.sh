@@ -1532,6 +1532,28 @@ project_mcp() {
   mcp_engine="$(igris_mcp_engine)"
   MCP_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "$TARGET_KIND" "$PROJECT_ROOT")
   if [ -n "$MCP_ROWS" ]; then
+    # TD-390-GUARD-BEGIN
+    # TD-390: IGRIS_MCP_<HARNESS>_CONFIG is the READ-ONLY drift seam (the
+    # verify_mcp `case` in check_harness_drift.sh + the MAINTAINING.md row).
+    # Every writer below resolves its config from $HOME — add-mcp (module-load
+    # homedir(), no path flag), paths.ts, the grant — so a seam-set compile
+    # would write the LIVE harness config (the TD-388 fixture incident). Refuse
+    # the pass, loudly; a sandboxed WRITE is an isolated HOME. `*_CONFIG` only:
+    # IGRIS_MCP_ENGINE is the retired engine knob (fr212-smoke still exports
+    # it), not a seam. An empty value is unset (mirrors the reader's
+    # ${VAR:-default}). bash 3.2: prefix expansion, no declare -A.
+    # Scoped HERE (non-empty MCP_ROWS) so `--surface agents` and an agents-only
+    # manifest never trip it. Pinned by test/harness_mcp_seam_guard.test.bash.
+    local seam_var="" _v
+    for _v in "${!IGRIS_MCP_@}"; do
+      case "$_v" in
+        *_CONFIG) if [ -n "${!_v:-}" ]; then seam_var="$_v"; break; fi ;;
+      esac
+    done
+    if [ -n "$seam_var" ]; then
+      echo "ERROR: compile_harnesses.sh refuses the MCP pass: $seam_var is set, but IGRIS_MCP_*_CONFIG redirects only the drift READER (check_harness_drift.sh). The writer (igris loadout project-mcp -> add-mcp + grant) resolves its config from \$HOME and would write the live harness config. To sandbox a compile, run it under an isolated HOME and unset the seam. (TD-390)" >&2
+    fi
+    # TD-390-GUARD-END
     while IFS=$'\t' read -r m_name m_canon m_type m_enabled m_scope_type m_scope_paths; do
       [ -z "$m_name" ] && continue
       [ -z "$m_type" ] && continue
@@ -1552,6 +1574,17 @@ project_mcp() {
       : "$m_scope_type" "$m_scope_paths"
 
       TOTAL=$((TOTAL + 1))
+
+      # TD-390-ROW-BEGIN
+      # TD-390: a counted FAIL row per target (parser-coupled `FAIL  ` prefix,
+      # parseHarnessOutput needs no re-point) + the exit-1 gate below. The
+      # `continue` is the guard — without it the dispatch still runs.
+      if [ -n "$seam_var" ]; then
+        SUMMARY+=("FAIL  mcp/$m_name/$m_type — refused: $seam_var is set (read-only drift seam; TD-390)")
+        FAIL=$((FAIL + 1))
+        continue
+      fi
+      # TD-390-ROW-END
 
       # Dispatch to the TS projector. ONE harness per call. The projector reads
       # the SAME merged manifest (base ++ overlay) via --project-root/--overlay,

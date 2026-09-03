@@ -1633,12 +1633,13 @@ EOF
     # DANGER, LEARNED THE HARD WAY (TD-388 build incident): a bare
     # `compile_harnesses.sh` runs the MCP projection pass too, and that pass
     # writes the harness config at its DEFAULT home-anchored path. The
-    # IGRIS_MCP_*_CONFIG seams are DRIFT-SIDE ONLY — grep compile_harnesses.sh
-    # and the TS projector: neither reads them — so pointing them at a temp dir
-    # would have been a guard that proves nothing. The first version of this
-    # fixture therefore merged its own canonical `args` straight into the
-    # operator's REAL ~/.claude.json: the fixture performed the exact
-    # destructive act this brief exists to stop the gate from recommending.
+    # IGRIS_MCP_*_CONFIG seams are DRIFT-SIDE ONLY — at the time of the
+    # incident neither compile_harnesses.sh nor the TS projector read them —
+    # so pointing them at a temp dir would have been a guard that proves
+    # nothing. The first version of this fixture therefore merged its own
+    # canonical `args` straight into the operator's REAL ~/.claude.json: the
+    # fixture performed the exact destructive act this brief exists to stop
+    # the gate from recommending.
     #
     # The guarantee is now STRUCTURAL, not an argument: compile is handed a
     # SEPARATE, agents-only manifest that contains no `surfaces` key at all, so
@@ -1646,6 +1647,10 @@ EOF
     # `--surface agents` is kept as a second, weaker belt. The drift run still
     # uses the full harness-manifest.json (with the MCP block), because drift
     # DOES honour IGRIS_MCP_CLAUDE_CONFIG.
+    # Since TD-390 compile REFUSES its MCP pass when any IGRIS_MCP_*_CONFIG is
+    # set (test/harness_mcp_seam_guard.test.bash); the agents-only manifest
+    # stays this fixture's primary, structural guard and the refusal is the
+    # belt — it would fire only if an MCP row ever reached the pass.
     # Pinned by the "fixture safety" test below — do not fold the two manifests
     # back together.
     local compile_manifest="$root/.td388-compile-agents-only.json"
@@ -2063,6 +2068,9 @@ EOF
   # ~/.claude.json. This test pins the structural fix: whatever manifest
   # compile is handed must contain no MCP surface at all, so no flag, no
   # refactor and no future pass can turn it into a real config write.
+  # Since TD-390 compile REFUSES its MCP pass when any IGRIS_MCP_*_CONFIG is
+  # set (test/harness_mcp_seam_guard.test.bash); that refusal is the belt —
+  # this agents-only manifest remains the primary, structural guard.
   local root
   root="$(build_mcp_repo fixsafe agent)"
 

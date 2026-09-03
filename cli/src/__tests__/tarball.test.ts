@@ -1880,6 +1880,34 @@ interface PackReport {
  *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
  *   writing THIS row cannot move the number it records.
  *
+ * TD-390 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * +0 B PACKED, BY CONSTRUCTION AND BY MEASUREMENT. This brief edits no
+ * `cli/src` runtime file and no brain source: the fix is a bash guard in
+ * `core/scripts/cli-adapters/compile_harnesses.sh` plus a comment in
+ * `check_harness_drift.sh`, and the bash adapters are NOT in the tarball
+ * (`cli/package.json` `files` = `dist` + `scripts/postinstall.mjs` + README +
+ * CHANGELOG; `copy-templates.sh` stages `harness-manifest.json` and the brain
+ * bundle, never `cli-adapters/` — grep: 0 hits; `cli/dist/**\/compile_harnesses.sh`
+ * does not exist). They ARE TD-096 runtime-mirrored, which is a different
+ * surface. No build ran (L-1165: `npm run build` is `rm -rf dist && tsc …` and
+ * `cli/dist` is the live brain bundle path); the bats suite drove the existing
+ * `cli/dist/index.js` read-only. `cli/package.json` declares no `prepack` or
+ * `prepare` hook, so the in-place `npm pack --dry-run` below built nothing.
+ *   packed              2_009_051    unpacked 7_658_066, 672 entries, shasum
+ *                                    `0494960fd0874ac5a17a8321e78f874a4c408b2a`
+ *                                    — the on-disk dist packs at EXACTLY the
+ *                                    TD-414 row's CONTROL reading (identical
+ *                                    shasum), because TD-414 staged its brain
+ *                                    edits into a copy and never built; the
+ *                                    row's live figure 2_010_385 is that staged
+ *                                    reading and is unchanged by this brief.
+ *   TD-390's own share  +0 B         (nothing packed was touched; the only
+ *                                    `cli/` edit is this comment, excluded
+ *                                    from dist)
+ *   cumulative delta    +146_965 B   (unchanged from TD-414)
+ *   headroom remaining  ~6.5 KB      (6_635 B — unchanged)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
  * TD-447 MEASURED LAST (2026-09-03), after its final code-touching step.
  * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-440 round 4's method,
  * adopted as that row instructs: both packages compiled inertly with
@@ -2329,9 +2357,10 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-414, measured 2026-09-04,
- * ~6.5 KB (6_635 B) is what is left on PACKED.** Grep `TD-414 MEASURED LAST` in this
- * file for that reading and the method behind it, and treat the 84_262 B above
+ * BRIEF, a DATE and no direction: **as of TD-390, measured 2026-09-04,
+ * ~6.5 KB (6_635 B) is what is left on PACKED.** Grep `TD-390 MEASURED LAST` in this
+ * file for that reading (a +0 B row that reproduces TD-414's control) and the
+ * method behind it, and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
  * does not cover: it is INTRA-PARAGRAPH — it names the 84_262 B in this same

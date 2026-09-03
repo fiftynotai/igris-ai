@@ -1471,6 +1471,19 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     # Resolve config path + map key per harness. Per-harness env overrides
     # (IGRIS_MCP_<HARNESS>_CONFIG) are the test-sandbox seam; defaults are the
     # native $HOME-anchored paths (byte-identical to paths.ts).
+    #
+    # TD-390 — THIS SEAM IS READ-ONLY, and this `case` is its definition site.
+    # It redirects THIS reader (the per-entry verify_mcp arms below) and nothing
+    # else. The MCP WRITER — compile_harnesses.sh#project_mcp → `igris loadout
+    # project-mcp` → add-mcp (module-load homedir(), no path flag) + the grant
+    # (paths.ts) — resolves every config from $HOME, so a compile invoked with
+    # any IGRIS_MCP_*_CONFIG set REFUSES its MCP pass (exit 1, a counted FAIL
+    # row) instead of writing the live config; a sandboxed WRITE is an isolated
+    # HOME. The grant-drift arm further down (`loadout verify-mcp-grant`) reads
+    # $HOME too — the seam does not redirect it. IGRIS_MCP_ENGINE is a
+    # different, retired knob, not a seam. Contract row: MAINTAINING.md
+    # ("IGRIS_MCP_<HARNESS>_CONFIG read-only drift seam"); pinned by
+    # test/harness_mcp_seam_guard.test.bash.
     case "$d_type" in
       claude)
         d_map_key="mcpServers"
