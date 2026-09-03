@@ -149,7 +149,7 @@
  *        "payload":"{\"learning_id\":2,\"title\":\"recurring\",\"reason\":\"probe\"}"}
  *   So L-140 is HALF STALE (reject is a three-tier outcome, not a blanket hard
  *   delete) and the L-857 naming trap resolves to the LEGACY literal
- *   `component = 'perception'` — `perception/events.ts:110` passes it directly
+ *   `component = 'perception'` — `perception/events.ts:112` passes it directly
  *   to `insertEventLogRow`; it is NOT `cognition.perception`.
  *
  * STEP 5c — GATEWAY VALIDATION REACHES A NON-MCP CALLER (verified, not assumed):

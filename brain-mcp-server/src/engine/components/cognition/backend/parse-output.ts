@@ -18,6 +18,10 @@
  *   - gemini/antigravity `--print`   → raw prose lines ARE the text;
  *   - opencode `run`                 → raw prose lines (falls through to text).
  *
+ * Also exports `detectClaudeErrorEnvelope` (TD-447): the claude-only inspection
+ * `runBackend` runs BEFORE `extractText`, so an `is_error:true` result envelope
+ * is a typed backend failure and never becomes "model text".
+ *
  * @module engine/components/cognition/backend/parse-output
  * @author fifty.dev
  */
@@ -87,4 +91,48 @@ export function extractText(_harness: ExtractorHarness, stdout: string): string 
     }
   }
   return texts.join('\n');
+}
+
+/** A claude result envelope that reports a failure instead of an answer (TD-447). */
+export interface ClaudeErrorEnvelope {
+  /** `auth_error` when status / terminal_reason / message indicate authentication; else `api_error`. */
+  kind: 'api_error' | 'auth_error';
+  /** The CLI's own message (first 200 chars) + ` (http N)` when `api_error_status` is present. */
+  detail: string;
+}
+
+/** The auth arm of the classifier: 401/403 are matched by status, the rest by this text signal. */
+const AUTH_SIGNAL = /authenticat|oauth|\/login|unauthori[sz]ed|not logged in/i;
+
+/**
+ * Find the first `{type:"result", is_error:true}` line in claude stdout, or `null`.
+ * Claude only — `runBackend` calls it under the harness guard BEFORE
+ * `extractText`, so an API/auth failure surfaces WITH its message (TD-447, L-232).
+ *
+ * @param stdout the child's raw stdout (`--output-format json` or stream-json)
+ */
+export function detectClaudeErrorEnvelope(stdout: string): ClaudeErrorEnvelope | null {
+  for (const line of stdout.split('\n')) {
+    const t = line.trim();
+    if (!t.startsWith('{')) continue;
+    let ev: Record<string, unknown>;
+    try {
+      ev = JSON.parse(t) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    if (ev.type !== 'result' || ev.is_error !== true) continue;
+    const message =
+      typeof ev.result === 'string' ? ev.result : 'claude result envelope is_error=true (no result text)';
+    const status = typeof ev.api_error_status === 'number' ? ev.api_error_status : undefined;
+    const terminal = typeof ev.terminal_reason === 'string' ? ev.terminal_reason : '';
+    const isAuth = status === 401 || status === 403 || AUTH_SIGNAL.test(`${terminal} ${message}`);
+    return {
+      kind: isAuth ? 'auth_error' : 'api_error',
+      // Message FIRST (the health surface renders its first sentence), status
+      // appended so it survives the 200-char cut.
+      detail: message.slice(0, 200) + (status === undefined ? '' : ` (http ${status})`),
+    };
+  }
+  return null;
 }

@@ -2716,6 +2716,13 @@ export interface CognitionRunSignals {
   last_terminal_at: string | null;
   /** Latest terminal event on this host: its `event_name`. */
   last_terminal_name: string | null;
+  /** Latest terminal event on this host: its `payload.reason`, when the payload carries a string one (TD-447). */
+  last_terminal_reason: string | null;
+  /**
+   * Latest terminal event on this host: its `payload.detail` — or perception's
+   * `error_message`, the same slot under the older key — when present (TD-447).
+   */
+  last_terminal_detail: string | null;
   /** Latest terminal event on ANY host. */
   last_terminal_any_host_at: string | null;
   /** `run_started` rows on this host today (UTC). */
@@ -2746,6 +2753,8 @@ export function readInstanceRunSignals(
   const empty: CognitionRunSignals = {
     last_terminal_at: null,
     last_terminal_name: null,
+    last_terminal_reason: null,
+    last_terminal_detail: null,
     last_terminal_any_host_at: null,
     runs_today: 0,
   };
@@ -2760,14 +2769,29 @@ export function readInstanceRunSignals(
 
     const thisHost = handle
       .prepare(
-        `SELECT event_name, created_at FROM event_log
+        `SELECT event_name, created_at, payload FROM event_log
           WHERE component = ? AND event_name IN (?, ?, ?)
             AND machine_hostname = ?
           ORDER BY datetime(created_at) DESC LIMIT 1`,
       )
       .get(component, ...terminals, hostname) as
-      | { event_name: string; created_at: string }
+      | { event_name: string; created_at: string; payload: string | null }
       | undefined;
+
+    // TD-447: parse the payload in JS, never `json_extract` in SQL — a malformed
+    // row would throw inside withReadonlyBrain and degrade the WHOLE signal.
+    let reason: string | null = null;
+    let detail: string | null = null;
+    try {
+      const p = JSON.parse(thisHost?.payload ?? "{}") as Record<string, unknown>;
+      if (typeof p.reason === "string") reason = p.reason;
+      // The cognition engine writes `detail`; perception's extractor writes
+      // the same message under `error_message`.
+      const d = typeof p.detail === "string" ? p.detail : p.error_message;
+      if (typeof d === "string") detail = d;
+    } catch {
+      /* malformed payload → both null; the digest is NOT degraded */
+    }
 
     const anyHost = handle
       .prepare(
@@ -2789,6 +2813,8 @@ export function readInstanceRunSignals(
     return {
       last_terminal_at: thisHost?.created_at ?? null,
       last_terminal_name: thisHost?.event_name ?? null,
+      last_terminal_reason: reason,
+      last_terminal_detail: detail,
       last_terminal_any_host_at: anyHost?.created_at ?? null,
       runs_today: today.n,
     };

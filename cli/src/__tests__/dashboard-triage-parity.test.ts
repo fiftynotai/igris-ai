@@ -461,7 +461,7 @@ describe("G-EP-2 — recurring reject: the ONE branch that logs, byte-equal on b
     ]);
     for (const e of mcp.events) {
       // THE L-857 TRAP, asserted as a LITERAL. `writePerceptionEvent`
-      // (`perception/events.ts:110`) and FR-241's `EVENT_COMPONENT_MAP` entry
+      // (`perception/events.ts:112`) and FR-241's `EVENT_COMPONENT_MAP` entry
       // both pin the LEGACY `'perception'`; `writeExtractorEvent` would have
       // produced `cognition.perception`. Do not assume — this is the assertion.
       expect(e.component, `component for ${String(e.event_name)}`).toBe("perception");

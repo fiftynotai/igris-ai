@@ -84,8 +84,25 @@ lifecycle event and returns:
 Past the gates, the engine writes `run_started` (consuming budget), runs the isolated
 LLM call, persists candidates via the instance's `persistCandidate`, and writes
 exactly one terminal event: `run_succeeded` (with `persisted` count) or `run_failed`
-(with `reason`). The one-terminal-event-per-run invariant (TD-074) is enforced in the
-lifecycle emitter so a run can never double-report nor surface as stuck-RUNNING.
+(with `reason`, plus `detail` when the backend classified it). The one-terminal-event-per-run
+invariant (TD-074) is enforced in the lifecycle emitter so a run can never double-report
+nor surface as stuck-RUNNING.
+
+`run_failed.reason` is a closed vocabulary with two writers. The BACKEND
+(`cognition/backend/index.ts`, `BackendFailReason`) writes `timeout`, `non_zero_exit`,
+`spawn_error`, `empty_response`, `api_error` and `auth_error`, each with a `detail`
+string carrying the CLI's own message (first 200 chars; `(http N)` appended when the
+envelope named a status). The ENGINE (`cognition/engine/index.ts`) writes
+`build_context_error`, `backend_error`, `parse_error` and `db_error`; `response_bytes`
+accompanies `parse_error` ONLY. Since **TD-447** a claude `{type:"result", is_error:true}`
+envelope — the CLI reporting an API or auth failure INSIDE its JSON with exit 1 — is
+classified `api_error` (or `auth_error` on 401/403 or an authentication message) BEFORE
+text extraction, so it never reaches an instance parser and is never `parse_error`.
+Perception's legacy path carries both classes at BOTH of its scopes: the extractor
+(`perception/extractors/llm_via_claude_code.ts`) writes them as `perception.run_failed`'s
+`reason`, and the runner (`perception/runner.ts`) maps that reason onto `llm_status` as
+`failed:api_error` and `failed:auth_error` — the value the MCP tool result and the
+`perception_extract_cli.ts` summary line print — instead of `failed:unknown`.
 
 ---
 
@@ -96,7 +113,9 @@ per-instance namespace `cognition.subconscious`:
 
 - `cognition.subconscious.run_started`
 - `cognition.subconscious.run_succeeded` (`payload.persisted` = suggestions queued)
-- `cognition.subconscious.run_failed` (`payload.reason`)
+- `cognition.subconscious.run_failed` (`payload.reason` from the vocabulary above;
+  `payload.detail` for backend-classified failures; `payload.response_bytes` for
+  `parse_error` only)
 - `cognition.subconscious.run_skipped` (`payload.reason`; `budget` adds `used_today`/`budget`)
 
 Observe them with `igris_event_log component='cognition.subconscious'` or a direct

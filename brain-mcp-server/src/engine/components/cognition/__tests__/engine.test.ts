@@ -320,6 +320,22 @@ describe('runExtractor — outcomes', () => {
     expect(r.fail_reason).toBe('non_zero_exit');
   });
 
+  it('API ERROR (backend-classified, TD-447) → run_failed payload {reason, detail} and NO response_bytes — a PIN of behaviour the engine already had, not a red-first', async () => {
+    const inst = makeDummyInstance();
+    const detail =
+      'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com. (http 529)';
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: false, text: '', fail_reason: 'api_error', detail }));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('api_error');
+    expect(names(db)).toEqual([eventName('dummy', 'run_started'), eventName('dummy', 'run_failed')]);
+    // AC-2: read the ROW, not the return value. `response_bytes` belongs to the
+    // parse_error arm only and must be absent here.
+    const payload = JSON.parse(events(db)[1].payload) as Record<string, unknown>;
+    expect(payload.reason).toBe('api_error');
+    expect(payload.detail).toBe(detail);
+    expect('response_bytes' in payload).toBe(false);
+  });
+
   it('PARSE ERROR (opt-out instance): a malformed response that parses to [] → run_failed reason=parse_error (TD-294)', async () => {
     const inst = makeDummyInstance();
     // ok response but the body is not a JSON array → parseResponse returns [].

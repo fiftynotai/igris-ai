@@ -1833,6 +1833,67 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-447 MEASURED LAST (2026-09-03), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-440 round 4's method,
+ * adopted as that row instructs: both packages compiled inertly with
+ * `npx tsc --outDir <scratch>`, exactly the changed artifacts staged into a
+ * scratch copy of the packed surface, and the pack taken there. `cli/dist` and
+ * `brain-mcp-server/dist` were never written: an in-place `npm pack --dry-run`
+ * AFTER staging differed from the control at exactly ONE entry, `CHANGELOG.md`
+ * (171_658 → 172_048 — the working-tree bullet), so every `dist` entry the real
+ * package would ship is the control's; and the brain sources newer than the
+ * vendored `index.js` are exactly this brief's eleven edited files, no more.
+ * No file under either dist is newer than the edited sources.
+ * Round 2 (the warden's L-1246 finding: perception `runner.ts`'s `LlmStatus`
+ * still printed `failed:unknown` for the new classes) re-took the whole
+ * measurement from the same control; the staged set was DERIVED by `cmp` of
+ * every inert-compile artifact against its vendored twin, not hand-listed.
+ *   packed              2_009_051    unpacked 7_658_066, 672 entries (UNCHANGED —
+ *                                    no new module; the detector lives in
+ *                                    parse-output.ts)
+ *   TD-447's own share  +2_523 B     (2.5 KB) against HEAD `6d077a1`'s 2_006_528
+ *                                    (+9_723 unpacked, reconciling EXACTLY to the
+ *                                    twenty-one staged files' size deltas: eighteen
+ *                                    non-zero, three content-changed at +0 —
+ *                                    monitoring/index.js's `:110` → `:112`
+ *                                    pointer, events.js.map, brain-write-bridge.js.
+ *                                    Round 1 read +2_482 / +9_472; round 2 added
+ *                                    runner.{js,js.map,d.ts} = +41 packed,
+ *                                    +251 unpacked, and nothing else moved)
+ *   cumulative delta    +145_631 B   (142.2 KB over PACK_BASELINE_PACKED,
+ *                                    94.8% of TD-374's grant)
+ *   headroom remaining  ~7.8 KB      (7_969 B — 153_600 − 145_631)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   THE CONTROL CORRECTS THE BASE. The scratch copy packed 2_006_528 /
+ *   7_648_343 / 672 / shasum `30eab099c3128b5ac88675dd73fbaa01d89f177b`
+ *   BEFORE staging, and the in-place pack of `cli/dist` gave the identical
+ *   four figures — so HEAD's live reading is 2_006_528 (cumulative 143_108,
+ *   headroom 10_492 B), 371 B ABOVE the 2_006_157 / 10_863 B the TD-440 row
+ *   records. Whether those 371 B are a post-row edit or a staging-vs-build
+ *   difference was not established here; the SHA control is what this row's
+ *   delta is taken against. TD-447's brief quoted "10,492 B" and attributed it
+ *   to a `TD-444`, which matches no file in the tree — the number was right,
+ *   the attribution was not.
+ *
+ *   WHERE THE 2_523 B WENT. Brain side, charged three ways: `parse-output.ts`
+ *   +4_129 unpacked (.js +1_883, .js.map +1_199, .d.ts +1_047 — the detector,
+ *   its exported interface and the auth regex), `backend/index.ts` +857, the
+ *   perception `switch` +363, the perception runner's `LlmStatus` union and
+ *   two `case` lines +251 (.js +132, .js.map +76, .d.ts +43), two `.d.ts`
+ *   comment lines +58. CLI side, charged
+ *   once: `brain-db.ts` +1_543 (.js + map), `verbs/cognition.ts` +2_132
+ *   (.js + map: the `firstSentence` helper, the classifier prefix and its
+ *   WHY comment). `CHANGELOG.md` +390 verbatim. 0.26 packed bytes per unpacked
+ *   byte on this mix. Source maps were staged with their `sources` path
+ *   rewritten from the scratch-relative form to the vendored form
+ *   (`../../../../../src/…`); the rewrite was validated on two UNCHANGED files
+ *   (`exec.js.map`, `kpi-read.js.map`) coming out `cmp`-identical to their
+ *   vendored copies before any changed map was staged.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
  * TD-440 MEASURED LAST (2026-09-03, re-measured after round 4), after its
  * final code-touching step.
  * MEASURED BY STAGING, NOT BY BUILDING, and that distinction is the method:
@@ -2221,8 +2282,8 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-440 round 4, measured 2026-09-03,
- * ~10.6 KB (10_863 B) is what is left on PACKED.** Grep `TD-440 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-447, measured 2026-09-03,
+ * ~7.8 KB (7_969 B) is what is left on PACKED.** Grep `TD-447 MEASURED LAST` in this
  * file for that reading and the method behind it, and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban

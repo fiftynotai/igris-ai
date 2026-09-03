@@ -136,7 +136,7 @@ export interface ExtractorResult {
   persisted: number;
   /** Set when outcome==='skipped' — e.g. 'disabled' | 'budget' | 'cold_start' | 'gate_bytes' | 'cli_missing' | 'no_candidates'. */
   skip_reason?: string;
-  /** Set when outcome==='failed' — e.g. 'timeout' | 'parse_error' | 'non_zero_exit' | 'spawn_error'. */
+  /** Set when outcome==='failed' — e.g. 'timeout' | 'parse_error' | 'non_zero_exit' | 'spawn_error' | 'api_error' | 'auth_error'. */
   fail_reason?: string;
   /** The resolved backend (which harness, the fallback order) — for observability. */
   backend?: ResolvedBackend;

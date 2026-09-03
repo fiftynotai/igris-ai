@@ -78,6 +78,8 @@ export type LlmStatus =
   | 'failed:epipe'
   | 'failed:spawn_error'
   | 'failed:non_zero_exit'
+  | 'failed:api_error' // TD-447 — backend-classified claude API failure envelope
+  | 'failed:auth_error' // TD-447 — same envelope, 401/403 or an authentication message
   | 'failed:unknown';
 
 /**
@@ -100,6 +102,10 @@ function mapFailureReasonToLlmStatus(reason: string): LlmStatus {
       return 'failed:spawn_error';
     case 'non_zero_exit':
       return 'failed:non_zero_exit';
+    case 'api_error':
+      return 'failed:api_error';
+    case 'auth_error':
+      return 'failed:auth_error';
     default:
       return 'failed:unknown';
   }

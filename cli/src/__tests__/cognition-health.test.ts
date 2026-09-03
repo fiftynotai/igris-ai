@@ -141,17 +141,31 @@ function seedInstance(s: RosterSeed): void {
   });
 }
 
+/**
+ * Insert one lifecycle row. `payload` (TD-447) is optional: an object is stored
+ * as its JSON, a STRING is stored verbatim (so a case can plant a malformed
+ * column), and absence leaves the column at its `'{}'` DEFAULT — which is what
+ * every pre-TD-447 case in this file seeds, so those rows carry no `reason`.
+ */
 function seedEvent(
   component: string,
   eventName: string,
   createdAt: string,
   host: string = HOST,
+  payload?: Record<string, unknown> | string,
 ): void {
   withDb((db) => {
+    if (payload === undefined) {
+      db.prepare(
+        `INSERT INTO event_log (event_name, component, machine_hostname, created_at)
+         VALUES (?, ?, ?, ?)`,
+      ).run(eventName, component, host, createdAt);
+      return;
+    }
     db.prepare(
-      `INSERT INTO event_log (event_name, component, machine_hostname, created_at)
-       VALUES (?, ?, ?, ?)`,
-    ).run(eventName, component, host, createdAt);
+      `INSERT INTO event_log (event_name, component, machine_hostname, created_at, payload)
+       VALUES (?, ?, ?, ?, ?)`,
+    ).run(eventName, component, host, createdAt, typeof payload === "string" ? payload : JSON.stringify(payload));
   });
 }
 
@@ -864,5 +878,101 @@ describe("a roster projected by an OLDER brain build degrades, it never throws",
     expect(d.degraded_reason).toBeNull();
     expect(d.warnings.some((w) => /predates the gate_default column/.test(w))).toBe(true);
     expect(pick(d, "janitor").gate_default).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-447 — a failure's own reason + detail lead the `failing` sentence
+// ---------------------------------------------------------------------------
+
+describe("a failure's own reason and detail lead the `failing` sentence (TD-447)", () => {
+  /** The live 529 detail as the backend now writes it (message first, status appended). */
+  const DETAIL_529 =
+    "API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com. (http 529)";
+  const DETAIL_AUTH = "Failed to authenticate: OAuth session expired and could not be refreshed";
+
+  beforeEach(() => {
+    seedSchema();
+    writeConfig({ synapse: { enabled: true } });
+    seedInstance({ id: "synapse", gate_keys: ["cognition.synapse.enabled"] });
+  });
+
+  it("C1 — run_failed {reason:'api_error', detail:<529>} → failing; the sentence opens `api_error: API Error: 529 Overloaded. ` and keeps the legacy clause", async () => {
+    const at = daysAgo(2);
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", at, HOST, { reason: "api_error", detail: DETAIL_529 });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("failing");
+    // `status.claude.com` inside the message must NOT split the first sentence;
+    // the trailing period of the sentence is stripped so `/boot`'s render rule
+    // prints `synapse: FAILING — api_error: API Error: 529 Overloaded`.
+    expect(row.reason.startsWith("api_error: API Error: 529 Overloaded. ")).toBe(true);
+    expect(row.reason).toContain("latest terminal event on this host is cognition.synapse.run_failed");
+    expect(row.reason).toBe(
+      `api_error: API Error: 529 Overloaded. latest terminal event on this host is cognition.synapse.run_failed at ${at}, with no later success`,
+    );
+  });
+
+  it("C2 — {reason:'auth_error', detail:<72-char message, no punctuation>} → the whole message is the first sentence", async () => {
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", daysAgo(2), HOST, { reason: "auth_error", detail: DETAIL_AUTH });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("failing");
+    expect(row.reason.startsWith(`auth_error: ${DETAIL_AUTH}. `)).toBe(true);
+  });
+
+  it("C3 — the OLD misfiled row {reason:'parse_error', response_bytes:147} → `parse_error. ` with no colon (no detail)", async () => {
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", daysAgo(2), HOST, { reason: "parse_error", response_bytes: 147 });
+    const row = pick(await digest(), "synapse");
+    expect(row.reason.startsWith("parse_error. latest terminal event")).toBe(true);
+    expect(row.reason).not.toContain("parse_error:");
+  });
+
+  it("C4 (byte-identical control) — a run_failed row with NO payload renders the legacy sentence EXACTLY", async () => {
+    const at = daysAgo(2);
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", at);
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("failing");
+    expect(row.reason).toBe(
+      `latest terminal event on this host is cognition.synapse.run_failed at ${at}, with no later success`,
+    );
+  });
+
+  it("C5 — a payload column holding the literal `not json` → legacy sentence, and the digest is NOT degraded", async () => {
+    const at = daysAgo(2);
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", at, HOST, "not json");
+    const d = await digest();
+    expect(d.degraded).toBe(false);
+    const row = pick(d, "synapse");
+    expect(row.status).toBe("failing");
+    expect(row.reason).toBe(
+      `latest terminal event on this host is cognition.synapse.run_failed at ${at}, with no later success`,
+    );
+  });
+
+  it("C6 — a run_succeeded whose payload carries {reason:'api_error'} → ok, legacy ok sentence (the prefix is for failures only)", async () => {
+    const at = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", daysAgo(2), HOST, { reason: "api_error", detail: DETAIL_529 });
+    seedEvent("cognition.synapse", "cognition.synapse.run_succeeded", at, HOST, { reason: "api_error" });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toBe(`latest terminal event on this host is cognition.synapse.run_succeeded at ${at}`);
+  });
+
+  it("C7 — perception writes `error_message` rather than `detail`; the reader accepts it as the detail fallback", async () => {
+    writeConfig({ synapse: { enabled: true }, perception: { enabled: true } });
+    seedInstance({
+      id: "perception",
+      component: "perception",
+      event_prefix: "perception",
+      gate_keys: ["cognition.perception.enabled"],
+      output: "learnings[review_status='pending_review']",
+    });
+    seedEvent("perception", "perception.run_failed", daysAgo(1), HOST, {
+      reason: "auth_error",
+      error_message: DETAIL_AUTH,
+      harness: "claude",
+    });
+    const row = pick(await digest(), "perception");
+    expect(row.status).toBe("failing");
+    expect(row.reason.startsWith(`auth_error: ${DETAIL_AUTH}. `)).toBe(true);
   });
 });

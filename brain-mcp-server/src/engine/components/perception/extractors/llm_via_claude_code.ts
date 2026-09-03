@@ -405,6 +405,12 @@ function backendFailReasonToPerception(reason: string | undefined): string {
       // treats "no candidates" as a clean run. But surface it as a parse-ish
       // signal so the read surface can show the call returned nothing.
       return 'non_zero_exit';
+    // TD-447: pass the claude envelope classes through — `default` would file
+    // them as 'unknown', the L-232 silent-failure shape.
+    case 'api_error':
+      return 'api_error';
+    case 'auth_error':
+      return 'auth_error';
     default:
       return 'unknown';
   }

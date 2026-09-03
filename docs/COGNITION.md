@@ -455,6 +455,57 @@ purge. If you find yourself unable to reproduce a cognition failure because the
 subsystem that would reproduce it is the thing that is broken — that is the
 signal to build the health surface first.
 
+## a `parse_error` that was never one (TD-447)
+
+The second `parse_error` the health surface ever showed was also not a parse
+error. On 2026-09-03 `synapse` read `run_failed reason=parse_error
+response_bytes=147`, and the 147 bytes were the claude CLI's own words:
+`API Error: 529 Overloaded. This is a server-side issue, usually temporary —
+try again in a moment. If it persists, check https://status.claude.com.`
+
+`claude -p --output-format json` reports an API or auth failure INSIDE its
+result envelope — `{"type":"result","is_error":true,"api_error_status":529,
+"terminal_reason":"api_error","result":"API Error: 529 …"}` — and exits 1.
+The backend classified `non_zero_exit` only when stdout was EMPTY, so the
+envelope fell through to text extraction, the error string was lifted as the
+model's answer, the instance parser found no JSON array in it, and the engine
+filed the run as a malformed reply. Every consumer downstream was then told
+the truth about the wrong thing.
+
+Decoding a row written before the fix — `event_log` keeps 30 days, so some
+of these are still readable:
+
+| `response_bytes` | what the "response" actually was |
+|---|---|
+| 147 | `API Error: 529 Overloaded. …` — the upstream was overloaded; nothing to fix here |
+| 72 | `Failed to authenticate: OAuth session expired and could not be refreshed` — run `claude login` on this host |
+| 54–64 | the brief's other recorded sizes for this class — a short CLI error message; the exact text was not captured, so read `payload` on the row |
+
+Since TD-447 the backend inspects a claude stdout for a `{type:"result",
+is_error:true}` line BEFORE extracting text. When it finds one the run fails as
+`api_error` — or `auth_error` when the status is 401/403 or the
+`terminal_reason`/message names authentication — with `detail` set to the
+CLI's message (first 200 chars) plus ` (http N)` when a status was reported.
+The instance parser is never called, so `response_bytes` is never written for
+this class. Perception's legacy path carries both classes at two scopes, and
+each was closed separately: the extractor's `backendFailReasonToPerception`
+maps them onto `perception.run_failed`'s `reason` (round 1), and the runner's
+`mapFailureReasonToLlmStatus` maps that reason onto `llm_status` —
+`failed:api_error` and `failed:auth_error` (round 2). Between the two rounds the
+event's `reason` was already right while the MCP tool result and the
+`perception_extract_cli.ts` summary line still printed `llm_status=failed:unknown`
+for the same run (L-1246). The other four harnesses are not inspected at all:
+their `extractText` path is the same bytes it was.
+
+`igris cognition health` reads the row's `reason` and `detail` and leads the
+`failing` sentence with them — `api_error: API Error: 529 Overloaded. latest
+terminal event on this host is cognition.synapse.run_failed at …, with no later
+success` — so `/boot`'s "first sentence of reason" render prints
+`synapse: FAILING — api_error: API Error: 529 Overloaded`. No digest field was
+added: the render rules already print `reason`, and a new field is a five-place
+wire sweep for a string the skills already show. A row with no `reason` in its
+payload renders the sentence it always did.
+
 ## the layer is open
 
 A new instance is a new self-describing extractor file plus one barrel line; the

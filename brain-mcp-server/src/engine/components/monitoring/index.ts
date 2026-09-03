@@ -85,7 +85,7 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
   //      because both paths wrote nothing and `[] === []` proves nothing.
   //
   // `'perception'` — the LEGACY literal, matching the four `run_*` rows above
-  // and `writePerceptionEvent`'s own `component` (`perception/events.ts:110`).
+  // and `writePerceptionEvent`'s own `component` (`perception/events.ts:112`).
   // NOT `cognition.perception`, which is what `writeExtractorEvent` produces.
   // The L-857 naming trap: verified against a real dispatch, not assumed.
   //

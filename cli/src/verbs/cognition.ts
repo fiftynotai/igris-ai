@@ -204,9 +204,23 @@ interface ClassifierInput {
   schedule: CognitionScheduleSignal | null;
   last_terminal_name: string | null;
   last_terminal_at: string | null;
+  /** TD-447 — the latest terminal row's `payload.reason` / `payload.detail`, when it carries them. */
+  last_terminal_reason: string | null;
+  last_terminal_detail: string | null;
   /** The verdict already computed for this instance's `driver_ref`, if any. */
   upstream: { id: string; status: CognitionHealthStatus } | null;
   retentionFloor: string | null;
+}
+
+/**
+ * The first sentence of `s` — a terminal mark followed by whitespace or the end,
+ * so a dotted hostname (`status.claude.com`) does not split it — with the mark
+ * stripped, capped at 160 chars. `/boot` renders "the first sentence of reason",
+ * so what this returns is what the operator reads (TD-447).
+ */
+function firstSentence(s: string): string {
+  const m = /^(.*?[.!?])(?:\s|$)/.exec(s);
+  return (m ? m[1] : s).replace(/[.!?]$/, "").slice(0, 160);
 }
 
 /**
@@ -263,9 +277,20 @@ function classify(input: ClassifierInput): {
 
   if (input.last_terminal_name !== null && input.last_terminal_at !== null) {
     if (input.last_terminal_name.endsWith(".run_failed")) {
+      // TD-447: lead with the failure's own class and the first sentence of its
+      // detail (`api_error: API Error: 529 Overloaded. `), so the render rule
+      // "first sentence of reason" shows the CAUSE. Generic — a `timeout` row
+      // reads `timeout: timeout after 300000ms. ` the same way. The legacy
+      // sentence follows verbatim; a row with no payload reason renders it alone.
+      const head =
+        input.last_terminal_reason === null
+          ? ""
+          : `${input.last_terminal_reason}${
+              input.last_terminal_detail === null ? "" : `: ${firstSentence(input.last_terminal_detail)}`
+            }. `;
       return {
         status: "failing",
-        reason: `latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}, with no later success`,
+        reason: `${head}latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}, with no later success`,
       };
     }
     return {
@@ -383,6 +408,8 @@ export function buildCognitionHealthDigest(
         schedule: p.schedule,
         last_terminal_name: p.signals.last_terminal_name,
         last_terminal_at: p.signals.last_terminal_at,
+        last_terminal_reason: p.signals.last_terminal_reason,
+        last_terminal_detail: p.signals.last_terminal_detail,
         upstream: null,
         retentionFloor,
       }).status,
@@ -411,6 +438,8 @@ export function buildCognitionHealthDigest(
       schedule: p.schedule,
       last_terminal_name: p.signals.last_terminal_name,
       last_terminal_at: p.signals.last_terminal_at,
+      last_terminal_reason: p.signals.last_terminal_reason,
+      last_terminal_detail: p.signals.last_terminal_detail,
       upstream:
         upstreamId !== null && upstreamStatus !== undefined
           ? { id: upstreamId, status: upstreamStatus }
