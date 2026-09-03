@@ -580,7 +580,12 @@ describe("G-EP-4 — TD-326: brain-level scope on /api/suggestions", () => {
     source_module: string;
     title: string;
   }> {
-    facets: { source_module: Record<string, number>; brain_level: number };
+    facets: {
+      source_module: Record<string, number>;
+      brain_level: number;
+      /** TD-440 — the PRODUCER axis. */
+      source_instance: Record<string, number>;
+    };
   }
 
   beforeEach(async () => {
@@ -612,6 +617,90 @@ describe("G-EP-4 — TD-326: brain-level scope on /api/suggestions", () => {
     // The count is NOT the same number as the unscoped total, which is the
     // reading a "just banner the all-projects total" implementation would give.
     expect(scoped.facets.brain_level).not.toBe(FIXTURE.suggestions.pendingCount);
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-440 — the producer facet and filter, end to end through the route
+  // -------------------------------------------------------------------------
+
+  /**
+   * TD-440's three route-level assertions run against the COMPILED brain
+   * bundle, not `brain-mcp-server/src` — `brain-bridge.ts` resolves
+   * `tools/suggestions-read.js` out of `cli/dist/brain-mcp-server/dist/` (and
+   * falls back to `brain-mcp-server/dist/`), so the reader these tests exercise
+   * is whatever the last BUILD produced.
+   *
+   * Rebuilding is a DEPLOY in this repo — it re-vendors the bundle the live MCP
+   * binary runs — so these skip LOUDLY on a pre-build tree instead of failing,
+   * and convert to real coverage the moment the bundle is refreshed. The
+   * assertions themselves are not lost meanwhile: the same rules are pinned
+   * against the source reader in
+   * `brain-mcp-server/src/tools/__tests__/suggestions-read.test.ts`.
+   *
+   * This is a PROBE, not an inference — it asks the running route what it
+   * actually returned rather than reading a path (L-1440).
+   */
+  let producerFacetLive = false;
+  beforeEach(async () => {
+    const probe = await json<SuggestionsEnvelope>("/api/suggestions?status=pending");
+    producerFacetLive = probe.facets.source_instance !== undefined;
+  });
+
+  const routeIt = (name: string, fn: () => Promise<void>): void => {
+    it(name, async (ctx) => {
+      if (!producerFacetLive) {
+        ctx.skip(
+          "SKIPPED — the vendored brain bundle predates TD-440's reader. " +
+            "Rebuild the CLI (a deploy) to arm this. Source-level coverage: " +
+            "brain-mcp-server/src/tools/__tests__/suggestions-read.test.ts",
+        );
+      }
+      await fn();
+    });
+  };
+
+  routeIt("TD-440 — facets.source_instance collapses the labels to their producers", async () => {
+    // UNSCOPED, because the fixture's asymmetry lives across statuses: `gap`
+    // and `missing_followup` are two of the subconscious's free-text labels and
+    // must land in ONE producer bucket. Measured on the fixture rather than
+    // assumed — if the two axes agreed, a facet computed off the wrong column
+    // would still look right.
+    const r = await json<SuggestionsEnvelope>("/api/suggestions?limit=100");
+    const modules = Object.keys(r.facets.source_module).length;
+    const producers = Object.keys(r.facets.source_instance).length;
+    expect(producers).toBeGreaterThan(0);
+    expect(producers).toBeLessThan(modules);
+    // The collapse, stated exactly: the subconscious bucket is the SUM of the
+    // label buckets that belong to it, not one of them.
+    expect(r.facets.source_instance.subconscious).toBe(
+      (r.facets.source_module.gap ?? 0) + (r.facets.source_module.missing_followup ?? 0),
+    );
+    // Every row is attributed — no `(unattributed)` bucket in this fixture.
+    expect(Object.keys(r.facets.source_instance)).not.toContain("");
+    const summed = Object.values(r.facets.source_instance).reduce((a, b) => a + b, 0);
+    expect(summed).toBe(r.total);
+  });
+
+  routeIt("TD-440 — the source_instance filter round-trips through the route", async () => {
+    const all = await json<SuggestionsEnvelope>("/api/suggestions?status=pending");
+    const synapse = await json<SuggestionsEnvelope>(
+      "/api/suggestions?status=pending&source_instance=synapse",
+    );
+    expect(synapse.total).toBe(all.facets.source_instance.synapse);
+    expect(synapse.total).toBeGreaterThan(0);
+    expect(synapse.total).toBeLessThan(all.total);
+    expect(synapse.items.every((i) => i.source_instance === "synapse")).toBe(true);
+    // The control keeps its own options — the minus-its-own-axis rule, from the
+    // browser's point of view rather than the reader's.
+    expect(synapse.facets.source_instance).toEqual(all.facets.source_instance);
+  });
+
+  routeIt("TD-440 — an unknown producer narrows to nothing without erroring", async () => {
+    const r = await json<SuggestionsEnvelope>(
+      "/api/suggestions?status=pending&source_instance=nobody",
+    );
+    expect(r.total).toBe(0);
+    expect(r.degraded).toBeNull();
   });
 
   it("project_scope=brain-level lists EXACTLY the project-less rows", async () => {

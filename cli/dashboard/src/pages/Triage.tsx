@@ -270,6 +270,7 @@ function SuggestionsTab({ live, search, project }: TabProps) {
 
   const write = writeState(live);
   const facets = payload?.facets.source_module ?? {};
+  const producers = payload?.facets.source_instance ?? {};
 
   // FR-246 — `q` rides the SAME `values` bag the chip filters use, so the
   // fetch above already forwards it (`for (const [k, v] of …values)`) and
@@ -388,6 +389,20 @@ function SuggestionsTab({ live, search, project }: TabProps) {
               value: list.values.priority ?? "",
             },
             {
+              name: "source_instance",
+              label: "producer",
+              // TD-440 — the axis "module" cannot be. `source_module` is the
+              // LLM's free choice (195 values over 358 rows — TD-437's audit,
+              // 2026-09-01), so grouping by it reads as 195 producers. There
+              // are SIX producer values, written by eight sites, so six is the
+              // most this chip can ever render (plus the pre-v5 unattributed
+              // bucket) — do not read the writer count off it. Listed BEFORE module
+              // because it is the coarser cut and the one the operator wants
+              // first. Counted from the data for the same L-967 reason.
+              options: Object.keys(producers),
+              value: list.values.source_instance ?? "",
+            },
+            {
               name: "source_module",
               label: "module",
               // COUNTED FROM THE DATA, never hand-listed: `source_module` has
@@ -422,7 +437,8 @@ function SuggestionsTab({ live, search, project }: TabProps) {
           degraded: payload?.degraded?.reason ?? list.error,
           filtersActive: (list.values.status ?? "pending") !== "pending" ||
             (list.values.priority ?? "").length > 0 ||
-            (list.values.source_module ?? "").length > 0,
+            (list.values.source_module ?? "").length > 0 ||
+            (list.values.source_instance ?? "").length > 0,
           searchActive: search.trim().length > 0,
           project,
         })}

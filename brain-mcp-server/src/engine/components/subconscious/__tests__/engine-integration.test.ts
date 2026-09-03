@@ -168,8 +168,49 @@ describe('runSubconscious (FR-118 M2 — mocked backend)', () => {
     expect(names.some((n) => n === 'subconscious.run_complete')).toBe(false);
   });
 
-  it('dedups against an already-pending open suggestion (no double-insert)', async () => {
-    // Pre-seed a pending suggestion whose evidence signature matches the canned one.
+  /**
+   * RE-AUTHORED BY TD-440, and the change is not a regression — it is the whole
+   * point of the brief, so it is written as a PAIR rather than edited quietly.
+   *
+   * This test used to pre-seed a row titled `already here` and assert that a
+   * candidate titled `BR-1 looks stalled (dup signature)` deduped against it.
+   * Those two titles share ZERO content tokens; they deduped only because the
+   * old key was `(source_module, project, evidence-signature)` and ignored the
+   * claim entirely. That is exactly the behaviour TD-440 removes: an
+   * entity-only key merges `BR-128 carries a malformed status string` with
+   * `BR-128 has been In Progress 189 days`, which are two true findings.
+   *
+   * So the contract is now two-sided, and both sides are asserted here.
+   */
+  it('dedups an already-pending suggestion when the entity AND the claim match', async () => {
+    db.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status, type_inferred)
+       VALUES ('stalled_brief', 'alpha', 'BR-1 has been In Progress for 189 days with no activity', '{"brief_id":"BR-1"}', 'high', 'pending', 1)`,
+    ).run();
+
+    const canned = JSON.stringify([
+      {
+        kind: 'dormant_work_item',
+        project_slug: 'alpha',
+        title: 'BR-1 has been In Progress 190 days with no recorded activity',
+        priority: 'high',
+        confidence: 0.7,
+        evidence: { brief_id: 'BR-1' },
+      },
+    ]);
+    const result = await runSubconscious(db, 'all', {
+      config: RUNNABLE_CONFIG,
+      deps: deps(canned),
+    });
+
+    const count = db.prepare(`SELECT COUNT(*) AS n FROM suggestions`).get() as { n: number };
+    expect(count.n).toBe(1);
+    const row = db.prepare(`SELECT * FROM suggestions`).get() as Suggestion;
+    expect(row.seen_count).toBe(2);
+    expect(result.outcome).toBe('succeeded');
+  });
+
+  it('does NOT dedup when the entity matches but the claim does not', async () => {
     db.prepare(
       `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status, type_inferred)
        VALUES ('stalled_brief', 'alpha', 'already here', '{"brief_id":"BR-1"}', 'high', 'pending', 1)`,
@@ -185,14 +226,15 @@ describe('runSubconscious (FR-118 M2 — mocked backend)', () => {
         evidence: { brief_id: 'BR-1' },
       },
     ]);
-    const result = await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps: deps(canned) });
+    const result = await runSubconscious(db, 'all', {
+      config: RUNNABLE_CONFIG,
+      deps: deps(canned),
+    });
 
-    // The candidate parsed (valid citation) but its evidence signature matches
-    // the pre-seeded pending row, so the persist slot SKIPS the INSERT (dedup).
-    // The DB invariant is what matters: NO new row was written.
+    // Two rows, because they are two claims. Under the PRE-TD-440 key this
+    // asserted 1, and that was the defect.
     const count = db.prepare(`SELECT COUNT(*) AS n FROM suggestions`).get() as { n: number };
-    expect(count.n).toBe(1);
-    // The run still completes (the candidate was handled, just deduped).
+    expect(count.n).toBe(2);
     expect(result.outcome).toBe('succeeded');
   });
 

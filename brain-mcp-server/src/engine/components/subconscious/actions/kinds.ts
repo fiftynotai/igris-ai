@@ -35,6 +35,25 @@ import { errMsg } from '../../../helpers.js';
 import { handleEdgeCreate } from '../../edges/handlers.js';
 import { deleteEmbedding } from '../../../../utils/vector-search.js';
 import { logUndoEntry } from '../../janitor/undo.js';
+import { candidateFromRow, findingKey } from '../finding-key.js';
+import { recordDismissPattern } from '../runner.js';
+import { LEGACY_PRODUCER_ID } from '../handlers.js';
+
+/**
+ * The `suggestions` columns `applyDismissExisting` needs to key a dismiss
+ * pattern (TD-440). Read via `SELECT *`, so a pre-v5 row simply has the three
+ * v5 fields undefined and falls back to a derived key.
+ */
+interface DismissableRow {
+  id: number;
+  status: string;
+  project_slug: string | null;
+  title: string;
+  evidence: string | null;
+  suggested_action: string | null;
+  dedupe_key?: string | null;
+  source_instance?: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -235,8 +254,8 @@ export function applyDismissExisting(
   }
 
   const existing = db
-    .prepare('SELECT id, status FROM suggestions WHERE id = ?')
-    .get(id) as { id: number; status: string } | undefined;
+    .prepare('SELECT * FROM suggestions WHERE id = ?')
+    .get(id) as DismissableRow | undefined;
   if (!existing) {
     return fail('dismiss_existing', `suggestion_id ${id} does not exist`);
   }
@@ -255,6 +274,17 @@ export function applyDismissExisting(
              dismissed_reason = ?
        WHERE id = ?`,
     ).run('superseded by subconscious apply_action', id);
+    // TD-440 — the SECOND dismiss writer now records the pattern too. It never
+    // did: `handleSuggestionDismiss` recorded and this path did not, so a
+    // suggestion the model itself superseded taught the loop nothing and came
+    // straight back. Same key as the handler, so the two writers land on one row.
+    recordDismissPattern(
+      db,
+      existing.source_instance ?? LEGACY_PRODUCER_ID,
+      existing.project_slug,
+      existing.dedupe_key ?? findingKey(candidateFromRow(existing)),
+      'superseded by subconscious apply_action',
+    );
   } catch (err) {
     return fail('dismiss_existing', `failed to dismiss suggestion ${id}: ${errMsg(err)}`);
   }

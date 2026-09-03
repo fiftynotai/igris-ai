@@ -121,6 +121,18 @@ export interface Suggestion {
   suggested_action: string | null;
   /** FR-118 M2 — 1 for LLM-extractor rows, 0 for legacy rule rows. */
   type_inferred: number;
+  /** TD-440 (v5) — the stable finding key; NULL until backfilled. */
+  dedupe_key: string | null;
+  /** TD-440 (v5) — the blocking anchor the key was built on; NULL until backfilled. */
+  entity_key: string | null;
+  /** TD-440 (v5) — how many times this finding has been emitted. Starts at 1. */
+  seen_count: number;
+  /** TD-440 (v5) — when the finding was last re-emitted; NULL until the first bump. */
+  last_seen_at: string | null;
+  /** TD-440 (v5) — JSON array of up to 3 distinct titles this row ABSORBED, so a wrong merge is readable off the row. */
+  recurrence_titles: string;
+  /** TD-440 (v5) — the producing instance ('subconscious', 'synapse', …). NULL on pre-v5 rows; NOT backfilled (see suggestions-read). */
+  source_instance: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +248,28 @@ export interface SubconsciousConfig {
    * shared `backend/env.ts:resolveHarness` 4-layer chain.
    */
   harness: string | null;
+  /**
+   * TD-440 — the Jaccard floor at which a re-emitted claim is treated as the
+   * SAME finding and bumps the pending row instead of inserting a new one.
+   * Above 1.0 disables the paraphrase stage entirely (the kill switch), leaving
+   * only exact-key dedup. The default is the knee of a measured sweep over 113
+   * hand-labelled rows across two projects; see `finding-key.ts` and
+   * `docs/architecture/subconscious_engine.md` §Finding key.
+   */
+  dedupe_claim_overlap: number;
+  /**
+   * TD-440 — below this many claim tokens the similarity score is not used at
+   * all and the two token sets must be EQUAL. A three-word claim has no room to
+   * be similar-but-different.
+   */
+  dedupe_min_claim_tokens: number;
+  /**
+   * TD-440 — every Nth recurrence promotes the row one priority step
+   * (low→medium→high, high stays high). This is the property that would have
+   * escalated lifeOS BR-023 after 30 consecutive runs instead of filing 30 rows.
+   * Zero or negative disables escalation.
+   */
+  recurrence_escalate_n: number;
 }
 
 /**
@@ -252,6 +286,19 @@ export const DEFAULT_SUBCONSCIOUS_CONFIG: SubconsciousConfig = {
   llm_daily_budget: 8,
   min_digest_bytes: 10_240,
   harness: null,
+  // MEASURED, then TUNED — and the second word matters. Over 113 hand-labelled
+  // real rows in two projects the highest-scoring pair of GENUINELY DIFFERENT
+  // findings sharing an entity scored 0.226, and 0.25 produced zero false
+  // merges there and on a held-out second-project corpus. But over the full
+  // 410-row population the cluster count is a SMOOTH SLOPE with no plateau
+  // (140 at 0.226, 153 at 0.25, 198 at 0.30 — 2026-09-03), so this is a knob
+  // set inside a clean band, NOT a gap the data shows. Two merges it admits
+  // are arguably distinct findings; both are named in
+  // `docs/architecture/subconscious_engine.md`, and `recurrence_titles` makes
+  // each visible on the row it happened on.
+  dedupe_claim_overlap: 0.25,
+  dedupe_min_claim_tokens: 3,
+  recurrence_escalate_n: 5,
 };
 
 /**

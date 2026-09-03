@@ -312,6 +312,13 @@ export const SUGGESTION_FILTERS: readonly FilterSpec[] = [
   { name: "priority", allowed: SUGGESTION_PRIORITIES },
   { name: "source_module", allowed: null },
   /**
+   * TD-440 — the PRODUCER axis. `allowed: null` deliberately: the writer set is
+   * closed in practice but it is an OPEN registry by design (MAINTAINING row
+   * 78), so a hand-list here would be a dropdown that hides rows the moment a
+   * seventh instance ships. The reader computes the vocabulary from the data.
+   */
+  { name: "source_instance", allowed: null },
+  /**
    * FR-246 — the honest SUBSTRING filter. `allowed: null` because operator
    * prose has no vocabulary.
    *

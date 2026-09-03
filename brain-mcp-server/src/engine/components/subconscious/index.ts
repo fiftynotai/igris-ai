@@ -114,6 +114,22 @@ export function resolveSubconsciousConfig(
     llm_daily_budget: pick('llm_daily_budget', DEFAULT_SUBCONSCIOUS_CONFIG.llm_daily_budget),
     min_digest_bytes: pick('min_digest_bytes', DEFAULT_SUBCONSCIOUS_CONFIG.min_digest_bytes),
     harness: pick('harness', DEFAULT_SUBCONSCIOUS_CONFIG.harness),
+    // TD-440 sibling tuning keys. Additive and resolver-defaulted, so the
+    // config template and `init-config` deliberately do NOT render them —
+    // three tuning knobs on every fresh install is noise, and an absent key
+    // already resolves to the measured default.
+    dedupe_claim_overlap: pick(
+      'dedupe_claim_overlap',
+      DEFAULT_SUBCONSCIOUS_CONFIG.dedupe_claim_overlap,
+    ),
+    dedupe_min_claim_tokens: pick(
+      'dedupe_min_claim_tokens',
+      DEFAULT_SUBCONSCIOUS_CONFIG.dedupe_min_claim_tokens,
+    ),
+    recurrence_escalate_n: pick(
+      'recurrence_escalate_n',
+      DEFAULT_SUBCONSCIOUS_CONFIG.recurrence_escalate_n,
+    ),
   };
 }
 

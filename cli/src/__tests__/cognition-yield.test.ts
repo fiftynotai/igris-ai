@@ -896,7 +896,7 @@ describe("the roster is DERIVED — an instance this code never heard of renders
     expect(d.instances.map((i) => i.id)).not.toContain("(unclaimed:entity_edges)");
   });
 
-  it("AC-5 at scale — one OTHER row absorbs 196 labels while siblings keep theirs", async () => {
+  it("AC-5 at scale — one OTHER row absorbs 195 labels while siblings keep theirs", async () => {
     seedRoster(dbFile(), [
       stub("late_arrival", "suggestions[source_module='late_arrival']"),
       {
@@ -907,7 +907,7 @@ describe("the roster is DERIVED — an instance this code never heard of renders
     seedSuggestions(dbFile(), [
       // A literal sibling that must be EXCLUDED from the complement.
       { source_module: "late_arrival", type_inferred: 1, status: "acted", count: 7 },
-      // 195 LLM-minted labels over 358 rows, the TD-437 measurement's shape.
+      // 195 LLM-minted labels over 358 rows — TD-437's audit, 2026-09-01.
       ...[
         { source_module: "seed_label", type_inferred: 1 as const, status: "acted" as const, count: 5 },
       ],
@@ -921,6 +921,8 @@ describe("the roster is DERIVED — an instance this code never heard of renders
 
     const d = await digest();
     const sub = pick(d, "subconscious");
+    // The seeded audit shape, read back off the digest (TD-437's audit,
+    // 2026-09-01) — a fixed denominator, not a live count of the table.
     expect(sub.produced_rows).toBe(358);
     expect(sub.distinct_label_values).toBe(195);
     // The sibling's 7 rows are NOT in the complement — that exclusion is the

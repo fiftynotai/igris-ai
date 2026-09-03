@@ -659,6 +659,18 @@ export interface SuggestionRow {
   confidence: number | null;
   suggested_action: string | null;
   type_inferred: number;
+  /** TD-440 — the stable finding key. */
+  dedupe_key: string | null;
+  /** TD-440 — the blocking anchor the key was built on. */
+  entity_key: string | null;
+  /** TD-440 — how many times this finding has been emitted. */
+  seen_count: number;
+  /** TD-440 — when it was last re-emitted. */
+  last_seen_at: string | null;
+  /** TD-440 — JSON array of up to 3 titles this row absorbed. */
+  recurrence_titles: string;
+  /** TD-440 — the producing instance; null on pre-v5 rows. */
+  source_instance: string | null;
 }
 
 /**
@@ -673,10 +685,21 @@ export interface SuggestionRow {
  * SAME non-project filters. It is what lets a project-scoped view state the
  * size of the population its own scope excludes — the number is computed over
  * the filters minus the project axis, so it is non-zero while scoped.
+ *
+ * `facets.source_instance` (TD-440) is the PRODUCER vocabulary. It exists
+ * because `source_module` cannot answer "who filed this": the subconscious
+ * alone reports under 195 distinct labels (TD-437's audit, 2026-09-01), so
+ * grouping by module reads as 195 producers instead of one. There are SIX
+ * producer values across eight writer sites, so that is the ceiling on this
+ * facet's key count (plus the pre-v5 unattributed bucket).
  */
 export interface SuggestionsPayload extends ListEnvelope {
   items: SuggestionRow[];
-  facets: { source_module: Record<string, number>; brain_level: number };
+  facets: {
+    source_module: Record<string, number>;
+    brain_level: number;
+    source_instance: Record<string, number>;
+  };
   /** FR-246 — what `q` did, or null. */
   search: SubstringSearch | null;
 }

@@ -299,6 +299,71 @@ describe('the golden can actually fail (self-negative-control)', () => {
     expect(malformed?.evidence).toEqual({});
   });
 
+  /**
+   * TD-440 WIDENED THIS WIRE, and the golden was re-recorded for it. That is
+   * the one move this file's header warns against, so it is fenced by a
+   * mechanical proof rather than a promise: the key set the wrapper emits today
+   * must be a strict SUPERSET of the FR-241 key set, with nothing renamed and
+   * nothing dropped.
+   *
+   * The cause is structural, not a choice: `listSuggestions` is
+   * `SELECT * FROM suggestions` and the handler spreads the row, so every
+   * column the table gains appears on the wire. The alternative — an explicit
+   * column list — would put a second schema in the reader and go stale the next
+   * time a migration lands.
+   */
+  const FR241_KEYS = [
+    'id',
+    'source_module',
+    'project_slug',
+    'title',
+    'evidence',
+    'priority',
+    'status',
+    'created_at',
+    'expires_at',
+    'dismissed_at',
+    'dismissed_reason',
+    'acted_at',
+    'acted_brief_id',
+    'confidence',
+    'suggested_action',
+    'type_inferred',
+  ];
+  const TD440_ADDED = [
+    'dedupe_key',
+    'entity_key',
+    'seen_count',
+    'last_seen_at',
+    'recurrence_titles',
+    'source_instance',
+  ];
+
+  it('the widening is ADDITIVE ONLY — no FR-241 key removed or renamed', () => {
+    const parsed = JSON.parse(wire({})) as {
+      suggestions: Record<string, unknown>[];
+    };
+    const row = parsed.suggestions[0]!;
+    for (const key of FR241_KEYS) {
+      expect(Object.keys(row), `FR-241 key "${key}" disappeared from the wire`).toContain(key);
+    }
+    expect(Object.keys(row).sort()).toEqual([...FR241_KEYS, ...TD440_ADDED].sort());
+  });
+
+  it('the ENVELOPE keys are untouched — only the row widened', () => {
+    const parsed = JSON.parse(wire({})) as Record<string, unknown>;
+    expect(Object.keys(parsed)).toEqual([
+      'suggestions',
+      'count',
+      'total',
+      'limit',
+      'offset',
+    ]);
+    // The reader computes `facets`; the WRAPPER deliberately does not emit it,
+    // and TD-440's third facet does not change that.
+    expect(parsed).not.toHaveProperty('facets');
+  });
+
   it('mutating a row CHANGES the bytes — the golden is not a constant', () => {
     const before = wire({ source_module: 'janitor' });
     db.prepare("UPDATE suggestions SET title = 'renamed' WHERE title = 'another project'").run();

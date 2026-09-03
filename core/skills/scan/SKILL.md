@@ -233,43 +233,51 @@ If both gates pass and the `igris-brain` MCP is available:
    - `status` = `'pending'`
    - `project_slug` = current project slug
    - `limit` = `1000` (handler caps at this value; >1000 pending is a degenerate state)
-2. Group the returned suggestions by `source_module`. Post-FR-118 the
-   `source_module` is OPEN — the LLM names the kind (`type_inferred=1`), so the
-   group set is dynamic, not the fixed `stalled`/`gap`/`conflict`/`pattern`
-   rule modules (those still label any surviving pre-FR-118 rows). Sort the
-   groups by their highest-priority member, then alphabetically by kind. Within
-   each group, the handler already returns rows ordered by `priority`
-   (high > medium > low) then `created_at` DESC, so client-side iteration
-   preserves that order.
+2. Group the returned suggestions by **`source_instance`** — the PRODUCER that
+   wrote the row (`subconscious`, `synapse`, `janitor`, `arbiter`, `curator`,
+   `cartographer`). Do NOT group by `source_module`: it is OPEN post-FR-118 (the
+   LLM names the kind, `type_inferred=1`) and one producer has used 195 distinct
+   values (TD-437's audit, 2026-09-01), so grouping by it renders 195 sections
+   where there are six producer values written by eight sites. Rows written
+   before the producer column existed carry no `source_instance`; group those
+   under `Unattributed`. Sort the groups by their highest-priority member, then
+   alphabetically. Within each group the handler already returns rows ordered
+   by `priority` (high > medium > low) then `created_at` DESC, so client-side
+   iteration preserves that order.
 3. Render each non-empty group as its own subsection (heading = the
-   `source_module` string, title-cased). Empty groups are omitted entirely. If
-   the global `total` is `0`, render the single line `No pending suggestions.`
-   and skip every subsection.
+   `source_instance` string, title-cased). Render `source_module` as a
+   per-row sub-label in the `Kind` column, not as a heading. Empty groups are
+   omitted entirely. If the global `total` is `0`, render the single line
+   `No pending suggestions.` and skip every subsection.
+4. When a row's `seen_count` is greater than 1, append `(seen Nx)` to its title.
+   A finding the brain has re-derived on many runs is a PRIORITY signal, not N
+   rows — that is the whole of TD-440 — so the count is the thing worth showing.
 
 #### Render template
 
 ```
-## Subconscious Suggestions ({total} pending)
+## Suggestions ({total} pending)
 
-### Stalled (N)
-| ID | Priority | Title | Project |
-|----|----------|-------|---------|
-| 12 | high     | TD-005 stalled in In Progress for 35 days | igris-ai |
+### Subconscious (N)
+| ID | Priority | Kind | Title | Project |
+|----|----------|------|-------|---------|
+| 12 | high     | stalled_brief | TD-005 stalled in In Progress for 35 days (seen 6x) | igris-ai |
+| 19 | medium   | abandoned_project | Project "old-app" has been quiet for 95 days | old-app |
 
-### Gap (N)
-| ID | Priority | Title | Project |
-|----|----------|-------|---------|
-| 19 | medium   | Project "old-app" has been quiet for 95 days | old-app |
+### Synapse (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 47 | low      | edge_inference | Edge: learning #112 derived_from #389 |
 
-### Conflict (N)
-| ID | Priority | Title |
-|----|----------|-------|
-| 47 | medium   | Possible contradiction: Learning #112 vs #389 |
+### Janitor (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 51 | low      | near_dupe | Two near-duplicate learnings in igris-ai |
 
-### Pattern (N)
-| ID | Priority | Title |
-|----|----------|-------|
-| 51 | medium   | Pattern: brief activity skews toward Monday in igris-ai (60% of last 50) |
+### Unattributed (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 3  | medium   | pattern | Pattern: brief activity skews toward Monday in igris-ai |
 ```
 
 If `total` exceeds 1000 (the handler ceiling), append the trailing line:

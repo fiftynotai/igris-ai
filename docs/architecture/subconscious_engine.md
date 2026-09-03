@@ -119,22 +119,251 @@ flag is the pending-suggestions table.
 
 ---
 
-## The dismiss-reason learning loop (still live)
+## The finding key (TD-440)
 
-The one piece of FR-106 that survives is the dismiss loop — it is instance-agnostic
-bookkeeping, not a detector. `subconscious/runner.ts` keeps:
+Every suggestion carries a **stable, entity-anchored key** that the model's free-text
+label cannot perturb. `subconscious/finding-key.ts` owns it, and the persist path
+uses it to BUMP a recurrence counter on the pending row instead of filing another
+one.
 
-- `computeEvidenceSignature(module, evidence)` — a stable per-kind key (the same row
-  the dismiss UPSERT lands on each time). The subconscious instance reuses it so an
-  LLM suggestion that maps onto a previously-dismissed signature is suppressed
-  before insert.
-- `recordDismissPattern(...)` — the `igris_suggestion_dismiss` handler UPSERTs the
-  signature into `dismissed_patterns` (dismiss_count++, reasons appended, capped).
+**The defect it fixes.** TD-437's audit, 2026-09-01, judged **358** subconscious rows
+and clustered them by hand to roughly **25** distinct findings. The old dedupe key
+began with `source_module`, which is the model's free choice — **195 distinct labels
+over those 358 rows, 147 used exactly once** — so a re-emission under a fresh label
+was a different key and the dedup could never fire. One finding (`fifty_eco_system` is
+abandoned) occupied 38 rows under 9 labels; that grouping is a hand-labelling of the
+corpus, not a query, and is not re-derivable in SQL.
 
-After `dismiss_suppress_count` dismisses (default 2) the signature is always
-suppressed; a single dismiss is silenced for `dismiss_cooldown_days` and then allowed
-to re-emit. This gives the operator a quiet, code-free way to silence a noisy
-suggestion kind.
+**These are SNAPSHOTS, and here is how to re-take them.** The population is the
+subconscious's own output — rows whose kind the LLM named, excluding the five fixed
+labels the deterministic producers write:
+
+```sql
+-- the subconscious's rows; add `AND status = 'pending'` for the live queue
+SELECT COUNT(*) AS rows_, COUNT(DISTINCT source_module) AS labels
+  FROM suggestions
+ WHERE type_inferred = 1
+   AND source_module NOT IN ('janitor','arbiter','curator','cartographer','edge_inference');
+```
+
+Re-run 2026-09-03 against that population as it stood **before** the 2026-09-01
+triage (1,288 rows dismissed between 10:52:51 and 11:07:12 that morning), it returns
+**360 rows over 196 labels, 147 used exactly once**. The `147` is identical; the
+two-row, one-label gap against TD-437's denominator is the audit's own scope, not
+drift, and it is the reason this section names TD-437 rather than presenting 358 as a
+table census. Two readings taken 2026-09-03 for scale: whole table **410 rows / 236
+labels**, still-pending slice **50 rows / 47 labels**.
+
+**The figure is a fixed audit denominator, never a current count, so every site in
+this repo that quotes it must name BOTH `TD-437` and the date.** Do not take that on
+trust — re-derive it, because the obvious sweep cannot see the defect. A sweep that
+ENUMERATES on `TD-437` alone reports clean, and one that enumerates on `2026-09-01`
+alone reports clean:
+only the INTERSECTION is empty, so each conjunct alone reports success without having
+checked the claim. Three details are load-bearing and each one hid a site during
+TD-440: the enumeration must include UNTRACKED files (`git ls-files` alone omits new
+ones, which is where two of the misses lived); the match must span a TWO-LINE JOIN
+(the figure wraps mid-phrase in `core/skills/scan/SKILL.md`); and each number must be
+keyed to its own noun — the label count to a label word, the row count to a row word —
+or the unrelated push-row count in `docs/reference/hunt-cost-record.md` is swept in as
+a false member.
+
+```bash
+git ls-files --cached --others --exclude-standard | while IFS= read -r f; do
+  case "$f" in *CHANGELOG.md|*.png|*.gif|*.gz|*.woff2) continue;; esac
+  [ -f "$f" ] || continue
+  awk -v F="$f" '
+    { L[NR] = $0 }
+    END { for (i = 1; i <= NR; i++) {
+      j = L[i] " " (i < NR ? L[i+1] : "")
+      if (j !~ /195[^0-9]{0,30}(label|value)/ && j !~ /(label|value)[a-z_]*[^0-9]{0,30}195/ &&
+          j !~ /358[^0-9]{0,30}row/     && j !~ /row[a-z_]*[^0-9]{0,30}358/) continue
+      lo = i > 10 ? i - 10 : 1; hi = i + 10 < NR ? i + 10 : NR
+      td = 0; dt = 0
+      for (k = lo; k <= hi; k++) { if (L[k] ~ /TD-437/) td = 1; if (L[k] ~ /2026-09-01/) dt = 1 }
+      printf "%s %s:%d (TD-437=%d date=%d)\n", (td && dt) ? "OK        " : "INCOMPLETE", F, i, td, dt
+    } }' "$f"
+done | sort
+```
+
+`CHANGELOG.md` is excluded: it quotes shipped entries verbatim and is not rewritten to
+match a later convention. Reading at TD-440's commit, 2026-09-03: 30 hits across ten
+files, every one `OK`. Both halves are armed: deleting the date at one site, and
+then deleting `TD-437` instead, reds that site's three lines each time.
+
+**Two stages.**
+
+| stage | function | what it does |
+|---|---|---|
+| BLOCK | `entityKey(candidate)` | ONE anchor: the project, else the primary cited brief, else learning, else suggestion, else `global` |
+| DISCRIMINATE | `claimsMatch(a, b, …)` | subject-id gate, then a short-claim guard, then Jaccard over `claimTokens` |
+
+`entityKey` deliberately does **not** use the whole set of cited identifiers. The
+model attaches an *illustrative* `evidence.brief_id` to a project-level finding and
+varies which one — across the 38 abandoned-project rows it cited AC-001, BR-037,
+BR-029, BR-040, BR-074 and null, while `project_slug` stayed constant. A key built
+from the set splits one finding across six blocks; measured on a 73-row labelled
+corpus it collapses to 37 rows where the anchor collapses to 10.
+
+`claimTokens` reuses `perception/dedup.ts#normalizeForDedup` verbatim rather than
+re-implementing text normalisation (L-138's fix is the source of truth, tuned on a
+201-pair labelled corpus), then drops tokens under 3 characters and pure-numeric
+tokens — day counts move between re-emissions of one finding.
+
+**The subject gate.** `normalizeForDedup` turns `BR-128` into `br 128`; `br` is two
+characters and `128` is pure-numeric, so both are dropped and a cited brief is
+INVISIBLE to the claim tokens. Without a gate, `BR-128 is the only P0-Critical
+brief …` and `BR-023 is the only P0-Critical brief …` score **1.000** and merge.
+`subjectIds(title)` re-extracts the identifiers the TITLE names, and two claims whose
+subject sets are both non-empty and DISJOINT never match. One empty set is not
+disjoint, so a project-level finding still absorbs a re-emission that happens to name
+an example brief.
+
+**Why Jaccard, and why 0.25.** Both were chosen by sweeping a 113-row hand-labelled
+corpus of REAL titles across two projects, and the sweep inverted the expectation.
+The Szymkiewicz–Simpson overlap coefficient (`|A∩B| / min(|A|,|B|)`) is length-robust,
+which sounded right — but on real data it is length-robust in the wrong direction: it
+scored a 4-token title 0.750 against a 16-token one and produced false merges on
+BOTH projects at every threshold with usable recall. Jaccard produced zero false
+merges on 2,628 + 780 adversarial same-entity pairs at 0.25. On that labelled corpus
+the highest-scoring pair of genuinely different findings sharing an entity scored
+**0.226**.
+
+**0.25 IS A TUNED KNOB, NOT A PROVEN GAP, AND THE DIFFERENCE IS WORTH THE PARAGRAPH.**
+Replaying the shipped `entityKey` / `claimsMatch` over the FULL population (410 rows,
+38 anchors — the query is in "The defect it fixes" above), measured 2026-09-03, the
+cluster count is a smooth slope with no plateau anywhere near the line:
+
+| threshold | 0.226 | 0.240 | **0.250** | 0.260 | 0.300 |
+|---|---|---|---|---|---|
+| clusters | 140 | 147 | **153** | 168 | 198 |
+
+There is no step in that curve to point at. What the sweep established is a clean
+BAND on the labelled corpus, and 0.25 is a value chosen inside it — every claim in
+this repo that reads as "the lowest step above a measured separation" overstates the
+evidence and should be read as this paragraph instead.
+
+Two merges the line admits are arguably distinct findings, named so they can be
+argued with rather than left implicit:
+
+- `[1660]` *"Four active projects carry 19 open briefs between them and zero
+  learnings…"* absorbed at **0.250** into `[1291]`, the lifeOS-has-zero-learnings head.
+- `[1473]` *"lifeOS has 14 briefs untouched for ~119 days… yet no stall suggestion
+  has ever been raised"* absorbed at **0.259** into `[1275]`, the lifeOS `BR-023`
+  P0-Critical head.
+
+An independent rebuild of the same corpus by the reviewer put the SAME two
+absorptions at 0.286 and 0.276 against different heads. The absorptions reproduce;
+the scores and the heads do not, because the accept loop is greedy first-match
+against cluster HEADS and head assignment moves with corpus order. That instability
+is itself the argument: these numbers are not a boundary.
+
+One trap, recorded because it looks like a precision reading and is not. The highest
+same-anchor pair landing in DIFFERENT clusters at 0.25 scores **0.944** — three
+near-identical `fifty_eco_system` re-emissions that were each absorbed by a different
+earlier head. That is a RECALL artefact of the greedy loop, not a false-merge ceiling.
+The quantity that means something on an unlabelled corpus is the highest same-anchor
+pair scoring BELOW the line (**0.244** here), and even that is not the labelled
+corpus's 0.226, because "genuinely different" is a label this population does not
+carry.
+
+The four falsifiers below all hold at 0.25, so the value stands — and
+`recurrence_titles` puts both merges above on the row they happened on, where an
+operator can overrule them without reading a log.
+
+The trade is deliberate and asymmetric. **A false merge destroys a true finding** —
+TD-437 measured ~23 of ~25 distinct findings as true and actionable — while a missed
+merge only leaves the row count where it already was. So precision is the axis that
+matters, and it is asserted PAIRWISE in
+`__tests__/finding-key.test.ts`. Recall is asserted per GROUP, because the two arms
+overlap pairwise (the lowest SAME pair is 0.176, below the highest DIFFERENT pair at
+0.192) and no threshold separates every pair. The matcher does not need it to: a
+candidate is compared against every pending row in its block and takes the best
+match, so a re-emission that misses the first anchor lands on a later one.
+
+**What a bump records.** `seen_count + 1`, a fresh `last_seen_at`, an extended
+`expires_at` (a still-recurring finding must not lapse), the absorbed title appended
+to `recurrence_titles` (last 3 distinct), and a one-step priority promotion every
+`recurrence_escalate_n`th sighting — the property that would have escalated lifeOS
+BR-023 after 30 runs instead of filing 30 rows. **`created_at` is not touched**: it is
+the LWW timestamp `SYNC_TABLES` compares on, so a recurrence does not re-push the row.
+
+`recurrence_titles` is the over-merge falsifier that needs no second table and no log
+archaeology — a merge that should not have happened is visible by reading the row it
+happened on.
+
+**Kill switch:** `dedupe_claim_overlap` above 1.0 disables the paraphrase stage and
+leaves only exact-key dedup, mirroring perception's `dedup_enabled`.
+
+**Rejected: cosine.** `utils/vector-search.ts` allowlists only
+`learnings_vec`/`briefs_vec`/`errors_vec`, so a similarity model here would need a
+`suggestions_vec` table, per-row embedding, an insert/delete lifecycle and an
+sqlite-vec-absent degradation path. Once the entity is the blocking key the claim
+discriminator only has to separate 1–3 findings within one entity, which is a
+low-resolution problem. If the boundary corpus ever shows lexical overlap failing,
+upgrading the discriminator is a contained change behind `claimsMatch`'s signature.
+
+---
+
+## The dismiss-reason learning loop
+
+`subconscious/runner.ts` owns both halves:
+
+- `recordDismissPattern(...)` — the WRITE side. UPSERTs into `dismissed_patterns`
+  (dismiss_count++, reasons appended, capped). **Both** dismiss writers call it: the
+  `igris_suggestion_dismiss` handler and `actions/kinds.ts#applyDismissExisting`.
+- `isSuppressedByDismissal(...)` — the READ side. Consulted by the subconscious
+  persist path before an INSERT.
+
+After `dismiss_suppress_count` dismisses (default 2) the finding is suppressed
+permanently; a single dismiss is silenced for `dismiss_cooldown_days` and then allowed
+to re-emit. This gives the operator a quiet, code-free way to silence a noisy finding.
+
+> **THIS POLICY DID NOT EXIST UNTIL TD-440, AND THREE DOCUMENTS INCLUDING THIS ONE
+> SAID IT DID.** `dismissed_patterns` was write-only from FR-106 through FR-118: the
+> only `SELECT` on the table was inside `recordDismissPattern` itself, deciding INSERT
+> vs UPDATE, and `dismiss_suppress_count` / `dismiss_cooldown_days` were read by no
+> code at all. A finding the operator explicitly dismissed came back on the next run.
+> `applyDismissExisting` was a second dismiss writer that recorded nothing, so a
+> suggestion the model itself superseded taught the loop nothing.
+
+Since TD-440 the loop is keyed on **`(source_instance, project_slug, dedupe_key)`** —
+the producer and the stable finding key. The table's schema, its composite UNIQUE and
+its `syncKey` are byte-unchanged; the two columns are REPURPOSED (`source_module` now
+carries the producer id, `evidence_signature` the finding key). That collapses SIX
+producer values — written by eight sites, since `janitor` is stamped three times — in
+place of 195 label values (TD-437's audit, 2026-09-01), and finally makes the
+UNIQUE constraint
+do its job, with no `syncKey` change. Rows written before TD-440 simply stop matching,
+which is correct — their signatures were keyed on a label the model re-invents every
+run. `computeEvidenceSignature` is retained for reading those historical rows only.
+
+---
+
+## Producer attribution (TD-440)
+
+`suggestions.source_instance` names the component that wrote the row —
+`subconscious`, `synapse`, `janitor`, `arbiter`, `curator`, `cartographer`. It exists
+because `source_module` structurally cannot answer "who filed this": the subconscious
+alone reports under 195 distinct labels (TD-437's audit, 2026-09-01), so grouping by
+module reads as 195 producers where there are **six producer values written by eight
+sites** — `janitor` is stamped by the extractor and by both deterministic sweeps. Six
+and eight are different numbers about different things: six bounds what the producer
+facet can ever render, eight is the set `__tests__/source-instance.test.ts` re-derives
+and holds to its stamp.
+
+**Every new `suggestions` writer MUST stamp it**, or its rows land in the
+`(unattributed)` facet bucket and silently understate whoever they belong to.
+`__tests__/source-instance.test.ts` re-derives the writer set from the source on every
+run rather than checking a list, so a ninth writer that forgets reds immediately.
+
+The two deterministic janitor sweeps (`janitor/hygiene.ts`, `janitor/emergence.ts`)
+are not cognition instances, so they stamp `janitor` — the owning component, which is
+what an operator would look for.
+
+Rows written before v5 read as NULL and are **deliberately not backfilled**:
+attributing them would need a hand-list of the sibling `source_module` literals over
+an OPEN registry. They surface as the empty-string facet bucket instead.
 
 ---
 
@@ -154,9 +383,37 @@ suggestion kind.
 - **v4** — `DROP TABLE IF EXISTS pattern_observations`. Idempotent; safe on a brain
   that never applied v2. `suggestions` / `dismissed_patterns` are untouched. The
   table was never in `SYNC_TABLES`, so there is no cross-machine merge state to lose.
+- **v5** (TD-440) — six additive `suggestions` columns + two indexes, ALTER-only:
+  `dedupe_key` / `entity_key` (the finding key), `seen_count` / `last_seen_at` /
+  `recurrence_titles` (the recurrence record that replaces a duplicate row) and
+  `source_instance` (the producer). The keys are backfilled in JS by
+  `finding-key.ts#backfillFindingKeys`, called once per run from `runSubconscious` —
+  a WRITE path, never from `buildContext`, which is a read slot — because the key
+  needs normalisation and a hash and cannot be computed in SQL.
 
-`suggestions` is not in `SYNC_TABLES` either — suggestions are machine-local review
-artifacts, re-derivable from brain state on the next run.
+### These tables ARE synced; the new columns are not
+
+**`suggestions` IS in `SYNC_TABLES`** (`tools/sync.ts`, `syncKey:
+['source_module','project_slug','title']`), and so is `dismissed_patterns`. An
+earlier version of this document said the opposite, and anyone planning a column
+change from it would have concluded, wrongly, that it was free.
+
+The six v5 columns are nonetheless **deliberately absent from the sync config**, and
+this is the reasoning so nobody re-derives it:
+
+- `mergeRows` reads and writes only `config.columns`, and push filters to the
+  configured list — a column absent from the config is invisible to every
+  replication path.
+- `suggestions` is **push-only** (absent from `BOOT_SYNC_PULL_TABLES`) and excluded
+  from export, so no inbound row can ever arrive with these columns NULL.
+- The precedent is exact: `learnings.seen_again_count` / `last_seen_at` are excluded
+  from `SYNC_TABLES` **by design**, because a rediscovery count is a per-machine usage
+  signal. `seen_count` is the same quantity for the same reason; the keys are
+  derive-on-receiver.
+
+Adding any of them to the config would make the remote's unmigrated schema a per-row
+failure and would oblige a manifest regeneration plus a remote-first deploy. It buys
+nothing — a recurrence count is about *this* machine's runs.
 
 ---
 

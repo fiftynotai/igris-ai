@@ -32,7 +32,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 1,
@@ -73,7 +79,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 5,
@@ -94,7 +106,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -115,7 +133,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 3,
@@ -133,7 +157,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 1,
@@ -154,7 +184,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 5,
@@ -186,7 +222,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -207,7 +249,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 2,
@@ -238,7 +286,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 5,
@@ -259,7 +313,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -280,7 +340,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 3,
@@ -312,7 +378,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -333,7 +405,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 3,
@@ -351,7 +429,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 1,
@@ -372,7 +456,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 4,
@@ -404,7 +494,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -425,7 +521,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 1,
@@ -446,7 +548,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 3,
@@ -477,7 +585,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -498,7 +612,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 3,
@@ -516,7 +636,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 1,
@@ -537,7 +663,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 4,
@@ -568,7 +700,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 5,
@@ -589,7 +727,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 2,
@@ -610,7 +754,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 3,
@@ -628,7 +778,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     },
     {
       "id": 1,
@@ -649,7 +805,13 @@ exports[`FR-241 — igris_suggestion_list wire output is unchanged by the lift >
       "acted_brief_id": null,
       "confidence": null,
       "suggested_action": null,
-      "type_inferred": 0
+      "type_inferred": 0,
+      "dedupe_key": null,
+      "entity_key": null,
+      "seen_count": 1,
+      "last_seen_at": null,
+      "recurrence_titles": "[]",
+      "source_instance": null
     }
   ],
   "count": 5,

@@ -26,6 +26,14 @@
  * was never in SYNC_TABLES (nothing to migrate cross-machine). `suggestions`
  * and `dismissed_patterns` are untouched by the drop.
  *
+ * TD-440 adds v5: six additive `suggestions` columns (the finding key, the
+ * recurrence counter and the producer id) + two indexes. ALTER-only, no
+ * rebuild. `suggestions` and `dismissed_patterns` ARE both in `SYNC_TABLES`
+ * (`tools/sync.ts`) — the doc that says otherwise is being corrected — but the
+ * six new columns are DELIBERATELY not added to that config; see the v5
+ * migration comment for the reasoning, which is recorded there so nobody
+ * re-derives it.
+ *
  * Per-component migration registry (memory #53): these are applied by
  * `storage.runMigrations('subconscious', subconsciousMigrations)` keyed on
  * `(component, version)` in `engine_migrations` — NOT the legacy `db.ts`
@@ -59,6 +67,13 @@ import type { Migration } from '../../types.js';
  * Version 4 (FR-118 M4b): `DROP TABLE IF EXISTS pattern_observations`.
  *   Idempotent; safe on a brain that never applied v2 (the table is simply
  *   absent). `suggestions` / `dismissed_patterns` are not touched.
+ *
+ * Version 5 (TD-440): six additive `suggestions` columns + two indexes —
+ *   `dedupe_key` / `entity_key` (the finding key), `seen_count` /
+ *   `last_seen_at` / `recurrence_titles` (the recurrence record that replaces a
+ *   duplicate row) and `source_instance` (which producer wrote the row).
+ *   ALTER-only and idempotent per column via the version guard; the keys are
+ *   backfilled in JS because they need normalisation and a hash.
  */
 export const subconsciousMigrations: Migration[] = [
   {
@@ -193,6 +208,50 @@ export const subconsciousMigrations: Migration[] = [
     // SYNC_TABLES, so there is no cross-machine merge state to preserve.
     sql: `
       DROP TABLE IF EXISTS pattern_observations;
+    `,
+  },
+  {
+    version: 5,
+    description:
+      'Add the TD-440 finding-key, recurrence and producer columns to suggestions (6 additive columns + 2 indexes)',
+    // ALTER-ONLY — no table rebuild. SQLite permits `ADD COLUMN` with NOT NULL
+    // when a non-null DEFAULT is supplied, which is why the two counters can be
+    // NOT NULL while the three keys stay nullable (they are backfilled in JS by
+    // `finding-key.ts#backfillFindingKeys`; the key needs normalisation and a
+    // hash, so it cannot be computed in SQL).
+    //
+    // WHY NONE OF THESE JOINS `SYNC_TABLES`, recorded here so the next reader
+    // does not re-derive it (MAINTAINING carries the same reasoning):
+    //   - `suggestions` IS in SYNC_TABLES (`tools/sync.ts`) and so is
+    //     `dismissed_patterns`. The claim in
+    //     `docs/architecture/subconscious_engine.md` that it is not was FALSE
+    //     and is corrected by this brief.
+    //   - `mergeRows` reads and writes only `config.columns`, and push filters
+    //     to the configured column list, so a column absent from that config is
+    //     invisible to every replication path.
+    //   - `suggestions` is PUSH-ONLY (absent from `BOOT_SYNC_PULL_TABLES`) and
+    //     excluded from export, so no inbound row can ever arrive with these
+    //     columns NULL.
+    //   - The precedent is exact: `learnings.seen_again_count` / `last_seen_at`
+    //     are excluded from SYNC_TABLES BY DESIGN because a rediscovery count is
+    //     a per-machine usage signal. `seen_count` here is the same quantity for
+    //     the same reason, and the three keys are derived-on-receiver.
+    // Adding any of them to the sync config would make the remote's unmigrated
+    // schema a per-row failure and would oblige a manifest regeneration and a
+    // remote-first deploy. It buys nothing: a recurrence count is about THIS
+    // machine's runs.
+    sql: `
+      ALTER TABLE suggestions ADD COLUMN dedupe_key TEXT;
+      ALTER TABLE suggestions ADD COLUMN entity_key TEXT;
+      ALTER TABLE suggestions ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE suggestions ADD COLUMN last_seen_at TEXT;
+      ALTER TABLE suggestions ADD COLUMN recurrence_titles TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE suggestions ADD COLUMN source_instance TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_suggestions_entity_key
+        ON suggestions(entity_key, status);
+      CREATE INDEX IF NOT EXISTS idx_suggestions_dedupe_key
+        ON suggestions(dedupe_key, status);
     `,
   },
 ];

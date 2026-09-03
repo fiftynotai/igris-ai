@@ -34,6 +34,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { listSuggestions } from '../suggestions-read.js';
+import { subconsciousMigrations } from '../../engine/components/subconscious/schema.js';
 
 let db: Database.Database;
 
@@ -421,5 +422,189 @@ describe('L-133 — a missing table DEGRADES, it does not throw', () => {
     // Without this, "degraded is null on the seeded db" and "degraded is a
     // constant null" are indistinguishable one level up.
     expect(listSuggestions(db).degraded).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-440 — the PRODUCER facet
+// ---------------------------------------------------------------------------
+
+/**
+ * The fixture above is deliberately PRE-v5 — it hand-rolls the FR-118 column
+ * set — and that is now load-bearing coverage rather than staleness: the
+ * dashboard opens the operator's brain `{readonly:true}` and cannot migrate it,
+ * so a brain that has not booted subconscious v5 must read exactly as it did
+ * before rather than throwing `no such column`. These tests use a v5 table.
+ */
+describe('facets.source_instance — the producer axis (TD-440)', () => {
+  let v5: Database.Database;
+
+  /**
+   * 20 rows, 16 distinct `source_module` values, 3 producers. The asymmetry is
+   * the point: the two facets must disagree, or a producer facet computed off
+   * the wrong column would still look right.
+   */
+  const ROWS: Array<[string, string, string]> = [
+    ['abandoned_project', 'subconscious', 'pending'],
+    ['project_abandonment', 'subconscious', 'pending'],
+    ['portfolio_overload', 'subconscious', 'pending'],
+    ['stalled_epidemic', 'subconscious', 'pending'],
+    ['duplicate_project_slug', 'subconscious', 'pending'],
+    ['systemic_process_gap', 'subconscious', 'pending'],
+    ['suggestion_queue_flood', 'subconscious', 'pending'],
+    ['unchecked_criteria_root_cause', 'subconscious', 'pending'],
+    ['learning_capture_gap', 'subconscious', 'pending'],
+    ['stale_brief_backlog', 'subconscious', 'dismissed'],
+    ['edge_inference', 'synapse', 'pending'],
+    ['edge_inference', 'synapse', 'pending'],
+    ['edge_inference', 'synapse', 'pending'],
+    ['edge_inference', 'synapse', 'dismissed'],
+    ['janitor', 'janitor', 'pending'],
+    ['janitor', 'janitor', 'pending'],
+    ['re_evaluate_rejection', 'janitor', 'pending'],
+    ['propose_edge_type', 'janitor', 'pending'],
+    ['near_dupe', 'janitor', 'pending'],
+    ['outdated_knowledge', 'janitor', 'pending'],
+  ];
+
+  beforeEach(() => {
+    v5 = new Database(':memory:');
+    for (const m of subconsciousMigrations) v5.exec(m.sql);
+    const ins = v5.prepare(
+      `INSERT INTO suggestions
+         (source_module, project_slug, title, evidence, priority, status, source_instance)
+       VALUES (?, 'a', 't', '{}', 'medium', ?, ?)`,
+    );
+    for (const [mod, inst, status] of ROWS) ins.run(mod, status, inst);
+  });
+
+  afterEach(() => {
+    v5.close();
+  });
+
+  it('the fixture is asymmetric — 16 labels but 3 producers', () => {
+    // The arming check. If the two axes agreed, every assertion below could
+    // pass off the wrong column.
+    expect(new Set(ROWS.map((r) => r[0])).size).toBe(16);
+    expect(new Set(ROWS.map((r) => r[1])).size).toBe(3);
+  });
+
+  it('reports ONE key per producer, not one per label', () => {
+    const r = listSuggestions(v5, { status: 'pending' });
+    expect(Object.keys(r.facets.source_instance).sort()).toEqual([
+      'janitor',
+      'subconscious',
+      'synapse',
+    ]);
+    expect(r.facets.source_instance).toEqual({ janitor: 6, subconscious: 9, synapse: 3 });
+    // ...while the module facet still reports the full open vocabulary.
+    expect(Object.keys(r.facets.source_module).length).toBeGreaterThan(3);
+  });
+
+  it('is ordered count DESC then name ASC, like its sibling', () => {
+    const r = listSuggestions(v5, { status: 'pending' });
+    expect(Object.keys(r.facets.source_instance)).toEqual([
+      'subconscious',
+      'janitor',
+      'synapse',
+    ]);
+  });
+
+  it('OMITS ITS OWN axis — selecting a producer does not collapse the control', () => {
+    const r = listSuggestions(v5, { status: 'pending', source_instance: 'synapse' });
+    expect(r.total).toBe(3);
+    // The list narrowed...
+    expect(r.suggestions.every((s) => s.source_instance === 'synapse')).toBe(true);
+    // ...but the control still offers every producer, or the operator is stranded.
+    expect(r.facets.source_instance).toEqual({ janitor: 6, subconscious: 9, synapse: 3 });
+  });
+
+  it('KEEPS every other filter — the other half of the minus-its-own-axis rule', () => {
+    const all = listSuggestions(v5, {}).facets.source_instance;
+    const pending = listSuggestions(v5, { status: 'pending' }).facets.source_instance;
+    expect(all).toEqual({ janitor: 6, subconscious: 10, synapse: 4 });
+    expect(pending).toEqual({ janitor: 6, subconscious: 9, synapse: 3 });
+    expect(pending).not.toEqual(all);
+  });
+
+  it('a source_module filter DOES narrow the producer facet (it is not its own axis)', () => {
+    const r = listSuggestions(v5, { status: 'pending', source_module: 'edge_inference' });
+    expect(r.facets.source_instance).toEqual({ synapse: 3 });
+    // ...and symmetrically, the module facet drops the module clause and keeps
+    // the producer one.
+    const byProducer = listSuggestions(v5, {
+      status: 'pending',
+      source_instance: 'synapse',
+    });
+    expect(byProducer.facets.source_module).toEqual({ edge_inference: 3 });
+  });
+
+  it('the source_instance FILTER round-trips', () => {
+    expect(listSuggestions(v5, { source_instance: 'janitor' }).total).toBe(6);
+    expect(listSuggestions(v5, { source_instance: 'nobody' }).total).toBe(0);
+  });
+
+  it('a NULL producer surfaces as the empty-string bucket, never as "null"', () => {
+    v5.prepare(
+      `INSERT INTO suggestions (source_module, project_slug, title, evidence, priority, status)
+       VALUES ('legacy_label', 'a', 't', '{}', 'medium', 'pending')`,
+    ).run();
+    const r = listSuggestions(v5, { status: 'pending' });
+    expect(r.facets.source_instance['']).toBe(1);
+    expect(r.facets.source_instance).not.toHaveProperty('null');
+  });
+
+  it('the row carries the six v5 columns onto the wire', () => {
+    const row = listSuggestions(v5, { source_instance: 'synapse', limit: 1 }).suggestions[0]!;
+    expect(row.source_instance).toBe('synapse');
+    expect(row.seen_count).toBe(1);
+    expect(row.recurrence_titles).toBe('[]');
+    expect(row.dedupe_key).toBeNull();
+    expect(row.entity_key).toBeNull();
+    expect(row.last_seen_at).toBeNull();
+  });
+});
+
+describe('TD-440 — a PRE-v5 brain degrades instead of throwing', () => {
+  it('omits the producer facet entirely rather than failing the read', () => {
+    const old = new Database(':memory:');
+    try {
+      old.exec(DDL);
+      old
+        .prepare(
+          `INSERT INTO suggestions (source_module, project_slug, title, priority, status)
+           VALUES ('gap', 'a', 't', 'medium', 'pending')`,
+        )
+        .run();
+
+      const r = listSuggestions(old, {});
+      // The read SUCCEEDS — this is the dashboard's path on an unmigrated brain.
+      expect(r.total).toBe(1);
+      expect(r.degraded).toBeNull();
+      expect(r.facets.source_instance).toEqual({});
+      // ...and the sibling facets are untouched.
+      expect(r.facets.source_module).toEqual({ gap: 1 });
+    } finally {
+      old.close();
+    }
+  });
+
+  it('a source_instance FILTER on a pre-v5 brain is ignored, not an error', () => {
+    const old = new Database(':memory:');
+    try {
+      old.exec(DDL);
+      old
+        .prepare(
+          `INSERT INTO suggestions (source_module, project_slug, title, priority, status)
+           VALUES ('gap', 'a', 't', 'medium', 'pending')`,
+        )
+        .run();
+      // A stale bookmark carrying `?source_instance=synapse` must not 500 the
+      // queue on a brain that has never heard of the column.
+      expect(() => listSuggestions(old, { source_instance: 'synapse' })).not.toThrow();
+      expect(listSuggestions(old, { source_instance: 'synapse' }).total).toBe(1);
+    } finally {
+      old.close();
+    }
   });
 });

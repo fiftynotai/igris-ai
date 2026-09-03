@@ -23,7 +23,6 @@ import { errMsg, errorResult, successResult } from '../../helpers.js';
 // FR-241 — the pure `db`-param reader this handler is now the wrapper for.
 import { listSuggestions } from '../../../tools/suggestions-read.js';
 import {
-  computeEvidenceSignature,
   recordDismissPattern,
   runSubconscious,
 } from './runner.js';
@@ -36,7 +35,16 @@ import {
   type SuggestionPriority,
   type SuggestionStatus,
 } from './types.js';
+import { candidateFromRow, findingKey } from './finding-key.js';
 import { handleEdgeCreate } from '../edges/handlers.js';
+
+/**
+ * The `source_instance` stamped on a dismiss pattern for a row written before
+ * TD-440 added the column. Named rather than inlined so the two dismiss writers
+ * agree, and so a pre-v5 row's patterns cannot silently collide with a real
+ * producer's.
+ */
+export const LEGACY_PRODUCER_ID = 'legacy';
 import { applyAction } from './actions/index.js';
 import type { LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
 
@@ -279,21 +287,19 @@ export function handleSuggestionDismiss(args: Record<string, unknown>): ToolResu
        WHERE id = ?`,
     ).run(reason, id);
 
-    let evidence: Record<string, unknown> = {};
-    try {
-      const parsed: unknown = JSON.parse(existing.evidence);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        evidence = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // empty evidence is fine — falls through to the fallback signature
-    }
-    const signature = computeEvidenceSignature(existing.source_module, evidence);
+    // TD-440 — the dismiss pattern is keyed on (producer, project, FINDING
+    // KEY), not on (LLM label, project, evidence signature). The old key
+    // STARTED with `source_module`, which the model re-invents every run (195
+    // distinct labels over 358 rows — TD-437's audit, 2026-09-01), so a
+    // re-emission under a fresh label was a different key and the loop could
+    // never fire on the rows that most needed it. `dedupe_key` is null only on
+    // a row written before v5; deriving it here keeps the loop working on the
+    // existing queue.
     recordDismissPattern(
       db,
-      existing.source_module,
+      existing.source_instance ?? LEGACY_PRODUCER_ID,
       existing.project_slug,
-      signature,
+      existing.dedupe_key ?? findingKey(candidateFromRow(existing)),
       reason,
       getActiveConfig(),
     );

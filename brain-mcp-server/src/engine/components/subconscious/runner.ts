@@ -16,13 +16,21 @@
  * subconscious instance replaced it as the live path. Nothing imports the rule
  * engine any more.
  *
- * Dismiss-reason learning loop (Q3=B in the FR-106 answers, still live):
- *   - A suggestion's `evidence` is canonicalized into a stable string per
- *     module (see `computeEvidenceSignature`).
- *   - Dismissing a suggestion UPSERTS the signature into `dismissed_patterns`
- *     (see `recordDismissPattern`). The instance's persist path reuses
- *     `computeEvidenceSignature` so an LLM suggestion that maps onto a
- *     previously-dismissed signature is suppressed before insert.
+ * Dismiss-reason learning loop (Q3=B in the FR-106 answers):
+ *   - Dismissing a suggestion UPSERTS its finding key into `dismissed_patterns`
+ *     (see `recordDismissPattern`), from BOTH dismiss writers — the MCP handler
+ *     and `actions/kinds.ts#applyDismissExisting`.
+ *   - The subconscious persist path consults `isSuppressedByDismissal` before
+ *     inserting, so a re-emission of a dismissed finding is suppressed.
+ *
+ *   UNTIL TD-440 THE SECOND HALF DID NOT EXIST. The loop was write-only: the
+ *   only `SELECT` on `dismissed_patterns` was inside `recordDismissPattern`,
+ *   and `dismiss_suppress_count` / `dismiss_cooldown_days` were read by no
+ *   code at all. This docblock, `docs/architecture/subconscious_engine.md` and
+ *   `cli/src/types.ts` all asserted the policy was live, and all three were
+ *   wrong for the whole of FR-106 through FR-118. `computeEvidenceSignature` is
+ *   retained for pre-TD-440 rows only; the live key is
+ *   `finding-key.ts#findingKey`.
  *
  * @module engine/components/subconscious/runner
  * @author fifty.dev
@@ -39,6 +47,7 @@ import {
 import { runExtractor, type LlmExtractorGlobalConfig } from '../cognition/engine/index.js';
 import type { ExtractorResult } from '../cognition/types.js';
 import { createSubconsciousInstance } from '../cognition/extractors/subconscious.js';
+import { backfillFindingKeys } from './finding-key.js';
 
 // ---------------------------------------------------------------------------
 // The LIVE runner (FR-118 M2) — the LLM subconscious instance on the engine
@@ -76,9 +85,14 @@ export interface RunSubconsciousOptions {
  * `subconscious.*` bus events are no longer emitted by the live path.
  *
  * NOTE: the FR-106 rule detectors + the FR-108 verifier were DELETED in M4b.
- * The only helpers retained alongside this runner are the dismiss-loop's
- * `computeEvidenceSignature` + `recordDismissPattern` (the dismiss handler and
- * the instance's dedupe key both use them).
+ * The helpers retained alongside this runner are the dismiss loop's
+ * `recordDismissPattern` + `isSuppressedByDismissal` (its write and read sides)
+ * and `computeEvidenceSignature`, which now serves ONLY pre-TD-440 rows — the
+ * instance's key is `finding-key.ts#findingKey`.
+ *
+ * TD-440: this function backfills the v5 finding keys once per run before
+ * driving the engine. It is the right slot precisely because it is a WRITE
+ * path; `buildContext` is a read slot and must not be given a write.
  *
  * @param db      the brain DB
  * @param project the project scope ('all' = whole brain)
@@ -90,6 +104,9 @@ export async function runSubconscious(
   options: RunSubconsciousOptions = {},
 ): Promise<ExtractorResult> {
   const config = options.config ?? DEFAULT_SUBCONSCIOUS_CONFIG;
+  // Bounded (NULL-key rows only) and idempotent; the live queue is keyed before
+  // the first candidate of this run is matched against it.
+  backfillFindingKeys(db);
   const instance = createSubconsciousInstance(config);
   const deps = {
     ...(options.globalConfig ? { globalConfig: options.globalConfig } : {}),
@@ -175,6 +192,66 @@ export function computeEvidenceSignature(
   // Fallback: serialize sorted JSON to keep collisions confined to identical
   // evidence shapes. Keeping the module prefix avoids cross-module collisions.
   return `${module}:fallback:${stableStringify(evidence)}`;
+}
+
+/**
+ * Is this finding one the operator has already dismissed?
+ *
+ * TD-440 implements the read side of a policy three documents have described
+ * since FR-106 and NO CODE HAS EVER HAD. `recordDismissPattern` was write-only:
+ * the only `SELECT` on `dismissed_patterns` was inside the recorder itself,
+ * deciding INSERT vs UPDATE, so `dismiss_suppress_count` and
+ * `dismiss_cooldown_days` were read by nothing. Without this function a finding
+ * the operator explicitly dismissed returns on the very next run, which is most
+ * of the brief's "a check that reports success" rows.
+ *
+ * The policy, now live:
+ *   - `dismiss_count >= dismiss_suppress_count` (default 2) → suppressed
+ *     permanently. Said no twice; stop asking.
+ *   - one dismissal → suppressed until `dismiss_cooldown_days` (default 7) have
+ *     passed since `last_dismissed_at`, then allowed back.
+ *
+ * Keyed on `(source_instance, project_slug, dedupe_key)` — the same composite
+ * the table has always had, with the two columns REPURPOSED: `source_module`
+ * carries the producer id (SIX values, written by eight sites) instead of the
+ * LLM's label (195 values — TD-437's audit, 2026-09-01), and
+ * `evidence_signature` carries the stable finding key. The schema, the
+ * UNIQUE constraint and the `syncKey` are byte-unchanged; only the values
+ * written change. Old rows simply stop matching, which is correct — their
+ * signatures were keyed on a label the model re-invents every run.
+ *
+ * Fail-soft: a missing table or column yields `false` (never suppress on an
+ * error — a spurious suppression silently loses a finding).
+ */
+export function isSuppressedByDismissal(
+  db: Database.Database,
+  sourceInstance: string,
+  projectSlug: string | null,
+  dedupeKey: string,
+  config: DetectorConfig = DEFAULT_DETECTOR_CONFIG,
+): boolean {
+  try {
+    const row = db
+      .prepare(
+        `SELECT dismiss_count,
+                CASE WHEN datetime(last_dismissed_at, ?) > datetime('now')
+                     THEN 1 ELSE 0 END AS in_cooldown
+           FROM dismissed_patterns
+          WHERE source_module = ? AND project_slug = ? AND evidence_signature = ?`,
+      )
+      .get(
+        `+${config.dismiss_cooldown_days} days`,
+        sourceInstance,
+        projectSlug ?? '',
+        dedupeKey,
+      ) as { dismiss_count: number; in_cooldown: number } | undefined;
+
+    if (!row) return false;
+    if (row.dismiss_count >= config.dismiss_suppress_count) return true;
+    return row.in_cooldown === 1;
+  } catch {
+    return false;
+  }
 }
 
 /**

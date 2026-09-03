@@ -1963,7 +1963,7 @@ export interface GoalDetailPayload {
 
 /**
  * One `suggestions` row on the wire. Field-for-field
- * `suggestions-read.ts:100#SuggestionRow`.
+ * `suggestions-read.ts#SuggestionRow`.
  *
  * `evidence` stays a RAW JSON STRING, exactly as stored. The MCP wrapper parses
  * it (`rowToSuggestion`) because a transcript reader wants an object; a triage
@@ -1987,10 +1987,22 @@ export interface SuggestionRowPayload {
   confidence: number | null;
   suggested_action: string | null;
   type_inferred: number;
+  /** TD-440 (v5) — the stable finding key. */
+  dedupe_key: string | null;
+  /** TD-440 (v5) — the blocking anchor the key was built on. */
+  entity_key: string | null;
+  /** TD-440 (v5) — how many times this finding has been emitted; 1 means "seen once". */
+  seen_count: number;
+  /** TD-440 (v5) — when it was last re-emitted; null until the first recurrence. */
+  last_seen_at: string | null;
+  /** TD-440 (v5) — JSON array of up to 3 distinct titles this row ABSORBED. */
+  recurrence_titles: string;
+  /** TD-440 (v5) — the producing instance; null on rows written before v5. */
+  source_instance: string | null;
 }
 
 /**
- * `GET /api/suggestions?project=|project_scope=&status=&priority=&source_module=&limit=&offset=`.
+ * `GET /api/suggestions?project=|project_scope=&status=&priority=&source_module=&source_instance=&limit=&offset=`.
  *
  * `facets` is the filter VOCABULARY, counted from the data. `source_module` has
  * been an OPEN vocabulary since FR-118 M2 (the LLM names the kind), so a
@@ -2011,8 +2023,16 @@ export interface SuggestionsPayload {
   total: number;
   limit: number;
   offset: number;
-  /** `source_module -> count` (count DESC then name ASC) + the `IS NULL` count. */
-  facets: { source_module: Record<string, number>; brain_level: number };
+  /**
+   * `source_module -> count` (count DESC then name ASC), the `IS NULL` count,
+   * and — since TD-440 — `source_instance -> count`, the PRODUCER axis. Each
+   * facet omits its own clause and keeps every other filter.
+   */
+  facets: {
+    source_module: Record<string, number>;
+    brain_level: number;
+    source_instance: Record<string, number>;
+  };
   /** FR-246 — what `q` did, or null. */
   search: SubstringSearchPayload | null;
   params: DashboardParamNotes;
@@ -2055,6 +2075,13 @@ export interface TriageRequest {
    * Free-text dismissal/rejection reason. NOT decoration: it feeds
    * `dismissed_patterns` and therefore the suppression loop that stops the
    * backlog re-growing. A blind clear throws that signal away.
+   *
+   * TD-440 MADE THAT SENTENCE TRUE. Until then `dismissed_patterns` was
+   * write-only — nothing read it to suppress anything — so the reason was
+   * recorded and then ignored, and a dismissed finding returned on the next
+   * run. The loop now closes in
+   * `engine/components/subconscious/runner.ts#isSuppressedByDismissal`, keyed
+   * on the producer and the stable finding key rather than the LLM's label.
    */
   reason?: string;
   /** `acted` only — which brief the operator opened in response. */

@@ -206,7 +206,15 @@ const DDL_SUGGESTIONS = `
     expires_at TEXT, dismissed_at TEXT, dismissed_reason TEXT,
     acted_at TEXT, acted_brief_id TEXT,
     confidence REAL, suggested_action TEXT,
-    type_inferred INTEGER NOT NULL DEFAULT 0
+    type_inferred INTEGER NOT NULL DEFAULT 0,
+    -- TD-440 (subconscious v5). Mirrored here rather than left off, because a
+    -- fixture missing the column would exercise the reader's PRE-v5
+    -- degradation path while claiming to test the producer facet.
+    dedupe_key TEXT, entity_key TEXT,
+    seen_count INTEGER NOT NULL DEFAULT 1,
+    last_seen_at TEXT,
+    recurrence_titles TEXT NOT NULL DEFAULT '[]',
+    source_instance TEXT
   );
 `;
 
@@ -494,11 +502,42 @@ export function seedLayerBrain(
   // ordering DISAGREES with created_at ordering — so the `CASE priority`
   // collation is observable rather than coincidental, and a facet map computed
   // over the wrong WHERE clause produces visibly wrong numbers.
-  const insSuggestion = db.prepare(
+  const insSuggestionStmt = db.prepare(
     `INSERT INTO suggestions
-       (source_module, project_slug, title, evidence, priority, status, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+       (source_module, project_slug, title, evidence, priority, status, created_at,
+        source_instance)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
   );
+  /**
+   * TD-440 — which PRODUCER wrote each row. Derived from the module rather than
+   * passed at every call site, so adding a row cannot silently leave it
+   * unattributed. Deliberately many-to-one: `gap` and `missing_followup` are two
+   * of the subconscious's 195 free-text labels (TD-437's audit, 2026-09-01),
+   * and collapsing them to one producer is the whole point of the axis.
+   */
+  const producerOf = (module: string): string =>
+    module === "edge_inference" ? "synapse" : module === "janitor" ? "janitor" : "subconscious";
+  const insSuggestion = {
+    run: (
+      module: string,
+      project: string | null,
+      title: string,
+      evidence: string,
+      priority: string,
+      status: string,
+      created: string,
+    ) =>
+      insSuggestionStmt.run(
+        module,
+        project,
+        title,
+        evidence,
+        priority,
+        status,
+        created,
+        producerOf(module),
+      ),
+  };
   insSuggestion.run("gap", "demo", "Untracked AC in FR-240", '{"kind":"gap"}', "high", "pending", "2026-07-01 09:00:00");
   insSuggestion.run("janitor", "demo", "Two near-duplicate learnings", '{"kind":"dupe"}', "low", "pending", "2026-07-30 09:00:00");
   insSuggestion.run("gap", "other", "Brief with no goal edge", '{"kind":"gap"}', "medium", "pending", "2026-07-15 09:00:00");

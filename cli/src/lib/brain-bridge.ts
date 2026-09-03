@@ -939,14 +939,16 @@ export interface ListGoalsResult {
 
 // --- FR-241: suggestions-read.ts ------------------------------------------
 
-/** suggestions-read.ts:79 — `ListSuggestionsOptions`. `limit`/`offset` are pre-clamped. */
+/** suggestions-read.ts#ListSuggestionsOptions. `limit`/`offset` are pre-clamped. */
 export interface ListSuggestionsOptions {
   status?: string;
   project_slug?: string;
   /** suggestions-read.ts — TD-326: match ONLY `project_slug IS NULL`. Replaces `project_slug`. */
   project_is_null?: boolean;
-  /** suggestions-read.ts:84 — OPEN vocabulary since FR-118 M2. Never an enum. */
+  /** suggestions-read.ts#ListSuggestionsOptions.source_module — OPEN vocabulary since FR-118 M2. Never an enum. */
   source_module?: string;
+  /** suggestions-read.ts — TD-440: the PRODUCER axis. NULL on pre-v5 rows. */
+  source_instance?: string;
   priority?: string;
   /** suggestions-read.ts — FR-246: substring over `title` + `evidence`. */
   q?: string;
@@ -955,7 +957,7 @@ export interface ListSuggestionsOptions {
 }
 
 /**
- * suggestions-read.ts:100 — `SuggestionRow`, the `suggestions` table verbatim.
+ * suggestions-read.ts#SuggestionRow — the `suggestions` table verbatim.
  *
  * `evidence` is the RAW JSON STRING, not an object: parsing is
  * `rowToSuggestion`'s job and it lives in the MCP wrapper. The dashboard route
@@ -979,17 +981,31 @@ export interface SuggestionRow {
   confidence: number | null;
   suggested_action: string | null;
   type_inferred: number;
+  /** suggestions-read.ts — TD-440 (v5): the stable finding key. */
+  dedupe_key: string | null;
+  /** suggestions-read.ts — TD-440 (v5): the blocking anchor. */
+  entity_key: string | null;
+  /** suggestions-read.ts — TD-440 (v5): emission count for this finding. */
+  seen_count: number;
+  /** suggestions-read.ts — TD-440 (v5): last re-emission stamp. */
+  last_seen_at: string | null;
+  /** suggestions-read.ts — TD-440 (v5): JSON array of ≤3 absorbed titles. */
+  recurrence_titles: string;
+  /** suggestions-read.ts — TD-440 (v5): the producing instance. */
+  source_instance: string | null;
 }
 
-/** suggestions-read.ts:121 — `SuggestionFacets`. Counts from DATA, never an enum (L-967). */
+/** suggestions-read.ts#SuggestionFacets. Counts from DATA, never an enum (L-967). */
 export interface SuggestionFacets {
-  /** suggestions-read.ts:127 — count DESC then name ASC; the filter vocabulary. */
+  /** suggestions-read.ts#SuggestionFacets.source_module — count DESC then name ASC; the filter vocabulary. */
   source_module: Record<string, number>;
   /** suggestions-read.ts — TD-326: rows with NO project, over the filters minus the project axis. */
   brain_level: number;
+  /** suggestions-read.ts — TD-440: the PRODUCER vocabulary, minus its own axis. */
+  source_instance: Record<string, number>;
 }
 
-/** suggestions-read.ts:131 — `ListSuggestionsResult`. */
+/** suggestions-read.ts#ListSuggestionsResult. */
 export interface ListSuggestionsResult {
   suggestions: SuggestionRow[];
   count: number;
@@ -997,7 +1013,7 @@ export interface ListSuggestionsResult {
   limit: number;
   offset: number;
   facets: SuggestionFacets;
-  /** suggestions-read.ts:139 — set when the `suggestions` table is absent (L-133). */
+  /** suggestions-read.ts#ListSuggestionsResult.degraded — set when the `suggestions` table is absent (L-133). */
   degraded: string | null;
   /** suggestions-read.ts — FR-246 D3-f. `null` when no `q` was supplied. */
   search: SubstringSearchReport | null;
@@ -1052,7 +1068,7 @@ export interface LayerReaders {
   listGoals: (db: Database.Database, opts: ListGoalsOptions) => ListGoalsResult;
   /** goals/read.ts:196 */
   getGoal: (db: Database.Database, goalId: string) => GoalDetail | null;
-  /** suggestions-read.ts:170 — FR-241. */
+  /** suggestions-read.ts#listSuggestions — FR-241. */
   listSuggestions: (
     db: Database.Database,
     opts?: ListSuggestionsOptions,

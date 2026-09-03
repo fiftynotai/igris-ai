@@ -103,6 +103,14 @@ export interface ListSuggestionsOptions {
   project_is_null?: boolean;
   /** OPEN vocabulary since FR-118 M2 — any non-empty string is legitimate. */
   source_module?: string;
+  /**
+   * TD-440 — the PRODUCER that wrote the row ('subconscious', 'synapse',
+   * 'janitor', …). A CLOSED set in practice (one value per writer) and the axis
+   * `source_module` was never able to be: the label is the model's free choice,
+   * the instance is not. Rows written before v5 carry NULL and are addressable
+   * only as the empty-string bucket.
+   */
+  source_instance?: string;
   priority?: string;
   /**
    * FR-246 — an honest SUBSTRING filter over `title` + `evidence`. Not
@@ -149,6 +157,18 @@ export interface SuggestionRow {
   confidence: number | null;
   suggested_action: string | null;
   type_inferred: number;
+  /** TD-440 (v5) — the stable finding key. */
+  dedupe_key: string | null;
+  /** TD-440 (v5) — the blocking anchor the key was built on. */
+  entity_key: string | null;
+  /** TD-440 (v5) — how many times this finding has been emitted. */
+  seen_count: number;
+  /** TD-440 (v5) — when it was last re-emitted. */
+  last_seen_at: string | null;
+  /** TD-440 (v5) — JSON array of up to 3 titles this row absorbed. */
+  recurrence_titles: string;
+  /** TD-440 (v5) — the producing instance; NULL on pre-v5 rows. */
+  source_instance: string | null;
 }
 
 /** Counts computed from the data, never from an enum (L-967). */
@@ -167,6 +187,16 @@ export interface SuggestionFacets {
    * `project_is_null` is set this equals `total`.
    */
   brain_level: number;
+  /**
+   * TD-440 — `source_instance` -> row count, over the active filters MINUS the
+   * `source_instance` clause itself. Same minus-its-own-axis rule as
+   * `source_module`, third axis. This is the facet that makes the subconscious
+   * report as ONE producer instead of 195 (TD-437's audit, 2026-09-01), which
+   * `source_module` structurally cannot do. Pre-v5 rows read as `''` and are deliberately NOT backfilled —
+   * attributing them would need a hand-list of sibling label literals over an
+   * OPEN registry, which MAINTAINING forbids.
+   */
+  source_instance: Record<string, number>;
 }
 
 /** The {@link listSuggestions} payload. */
@@ -204,9 +234,35 @@ function tableExists(db: Database.Database, name: string): boolean {
 }
 
 /**
+ * TD-440 — the same L-133 posture one level down, for a COLUMN.
+ *
+ * `source_instance` arrives with subconscious migration v5, and this reader is
+ * given handles it does not own: the dashboard opens the operator's brain
+ * `{readonly:true}`, which cannot migrate. On a brain that has not booted v5
+ * the producer facet must be ABSENT, not an exception — a browse of the queue
+ * failing with `no such column` would be a worse outcome than a missing chip.
+ *
+ * `PRAGMA` takes no bound parameter, so `table` is interpolated — same posture
+ * as the older twin at `engine/components/edges/whole-graph.ts`. This copy's one
+ * caller passes the literal `'suggestions'`, and it must stay that way: the day
+ * a caller passes a value that reached it from a request, this is an injection.
+ */
+function columnExists(db: Database.Database, table: string, column: string): boolean {
+  try {
+    return (db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[]).some(
+      (c) => c.name === column,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * List suggestions with optional filters, priority-collated, with a `total`.
  *
- * SQL moved verbatim from `subconscious/handlers.ts:166-216`. The ordering is
+ * SQL moved verbatim from `subconscious/handlers.ts#handleSuggestionList` (the
+ * PROVENANCE block above carries the pre-lift line numbers; they are historical
+ * and do not track that file). The ordering is
  * `CASE priority` (high > medium > low) then `created_at DESC` — the collation
  * that makes `/awaken` pick up the most actionable items first, and the reason
  * this cannot be a plain `ORDER BY priority` (which would sort alphabetically:
@@ -229,11 +285,16 @@ export function listSuggestions(
       total: 0,
       limit,
       offset,
-      facets: { source_module: {}, brain_level: 0 },
+      facets: { source_module: {}, brain_level: 0, source_instance: {} },
       degraded: 'brain table absent: suggestions',
       search: substringReport(opts.q, SUGGESTION_SEARCH_FIELDS),
     };
   }
+
+  // Present only from subconscious v5. Everything keyed on `source_instance`
+  // is conditional on it, so a pre-v5 brain reads exactly as it did before.
+  const hasInstance = columnExists(db, 'suggestions', 'source_instance');
+  const instanceFilter = hasInstance ? opts.source_instance : undefined;
 
   /** The project axis, in exactly one place. TD-326 gave it three states. */
   const scope = (b: WhereBuilder): WhereBuilder =>
@@ -261,6 +322,7 @@ export function listSuggestions(
   const where = withQ(
     scope(new WhereBuilder().add('status = ?', opts.status))
       .add('source_module = ?', opts.source_module)
+      .add('source_instance = ?', instanceFilter)
       .add('priority = ?', opts.priority),
   );
 
@@ -298,10 +360,17 @@ export function listSuggestions(
   // answers the question the badge actually poses: how many rows MATCHING WHAT
   // I TYPED is the project scope hiding.
   const facetWhere = withQ(
-    scope(new WhereBuilder().add('status = ?', opts.status)).add(
-      'priority = ?',
-      opts.priority,
-    ),
+    scope(new WhereBuilder().add('status = ?', opts.status))
+      .add('source_instance = ?', instanceFilter)
+      .add('priority = ?', opts.priority),
+  );
+
+  // ...and the producer facet omits ITS OWN axis while keeping `source_module`:
+  // the same rule, one axis over (TD-440).
+  const instanceWhere = withQ(
+    scope(new WhereBuilder().add('status = ?', opts.status))
+      .add('source_module = ?', opts.source_module)
+      .add('priority = ?', opts.priority),
   );
 
   // ...and the brain-level facet omits the PROJECT axis instead, replacing it
@@ -313,6 +382,7 @@ export function listSuggestions(
       .add('status = ?', opts.status)
       .addAlways('project_slug IS NULL')
       .add('source_module = ?', opts.source_module)
+      .add('source_instance = ?', instanceFilter)
       .add('priority = ?', opts.priority),
   );
   const brainLevel = (
@@ -331,6 +401,20 @@ export function listSuggestions(
     )
     .all(...facetWhere.values()) as { name: string | null; n: number }[];
 
+  const sourceInstance: Record<string, number> = {};
+  if (hasInstance) {
+    const instanceRows = db
+      .prepare(
+        `SELECT COALESCE(source_instance, '') AS name, COUNT(*) AS n
+           FROM suggestions
+           ${instanceWhere.toSQL()}
+          GROUP BY COALESCE(source_instance, '')
+          ORDER BY n DESC, name ASC`,
+      )
+      .all(...instanceWhere.values()) as { name: string; n: number }[];
+    for (const r of instanceRows) sourceInstance[r.name] = r.n;
+  }
+
   const sourceModule: Record<string, number> = {};
   for (const r of facetRows) {
     // `source_module` is NOT NULL in the schema, but a facet map is a display
@@ -344,7 +428,11 @@ export function listSuggestions(
     total: countRow.total,
     limit,
     offset,
-    facets: { source_module: sourceModule, brain_level: brainLevel },
+    facets: {
+      source_module: sourceModule,
+      brain_level: brainLevel,
+      source_instance: sourceInstance,
+    },
     degraded: null,
     search: substringReport(opts.q, SUGGESTION_SEARCH_FIELDS),
   };

@@ -295,6 +295,31 @@ describe('Sync Auto-Push', () => {
       expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
     });
 
+    it('EXCLUDES the six TD-440 v5 columns from the suggestions column list', () => {
+      // MAINTAINING's TD-440 rule (b) says the six v5 columns are DELIBERATELY
+      // out of the sync config; until this test existed that rule had no
+      // mechanical pin, and `suggestions` IS synced, so an editor adding one
+      // here would have shipped a per-row failure against an unmigrated remote.
+      // `columns` is exactly what `mergeRows` reads and writes, so pinning the
+      // list is what makes the omission a decision instead of an oversight.
+      const suggestions = SYNC_TABLES.find((t) => t.table === 'suggestions');
+      expect(suggestions).toBeDefined();
+      for (const v5 of [
+        'dedupe_key', 'entity_key', 'seen_count',
+        'last_seen_at', 'recurrence_titles', 'source_instance',
+      ]) {
+        expect(suggestions!.columns).not.toContain(v5);
+      }
+      // …and the list is otherwise unchanged, so a SEVENTH column cannot slip in
+      // under a name this loop does not name.
+      expect(suggestions!.columns).toEqual([
+        'source_module', 'project_slug', 'title', 'evidence', 'priority',
+        'status', 'created_at', 'expires_at', 'dismissed_at',
+        'dismissed_reason', 'acted_at', 'acted_brief_id',
+        'confidence', 'suggested_action', 'type_inferred',
+      ]);
+    });
+
     const newTables = [
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },

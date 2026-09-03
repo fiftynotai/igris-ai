@@ -163,9 +163,18 @@ table[col=literal, col2=OTHER]
 `OTHER` means *the complement of every literal any OTHER instance declares for
 this same table and column*, computed from the roster. That is how the
 subconscious — whose `source_module` is chosen by the LLM, and which had **196
-distinct values** across 360 rows on 2026-09-01 — reports as ONE instance rather
-than 196 tiny detectors. Register an eighth instance that claims a literal
+distinct values** across 360 rows as of 2026-09-01 — reports as ONE instance
+rather than 196 tiny detectors. Register an eighth instance that claims a literal
 `source_module` tomorrow and the complement shrinks on its own.
+
+TD-440 added a **direct** answer to the same question, alongside this derived one:
+`suggestions.source_instance` names the writing component, so the queue can be
+grouped by producer without inferring a complement. The `produced` predicates are
+deliberately NOT re-pointed at it yet — that would break comparability with the
+clean-room baseline TD-440 is measured against. Once `source_instance` is fully
+populated, moving them is the same grammar with no reader change, and it removes
+the standing hazard that a free-text label could collide with a sibling's declared
+literal and mis-attribute the row.
 
 ### expiry is not judgment
 
@@ -319,8 +328,9 @@ names it, so the categories are not a fixed list.
 |---|---|
 | **gate** | `cognition.subconscious.enabled` |
 | **driver** | the `subconscious_engine` schedule (every 6 hours) |
-| **output** | `suggestions` rows with an LLM-chosen `source_module` and `type_inferred=1` |
-| **produced** | `suggestions[type_inferred=1, source_module=OTHER]` — the complement of every literal sibling, which is what makes it ONE instance and not 196 |
+| **output** | `suggestions` rows with an LLM-chosen `source_module`, `type_inferred=1` and `source_instance='subconscious'` (TD-440) |
+| **produced** | `suggestions[type_inferred=1, source_module=OTHER]` — the complement of every literal sibling, which is what makes it ONE instance and not 196. Unchanged by TD-440 ON PURPOSE: re-pointing it at `source_instance` mid-measurement would break the baseline comparison AC-6 depends on |
+| **dedup** | TD-440 — a re-emission of a finding already pending BUMPS `seen_count` on that row instead of inserting. Queue depth tracks open findings, not elapsed runs. See `docs/architecture/subconscious_engine.md` §The finding key |
 
 ### synapse
 

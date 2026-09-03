@@ -1833,6 +1833,111 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-440 MEASURED LAST (2026-09-03, re-measured after round 4), after its
+ * final code-touching step.
+ * MEASURED BY STAGING, NOT BY BUILDING, and that distinction is the method:
+ * `npm run build` in `cli/` re-vendors the brain bundle and replaces the binary
+ * the live MCP runs, so it is a DEPLOY and this brief was forbidden one. Both
+ * packages were compiled INERTLY with `npx tsc --outDir <scratch>` and the
+ * artifacts for exactly the changed sources were staged before packing.
+ *   packed              2_006_157    unpacked 7_647_047, 672 entries (+3 — the
+ *                                    one new module's .js, .js.map and .d.ts;
+ *                                    its .d.ts.map is excluded by TD-443)
+ *   TD-440's own share  +22_243 B    (21.7 KB) against HEAD `9bbda40`'s
+ *                                    1_983_914
+ *   round 4's own share +470 B       (2_006_157 − round 3's 2_005_687;
+ *                                    +1_314 unpacked, entries UNCHANGED)
+ *   cumulative delta    +142_737 B   (139.4 KB over PACK_BASELINE_PACKED,
+ *                                    92.9% of TD-374's grant)
+ *   headroom remaining  ~10.6 KB     (10_863 B — 153_600 − 142_737)
+ *   built app chunk     NOT REMEASURED — see the caveat below
+ *
+ *   ROUND 4 STAGED INTO A COPY INSTEAD OF INTO `cli/dist`, and that is the
+ *   better method — adopt it. The whole packed surface is small (`package.json`
+ *   `files` is `dist` minus `dist/brain-mcp-server/node_modules` minus every
+ *   `.d.ts.map`, plus `scripts/postinstall.mjs`, `README.md`, `CHANGELOG.md`),
+ *   so it copies to a scratch directory in seconds and packs there. `cli/dist`
+ *   is never written, so there is no restore to get wrong and no window in
+ *   which the live MCP bundle is a staged hybrid. THE CONTROL IS THE SAME AND
+ *   IT IS THE SHA, taken on the COPY before staging anything: it reproduced
+ *   HEAD's 1_983_914 / 7_581_990 unpacked / 669 entries / shasum
+ *   `fc4d8d20303b2e1306562a27515754ce9b2c2a1d` byte-exactly, which is what
+ *   licenses reading the post-staging number as a delta. It was taken TWICE —
+ *   once before the first staging and again on a fresh copy after a later edit
+ *   — and reproduced both times. An in-place pack of `cli/dist` confirmed the
+ *   real bundle was never written.
+ *
+ *   ROUND 3 STAGED IN PLACE AND RESTORED, and the failure modes are kept here
+ *   because they are the reason the copy method is better. It took four
+ *   attempts, and both failures LOOKED like a clean restore at a glance: a
+ *   restore loop that fell back to a second destination root wrote four files
+ *   into `dist/brain-mcp-server/dist/` that had never existed there, and
+ *   `cli/dist/types.js.map` came back byte-different because the map embeds
+ *   line mappings and `cli/src/types.ts` grew. Size alone said "off by 51 B";
+ *   only the SHA said which file.
+ *
+ *   WHERE ROUND 4's 474 B WENT, AND WHAT IT DID NOT PAY FOR. Round 4 added a
+ *   value-level assertion per `suggestions` writer site to
+ *   `source-instance.test.ts` — and that cost **ZERO packed bytes**, because
+ *   `brain-mcp-server/tsconfig.json` excludes the `__tests__` glob from the
+ *   emit and the packlist carries no test artifact at all (verified: the
+ *   scratch compile emits no `source-instance` output, and the packed file
+ *   list matches `test` zero times). Every one of the 470 B is PROSE — **+879
+ *   source bytes**, being dated counts, a re-framed threshold and nine stale
+ *   `file.ts:NNN` pointers converted to `file.ts#symbol` anchors. It splits
+ *   +819 across five brain modules (`finding-key.ts` +211, `types.ts` +354,
+ *   `suggestions-read.ts` +159, `runner.ts` +57, `handlers.ts` +38) and +60
+ *   across two cli ones (`brain-bridge.ts` +64, `types.ts` −4) — which `tsc`
+ *   preserves into both the `.js` and the `.js.map` and, for the brain's
+ *   exported declarations, the `.d.ts` as well. That is **0.53 packed bytes per
+ *   source byte** on this round's mix (470 / 879), the low end of the
+ *   0.54-0.73 band above because most of it landed in `.js`/`.js.map` rather
+ *   than in exported-declaration prose. A test is free.
+ *
+ *   WHERE THE 21.7 KB WENT. Almost all of it is `brain-mcp-server/**`, which is
+ *   this ledger's oldest lesson rather than a surprise: `tsc` PRESERVES comments
+ *   into the vendored bundle and pays for them TWICE (`.js` and `.js.map`), and
+ *   the emitted `.d.ts` carries interface prose a third time. The single new
+ *   module `subconscious/finding-key.ts` is 13_432 source B and cost **+9_730 B
+ *   packed on its own** — measured separately, with its own restore control —
+ *   i.e. ~0.72 packed bytes per brain source byte, at the top of the 0.54-0.73
+ *   band this ledger has recorded before. The remaining ~12 KB is spread over
+ *   15 modified brain modules and 4 `cli/src` ones. The four `cli/src` files are
+ *   nearly free where they are type-only: `cli` compiles with
+ *   `declaration: false`, so `types.ts`'s ~40 new lines of interface prose
+ *   erase to nothing in `types.js` — but NOT in `types.js.map`, which is the
+ *   detail that broke the restore control above.
+ *
+ *   WHAT THIS ROW DOES NOT COVER — the browser bundle. `cli/dashboard/src`
+ *   changed (one filter chip in `Triage.tsx`, type-only additions in
+ *   `api.ts`), and rebuilding the dashboard is a separate script this brief also
+ *   did not run, so the built chunk was NOT re-measured and the figure above
+ *   excludes it. The changed JSX is one array entry, one `const` and one `||`
+ *   in a predicate; the type additions erase. Expect a low-hundreds-of-bytes
+ *   move on TOTAL_JS and verify it at the first build rather than trusting this
+ *   sentence — the chunk gate is the binding one and an estimate is not a
+ *   reading.
+ *
+ *   HEADROOM IS NOW ~10.7 KB AND THAT IS THE HEADLINE. TD-443 recovered
+ *   31_426 B by dropping the `.d.ts.map` population from the packlist and this
+ *   brief spent 71% of it. A brief that adds another brain module of this
+ *   size does not fit. The remedy this ledger already names is still the right
+ *   one and is still unspent, and round 4 REPLACED ITS ESTIMATE WITH A
+ *   MEASUREMENT (delete the files from a scratch copy of the packed surface and
+ *   re-pack). The count in the round-3 wording was wrong — "246 vendored" was
+ *   the count of EVERY `.js.map` in the packed `dist`, not the vendored subset:
+ *   *   139 vendored maps (`dist/brain-mcp-server/**`)  −158_296 B (154.6 KB)
+ *   *   247 maps, the whole packed `dist`                −320_240 B (312.7 KB)
+ *   (both measured against a 2_006_098 staging taken mid-round; the later
+ *   +59 B does not move either figure at this resolution)
+ *   The size the round-3 row quoted (~154 KB) was right for the vendored arm;
+ *   only the cardinal was wrong. Both arms are dangling pointers for a
+ *   consumer — a vendored map's `sources` is `["../src/index.ts"]` and there is
+ *   no `sourcesContent`, so it resolves into a tree the tarball does not ship.
+ *   Either arm is a packlist change, not a compiler-flag change, and it needs
+ *   its own brief; the 247-file arm alone would return the whole surface to
+ *   below `PACK_BASELINE_PACKED`.
+ *
  * TD-443 MEASURED LAST (2026-09-02), after its final code-touching step. The
  * FIRST ROW IN THIS LEDGER WHOSE OWN SHARE IS NEGATIVE — it is a RECOVERY, not
  * a typo and not a re-base. No build was run: `npm pack` reads whatever is in
@@ -2116,8 +2221,8 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-443, measured 2026-09-02, ~32.3 KB
- * (33_106 B) is what is left on PACKED.** Grep `TD-443 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-440 round 4, measured 2026-09-03,
+ * ~10.6 KB (10_863 B) is what is left on PACKED.** Grep `TD-440 MEASURED LAST` in this
  * file for that reading and the method behind it, and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
@@ -2127,10 +2232,11 @@ interface PackReport {
  * the whole test. A direction word is safe exactly when nothing can be placed
  * between it and what it names; "the FR-268 row directly above" failed that test
  * because a row could be, and was. Whoever appends the next row
- * re-points THIS sentence at their own brief id, date and figure. TD-443 is
- * also the reason the figure went UP rather than down — it is a recovery row,
- * so do not read the jump from TD-423's 1_880 B as a ceiling change; both
- * constants are untouched.)* **But packed is
+ * re-points THIS sentence at their own brief id, date and figure. TD-443 was
+ * the reason the figure last went UP rather than down — it is a recovery row,
+ * so do not read that jump from TD-423's 1_880 B as a ceiling change. TD-440
+ * then spent 22_243 B of what TD-443 recovered; both constants are still
+ * untouched, and the direction of travel is back down.)* **But packed is
  * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
  * **13_601 B**, and any brief with a UI will hit that first. Read both — the
  * packed GRANT is +150 KB and the headroom is what remains under it, and
