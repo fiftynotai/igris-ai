@@ -117,7 +117,11 @@ re-embeds it); writes a `derived_from` lineage edge survivor→duplicate; and
 soft-deletes the duplicate. It validates both ids resolve and are distinct,
 never throws, and is idempotent (re-applying on an already-merged row is a no-op).
 It fires ONLY via operator `igris_suggestion_apply_action` or the default-OFF
-`auto_merge` fork (human-in-the-loop invariant preserved).
+`auto_merge` fork (human-in-the-loop invariant preserved). Its
+`synthesized_content` has the same two defects TD-439 closed for the arbiter's
+`evolved_merge` (snippet-derived and unhashed — see below); the guard helpers
+(`contentHash`, `carryForward`) are exported so a follow-up brief can adopt
+them here with a two-line call.
 
 ## Audit: `brain_maintenance_runs`
 
@@ -186,7 +190,26 @@ near-identical restatements so the arbiter + janitor candidate sets stay disjoin
   content (NULLing its embedding for the FR-220 re-embed scan). Neither is deleted.
 - **evolved_merge** — the conflict resolves into a single evolved understanding:
   write the synthesized content onto the winner, roll `seen_again_count`, and
-  supersede the loser (like newer_wins).
+  supersede the loser (like newer_wins). **Guarded since TD-439**, because the
+  synthesis is generalised from a 200-char snippet per side (`SNIPPET_MAX`) and
+  so cannot carry the inputs' commands, paths, SHAs and brief ids, and because
+  it is a snapshot applied later: (1) `persistArbiterProposal` stamps
+  `synthesized_from_hash` (sha256 of the winner's exact content at generation)
+  into the action, and the executor REFUSES on a mismatch or an absent stamp
+  (fail-closed — dismiss and let the next run regenerate); (2) the executor
+  extracts the executable specifics of BOTH inputs (`extractSpecifics`) and
+  (Line-granular: a line is carried when ANY rule matches it, so a bare number
+  range such as `289-326` survives only when it shares a line with another
+  matched specific — the four harvested pairs satisfy that; a lone-line range
+  would be dropped. TD-439 review, 2026-09-04.)
+  appends every line / fenced block the synthesis dropped under a
+  `Preserved specifics from #<id>` section, refusing above `CARRY_CAP`
+  (8,000 chars) rather than truncating; (3) a refusal leaves the suggestion
+  `pending`, is returned as `apply_action (…) refused: <reason>` and persisted
+  under `evidence.apply_refused`, and the auto-resolve fork falls through to
+  the review INSERT instead of reporting `deduped`. The prompt is unchanged —
+  the model cannot preserve what it never sees. Undo is untouched:
+  `prior_content` is captured before the enriched write.
 
 Every path is a single transaction, idempotent (a no-op when the loser is already
 superseded / the scope already annotated), validates every target id resolves, and

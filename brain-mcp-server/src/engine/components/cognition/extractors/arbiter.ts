@@ -58,7 +58,7 @@ import {
   type ContradictionPair,
   type ContradictionProposal,
 } from '../../arbiter/types.js';
-import { applyResolveContradiction } from '../../subconscious/actions/kinds.js';
+import { applyResolveContradiction, contentHash } from '../../subconscious/actions/kinds.js';
 
 // ---------------------------------------------------------------------------
 // The instance's private context shape (slot 1 output)
@@ -156,6 +156,7 @@ function proposalPair(proposal: ContradictionProposal): [number, number] | null 
  * consumer (`applyResolveContradiction`) reads — the two MUST stay byte-aligned
  * (the synapse↔add_edge / janitor↔merge_learnings lesson: a shape mismatch makes
  * apply silently fall back to flag_for_review). `resolution` is the discriminator.
+ * The persist slot stamps `synthesized_from_hash` (TD-439).
  */
 export function buildResolveContradictionAction(
   proposal: ContradictionProposal,
@@ -217,12 +218,17 @@ export function persistArbiterProposal(
   ctx.persistedPairs.add(key);
 
   const action = buildResolveContradictionAction(proposal);
+  if (proposal.verdict === 'evolved_merge') {
+    const winner = db
+      .prepare('SELECT content FROM learnings WHERE id = ?')
+      .get(proposal.winner_id) as { content: string } | undefined;
+    if (winner) action.synthesized_from_hash = contentHash(winner.content);
+  }
 
   // AUTO-RESOLVE fork: gated by the config flag AND the cosine floor.
+  // A failed resolve falls through to the INSERT (TD-439).
   if (ctx.autoResolve && proposal.cosine >= ctx.autoResolveThreshold) {
-    const result = applyResolveContradiction(db, action);
-    // A failed direct resolve is not fatal — it simply does not count as resolved.
-    return result.ok ? 'resolved' : 'deduped';
+    if (applyResolveContradiction(db, action).ok) return 'resolved';
   }
 
   const evidence = {

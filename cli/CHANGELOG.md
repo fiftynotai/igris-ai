@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Arbiter `evolved_merge` no longer drops the inputs' executable specifics and refuses a stale synthesis (TD-439)** — the executor compares `synthesized_from_hash` (stamped at generation) with the winner's exact current bytes, refusing on mismatch or no stamp, and carries the lines of BOTH inputs the snippet-derived synthesis dropped into a `Preserved specifics` section (refused above 8,000 chars). A refusal stays `pending`, is returned as `refused: <reason>` and recorded in `evidence.apply_refused`; the auto-resolve fork no longer swallows it. Pre-TD-439 pending rows are refused as unprovenanced — dismiss and let the next run regenerate.
+
 - **A claude API/auth failure is no longer filed as `parse_error` (TD-447)** — the cognition backend classifies a claude `{type:"result",is_error:true}` envelope as `api_error` / `auth_error` with the CLI's message in `detail` before text extraction; `igris cognition health` leads the `failing` sentence with it (`api_error: API Error: 529 Overloaded. …`). Other harnesses untouched.
 
 - **The tarball no longer ships 138 dangling declaration maps (TD-443)** — `files` gains `"!dist/**/*.d.ts.map"`. Their `sources` point at `brain-mcp-server/src`, which is not shipped, and there is no `sourcesContent`, so no consumer could resolve them. Measured, no build: 2,015,140 B / 807 entries → 1,983,714 B / 669 for the packlist change alone. `declarationMap` stays on and every map stays on disk. The shipped total, the method and why not all 276: grep `TD-443 MEASURED LAST` in `src/__tests__/tarball.test.ts` — this file ships verbatim, so none of it is restated here.

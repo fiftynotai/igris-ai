@@ -7,7 +7,8 @@
  *   2. parses its serialized `suggested_action` (`{ kind, ...params }`);
  *   3. dispatches to the matching kind (`actions/kinds.ts`);
  *   4. on success marks the suggestion `acted` (stamping `acted_at` and, where a
- *      kind provides one, `acted_brief_id`); on failure LEAVES it `pending`.
+ *      kind provides one, `acted_brief_id`); on failure LEAVES it `pending`
+ *      (a refusal is recorded, TD-439).
  *
  * HUMAN-IN-THE-LOOP (load-bearing invariant). This runs ONLY when the operator
  * applies a reviewed suggestion — it is NEVER called when a suggestion is
@@ -146,6 +147,25 @@ function dispatchKind(
   }
 }
 
+/** Persist a guard refusal (TD-439). */
+function persistRefusal(db: Database.Database, s: Suggestion, reason: string): void {
+  try {
+    let evidence: Record<string, unknown> = {};
+    try {
+      const parsed: unknown = JSON.parse(s.evidence);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        evidence = parsed as Record<string, unknown>;
+      }
+    } catch {
+      /* start from {} */
+    }
+    evidence.apply_refused = { at: new Date().toISOString(), reason };
+    db.prepare('UPDATE suggestions SET evidence = ? WHERE id = ?').run(JSON.stringify(evidence), s.id);
+  } catch {
+    /* text carries it */
+  }
+}
+
 /**
  * Apply the `suggested_action` of a reviewed suggestion. OPERATOR-INVOKED only.
  *
@@ -196,8 +216,9 @@ export function applyAction(db: Database.Database, suggestionId: number): ToolRe
 
   if (!result.ok) {
     // Action failed/unresolvable → leave the suggestion pending.
+    if (result.refused) persistRefusal(db, suggestion, result.refused);
     return errorResult(
-      `apply_action (${result.kind}) failed: ${result.error ?? result.message}`,
+      `apply_action (${result.kind}) ${result.refused ? 'refused' : 'failed'}: ${result.error ?? result.message}`,
     );
   }
 

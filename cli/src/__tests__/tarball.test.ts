@@ -1833,6 +1833,66 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-439 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414
+ * method, taken twice: once at +2_645 B (over the plan's 2_500 B own-share
+ * budget by 145 B — that reading is void) and once after the plan's cut list
+ * (grammar rule 9, the inline-JSON literal, dropped — its only fixture
+ * identifier is backticked and rule 2 carries it; the CHANGELOG bullet cut to
+ * the TD-447 style the plan specified). Both packages compiled inertly with
+ * `npx tsc --outDir <scratch>` and NO other flag; the staged set was DERIVED
+ * by `cmp` of every inert-compile artifact against its vendored twin (brain:
+ * 400 unchanged, 133 of them `.js.map` whose `sources` rewrite came out
+ * `cmp`-identical BEFORE any changed map was staged; 17 changed = TD-414's
+ * eight still-unbuilt artifacts + this brief's nine; cli: 216 unchanged,
+ * 0 changed — no `cli/src` runtime edit). `cli/dist` and
+ * `brain-mcp-server/dist` were never written. The SHA control on a fresh
+ * untouched copy reproduced 2_009_051 / 7_658_066 / 672 /
+ * `0494960fd0874ac5a17a8321e78f874a4c408b2a` before each staging.
+ *   packed              2_012_839    unpacked 7_673_591, 672 entries (UNCHANGED —
+ *                                    no new module; the guard lives in kinds.ts
+ *                                    beside its one caller) — this is the LIVE
+ *                                    figure: this brief's nine artifacts AND
+ *                                    TD-414's eight staged together (the
+ *                                    TD-414 set alone re-read +1_307 packed /
+ *                                    +5_219 unpacked on this copy against its
+ *                                    row's +1_334 / +5_219 — the unpacked
+ *                                    figure is exact, the packed differs by
+ *                                    gzip context)
+ *   TD-439's own share  +2_481 B     (2.4 KB) against HEAD `2275c17`'s control
+ *                                    2_009_051 — the reading with ONLY this
+ *                                    brief's nine artifacts + the CHANGELOG
+ *                                    bullet staged: 2_011_532 / 7_668_372 /
+ *                                    shasum `7dfb9b76…`, taken twice, identical.
+ *                                    +10_306 unpacked, reconciling EXACTLY to
+ *                                    the nine artifacts' size deltas (9_652)
+ *                                    plus `CHANGELOG.md` (172_048 → 172_702,
+ *                                    +654) — all ten non-zero.
+ *   cumulative delta    +149_419 B   (145.9 KB over PACK_BASELINE_PACKED,
+ *                                    97.3% of TD-374's grant)
+ *   headroom remaining  ~4.1 KB      (4_181 B — 153_600 − 149_419)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 9_652 B WENT (unpacked; ~0.26 packed per unpacked on this mix).
+ *   `subconscious/actions/kinds.ts` +7_514 (.js +3_392 — `contentHash`, the
+ *   7-rule `SPECIFIC_RES` table, `extractSpecifics`, `carryForward`,
+ *   `refuse`, the hash / carry / cap guard and the enriched write; .js.map
+ *   +3_418; .d.ts +704 — five new exports, the `CarrySource` interface and
+ *   the `refused` field), `subconscious/actions/index.ts` +1_598 (.js +784 —
+ *   `persistRefusal` and the `refused:` branch; .js.map +774; .d.ts +40),
+ *   `cognition/extractors/arbiter.ts` +540 (.js +295 — the winner SELECT,
+ *   the stamp and the fall-through fork; .js.map +184; .d.ts +61). New
+ *   shipped comment prose across the three files: NET +394 B (558 added,
+ *   164 replaced; measured against `git diff -U0`; the first draft was
+ *   +1_679 and was trimmed to the plan's ≤ 400 B — the reasoning lives in
+ *   the unshipped `td439-merge-guard.test.ts` docblock, the fixture docblock,
+ *   `docs/architecture/brain_janitor.md` and coding_guidelines §18.17).
+ *   The fixture (`td439-pairs.ts`, 33 KB of harvested text) and the suite
+ *   are under the `__tests__` glob and ship 0 B.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
  * TD-414 MEASURED LAST (2026-09-04), after its final SHIPPED code-touching
  * step (the runtime context docs that closed the hunt ship no bytes).
  * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-447's method, taken
