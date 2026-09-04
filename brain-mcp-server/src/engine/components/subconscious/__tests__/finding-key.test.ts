@@ -32,6 +32,17 @@
  * (it must never bend) and recall per GROUP (the matcher takes the best match
  * in a block, so a re-emission that misses one anchor lands on another).
  *
+ * TD-445 (2026-09-04) RE-SWEPT THE VALUE AGAINST PRODUCTION and kept it. The
+ * instrument is `scripts/td445_claim_threshold_sweep.ts` (its slope on cut C1
+ * reproduces TD-440's row point for point); the marginal band below 0.25 was
+ * hand-labelled per row and every candidate that catches a production miss
+ * admits DIFFERENT pairs (97 at 0.22, 137 at 0.21, 207 at 0.20). The
+ * `PRODUCTION_PAIRS` block at the end of this file pins those misses AS
+ * misses. Note what this excerpt cannot see: at 0.22 / 0.21 / 0.20 every case
+ * in this file stays green, because its DIFFERENT arm tops out at 0.192 — the
+ * excerpt floors the value at 0.192, the labelled marginal set is what holds it
+ * at 0.25.
+ *
  * @module engine/components/subconscious/__tests__/finding-key.test
  */
 
@@ -40,6 +51,7 @@ import Database from 'better-sqlite3';
 import {
   GLOBAL_ENTITY_KEY,
   backfillFindingKeys,
+  candidateFromRow,
   claimOf,
   claimSimilarity,
   claimTokens,
@@ -404,6 +416,181 @@ describe('the labelled boundary corpus (the over-merge falsifier)', () => {
     expect(diffMax).toBeCloseTo(0.192, 3);
     expect(THRESHOLD).toBeGreaterThan(diffMax);
     expect(sameMax).toBeGreaterThan(THRESHOLD);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-445 — THE PRODUCTION WINDOW: the misses, pinned as misses
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Four real pairs from TD-445's production measurement (T0
+ * `2026-09-03 12:42:03Z`, three new-bundle runs), copied from a read-only
+ * `.backup` of the operator brain taken 2026-09-04 — every field below is the
+ * stored column byte-for-byte, including `entity_key` as the writer stamped it.
+ * Nothing was edited to make a case pass.
+ *
+ * WHAT THEY ARE. Three same-anchor re-emissions that scored BELOW the shipped
+ * threshold and were filed as new rows (the brief's AC-5 "underperforms"), and
+ * the 0.128 control the brief called a correct non-merge. The anchor is the
+ * SAME on every pair, which is what makes them this brief's and not TD-452's
+ * (the anchor-split misses).
+ *
+ * WHY THEY ARE PINNED AS MISSES AND NOT FIXED. TD-445 re-swept the whole
+ * corpus (431 rows, `scripts/td445_claim_threshold_sweep.ts`, row labels in
+ * `scripts/td445_row_findings.csv`, the derived pair labels in
+ * `scripts/td445_marginal_pairs_labeled.csv`) at 0.22 / 0.21 / 0.20. Every
+ * candidate that catches one of these pairs also admits pairs hand-labelled
+ * DIFFERENT — 97 at 0.22, 137 at 0.21, 207 at 0.20, the highest at 0.243 — so
+ * the value stayed at 0.25 (`docs/architecture/subconscious_engine.md` §"TD-445
+ * production re-sweep"). These cases red if a future re-tune moves the value
+ * far enough to catch a pair WITHOUT re-reading that labelled set. The third
+ * pair reads DIFFERENT on the labelling rule (the audit action vs the
+ * traceability action), so on that reading it is a correct non-merge — and it
+ * sits below the excerpt's 0.192 floor regardless.
+ */
+const PRODUCTION_PAIRS = [
+  {
+    ids: [1880, 1888] as const,
+    score: 0.209,
+    label: 'SAME',
+    note: "'44 of 60 edge_inference' — catchable only at t ≤ 0.209, where M(0.20) carries 207 DIFFERENT pairs",
+    a: {
+      id: 1880,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "The digest's own edge_inference module emitted 44 of 60 open suggestions as one-line 'inferred edge' rows over learnings 6–1447, drowning the 17 substantive findings — the subconscious queue needs the same dedup/batching treatment commit 6d077a1 applied to findings",
+      evidence:
+        "{\"note\":\"open_suggestions ids 1712–1755 are all source_module=edge_inference, each proposing a single graph edge, many over learnings from the 6–425 range (i.e. long-settled history). Commit 6d077a1 'fix(subconscious): dedup findings on a key stable under LLM paraphrase' shows the noise problem is already recognized for findings but not for edge proposals. An operator review queue where 73% of rows are mechanical edge assertions is one an operator stops reading.\"}",
+      suggested_action:
+        "{\"kind\":\"batch_or_autoapply_suggestion_module\",\"source_module\":\"edge_inference\",\"proposal\":\"auto-apply high-confidence edges without operator review, or collapse into a single batched 'N inferred edges' row\"}",
+    },
+    b: {
+      id: 1888,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "44 of 60 open suggestions are low-value edge_inference rows — they crowd out substantive findings in the review queue and should be batched or auto-applied rather than queued individually",
+      evidence:
+        "{\"note\":\"open_suggestions ids 1712–1755 are all source_module=edge_inference, each proposing a single learning→learning edge. They occupy 73% of the operator's queue while carrying no decision content. Commit 6d077a1 ('fix(subconscious): dedup findings on a key stable under LLM paraphrase') shows queue quality is already a known concern; edge inference is the remaining volume source.\"}",
+      suggested_action:
+        "{\"kind\":\"change_suggestion_routing\",\"source_module\":\"edge_inference\",\"from\":\"individual_queued_suggestion\",\"to\":\"batched_review_or_auto_apply_above_threshold\"}",
+    },
+  },
+  {
+    ids: [1814, 1823] as const,
+    score: 0.216,
+    label: 'SAME',
+    note: "igris-ai backlog, two heads — catchable only at t ≤ 0.216, where M(0.21) carries 137 DIFFERENT pairs",
+    a: {
+      id: 1814,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "igris-ai carries 165 open briefs and 602 learnings — by far the largest backlog in the system and roughly 2.5x the next project — with no evidence of any closure or archive rhythm",
+      evidence:
+        "{\"brief_id\":\"FR-112\",\"note\":\"igris-ai: open_briefs=165, learnings=602, days_since_activity=1 — it is the most active repo and simultaneously the largest backlog. Low-priority P3 briefs like FR-112 (Leiden clustering) and FR-114 (schema evolution) have sat Ready for 127 days. A backlog that only grows cannot be read; it needs a periodic archive gate, not another triage pass.\"}",
+      suggested_action:
+        "{\"kind\":\"recurring_review\",\"project_slug\":\"igris-ai\",\"cadence\":\"monthly\",\"rule\":\"Archive any P3-Low brief untouched for 90+ days unless explicitly renewed\"}",
+    },
+    b: {
+      id: 1823,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "igris-ai carries 166 open briefs while shipping daily — at the observed harvest rate the backlog is write-only, and the same containment/verification themes keep recurring as fresh learnings instead of closing briefs",
+      evidence:
+        "{\"learning_id\":1454,\"note\":\"166 open briefs, 603 learnings, days_since_activity 0. Commits f1d05ce, 8fce09d, 1eb88c5, 174282f, 07ea8d3 are all containment/gate work; learnings 1454 ('every guard needs a self-negative-control'), 1463, 1455 restate the same theme. Suggestion 1708 notes commits lack matching briefs; the complementary risk is 166 briefs that no commit will ever reach. Recommend a brief-age cap or a WIP limit rather than more triage passes.\"}",
+      suggested_action:
+        null,
+    },
+  },
+  {
+    ids: [1879, 1887] as const,
+    score: 0.186,
+    label: 'DIFFERENT',
+    note: "'Learning 1509 ↔ e7435d0' — below the excerpt floor (0.192), and hand-labelled DIFFERENT at TD-445: the audit action vs the traceability action",
+    a: {
+      id: 1879,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "Learning 1509 ('a Done brief can silently flip back to Ready with no brief event') plus the brief-disk-projection and status-sync-clobber commits suggest some of the 191-day 'Ready' fifty_eco_system briefs may be silently-reverted completed work, not real backlog",
+      evidence:
+        "{\"learning_id\":1509,\"brief_id\":\"BR-029\",\"note\":\"Learning 1509 documents a Done->Ready flip with no brief event; commit e7435d0 'guard brief disk projection against status-sync clobber' and learning 1495 ('igris_brief_sync re-materialises the brief FILE from the brain') describe the same mechanism. Before any bulk triage/archive of the 33 fifty_eco_system briefs, their status should be checked against merge-base rather than trusted — otherwise finished work gets re-opened or archived as never-done.\"}",
+      suggested_action:
+        "{\"kind\":\"audit_brief_status_against_git_history\",\"project_slug\":\"fifty_eco_system\",\"method\":\"merge-base check per brief_id, per learning 1509\",\"scope\":\"all 33 open briefs\"}",
+    },
+    b: {
+      id: 1887,
+      project_slug: "igris-ai",
+      entity_key: "project:igris-ai",
+      title:
+        "Learning 1509 documents a Done brief silently flipping back to Ready, and commit e7435d0 guards exactly that — but nothing in the digest links the fix to the learning or to a brief",
+      evidence:
+        "{\"learning_id\":1509,\"note\":\"Learning 1509: 'A Done brief can silently flip back to Ready with no brief event'. Commit e7435d0: 'fix(brain): guard brief disk projection against status-sync clobber'. Same defect, same day-range, no brief in the open set covers it. The same pairing holds for learning 1507 and commit a3d8a4a (claude CLI error envelopes). Discovery→fix pairs are landing without a durable link, so the learning cannot later be scored as acted-upon.\"}",
+      suggested_action:
+        "{\"kind\":\"link_learning_to_commit\",\"pairs\":[{\"learning_id\":1509,\"commit\":\"e7435d0\"},{\"learning_id\":1507,\"commit\":\"a3d8a4a\"}]}",
+    },
+  },
+  {
+    ids: [1821, 1884] as const,
+    score: 0.128,
+    label: 'DIFFERENT',
+    note: "fifty_eco_system — the control the brief called a correct non-merge",
+    a: {
+      id: 1821,
+      project_slug: "fifty_eco_system",
+      entity_key: "project:fifty_eco_system",
+      title:
+        "fifty_eco_system has 33 open briefs but only 7 learnings in 187 days — the project consumes brief-writing effort and returns almost no knowledge, which is the strongest single argument for archiving it outright",
+      evidence:
+        "{\"brief_id\":\"BR-095\",\"note\":\"Project row: 33 open briefs, 7 learnings, 187 days_since_activity. The template swarms (BR-095..BR-101, UI-006..UI-013) plus AC-001/AC-007 and TD-004/TD-006/TD-007 have never produced harvested knowledge. Existing suggestion 1696 asks for triage; this adds the yield argument — briefs-per-learning is the metric that decides archive vs revive.\"}",
+      suggested_action:
+        "{\"kind\":\"archive_project_backlog\",\"project_slug\":\"fifty_eco_system\",\"keep_open\":[\"BR-074\",\"BR-076\"],\"reason\":\"In-Progress briefs preserved; all Ready briefs archived pending explicit revival\"}",
+    },
+    b: {
+      id: 1884,
+      project_slug: "fifty_eco_system",
+      entity_key: "project:fifty_eco_system",
+      title:
+        "Three fifty_eco_system tech-debt briefs (TD-004, TD-006, TD-007) are 'In Progress' with 191 days of no activity — 'In Progress' has stopped meaning anything and should be reset to Ready or archived",
+      evidence:
+        "{\"brief_id\":\"TD-004\",\"note\":\"TD-004, TD-006, TD-007 all show status 'In Progress' at days_since_update 191, and the project's days_since_activity is 188 — nothing can be in progress. Distinct from suggestion 1696 (bulk staleness) and 1697 (lifeOS P0): this is specifically the in-progress status being false across a set, which corrupts any 'what is being worked on' query.\"}",
+      suggested_action:
+        "{\"kind\":\"bulk_status_reset\",\"project_slug\":\"fifty_eco_system\",\"brief_ids\":[\"TD-004\",\"TD-006\",\"TD-007\",\"BR-074\",\"BR-076\",\"TS-003\"],\"from_status\":\"In Progress\",\"to_status\":\"Ready\",\"reason\":\"no project activity for 188 days; In Progress is stale\"}",
+    },
+  },
+] as const;
+
+const IN_BAND = PRODUCTION_PAIRS.slice(0, 3);
+
+describe('TD-445 production window — three misses and one control, pinned as measured', () => {
+  it.each(PRODUCTION_PAIRS)('$ids scores the recorded $score', (p) => {
+    // Reds if the tokeniser or a stored title drifts.
+    expect(claimSimilarity(claimTokens(p.a.title), claimTokens(p.b.title))).toBeCloseTo(
+      p.score,
+      3,
+    );
+  });
+
+  it.each(IN_BAND)('$ids shares ONE anchor — this brief, not TD-452', (p) => {
+    const anchorA = entityKey(candidateFromRow(p.a));
+    expect(anchorA).toBe(entityKey(candidateFromRow(p.b)));
+    expect(anchorA).toBe(p.a.entity_key);
+  });
+
+  it.each(PRODUCTION_PAIRS)('$ids does not merge at the shipped threshold — $note', (p) => {
+    expect(match(p.a.title, p.b.title)).toBe(false);
+  });
+
+  it('the shipped threshold sits above every production pair — move it and re-read the set', () => {
+    const top = Math.max(
+      ...PRODUCTION_PAIRS.map((p) => claimSimilarity(claimTokens(p.a.title), claimTokens(p.b.title))),
+    );
+    expect(top).toBeCloseTo(0.216, 3);
+    expect(THRESHOLD).toBeGreaterThan(top);
   });
 });
 

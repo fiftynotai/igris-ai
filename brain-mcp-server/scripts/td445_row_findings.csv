@@ -1,0 +1,327 @@
+id,finding,title
+901,fr054_split_parent_open,FR-054 was split into FR-061/062/063 127 days ago but the parent brief is still open — close/archive it to stop counting a superseded parent as active work.
+902,superseded_briefs_open,"A large cluster of briefs marked 'Superseded' are still sitting in the open set (e.g. FR-140, TD-181, TD-204, TD-247, TD-250, TD-251, FR-174, FR-117) — sweep them to Closed to declutter the 61-brief backlog."
+1270,feco_slug_variant,"fifty_eco_system (34 open briefs, 0 learnings) and fifty-eco-system (0 open briefs, 7 learnings) are the same project split across two slugs, so harvest and recall never meet"
+1271,queue_flood_stalled_gap,60 of 68 open suggestions are mechanical stalled/gap rows for one dormant project — the review queue is unusable until they are batch-resolved
+1272,feco_abandoned,All 34 fifty_eco_system briefs are 143-163 days untouched with no project activity — archive or park the project rather than letting it generate suggestions forever
+1273,br128_malformed_status,BR-128 is still listed as an open brief despite status 'Done (Resolved by dec8d1f)' — a resolved brief is leaking into the open set
+1274,fr054_split_parent_open,"FR-054's status is the free-text 'Split (see FR-061, FR-062, FR-063)' — a split brief has no terminal state, so it counts as open forever"
+1275,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 105 days with no project activity recorded
+1276,zero_learnings_projects,"Seven projects carry 100+ open briefs between them but zero learnings — fifty_eco_system (34), lifeOS (14), attendance_app (4) never ran /harvest"
+1289,brief_id_collision,"BR-001 exists as a distinct brief in three projects (hadir-system, attendance_app, fifty_eco_system) — cross-project brief references are ambiguous"
+1290,feco_slug_variant,"Two near-identical project slugs exist — 'fifty_eco_system' (34 open briefs, 0 learnings) and 'fifty-eco-system' (0 briefs, 7 learnings); knowledge and work are split across a spelling variant"
+1291,lifeos_dark,lifeOS has 14 open briefs including a P0-Critical a11y regression but zero learnings and no recorded activity — work is being briefed but nothing is being harvested
+1292,feco_unchecked_ac,"27 'Done but unchecked acceptance criteria' suggestions all land on fifty_eco_system — treat as one process defect (bulk AC audit), not 27 individual reviews"
+1294,fr054_split_parent_open,"FR-054 has sat in status 'Split (see FR-061, FR-062, FR-063)' for 163 days — a split parent should be closed, not left open as a P1"
+1295,br128_malformed_status,BR-128's status is the unparsed string 'Done(Resolvedbydec8d1f)' — a done brief is leaking into the open-briefs list via a status field that lost its whitespace
+1296,feco_abandoned,fifty_eco_system's entire 34-brief backlog is uniformly 143–163 days stale with zero commits — decide bulk-archive vs. revival rather than triaging 30 stall alerts individually
+1297,zero_learnings_projects,Learning capture is concentrated in igris-ai/mbrgea-ai while 8 active projects with open briefs have recorded zero learnings
+1299,br023_p0_unattended,"BR-023 is the only P0-Critical brief in the brain, has sat In Progress for 105 days, and no stalled suggestion covers it"
+1300,stalled_detector_gap,"The stalled detector has flagged only fifty_eco_system and attendance_app, missing 14 lifeOS and 4 hadir/hadir-system briefs idle 105–148 days"
+1302,feco_unchecked_ac,"Commit 03adca2 now refuses closing commits on unticked criteria, but the 27 already-Done briefs flagged by the gap module were never reconciled"
+1304,fr054_split_parent_open,"FR-054 sits in a non-canonical status 'Split (see FR-061, FR-062, FR-063)' that the new status vocabulary normalization does not cover"
+1305,feco_abandoned,"fifty_eco_system has 34 open briefs all frozen at 166/146 days and zero recorded learnings — decide whether the project is paused, or bulk-close it"
+1306,br023_p0_unattended,BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 108 days with no activity
+1307,lifeos_batch_sweep_stalled,lifeOS filed 13 bug briefs in one sweep (BR-024…BR-036) and none moved off Ready in 109 days — a whole QA pass was captured and then dropped
+1308,fr054_split_parent_open,"FR-054 is still counted as open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, not left in the open queue"
+1309,br128_malformed_status,BR-128 status is the unparsed string 'Done(Resolvedbydec8d1f)' yet the brief still counts as open — status parsing is dropping whitespace and swallowing the Done state
+1310,EXCLUDED,"Near-duplicate project slugs (fifty_eco_system vs fifty-eco-system, hadir vs hadir-system vs fya-hadir-app vs moca-hadir-app) are splitting one project's history across several rows"
+1312,feco_unchecked_ac,"27 briefs marked Done with unchecked acceptance criteria are all in one project — this is a workflow defect in how fifty_eco_system closes briefs, not 27 findings"
+1313,feco_abandoned,"34 open briefs in fifty_eco_system have all sat untouched for 167 days — the project looks abandoned, not backlogged; decide to archive or re-activate it wholesale"
+1314,br023_p0_unattended,BR-023 is the brain's only P0-Critical brief and has been In Progress for 109 days with no per-brief stall suggestion raised
+1316,fr054_split_parent_open,"FR-054 carries the non-vocabulary status 'Split (see FR-061, FR-062, FR-063)' and is still counted open — its children aren't in the digest to confirm the split landed"
+1317,EXCLUDED,Three near-identical project slugs coexist (fifty_eco_system / fifty-eco-system / fifty-flutter-kit vs fifty-dev) and the briefs and learnings are split across them
+1318,feco_unchecked_ac,"27 briefs are Done with unchecked acceptance criteria, but a commit gate now refuses exactly this — decide whether the historical backlog gets audited or grandfathered"
+1321,partial_sweep_class_promote,"Partial-sweep mistakes keep recurring (learnings 1131, 1182, 1202, 1220) — the lesson is captured repeatedly but never promoted into a standing guideline"
+1323,br023_p0_unattended,BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 109 days with no stalled-suggestion coverage
+1324,lifeos_batch_sweep_stalled,"Thirteen lifeOS briefs (BR-024..BR-036) were all filed together 110 days ago and none has moved — the whole QA sweep is unprocessed, not thirteen independent stalls"
+1325,feco_slug_variant,"Two project slugs differ only by separator — fifty_eco_system (34 open briefs) vs fifty-eco-system (7 learnings, 0 briefs) — so briefs and learnings for one codebase are split across two brain projects"
+1326,queue_flood_stalled_gap,62 of 66 open suggestions are single-project fifty_eco_system stalled/gap notices — the queue is drowning higher-value findings and should be collapsed per-project
+1327,feco_abandoned,"fifty_eco_system holds 34 open briefs (4 of them P1-High) frozen at 167/147 days with 0 learnings — it looks abandoned rather than paused, and no brief records that decision"
+1330,feco_slug_variant,"Two project slugs for the same codebase — 'fifty_eco_system' (34 open briefs, 0 learnings) and 'fifty-eco-system' (0 briefs, 7 learnings) — the brief and learning layers are split across a naming variant"
+1332,br023_p0_unattended,"BR-023 is the only P0-Critical brief in the brain, In Progress and untouched for 109 days, yet no stalled suggestion has ever been raised for it"
+1333,feco_unchecked_ac,27 queued 'Done but unchecked acceptance criteria' suggestions are all pre-existing debt from before commit 03adca2 shipped the closing-commit gate — batch-reconcile them rather than triaging one by one
+1334,fr054_split_parent_open,"FR-054 sits open with status 'Split (see FR-061, FR-062, FR-063)' — a resolved parent still counted as an open P1 brief because 'Split' is not a terminal status in the vocabulary"
+1335,sandbox_projects_active,"At least nine throwaway test/sandbox projects (test-v5-verify, agy-deny-test, igris-nobrief-*, igris-agy-hunt-*, mbrgea-test, igris-os-eval) are registered as 'active' and contribute open briefs to the real backlog"
+1339,brief_id_collision,"Brief IDs collide across projects (BR-001 exists in hadir-system, attendance_app, and fifty_eco_system; BR-027/BR-028 in both hadir and lifeOS) — any tooling keyed on brief_id alone will cross-wire them"
+1340,feco_slug_variant,"Two project slugs for the same codebase — 'fifty_eco_system' (34 open briefs, 0 learnings) and 'fifty-eco-system' (0 open briefs, 7 learnings) — briefs and knowledge are split across a hyphen/underscore variant"
+1341,queue_flood_stalled_gap,58 of 61 open suggestions are mechanical 'stalled'/'gap' rows for one project — the review queue is saturated and will bury any genuinely novel finding
+1342,feco_abandoned,"All 34 fifty_eco_system briefs froze on the same two dates (169d / 148d ago) with zero learnings recorded — this reads as an abandoned project, not 34 independent stalls"
+1343,lifeos_priority_not_discriminating,"lifeOS has a P0-Critical a11y regression (BR-023) stalled 110 days behind 13 other briefs, 7 of which are also P1-High — the priority field has stopped discriminating"
+1345,fr054_split_parent_open,"FR-054 is still open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent left open counts against the backlog and none of the three children appear in the digest"
+1355,queue_flood_stalled_gap,60 of the 60 open suggestions are mechanical stalled/gap rows on fifty_eco_system — the review queue is saturated and will hide any real finding
+1356,feco_abandoned,fifty_eco_system holds 34 open briefs and 0 learnings with no recorded activity — decide archive-vs-revive as one call instead of 34
+1358,br023_p0_unattended,"lifeOS BR-023 is the only P0-Critical brief in the system, In Progress and untouched for 111 days"
+1359,lifeos_batch_sweep_stalled,All 14 lifeOS briefs were filed in one 112-day-old sweep and none has moved — an audit was run and its output never entered the work loop
+1361,false_success_class_promote,"'A check that reports success without having checked' has now been learned four separate times across two projects — it is a systemic defect class, not four incidents"
+1364,fr054_split_parent_open,FR-054 still counts as open at P1-High while its status says it was split into FR-061/062/063 — the parent should be closed or the children linked
+1365,br128_malformed_status,BR-128's status is the unspaced string 'Done(Resolvedbydec8d1f)' yet it appears in the open-briefs list — status parsing is dropping whitespace and not recognising Done
+1377,feco_slug_variant,"Two project slugs exist for the same codebase — fifty_eco_system (34 open briefs, 0 learnings) and fifty-eco-system (0 briefs, 7 learnings); briefs and knowledge are split across them"
+1378,feco_abandoned,"All 34 fifty_eco_system briefs share days_since_update 170 and the project has null activity — the backlog looks abandoned, not stalled; consider a bulk triage-or-archive pass rather than 30 more per-brief stall alerts"
+1379,br023_p0_unattended,"BR-023 is the only P0-Critical brief in the whole brain, In Progress and untouched for 112 days, with 13 more P1/P2 lifeOS briefs behind it and zero recorded learnings for the project"
+1380,br128_malformed_status,"BR-128 is recorded as ""Done(Resolvedbydec8d1f)"" yet still counts as an open brief — the status string is malformed and not matching the Done state"
+1381,false_success_class_promote,"""A check that reports success without having checked"" is now recorded independently in three projects (igris-ai, mbrgea-ai, moca-ai-agent) — it is a cross-project standard candidate, not three local lessons"
+1382,partial_sweep_class_promote,"mbrgea-ai's self-declared most frequent defect — correcting a claim at its source but not its siblings — has produced repeat rejections and is still only a learning, never a project standard"
+1384,queue_flood_stalled_gap,66 of 69 queued suggestions are single-project fifty_eco_system stall/gap alerts — the review queue is saturated by one dormant project and will bury anything new
+1392,stalled_module_stale_days,Every fifty_eco_system stalled suggestion says 68 days but the briefs now report 174 days idle — the stalled module's day counts are stale and no longer match the digest
+1393,feco_abandoned,"fifty_eco_system has 34 open briefs (7 at P1-High) with 170 days of no activity — decide whether to archive the project or re-commit to it, rather than re-triaging briefs one by one"
+1394,queue_flood_stalled_gap,"69 open suggestions, 56 of them mechanical stalled/gap rows for a single dormant project — the review queue needs per-project caps or grouping before any new signal can be seen"
+1395,feco_unchecked_ac,"27 fifty_eco_system briefs are Done with unchecked acceptance criteria — this looks like a per-project closing habit, and the gate that now refuses such commits landed only recently"
+1396,br023_p0_unattended,"lifeOS BR-023 is P0-Critical and In Progress with 115 days of no update, and no stalled suggestion has ever been raised for it"
+1397,stalled_detector_gap,"The stalled module only ever fires on fifty_eco_system and attendance_app — lifeOS (14 briefs, 117 days), hadir (132 days), and hadir-system (158 days) are equally stale and produce no suggestions"
+1399,false_success_class_promote,"""A check that reports success without having checked"" now has at least four independent instances across three projects — it is a cross-project standard, not a per-project learning"
+1401,fr054_split_parent_open,"igris-ai FR-054 has sat in status ""Split (see FR-061, FR-062, FR-063)"" for 173 days — a split parent should be closed, and none of its three children appear anywhere in the digest"
+1402,feco_abandoned,fifty_eco_system holds 34 open briefs but has had zero activity for 171 days — decide whether to archive the project or schedule a deliberate restart
+1403,queue_flood_stalled_gap,The suggestion queue is 60 items and ~93% of it is two mechanical modules firing per-brief on one dormant project — add per-project rollup/caps before the queue stops being read
+1404,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 116 days with no learnings ever captured for the project
+1405,lifeos_batch_sweep_stalled,"lifeOS accumulated 14 briefs (7 of them P1-High) in a single 117-day-old QA sweep and none has moved since — the sweep produced a backlog, not a fix cycle"
+1406,fr054_split_parent_open,"FR-054 has status 'Split (see FR-061, FR-062, FR-063)' yet still counts as an open P1 brief — split parents should close, or the successors are missing"
+1407,partial_sweep_class_promote,"Partial-sweep corrections keep recurring in mbrgea-ai/igris-ai — five learnings now describe the same 'fixed the source, missed the siblings' failure and it is still being rediscovered, not prevented"
+1408,false_success_class_promote,'A check that reports success without having checked' is already named as a recurring class (1248) and has kept recurring since — three later learnings are fresh instances
+1409,blob_push_drop,Learning 1291 reports brain pushes silently dropping BLOB-typed brief_files.content while reporting success — worth confirming no other project's briefs were lost the same way
+1410,zero_learnings_projects,Four active projects hold 21 open briefs between them but have never recorded a single learning — work is going in without knowledge coming out
+1411,hadir_slug_fragmentation,Hadir and Moca each exist under 3-4 separate project slugs with briefs split across them — likely fragmentation of one product's brain
+1414,feco_abandoned,fifty_eco_system holds 34 open briefs but has had zero activity for 171 days — decide whether to archive the project or schedule a real revival sprint
+1415,queue_flood_stalled_gap,69 open suggestions are all from two mechanical modules (stalled/gap) and 62 concern one dormant project — the review queue is drowning its own signal
+1417,lifeos_dark,lifeOS has 14 open briefs including a P0 accessibility regression but zero learnings recorded — a full bug sweep produced briefs and no captured knowledge
+1418,br023_p0_unattended,BR-023 is the only P0-Critical brief in the whole digest and it has sat In Progress for 116 days with no stalled-suggestion ever raised for it
+1419,fr054_split_parent_open,"FR-054 still sits open with status 'Split (see FR-061, FR-062, FR-063)' after 174 days — a split parent should be closed, not left counting as open work"
+1420,br128_malformed_status,BR-128 is recorded as 'Done(Resolvedbydec8d1f)' yet still appears in the open-brief set — a malformed status string is keeping resolved work open
+1421,false_success_class_promote,Five recent mbrgea-ai learnings independently describe the same defect class — verifications that pass without having verified — and should be promoted into a test-standards doc
+1422,partial_sweep_class_promote,Partial-sweep corrections are called this project's most frequent defect (learning 1246) and three newer learnings repeat it — codify a sweep protocol rather than relearning it
+1423,mbrgea_filing_bar,mbrgea-ai carries 51 open briefs while its own learning 1262 warns that a brief spends attention whether or not anyone reads it — worth a filing-bar review
+1424,feco_abandoned,"fifty_eco_system has 34 open briefs but no activity for 171 days — decide whether to archive the project or re-commit to it, rather than triaging 30+ stalled-brief suggestions one at a time"
+1425,br023_p0_unattended,BR-023 is the only P0-Critical brief in the digest and has sat In Progress for 116 days with no owner activity — lifeOS shows 14 open briefs and zero recorded learnings
+1427,fr054_split_parent_open,"FR-054 is still counted as an open brief 174 days after being split into FR-061/062/063 — 'Split (see ...)' is not a terminal status, so the parent never closes"
+1428,feco_unchecked_ac,"27 'Done but unchecked acceptance criteria' suggestions all predate the commit that added the closing-gate — resolve them as one historical sweep, not 27 reviews"
+1429,false_success_class_promote,Nine recent learnings across three projects describe the same defect — a check or sweep that reports success without having checked — which is worth promoting into a cross-project standard rather than re-learning per project
+1430,zero_learnings_projects,"Four active projects with open briefs have recorded zero learnings — attendance_app (4 briefs), lifeOS (14), hadir-system (1), moca-hr-agent (1) — so nothing from that work is reaching the brain"
+1431,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 171 days — decide whether to archive the project or pick a single P1 to restart it
+1432,queue_flood_stalled_gap,Suggestion queue is 96% one project — cap per-project stalled/gap suggestions so real cross-project findings aren't buried
+1433,lifeos_dark,"lifeOS has 14 open briefs including a P0-Critical a11y regression (BR-023) idle 116 days, yet zero learnings and no recorded activity"
+1434,stalled_detector_gap,"The stalled detector appears to miss projects with null days_since_activity — attendance_app, lifeOS, hadir-system and hadir briefs idle 118–159 days produce no suggestions"
+1435,fr054_split_parent_open,"FR-054 still counts as open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, not left In Progress for 174 days"
+1436,br128_malformed_status,BR-128 status is the unparsed string 'Done(Resolvedbydec8d1f)' yet it is still listed as an open brief — whitespace-stripped status is defeating the done-filter
+1438,partial_sweep_class_promote,Partial-sweep corrections are mbrgea-ai's self-declared most frequent defect and igris-ai keeps re-learning the same lesson — promote one sweep rule into project guidelines instead of logging a sixth learning
+1440,hadir_slug_fragmentation,"Four hadir-family slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) hold overlapping MOCA/Hadir UI briefs — confirm they are distinct repos or merge the brains"
+1441,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 172 days — decide whether to archive the project or schedule a dedicated cleanup sprint
+1442,queue_flood_stalled_gap,The open-suggestion queue is 96% one project — 27 near-identical 'stalled 68 days' items plus 27 'Done but unchecked AC' items all from fifty_eco_system are drowning out every other signal
+1443,feco_unchecked_ac,"27 fifty_eco_system briefs are marked Done with unchecked acceptance criteria — this is a closing-discipline failure, not 27 separate defects, and igris-ai already shipped a gate for it"
+1444,fr054_split_parent_open,"FR-054 sits in the non-canonical status 'Split (see FR-061, FR-062, FR-063)' and still counts as an open P1 — close it now that a status-vocabulary gate exists"
+1445,br128_malformed_status,BR-128 is recorded as 'Done(Resolvedbydec8d1f)' yet still appears in the open-briefs list — a resolved brief leaking into open counts
+1446,lifeos_dark,lifeOS has 14 open briefs including a P0 accessibility regression but zero recorded learnings and no activity timestamp — the project is producing work the brain never captures
+1447,partial_sweep_class_promote,Six recent learnings restate one rule — 'a partial sweep of a claim class is the recurring defect' — and should be consolidated into a single canonical entry or promoted to a project doc
+1448,false_success_class_promote,'A check that reports success without having checked' is documented as a defect class in igris-ai but recurs unlinked in mbrgea-ai and moca-ai-agent — promote it to a global learning
+1452,feco_abandoned,"fifty_eco_system has 34 open briefs and zero activity for 172 days — decide whether to archive the project or schedule a deliberate revival, rather than triaging 30 individual stall alerts"
+1453,queue_flood_stalled_gap,The suggestion queue is ~90% one project's stall/gap alerts — cap per-project suggestions or the reviewable signal is buried
+1454,br023_p0_unattended,BR-023 is a P0-Critical accessibility regression sitting In Progress for 117 days with no learnings ever recorded for lifeOS
+1455,lifeos_batch_sweep_stalled,13 lifeOS briefs (BR-024…BR-036) were all filed the same day 118 days ago and none has moved — likely a one-off audit dump that was never scheduled into work
+1456,fr054_split_parent_open,FR-054 is still counted as an open brief although its status says it was split into FR-061/062/063 — close it so the open count stops double-counting
+1457,br128_malformed_status,BR-128 is listed among open briefs while its status reads 'Done (Resolved by dec8d1f)' — the status string was never normalised to a closed state
+1458,EXCLUDED,Six-plus recent learnings all restate one defect class — partial claim sweeps and checks that report success without checking — and should be promoted into a coding_guidelines rule instead of accumulating as memory
+1459,partial_sweep_class_promote,"mbrgea-ai learning 1246 names partial claim sweeps as its most frequent defect — the same class igris-ai learned independently, so the rule should be lifted to a global standard"
+1460,feco_unchecked_ac,"27 briefs marked Done with unchecked acceptance criteria is a process failure, not 27 findings — the Done transition is not gated on criteria"
+1463,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 172 days — decide whether to archive the project or re-commit to it, rather than triaging 30+ stalled-brief suggestions one by one"
+1464,br023_p0_unattended,BR-023 is the only P0-Critical brief in the whole system and has sat In Progress for 117 days with no stalled-suggestion coverage
+1465,lifeos_batch_sweep_stalled,All 14 lifeOS briefs date to a single 117–118 day old QA sweep and the project reports no activity since — the sweep produced briefs but never produced work
+1466,fr054_split_parent_open,"FR-054 is still counted as an open P1 brief despite a status of 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, not left open for 175 days"
+1467,br128_malformed_status,BR-128 is marked 'Done (Resolved by dec8d1f)' yet still appears in the open-brief set — a status-parsing or close-sweep gap that inflates every open-brief count
+1468,feco_unchecked_ac,"27 fifty_eco_system briefs were marked Done with unchecked acceptance criteria — treat this as one process defect in the close ritual, not 27 individual cleanups"
+1469,attendance_app_zero_learnings,"attendance_app has 4 open P1 briefs and a visible commit stream (Microsoft SSO, rebrand, geolocation licensing) but zero learnings recorded — shipped work is not being harvested"
+1470,partial_sweep_class_promote,Five recent learnings restate one lesson — partial claim sweeps — across two projects; consolidate into a single promoted standard instead of letting the sixth recurrence be filed as new
+1471,false_success_class_promote,Four independent projects logged the same root cause this period — a check that reports success without having checked — which is worth a cross-project guardrail rather than four separate learnings
+1472,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity in 172 days — decide whether to archive the project or schedule a deliberate revival
+1473,lifeos_stalled_undetected,lifeOS has 14 briefs untouched for ~119 days — including a P0-Critical a11y regression (BR-023) — yet no stall suggestion has ever been raised for the project
+1474,stalled_detector_gap,"The stalled-brief detector appears scoped to two projects — hadir, hadir-system, igris-ai and lifeOS all have 110+ day stale briefs with no corresponding suggestion"
+1475,queue_flood_stalled_gap,62 of 66 queued suggestions are single-brief 'stalled'/'gap' notices from one project — collapse per-brief alerts into per-project rollups before the queue becomes unreadable
+1476,false_success_class_promote,Six recent learnings restate the same root cause — a check or edit that reports success without verifying — and it is already named as a recurring class; promote it to an enforced gate rather than logging it again
+1479,fr054_split_parent_open,"FR-054 has sat in a non-standard 'Split (see FR-061, FR-062, FR-063)' status for 175 days — none of its three children appear in the digest, so the split may be untracked"
+1480,brief_id_collision,"BR-001 through BR-004 exist concurrently in attendance_app, hadir-system and fifty_eco_system — verify brief ids are project-scoped everywhere the recent identity fixes touched"
+1481,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 173 days — decide whether to archive the project or schedule a dedicated triage session
+1482,queue_flood_stalled_gap,"The stalled+gap modules emitted 60+ near-identical suggestions, 55 of them for one dormant project — add per-project rollup/caps before the queue stops being readable"
+1483,br128_malformed_status,"BR-128 is marked Done (resolved by dec8d1f) yet still appears in open_briefs — the closure did not propagate, which is exactly the failure learning 1316 describes"
+1484,fr054_split_parent_open,"FR-054 has status 'Split (see FR-061, FR-062, FR-063)' but is still open and P1 after 176 days — a split parent should be closed once its children exist"
+1485,br023_p0_unattended,BR-023 is the only P0-Critical brief anywhere in the digest and it has sat In Progress for 118 days with no lifeOS activity recorded at all
+1486,zero_learnings_projects,"Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work there is not reaching the brain"
+1491,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 173 days — decide whether to archive the project or schedule a real burn-down
+1492,queue_flood_stalled_gap,The stalled+gap modules emitted ~60 near-identical suggestions all pointing at fifty_eco_system — add per-project aggregation or a dormancy cutoff before the queue becomes unreadable
+1493,fr054_split_parent_open,"FR-054 is still counted as open despite status 'Split (see FR-061, FR-062, FR-063)' — close it so the successors are the only live records"
+1494,br128_malformed_status,BR-128 status is the unparsed string 'Done(Resolvedbydec8d1f)' and it still appears in open_briefs — the status normalizer is not covering this form
+1495,lifeos_dark,lifeOS has 14 open briefs including a P0 accessibility regression but zero learnings and no recorded activity — the brain is capturing nothing from this project
+1496,EXCLUDED,Partial-sweep and false-success defects keep recurring across igris-ai and mbrgea-ai — consider promoting the sweep discipline into a coding-guidelines rule instead of another learning
+1497,EXCLUDED,"BR-001/BR-027/BR-028 recur across hadir, hadir-system, attendance_app and fifty_eco_system with overlapping Moca/Hadir UI scope — check whether these are the same work tracked in four projects"
+1498,feco_abandoned,"fifty_eco_system holds 34 open briefs but has seen zero activity for 173 days — decide whether to archive the project or re-commit to it, rather than triaging 30 stalled briefs one at a time"
+1499,queue_flood_stalled_gap,The suggestion queue is 69 items of which ~60 are single-project 'stalled'/'gap' rows — the stalled and gap modules need per-project aggregation or a dormancy suppression before they drown out anything else
+1500,fr054_split_parent_open,"FR-054 still sits open with status 'Split (see FR-061, FR-062, FR-063)' after 176 days — a split parent should be closed, not left counting as open P1 work"
+1501,br128_malformed_status,"BR-128 is listed among open briefs with status 'Done(Resolvedbydec8d1f)' — a resolved brief leaking into the open set, and the mangled spacing suggests a status-parsing defect"
+1502,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief anywhere in the digest and it has been In Progress for 118 days with 13 sibling P1 bugs behind it and zero recorded learnings for the project
+1503,false_success_class_promote,'A check that reports success without having checked' keeps recurring across projects — consider promoting learning 1248 into a project-context doc so it stops being re-learned
+1504,merge_learnings_1304_1315,Learnings 1304 and 1315 state nearly the same rule about occurrence-granular sweeps — merge them before the pair dilutes recall for the sweep class
+1505,EXCLUDED,mbrgea-ai's own most-frequent defect is the partial sweep (learning 1246) and it now carries 54 open briefs at 158 learnings — worth a targeted sweep audit rather than more briefs
+1506,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 173 days — decide whether to archive the project or schedule a working block, rather than triaging 30 stall alerts one by one"
+1507,queue_flood_stalled_gap,The suggestion queue is 69 items of which ~60 are mechanical stalled/gap alerts against one dormant project — raise the stalled-module threshold or scope it to active projects before it drowns real signal
+1508,feco_unchecked_ac,"27 fifty_eco_system briefs are marked Done with unchecked acceptance criteria — this is one closing-ritual defect, not 27 briefs to reopen; fix the close step or backfill the checkboxes in a single pass"
+1511,lifeos_priority_not_discriminating,"lifeOS filed 14 briefs on the same day 120 days ago, nine of them P1-High and one P0-Critical, and none has moved since — the priorities are not being used as a queue"
+1512,fr054_split_parent_open,"FR-054 still counts as open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed so it stops occupying the open-brief count"
+1513,zero_learnings_projects,"attendance_app, lifeOS, hadir-system and moca-hr-agent have open briefs but zero learnings recorded — either work is happening without harvest, or these projects are inactive and should be marked so"
+1514,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 174 days — decide whether to archive the project or resume it, rather than triaging 30 stalled-brief suggestions one at a time"
+1515,br023_p0_unattended,"BR-023 is lifeOS's only P0-Critical brief, has sat In Progress for 119 days, and — unlike fifty_eco_system's briefs — has no stalled suggestion queued for it"
+1516,stalled_detector_gap,"The stalled and gap suggestion modules have produced 60 queued items covering only 2 projects — lifeOS (14 open briefs, 120 days cold) and hadir (2 briefs, 133+ days) are invisible to them"
+1517,fr054_split_parent_open,"FR-054 still counts as open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, not left occupying the P1 open list"
+1519,false_success_class_promote,"""A check that reports success without having checked"" is already named as a recurring class (1248) and has since recurred at least four more times — the verification-honesty rule is not being enforced anywhere"
+1520,feco_unchecked_ac,"27 briefs are marked Done with unchecked acceptance criteria, yet commit 03adca2 added a gate that refuses exactly that — the backlog predates the gate and will never be swept by it"
+1521,lifeos_dark,lifeOS has 14 open briefs including a P0 and eight P1s but zero learnings recorded — the project is producing work and no knowledge
+1524,feco_abandoned,"fifty_eco_system has 34 open briefs but zero activity for 174 days — decide whether to archive the project or re-scope it, rather than triaging 30 stalled briefs one by one"
+1525,queue_flood_stalled_gap,The stalled/gap modules have queued 69 near-identical suggestions (30 stalled + 27 gap on fifty_eco_system alone) — add per-project caps or roll-ups before the review queue becomes unreadable
+1526,feco_unchecked_ac,"27 briefs are marked Done with unchecked acceptance criteria — this is a systematic closing-ritual defect, not 27 independent oversights; fix the Done gate instead of the briefs"
+1527,partial_sweep_class_promote,Partial-sweep defects (correcting a claim at its source but not its siblings) recur across at least 8 learnings in igris-ai and mbrgea-ai — promote the sweep discipline into a coding-guidelines rule instead of re-learning it
+1528,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief in the digest and has sat In Progress for 119 days with no recorded project activity
+1529,fr054_split_parent_open,"FR-054 is still counted as open with status 'Split (see FR-061, FR-062, FR-063)' — a terminal split state is being tracked as live work"
+1530,igris_backlog_size,"igris-ai carries 139 open briefs and 558 learnings — the largest backlog in the brain by 2.5x, with no stalled-detection coverage in the current queue"
+1531,hadir_slug_fragmentation,"Five separate active projects track the same Hadir/attendance product (hadir, hadir-system, fya-hadir-app, moca-hadir-app, attendance_app) — consolidate or explicitly document the split"
+1532,attendance_app_br003_before_br002,BR-002 'Rebrand to Moca Design' and BR-003 'Polish Moca Rebrand to 100% Accuracy' are both In Progress at P1-High — BR-003 presupposes BR-002 is finished
+1533,attendance_app_zero_learnings,"Substantial shipped work (Microsoft SSO, i18n/Arabic, PDF reports, release signing) appears in recent commits but attendance_app has zero learnings and all four briefs sit 157 days stale"
+1535,feco_abandoned,fifty_eco_system holds 34 open briefs but has had zero activity for 174 days — decide whether to archive the project or schedule a dedicated burn-down
+1536,queue_flood_stalled_gap,"The stalled+gap modules have flooded the review queue with 69 open suggestions, 96% of them for one dormant project — add per-project caps or roll-ups before the queue becomes unreadable"
+1537,feco_unchecked_ac,All 27 'Done with unchecked acceptance criteria' suggestions predate the closing-commit gate — verify the gate covers this project rather than triaging the 27 legacy briefs one by one
+1538,br023_p0_unattended,lifeOS BR-023 is P0-Critical and has sat In Progress for 119 days with 13 other open briefs behind it and zero captured learnings
+1540,fr054_split_parent_open,"FR-054 is still counted open with status 'Split (see FR-061, FR-062, FR-063)' — a terminal state wearing a non-vocabulary status string"
+1541,br128_malformed_status,BR-128 shows status 'Done(Resolvedbydec8d1f)' in the open-brief list — a resolved brief whose malformed status keeps it counted as open
+1542,brief_id_collision,"BR-001 exists concurrently in hadir-system, attendance_app and (as a closed gap suggestion) fifty_eco_system — brief ids are only project-unique, so any cross-project citation is ambiguous"
+1543,partial_sweep_class_promote,"Six recent learnings all describe the same partial-sweep defect — the 'correct one occurrence, miss its siblings' class is now the most frequent failure and warrants a standing check rather than another learning"
+1544,false_success_class_promote,Four mbrgea-ai learnings independently found green checks that verified nothing — the suite's trustworthiness is itself the open question
+1545,blob_push_drop,BLOB-typed brief_files.content is dropped from every brain push while the push reports success — prior pushes may have silently lost brief attachments
+1547,feco_abandoned,"fifty_eco_system has 34 open briefs and 178-day-stale updates with zero repo activity in 174 days — decide whether to archive the project or restart it, rather than triaging briefs one at a time"
+1548,queue_flood_stalled_gap,The suggestion queue is 60 items of which ~57 are mechanical per-brief 'stalled'/'gap' rows from two modules on one project — the stalled and gap modules need per-project aggregation before they drown real signal
+1550,partial_sweep_class_promote,"Partial-sweep corrections are this project's most frequent defect by its own accounting, and three later learnings repeat the same failure — the sweep discipline should be promoted into project guidelines rather than re-learned"
+1553,lifeos_dark,"lifeOS carries 14 open briefs including a P0 accessibility regression and eight P1 bugs, but has zero learnings and no recorded activity — the project is accumulating defects with no knowledge capture at all"
+1554,fr054_split_parent_open,FR-054 is still listed as an open P1 brief 177 days after being split into FR-061/062/063 — a split parent left open inflates the backlog and none of its children appear in the digest
+1555,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity in 177 days — decide whether to formally pause the project instead of leaving 30+ stall alerts accruing
+1556,queue_flood_stalled_gap,"The stalled + gap modules emit one suggestion per brief, so 69 of 69 open suggestions are two mechanical checks over a single dormant project — collapse them to per-project rollups before the queue becomes unreadable"
+1557,EXCLUDED,"lifeOS carries 14 open briefs including a P0 accessibility regression (BR-023) and 7 P1 bugs, all untouched for ~123 days, yet the project has produced zero learnings and no suggestion has ever been raised for it"
+1558,false_success_class_promote,A single defect class — a check or push that reports success without having checked — now spans at least five separate learnings across igris-ai and mbrgea-ai; it warrants a shared guard rather than another per-incident learning
+1559,partial_sweep_class_promote,Six learnings restate one rule — sweep a claim class occurrence-granular across all siblings before closing — and it is still being re-learned rather than enforced
+1561,feco_unchecked_ac,"27 briefs are marked Done with unchecked acceptance criteria in one project, and a sibling learning shows the AC parser fails open — the gap suggestions may be a parser artifact, not 27 real gaps"
+1562,br128_malformed_status,BR-128 is recorded as Done (resolved by dec8d1f) yet still counts as an open brief in the digest — closed briefs are not leaving the open set
+1563,zero_learnings_projects,"Four projects with open briefs have never recorded a learning — attendance_app, lifeOS, hadir-system and moca-hr-agent are executing without any knowledge capture"
+1565,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity in 177 days — decide whether to archive the project or schedule a deliberate revival sprint
+1566,queue_flood_stalled_gap,The stalled + gap detectors emitted 60+ near-identical suggestions from one dormant project — add per-project rollup/caps before the review queue becomes unreadable
+1567,feco_unchecked_ac,"27 fifty_eco_system briefs were marked Done with unchecked acceptance criteria — the closing ritual does not enforce the AC gate, so 'Done' carries no verification signal here"
+1568,fr054_split_parent_open,"FR-054 still sits in open_briefs with status 'Split (see FR-061, FR-062, FR-063)' after 180 days — a split parent should be closed, not left counting against open work"
+1569,lifeos_dark,"lifeOS has 14 open briefs — including a P0-Critical a11y regression (BR-023) — but zero learnings and no recorded activity, suggesting the project was filed and never worked"
+1572,backlog_vs_activity_mismatch,All 40 recent commits belong to the MOCA/HR agent line while 8 projects holding 190+ open briefs show no recent activity — the open-brief backlog no longer reflects where work happens
+1573,feco_abandoned,fifty_eco_system holds 34 open briefs with zero activity for 178 days — decide whether to archive/park the project rather than triage 30 stalled briefs one by one
+1574,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 123 days with no project activity recorded
+1575,fr054_split_parent_open,"FR-054 is still counted as an open brief despite status 'Split (see FR-061, FR-062, FR-063)' — it should be closed so the split children carry the work"
+1576,br128_malformed_status,BR-128's status is the malformed literal 'Done(Resolvedbydec8d1f)' — whitespace-stripped text in a status field means status parsing/writing is lossy somewhere
+1577,feco_unchecked_ac,"27 queued 'Done but unchecked acceptance criteria' suggestions all land on one project — learning 1368 says the AC parser fails open on heading variants, so investigate the parser instead of the 27 briefs"
+1578,hadir_slug_fragmentation,"Four near-duplicate Hadir projects (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each carry open briefs — likely one product split across four brain slices"
+1579,zero_learnings_projects,"The four projects with the most open briefs outside igris-ai/mbrgea-ai (fifty-dev 61, lifeOS 14, hero-lab 18, attendance_app 4) have captured almost no learnings — knowledge is only being harvested where the operator already lives"
+1589,brief_id_collision,Brief IDs collide across projects (BR-001 open in hadir-system and attendance_app; BR-027/BR-028 in both hadir and lifeOS) — any cross-project reference or suggestion citing a bare id is ambiguous
+1590,br128_malformed_status,BR-128 shows status 'Done(Resolvedbydec8d1f)' yet still appears in open_briefs — the status parser is not recognising Done when a resolution suffix is appended
+1591,fr054_split_parent_open,"FR-054 is marked 'Split (see FR-061, FR-062, FR-063)' but still counts as an open P1 brief after 181 days — split parents should be terminal, not open"
+1592,ac_parser_fail_open,Learning 1368 says the TD-325 acceptance-criteria parser matches only the literal 'Acceptance Criteria' and fails open — that is likely the same root cause behind the 27 queued 'Done but unchecked AC' gap suggestions
+1594,EXCLUDED,"fifty_eco_system is 'active' with 34 open briefs but 178 days without activity — and it accounts for 60 of the 63 queued suggestions, crowding out every other project"
+1595,lifeos_stalled_undetected,lifeOS has 14 open briefs untouched for ~124 days — including a P0-Critical a11y regression (BR-023) — yet zero of them appear in the stalled queue
+1596,zero_learnings_projects,"Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is either happening outside the brain or these are dead entries"
+1598,EXCLUDED,"Two open learnings describe brain pushes that report success while dropping rows (BLOB brief_files.content, and watermarks advanced for unpushed tables) — the brain may be missing data no one has noticed"
+1599,feco_abandoned,fifty_eco_system has 34 open briefs and no activity for 178 days — decide whether to revive or shelve the project instead of triaging 30 individual stall alerts
+1600,br023_p0_unattended,"lifeOS BR-023 is P0-Critical and has sat In Progress for 123 days, with 13 more P1/P2 briefs behind it and no alert in the queue"
+1601,fr054_split_parent_open,FR-054 is still counted open although its status says it was split into FR-061/062/063 — close it so the open-brief count reflects real work
+1602,br128_malformed_status,"BR-128 shows status 'Done(Resolvedbydec8d1f)' — whitespace-stripped and still listed as open, suggesting the status field is free text the open-brief filter cannot read"
+1604,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 178 days — decide whether to archive the project or schedule a triage sweep
+1605,queue_flood_stalled_gap,29 of the 33 queued 'stalled' suggestions are the same finding about one dormant project — the stalled module needs per-project aggregation before it buries higher-signal findings
+1606,feco_unchecked_ac,27 briefs closed as Done with unticked acceptance criteria predate the new closing-commit gate — confirm the gate is active for this project or backfill the criteria
+1607,ac_parser_fail_open,The acceptance-criteria parser fail-open found in mbrgea-ai (L1368) likely affects the same shared brain code that igris-ai's new closing-commit gate depends on
+1608,lifeos_dark,"lifeOS holds a P0-Critical accessibility regression plus 13 other open briefs, has zero learnings, and reports no recorded activity at all"
+1609,fr054_split_parent_open,"FR-054 has status 'Split (see FR-061, FR-062, FR-063)' but still counts as an open P1 brief 181 days on — split parents should close, not linger"
+1611,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 179 days — decide whether to archive the project or re-commit to it, rather than triaging its briefs one at a time"
+1612,queue_flood_stalled_gap,The stalled/gap modules have queued ~60 near-identical suggestions for a single dormant project — add per-project rollup or a dormancy suppression rule before the review queue becomes unreadable
+1613,feco_unchecked_ac,"27 briefs are Done with unchecked acceptance criteria while learning 1368 reports the AC-parser fails open on heading variants — the backlog may be a parser artifact, not 27 real gaps"
+1616,fr054_split_parent_open,"FR-054 is still listed as open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed so it stops occupying the open-brief count"
+1619,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 179 days — decide whether to archive the project or re-scope it, rather than triaging 30 stalled-brief suggestions individually"
+1620,queue_flood_stalled_gap,"The suggestion queue is 69 items and ~97% is two mechanical modules (stalled, gap) firing on one dormant project — add a per-project cap or dormancy filter before the queue becomes unreadable"
+1621,br023_p0_unattended,"BR-023 is lifeOS's only P0-Critical brief, has sat In Progress for 124 days, and the project has zero recorded learnings — no one is working it"
+1622,hadir_slug_fragmentation,"The Moca/Hadir attendance work is split across five project slugs (attendance_app, hadir, hadir-system, fya-hadir-app, moca-hadir-app) with overlapping rebrand and UI briefs — consolidate the slugs before more briefs fork"
+1626,br128_malformed_status,"BR-128 shows status 'Done(Resolvedbydec8d1f)' — a whitespace-stripped free-text status that a Done-state parser will not match, and it is still counted as an open brief"
+1627,zero_learnings_projects,Learnings are concentrated in three projects while eight active projects with open briefs have recorded none — the harvest habit is not running outside the top repos
+1628,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 180 days — decide whether to archive the project or schedule a revival sprint
+1629,br023_p0_unattended,BR-023 is the only P0-Critical brief in the brain and it has sat In Progress for 125 days with no stalled-suggestion raised
+1630,stalled_detector_gap,"The stalled-brief detector only fires for fifty_eco_system and attendance_app, missing 14 lifeOS and 4 hadir/hadir-system briefs idle 118-167 days"
+1631,fr054_split_parent_open,"FR-054 has been parked in a non-standard 'Split (see FR-061, FR-062, FR-063)' status for 183 days and should be closed out"
+1632,br128_malformed_status,BR-128 is listed among open briefs despite status 'Done(Resolvedbydec8d1f)' — the status parser is not recognising the resolution suffix
+1633,feco_unchecked_ac,"27 fifty_eco_system briefs were closed with unchecked acceptance criteria — treat as one process failure, not 27 separate reviews"
+1648,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 180 days — decide whether to archive the project or schedule a deliberate revival
+1649,lifeos_dark,lifeOS carries 14 open briefs — including a P0 a11y regression (BR-023) and eight P1 bugs — untouched for ~126 days with no learnings ever captured
+1650,fr054_split_parent_open,"FR-054 has status 'Split (see FR-061, FR-062, FR-063)' yet still counts as an open P1 brief — close it so the split children are the only live work"
+1651,br128_malformed_status,"BR-128's status is the unparseable literal 'Done(Resolvedbydec8d1f)' — a resolution note collapsed into the status field, so a Done brief is still listed as open"
+1652,feco_unchecked_ac,"27 queued 'Done but unchecked acceptance criteria' suggestions are one process gap, not 27 findings — the AC gate (commit 03adca2) landed after these briefs closed"
+1653,false_success_class_promote,Six recent 'mistake' learnings all describe the same failure — a claim written before it was measured — which now has an obligation (f578dd2) but no validator
+1654,hadir_slug_fragmentation,Four separate Hadir/attendance projects hold overlapping open briefs on the same MOCA rebrand — confirm they are distinct products before more parallel UI work
+1655,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 180 days — decide whether to archive the project or re-scope it, rather than triaging 30 stalled-brief suggestions one at a time"
+1656,queue_flood_stalled_gap,The suggestion queue is 69 items of which ~57 are mechanical stalled/gap rows from a single dormant project — add a per-project cap or dormancy filter to the stalled and gap modules before they drown real findings
+1657,br023_p0_unattended,"BR-023 is lifeOS's only P0-Critical brief, In Progress and untouched for 125 days, and sits under 13 sibling briefs — the a11y role regression likely explains several of them"
+1658,fr054_split_parent_open,"FR-054 is still counted open with status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, and none of its three children appear in the digest"
+1660,zero_learnings_projects,"Four active projects carry 19 open briefs between them and zero learnings — nothing from lifeOS, attendance_app, hadir-system or moca-hr-agent has ever been harvested into the brain"
+1661,hadir_slug_fragmentation,Three near-identical hadir slugs and four moca slugs are tracked as separate projects — likely the same directory-to-project confusion the recent brain fixes were written for
+1662,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 180 days — decide whether to archive the project or schedule a dedicated cleanup pass
+1663,queue_flood_stalled_gap,The stalled+gap modules emitted ~60 near-identical suggestions all for fifty_eco_system — add per-project rollup or a dormancy suppression rule so real signal isn't buried
+1664,feco_unchecked_ac,"27 briefs marked Done with unchecked acceptance criteria points at a broken completion gate, not 27 separate oversights — verify the AC parser isn't failing open here"
+1665,br023_p0_unattended,lifeOS BR-023 is P0-Critical and has sat In Progress for 125 days with no stalled suggestion ever raised for it
+1668,attendance_app_zero_learnings,"attendance_app has 4 open briefs and a large body of matching commits, but null recorded activity and zero learnings — brain tracking appears disconnected from the repo"
+1669,fr054_split_parent_open,"FR-054 has been sitting in the non-terminal status 'Split (see FR-061, FR-062, FR-063)' for 183 days — close it or restore it to a real status"
+1670,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 184 days — decide whether to revive, descope, or archive the whole project rather than triaging 30 stalled briefs one by one"
+1671,queue_flood_stalled_gap,"The stalled + gap modules have queued ~60 near-identical suggestions, 55 of them for one dormant project — add per-project rollup/caps so the review queue stays readable"
+1672,feco_unchecked_ac,"27 fifty_eco_system briefs were marked Done with unticked acceptance criteria — the commit 03adca2 gate that refuses this landed after them, so a one-off backfill audit is needed"
+1673,fr054_split_parent_open,"FR-054 has sat open in status 'Split (see FR-061, FR-062, FR-063)' for 187 days — a split parent should be closed once its children exist"
+1674,lifeos_dark,lifeOS has 14 briefs including a P0-Critical accessibility regression (BR-023) untouched for 129 days and no recorded project activity
+1677,hadir_slug_fragmentation,"Overlapping Hadir project slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each hold open briefs — likely one product tracked under four brain identities"
+1678,feco_abandoned,"fifty_eco_system holds 34 open briefs but has had zero activity for 184 days — decide whether to archive the project or re-commit to it, rather than triaging 30 stalled-brief suggestions one by one"
+1679,queue_flood_stalled_gap,"The stalled/gap modules emit one suggestion per brief — 69 queued items are ~3 findings, and the queue will drown any new signal until they are collapsed"
+1680,feco_unchecked_ac,"27 fifty_eco_system briefs are Done with unchecked acceptance criteria — the same failure mode learning 1368 measured in mbrgea-ai (a fail-open AC parser), so check the parser before re-auditing the briefs"
+1681,lifeos_dark,"lifeOS has 14 open briefs including a P0-Critical a11y regression untouched for 129 days, zero captured learnings, and no recorded activity — it is running dark"
+1685,attendance_app_in_progress_stuck,attendance_app carries 4 P1-High briefs (three of them In Progress) but has 0 learnings and no recorded activity date — either the work is not being tracked or the briefs are stale
+1686,feco_abandoned,fifty_eco_system has 34 open briefs but zero activity for 185 days — decide whether to archive the project or schedule a deliberate revival sprint
+1687,br023_p0_unattended,lifeOS BR-023 is the only P0-Critical brief in the brain and has sat In Progress for 130 days with no activity record
+1688,EXCLUDED,"14 lifeOS briefs (BR-023 to BR-036) all froze at 130-131 days — a whole QA sweep was filed and never worked, and the stalled detector never flagged it"
+1690,queue_flood_stalled_gap,The review queue is 98% single-project mechanical notices (34 'stalled' + 27 'Done with unchecked AC') — collapse them into two batch items so real findings are visible
+1691,feco_unchecked_ac,"27 fifty_eco_system briefs are marked Done with unchecked acceptance criteria — the Done transition is not gated, matching the parser fail-open defect already learned in mbrgea-ai"
+1692,zero_learnings_projects,"Four active projects carry 53 open briefs between them and zero recorded learnings — attendance_app, lifeOS, hadir-system, and moca-hr-agent are producing no institutional memory"
+1693,fr054_split_parent_open,"igris-ai FR-054 is still listed open at status 'Split (see FR-061, FR-062, FR-063)' — a split parent should be closed, not left as a P1-High open brief"
+1694,br128_malformed_status,BR-128 shows status 'Done(Resolvedbydec8d1f)' — whitespace-stripped status strings will not match any status filter and corrupt open-brief counts
+1696,feco_abandoned,fifty_eco_system holds 33 open briefs with zero activity for 185 days — the whole backlog is stale and needs a bulk triage or archive decision
+1697,br023_p0_unattended,"BR-023, the only P0-Critical brief in the system, has been 'In Progress' for 130 days with no lifeOS activity recorded at all"
+1698,zero_learnings_projects,"Four projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is being briefed but never executed or never harvested"
+1701,lifeos_priority_not_discriminating,Nine of lifeOS's fourteen open briefs are P1-High and all sit at 132 days — the priority field carries no ordering information
+1703,hadir_slug_fragmentation,"Three overlapping Hadir project slugs (hadir, hadir-system, fya-hadir-app) split 5 open briefs and 16 learnings across what may be one product"
+1705,brief_id_collision,"Brief ids collide across projects — BR-001 exists in both hadir-system and attendance_app, and BR-027/BR-028 exist in both hadir and lifeOS, so any id-only reference is ambiguous"
+1706,lifeos_batch_sweep_stalled,lifeOS's 14 open briefs were all filed in one 132-day-old burst (BR-023..BR-036) and none has been touched since — this looks like a single QA sweep dumped as briefs and then abandoned
+1787,igris_backlog_size,igris-ai carries 163 open briefs and 602 learnings but its only digest-visible briefs are three P3/P2 research items and one Deferred debt item — the tracked backlog does not describe what the repo is actually doing
+1789,attendance_app_in_progress_stuck,"attendance_app has three briefs stuck 'In Progress' for 169 days (BR-002, BR-003, BR-004) with zero recorded activity and zero learnings — In Progress is being used as a filing state, not a work state"
+1790,attendance_app_br003_before_br002,BR-003 'Polish Moca Rebrand to 100% Accuracy' is In Progress alongside its own prerequisite BR-002 'Rebrand Attendance App to Moca Design' — a polish brief opened before the thing it polishes exists
+1796,edge_inference_flood,44 of the 60 open suggestions are auto-generated edge_inference proposals about learnings 6–944 — they crowd out every human-actionable suggestion in the review queue and should be batch-applied or routed off the main queue
+1797,feco_in_progress_stuck,"Three fifty_eco_system briefs sit 'In Progress' for 189 days (BR-074, BR-076, TD-004) — work was started and abandoned mid-flight, which is worse than a stale Ready backlog"
+1798,attendance_app_in_progress_stuck,attendance_app has 3 P1 briefs 'In Progress' for 169 days with zero recorded activity and zero learnings — the project may never have been started despite the status
+1799,attendance_app_br003_before_br002,BR-003 'Polish Moca Rebrand to 100% Accuracy' is In Progress alongside its own prerequisite BR-002 'Rebrand Attendance App to Moca Design' — the polish brief cannot legitimately be in flight before the rebrand lands
+1800,igris_backlog_size,"igris-ai carries 163 open briefs and 602 learnings — the largest backlog in the system by 2.6x, and large enough that the open set can no longer function as a work queue"
+1801,edge_inference_flood,"44 of the 60 open suggestions are low-value edge_inference rows — the operator's review queue is 73% noise, which will bury the 16 substantive findings"
+1804,feco_in_progress_stuck,Five fifty_eco_system briefs sit in 'In Progress' with 190 days of zero project activity — 'In Progress' no longer means anyone is working on them
+1805,attendance_app_in_progress_stuck,All four attendance_app briefs are P1-High and three are 'In Progress' at 170 days with the project reporting null activity — the app has no recorded execution at all
+1806,attendance_app_br003_before_br002,BR-003 'Polish Moca Rebrand to 100% Accuracy' is open in parallel with its unfinished parent BR-002 'Rebrand Attendance App to Moca Design' — a follow-up brief filed before the work it polishes exists
+1809,edge_inference_flood,44 of the 60 queued suggestions are auto-generated single-edge inferences — the edge_inference module is drowning the review queue and should batch or auto-apply below a threshold
+1810,attendance_app_in_progress_stuck,"Three attendance_app briefs (BR-002, BR-003, BR-004) sit 'In Progress' for 170 days with zero recorded activity and zero learnings — nothing was ever actually started or the work never reached the brain"
+1812,feco_in_progress_stuck,"Six fifty_eco_system items are parked 'In Progress' (BR-074, BR-076, TD-004, TD-006, TD-007, TS-003) — abandoned mid-flight work that will be silently lost in any bulk backlog triage"
+1814,igris_backlog_size,igris-ai carries 165 open briefs and 602 learnings — by far the largest backlog in the system and roughly 2.5x the next project — with no evidence of any closure or archive rhythm
+1815,edge_inference_flood,44 of the 60 open suggestions are auto-generated edge_inference rows (ids 1712-1755) — they drown the 16 substantive findings and should be batch-applied or routed out of the operator queue
+1816,attendance_app_in_progress_stuck,attendance_app has three briefs stuck 'In Progress' for 170 days with zero learnings and no recorded activity — work was started and silently dropped mid-flight
+1821,feco_abandoned,"fifty_eco_system has 33 open briefs but only 7 learnings in 187 days — the project consumes brief-writing effort and returns almost no knowledge, which is the strongest single argument for archiving it outright"
+1823,igris_backlog_size,"igris-ai carries 166 open briefs while shipping daily — at the observed harvest rate the backlog is write-only, and the same containment/verification themes keep recurring as fresh learnings instead of closing briefs"
+1824,brief_throughput_metric,"No project tracks briefs-closed-per-week, so a 166-brief backlog and a 0-brief backlog look identical in the digest — add a brief throughput field before any bulk-triage decision"
+1826,br023_root_cause_of_siblings,"lifeOS BR-023 (P0-Critical a11y regression) is the root cause of at least three other open lifeOS briefs (BR-030, BR-031, BR-035) — they are one accessibility-tree defect filed as four, and fixing BR-023 likely closes the rest"
+1829,attendance_app_in_progress_stuck,"attendance_app has three briefs stuck 'In Progress' for 171 days with zero learnings and null activity — in-progress state is being used as a parking status, which makes the WIP count meaningless system-wide"
+1830,igris_backlog_size,"igris-ai carries 166 open briefs and 612 learnings with activity today — the two largest active projects (igris-ai, mbrgea-ai: 230 open briefs combined) have no visible closure rate, so backlog size is tracking effort spent rather than work remaining"
+1879,l1509_feco_status_audit,"Learning 1509 ('a Done brief can silently flip back to Ready with no brief event') plus the brief-disk-projection and status-sync-clobber commits suggest some of the 191-day 'Ready' fifty_eco_system briefs may be silently-reverted completed work, not real backlog"
+1880,edge_inference_flood,"The digest's own edge_inference module emitted 44 of 60 open suggestions as one-line 'inferred edge' rows over learnings 6–1447, drowning the 17 substantive findings — the subconscious queue needs the same dedup/batching treatment commit 6d077a1 applied to findings"
+1884,feco_in_progress_stuck,"Three fifty_eco_system tech-debt briefs (TD-004, TD-006, TD-007) are 'In Progress' with 191 days of no activity — 'In Progress' has stopped meaning anything and should be reset to Ready or archived"
+1887,l1509_fix_traceability,"Learning 1509 documents a Done brief silently flipping back to Ready, and commit e7435d0 guards exactly that — but nothing in the digest links the fix to the learning or to a brief"
+1888,edge_inference_flood,44 of 60 open suggestions are low-value edge_inference rows — they crowd out substantive findings in the review queue and should be batched or auto-applied rather than queued individually

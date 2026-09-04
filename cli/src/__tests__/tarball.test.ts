@@ -1833,6 +1833,46 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-445 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414 /
+ * TD-439 method. The brain compiled inertly with `npx tsc --outDir <scratch>`
+ * and NO other flag; every artifact `cmp`'d against its vendored twin under
+ * `cli/dist/brain-mcp-server/dist/` (556 artifacts: 11 real differences —
+ * `cache/{handlers,index}.{js,d.ts}`, `subconscious/actions/{kinds,index}.{js,d.ts}`,
+ * `cognition/extractors/arbiter.{js,d.ts}`, `tools/briefs.js` — the still-unbuilt
+ * TD-414 / TD-439 set, plus 278 maps of which 266 differ only in the scratch
+ * `sources` path and 12 belong to those same modules). NONE is TD-445's:
+ * this brief edits no `src` runtime file (its only `src` change is
+ * `subconscious/__tests__/finding-key.test.ts`, under the excluded test glob)
+ * and no `cli/src` runtime file. So the staged set is EMPTY and the reading
+ * IS the control. `cli/dist` and `brain-mcp-server/dist` were never written;
+ * the vendored bundle carries no `TD-445` string (grep, 0 hits).
+ *   control             2_009_297    unpacked 7_658_720, 672 entries, shasum
+ *                                    `21a78d901865338f7b1a34430f5d633234e9c236`,
+ *                                    on an untouched scratch copy of the packed
+ *                                    surface at HEAD `6135014` — 246 B over
+ *                                    TD-439's control 2_009_051, which that row
+ *                                    took before its own CHANGELOG bullet
+ *                                    (172_048 → 172_702 unpacked, +654; the
+ *                                    bullet is now in the tree and this is its
+ *                                    packed size)
+ *   TD-445's own share  +0 B         (nothing packed was touched: a diagnostic
+ *                                    script and two CSVs under
+ *                                    `brain-mcp-server/scripts/` — never
+ *                                    compiled — a test-file fixture, a doc
+ *                                    block, a MAINTAINING cell and this row.
+ *                                    `types.ts` was mutated and restored
+ *                                    byte-identical during the sweep and the
+ *                                    battery; `git diff` is empty on it)
+ *   cumulative delta    +149_419 B   (unchanged from TD-439)
+ *   headroom remaining  ~4.1 KB      (4_181 B — 153_600 − 149_419; the brief's
+ *                                    "10_492 B" was HEAD `6d077a1`'s figure and
+ *                                    predates TD-447, TD-414 and TD-439)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
  * TD-439 MEASURED LAST (2026-09-04), after its final code-touching step.
  * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414
  * method, taken twice: once at +2_645 B (over the plan's 2_500 B own-share
@@ -2417,9 +2457,9 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-390, measured 2026-09-04,
- * ~6.5 KB (6_635 B) is what is left on PACKED.** Grep `TD-390 MEASURED LAST` in this
- * file for that reading (a +0 B row that reproduces TD-414's control) and the
+ * BRIEF, a DATE and no direction: **as of TD-445, measured 2026-09-04,
+ * ~4.1 KB (4_181 B) is what is left on PACKED.** Grep `TD-445 MEASURED LAST` in this
+ * file for that reading (a +0 B row that inherits TD-439's cumulative) and the
  * method behind it, and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban

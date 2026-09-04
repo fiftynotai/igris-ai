@@ -286,9 +286,79 @@ pair scoring BELOW the line (**0.244** here), and even that is not the labelled
 corpus's 0.226, because "genuinely different" is a label this population does not
 carry.
 
-The four falsifiers below all hold at 0.25, so the value stands — and
-`recurrence_titles` puts both merges above on the row they happened on, where an
-operator can overrule them without reading a log.
+The four falsifiers below all hold at 0.25, so the value stood at TD-440 and was
+re-swept at TD-445 — see the next block — and `recurrence_titles` puts both merges
+above on the row they happened on, where an operator can overrule them without
+reading a log.
+
+**TD-445 production re-sweep (2026-09-04) — measured, not moved.** TD-445's production
+window (T0 `2026-09-03 12:42:03Z`, three new-bundle runs, 18 parsed) found seven of the
+fifteen new rows to be re-emissions of a finding already pending. Two families were
+anchor splits and are TD-452's; three pairs shared an anchor and scored below the line
+with the deployed matcher, and the brief's own control makes a fourth:
+
+| pair | anchor | Jaccard | TD-445 label |
+|---|---|---|---|
+| `1880` / `1888` — "44 of 60 edge_inference" | `project:igris-ai` | 0.209 | SAME |
+| `1814` / `1823` — igris-ai backlog, two heads | `project:igris-ai` | 0.216 | SAME |
+| `1879` / `1887` — "Learning 1509 ↔ e7435d0" | `project:igris-ai` | 0.186 | DIFFERENT — the status-audit action vs the traceability action |
+| `1821` / `1884` — fifty_eco_system | `project:fifty_eco_system` | 0.128 | DIFFERENT — the control |
+
+The re-sweep instrument is checked in this time, which TD-440's was not:
+`brain-mcp-server/scripts/td445_claim_threshold_sweep.ts` imports the shipped
+`entityKey` / `claimOf` / `claimsMatch` / `claimSimilarity`, runs only against a
+read-only `.backup` copy of the brain (it refuses the live path), and self-checks the
+four scores above, the excerpt's 0.192 and three known-answer points on the subject and
+short-claim gates before it scores anything. The copy held 1,880 `suggestions` rows.
+Its slope, on its own named cuts — a SECOND row, not spliced into TD-440's:
+
+| threshold | 0.18 | 0.20 | 0.21 | 0.22 | 0.226 | 0.24 | **0.25** | 0.26 | 0.30 |
+|---|---|---|---|---|---|---|---|---|---|
+| clusters, cut C1 (`created_at < T0`; N = 410, 38 anchors, `id ASC`) | 125 | 132 | 133 | 139 | 140 | 147 | **153** | 168 | 198 |
+| clusters, cut C2 (whole table; N = 431, 43 anchors, `id ASC`) | 136 | 144 | 147 | 154 | 156 | 163 | **170** | 185 | 218 |
+
+C1 reproduces TD-440's row point for point (140 · 147 · 153 · 168 · 198), so the two
+instruments are comparable where they overlap. Both accept loops — greedy first-match
+against heads (the loop described above) and production's best-match stage B — give the
+SAME count at every point, by construction: a row opens a new cluster iff no head
+matches, in either loop; the loop only decides WHICH head absorbs, which is the 0.944
+trap above and not a count.
+
+The decision set is pairwise, not a cluster statistic: M(t) is every same-anchor pair in
+C2 that matches at t and does not at 0.25 — the merges a lower line would NEWLY admit,
+a superset of what either loop admits and therefore conservative for precision.
+|M(0.18)| = 1,018 pairs over 326 rows. Each of the 326 rows was hand-tagged with the
+finding it expresses (`scripts/td445_row_findings.csv`; ten rows that visibly blend two
+findings are `EXCLUDED`, the treatment TD-440's corpus used) and the pair labels
+derived — SAME iff the same tag (`scripts/td445_marginal_pairs_labeled.csv`). The rule,
+fixed before the list was opened: SAME if an operator resolving one would consider the
+other resolved by the same action. Calibration was read first: the excerpt's four
+`abandoned` titles SAME; `p0_unattended` vs `harvest_gap` DIFFERENT; TD-440's two
+admitted merges `[1660]→[1291]` (0.2500 today) and `[1473]→[1275]` (0.2593) both
+re-read DIFFERENT.
+
+| candidate t | M(t) pairs | SAME | DIFFERENT | EXCLUDED | production pairs caught | verdict |
+|---|---|---|---|---|---|---|
+| 0.22 | 391 | 283 | **97** | 11 | none | fails precision and evidence |
+| 0.21 | 547 | 388 | **137** | 22 | `1814`/`1823` | fails precision |
+| 0.20 | 736 | 494 | **207** | 35 | `1814`/`1823`, `1880`/`1888` | fails precision |
+
+The highest DIFFERENT pair is `1377`/`1821` at **0.2432** — the fifty_eco_system
+slug-variant finding against its archive-outright finding, seven thousandths under the
+line — and the band is dense rather than blocked by one pair: 35 of the 97 DIFFERENT
+pairs at or above 0.22 are `BR-023 unattended` against `lifeOS running dark`, the
+excerpt's own `p0_unattended` / `harvest_gap` calibration, which is what a lower line
+would merge first. The in-repo gate cannot see any of this: with `dedupe_claim_overlap`
+set to 0.22, 0.21 and 0.20 in turn, the whole brain suite stays green and no collapse
+pin moves, because the excerpt's DIFFERENT arm tops out at 0.192. The excerpt floors
+the value at 0.192; the labelled marginal set is what holds it at 0.25. **So 0.25
+stays. The two catchable production pairs are pinned as known misses in
+`__tests__/finding-key.test.ts`, and the instrument and labelled set are in the repo
+for the next reading** — re-run both before the next move, on a fresh `.backup`.
+TD-440's 0.226 could not be re-identified as one pair: 46 pairs in C1 score within
+0.0015 of it (33 SAME, 10 DIFFERENT, 3 EXCLUDED on TD-445's labels), so the record's
+figure was a maximum over a corpus this population does not carry, as the paragraph
+above already said of 0.244.
 
 The trade is deliberate and asymmetric. **A false merge destroys a true finding** —
 TD-437 measured ~23 of ~25 distinct findings as true and actionable — while a missed
