@@ -18,9 +18,30 @@
  * DELEGATE-default routing (every harness EXCEPT antigravity → add-mcp,
  * antigravity → custom) is covered by the registry-project-mcp DELEGATE tests +
  * the fr212-smoke gate.
+ *
+ * BR-099 (2026-09-04): THIS SUITE IS THE LIKELY LEAKER of three fixture MCP
+ * servers (`demo-mcp` = `npx -y evil` + env.API=${API_TOKEN}, `personal-mcp` =
+ * `node /p.js`, `core-mcp` = `echo hi`) into the operator's REAL ~/.claude.json
+ * — and of `demo-mcp` into the real gemini / opencode / codex configs, which is
+ * exactly this file's target matrix (`core-mcp` exists in no other fixture).
+ * Its only sandbox was `configPath` + the forced `mcpEngine: "custom"` above,
+ * but the DELEGATE path (`runProjectMcpViaDelegate` → add-mcp, module-load
+ * `homedir()`, no path flag) is routed BEFORE `configPath` is consulted and
+ * never reads it: one deleted `mcpEngine` line, or a delegate default reached
+ * under a real HOME (the June-26 FR-212b→d window), writes the live file while
+ * the assertions read the mkdtemp `cfg`. The fence below makes `HOME` a
+ * per-test directory under `work` and ASSERTS it is armed (`homedir()` resolves
+ * there — the TD-414 root-coincidence rule applied to a subprocess writer);
+ * the belt takes a read-only sha256 of the real `~/.claude.json` `mcpServers`
+ * subtree in `beforeAll` and re-compares it in `afterAll` (the whole-file sha
+ * is reported, not asserted: Claude Code rewrites that file from memory during
+ * a session). The existing cases' `configPath` read-backs remain the positive
+ * control that writes still land. Drift-side twin: `verify_mcp`'s mcp-fixture
+ * arm (test/harness_mcp_fixture_guard.test.bash).
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { createHash } from "node:crypto";
 import {
   existsSync,
   mkdirSync,
@@ -31,7 +52,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import * as TOML from "@iarna/toml";
 import { runLoadout } from "../verbs/loadout.js";
@@ -42,16 +63,79 @@ let overlayPath: string;
 let secretsPath: string;
 const SENTINEL = "sentinel-secret-DO-NOT-LEAK";
 
+// BR-099 — the HOME fence and the real-config belt (see the docblock).
+const REAL_HOME = process.env.HOME;
+const REAL_CLAUDE_CONFIG =
+  REAL_HOME !== undefined ? join(REAL_HOME, ".claude.json") : undefined;
+let fenceHome: string;
+let realWholeShaBefore: string | null = null;
+let realMcpShaBefore: string | null = null;
+
+/** Key-sorted JSON so the subtree sha is stable across key order. */
+function canonical(v: unknown): unknown {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (v !== null && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return Object.fromEntries(Object.keys(o).sort().map((k) => [k, canonical(o[k])]));
+  }
+  return v;
+}
+function sha256(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+/** sha256 of the file's `mcpServers` subtree — the field the incident damaged. */
+function mcpSubtreeSha(path: string): string {
+  const parsed = JSON.parse(readFileSync(path, "utf-8")) as { mcpServers?: unknown };
+  return sha256(JSON.stringify(canonical(parsed.mcpServers ?? null)));
+}
+
+beforeAll(() => {
+  // Read-only. Absent (CI) → no belt.
+  if (REAL_CLAUDE_CONFIG !== undefined && existsSync(REAL_CLAUDE_CONFIG)) {
+    realWholeShaBefore = sha256(readFileSync(REAL_CLAUDE_CONFIG, "utf-8"));
+    realMcpShaBefore = mcpSubtreeSha(REAL_CLAUDE_CONFIG);
+  }
+});
+
 beforeEach(() => {
   work = mkdtempSync(join(tmpdir(), "igris-project-mcp-"));
   projectRoot = join(work, "proj");
   mkdirSync(projectRoot, { recursive: true });
   overlayPath = join(work, "overlay.json");
   secretsPath = join(work, "secrets.env");
+  // The fence: every HOME-keyed writer (add-mcp, the grant, paths.ts) lands
+  // under `work`, never under the operator's home. ARMED, not assumed.
+  fenceHome = join(work, "home");
+  mkdirSync(join(fenceHome, ".claude"), { recursive: true });
+  process.env.HOME = fenceHome;
+  expect(homedir(), "BR-099 fence NOT ARMED: homedir() does not resolve to the fence").toBe(fenceHome);
+  expect(fenceHome, "BR-099 fence NOT ARMED: the fence IS the real home").not.toBe(REAL_HOME);
 });
 
 afterEach(() => {
+  if (REAL_HOME === undefined) {
+    delete process.env.HOME;
+  } else {
+    process.env.HOME = REAL_HOME;
+  }
   rmSync(work, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  if (realMcpShaBefore === null || REAL_CLAUDE_CONFIG === undefined) return;
+  const wholeAfter = sha256(readFileSync(REAL_CLAUDE_CONFIG, "utf-8"));
+  const mcpAfter = mcpSubtreeSha(REAL_CLAUDE_CONFIG);
+  if (wholeAfter !== realWholeShaBefore) {
+    // Informational: the harness rewrites this file from memory mid-session.
+    console.warn(
+      `BR-099 belt: ${REAL_CLAUDE_CONFIG} whole-file sha256 changed during the run ` +
+        `(${realWholeShaBefore} -> ${wholeAfter}); mcpServers subtree compared below`,
+    );
+  }
+  expect(
+    mcpAfter,
+    `BR-099 belt: ${REAL_CLAUDE_CONFIG} mcpServers subtree CHANGED during this suite — a case reached a HOME-keyed writer outside the fence`,
+  ).toBe(realMcpShaBefore);
 });
 
 /** Write a base manifest declaring one mcp block with the 4 harness targets. */

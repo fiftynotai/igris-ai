@@ -23,6 +23,39 @@ including the 18 home-anchored agent target rows (gemini ×9, opencode ×9 of th
 inode/symlink identity against the SHARED `~/.igris/loadout/` and therefore
 identical in every worktree.
 
+**Proves, since BR-099 (2026-09-04).** The mcp surface also proves that no
+TEST-FIXTURE MCP server is registered in any harness config the drift reader
+opens for the brain block (claude `~/.claude.json`, gemini
+`~/.gemini/settings.json`, opencode `~/.config/opencode/opencode.json`, codex
+`~/.codex/config.toml` — or the `IGRIS_MCP_<HARNESS>_CONFIG` seam file, which
+this arm reads exactly like the per-entry arm). A fixture is an entry whose
+name is on the literal list `IGRIS_MCP_FIXTURE_NAMES` (`demo-mcp personal-mcp
+core-mcp evil`) or carries the `igris-fixture-` prefix — unless the project's
+own manifest declares that name FOR THAT HARNESS (the exemption is scoped to
+the declaring block's `targets[]`: a test manifest projecting `demo-mcp` to
+claude exempts the claude config only, and the same name in the gemini config
+is still flagged; the igris-ai manifest and personal overlay declare only
+`igris-brain`) — or whose launch tokens are `npx -y evil` / `evil` (the
+add-mcp npx-wrap of the collision fixture's bare-word command; never exempt).
+The verdict is `[mcp-fixture/<name>/<harness>] DRIFTED` with a `config :` line
+and a reason that carries NO `differing key(s)` clause, so the TD-388
+exemption below cannot apply to it: it is fatal at the commit gate even beside
+a live sibling worktree (`test/harness_drift_gate.test.bash` W10). The arm is
+silent and count-neutral on a clean config, gated on the brain MCP being in
+scope and on `FILTER='*'` (an `igris add/remove mcp` verify runs `--filter
+<name>` and must not false-fail on a pre-existing fixture entry). Limits: the
+antigravity file is not a brain-MCP target and is not scanned; only the configs
+of harnesses some brain-block targets are scanned; the list is the names the
+fixture files construct today, so a renamed fixture must update it (the
+`igris-fixture-` prefix is the forward convention); and within a harness a
+block DOES target, a fixture name that block declares is indistinguishable from
+its own projection, so the name rules stay silent there (the command rule still
+fires). Why it exists: three
+fixture entries sat in the operator's real `~/.claude.json` for weeks — the
+delegate MCP writer (add-mcp, `homedir()` at module load) ran under a real HOME
+from a vitest suite whose only sandbox was a `configPath` the delegate never
+reads. Gate: `test/harness_mcp_fixture_guard.test.bash`.
+
 **Deliberately does not catch (TD-388).** The harness MCP configs
 (`~/.claude.json`, and the native config of every other harness that declares
 an `mcp` block in `harness-manifest.json`) are home-anchored and shared by every

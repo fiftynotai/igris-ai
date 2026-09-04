@@ -2177,3 +2177,41 @@ EOF
   [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
   [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
 }
+
+# --- W10 (BR-099): a test-fixture MCP entry is FATAL beside a live sibling --
+
+@test "BR-099 W10: a test-fixture MCP entry is FATAL at the commit gate even with a live sibling worktree (no WORKTREE NOTICE)" {
+  # The verify_mcp mcp-fixture arm (check_harness_drift.sh) emits
+  # `[mcp-fixture/<name>/<harness>] DRIFTED` + `config :` with a reason that
+  # carries NO `differing key(s)` clause, so parse_differing_keys returns None
+  # and condition 4 fails — the W6 route — while conditions 1–3 all HOLD here
+  # (live sibling, an mcp* block name would not even matter, out-of-repo
+  # config). igris-brain itself MATCHes (args[0] = canonical), so the ONE
+  # fatal verdict is the fixture's: a leaked test fixture in a real harness
+  # config can never ride the TD-388 exemption. The entry is the reality
+  # shape extracted from the pre-BR-099 backup (2026-09-04).
+  local root sib cfg
+  root="$(build_mcp_repo w10)"
+  add_sibling_worktree "$root" w10 || return 1
+  sib="$TD388_SIBLING"
+  cfg="$TEST_TEMP_DIR/td388_cfg_w10_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$cfg" "$TD388_CANON_ARG"
+  python3 - "$cfg" <<'PY'
+import json, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d["mcpServers"]["demo-mcp"] = {"args": ["-y", "evil"], "command": "npx", "env": {"API": "${API_TOKEN}"}}
+json.dump(d, open(p, "w"))
+PY
+
+  run_wrapper "$root" "$cfg"
+  echo "status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[mcp/igris-brain/claude] MATCH"* ]] || return 1
+  [[ "$output" == *"[mcp-fixture/demo-mcp/claude] DRIFTED"* ]] || return 1
+  [[ "$output" == *"FATAL: 1 harness(es) DRIFTED"* ]] || return 1
+  [[ "$output" != *"WORKTREE NOTICE"* ]] || return 1
+  if printf '%s\n' "$output" | grep 'differing key(s)' >/dev/null; then return 1; fi
+  # The premise held for the whole run: the sibling was live.
+  [ -d "$sib" ] || return 1
+}

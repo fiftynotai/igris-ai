@@ -54,6 +54,25 @@ IGRIS_ADAPTER_COMMON_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 IGRIS_SURFACE_IDS="agents skills mcp hook"
 IGRIS_SURFACE_LABELS="agent skills mcp hook"
 
+# ---------------------------------------------------------------------------
+# BR-099 — the test-fixture MCP server guard's inputs (consumed by
+# scan_mcp_fixture_entries below and by check_harness_drift.sh#verify_mcp's
+# mcp-fixture arm). Three of these names sat in the operator's REAL
+# ~/.claude.json for weeks: a vitest suite reached the add-mcp delegate
+# writer (module-load homedir(), no path flag) under a real HOME. The first
+# three names ARE the entry names the fixture files construct —
+# cli/src/__tests__/registry-project-mcp.test.ts, test/harness_mcp.test.bash,
+# test/harness_agent_id_coverage.test.bash, test/harness_schema.test.bash —
+# so renaming a fixture MUST update this list (MAINTAINING.md, "MCP
+# fixture-name guard"). `evil` is NOT a fixture entry name: it is only the
+# `command` value under `demo-mcp` in the two collision fixtures
+# (registry-project-mcp.test.ts, harness_mcp.test.bash); it is listed here as
+# the defensive name-rule twin of the launch-token rule below. A NEW fixture
+# takes the prefix instead (test_standards.md); the list never grows for a
+# new test.
+IGRIS_MCP_FIXTURE_NAMES="demo-mcp personal-mcp core-mcp evil"
+IGRIS_MCP_FIXTURE_PREFIX="igris-fixture-"
+
 # igris_surface_is_valid <value>
 #   Returns 0 if <value> is a known surface id OR the literal `all`; 1 otherwise.
 #   Replaces the hard-coded `case "$SURFACE_KIND" in agents|skills|…|all)` enum
@@ -2033,6 +2052,120 @@ if entry is None:
     sys.exit(10)
 
 sys.stdout.write(json.dumps(entry, separators=(",", ":"), sort_keys=True))
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
+# scan_mcp_fixture_entries <config-path> <map-key> [<declared-names>]
+#
+# BR-099. Reads ONE harness MCP config (JSON, or TOML for codex — the SAME
+# loader shape as extract_mcp_entry above) and prints one `<name>\t<why>`
+# line per entry under <map-key> that is a TEST FIXTURE:
+#   known-fixture-name   name is in IGRIS_MCP_FIXTURE_NAMES
+#   fixture-prefix       name starts with IGRIS_MCP_FIXTURE_PREFIX
+#   npx-y-evil-command   launch tokens start `npx -y evil` or `evil` — the
+#                        add-mcp npx-wrap of the collision fixture's bare-word
+#                        `command: "evil"` (claude/gemini/codex: command+args;
+#                        opencode: the FUSED command list)
+# The two NAME rules are skipped for a name in <declared-names> (space-
+# separated: the names the manifest declares FOR THE HARNESS whose config this
+# call scans — the caller filters its `<harness>:<name>` row tokens per config;
+# passing every harness's names would exempt a leak in a harness the declaring
+# block never targets, the round-1 defect T9b pins).
+# A test manifest that declares `demo-mcp` projects it into ITS fenced sandbox
+# on purpose (harness_agent_id_coverage / harness_mcp), while the igris-ai
+# manifest + personal overlay declare only igris-brain — so a fixture leaked
+# onto the operator's disk is undeclared and flagged. The COMMAND rule is never
+# skipped: `evil` is never a legitimate registration.
+#
+# Absent file / unparseable / non-dict map → prints nothing, exit 0 (the
+# per-entry verdict already reports unparseable). No TOML parser → prints
+# nothing (extract_mcp_entry's MISSING-safe posture). NEVER prints `env`,
+# `args` or any value — only the name and the rule that matched. Never
+# throws under `set -euo pipefail`; the python exits 0 on every path.
+# Gate: test/harness_mcp_fixture_guard.test.bash.
+# ---------------------------------------------------------------------------
+scan_mcp_fixture_entries() {
+  local config_path="$1"
+  local map_key="$2"
+  local declared="${3:-}"
+  python3 - "$config_path" "$map_key" "$IGRIS_MCP_FIXTURE_NAMES" \
+    "$IGRIS_MCP_FIXTURE_PREFIX" "$declared" <<'PY' || true
+import json
+import os
+import sys
+
+config_path, map_key, names_raw, prefix, declared_raw = sys.argv[1:6]
+fixture_names = set(names_raw.split())
+declared = set(declared_raw.split())
+
+if not os.path.exists(config_path):
+    sys.exit(0)
+
+is_toml = config_path.endswith(".toml")
+data = None
+try:
+    if is_toml:
+        try:
+            import tomllib  # py3.11+
+            with open(config_path, "rb") as fh:
+                data = tomllib.load(fh)
+        except ImportError:
+            for mod in ("tomli", "toml"):
+                try:
+                    m = __import__(mod)
+                    with open(config_path, "rb" if mod == "tomli" else "r",
+                              encoding=None if mod == "tomli" else "utf-8") as fh:
+                        data = m.load(fh)
+                    break
+                except ImportError:
+                    continue
+    else:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+except (ValueError, OSError):
+    sys.exit(0)
+
+if not isinstance(data, dict):
+    sys.exit(0)
+server_map = data.get(map_key)
+if not isinstance(server_map, dict):
+    sys.exit(0)
+
+
+def launch_tokens(entry):
+    """[command, *args] for the separate shape; the fused list for opencode."""
+    if not isinstance(entry, dict):
+        return []
+    cmd = entry.get("command")
+    if isinstance(cmd, list):
+        return [t for t in cmd if isinstance(t, str)]
+    if not isinstance(cmd, str):
+        return []
+    toks = [cmd]
+    args = entry.get("args")
+    if isinstance(args, list):
+        toks.extend(t for t in args if isinstance(t, str))
+    return toks
+
+
+for name in sorted(server_map):
+    if not isinstance(name, str):
+        continue
+    why = None
+    if name not in declared:
+        if name in fixture_names:
+            why = "known-fixture-name"
+        elif prefix and name.startswith(prefix):
+            why = "fixture-prefix"
+    if why is None:
+        toks = launch_tokens(server_map[name])
+        if toks[:1] == ["evil"] or toks[:3] == ["npx", "-y", "evil"]:
+            why = "npx-y-evil-command"
+    if why is not None:
+        safe = name.replace("\t", " ").replace("\n", " ")
+        sys.stdout.write("%s\t%s\n" % (safe, why))
 sys.exit(0)
 PY
 }
