@@ -456,6 +456,40 @@ Restart Claude Code once the install completes. To confirm the fix, re-run
 the verification check from
 [Native dependencies (built at install time)](#native-dependencies-built-at-install-time).
 
+### Issue: Brain MCP stack traces name `dist/…/*.js`, not `src/…/*.ts`
+
+**Symptom:** An error thrown inside the bundled brain
+(`$(npm root -g)/igris-ai/dist/brain-mcp-server/dist/**`) reports a frame like
+`at Module.sanitizeFts5Query (…/dist/utils/fts5.js:32:27)`. With the source
+map present the same frame reads `…/src/utils/fts5.ts:33:25`.
+
+**Cause:** Since TD-444 (2026-09-06) the published tarball ships no `.js.map`
+for the bundled brain. Their `sources` named a `src/` directory the tarball
+never shipped and carried no `sourcesContent`, so no consumer could resolve
+them anyway; dropping the 139 of them recovered 155.4 KB (159,151 B) of packed size. Two
+bounds on what was lost: nothing in Igris spawns the brain with
+`--enable-source-maps`, so those frames named `dist/*.js` already unless you
+opted in; and the maps stay on disk in a repo checkout and on the VPS
+(`scripts/igris_brain_deploy.sh` builds from source) — only a tarball install
+lacks them. The CLI's own maps (`dist/index.js.map`, `dist/lib/*.js.map`)
+still ship.
+
+**Solution:** Recover the original position against the published tag. The
+bundle's version is the tag:
+
+```bash
+version="$(node -p "require('$(npm root -g)/igris-ai/dist/brain-mcp-server/package.json').version")"
+git clone https://github.com/fiftynotai/igris-ai && cd igris-ai
+git checkout "v$version"
+cd brain-mcp-server && npm ci && npm run build
+```
+
+Then read the frame against the rebuilt `dist/` and its maps — run the
+reproduction with `node --enable-source-maps`, or open the sibling
+`dist/utils/fts5.js.map` and look up the position by hand. The frame's
+`dist/…/*.js:line:col` is the same on both machines because the tag is the
+same build input.
+
 ### Issue: Global surfaces stale after moving Igris AI repo or upgrading
 
 FR-212d retired the per-project `.claude/` symlink layer — every surface

@@ -11,6 +11,7 @@
     "dist",
     "!dist/brain-mcp-server/node_modules",
     "!dist/**/*.d.ts.map",
+    "!dist/brain-mcp-server/**/*.js.map",
     "scripts/postinstall.mjs",
     "README.md",
     "CHANGELOG.md"

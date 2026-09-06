@@ -1833,6 +1833,211 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-444 MEASURED LAST (2026-09-06), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh` — BR-101's method,
+ * and REQUIRED here rather than optional: `cli/package.json` is on that row's
+ * copied-path list, and this brief's diff touches it. The scratch: `cli/`
+ * copied WITHOUT `node_modules` (symlinked back) and WITHOUT the staged
+ * `dist/brain-mcp-server/` (the copy step regenerates it), `brain-mcp-server/`
+ * assembled from COPIES of `dist/ scripts/ src/ package.json
+ * package-lock.json tsconfig.json` (`src/` copied, not symlinked — the
+ * rebuilt maps' `sources` must match the vendored ones for the identity check
+ * below, even though those maps no longer pack), `node_modules` symlinked,
+ * `harness-manifest.json` at the scratch root. The TD-373 trigger fired
+ * (`src/ newer than dist/index.js` — copy mtimes), the scratch REBUILT the
+ * brain into `dist.tmp` and swapped, and the rebuilt tree `diff -rq`
+ * IDENTICAL to the vendored `cli/dist/brain-mcp-server/dist/`; the staged
+ * `package.json` and `package-lock.json` `cmp` identical to the real
+ * bundle's; the TD-426 smoke printed `(sandboxed)`; the staged `scripts/`
+ * held 10 files (BR-101's prune applied — every reading INCLUDES BR-101).
+ * `cli/dist` and `brain-mcp-server/dist` were never written. npm 10.9.8,
+ * node v22.23.2, darwin/arm64. The checksum column is npm's `shasum`
+ * (SHA-1). Every reading below was taken AFTER the copy step.
+ *   control             2_002_047    unpacked 7_638_295, 670 entries, shasum
+ *                                    `a9eda015884631fc5ba7abfd7b0d57f595088dca`
+ *                                    — the scratch at HEAD `c1aee95`, taken
+ *                                    twice, byte- and sha-identical to
+ *                                    BR-101's MEASURED LAST, and reproduced a
+ *                                    third time as the restore-as-control
+ *                                    after the battery (HEAD `package.json` +
+ *                                    HEAD `CHANGELOG.md` back in place).
+ *                                    Manifest census: 139 `.js.map` under
+ *                                    `dist/brain-mcp-server/`, 108 elsewhere.
+ *                                    NOT the row's control, for the record:
+ *                                    an in-place `npm pack --dry-run` of the
+ *                                    REAL `cli/dist` the same day read
+ *                                    2_090_510 / 8_153_161 / 675 /
+ *                                    `b774d05e…` — the operator's 2026-09-04
+ *                                    build still carrying the five files
+ *                                    BR-101 prunes, plus BR-101's bullet
+ *                                    (unpacked +391 over BR-101's control,
+ *                                    exactly that bullet's cost).
+ *   negation alone      1_842_896    unpacked 6_699_926, 531 entries (−139),
+ *                                    shasum
+ *                                    `4e16cddef0b25ddb0de549d5817c5ce280619748`
+ *                                    — ONE line added to `files` after the
+ *                                    TD-443 negation: a `!` rule matching
+ *                                    `.js.map` at any depth under
+ *                                    `dist/brain-mcp-server/` (the literal is
+ *                                    in the TD-444 pin's failure message and
+ *                                    in `cli/package.json`). Manifest census
+ *                                    on this reading: 0 vendored `.js.map`,
+ *                                    108 cli-own, and
+ *                                    `dist/brain-mcp-server/dist/index.js` +
+ *                                    `engine/index.js` still packed. GLOB
+ *                                    SEMANTICS MEASURED, NOT BELIEVED: the
+ *                                    fallback spelling anchored one segment
+ *                                    deeper (`…/brain-mcp-server/dist/…`)
+ *                                    packs the same 1_842_896 / 531 (+5
+ *                                    unpacked — its own longer literal), so
+ *                                    the nested `dist/brain-mcp-server/
+ *                                    package.json` swallows neither; the
+ *                                    shorter spelling shipped. Unpacked
+ *                                    reconciles EXACTLY: 7_638_295 −
+ *                                    6_699_926 = 938_369 = 938_411 (the 139
+ *                                    maps by `find … -exec cat {} + | wc -c`
+ *                                    on the live dist) − 42 (the new line's
+ *                                    raw bytes in the shipped
+ *                                    `package.json`).
+ *   packed              1_843_276    unpacked 6_701_216, 531 entries, shasum
+ *                                    `02fc3c2c641ffc8a2e507ae7f2a986c343787fdb`,
+ *                                    taken twice, after the CHANGELOG bullet.
+ *                                    THIS IS THE NEW FLOOR — see RE-BASED.
+ *   TD-444's own share  −158_771 B   vs the OLD baseline: −159_151 for the
+ *                                    negation (139 maps out of the manifest,
+ *                                    net of the 42 raw B the `files` line
+ *                                    adds — one manifest, not separable) +
+ *                                    380 for the CHANGELOG bullet (388 when
+ *                                    the same bullet is packed beside the
+ *                                    maps, M1 below — gzip context, not a
+ *                                    second cost). Unpacked −937_079 =
+ *                                    −938_369 + 1_290 (the bullet).
+ *   delta at OLD floor  −20_144 B    (1_843_276 − 1_863_420). THE TRAP
+ *                                    FIGURE, stated: `toBeLessThan(153_600)`
+ *                                    is GREEN on it and would stay green
+ *                                    through 173_744 B of unmeasured growth
+ *                                    (2_017_020 − 1_843_276). OBSERVED, not
+ *                                    inferred — the M2 cell below is that
+ *                                    run, 36/36 green.
+ *   RE-BASED            1_843_276    `PACK_BASELINE_PACKED` 1_863_420 →
+ *                                    1_843_276. OPERATOR DECISION 2026-09-06,
+ *                                    recorded in the brief BEFORE the work
+ *                                    ("drop the vendored brain `.js.map`
+ *                                    only + re-base"; the drop-detecting
+ *                                    assertion was NOT chosen, and a
+ *                                    symmetric lower bound was argued
+ *                                    against in the plan — see the rule at
+ *                                    the constant). `PACK_HARD_CEILING_DELTA`
+ *                                    unchanged at 153_600. Absolute cap
+ *                                    2_017_020 → 1_996_876, DOWN 20_144 B:
+ *                                    the re-base is STRICTER than leaving
+ *                                    the constant alone — it retires the
+ *                                    20_144 B the recovery over-shot the old
+ *                                    floor by instead of handing it back,
+ *                                    and the grant is spent from a real
+ *                                    origin again. Older rows convert with
+ *                                    new_delta = old_delta + 20_144.
+ *   cumulative delta    0 B          by construction — the constant IS this
+ *                                    row's packed figure
+ *   headroom remaining  153_600 B    the whole grant, at delta 0. BR-100's
+ *                                    parked 7_727 B is the first consumer.
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   THE 2×2 — the evidence that the ceiling still bites (AC-3). One tarball
+ *   pair × two constants, whole file each time, all on the scratch:
+ *                          OLD floor 1_863_420        NEW floor 1_843_276
+ *     maps EXCLUDED        GREEN on −20_144           GREEN on 0 — shipped
+ *     (the shipped state)  (M2 — the trap; survives
+ *                          BY DESIGN, not a defect)
+ *     maps RESTORED (M1)   GREEN on +139_015 — the    RED on +159_159 >
+ *                          whole recovery re-spent,   153_600 — the gate
+ *                          nothing red (2_002_435)    bites
+ *   The right column is what makes the recovery defensible; the left column
+ *   is why the re-base was mandatory rather than optional.
+ *
+ *   THE CENSUS, re-measured at implementation time (AC-2), 2026-09-06 on the
+ *   operator's 2026-09-04 18:00 build: 139 `.js.map` under
+ *   `cli/dist/brain-mcp-server/dist/` totalling 938_411 B by `cat | wc -c`;
+ *   108 cli-own `.js.map` under `cli/dist` outside the bundle
+ *   (`cli/tsconfig.json:15` `sourceMap: true`). The brief's 139 + 108 = 247
+ *   held; the brief's earlier 138 was one `finding-key.ts` (TD-440) short.
+ *
+ *   THE PIN — `describe("TD-444 — no vendored brain .js.map ships
+ *   (path-scoped)")` at the end of this file, four tests: the scoped
+ *   exclusion pin WITH THE SCOPE IN ITS NAME (relation, `toEqual([])`, prints
+ *   paths), the `.js`-still-ships inverse, the `dist/index.js.map` presence
+ *   pin (cli's own map, so "cli keeps its maps" is a gate), and `sourceMap:
+ *   true` pinned at `brain-mcp-server/tsconfig.json` (the shipped CHANGELOG
+ *   sentence's durable half; the on-disk half is not pinned, test_standards'
+ *   gitignored-`dist` reason). RED-first on the scratch at HEAD's
+ *   `package.json`: the scoped pin red printing 139 paths (`db.js.map` first,
+ *   `utils/vector-search.js.map` last), the three companions green, the
+ *   ceiling green at the old floor — 1 failed / 35 passed. GREEN after the
+ *   negation: 36 / 36.
+ *
+ *   BATTERY, scratch only, each mutation landed, one whole-file run, restored
+ *   `cmp`-identical before the next:
+ *     M1  negation removed        scoped pin RED (139 paths) AND the ceiling
+ *                                 RED at the new floor (packed 2_002_435,
+ *                                 delta 159_159 > 153_600). Kill.
+ *     M2  constant back to        36 / 36 GREEN; `size − 1_863_420 = −20_144`
+ *         1_863_420, negation in  from the manifest. SURVIVOR, BY DESIGN —
+ *                                 this is the trap the re-base exists for,
+ *                                 recorded here so no one reads the green as
+ *                                 a pass.
+ *     M3  `startsWith` dropped    scoped pin RED printing the 108 cli-own
+ *         from the pin            maps (`dist/index.js.map` first,
+ *                                 `dist/verbs/update.js.map` last) — the
+ *                                 scope claim is load-bearing. Kill.
+ *     M4  glob widened to every   scoped pin GREEN (cannot see the loss);
+ *         `.js.map` under `dist/` presence pin RED on `dist/index.js.map`;
+ *                                 423 entries / 1_681_838 packed — the reason
+ *                                 the presence pin exists. Kill.
+ *     M5a glob typo `.js*`        inverse RED plus six FR-238 presence pins
+ *         instead of `.js.map`    (7 failed; 390 entries). Kill.
+ *     M5b `sourceMap: false` in   tsconfig pin RED; every packlist pin green
+ *         the scratch tsconfig    (nothing rebuilt, so the maps still pack —
+ *                                 the outcome pins are blind to the flag by
+ *                                 construction). Kill.
+ *     C   comment-only edit in    36 / 36; pack byte- and sha-identical
+ *         the TD-444 describe     (`tarball.test.ts` is outside `dist`).
+ *                                 SURVIVES.
+ *
+ *   THE FORENSIC TRADE, at its measured size. Node importing a `.js` whose
+ *   map is absent under `--enable-source-maps` is SILENT (exit 0, both
+ *   streams empty — TD-443's `EVIDENCE FOR THE FOLLOW-ON`); the whole loss is
+ *   one resolved frame, `…/src/utils/fts5.ts:33:25` with the map against
+ *   `…/dist/utils/fts5.js:32:27` without. Two bounds: nothing in Igris spawns
+ *   the brain with `--enable-source-maps` (`grep -rn enable-source-maps
+ *   core/ cli/src brain-mcp-server/src` → 0), so a consumer's frames named
+ *   `dist/` already; and the maps stay on disk in a repo checkout and on the
+ *   VPS (`scripts/igris_brain_deploy.sh` builds from source) — only a
+ *   tarball install lacks them. Recovery: check out the tag in
+ *   `dist/brain-mcp-server/package.json`, build, read the frame against the
+ *   rebuilt `dist/` (`docs/SETUP_GUIDE.md` § Troubleshooting).
+ *
+ *   TD-443's AC-1, RESOLVED HERE AS MET, SCOPED. The dangling-sourcemap class
+ *   is closed for the bundled brain: 0 of 139 vendored `.js.map` in the
+ *   manifest (and 0 `.d.ts.map` since TD-443). The 108 cli-own `.js.map`
+ *   remain BY OPERATOR DECISION and are pinned as SHIPPING (test 3), so they
+ *   are a recorded exception, not a remainder. The unscoped arm was measured
+ *   and not taken: M4's 1_681_838 / 423.
+ *
+ *   POINTERS RE-POINTED (TD-423's rule — brief + date, no direction word):
+ *   this file's head parenthetical (it still read TD-445's 4_181 B, which
+ *   BR-101's row says was never true of the shipped tarball — BR-101
+ *   re-pointed `coding_guidelines.md`'s copy and not this one; both point at
+ *   TD-444 now), `coding_guidelines.md`'s live-reading pointer,
+ *   `docs/dashboard.md`'s two ceiling-history sentences, and
+ *   `MAINTAINING.md` rows 109 (the exclusion set) and 110 (the re-base
+ *   narrative), all in this change.
+ *
+ *   FOLLOW-UP CANDIDATE, not filed: `cli/src/lib/brain-db.ts` still carries
+ *   a shipped comment claiming prose is "paid for TWICE (`.js` and
+ *   `.js.map`)" — false since TD-443 corrected it here (`.js.map` carry no
+ *   `sourcesContent`), and doubly so now that the vendored maps do not ship.
+ *   A `dist/lib/brain-db.js` byte change belongs to a brief that measures it.
+ *
  * BR-101 MEASURED LAST (2026-09-06), after its final code-touching step.
  * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh` — NOT by the
  * TD-440 staging method, and the reason is the whole brief (see THE METHOD'S
@@ -2624,10 +2829,13 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-445, measured 2026-09-04,
- * ~4.1 KB (4_181 B) is what is left on PACKED.** Grep `TD-445 MEASURED LAST` in this
- * file for that reading (a +0 B row that inherits TD-439's cumulative) and the
- * method behind it, and treat the 84_262 B above
+ * BRIEF, a DATE and no direction: **as of TD-444, measured 2026-09-06,
+ * 153_600 B is what is left on PACKED — the whole grant, because TD-444
+ * re-based the floor to its own reading.** Grep `TD-444 MEASURED LAST` in this
+ * file for that reading and the method behind it (BR-101 re-pointed
+ * `coding_guidelines.md`'s copy of this pointer and left this one at TD-445's
+ * 4_181 B — a figure BR-101's own row says was never true of the shipped
+ * tarball; TD-444 re-points both), and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
  * does not cover: it is INTRA-PARAGRAPH — it names the 84_262 B in this same
@@ -2721,6 +2929,31 @@ interface PackReport {
  * They are also all measured on trees carrying the orphan artifacts TD-373
  * deleted, so treat them as historical narrative, not as comparable figures.
  *
+ * RE-BASED A SECOND TIME (TD-444, 2026-09-06, on `c1aee95` plus this brief's
+ * diff). Dropping the 139 vendored brain `.js.map` from the packlist took the
+ * packed total 20_144 B BELOW the TD-374 floor, and a ceiling that reads a
+ * negative delta has gone QUIET rather than passed: `toBeLessThan(150 KB)`
+ * would have stayed green through 173_744 B of unmeasured growth
+ * (2_017_020 − 1_843_276). The 2×2 in the TD-444 row shows all four cells
+ * (maps excluded/restored × old/new floor); only the re-based floor makes the
+ * restored-maps tarball RED, and that is why the re-base was mandatory.
+ *   new floor  1_843_276  (was 1_863_420) — MEASURED LAST on a scratch build
+ *                         that ran `copy-templates.sh`, taken twice; grep
+ *                         `TD-444 MEASURED LAST` for the method
+ *   grant      153_600    unchanged; absolute cap 2_017_020 → 1_996_876,
+ *                         DOWN 20_144 B — the re-base retires the over-shoot
+ *                         rather than handing it back
+ *   older rows new_delta = old_delta + 20_144   (1_863_420 − 1_843_276) —
+ *                         the conversion above, sign reversed because the
+ *                         floor went DOWN this time
+ * THE RULE, for the next prune: a recovery whose cumulative delta would go
+ * NEGATIVE re-bases `PACK_BASELINE_PACKED` in the SAME change, as an operator
+ * decision recorded before the work. A recovery that stays ABOVE the floor
+ * (TD-443 −31 KB, BR-101 −88 KB) does NOT re-base: the ledger prefers a
+ * recovery to be spent, not retired, and a symmetric lower bound was
+ * considered and NOT added — at delta 0 it would red the next net-negative
+ * docblock trim and make this constant a hot edit (the TD-444 plan, §4).
+ *
  * THE CEILING — +150 KB, operator grant, 2026-08-10
  * ─────────────────────────────────────────────────
  * Raised from +550 KB over the old baseline. In absolute terms the cap moves
@@ -2755,7 +2988,13 @@ interface PackReport {
  * for sources that no longer existed, and that deletion happened FIRST,
  * deliberately, so this grant is spent on features rather than on leftovers.
  */
-const PACK_BASELINE_PACKED = 1_863_420; // TD-374, measured clean on bd49525
+// TD-444 (2026-09-06): re-based from 1_863_420 (TD-374, measured clean on
+// bd49525) to the floor measured on a scratch build of c1aee95 after the
+// vendored brain .js.map exclusion — grep `TD-444 MEASURED LAST`. RULE: a
+// recovery whose cumulative delta would go NEGATIVE re-bases this constant in
+// the SAME change, on an operator decision recorded before the work; a
+// negative delta is a ceiling that has gone quiet, and quiet is not a pass.
+const PACK_BASELINE_PACKED = 1_843_276;
 const PACK_HARD_CEILING_DELTA = 150 * 1024; // TD-374, operator, 2026-08-10
 
 /**
@@ -3029,7 +3268,8 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
  * by claim.
  *
  * WHY THIS PIN CARRIES NO PATH SCOPE, and why the `.js.map` class cannot have
- * one. `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
+ * one (TD-444 then wrote that pin PATH-SCOPED — the next describe).
+ * `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
  * declarations of its own, and the staged `dist/brain-mcp-server/scripts/`
  * holds `.ts` sources rather than compiled output (12 entries, zero maps). The
  * tarball's ENTIRE `.d.ts.map` population was the brain's 138 — measured
@@ -3041,7 +3281,9 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
  * the identical defect (`dist/lib/slug.js.map` reads
  * `"sources":["../../src/lib/slug.ts"]`, and `src` is not in `files`). Such a
  * pin would have to be path-scoped, and a later reader would take a scoped pin
- * for a whole-tarball guarantee it is not. The narrower exclusion buys the
+ * for a whole-tarball guarantee it is not — which is why TD-444's carries the
+ * scope in its NAME and a presence pin on cli's own map beside it. The
+ * narrower exclusion buys the
  * stronger invariant, and that inversion is the reason it is the one taken.
  * The full argument, including the option NOT taken, is in this file's pack
  * ledger — grep `TD-443 MEASURED LAST`.
@@ -3137,6 +3379,164 @@ describe("TD-443 — no dangling declaration maps ship", () => {
       opts.declaration,
       "brain-mcp-server/tsconfig.json no longer sets `declaration: true`, so " +
         "no `.d.ts` is emitted and `declarationMap` has nothing to describe.",
+    ).toBe(true);
+  });
+});
+
+/**
+ * TD-444 — the `.js.map` half of the dangling-sourcemap class, PATH-SCOPED.
+ *
+ * TD-443 dropped the 138 `.d.ts.map` and left the `.js.map` class alone; this
+ * is the remainder, and it is NARROWER on purpose. Two tsconfigs emit `.js.map`
+ * into this tarball: `brain-mcp-server/tsconfig.json` (vendored under
+ * `dist/brain-mcp-server/dist/**` — 139 files, 938_411 unpacked B, measured
+ * 2026-09-06 on the operator's 2026-09-04 build) and `cli/tsconfig.json:15`
+ * `sourceMap: true` (108 cli-own maps: `dist/index.js.map`,
+ * `dist/lib/slug.js.map`, …). The operator decided, 2026-09-06 and recorded in
+ * the brief BEFORE the work, to drop the VENDORED brain maps only and keep
+ * cli's. So the negation in `cli/package.json` `files` matches `.js.map` at
+ * any depth under `dist/brain-mcp-server/` (the literal is in test 1's
+ * failure message), and the first pin below filters on that prefix. Every
+ * vendored map was dangling: `sources` name a `../../src/….ts`, there is no
+ * `sourcesContent`, and `files` ships no
+ * `src` — TD-443's defect on the sibling class (grep `THE DEFECT` in its
+ * row), true of the repo's own `cli/dist` too because `copy-templates.sh`
+ * stages `dist/**` only.
+ *
+ * WHAT IS GIVEN UP, at its measured size (TD-443's `EVIDENCE FOR THE
+ * FOLLOW-ON`): `node --enable-source-maps` importing a `.js` whose map is
+ * absent is SILENT (exit 0, both streams empty); the whole difference is one
+ * resolved frame — `…/src/utils/fts5.ts:33:25` with the map,
+ * `…/dist/utils/fts5.js:32:27` without. Nothing in Igris spawns the brain
+ * with `--enable-source-maps`, so a consumer's frames already named `dist/`;
+ * an operator who needs the `src/` position checks out the tag in
+ * `dist/brain-mcp-server/package.json` and builds. `sourceMap` stays ON (test
+ * 4) and every map stays on disk: a packlist change, as TD-443's was. The
+ * VPS keeps its maps too — `scripts/igris_brain_deploy.sh` builds from source.
+ *
+ * A LATER READER MUST NOT TAKE THIS PIN FOR A WHOLE-TARBALL GUARANTEE — it is
+ * not one, and test 3 is the proof: it pins that cli's OWN `dist/index.js.map`
+ * STILL SHIPS. The two mutations that tell the scope from a glob accident are
+ * in the TD-444 row (grep `TD-444 MEASURED LAST`): widen the ASSERTION to the
+ * whole tarball and it reds on the 108 cli-own maps (M3); widen the GLOB to
+ * `.js.map` at any depth under `dist/` and test 1 stays green while test 3
+ * reds (M4). One
+ * mutation per direction of the boundary.
+ *
+ * THE CEILING WAS RE-BASED IN THE SAME CHANGE. The negation alone recovers
+ * 159_151 packed B, which takes the total BELOW the TD-374 floor of
+ * `1_863_420`: the old constant would have read a NEGATIVE delta, and
+ * `toBeLessThan(150 KB)` passes on a negative through every byte of growth up
+ * to the old cap without a word. TD-443 named that trap and stayed narrow to
+ * avoid it; this brief crosses the floor, so `PACK_BASELINE_PACKED` above now
+ * holds the measured post-exclusion floor and the rule is stated beside it.
+ *
+ * RELATION, NOT COUNT — `toEqual([])` on the filtered list, TD-443's shape.
+ */
+describe("TD-444 — no vendored brain .js.map ships (path-scoped)", () => {
+  const VENDORED_BRAIN_PREFIX = "dist/brain-mcp-server/";
+
+  it("packs no .js.map under dist/brain-mcp-server/ — PATH-SCOPED, and the scope is a decision", () => {
+    // `startsWith` is the scope, and it is LOAD-BEARING: drop it and this test
+    // reds on the 108 cli-own maps that ship by operator decision (M3 in the
+    // TD-444 row). It is not a whole-tarball claim; test 3 pins the boundary
+    // from the other side.
+    const stray = [...packedPaths()].filter(
+      (p) => p.startsWith(VENDORED_BRAIN_PREFIX) && p.endsWith(".js.map"),
+    );
+    expect(
+      stray,
+      "vendored brain source maps are back in the published tarball " +
+        "(TD-444). Every path listed is a `.js.map` under " +
+        "dist/brain-mcp-server/ whose `sources` name a `src/` the tarball " +
+        "does not ship, with no `sourcesContent` — 139 files / 938_411 " +
+        "unpacked B on the 2026-09-04 build, 159_151 packed B. The operator " +
+        "chose (2026-09-06) to drop the VENDORED maps only; cli's own " +
+        "`.js.map` are OUT of this pin's scope on purpose. Restore the " +
+        '`"!dist/brain-mcp-server/**/*.js.map"` negation in cli/package.json ' +
+        "`files`, after the `dist` entry it narrows.",
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships the vendored .js those maps described", () => {
+    // The glob-typo inverse, TD-443's shape: `!dist/brain-mcp-server/**/*.js*`
+    // would take the whole compiled brain along with its maps and the pin
+    // above would stay GREEN on a far larger regression. The FR-238 presence
+    // pins would fire too, but without naming the cause; this one does.
+    const compiled = [...packedPaths()].filter(
+      (p) => p.startsWith("dist/brain-mcp-server/dist/") && p.endsWith(".js"),
+    );
+    expect(
+      compiled.length,
+      "the compiled brain is gone from the tarball. TD-444 excluded source " +
+        "MAPS only; if this is red, the exclusion glob widened past `.js.map` " +
+        "and took the `.js` with it.",
+    ).toBeGreaterThan(0);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships cli's OWN .js.map — the scope boundary is a decision, not a glob accident", () => {
+    // The pin that makes "cli keeps its maps" a GATE rather than a sentence.
+    // Widen the negation to `!dist/**/*.js.map` and test 1 cannot see the
+    // loss (it filters on the brain prefix); this one reds on
+    // `dist/index.js.map` (M4 in the TD-444 row). `dist/index.js.map` is the
+    // CLI entrypoint's own map — the one name that survives any module
+    // rename under lib/ — and the `some` beside it keeps the relation honest
+    // if that file is ever renamed.
+    const paths = packedPaths();
+    expect(
+      paths.has("dist/index.js.map"),
+      "cli's own entrypoint map `dist/index.js.map` is no longer in the " +
+        "tarball. TD-444's negation is scoped to dist/brain-mcp-server/ by " +
+        "operator decision (2026-09-06); a `!dist/**/*.js.map` spelling, or " +
+        "`sourceMap: false` in cli/tsconfig.json, widened the drop past that " +
+        "scope.",
+    ).toBe(true);
+    expect(
+      [...paths].some(
+        (p) => p.endsWith(".js.map") && !p.startsWith(VENDORED_BRAIN_PREFIX),
+      ),
+      "no cli-own `.js.map` ships at all — the path scope of TD-444's " +
+        "exclusion has been lost.",
+    ).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("keeps `sourceMap` ON in the brain's tsconfig — the CHANGELOG sentence's durable half", () => {
+    // TD-443's third-test pattern. Both packlist pins above are OUTCOME pins:
+    // flip `sourceMap` to false, rebuild, delete the negation — no map is
+    // emitted, none packs, test 1 stays green, the `.js` still ship. The
+    // tarball is still correct; the shipped cli/CHANGELOG.md sentence
+    // "`sourceMap` stays on and every map stays on disk" is FALSE with the
+    // suite green. This pin reads SOURCE, so it fires without a build. The
+    // on-disk half is deliberately NOT pinned: `brain-mcp-server/dist` is
+    // gitignored, so a count there measures whether someone built the brain.
+    const tsconfigPath = join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "brain-mcp-server",
+      "tsconfig.json",
+    );
+    const raw = readFileSync(tsconfigPath, "utf8");
+    let opts: Record<string, unknown>;
+    try {
+      opts = (JSON.parse(raw) as { compilerOptions: Record<string, unknown> })
+        .compilerOptions;
+    } catch {
+      throw new Error(
+        "brain-mcp-server/tsconfig.json is no longer plain JSON and this pin " +
+          "parses it with JSON.parse (the TD-443 pin has the same shape). " +
+          "Teach both a tolerant parser — do not delete either.",
+      );
+    }
+    expect(
+      opts.sourceMap,
+      "brain-mcp-server/tsconfig.json no longer sets `sourceMap: true`. " +
+        "TD-444 excluded the vendored `.js.map` from the PACKLIST and left " +
+        "the compiler alone on purpose, so that in-repo debugging keeps its " +
+        "maps; turning the flag off is a DIFFERENT change (the brief's Out " +
+        "of Scope), and on its own it leaves every packlist pin in this file " +
+        "green while making the shipped TD-444 CHANGELOG entry false.",
     ).toBe(true);
   });
 });
