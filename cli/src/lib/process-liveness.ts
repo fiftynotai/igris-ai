@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { hostname } from "node:os";
+import { isSameMachine, readMachineIdentity, type MachineIdentity } from "./machine-identity.js";
 import { HARNESS_PROCESS_TABLE, inferHarness } from "./detect.js";
 import type { InstanceLivenessStatus, InstanceRow } from "../types.js";
 
@@ -23,7 +23,8 @@ export interface ProcessTableEntry {
 export type InstanceLivenessInputs = Pick<
   InstanceRow,
   "machine_hostname" | "owner_pid" | "owner_started_at"
->;
+> &
+  Partial<Pick<InstanceRow, "machine_id">>;
 
 export interface InstanceLiveness {
   status: InstanceLivenessStatus;
@@ -245,13 +246,14 @@ export function resolveOwnerProcess(
   // Tier 3 — null, reached by every `return null` above.
 }
 
+// BR-100: same-machine is the IDENTITY (`isSameMachine`), never the bare hostname.
 export function classifyInstanceLiveness(
   row: InstanceLivenessInputs,
-  localHostname = hostname(),
+  me: MachineIdentity = readMachineIdentity(),
 ): InstanceLiveness {
   const checkedAt = new Date().toISOString().replace("T", " ").substring(0, 19);
 
-  if (row.machine_hostname !== localHostname) {
+  if (!isSameMachine(row, me)) {
     return {
       status: "unknown_remote",
       checked_at: checkedAt,

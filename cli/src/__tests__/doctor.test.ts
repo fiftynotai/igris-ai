@@ -1590,3 +1590,150 @@ describe("doctor — antigravity-skills-link drift class (FR-179)", () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-100: machine-identity drift class — informational, read-only, never fixed.
+// ---------------------------------------------------------------------------
+
+describe("doctor — machine-identity drift class (BR-100)", () => {
+  const LIVE = require("node:os").hostname() as string;
+
+  /** Merge a `machine` block into the staged opt-out config (keeps `cli_targets: {}`). */
+  function withMachine(machine: unknown): void {
+    const p = join(tmpRoot, "config.json");
+    const cfg = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+    if (machine === undefined) delete cfg.machine;
+    else cfg.machine = machine;
+    writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n");
+    chmodSync(p, 0o600);
+  }
+
+  /** A minimal brain with the two tables at their BR-100 shape. */
+  function seedBrain(rows: Array<{ table: "event_log" | "instances"; hostname: string; machine_id: string | null; n?: number }>): string {
+    const Database = require("better-sqlite3");
+    const p = join(tmpRoot, "memory", "knowledge.db");
+    const db = new Database(p);
+    db.exec(`
+      CREATE TABLE event_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL, component TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}', machine_hostname TEXT, project_slug TEXT, instance_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), machine_id TEXT);
+      CREATE TABLE instances (id TEXT PRIMARY KEY, machine_hostname TEXT NOT NULL, project_slug TEXT, status TEXT DEFAULT 'active',
+        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')), machine_id TEXT);
+    `);
+    let k = 0;
+    for (const r of rows) {
+      for (let i = 0; i < (r.n ?? 1); i++) {
+        k++;
+        if (r.table === "event_log") {
+          db.prepare("INSERT INTO event_log (event_name, component, machine_hostname, machine_id) VALUES ('x', 'unknown', ?, ?)").run(r.hostname, r.machine_id);
+        } else {
+          db.prepare("INSERT INTO instances (id, machine_hostname, machine_id) VALUES (?, ?, ?)").run(`i-${k}`, r.hostname, r.machine_id);
+        }
+      }
+    }
+    db.close();
+    return p;
+  }
+
+  function sha(p: string): string {
+    return require("node:crypto").createHash("sha256").update(readFileSync(p)).digest("hex");
+  }
+
+  async function machineRow() {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    const drift = await classifyDriftAll(reg.listProjects());
+    return drift.find((r) => r.driftClass === "machine-identity") ?? null;
+  }
+
+  it("clean: no machine block yet (a fresh init, nothing minted) and no brain rows → NO row", async () => {
+    withMachine(undefined);
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("clean: minted, live hostname aliased, every local row attributed → NO row", async () => {
+    withMachine({ id: "X", aliases: [LIVE, "MacBookAir"] });
+    seedBrain([
+      { table: "event_log", hostname: "MacBookAir", machine_id: null, n: 3 },
+      { table: "event_log", hostname: "elsewhere", machine_id: "X" }, // id wins
+      { table: "instances", hostname: LIVE, machine_id: "X" },
+    ]);
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("(b): minted but the live hostname is NOT in the persisted aliases → informational row naming both", async () => {
+    withMachine({ id: "X", aliases: ["MacBookAir"] });
+    const row = await machineRow();
+    expect(row).not.toBeNull();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.path).toBe(join(tmpRoot, "config.json"));
+    expect(row!.recommendedFix).toMatch(/^informational — hostname changed since the last writer ran/);
+    expect(row!.recommendedFix).toContain(`now '${LIVE}'`);
+    expect(row!.recommendedFix).toContain("aliases [MacBookAir]");
+  });
+
+  it("(b) does NOT fire for an UNMINTED identity (no id): the next writer mints and seeds the alias", async () => {
+    withMachine({ aliases: [] });
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("(c): NULL-id rows under hostnames outside the alias list are listed with counts, largest first; id-bearing rows are not counted", async () => {
+    withMachine({ id: "X", aliases: [LIVE] });
+    seedBrain([
+      { table: "event_log", hostname: "MacBookAir", machine_id: null, n: 5 },
+      { table: "instances", hostname: "MacBookAir", machine_id: null, n: 2 },
+      { table: "event_log", hostname: "vps-host", machine_id: null, n: 3 },
+      { table: "event_log", hostname: "foreign-with-id", machine_id: "Y", n: 4 }, // carries an id → not an alias candidate
+      { table: "event_log", hostname: LIVE, machine_id: null, n: 9 }, // mine already
+    ]);
+    const row = await machineRow();
+    expect(row).not.toBeNull();
+    expect(row!.recommendedFix).toContain("seen locally, unattributed (machine_id NULL): 'MacBookAir' (7), 'vps-host' (3)");
+    expect(row!.recommendedFix).not.toContain("foreign-with-id");
+    expect(row!.recommendedFix).toContain("ONLY names this machine has used");
+    expect(row!.recommendedFix).not.toContain("not yet minted");
+  });
+
+  it("(c) names the unminted state when (c) fires before any writer ran", async () => {
+    withMachine(undefined);
+    seedBrain([{ table: "instances", hostname: "MacBookAir", machine_id: null }]);
+    const row = await machineRow();
+    expect(row!.recommendedFix).toContain("'MacBookAir' (1)");
+    expect(row!.recommendedFix).toContain("identity not yet minted (the next writer mints it)");
+  });
+
+  it("read-only: the reader leaves the brain file byte-identical (no -wal on a delete-mode brain); the doctor pass leaves brain + config identical", async () => {
+    withMachine({ id: "X", aliases: ["old-name"] });
+    const dbPath = seedBrain([{ table: "event_log", hostname: "MacBookAir", machine_id: null }]);
+    const cfgPath = join(tmpRoot, "config.json");
+
+    // The READER on its own, before anything else opens the file.
+    const { readUnattributedHostnames } = await import("../lib/brain-db.js");
+    const dbBefore = sha(dbPath);
+    const seen = readUnattributedHostnames({ machine_id: "X", hostname: LIVE, aliases: ["old-name", LIVE] });
+    expect(seen).toEqual([{ hostname: "MacBookAir", rows: 1 }]); // non-vacuous
+    expect(sha(dbPath)).toBe(dbBefore);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+
+    // The whole doctor pass. The registry (`listProjects`) opens the SAME file
+    // read-write and creates its `projects` table on first touch — that is the
+    // registry's write, not the probe's — so the witness brackets the SECOND
+    // pass, where nothing but the probe runs against a settled file.
+    expect(await machineRow()).not.toBeNull();
+    const settled = { db: sha(dbPath), cfg: sha(cfgPath) };
+    const row = await machineRow();
+    expect(row).not.toBeNull(); // both (b) and (c) fired
+    expect({ db: sha(dbPath), cfg: sha(cfgPath) }).toEqual(settled);
+  });
+
+  it("--fix never touches it: the row survives, exit 1, config.json unchanged", async () => {
+    withMachine({ id: "X", aliases: ["old-name"] });
+    const cfgPath = join(tmpRoot, "config.json");
+    const before = sha(cfgPath);
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: true });
+    expect(code).toBe(1);
+    expect(sha(cfgPath)).toBe(before);
+    expect(await machineRow()).not.toBeNull();
+  });
+});

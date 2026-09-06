@@ -320,6 +320,27 @@ describe('Sync Auto-Push', () => {
       ]);
     });
 
+    it('EXCLUDES machine_id from event_log, instances AND ceremony_events (BR-100)', () => {
+      // BR-100 (2026-09-06): the machine-identity stamp is a per-machine value
+      // (coding_guidelines §7, TD-440) and its NON-replication is the contract —
+      // L-849 inverted. No reader anywhere compares a FOREIGN row's machine_id;
+      // an inbound row lands with it NULL, which is "not mine" by construction
+      // (AC-5), and a pulled-back copy of my own `instances` row cannot NULL my
+      // id because the LWW UPDATE iterates `config.columns` only. Adding it here
+      // would buy a remote-first deploy (a per-row `has no column named
+      // machine_id` on an un-migrated VPS, which BR-097 does NOT hold the
+      // watermark for), an egress-manifest regeneration and two CLI mirror
+      // edits — for a value nobody remote reads. This pin is the decision.
+      for (const table of ['event_log', 'instances', 'ceremony_events']) {
+        const entry = SYNC_TABLES.find((t) => t.table === table);
+        expect(entry, table).toBeDefined();
+        expect(entry!.columns, table).not.toContain('machine_id');
+        expect(entry!.syncKey, table).not.toContain('machine_id');
+      }
+      // …and the count is unchanged: no new table joined for it either.
+      expect(SYNC_TABLES).toHaveLength(21);
+    });
+
     const newTables = [
       { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
       { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },

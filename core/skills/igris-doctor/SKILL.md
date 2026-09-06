@@ -84,7 +84,10 @@ Render in this order:
    `antigravity-skills-link`, `path-missing`
 2. **Degraded / needs judgment:** `secret-perms`, `brain-core-stale`,
    `channel-mismatch`, `duplicate-path`
-3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`
+3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`,
+   `machine-identity` (the machine's hostname drifted from its recorded
+   identity, or local rows carry hostnames its alias list does not cover — an
+   alias is an operator claim, so read the row's text and decide by hand)
 
 For each group, explain:
 
@@ -136,6 +139,9 @@ This is especially important for:
   require manual review before any repair attempt.
 - `duplicate-path`, `slug-basename-mismatch`, `symlink-target`: these may reflect
   intentional aliases or workspace layout.
+- `machine-identity`: informational and never auto-fixed. Add to `config.json`
+  `machine.aliases` ONLY hostnames this machine has actually used; a name from
+  another machine would attribute its rows to this one.
 - `brain-core-stale` / `channel-mismatch`: these may require a channel or upgrade
   decision.
 

@@ -205,7 +205,8 @@ function daysAgo(n: number): string {
 
 async function digest(): Promise<CognitionHealthDigest> {
   const { buildCognitionHealthDigest } = await import("../verbs/cognition.js");
-  return buildCognitionHealthDigest({ hostname: HOST });
+  // BR-100: the seam is an IDENTITY; a NULL id + [HOST] is exactly the pre-BR-100 posture.
+  return buildCognitionHealthDigest({ identity: { machine_id: null, hostname: HOST, aliases: [HOST] } });
 }
 
 function pick(d: CognitionHealthDigest, id: string): CognitionInstanceHealth {
@@ -974,5 +975,125 @@ describe("a failure's own reason and detail lead the `failing` sentence (TD-447)
     const row = pick(await digest(), "perception");
     expect(row.status).toBe("failing");
     expect(row.reason.startsWith(`auth_error: ${DETAIL_AUTH}. `)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100 — "this host" is the machine IDENTITY (AC-3, AC-5)
+// RED at HEAD (pre-change probe, 2026-09-06): the two-name roster read
+// 5 × no_signal (perception, subconscious, synapse, janitor, arbiter) under
+// the `.local` name; runs_today under two names read 1.
+// ---------------------------------------------------------------------------
+
+const SEVEN = ["perception", "subconscious", "synapse", "janitor", "arbiter", "curator", "cartographer"];
+/** The operator's Mac: three names, one identity. */
+const ME_MAC = {
+  machine_id: "X",
+  hostname: "Mohameds-MacBook-Air-2",
+  aliases: ["MacBookAir", "Mohameds-MacBook-Air-2.local", "Mohameds-MacBook-Air-2"],
+};
+
+function addMachineIdColumn(): void {
+  withDb((db) => db.exec("ALTER TABLE event_log ADD COLUMN machine_id TEXT"));
+}
+
+function seedEventWithId(component: string, eventName: string, createdAt: string, host: string, machineId: string | null): void {
+  withDb((db) => {
+    db.prepare(
+      `INSERT INTO event_log (event_name, component, machine_hostname, created_at, machine_id) VALUES (?, ?, ?, ?, ?)`,
+    ).run(eventName, component, host, createdAt, machineId);
+  });
+}
+
+async function digestAs(identity: { machine_id: string | null; hostname: string; aliases: string[] }): Promise<CognitionHealthDigest> {
+  const { buildCognitionHealthDigest } = await import("../verbs/cognition.js");
+  return buildCognitionHealthDigest({ identity });
+}
+
+/** Five instances under `MacBookAir`, two under `…-2.local`, every row NULL-id (legacy). */
+function seedTwoNameRoster(): void {
+  writeConfig(Object.fromEntries(SEVEN.map((id) => [id, { enabled: true }])));
+  SEVEN.forEach((id, i) => {
+    seedInstance({ id });
+    seedEvent(
+      `cognition.${id}`,
+      `cognition.${id}.run_succeeded`,
+      daysAgo(0.05 * (i + 1)),
+      i < 5 ? "MacBookAir" : "Mohameds-MacBook-Air-2.local",
+    );
+  });
+}
+
+describe("BR-100 — the health digest scopes 'this host' by machine identity", () => {
+  for (const arm of ["WITHOUT", "WITH"] as const) {
+    it(`AC-3 (${arm} the machine_id column): terminal events under two historical names → 7 × ok with last_run_at`, async () => {
+      seedSchema();
+      if (arm === "WITH") addMachineIdColumn();
+      seedTwoNameRoster();
+      const d = await digestAs(ME_MAC);
+      expect(d.degraded).toBe(false);
+      expect(Object.fromEntries(d.instances.map((r) => [r.id, r.status]))).toEqual(
+        Object.fromEntries(SEVEN.map((id) => [id, "ok"])),
+      );
+      expect(d.instances.every((r) => r.last_run_at !== null)).toBe(true);
+      expect(d.hostname).toBe("Mohameds-MacBook-Air-2");
+    });
+  }
+
+  it("AC-3 negative control: the same rows under the `.local` identity WITHOUT the aliases reproduce the pre-BR-100 verdict (5 × no_signal)", async () => {
+    seedSchema();
+    seedTwoNameRoster();
+    const d = await digestAs({ machine_id: null, hostname: "Mohameds-MacBook-Air-2.local", aliases: ["Mohameds-MacBook-Air-2.local"] });
+    const statuses = Object.fromEntries(d.instances.map((r) => [r.id, r.status]));
+    expect(statuses).toEqual({
+      perception: "no_signal", subconscious: "no_signal", synapse: "no_signal", janitor: "no_signal", arbiter: "no_signal",
+      curator: "ok", cartographer: "ok",
+    });
+  });
+
+  it("AC-5: a row carrying a FOREIGN machine_id under MY hostname is excluded from this_host (surfaces only as any_host)", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeConfig({ janitor: { enabled: true } });
+    seedInstance({ id: "janitor" });
+    seedEventWithId("cognition.janitor", "cognition.janitor.run_succeeded", daysAgo(1), "Mohameds-MacBook-Air-2", "vps-id");
+    const row = pick(await digestAs(ME_MAC), "janitor");
+    expect(row.status).toBe("no_signal");
+    expect(row.last_run_at).toBeNull();
+    expect(row.last_run_any_host).not.toBeNull();
+  });
+
+  it("AC-5 (the retained T7 guard): a NULL-id row under a foreign hostname stays foreign under an identity too", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeConfig({ janitor: { enabled: true } });
+    seedInstance({ id: "janitor" });
+    seedEventWithId("cognition.janitor", "cognition.janitor.run_succeeded", daysAgo(1), FOREIGN, null);
+    const row = pick(await digestAs(ME_MAC), "janitor");
+    expect(row.last_run_at).toBeNull();
+    expect(row.last_run_any_host).not.toBeNull();
+  });
+
+  it("id wins: MY machine_id under a hostname outside every alias is still mine", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeConfig({ janitor: { enabled: true } });
+    seedInstance({ id: "janitor" });
+    seedEventWithId("cognition.janitor", "cognition.janitor.run_succeeded", daysAgo(1), "renamed-again", "X");
+    expect(pick(await digestAs(ME_MAC), "janitor").status).toBe("ok");
+  });
+
+  it("runs_today counts run_started under EVERY alias and under my id, never under a foreign id", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeConfig({ synapse: { enabled: true } });
+    seedInstance({ id: "synapse" });
+    const now = new Date().toISOString();
+    seedEventWithId("cognition.synapse", "cognition.synapse.run_started", now, "MacBookAir", null);
+    seedEventWithId("cognition.synapse", "cognition.synapse.run_started", now, "Mohameds-MacBook-Air-2.local", null);
+    seedEventWithId("cognition.synapse", "cognition.synapse.run_started", now, "elsewhere", "X");
+    seedEventWithId("cognition.synapse", "cognition.synapse.run_started", now, "Mohameds-MacBook-Air-2", "vps-id");
+    seedEventWithId("cognition.synapse", "cognition.synapse.run_started", now, FOREIGN, null);
+    expect(pick(await digestAs(ME_MAC), "synapse").runs_today).toBe(3);
   });
 });

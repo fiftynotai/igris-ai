@@ -416,6 +416,9 @@ describe("HARNESS_PROCESS_TABLE", () => {
   });
 });
 
+/** BR-100: the classifier takes an IDENTITY; a NULL id + [hostname] is the pre-BR-100 posture. */
+const ME_LEGACY = { machine_id: null, hostname: hostname(), aliases: [hostname()] };
+
 describe("classifyInstanceLiveness — regression guards (already green)", () => {
   it("AC-3: a genuinely dead pid still classifies dead", () => {
     const v = classifyInstanceLiveness(
@@ -424,7 +427,7 @@ describe("classifyInstanceLiveness — regression guards (already green)", () =>
         owner_pid: 999_999_999,
         owner_started_at: "definitely not alive",
       },
-      hostname(),
+      ME_LEGACY,
     );
     expect(v.status).toBe("dead");
   });
@@ -436,7 +439,7 @@ describe("classifyInstanceLiveness — regression guards (already green)", () =>
         owner_pid: process.pid,
         owner_started_at: "Mon Jan  1 00:00:00 1970",
       },
-      hostname(),
+      ME_LEGACY,
     );
     expect(v.status).toBe("dead_pid_reused");
   });
@@ -448,7 +451,7 @@ describe("classifyInstanceLiveness — regression guards (already green)", () =>
         owner_pid: null,
         owner_started_at: null,
       },
-      hostname(),
+      ME_LEGACY,
     );
     expect(v.status).toBe("unknown_no_metadata");
     expect(v.method).toBe("none");
@@ -461,8 +464,67 @@ describe("classifyInstanceLiveness — regression guards (already green)", () =>
         owner_pid: process.pid,
         owner_started_at: getProcessStartTime(process.pid),
       },
-      hostname(),
+      ME_LEGACY,
     );
     expect(v.status).toBe("alive");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100 — "same machine" is the machine IDENTITY, not the hostname
+// RED at HEAD (pre-change probe, 2026-09-06): AC-4 read `unknown_remote`.
+// ---------------------------------------------------------------------------
+
+describe("BR-100 — classifyInstanceLiveness keys on the machine identity (AC-4, AC-5)", () => {
+  const ME = { machine_id: "X", hostname: "B", aliases: ["A", "B"] };
+
+  it("AC-4: a row registered under a PRIOR hostname (an alias, NULL id) with a live pid → alive, not unknown_remote", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "A", machine_id: null, owner_pid: process.pid, owner_started_at: getProcessStartTime(process.pid) },
+      ME,
+    );
+    expect(v.status).toBe("alive");
+    expect(v.method).toBe("pid_start_time");
+  });
+
+  it("AC-4: the same alias row with a DEAD pid → dead (MEASURED, never unknown)", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "A", machine_id: null, owner_pid: 999_999_999, owner_started_at: "gone" },
+      ME,
+    );
+    expect(v.status).toBe("dead");
+  });
+
+  it("AC-4: an id MATCH under a hostname outside every alias is still this machine (id wins)", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "renamed-again", machine_id: "X", owner_pid: process.pid, owner_started_at: getProcessStartTime(process.pid) },
+      ME,
+    );
+    expect(v.status).toBe("alive");
+  });
+
+  it("AC-5: a FOREIGN machine_id whose hostname COLLIDES with my alias is never mine → unknown_remote", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "B", machine_id: "Y", owner_pid: process.pid, owner_started_at: getProcessStartTime(process.pid) },
+      ME,
+    );
+    expect(v.status).toBe("unknown_remote");
+    expect(v.method).toBe("remote");
+  });
+
+  it("AC-5: a NULL-id row under a hostname outside my aliases (an inbound replicated row) → unknown_remote", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "vps-host", machine_id: null, owner_pid: process.pid, owner_started_at: getProcessStartTime(process.pid) },
+      ME,
+    );
+    expect(v.status).toBe("unknown_remote");
+  });
+
+  it("a caller that passes NO machine_id key (the pre-BR-100 row shape) takes the alias path", () => {
+    const v = classifyInstanceLiveness(
+      { machine_hostname: "A", owner_pid: null, owner_started_at: null },
+      ME,
+    );
+    expect(v.status).toBe("unknown_no_metadata"); // same machine — the metadata degrade, not `remote`
   });
 });

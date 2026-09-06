@@ -33,6 +33,10 @@
  *                             layer anymore, so this is a single (brain) row.
  *   hooks-stale             → the global settings carry the Igris SessionEnd hook
  *                             but at a non-canonical command path.
+ *   machine-identity        → (informational, BR-100) hostname outside the minted
+ *                             identity's aliases, or NULL-id rows under names the
+ *                             aliases do not cover; never --fix'able (an alias is
+ *                             an operator claim); lowest brain-level precedence.
  *
  * Per-project:
  *   path-missing            → orphan (registry row points at deleted dir)
@@ -131,6 +135,9 @@ import { detectChannelMismatch } from "../lib/drift/channel-mismatch.js";
 import { detectBridgeMissing } from "../lib/drift/bridge-missing.js";
 import { detectAntigravitySkillsLink } from "../lib/drift/antigravity-skills-link.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
+import { readMachineIdentity } from "../lib/machine-identity.js";
+import { readConfig } from "../lib/init-config.js";
+import { readUnattributedHostnames } from "../lib/brain-db.js";
 import { info, warn, error as logError } from "../lib/log.js";
 import type { DriftRow, RegistryRow } from "../types.js";
 
@@ -331,7 +338,8 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
         row.driftClass === "channel-mismatch" ||
-        row.driftClass === "brain-core-stale"
+        row.driftClass === "brain-core-stale" ||
+        row.driftClass === "machine-identity"
       ) {
         warn(
           `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
@@ -541,6 +549,10 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   // antigravity loads zero Igris skills (the R2 silent gap).
   const agSkills = detectAntigravitySkillsLink();
   if (agSkills !== null) out.push(agSkills);
+
+  // machine-identity (BR-100): informational, read-only, lowest precedence.
+  const mi = detectMachineIdentity();
+  if (mi !== null) out.push(mi);
 
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
@@ -818,6 +830,47 @@ function detectSkillsPollution(): DriftRow | null {
     path: affectedRoot,
     driftClass: "skills-pollution",
     recommendedFix: parts.join(", "),
+  };
+}
+
+/**
+ * machine-identity (BR-100): (b) minted but the live hostname is not in the
+ * persisted aliases; (c) NULL-id local rows under names outside the aliases.
+ * An unminted identity is not drift (a fresh init stays clean). Never writes.
+ */
+function detectMachineIdentity(): DriftRow | null {
+  const me = readMachineIdentity();
+  const cfg = readConfig();
+  const raw = cfg !== null ? cfg.machine : undefined;
+  const block =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : null;
+  const persisted = Array.isArray(block?.aliases)
+    ? (block!.aliases as unknown[]).filter((a): a is string => typeof a === "string")
+    : [];
+  const parts: string[] = [];
+  if (me.machine_id !== null && !persisted.includes(me.hostname)) {
+    parts.push(
+      `hostname changed since the last writer ran: now '${me.hostname}', ` +
+        `aliases [${persisted.join(", ")}] (the next writer appends it)`,
+    );
+  }
+  const seen = readUnattributedHostnames(me);
+  if (seen.length > 0) {
+    parts.push(
+      `seen locally, unattributed (machine_id NULL): ` +
+        seen.map((s) => `'${s.hostname}' (${s.rows})`).join(", ") +
+        ` — add to config.json machine.aliases ONLY names this machine has used` +
+        (me.machine_id === null ? `; identity not yet minted (the next writer mints it)` : ""),
+    );
+  }
+  if (parts.length === 0) return null;
+  return {
+    slug: "(brain)",
+    path: configJsonPath(),
+    driftClass: "machine-identity",
+    recommendedFix: `informational — ${parts.join("; ")}`,
   };
 }
 

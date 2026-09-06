@@ -179,6 +179,15 @@ export function createInstancesComponent(): BrainComponent {
               FROM ceremony_events e WHERE e.event_type = 'stop';
           `,
         },
+        {
+          version: 5,
+          // BR-100: ALTER-only (L-53); NOT in SYNC_TABLES — L-849 inverted, non-replication is the contract.
+          description: 'BR-100 machine identity: machine_id on instances + ceremony_events (not replicated)',
+          sql: `
+            ALTER TABLE instances ADD COLUMN machine_id TEXT;
+            ALTER TABLE ceremony_events ADD COLUMN machine_id TEXT;
+          `,
+        },
       ];
     },
 
@@ -254,6 +263,10 @@ export function createInstancesComponent(): BrainComponent {
               lease_expires_at: {
                 type: 'string',
                 description: 'Remote-visible work lease expiry for cross-machine coordination',
+              },
+              machine_id: {
+                type: 'string',
+                description: 'Machine identity (config.json machine.id); stored verbatim',
               },
             },
             required: ['machine_hostname'],

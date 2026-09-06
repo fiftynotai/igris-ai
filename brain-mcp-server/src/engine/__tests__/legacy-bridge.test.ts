@@ -227,7 +227,9 @@ describe('Legacy Migration Bridge (BR-035)', () => {
     const componentFactories = [
       // FR-268 (2026-08-27): instances 3→4 — v4 adds the `ceremony_events`
       // table + `ceremony_runs` view (the ceremony record).
-      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 4 },
+      // BR-100 (2026-09-06): instances 4→5 — v5 adds `machine_id` to `instances`
+      // and `ceremony_events` (ALTER-only; deliberately NOT in SYNC_TABLES).
+      { name: 'instances', factory: createInstancesComponent, table: 'agent_events', migrationCount: 5 },
       { name: 'sync', factory: createSyncComponent, table: 'sync_queue', migrationCount: 1 },
       { name: 'briefs', factory: createBriefsComponent, table: 'brief_files', migrationCount: 2 },
       { name: 'sessions', factory: createSessionsComponent, table: 'session_files', migrationCount: 2 },

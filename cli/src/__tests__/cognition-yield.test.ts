@@ -59,7 +59,7 @@ function makeBrainDir(): void {
 
 async function digest(): Promise<CognitionYieldDigest> {
   const { buildCognitionYieldDigest } = await import("../verbs/cognition.js");
-  return buildCognitionYieldDigest({ hostname: HOST });
+  return buildCognitionYieldDigest({ identity: { machine_id: null, hostname: HOST, aliases: [HOST] } });
 }
 
 function pick(d: CognitionYieldDigest, id: string): CognitionInstanceYield {
@@ -1232,7 +1232,7 @@ describe("the yield action does not leak into the health digest (D1)", () => {
     seedWorld_2026_09_01(dbFile());
     writeConfig({});
     const { buildCognitionHealthDigest } = await import("../verbs/cognition.js");
-    const health = buildCognitionHealthDigest({ hostname: HOST });
+    const health = buildCognitionHealthDigest({ identity: { machine_id: null, hostname: HOST, aliases: [HOST] } });
     expect(health.degraded).toBe(false);
     expect(health.instances.length).toBeGreaterThan(0);
 

@@ -1360,3 +1360,99 @@ describe("BR-097 — a push advances a table's watermark only on remote acknowle
     remote.close();
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-100 — machine_id never crosses the wire, in either direction
+// ---------------------------------------------------------------------------
+// The three legs of coding_guidelines §7's "per-machine value stays OUT of
+// SYNC_TABLES", read at the MECHANISM rather than at the intention:
+//   1. push: `handleBrainPush` SELECTs `config.columns ∩ existing columns`, so a
+//      local row carrying machine_id egresses WITHOUT the key;
+//   2. merge/INSERT: an inbound row for a NEW id lands with machine_id NULL;
+//   3. merge/LWW UPDATE: an inbound NEWER copy of MY OWN row (instances is in
+//      BOOT_SYNC_PULL_TABLES, so this round trip happens at every boot) leaves
+//      my local machine_id intact — the UPDATE iterates `config.columns` only.
+
+describe('BR-100 — machine_id is not replicated (push payload, inbound INSERT, LWW round trip)', () => {
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    // The stub tables carry the SYNC_TABLES column set; the BR-100 column sits
+    // beside it exactly as monitoring v2 / instances v5 leave it on a real brain.
+    db.exec('ALTER TABLE event_log ADD COLUMN machine_id TEXT');
+    db.exec('ALTER TABLE instances ADD COLUMN machine_id TEXT');
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  it('leg 1 — a pushed event_log row carries machine_hostname but NO machine_id key', async () => {
+    db.prepare(
+      `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at, machine_id)
+       VALUES ('cognition.synapse.run_succeeded', 'cognition.synapse', '{}', 'MacBookAir', 'p', NULL, '2026-09-06 10:00:00', 'my-machine-id')`,
+    ).run();
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ ok: true, results: { event_log: { inserted: 1 } }, skipped: [] }),
+      text: async () => '',
+      status: 200,
+    })) as unknown as typeof globalThis.fetch;
+    globalThis.fetch = fetchMock;
+
+    const result = await handleBrainPush({ remote_url: 'http://test-remote.local', api_key: 'k' });
+    expect((result as { isError?: boolean }).isError).toBeFalsy();
+    const init = (fetchMock as ReturnType<typeof vi.fn>).mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as { tables: Record<string, Array<Record<string, unknown>>> };
+    expect(body.tables.event_log).toHaveLength(1);
+    const pushed = body.tables.event_log[0];
+    expect(pushed).toHaveProperty('machine_hostname', 'MacBookAir');
+    expect(pushed).not.toHaveProperty('machine_id');
+    // The whole payload, every table: the key appears nowhere.
+    expect(JSON.stringify(body)).not.toContain('machine_id');
+  });
+
+  it('leg 2 — an inbound instances row for a NEW id lands with machine_id NULL', () => {
+    const config = SYNC_TABLES.find((t) => t.table === 'instances')!;
+    const merged = mergeRows(db, config, [{
+      id: 'i-remote', machine_hostname: 'vps-host', machine_os: 'linux', project_slug: 'p',
+      project_path: null, current_brief: null, current_phase: null, current_task: null, status: 'active',
+      started_at: '2026-09-06 09:00:00', last_activity_at: '2026-09-06 09:00:00', metadata: '{}',
+      harness: null, harness_session_id: null, owner_pid: null, owner_started_at: null,
+      liveness_method: null, liveness_status: null, liveness_checked_at: null, lease_expires_at: null,
+      state_updated_at: null,
+      // A remote that DID stamp its own id sends it anyway? No — it is not in its
+      // columns either; but even a hand-crafted payload carrying one is dropped:
+      machine_id: 'remote-machine-id',
+    }]);
+    expect(merged.inserted).toBe(1);
+    expect(merged.failed).toBe(0);
+    const row = db.prepare("SELECT machine_hostname, machine_id FROM instances WHERE id = 'i-remote'").get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: 'vps-host', machine_id: null });
+  });
+
+  it('leg 3 — a NEWER inbound copy of MY OWN row updates the LWW columns and leaves my machine_id intact', () => {
+    const config = SYNC_TABLES.find((t) => t.table === 'instances')!;
+    db.prepare(
+      `INSERT INTO instances (id, machine_hostname, project_slug, status, last_activity_at, current_phase, machine_id)
+       VALUES ('i-mine', 'Mohameds-MacBook-Air-2', 'p', 'active', '2026-09-06 09:00:00', 'BUILDING', 'my-machine-id')`,
+    ).run();
+    const merged = mergeRows(db, config, [{
+      id: 'i-mine', machine_hostname: 'Mohameds-MacBook-Air-2', machine_os: null, project_slug: 'p',
+      project_path: null, current_brief: 'BR-100', current_phase: 'TESTING', current_task: null, status: 'active',
+      started_at: null, last_activity_at: '2026-09-06 10:00:00', metadata: '{}',
+      harness: null, harness_session_id: null, owner_pid: null, owner_started_at: null,
+      liveness_method: null, liveness_status: null, liveness_checked_at: null, lease_expires_at: null,
+      state_updated_at: null,
+    }]);
+    expect(merged.updated).toBe(1);
+    const row = db.prepare("SELECT current_phase, last_activity_at, machine_id FROM instances WHERE id = 'i-mine'").get() as Record<string, unknown>;
+    expect(row).toEqual({ current_phase: 'TESTING', last_activity_at: '2026-09-06 10:00:00', machine_id: 'my-machine-id' });
+  });
+});

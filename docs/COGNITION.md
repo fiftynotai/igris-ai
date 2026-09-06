@@ -117,7 +117,20 @@ Two more things the digest reports that a naive read would miss:
 - **`last_run_at` is scoped to this machine.** `event_log` replicates between
   brains, so a run that succeeded on another host would otherwise render a
   locally-wedged instance green. That reading is reported separately as
-  `last_run_any_host`.
+  `last_run_any_host`. "This machine" is the **machine identity**, not the
+  hostname (BR-100): every writer stamps `config.json` `machine.id` — a uuid
+  minted once by the first writer — into `event_log.machine_id` beside the
+  volatile `machine_hostname` label, and the reader keys on the id first. A
+  row whose `machine_id` is NULL (written before the mint, by a bash hook, or
+  pulled from another brain — the column deliberately never replicates, so an
+  inbound row is "not mine" by construction) is attributed through
+  `config.json` `machine.aliases`: every hostname this machine has been observed
+  under, appended by writers and editable by the operator. So a `no_signal`
+  under a name the machine used before the mint (a laptop that wrote as
+  `MacBookAir` on one network and `…-Air-2.local` on another) is the
+  operator-adds-alias case: `igris doctor` lists the unattributed names with
+  counts under its informational `machine-identity` class; add only names this
+  machine has actually used.
 - **Duplicate schedule rows** show up in `warnings[]`. The schedule bootstrap
   de-duplicates by NAME while the table replicates by a per-machine random id,
   so two brains can each keep their own row under one name.

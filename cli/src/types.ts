@@ -83,7 +83,8 @@ export interface DriftRow {
     | "mcp-unregistered"
     | "secret-perms"
     | "skills-pollution"
-    | "antigravity-skills-link";
+    | "antigravity-skills-link"
+    | "machine-identity";
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;
@@ -173,6 +174,8 @@ export interface SessionFileRow {
 export interface InstanceRow {
   id: string;
   machine_hostname: string;
+  /** BR-100 — the minted machine identity; NULL on legacy rows and on inbound replicated rows. */
+  machine_id: string | null;
   machine_os: string | null;
   project_slug: string | null;
   current_brief: string | null;
@@ -519,7 +522,7 @@ export interface CognitionHealthDigest {
   degraded: boolean;
   /** Why it degraded; null when it did not. */
   degraded_reason: string | null;
-  /** `os.hostname()` — the host every `last_run_at` is scoped to. */
+  /** The live hostname — the machine's LABEL. Scoping is by machine IDENTITY (BR-100), not by this string. */
   hostname: string;
   /** The `event_log` retention window `monitoring` enforces, in days. */
   event_log_retention_days: number;
@@ -756,7 +759,7 @@ export interface CognitionYieldDigest {
   degraded: boolean;
   /** Why it degraded; null when it did not. */
   degraded_reason: string | null;
-  /** `os.hostname()`. Reported for symmetry with health; no rate is host-scoped. */
+  /** The live hostname. Reported for symmetry with health; no rate is host-scoped. */
   hostname: string;
   /** The `event_log` retention window the judgment-event counts are bounded by. */
   event_log_retention_days: number;

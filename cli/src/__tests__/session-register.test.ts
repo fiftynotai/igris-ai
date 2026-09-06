@@ -505,3 +505,47 @@ describe("TD-360 — register's Next Steps round-trips through gather", () => {
     expect(g.handoff?.next_steps).toBe("None yet");
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-100 — register stamps the machine identity
+// ---------------------------------------------------------------------------
+
+describe("BR-100 — session register stamps machine_id beside machine_hostname", () => {
+  it("with instances.machine_id present: the row carries the minted config.json machine.id; the live hostname stays the label", async () => {
+    seedSchema();
+    const { hostname } = await import("node:os");
+    const db = new Database(dbFile());
+    db.exec("ALTER TABLE instances ADD COLUMN machine_id TEXT");
+    db.close();
+    writeFileSync(join(tmpRoot, "config.json"), "{}\n");
+
+    const d = await runRegister({ project: "demo", projectPath: "/tmp/demo" });
+    expect(d.degraded).toBe(false);
+
+    const cfg = JSON.parse(readFileSync(join(tmpRoot, "config.json"), "utf-8")) as { machine: { id: string; aliases: string[] } };
+    expect(cfg.machine.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(cfg.machine.aliases).toEqual([hostname()]);
+
+    const h = new Database(dbFile(), { readonly: true });
+    const row = h.prepare("SELECT machine_hostname, machine_id FROM instances WHERE id = ?").get(d.instance_id) as Record<string, unknown>;
+    h.close();
+    expect(row).toEqual({ machine_hostname: hostname(), machine_id: cfg.machine.id });
+  });
+
+  it("without the column (an un-migrated brain): the write still lands; the identity is minted regardless", async () => {
+    seedSchema();
+    writeFileSync(join(tmpRoot, "config.json"), "{}\n");
+    const d = await runRegister({ project: "demo", projectPath: "/tmp/demo" });
+    expect(d.degraded).toBe(false);
+    expect(readInstanceRow(d.instance_id)?.status).toBe("active");
+    const cfg = JSON.parse(readFileSync(join(tmpRoot, "config.json"), "utf-8")) as { machine?: { id?: string } };
+    expect(cfg.machine?.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("an ABSENT config.json: register still succeeds and creates no config (init owns creation)", async () => {
+    seedSchema();
+    const d = await runRegister({ project: "demo", projectPath: "/tmp/demo" });
+    expect(d.degraded).toBe(false);
+    expect(existsSync(join(tmpRoot, "config.json"))).toBe(false);
+  });
+});

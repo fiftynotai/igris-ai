@@ -18,7 +18,7 @@
  * NOT clobber).
  */
 
-import { hostname } from "node:os";
+import { ensureMachineIdentity, readMachineIdentity } from "../lib/machine-identity.js";
 import {
   existsSync,
   mkdirSync,
@@ -241,9 +241,11 @@ function buildGatherDigest(
     string,
     ReturnType<typeof classifyInstanceLiveness>
   >();
+  // BR-100: one identity read per gather (pure).
+  const me = readMachineIdentity();
   for (const inst of instanceRows) {
     instanceById.set(inst.id, inst);
-    const liveness = classifyInstanceLiveness(inst);
+    const liveness = classifyInstanceLiveness(inst, me);
     livenessById.set(inst.id, liveness);
     if (liveness.status === "dead" || liveness.status === "dead_pid_reused") {
       deadIds.add(inst.id);
@@ -440,7 +442,9 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
   let registration;
   try {
     const owner = resolveOwnerProcess();
-    const machineHostname = hostname();
+    // BR-100: a writer mints `machine.id`; the hostname stays the label.
+    const me = ensureMachineIdentity();
+    const machineHostname = me.hostname;
 
     // D-411-d — the `liveness_*` columns are a LAST-OBSERVED STAMP, never a
     // source of truth. Every CLI-SIDE reader (`buildGatherDigest` here,
@@ -480,14 +484,16 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
     const liveness = classifyInstanceLiveness(
       {
         machine_hostname: machineHostname,
+        machine_id: me.machine_id,
         owner_pid: owner ? owner.pid : null,
         owner_started_at: owner ? owner.started_at : null,
       },
-      machineHostname,
+      me,
     );
     registration = registerOrUpdateInstanceState({
       instance_id: opts.selfInstanceId,
       machine_hostname: machineHostname,
+      machine_id: me.machine_id,
       machine_os: process.platform,
       project_slug: slug,
       project_path: opts.projectPath ?? null,

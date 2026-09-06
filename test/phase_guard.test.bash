@@ -317,3 +317,106 @@ MD
   [ "$status" -eq 0 ]
   [[ "$output" != *"refusing commit"* ]]
 }
+
+# -----------------------------------------------------------------------------
+# BR-100 — the machine IDENTITY replaces the bare hostname in tier 1.
+#   (g1) a row under a PRIOR hostname (an alias, NULL machine_id) is found;
+#   (g2) a row with MY machine_id under a foreign hostname is found;
+#   (g3) a row with a FOREIGN machine_id under MY hostname is NOT found;
+#   (g4) a brain WITHOUT the column falls back to hostname-in-aliases;
+#   (g5) G10 self-negative: a hook copy with the identity section removed
+#        flips (g1) back to exit 0 — proves the section is what makes it fire.
+# -----------------------------------------------------------------------------
+
+# add_machine_id_column — the instances v5 shape.
+add_machine_id_column() {
+  sqlite3 "$DB" "ALTER TABLE instances ADD COLUMN machine_id TEXT;"
+}
+
+# seed_identity <id> [alias...] — config.json `machine` block in the fake HOME.
+seed_identity() {
+  local mid="$1"; shift
+  local aliases="" a
+  for a in "$@"; do
+    [ -n "$aliases" ] && aliases="$aliases, "
+    aliases="$aliases\"$a\""
+  done
+  printf '{"machine":{"id":"%s","aliases":[%s]}}\n' "$mid" "$aliases" > "$FAKEHOME/.igris/config.json"
+}
+
+# seed_instance_id <brief> <status> <hostname> <machine_id-or-NULL> [phase]
+seed_instance_id() {
+  local brief="$1" istatus="$2" host="$3" mid="$4" phase="${5:-BUILDING}"
+  local mid_sql="NULL"
+  [ "$mid" != "NULL" ] && mid_sql="'$mid'"
+  sqlite3 "$DB" "
+    INSERT INTO instances (id, machine_hostname, project_slug, current_brief, current_phase, status, last_activity_at, machine_id)
+      VALUES ('$brief-$host', '$host', '$PROJECT', '$brief', '$phase', '$istatus', datetime('now'), $mid_sql);
+  "
+}
+
+@test "(g1) BR-100: a row under a PRIOR hostname (alias, NULL id) is this machine -> guard fires" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  add_machine_id_column
+  seed_identity "id-mine" "MacBookAir"
+  seed_instance_id "FR-555" "active" "MacBookAir" "NULL" "BUILDING"
+  seed_brief "FR-555" "BUILDING"
+
+  run_guard
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FR-555"* ]] || return 1
+}
+
+@test "(g2) BR-100: a row with MY machine_id under a foreign hostname is this machine -> guard fires" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  add_machine_id_column
+  seed_identity "id-mine"
+  seed_instance_id "FR-444" "active" "renamed-elsewhere" "id-mine" "BUILDING"
+  seed_brief "FR-444" "BUILDING"
+
+  run_guard
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FR-444"* ]] || return 1
+}
+
+@test "(g3) BR-100: a row with a FOREIGN machine_id under MY hostname is NOT this machine -> exit 0" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  add_machine_id_column
+  seed_identity "id-mine" "$HOSTNAME_LOCAL"
+  seed_instance_id "FR-333" "active" "$HOSTNAME_LOCAL" "id-theirs" "BUILDING"
+  seed_brief "FR-333" "BUILDING"
+
+  run_guard
+  [ "$status" -eq 0 ] || return 1
+  if printf '%s\n' "$output" | grep -q 'refusing commit'; then return 1; fi
+}
+
+@test "(g4) BR-100: a brain WITHOUT the column falls back to hostname-in-aliases -> alias row still found" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  seed_identity "id-mine" "MacBookAir"
+  seed_instance "FR-222" "active" "MacBookAir" "BUILDING"
+  seed_brief "FR-222" "BUILDING"
+
+  run_guard
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"FR-222"* ]] || return 1
+}
+
+@test "(g5) G10 self-negative: a hook copy WITHOUT the identity section no longer finds the alias row (exit 0)" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  add_machine_id_column
+  seed_identity "id-mine" "MacBookAir"
+  seed_instance_id "FR-111" "active" "MacBookAir" "NULL" "BUILDING"
+  seed_brief "FR-111" "BUILDING"
+
+  # Same arrangement as (g1) fires on the real hook…
+  run_guard
+  [ "$status" -eq 1 ] || return 1
+
+  # …and a copy with the identity section deleted reverts to the live-hostname-only query.
+  local mutant="$SANDBOX/pre-commit.no-identity"
+  sed '/# BR-100 identity: begin/,/# BR-100 identity: end/d' "$HOOK_SRC" > "$mutant"
+  grep -q 'IDENTITY_LINE' "$mutant" && return 1   # the section really is gone
+  run bash -c "cd '$REPO' && HOME='$FAKEHOME' bash '$mutant' 2>&1"
+  [ "$status" -eq 0 ] || return 1
+}

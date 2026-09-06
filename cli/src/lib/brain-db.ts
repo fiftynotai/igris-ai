@@ -51,6 +51,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, sep } from "node:path";
 import { openBrainReadonly } from "./brain-bridge.js";
 import { brainDbPath } from "./paths.js";
+import { sameMachineSql, type MachineIdentity } from "./machine-identity.js";
 // TD-338: the GENERATED mirror of the brain's write-boundary normalizers. Never
 // hand-edited — `npm run gen:brief-normalize-mirror` in brain-mcp-server/ writes
 // it, and a brain-side parity test byte-locks it. See coding_guidelines §13.
@@ -483,7 +484,8 @@ function selectInstances(
              ${optionalProjection(columns, "liveness_status")},
              ${optionalProjection(columns, "liveness_checked_at")},
              ${optionalProjection(columns, "lease_expires_at")},
-             ${optionalProjection(columns, "state_updated_at")}
+             ${optionalProjection(columns, "state_updated_at")},
+             ${optionalProjection(columns, "machine_id")}
       FROM instances
       ${whereClause}
       ${activity.order}
@@ -530,6 +532,8 @@ export interface InstanceStateRegistrationInput {
   liveness_status?: string | null;
   liveness_checked_at?: string | null;
   lease_expires_at?: string | null;
+  /** BR-100 — `ensureMachineIdentity().machine_id`; stamped only when the column exists (instances v5). */
+  machine_id?: string | null;
 }
 
 /** Result of a {@link registerOrUpdateInstanceState} upsert. */
@@ -618,6 +622,7 @@ export function registerOrUpdateInstanceState(
     ["liveness_status", input.liveness_status ?? null],
     ["liveness_checked_at", input.liveness_checked_at ?? null],
     ["lease_expires_at", input.lease_expires_at ?? null],
+    ["machine_id", input.machine_id ?? null],
     [
       "state_updated_at",
       new Date().toISOString().replace("T", " ").substring(0, 19),
@@ -2748,7 +2753,7 @@ export interface CognitionRunSignals {
 export function readInstanceRunSignals(
   component: string,
   eventPrefix: string,
-  hostname: string,
+  me: MachineIdentity,
 ): CognitionRunSignals {
   const empty: CognitionRunSignals = {
     last_terminal_at: null,
@@ -2767,14 +2772,16 @@ export function readInstanceRunSignals(
       `${eventPrefix}.run_skipped`,
     ];
 
+    // BR-100: "this host" = the machine identity, column-tolerant.
+    const mine = sameMachineSql(me, tableColumns(handle, "event_log").has("machine_id"));
     const thisHost = handle
       .prepare(
         `SELECT event_name, created_at, payload FROM event_log
           WHERE component = ? AND event_name IN (?, ?, ?)
-            AND machine_hostname = ?
+            AND ${mine.sql}
           ORDER BY datetime(created_at) DESC LIMIT 1`,
       )
-      .get(component, ...terminals, hostname) as
+      .get(component, ...terminals, ...mine.params) as
       | { event_name: string; created_at: string; payload: string | null }
       | undefined;
 
@@ -2805,10 +2812,10 @@ export function readInstanceRunSignals(
       .prepare(
         `SELECT COUNT(*) AS n FROM event_log
           WHERE component = ? AND event_name = ?
-            AND machine_hostname = ?
+            AND ${mine.sql}
             AND date(datetime(created_at)) = date('now')`,
       )
-      .get(component, `${eventPrefix}.run_started`, hostname) as { n: number };
+      .get(component, `${eventPrefix}.run_started`, ...mine.params) as { n: number };
 
     return {
       last_terminal_at: thisHost?.created_at ?? null,
@@ -3566,6 +3573,10 @@ export interface CeremonyEventWriteInput {
   machine_hostname: string;
   instance_id?: string | null;
   brief_id?: string | null;
+  /** BR-100 — the minted machine identity; stamped only when the column exists (instances v5). */
+  machine_id?: string | null;
+  /** BR-100 — the identity's alias list for the pairing predicate; defaults to `[machine_hostname]`. */
+  aliases?: string[];
 }
 
 /** What {@link ceremonyEventWrite} returns — every field READ BACK from the row. */
@@ -3589,32 +3600,36 @@ const CEREMONY_DURATION_FROM_START_SQL =
   "CAST((julianday('now') - julianday((SELECT created_at FROM ceremony_events WHERE id = ?))) * 86400000 AS INTEGER)";
 
 /**
- * The latest open `start` for `(project, ceremony, machine_hostname)` — the
- * start no later `stop` of the same key has closed. Mirror of
+ * The latest open `start` for `(project, ceremony, this machine)` — the start
+ * no later `stop` of the same key has closed. Mirror of
  * `brain-mcp-server/src/tools/agent_events.ts:172-189` (`findOpenStart`), keyed
- * by host rather than instance because `boot`'s start predates the instance
- * mint. Any later stop closes EVERY earlier start of the key, so an orphaned
- * start is never paired with a much later stop.
+ * by machine rather than instance because `boot`'s start predates the instance
+ * mint; since BR-100 "this machine" is the identity (`sameMachineSql`), so a
+ * stop after a network change still closes its start and a foreign id never
+ * does. Any later stop closes EVERY earlier start of the key.
  *
  * Known limitation (the FR-267 class): two concurrent same-ceremony runs for
- * one project on one host may mis-pair — counts stay right, durations may swap.
+ * one project on one machine may mis-pair — counts stay right, durations may swap.
  */
 function findOpenCeremonyStart(
   handle: Database.Database,
   project: string,
   ceremony: string,
-  machineHostname: string,
+  me: MachineIdentity,
+  hasMachineId: boolean,
 ): { id: number; created_at: string } | undefined {
+  const s = sameMachineSql(me, hasMachineId, "s");
+  const e = sameMachineSql(me, hasMachineId, "e");
   return handle
     .prepare(
       `SELECT s.id, s.created_at FROM ceremony_events s
-        WHERE s.event_type = 'start' AND s.project = ? AND s.ceremony = ? AND s.machine_hostname = ?
+        WHERE s.event_type = 'start' AND s.project = ? AND s.ceremony = ? AND ${s.sql}
           AND NOT EXISTS (SELECT 1 FROM ceremony_events e
                            WHERE e.event_type = 'stop' AND e.project = s.project AND e.ceremony = s.ceremony
-                             AND e.machine_hostname = s.machine_hostname AND e.id > s.id)
+                             AND ${e.sql} AND e.id > s.id)
         ORDER BY s.id DESC LIMIT 1`,
     )
-    .get(project, ceremony, machineHostname) as { id: number; created_at: string } | undefined;
+    .get(project, ceremony, ...s.params, ...e.params) as { id: number; created_at: string } | undefined;
 }
 
 /**
@@ -3635,6 +3650,16 @@ export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEven
   }
   const instanceId = input.instance_id ?? null;
   const briefId = input.brief_id ?? null;
+  // BR-100: stamp when the column exists (v5); pair on the identity.
+  const hasMachineId = tableColumns(handle, "ceremony_events").has("machine_id");
+  const me: MachineIdentity = {
+    machine_id: input.machine_id ?? null,
+    hostname: input.machine_hostname,
+    aliases: input.aliases ?? [input.machine_hostname],
+  };
+  const idCol = hasMachineId ? ", machine_id" : "";
+  const idVal = hasMachineId ? ", ?" : "";
+  const idParams = hasMachineId ? [me.machine_id] : [];
 
   let id: number;
   let paired: boolean | null = null;
@@ -3642,28 +3667,28 @@ export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEven
   if (input.event_type === "start") {
     const info = handle
       .prepare(
-        `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id)
-         VALUES (?, ?, 'start', ?, ?, ?)`,
+        `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol})
+         VALUES (?, ?, 'start', ?, ?, ?${idVal})`,
       )
-      .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId);
+      .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams);
     id = Number(info.lastInsertRowid);
   } else {
-    const open = findOpenCeremonyStart(handle, input.project, input.ceremony, input.machine_hostname);
+    const open = findOpenCeremonyStart(handle, input.project, input.ceremony, me, hasMachineId);
     paired = open !== undefined;
     pairedStartId = open?.id ?? null;
     const info = open
       ? handle
           .prepare(
-            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id, duration_ms)
-             VALUES (?, ?, 'stop', ?, ?, ?, ${CEREMONY_DURATION_FROM_START_SQL})`,
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol}, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?${idVal}, ${CEREMONY_DURATION_FROM_START_SQL})`,
           )
-          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, open.id)
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams, open.id)
       : handle
           .prepare(
-            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id, duration_ms)
-             VALUES (?, ?, 'stop', ?, ?, ?, NULL)`,
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol}, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?${idVal}, NULL)`,
           )
-          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId);
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams);
     id = Number(info.lastInsertRowid);
   }
 
@@ -3689,4 +3714,40 @@ export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEven
  */
 export function readKpiDigest(opts: KpiReadOptions): KpiDigest {
   return withReadonlyBrain<KpiDigest>(absentKpiDigest(opts), (handle) => buildKpiDigest(handle, opts));
+}
+
+// ---------------------------------------------------------------------------
+// BR-100 — the doctor's `machine-identity` reader (READ door)
+// ---------------------------------------------------------------------------
+
+/** BR-100 doctor: a hostname outside the alias list + its local NULL-id row count. */
+export interface UnattributedHostname {
+  hostname: string;
+  rows: number;
+}
+
+/** NULL-id `event_log` (last `days`) + `instances` rows under hostnames outside `me.aliases`, counted. Read-only; column-tolerant. */
+export function readUnattributedHostnames(me: MachineIdentity, days = 30): UnattributedHostname[] {
+  return withReadonlyBrain<UnattributedHostname[]>([], (handle) => {
+    const counts = new Map<string, number>();
+    const scan = (table: string, where: string, params: unknown[]): void => {
+      if (!tableExists(handle, table)) return;
+      const nullId = tableColumns(handle, table).has("machine_id") ? "AND machine_id IS NULL" : "";
+      const rows = handle
+        .prepare(
+          `SELECT machine_hostname AS h, COUNT(*) AS n FROM ${table}
+            WHERE machine_hostname IS NOT NULL ${nullId} ${where}
+            GROUP BY machine_hostname`,
+        )
+        .all(...params) as { h: string; n: number }[];
+      for (const r of rows) {
+        if (!me.aliases.includes(r.h)) counts.set(r.h, (counts.get(r.h) ?? 0) + r.n);
+      }
+    };
+    scan("event_log", "AND datetime(created_at) >= datetime('now', ?)", [`-${days} days`]);
+    scan("instances", "", []);
+    return [...counts]
+      .map(([hostname, rows]) => ({ hostname, rows }))
+      .sort((a, b) => b.rows - a.rows || a.hostname.localeCompare(b.hostname));
+  });
 }

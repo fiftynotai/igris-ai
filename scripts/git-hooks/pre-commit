@@ -241,13 +241,60 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   # $PROJECT is basename(repo) and $HOSTNAME_LOCAL is `hostname` — neither is
   # user-controlled free text. They are still single-quote-escaped (doubling any
   # embedded quote) before interpolation so a stray quote cannot break the SQL.
+  #
+  # BR-100: "this machine" is the machine IDENTITY, not the hostname. A row
+  # carrying a `machine_id` must match config.json `machine.id`; a row whose
+  # `machine_id` is NULL (legacy, or inbound replicated) is mine iff its hostname
+  # is the live hostname or one of `machine.aliases`. A brain older than
+  # instances v5 has no column → the hostname-IN-aliases form. No python3 or no
+  # config.json → the live hostname alone, i.e. the pre-BR-100 query. bash 3.2.
   if [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
     PROJECT_SQL="${PROJECT//\'/\'\'}"
     HOSTNAME_SQL="${HOSTNAME_LOCAL//\'/\'\'}"
+    MACHINE_ID=""
+    ALIASES_SQL="'$HOSTNAME_SQL'"
+    # BR-100 identity: begin
+    CONFIG_JSON="$HOME/.igris/config.json"
+    if [ -f "$CONFIG_JSON" ] && command -v python3 >/dev/null 2>&1; then
+      # One line, TAB-separated: id, then every string alias. Empty on any
+      # parse failure, which falls back to the live hostname alone.
+      IDENTITY_LINE="$(python3 -c '
+import json, sys
+try:
+    m = json.load(open(sys.argv[1])).get("machine") or {}
+    mid = m.get("id") if isinstance(m.get("id"), str) else ""
+    al = [a for a in (m.get("aliases") or []) if isinstance(a, str) and a]
+    print("\t".join([mid] + al))
+except Exception:
+    pass
+' "$CONFIG_JSON" 2>/dev/null)"
+      if [ -n "$IDENTITY_LINE" ]; then
+        TAB="$(printf '\t')"
+        MACHINE_ID="${IDENTITY_LINE%%"$TAB"*}"
+        ALIAS_REST="${IDENTITY_LINE#*"$TAB"}"
+        [ "$ALIAS_REST" = "$IDENTITY_LINE" ] && ALIAS_REST=""
+        OLD_IFS="$IFS"
+        IFS="$TAB"
+        for alias in $ALIAS_REST; do
+          [ "$alias" = "$HOSTNAME_LOCAL" ] && continue
+          ALIASES_SQL="$ALIASES_SQL, '${alias//\'/\'\'}'"
+        done
+        IFS="$OLD_IFS"
+      fi
+    fi
+    # BR-100 identity: end
+    INSTANCES_COLS="$(sqlite3 "$BRAIN_DB" "PRAGMA table_info(instances);" 2>/dev/null)"
+    case "$INSTANCES_COLS" in
+      *'|machine_id|'*)
+        MACHINE_ID_SQL="${MACHINE_ID//\'/\'\'}"
+        MACHINE_WHERE="(machine_id = '$MACHINE_ID_SQL' OR (machine_id IS NULL AND machine_hostname IN ($ALIASES_SQL)))" ;;
+      *)
+        MACHINE_WHERE="machine_hostname IN ($ALIASES_SQL)" ;;
+    esac
     ACTIVE_BRIEF="$(sqlite3 "$BRAIN_DB" \
       "SELECT current_brief FROM instances
          WHERE project_slug='$PROJECT_SQL'
-           AND machine_hostname='$HOSTNAME_SQL'
+           AND $MACHINE_WHERE
            AND status='active'
            AND current_brief IS NOT NULL
          ORDER BY last_activity_at DESC LIMIT 1;" \

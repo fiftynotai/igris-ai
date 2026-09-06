@@ -31,7 +31,7 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { hostname } from "node:os";
+import { readMachineIdentity, type MachineIdentity } from "../lib/machine-identity.js";
 import {
   JUDGED_CHANNELS,
   parseProducedPredicate,
@@ -76,8 +76,8 @@ const EVENT_LOG_RETENTION_DAYS = 30;
 export interface CognitionHealthOptions {
   /** Emit JSON to stdout (default ON — this is a machine surface). */
   json?: boolean;
-  /** Hostname override, for tests. Default `os.hostname()`. */
-  hostname?: string;
+  /** Identity override for tests (BR-100). */
+  identity?: MachineIdentity;
 }
 
 // ---------------------------------------------------------------------------
@@ -330,7 +330,8 @@ function classify(input: ClassifierInput): {
 export function buildCognitionHealthDigest(
   opts: CognitionHealthOptions = {},
 ): CognitionHealthDigest {
-  const host = opts.hostname ?? hostname();
+  const me = opts.identity ?? readMachineIdentity();
+  const host = me.hostname;
   const now = Date.now();
   const warnings: string[] = [];
 
@@ -392,7 +393,7 @@ export function buildCognitionHealthDigest(
       disabled_by,
       schedule,
       // The LITERALS out of the roster — never `cognition.${row.id}`.
-      signals: readInstanceRunSignals(row.component, row.event_prefix, host),
+      signals: readInstanceRunSignals(row.component, row.event_prefix, me),
     };
   });
 
@@ -645,7 +646,7 @@ function shapeYield(
 export function buildCognitionYieldDigest(
   opts: CognitionHealthOptions = {},
 ): CognitionYieldDigest {
-  const host = opts.hostname ?? hostname();
+  const host = (opts.identity ?? readMachineIdentity()).hostname;
   const warnings: string[] = [];
 
   const roster = readCognitionRoster();

@@ -27,7 +27,7 @@
  * authoring error the validator also catches.
  */
 
-import { hostname } from "node:os";
+import { ensureMachineIdentity } from "../lib/machine-identity.js";
 import { basenameOfCwd } from "../lib/sync/util.js";
 import { detectCapabilities } from "../lib/detect.js";
 import { BrainTableMissingError, ceremonyEventWrite } from "../lib/brain-db.js";
@@ -101,11 +101,15 @@ export function runCeremony(opts: CeremonyOptions): number {
   }
 
   try {
+    // BR-100: a writer; pairs on the identity (brain-db).
+    const me = ensureMachineIdentity();
     const row = ceremonyEventWrite({
       project: slug,
       ceremony: name,
       event_type: action,
-      machine_hostname: hostname(),
+      machine_hostname: me.hostname,
+      machine_id: me.machine_id,
+      aliases: me.aliases,
       instance_id: opts.instanceId ?? null,
       brief_id: opts.brief ?? null,
     });

@@ -31,4 +31,10 @@ export const monitoringMigrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_event_log_created ON event_log(created_at);
     `,
   },
+  {
+    version: 2,
+    // BR-100 (docs/COGNITION.md): NOT in SYNC_TABLES — L-849 inverted, non-replication is the contract.
+    description: 'BR-100: event_log.machine_id (not replicated)',
+    sql: 'ALTER TABLE event_log ADD COLUMN machine_id TEXT;',
+  },
 ];

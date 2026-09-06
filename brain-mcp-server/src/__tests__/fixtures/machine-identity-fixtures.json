@@ -1,0 +1,34 @@
+{
+  "_doc": "BR-100 — the behavioural contract of the parity-pinned pure region shared by brain-mcp-server/src/machine-identity.ts and cli/src/lib/machine-identity.ts. BOTH suites replay every case; a logic edit that is not mirrored reds on the other side.",
+  "resolve": [
+    { "name": "absent config (null) → no id, aliases = [live]", "config": null, "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["H"] } },
+    { "name": "malformed config (a string) → treated absent", "config": "not an object", "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["H"] } },
+    { "name": "no machine block → no id, aliases = [live]", "config": { "remote_brain": { "url": "https://x" } }, "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["H"] } },
+    { "name": "machine block is an array → ignored", "config": { "machine": ["X"] }, "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["H"] } },
+    { "name": "id present, live hostname already aliased → aliases verbatim", "config": { "machine": { "id": "X", "aliases": ["A", "H"] } }, "liveHostname": "H", "expected": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] } },
+    { "name": "id present, live hostname NOT aliased → live appended (in memory only)", "config": { "machine": { "id": "X", "aliases": ["A"] } }, "liveHostname": "H", "expected": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] } },
+    { "name": "aliases not an array → ignored, live only", "config": { "machine": { "id": "X", "aliases": "A" } }, "liveHostname": "H", "expected": { "machine_id": "X", "hostname": "H", "aliases": ["H"] } },
+    { "name": "non-string / empty alias entries dropped", "config": { "machine": { "id": "X", "aliases": ["A", 3, null, "", "B"] } }, "liveHostname": "H", "expected": { "machine_id": "X", "hostname": "H", "aliases": ["A", "B", "H"] } },
+    { "name": "id present but not a string → treated absent", "config": { "machine": { "id": 42, "aliases": ["A"] } }, "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["A", "H"] } },
+    { "name": "empty-string id → treated absent", "config": { "machine": { "id": "", "aliases": ["A"] } }, "liveHostname": "H", "expected": { "machine_id": null, "hostname": "H", "aliases": ["A", "H"] } },
+    { "name": "empty live hostname is not appended", "config": { "machine": { "id": "X", "aliases": ["A"] } }, "liveHostname": "", "expected": { "machine_id": "X", "hostname": "", "aliases": ["A"] } }
+  ],
+  "sameMachine": [
+    { "name": "id match wins even under a foreign hostname", "row": { "machine_id": "X", "machine_hostname": "zzz" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["H"] }, "expected": true },
+    { "name": "AC-5: foreign id, hostname collides with my alias → NOT mine", "row": { "machine_id": "Y", "machine_hostname": "H" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] }, "expected": false },
+    { "name": "NULL id, hostname in aliases → mine (legacy row)", "row": { "machine_id": null, "machine_hostname": "A" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] }, "expected": true },
+    { "name": "absent id key, hostname in aliases → mine", "row": { "machine_hostname": "A" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] }, "expected": true },
+    { "name": "NULL id, hostname outside aliases → not mine (inbound replicated row)", "row": { "machine_id": null, "machine_hostname": "vps-host" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["A", "H"] }, "expected": false },
+    { "name": "NULL id, NULL hostname → not mine", "row": { "machine_id": null, "machine_hostname": null }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["H"] }, "expected": false },
+    { "name": "row carries an id, I have none → not mine", "row": { "machine_id": "X", "machine_hostname": "H" }, "me": { "machine_id": null, "hostname": "H", "aliases": ["H"] }, "expected": false },
+    { "name": "empty-string id on the row → alias path", "row": { "machine_id": "", "machine_hostname": "H" }, "me": { "machine_id": "X", "hostname": "H", "aliases": ["H"] }, "expected": true },
+    { "name": "no id anywhere, live hostname matches → mine (today's posture)", "row": { "machine_id": null, "machine_hostname": "H" }, "me": { "machine_id": null, "hostname": "H", "aliases": ["H"] }, "expected": true }
+  ],
+  "observe": [
+    { "name": "appends a new hostname", "config": { "machine": { "id": "X", "aliases": ["A"] } }, "host": "B", "expected": { "changed": true, "aliases": ["A", "B"] } },
+    { "name": "no-op when already present", "config": { "machine": { "id": "X", "aliases": ["A", "B"] } }, "host": "B", "expected": { "changed": false, "aliases": ["A", "B"] } },
+    { "name": "no machine block → block created with the one alias", "config": { "remote_brain": {} }, "host": "B", "expected": { "changed": true, "aliases": ["B"] } },
+    { "name": "aliases not an array → replaced by [host]", "config": { "machine": { "id": "X", "aliases": "A" } }, "host": "B", "expected": { "changed": true, "aliases": ["B"] } },
+    { "name": "empty hostname → no-op", "config": { "machine": { "id": "X", "aliases": ["A"] } }, "host": "", "expected": { "changed": false, "aliases": ["A"] } }
+  ]
+}

@@ -69,7 +69,8 @@ function makeCtx(bus: EventBus): ComponentContext {
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
-  db.exec(monitoringMigrations[0].sql);
+  // BR-100 (2026-09-06): apply the WHOLE chain — v2 adds `machine_id`, which the component INSERT names.
+  for (const m of monitoringMigrations) db.exec(m.sql);
   return db;
 }
 
@@ -161,9 +162,11 @@ describe('Monitoring Component', () => {
           'project_slug',
           'instance_id',
           'created_at',
+          'machine_id',
         ]),
       );
-      expect(columnNames).toHaveLength(8);
+      // BR-100 (2026-09-06): 8 → 9 — monitoring v2 adds `machine_id`.
+      expect(columnNames).toHaveLength(9);
     });
 
     it('indexes exist', () => {
@@ -443,11 +446,13 @@ describe('Monitoring Component', () => {
       expect(toolNames).toContain('igris_event_log_cleanup');
     });
 
-    it('schema() returns 1 migration', () => {
+    it('schema() returns 2 migrations (BR-100: v2 = machine_id)', () => {
       const comp = createMonitoringComponent();
       const migrations = comp.schema();
-      expect(migrations).toHaveLength(1);
+      // BR-100 (2026-09-06): 1 → 2 — v2 adds `event_log.machine_id`.
+      expect(migrations).toHaveLength(2);
       expect(migrations[0].version).toBe(1);
+      expect(migrations[1].version).toBe(2);
     });
   });
 
@@ -853,5 +858,91 @@ describe('Monitoring Component', () => {
       const entry = SYNC_TABLES.find((t) => t.table === 'event_log');
       expect(entry!.timestampCol).toBe('created_at');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100 — monitoring v2 (`event_log.machine_id`) and the identity stamp
+// ---------------------------------------------------------------------------
+
+describe('BR-100 — monitoring v2 and the machine_id stamp', () => {
+  let db: Database.Database;
+  let bus: EventBus;
+  let sandbox: string;
+  let savedBrainDir: string | undefined;
+
+  beforeEach(async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    sandbox = mkdtempSync(join('/tmp', 'br100-mon-'));
+    // The brain identity writer honours IGRIS_BRAIN_DIR (a WRITE seam); the
+    // suite's `node:os` mock has no `homedir`, so an unset seam could not even
+    // resolve the real path — the fence is armed AND asserted.
+    savedBrainDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = sandbox;
+    expect(process.env.IGRIS_BRAIN_DIR).toBe(sandbox);
+    writeFileSync(join(sandbox, 'config.json'), '{}\n');
+    db = createTestDb();
+    bus = createEventBus();
+    (getDb as ReturnType<typeof vi.fn>).mockReturnValue(db);
+  });
+
+  afterEach(async () => {
+    if (savedBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
+    else process.env.IGRIS_BRAIN_DIR = savedBrainDir;
+    (await import('node:fs')).rmSync(sandbox, { recursive: true, force: true });
+    db.close();
+  });
+
+  it('v2 adds `machine_id`; the applied versions under the monitoring key read [1, 2]', async () => {
+    const { createSqliteAdapter } = await import('../../../storage/sqlite.js');
+    const { join } = await import('node:path');
+    const storage = createSqliteAdapter(join(sandbox, 'v.db'));
+    storage.runMigrations('monitoring', monitoringMigrations);
+    const versions = (storage.rawConnection.prepare(
+      "SELECT version FROM engine_migrations WHERE component = 'monitoring' ORDER BY version",
+    ).all() as { version: number }[]).map((r) => r.version);
+    expect(versions).toEqual([1, 2]);
+    const cols = (storage.rawConnection.pragma('table_info(event_log)') as { name: string }[]).map((c) => c.name);
+    expect(cols).toContain('machine_id');
+    storage.close();
+  });
+
+  it('a DB already at v1 takes v2 on the next boot and keeps its rows', async () => {
+    const { createSqliteAdapter } = await import('../../../storage/sqlite.js');
+    const { join } = await import('node:path');
+    const path = join(sandbox, 'v1.db');
+    const first = createSqliteAdapter(path);
+    first.runMigrations('monitoring', [monitoringMigrations[0]]);
+    first.rawConnection.prepare(
+      "INSERT INTO event_log (event_name, component, machine_hostname) VALUES ('x', 'unknown', 'MacBookAir')",
+    ).run();
+    first.close();
+
+    const second = createSqliteAdapter(path);
+    second.runMigrations('monitoring', monitoringMigrations);
+    const row = second.rawConnection.prepare('SELECT machine_hostname, machine_id FROM event_log').get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: 'MacBookAir', machine_id: null });
+    second.close();
+  });
+
+  it('the component stamps machine_id = the minted config.json machine.id beside machine_hostname', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const comp = createMonitoringComponent();
+    comp.init(makeCtx(bus));
+    bus.emit('schedule.created', {});
+    const stored = JSON.parse(readFileSync(join(sandbox, 'config.json'), 'utf-8')) as { machine: { id: string; aliases: string[] } };
+    expect(stored.machine.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(stored.machine.aliases).toEqual(['test-host']);
+    const row = db.prepare('SELECT machine_hostname, machine_id FROM event_log').get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: 'test-host', machine_id: stored.machine.id });
+    comp.destroy();
+  });
+
+  it('v2 is exactly one ALTER and its comment carries the non-replication decision', () => {
+    const v2 = monitoringMigrations.find((m) => m.version === 2)!;
+    expect(v2.sql.trim()).toBe('ALTER TABLE event_log ADD COLUMN machine_id TEXT;');
+    expect(monitoringMigrations).toHaveLength(2);
   });
 });

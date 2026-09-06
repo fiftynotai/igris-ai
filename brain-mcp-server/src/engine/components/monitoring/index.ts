@@ -24,7 +24,7 @@
  * @author fifty.dev
  */
 
-import * as os from 'node:os';
+import { ensureMachineIdentity, type MachineIdentity } from '../../../machine-identity.js';
 import { getDb } from '../../../db.js';
 import type {
   BrainComponent,
@@ -103,7 +103,7 @@ const EVENT_COMPONENT_MAP: Record<string, string> = {
 
 export function createMonitoringComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
-  let _hostname: string = '';
+  let _identity: MachineIdentity = { machine_id: null, hostname: '', aliases: [] };
 
   /**
    * Generic event handler -- logs any received event into event_log.
@@ -127,15 +127,16 @@ export function createMonitoringComponent(): BrainComponent {
         null;
 
       db.prepare(
-        `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at, machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         eventName,
         component,
         JSON.stringify(payload.data),
-        _hostname,
+        _identity.hostname,
         projectSlug,
         instanceId,
         payload.timestamp,
+        _identity.machine_id,
       );
     } catch (err) {
       _ctx?.log.error(`Failed to log event ${payload.event}: ${errMsg(err)}`);
@@ -256,8 +257,8 @@ export function createMonitoringComponent(): BrainComponent {
     init(ctx: ComponentContext): void {
       _ctx = ctx;
 
-      // Cache hostname for event logging
-      _hostname = os.hostname();
+      // BR-100: identity once per boot (v2 has run).
+      _identity = ensureMachineIdentity();
 
       // Wire all event listeners -- EXPLICIT per-event calls for regex-based integrity tests
       ctx.bus.on('schedule.created', onEventReceived);

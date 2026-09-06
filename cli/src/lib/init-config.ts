@@ -54,7 +54,7 @@ export type SubconsciousDefaultOutcome = CognitionDefaultOutcome;
  * Igris-owned secret-bearing file (config.json carries the api_key). Same
  * rationale as the pre-FR-122 inline tail; no behavior change.
  */
-function writeConfigAtomic(next: Record<string, unknown>): void {
+export function writeConfigAtomic(next: Record<string, unknown>): void {
   const cfgPath = configJsonPath();
   const tmp = `${cfgPath}.tmp.${process.pid}.${Date.now()}`;
   writeFileSync(tmp, JSON.stringify(next, null, 2) + "\n");
@@ -67,7 +67,7 @@ function writeConfigAtomic(next: Record<string, unknown>): void {
  * Callers map `null` to the graceful `config_missing` / `config_malformed`
  * outcomes — nothing throws.
  */
-function readConfig(): Record<string, unknown> | null {
+export function readConfig(): Record<string, unknown> | null {
   const cfgPath = configJsonPath();
   if (!existsSync(cfgPath)) return null;
   try {

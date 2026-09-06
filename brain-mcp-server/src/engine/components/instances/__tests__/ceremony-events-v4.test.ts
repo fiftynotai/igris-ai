@@ -138,6 +138,7 @@ describe('instances migration v4 — ceremony_events record (FR-268)', () => {
     expect(columnsOf(db, 'ceremony_events')).toEqual([
       'id', 'project', 'ceremony', 'event_type', 'machine_hostname', 'instance_id',
       'brief_id', 'duration_ms', 'metadata', 'created_at',
+      'machine_id', // BR-100 (2026-09-06): instances v5 ALTER, appended after the frozen v4 shape
     ]);
     const indexes = (db.prepare(
       "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ceremony_events'",
@@ -145,7 +146,8 @@ describe('instances migration v4 — ceremony_events record (FR-268)', () => {
     expect(indexes).toContain('idx_ceremony_events_key');
     const view = db.prepare("SELECT name FROM sqlite_master WHERE type = 'view' AND name = 'ceremony_runs'").get();
     expect(view).toBeDefined();
-    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
+    // BR-100 (2026-09-06): instances 4→5 — `machine_id` on instances + ceremony_events.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('the event_type CHECK admits start and stop only — a retry row is refused', () => {
@@ -246,12 +248,13 @@ describe('instances migration v4 — ceremony_events record (FR-268)', () => {
     });
   });
 
-  it('is idempotent: a second boot leaves engine_migrations for instances at exactly 1,2,3,4', () => {
+  it('is idempotent: a second boot leaves engine_migrations for instances at exactly 1,2,3,4,5', () => {
     const path = tmpDbPath();
     bootInstances(path).close();
 
     const db = bootInstances(path).rawConnection; // must not throw
-    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
+    // BR-100 (2026-09-06): instances 4→5.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
     expect(columnsOf(db, 'ceremony_events')).toContain('duration_ms');
   });
 

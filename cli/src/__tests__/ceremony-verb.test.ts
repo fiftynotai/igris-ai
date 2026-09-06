@@ -14,7 +14,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, mkdirSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -338,5 +338,61 @@ describe("igris ceremony — the brain-timed ceremony stamp (FR-268)", () => {
       cwdSpy.mockRestore();
     }
     expect(rows()[0].project).toBe("demo-proj");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100 (Phase 4b) — pairing on the machine identity
+// ---------------------------------------------------------------------------
+
+describe("BR-100 — ceremony pairing keys on the machine identity, and the stop carries machine_id", () => {
+  function addMachineIdColumn(): void {
+    withDb((db) => db.exec("ALTER TABLE ceremony_events ADD COLUMN machine_id TEXT"));
+  }
+  function writeIdentity(machine: unknown): void {
+    writeFileSync(join(tmpRoot, "config.json"), JSON.stringify({ machine }) + "\n");
+  }
+
+  it("a start under a PRIOR hostname (alias, NULL id) is closed by a stop under the live hostname → paired, duration_ms set, machine_id stamped", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeIdentity({ id: "X", aliases: ["MacBookAir"] });
+    const startId = seedStart(SLUG, "boot", "MacBookAir", "datetime('now', '-90 seconds')");
+    const { code, digest } = await run({ action: "stop", name: "boot", project: SLUG });
+    expect(code).toBe(0);
+    expect(digest?.paired).toBe(true);
+    expect(digest?.paired_start_id).toBe(startId);
+    expect(digest?.duration_ms as number).toBeGreaterThanOrEqual(88_000);
+    const stop = withDb((db) => db.prepare("SELECT machine_hostname, machine_id FROM ceremony_events WHERE event_type = 'stop'").get() as Record<string, unknown>);
+    expect(stop).toEqual({ machine_hostname: hostname(), machine_id: "X" });
+    // The writer observed the live hostname: it is now an alias beside the historical one.
+    const cfg = JSON.parse(readFileSync(join(tmpRoot, "config.json"), "utf-8")) as { machine: { aliases: string[] } };
+    expect(cfg.machine.aliases).toEqual(["MacBookAir", hostname()]);
+  });
+
+  it("a start carrying a FOREIGN machine_id under MY hostname is never closed by my stop → unpaired, duration NULL", async () => {
+    seedSchema();
+    addMachineIdColumn();
+    writeIdentity({ id: "X", aliases: [] });
+    withDb((db) =>
+      db.prepare(
+        `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, machine_id, created_at)
+         VALUES (?, 'boot', 'start', ?, 'Y', datetime('now', '-90 seconds'))`,
+      ).run(SLUG, hostname()),
+    );
+    const { code, digest } = await run({ action: "stop", name: "boot", project: SLUG });
+    expect(code).toBe(0);
+    expect(digest?.paired).toBe(false);
+    expect(digest?.duration_ms).toBeNull();
+    expect(digest?.warnings?.some((w) => w.includes("unpaired stop"))).toBe(true);
+  });
+
+  it("without the column (a brain older than instances v5): hostname-only pairing, widened to the alias list", async () => {
+    seedSchema();
+    writeIdentity({ id: "X", aliases: ["MacBookAir"] });
+    seedStart(SLUG, "boot", "MacBookAir", "datetime('now', '-90 seconds')");
+    const { digest } = await run({ action: "stop", name: "boot", project: SLUG });
+    expect(digest?.paired).toBe(true);
+    expect(digest?.duration_ms as number).toBeGreaterThanOrEqual(88_000);
   });
 });

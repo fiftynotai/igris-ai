@@ -36,6 +36,7 @@ interface InstanceStateInput {
   liveness_status?: string;
   liveness_checked_at?: string;
   lease_expires_at?: string;
+  machine_id?: string | null;
 }
 
 /** Input shape for igris_instance_list */
@@ -135,6 +136,7 @@ function handleInstanceState(args: InstanceStateInput): { content: { type: strin
     ['liveness_status', args.liveness_status ?? null],
     ['liveness_checked_at', args.liveness_checked_at ?? null],
     ['lease_expires_at', args.lease_expires_at ?? null],
+    ['machine_id', args.machine_id ?? null],
     ['state_updated_at', now],
   ] as Array<[string, unknown]>) {
     if (!columns.has(name)) continue;
@@ -204,7 +206,8 @@ function handleInstanceList(args: InstanceListInput): { content: { type: string;
            ${optionalProjection(columns, 'liveness_status')},
            ${optionalProjection(columns, 'liveness_checked_at')},
            ${optionalProjection(columns, 'lease_expires_at')},
-           ${optionalProjection(columns, 'state_updated_at')}
+           ${optionalProjection(columns, 'state_updated_at')},
+           ${optionalProjection(columns, 'machine_id')}
     FROM instances
     ${whereClause}
     ORDER BY last_activity_at DESC

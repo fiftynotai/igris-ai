@@ -26,7 +26,19 @@
  */
 
 import type Database from 'better-sqlite3';
-import * as os from 'node:os';
+import { ensureMachineIdentity } from '../../../machine-identity.js';
+
+/** BR-100: per-handle memo of the `machine_id` column (the extract CLI may predate the migration). */
+const hasMachineId = new WeakMap<Database.Database, boolean>();
+
+function stampsMachineId(db: Database.Database): boolean {
+  let has = hasMachineId.get(db);
+  if (has === undefined) {
+    has = (db.prepare('PRAGMA table_info(event_log)').all() as { name: string }[]).some((c) => c.name === 'machine_id');
+    hasMachineId.set(db, has);
+  }
+  return has;
+}
 
 // ---------------------------------------------------------------------------
 // Event names
@@ -102,16 +114,19 @@ export function insertEventLogRow(
   try {
     const projectSlug =
       typeof payload.project === 'string' ? payload.project : null;
+    const me = ensureMachineIdentity();
+    const withId = stampsMachineId(db);
     db.prepare(
       `INSERT INTO event_log
-         (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-       VALUES (?, ?, ?, ?, ?, NULL, datetime('now'))`,
+         (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at${withId ? ', machine_id' : ''})
+       VALUES (?, ?, ?, ?, ?, NULL, datetime('now')${withId ? ', ?' : ''})`,
     ).run(
       evtName,
       component,
       JSON.stringify(payload),
-      os.hostname(),
+      me.hostname,
       projectSlug,
+      ...(withId ? [me.machine_id] : []),
     );
   } catch (err) {
     // Defensive fallback. Grep-able even though the structured event was lost.

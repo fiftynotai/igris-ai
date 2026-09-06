@@ -109,7 +109,8 @@ describe('instances migration v3 — agent_events hunt-cost record (FR-267)', ()
     ).all() as { name: string }[]).map((r) => r.name);
     expect(indexes).toContain('idx_agent_events_brief');
     // FR-268 (2026-08-27): the chain now ends at v4 (ceremony_events), 1,2,3 -> 1,2,3,4.
-    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
+    // BR-100 (2026-09-06): instances 4→5 — `machine_id` on instances + ceremony_events.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it('round defaults to 1 for a row that does not set it', () => {
@@ -232,7 +233,8 @@ describe('instances migration v3 — agent_events hunt-cost record (FR-267)', ()
 
     const db = bootInstances(path).rawConnection; // must not throw `duplicate column`
     // FR-268 (2026-08-27): v4 (ceremony_events) joined the chain, 1,2,3 -> 1,2,3,4.
-    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
+    // BR-100 (2026-09-06): instances 4→5 — `machine_id` on instances + ceremony_events.
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4, 5]);
     expect(columnsOf(db, 'agent_events')).toEqual(expect.arrayContaining(V3_COLUMNS));
     const view = db.prepare("SELECT name FROM sqlite_master WHERE type = 'view' AND name = 'hunt_runs'").get();
     expect(view).toBeDefined();
