@@ -64,9 +64,22 @@
  *   - Nothing about the REMOTE brain's copy after `sync` auto-push. `sync` stays
  *     enabled precisely so the two paths propagate identically, but this suite
  *     never reaches the VPS.
- *   - Nothing about `machine_hostname` / `created_at` / `id`, which are excluded
- *     from the comparison — and the exclusion list is itself ASSERTED below so
- *     it cannot quietly grow to cover a real difference.
+ *   - Nothing about `machine_hostname` / `created_at` / `id` / `machine_id`,
+ *     which are excluded from the comparison — and the exclusion list is
+ *     itself ASSERTED below so it cannot quietly grow to cover a real
+ *     difference. `machine_id` (BR-100, monitoring v2) joined the list
+ *     2026-09-06: measured, not assumed — neither arm's sandbox ever gains a
+ *     `config.json` (`PREAMBLE` only does `mkdtempSync` + `mkdirSync`), so
+ *     `ensureMachineIdentity()` returns `machine_id: null` on BOTH arms before
+ *     the mint/lock path ever runs (confirmed with a throwaway diagnostic:
+ *     both arms' `event_log` rows read `machine_id: null`). That is the SAME
+ *     class of column as `machine_hostname` — already excluded despite both
+ *     arms coincidentally reporting the same physical hostname today — a
+ *     per-brain identity stamp that COULD diverge across a real deployment
+ *     even though this harness's sandbox cannot currently produce that
+ *     divergence, so it is excluded on the same principle, not because the
+ *     two arms were observed to mint different values (they don't, in this
+ *     harness, today).
  *   SIBLING covering the general case: `dashboard-triage-endpoint.test.ts`
  *   G-TR-5(b), which proves the same handler FUNCTION OBJECT is reached by the
  *   HTTP path. These per-action diffs sample that argument; G-TR-5(b) makes it.
@@ -86,13 +99,19 @@ const CLI_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const CLI_ENTRY = join(CLI_ROOT, "dist", "index.js");
 
 /**
- * The comparable columns. `id`, `created_at` and `machine_hostname` are
- * EXCLUDED — an autoincrement, a clock and a hostname cannot agree across two
- * processes on principle. The list is asserted in its own test so it cannot
- * grow to swallow a real difference.
+ * The comparable columns. `id`, `created_at`, `machine_hostname` and
+ * `machine_id` are EXCLUDED — an autoincrement, a clock and a pair of
+ * per-brain identity stamps cannot agree across two processes on principle.
+ * `machine_id` (BR-100) joined 2026-09-06: measured, not assumed — both arms'
+ * sandboxes never gain a `config.json`, so `ensureMachineIdentity()` returns
+ * `machine_id: null` on BOTH arms before the mint path ever runs (confirmed
+ * empirically). It is excluded on the same per-brain-identity principle as
+ * `machine_hostname`, not because the two arms were observed to mint
+ * different values. The list is asserted in its own test so it cannot grow to
+ * swallow a real difference.
  */
 const COMPARED = ["event_name", "component", "project_slug", "instance_id", "payload"] as const;
-const EXCLUDED = ["id", "created_at", "machine_hostname"] as const;
+const EXCLUDED = ["id", "created_at", "machine_hostname", "machine_id"] as const;
 
 const REAL_BRAIN = join(homedir(), ".igris", "memory", "knowledge.db");
 /**
@@ -339,11 +358,11 @@ describe("the parity harness is real before anything is compared", () => {
     ).toBe(true);
   });
 
-  it("the EXCLUSION LIST is exactly three columns, and they are named", () => {
+  it("the EXCLUSION LIST is exactly four columns, and they are named", () => {
     // The failure mode this forecloses: an exclusion list that grows one column
     // at a time until it covers the difference the gate was written to catch.
     // Changing it means changing this assertion, deliberately.
-    expect([...EXCLUDED]).toEqual(["id", "created_at", "machine_hostname"]);
+    expect([...EXCLUDED]).toEqual(["id", "created_at", "machine_hostname", "machine_id"]);
     expect([...COMPARED]).toEqual([
       "event_name",
       "component",
