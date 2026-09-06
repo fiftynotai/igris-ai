@@ -21,6 +21,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The tarball no longer ships research artifacts from `brain-mcp-server/scripts/` (BR-101)** — the build's copy step prunes `*.csv` and `td<N>_`-prefixed files by pattern; TD-445's sweep and two labelled CSVs had shipped (+77,529 packed B; ceiling and CI red). Figures and the copy-step blind spot in the ledger's method: grep `BR-101 MEASURED LAST` in `src/__tests__/tarball.test.ts`.
+
 - **Arbiter `evolved_merge` no longer drops the inputs' executable specifics and refuses a stale synthesis (TD-439)** — the executor compares `synthesized_from_hash` (stamped at generation) with the winner's exact current bytes, refusing on mismatch or no stamp, and carries the lines of BOTH inputs the snippet-derived synthesis dropped into a `Preserved specifics` section (refused above 8,000 chars). A refusal stays `pending`, is returned as `refused: <reason>` and recorded in `evidence.apply_refused`; the auto-resolve fork no longer swallows it. Pre-TD-439 pending rows are refused as unprovenanced — dismiss and let the next run regenerate.
 
 - **A claude API/auth failure is no longer filed as `parse_error` (TD-447)** — the cognition backend classifies a claude `{type:"result",is_error:true}` envelope as `api_error` / `auth_error` with the CLI's message in `detail` before text extraction; `igris cognition health` leads the `failing` sentence with it (`api_error: API Error: 529 Overloaded. …`). Other harnesses untouched.

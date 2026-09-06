@@ -1833,6 +1833,150 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * BR-101 MEASURED LAST (2026-09-06), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh` — NOT by the
+ * TD-440 staging method, and the reason is the whole brief (see THE METHOD'S
+ * BLIND SPOT below). `cli/dist` (the live brain bundle) was never rebuilt or
+ * written; `brain-mcp-server/dist` was never written. The scratch: `cli/`
+ * copied without `node_modules` (symlinked back), `brain-mcp-server/`
+ * assembled from copies of `dist/ scripts/ src/ package.json
+ * package-lock.json tsconfig.json` (`src/` COPIED, not symlinked — `tsc`
+ * realpaths a symlinked `src` into the `.js.map` `sources`, and `.js.map`
+ * ships), `node_modules` symlinked, `harness-manifest.json` at the scratch
+ * root. The TD-373 `find -newer` trigger fired (13 `src` files carried
+ * checkout mtimes newer than `dist/index.js`, all committed before the
+ * operator's 2026-09-04 18:00 build), so the scratch REBUILT the brain into
+ * `dist.tmp` and swapped — and the rebuilt tree `diff -rq` IDENTICAL to the
+ * vendored `cli/dist/brain-mcp-server/dist/`. The bundle's `npm install
+ * --omit=dev` re-ran twice; both times the staged `package.json` and
+ * `package-lock.json` `cmp` identical to the real bundle's. The whole staged
+ * `dist/` minus `node_modules` was `diff -rq` identical to the real `cli/dist`
+ * at HEAD. So the scratch build IS the real packed surface, and every reading
+ * below is a delta against it.
+ *   control             2_090_368    unpacked 8_152_770, 675 entries, shasum
+ *                                    `012fd0d85c2e6c14c035054d86e96ffcb8154939`
+ *                                    — the scratch build at HEAD `a060f67` with
+ *                                    the UNMODIFIED script, taken twice, and
+ *                                    byte-identical to an in-place
+ *                                    `npm pack --dry-run` of the real `cli/dist`
+ *                                    (same size, entries and shasum). This is
+ *                                    the figure the ceiling assertion was red
+ *                                    on: delta 226_948, 147.8 % of the grant,
+ *                                    73_348 B over.
+ *   packed              2_002_047    unpacked 7_638_295, 670 entries (−5),
+ *                                    shasum
+ *                                    `a9eda015884631fc5ba7abfd7b0d57f595088dca`,
+ *                                    taken twice, on the scratch build with the
+ *                                    BR-101 prune and the CHANGELOG bullet.
+ *   BR-101's own share  −88_321 B    = −88_486 for the five pruned files
+ *                                    + 165 for the CHANGELOG bullet. Unpacked
+ *                                    −514_475 = −514_866 + 391, and the
+ *                                    514_866 reconciles EXACTLY to `wc -c` of
+ *                                    the five: 387_399 + 64_796 + 26_984
+ *                                    (TD-445's `td445_marginal_pairs_labeled.csv`,
+ *                                    `td445_row_findings.csv`,
+ *                                    `td445_claim_threshold_sweep.ts`) + 11_848
+ *                                    (`td286_renormalize_backfill.ts`) + 23_839
+ *                                    (`td402_fold_project_slugs.mjs`). Packed,
+ *                                    split by a hand-pruned copy of the control
+ *                                    surface: minus the three TD-445 files
+ *                                    alone = 2_012_839 / 7_673_591 / 672 (the
+ *                                    TD-439 row's figure, byte-exact), so the
+ *                                    three cost 77_529 packed; minus all five
+ *                                    = 2_001_882 / 7_637_904 / 670 / shasum
+ *                                    `c411fe5bdca3174117c11bd9c0f9234ac63f075b`,
+ *                                    which the scratch BUILD reproduced
+ *                                    byte-exactly before the bullet — so
+ *                                    `td286` + `td402` cost 10_957 packed.
+ *   cumulative delta    +138_627 B   (135.4 KB, 90.3 % of TD-374's grant —
+ *                                    2_002_047 − 1_863_420)
+ *   headroom remaining  ~14.6 KB     (14_973 B — 153_600 − 138_627). The
+ *                                    TD-445 row's "4_181 B" was never true of
+ *                                    the shipped tarball: the real headroom at
+ *                                    `a060f67` was −73_348 B.
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 22 WENT. `find brain-mcp-server/scripts -maxdepth 1 -type f |
+ *   wc -l` = 22 at `a060f67` (2026-09-06), beside the two directories TD-298
+ *   prunes. −7 by TD-299's named list, −5 by BR-101's pattern = 10, confirmed
+ *   by `find cli/dist/brain-mcp-server/scripts -type f | wc -l` on the
+ *   scratch build (15 before the prune, 10 after; the prune's `-print` listed
+ *   exactly the five). The TD-443 row's "12" is a dated reading of a 19-file
+ *   tree — left as written. The survivors: `render_brief_graph.template.html`
+ *   (19900 B) is the ONE file the package reads at runtime (the compiled
+ *   `visualization-tool.js` ascends to it); the other nine ship by precedent
+ *   and none is runnable from the package — every `.ts` under `scripts/`
+ *   imports `../src/*.js`, the bundle ships no `src/` and vendors no `tsx` —
+ *   see FOLLOW-UP below.
+ *
+ *   THE METHOD'S BLIND SPOT, and the amendment. The staging method adopted at
+ *   the TD-440 row compiles inertly (`npx tsc --outDir <scratch>`) and stages
+ *   COMPILED artifacts against their vendored twins. It never runs
+ *   `copy-templates.sh`, so anything that reaches the tarball BY COPY is
+ *   invisible to it: `dist/brain-mcp-server/scripts/*` (the `cp -R` of
+ *   `brain-mcp-server/scripts`), `dist/brain-mcp-server/package.json` and
+ *   `package-lock.json` (copied, then pruned and regenerated by the vendored
+ *   install), `dist/lib/harness-manifest.json`, `dist/lib/templates/**`, and
+ *   `cli/package.json` `files` itself; `dist/dashboard/**` likewise reaches the
+ *   tarball by `build-dashboard.sh`, not `tsc`. A reading is complete ONLY IF
+ *   EITHER the surface has been through `copy-templates.sh` (a scratch build,
+ *   this row's method) OR the brief's diff touches none of the copied paths —
+ *   and the row must SAY WHICH. The mechanical check for the second arm:
+ *     git diff --name-only <base>..HEAD -- brain-mcp-server/scripts \
+ *       brain-mcp-server/package.json brain-mcp-server/package-lock.json \
+ *       harness-manifest.json cli/src/lib/templates cli/package.json \
+ *       cli/dashboard cli/scripts
+ *   must print nothing (`cli/scripts` because the copy step ITSELF is a
+ *   copied-surface change — BR-101's own diff is one, which is why this row
+ *   could not use the staging method). TD-445's three actors quoted +0 B from the premise
+ *   "`scripts/` never compiles" — true, and irrelevant, because copying is not
+ *   compiling. Its `git diff` against that list would have printed three paths.
+ *
+ *   THE PIN. `describe("BR-101 — no research artifact ships …")` at the end of
+ *   this file: the packlist half, the on-disk half (reads the REAL `cli/dist`
+ *   relative to this file, so it is RED in a working tree whose bundle
+ *   predates the prune — it was, inside the hunt, printing the five names —
+ *   and GREEN wherever the build has run, which CI does before it tests), and
+ *   the presence tripwire on the template plus three precedent-shipped `.ts`.
+ *   Battery, in the scratch: M1 prune absent (the pre-fix scratch tree; halves
+ *   1-2 red printing the five), M2 novel `td999_probe.{csv,ts}` (halves 1-2
+ *   red naming both — a count could not), M3 pattern widened to `*.ts` (only
+ *   the tripwire red, naming the nine — the asymmetry is the point), control
+ *   = a comment-only edit inside the prune block, full re-staging, listing
+ *   empty, pin green, pack byte-identical (`cli/scripts/**` is packed-free).
+ *   ROUND 2 (warden): round 1 spelled the shell prune as `find -name
+ *   'td[0-9]*_*'` — td, ONE digit, ANY run up to a `_` — which took
+ *   `td9legacy_notes.ts` while the regex did not. The shell is now a bash
+ *   loop on `^td[0-9]+_` / `*.csv` (the authority), a fourth test pins the
+ *   regex to it on the boundary names, the battery re-ran unchanged, and the
+ *   pack figure above is unchanged (neither file is packed).
+ *
+ *   OPTION NOT TAKEN — `files` negation. A `!dist/brain-mcp-server/scripts/*.csv`
+ *   pair in `cli/package.json` would protect the tarball ONLY and leave the
+ *   on-disk `cli/dist` — the live brain bundle, and what bats and the TD-373
+ *   guards read — carrying the files; `package.json` ships verbatim so it
+ *   costs packed bytes; and it is a second copy of the rule that can drift
+ *   from the first. TD-443 used `files` because its target must STAY on disk;
+ *   BR-101's target must not be on the staged disk at all. The packlist half
+ *   of the pin gives the tarball the same guarantee for 0 B.
+ *
+ *   TD-444 NOTE. This row RECOVERS headroom and does not re-base:
+ *   `PACK_BASELINE_PACKED` and `PACK_HARD_CEILING_DELTA` are unchanged
+ *   (TD-443's precedent). The headroom TD-444's re-base decision sees is now
+ *   14_973 B, not the 4_181 B it was filed against; whether that changes the
+ *   decision is the operator's call, on the record, before the work.
+ *
+ *   FOLLOW-UP CANDIDATE, not filed. None of the nine surviving `.ts`
+ *   (112961 B unpacked, measured 2026-09-06 on the staged dir) is runnable
+ *   from the package; they ship by precedent with MAINTAINING rows 65 / 102 /
+ *   103 / 117 / 125 / 133 / 139 as their consumers (all repo-path). Pruning
+ *   that class is a different brief with a different blast radius — the
+ *   tripwire names the three that would need a dated retirement.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — re-packed after the
+ *   edit in the scratch: unchanged.
+ *
  * TD-445 MEASURED LAST (2026-09-04), after its final code-touching step.
  * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414 /
  * TD-439 method. The brain compiled inertly with `npx tsc --outDir <scratch>`
@@ -1869,6 +2013,25 @@ interface PackReport {
  *                                    "10_492 B" was HEAD `6d077a1`'s figure and
  *                                    predates TD-447, TD-414 and TD-439)
  *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   CORRECTION (BR-101, 2026-09-06): the own share above is WRONG. The three
+ *   files under `brain-mcp-server/scripts/` ship by COPY (`copy-templates.sh`,
+ *   the `cp -R "$MCP_SRC/scripts"` line) and the staging method never runs the
+ *   copy step, so "never compiled" was true and irrelevant. True own share
+ *   +77_529 packed B / +3 entries (479_179 unpacked = 26_984 + 64_796 +
+ *   387_399), measured by BR-101 on the built surface at `a060f67`: 2_090_368
+ *   / 8_152_770 / 675 with the three, 2_012_839 / 7_673_591 / 672 without —
+ *   the TD-439 row's figure, byte-exact. The +81_071 first reported (BR-100's
+ *   forger, 2026-09-06, = 2_090_368 − this row's 2_009_297 control) also
+ *   counts 3_542 packed / 14_871 unpacked B of TD-414 / TD-439 compiled output
+ *   that entered the live dist at the operator's 2026-09-04 18:00 rebuild —
+ *   this row's control was taken on the UNBUILT surface (its "11 real
+ *   differences"). Cumulative at `a060f67` was therefore +226_948 B, 147.8 % of
+ *   the grant, the ceiling assertion red by 73_348 B and CI `Test Shell
+ *   Scripts` red from `a060f67` (bats case 130 runs this file; run
+ *   33882545499 per the BR-101 plan). Reverted by BR-101 (`td286` and `td402`
+ *   went with them). The `+0` line above is left in place as the record of
+ *   what was believed.
  *
  *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
  *   writing THIS row cannot move the number it records.
@@ -2089,7 +2252,11 @@ interface PackReport {
  *   built app chunk     NOT REMEASURED — see the caveat below
  *
  *   ROUND 4 STAGED INTO A COPY INSTEAD OF INTO `cli/dist`, and that is the
- *   better method — adopt it. The whole packed surface is small (`package.json`
+ *   better method — adopt it. AMENDED BY BR-101 (2026-09-06): this method
+ *   sees COMPILED artifacts only — a file that reaches the tarball by COPY
+ *   (`copy-templates.sh`) is invisible to it; see `BR-101 MEASURED LAST` for
+ *   the copied-path list and the `git diff --name-only` check that licenses
+ *   skipping the build. The whole packed surface is small (`package.json`
  *   `files` is `dist` minus `dist/brain-mcp-server/node_modules` minus every
  *   `.d.ts.map`, plus `scripts/postinstall.mjs`, `README.md`, `CHANGELOG.md`),
  *   so it copies to a scratch directory in seconds and packs there. `cli/dist`
@@ -2971,5 +3138,155 @@ describe("TD-443 — no dangling declaration maps ship", () => {
       "brain-mcp-server/tsconfig.json no longer sets `declaration: true`, so " +
         "no `.d.ts` is emitted and `declarationMap` has nothing to describe.",
     ).toBe(true);
+  });
+});
+
+/**
+ * BR-101 — no research artifact ships from the vendored `scripts/`.
+ *
+ * `cli/scripts/copy-templates.sh` copies `brain-mcp-server/scripts/` WHOLESALE
+ * into `dist/brain-mcp-server/scripts/` and prunes by three rules: TD-298
+ * (the `__tests__` / `fixtures` dirs), TD-299 (a named list) and BR-101 (a
+ * PATTERN — a `*.csv` or a `td<N>_` basename). TD-445 landed a sweep script and two
+ * labelled CSVs that matched neither of the first two, and they shipped:
+ * +77_529 packed B / +3 entries on the built surface (the brief's 81_071 also
+ * counted TD-414/TD-439's rebuilt bytes), the ceiling red by 73_348 B, CI
+ * red at bats case 130. The ledger's staging method never saw them, because it stages
+ * COMPILED artifacts and never runs the copy step — see `BR-101 MEASURED LAST`.
+ *
+ * TWO SURFACES, ONE RULE, ONE AUTHORITY. The SHELL is the authoritative
+ * spelling of the contract: the BR-101 loop in `copy-templates.sh` prunes a
+ * top-level basename matching `^td[0-9]+_` or ending `.csv`. `RESEARCH_ARTIFACT`
+ * below is a second spelling in JS, and the "agree on the boundary cases" test
+ * pins it to the shell on the names that separate the two — round 1's shell
+ * glob `td[0-9]*_*` (td, ONE digit, ANY run up to a `_`) took
+ * `td9legacy_notes.ts`, which the regex did not, and nothing red. Widen or
+ * narrow the shell and you MUST move the regex AND that table, then re-run the
+ * M3 mutation recorded in the BR-101 row. The tarball half reads the packlist
+ * (what a consumer installs);
+ * the on-disk half reads the staged dir (what the LIVE brain bundle carries,
+ * and what bats and the TD-373 guards look at). `files` negation in
+ * package.json was considered and NOT taken — it would protect the tarball
+ * only, cost packed bytes, and be a second copy of the rule (the row says why).
+ *
+ * RELATION, NOT COUNT (TD-443's shape): `toEqual([])` on the filtered list, so
+ * a regression PRINTS the offending paths rather than a bare number, and no
+ * re-blessing is needed when the brain gains or loses a script.
+ *
+ * The on-disk half is RED in a working tree whose `cli/dist` predates the
+ * prune (it reads the live bundle, which only the operator rebuilds); CI builds
+ * before it tests (`test.yml`, the cli-bats job), so there it is the green.
+ */
+const RESEARCH_ARTIFACT = /(^td\d+_)|(\.csv$)/;
+const VENDORED_SCRIPTS_PREFIX = "dist/brain-mcp-server/scripts/";
+
+/** The file name after the last `/` — the packlist is `/`-joined on every OS. */
+function packedBasename(p: string): string {
+  return p.slice(p.lastIndexOf("/") + 1);
+}
+
+describe("BR-101 — no research artifact ships from the vendored scripts/", () => {
+  it("packs no *.csv and no td<N>_ file under dist/brain-mcp-server/scripts/ — the tarball half", () => {
+    // Basename at ANY depth on purpose: the `find` is `-maxdepth 1` because
+    // TD-298 removed the only subdirectories, but a research corpus that
+    // arrives in a NEW subdirectory would ship untouched by all three rules —
+    // this half fires on it, and the fix is to widen the prune, not this test.
+    const stray = [...packedPaths()].filter(
+      (p) =>
+        p.startsWith(VENDORED_SCRIPTS_PREFIX) &&
+        RESEARCH_ARTIFACT.test(packedBasename(p)),
+    );
+    expect(
+      stray,
+      "research artifacts are in the published tarball again (BR-101). Every " +
+        "path listed is a `*.csv` or a `td<N>_` file under " +
+        "dist/brain-mcp-server/scripts/. The prune is the BR-101 loop " +
+        "in cli/scripts/copy-templates.sh (after TD-299's named list); if a " +
+        "path here does not match that loop, the shell and this regex have " +
+        "drifted apart — see `BR-101 MEASURED LAST` in this file.",
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("stages no *.csv and no td<N>_ file into cli/dist/brain-mcp-server/scripts/ — the on-disk half", () => {
+    const stagedScripts = join(
+      __dirname, "..", "..", "dist", "brain-mcp-server", "scripts",
+    );
+    if (!existsSync(stagedScripts)) {
+      // Same shape as bundleBuilt(): a clean checkout has no dist; CI always
+      // builds first. Skipping loudly beats a false red on a fresh clone.
+      console.warn(
+        "[tarball BR-101] skipped: cli/dist/brain-mcp-server/scripts absent " +
+          "— run `npm run build` in cli/ before this test.",
+      );
+      return;
+    }
+    const stray = readdirSync(stagedScripts).filter((name) =>
+      RESEARCH_ARTIFACT.test(name),
+    );
+    expect(
+      stray,
+      "research artifacts are on the STAGED surface (BR-101) — this is the " +
+        "live brain bundle, and what `npm pack` will ship. Either " +
+        "cli/dist predates the BR-101 prune (rebuild: `npm run build` in " +
+        "cli/ — operator-owned when this dist is the running brain) or the " +
+        "BR-101 loop in cli/scripts/copy-templates.sh no longer " +
+        "matches these names.",
+    ).toEqual([]);
+  });
+
+  it("still ships the one file the package READS from scripts/, and the precedent-shipped CLIs — the widening tripwire", () => {
+    // The inverse guard, TD-443's shape. A pattern widened to `*.ts` or `*`
+    // would take every survivor and BOTH halves above would stay GREEN.
+    //
+    // `render_brief_graph.template.html` is the ONE package-runtime file under
+    // scripts/: the compiled `dist/engine/components/edges/visualization-tool.js`
+    // ascends `../../../../scripts/` to read it (visualization-tool.ts, the
+    // `templatePath()` function), reached by `igris_brief_graph_render` and the
+    // `/visualize` skill. Losing it breaks graph rendering on every install.
+    //
+    // The three `.ts` are NOT runnable from the package — each imports
+    // `../src/*.js`, the bundle ships no `src/` and vendors no `tsx` — and ship
+    // by precedent (brief-type-vocabulary.md: "do not delete on sight"). A
+    // future brief that prunes that class retires these three names with a
+    // dated reason (test_standards convention 6) and keeps the template line.
+    const paths = packedPaths();
+    for (const name of [
+      "render_brief_graph.template.html",
+      "perception_extract_cli.ts",
+      "normalize_brief_types.ts",
+      "render_brief_graph.ts",
+    ]) {
+      const p = VENDORED_SCRIPTS_PREFIX + name;
+      expect(
+        paths.has(p),
+        `missing from the tarball: ${p} (BR-101). The research-artifact ` +
+          "prune in cli/scripts/copy-templates.sh matches `*.csv` and " +
+          "`^td[0-9]+_` ONLY; if this file is gone the pattern widened past " +
+          "that, or TD-299's named list gained a runtime name.",
+      ).toBe(true);
+    }
+  }, PACK_TIMEOUT_MS);
+
+  it("agrees with the shell prune on the boundary cases — the two spellings of one contract", () => {
+    // The shell loop in copy-templates.sh is the authority; this table is the
+    // three names that told round 1's glob apart from the contract, plus the
+    // one runtime survivor. `td9legacy_notes.ts` is the discriminator: digits
+    // NOT followed by `_` is not a research name (the glob pruned it; the
+    // contract keeps it). Change the shell and this table reds until the regex
+    // and the table move with it — the row's M3 mutation re-checks the rest.
+    const cases: Array<[string, boolean]> = [
+      ["td9legacy_notes.ts", false],
+      ["td12_probe.csv", true],
+      ["td7_probe.ts", true],
+      ["render_brief_graph.template.html", false],
+    ];
+    for (const [name, pruned] of cases) {
+      expect(
+        RESEARCH_ARTIFACT.test(name),
+        `RESEARCH_ARTIFACT disagrees with the shell prune on ${name}: the ` +
+          `contract says ${pruned ? "PRUNED" : "KEPT"} (BR-101, ` +
+          "copy-templates.sh `research_prefix` + `*.csv`).",
+      ).toBe(pruned);
+    }
   });
 });

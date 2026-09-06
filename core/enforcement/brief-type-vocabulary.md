@@ -169,10 +169,12 @@ the fold tables in `brief-normalize.ts` are packed. Only the repo-side validator
 (`scripts/`) and the bats trio are genuinely free. Do not repeat the claim that
 these observers are "outside the npm package" — the plan asserted it and it is
 false. `brain-mcp-server/scripts/normalize_brief_types.ts` is likewise packed
-into `dist/brain-mcp-server/scripts/`, which already ships eight comparable
-maintenance scripts (`td286_renormalize_backfill.ts`, `backfill_brief_edges.ts`,
+into `dist/brain-mcp-server/scripts/`, beside the other precedent-shipped
+maintenance CLIs (`fr219_embed_null_learnings.ts`, `backfill_brief_edges.ts`,
 …) — it follows that precedent rather than opening a new class, so **do not
-delete it on sight** as stray weight. The measured cost is recorded in the pack
+delete it on sight** as stray weight. (BR-101 prunes RESEARCH artifacts from
+that directory by pattern — `*.csv` and any `td<N>_`-prefixed file — so the
+maintenance class still ships and a `td<N>_` name is no longer part of it.) The measured cost is recorded in the pack
 ledger in `cli/src/__tests__/tarball.test.ts`; consult it before planning, not
 this doc, because the ledger is the surface that is kept current.
 

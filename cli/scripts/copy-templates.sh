@@ -192,10 +192,16 @@ rm -rf "$MCP_DEST/scripts/__tests__" "$MCP_DEST/scripts/fixtures"
 #   - perception_extract_cli.ts     — invoked by core/hooks/shared/
 #                                      perception_extract_and_persist.sh
 #   - render_brief_graph.{ts,template.html} — the standalone CLI the `visualize`
-#                                      skill points users at
+#                                      skill points users at. The .template.html
+#                                      is the ONE file the shipped package itself
+#                                      reads (dist/engine/components/edges/
+#                                      visualization-tool.js ascends to it).
 #   - gen-egress-manifest.ts, backfill_brief_edges.ts — package.json scripts
-#   - fr219_embed_null_learnings.ts, td286_renormalize_backfill.ts,
-#     reap-stale-instances.ts       — operational one-off migrations/ops CLIs
+#   - fr219_embed_null_learnings.ts, reap-stale-instances.ts
+#                                   — operational one-off migrations/ops CLIs
+# td286_renormalize_backfill.ts stood in this KEEP list from TD-299 until
+# BR-101 superseded that entry: it is a brief-numbered one-off with no shipped
+# consumer, so it now falls to the PATTERN prune below. Do not restore it here.
 for dev_script in \
   recall_bench.ts \
   dedup_corpus_eval.ts \
@@ -205,6 +211,38 @@ for dev_script in \
   td087_corpus_pairs_labeled.csv \
   td285_dedup_recall_audit.ts; do
   rm -f "$MCP_DEST/scripts/$dev_script"
+done
+
+# BR-101: prune RESEARCH ARTIFACTS by PATTERN. TD-445 landed a sweep script and
+# two labelled CSVs (479 KB unpacked, +77_529 packed B) that matched neither
+# TD-298's directory rule nor TD-299's named list above, and the pack ledger's
+# staging method could not see them (it stages COMPILED artifacts and never
+# runs this script — copying is not compiling). Two classes, one rule, tested
+# on the BASENAME of each top-level file (TD-298 already removed the only
+# subdirectories):
+#   *.csv        — a labelled corpus is never runtime
+#   ^td[0-9]+_   — a brief-numbered research or one-off script: `td`, one or
+#                  MORE digits, then `_` IMMEDIATELY. `td9legacy_notes.ts` is
+#                  NOT in the class (the digits are not followed by `_`).
+# The prefix is therefore a NAMING CONTRACT (MAINTAINING.md, the BR-101 row):
+# a script the shipped package must reach may NOT take a td<N>_ name, and a
+# research artifact MUST take it (or join TD-299's list). THIS BLOCK IS THE
+# AUTHORITATIVE SPELLING of the contract; the JS regex in
+# cli/src/__tests__/tarball.test.ts ("BR-101 — no research artifact ships")
+# is PINNED to agree with it on named boundary cases, so widening or
+# narrowing this block reds that pin until the regex moves with it.
+# A bash loop, not `find`: round 1's `-name 'td[0-9]*_*'` (td, ONE digit, ANY
+# run up to a `_`) was broader than the contract; `find -regex` / `-E` diverge
+# between BSD (macOS) and GNU (CI's Linux); and `[[ =~ ]]` with the pattern in
+# a VARIABLE is what bash 3.2 (/bin/bash here) treats as a regex.
+research_prefix='^td[0-9]+_'
+for f in "$MCP_DEST/scripts"/*; do
+  [ -f "$f" ] || continue
+  base="$(basename "$f")"
+  if [[ "$base" =~ $research_prefix ]] || [[ "$base" == *.csv ]]; then
+    echo "$base"
+    rm -f -- "$f"
+  fi
 done
 
 # Fail loud if the staged entrypoint is missing — a publish with a broken
