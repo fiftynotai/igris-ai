@@ -10,6 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.0] - 2026-09-07
+
+The CLI half of the 7.3.0 release (see the root `CHANGELOG.md` for the
+whole). New verbs: `igris kpi`, `igris ceremony` (FR-268), `igris dashboard`
+(FR-238). `igris install <path>` now projects the git-level gates (FR-243)
+and `igris doctor` reports `git-hooks-missing` / `secret-scan-disarmed` /
+`machine-identity` drift. `igris doctor --fix` no longer replaces
+`~/.igris/core/`, and `igris init --upgrade` / `igris refresh` share one
+core-source resolver that honours `~/.igris/.install-source.json` and refuse
+a real interrupted state (BR-103). The tarball is measured against a
+re-based floor with a +150 KB ceiling (TD-374, TD-444).
+
 ### Added
 
 - **Git-level gates for consumer projects (FR-243)** — `igris install <path>` step 7b symlinks `.git/hooks/{pre-commit,commit-msg}` -> `~/.igris/core/git-hooks/<name>` (landed by `igris refresh`; zero packed bytes). Backup-not-clobber for a hand-rolled hook; refuses under `core.hooksPath`, on a worktree, or before the first refresh; `--no-git-hooks` opts out. `igris doctor` adds `git-hooks-missing` (per project; `--fix`able — also fires on a NON-EXECUTABLE target, which git silently ignores) and `secret-scan-disarmed` (brain-level, informational: `gitleaks` not on PATH). The hook prints `[pre-commit] layers: phase-guard=… secret-scan=… repo-validators=…` on every run and scans with gitleaks' built-in rules when the repo has no `.gitleaks.toml` (previously: no scan, silently).

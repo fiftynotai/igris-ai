@@ -10,6 +10,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.0] - 2026-09-07
+
+Ninety-two commits since `v7.2.1` (counted 2026-09-07 with `git log
+v7.2.1..HEAD --oneline | wc -l`; 22 `feat`, 47 `fix`, 8 `docs`, 7 `test`, 4
+`chore`, 2 `ci`, 1 `perf`, 1 merge; no breaking change). The §17.2 pre-tag
+audit PASSED with zero P0/P1 broken-feature rows — the four briefs bypassed
+at `v7.2.1` are resolved: FR-243 and FR-251 shipped, TD-345 shipped, FR-236
+was explicitly downgraded to P2 on 2026-09-07 (research, no shipped
+behaviour depends on it).
+
+The release in one paragraph: the OS now **measures itself** (seven KPIs and
+a brain-timed ceremony record, FR-268; one durable `agent_events` row per
+agent invocation, FR-267), **projects its gates into consumer projects**
+(git-level pre-commit/commit-msg hooks arrive with `igris install`, FR-243),
+**keys identity to the machine rather than the hostname** (BR-100), and gets
+a **local dashboard** (`igris dashboard`, FR-238, with board/search/goal
+mutations FR-245–FR-250 and a diagnostics route FR-266). Under it: the brief
+vocabulary is normalised (TD-328, TD-333), `develop` CI is green for the
+first time in the workflow's history (TD-434) and now runs the brain suite
+(TD-312), and the npm tarball is 31 KB lighter with a measured ceiling
+(TD-443, TD-444, BR-101). The last fix in is BR-103: `igris doctor --fix`
+can no longer replace the runtime core.
+
+Upgrading a from-source machine: rebuild `cli/`, then `igris refresh
+--from-source <checkout> --yes` and `igris doctor`. Do NOT use `igris doctor
+--fix` on a pre-7.3.0 CLI to reach here — that is the BR-103 defect.
+
 ### Added
 
 - **Git-level gates reach consumer projects — and a half-installed gate now fails loudly (FR-243)** — measured 2026-07-29: `.git/hooks/` was EMPTY in `moca-ai-agent` and `mbrgea-ai` (the registry census on 2026-09-07 found 24 of 25 registered clones on this machine with zero non-sample hooks), and the one path a consumer could hand-copy was disarmed anyway: the gitleaks scan sat behind `[ -f .gitleaks.toml ]`, a file consumers never have, so a real `.env` backup with two live keys staged in moca produced `exit 0`, silent. Decision (plan §2, option B): the gates are a **property of being a registered Igris project**, not a fifth `igris add` surface (they target a per-clone `.git/hooks/`, not a harness — the surface contract has no axis for that). The canonical hooks moved to **`core/git-hooks/{pre-commit,commit-msg}`** (`scripts/git-hooks/*` are now tracked symlinks, so every citation and `install_git_hooks.sh` still resolve) and ride the core channel — `igris refresh` lands them at `~/.igris/core/git-hooks/` at ZERO packed bytes. **`igris install <path>` step 7b** symlinks `.git/hooks/{pre-commit,commit-msg}` there (backup-not-clobber `<hook>.pre-igris.bak.<epoch>`; REFUSES under `core.hooksPath` — a hook in `.git/hooks/` under husky never runs — and on a worktree or a missing mirror; `--no-git-hooks` opts out; `--dry-run` enumerates). **`igris doctor`** gains `git-hooks-missing` (per project: absent / foreign / dangling / **not executable** — git ignores such a hook with one `hint:` and commits anyway — / `core.hooksPath` bypass; `--fix` runs the installer, `chmod +x` only under `~/.igris/`) and `secret-scan-disarmed` (brain-level, informational: an installed pre-commit exists and `gitleaks` is not on PATH). The hook itself: **one `[pre-commit] layers: phase-guard=… secret-scan=… repo-validators=…` line on every run** (grammar pinned in MAINTAINING.md); the 27 igris-ai-internal validator sites are ONE inert region keyed on `IGRIS_REPO_INTERNAL` (`harness-manifest.json` + `brain-mcp-server/` + `scripts/git-hooks/` — a consumer never has all three; before, a consumer staging `core/skills/x/SKILL.md` was BLOCKED by `python3 …/validate_skill_frontmatter_yaml.py: No such file`); `--config .gitleaks.toml` only when present, gitleaks' built-in ruleset otherwise (the config is deliberately NOT projected — it embeds an operator-private IP family); a missing gitleaks prints a `SECRET SCAN DISARMED` box and still commits (TD-159 posture). **Shown RED first** in a sandbox consumer repo through a REAL `git commit` via the installed symlink (`test/git_hooks_consumer.test.bash`, root matrix — the `cli-bats` job has no gitleaks): the staged AKIA key was accepted with `exit=0` and NO output; after: `SECRET-SHAPED CONTENT DETECTED`, exit 1. `cli/tests/integration/install-git-hooks.bats` (8) and `doctor-drift-classes.bats` (+8) pin the installer rules and both classes. Backfilled on this machine: `moca-ai-agent`, `mbrgea-ai`; the other 22 zero-hook clones now show `git-hooks-missing` until the operator runs `igris install <path>` per project (or `igris doctor --fix` for all).
