@@ -360,6 +360,77 @@ TD-440's 0.226 could not be re-identified as one pair: 46 pairs in C1 score with
 figure was a maximum over a corpus this population does not carry, as the paragraph
 above already said of 0.244.
 
+**TD-452 anchor re-design (2026-09-07) — measured, not moved.** TD-445's read left two
+misses no threshold can reach because the rows never share a BLOCK: (1) a cross-project
+finding has no `project_slug`, so `entityKey` falls to the illustrative `evidence.brief_id`
+the model varies per run — `1822` / `1883` / `1885` ("N briefs In Progress 133–191 days")
+sit in `brief:br-074` / `brief:ts-003` / `brief:br-001`; (2) one finding filed under
+`global` (`1801`) and under `project:igris-ai` (`1888`), pairwise **0.414**, never
+compared. Two candidate anchor changes were measured against a rule pre-registered before
+any code (`plans/TD-452-plan.md` §1, TD-445's shape): every pair the change makes NEWLY
+comparable that `claimsMatch`es at 0.25 is labelled from per-row tags, and DIFFERENT must be
+0. The instrument is `brain-mcp-server/scripts/td452_anchor_sweep.ts` — both candidates are
+expressed as transformations of the SHIPPED matcher (never re-implemented): (a-narrow) =
+`entityKey` of the candidate with its evidence brief ids removed, taken only when the shipped
+anchor is `brief:` and the title names no id; (c) = compare `global` ↔ `project:*` in a second
+pass after the own block yields nothing. Copy of 1,912 rows, taken 2026-09-07 with
+`sqlite3 -readonly … .backup`; self-checks: the stored `entity_key` equals the imported
+`entityKey()` on 1,912 / 1,912 rows, TD-445's four scores, the brief's own four (0.238 /
+0.200 / 0.238 no-match; 0.414 match), and C1 @0.25 = 153. Tags: TD-445's
+`scripts/td445_row_findings.csv` plus 19 rows in `scripts/td452_row_findings.csv` (same rule;
+TD-445's tag wins on any overlap; a project-subset instance of a portfolio class is its own
+finding, TD-445's `lifeos_dark` ≠ `zero_learnings_projects` precedent).
+
+**Neither candidate ships.** The decision set, cut C2 (whole table, N = 442, 46 anchors,
+`id ASC`), pairwise at 0.25:
+
+| candidate | newly comparable pairs | SAME | DIFFERENT | EXCLUDED | highest DIFFERENT |
+|---|---|---|---|---|---|
+| (a-narrow) demote the evidence brief — 26 rows move, all slug-less, 24 → `global`, 2 → `learning:` | 52 | 43 | **9** (4 on TD-445's tags, all `stalled_detector_gap` × `zero_learnings_projects`) | 0 | `1434`/`1486` @ 0.303 (TD-445 tags); `1596`/`1614` @ 0.581 (subset-vs-class tag) |
+| (c) `global` ↔ `project:*`, second pass | 85 | 49 | **33** | 3 | `1291`/`1698` @ 0.387 — lifeOS-has-zero-learnings vs four-projects-have-zero-learnings |
+| (c), asymmetric: only a later `global` row crosses | 45 | 31 | **13** | 1 | same pair |
+| (c), asymmetric: only a later `project:` row crosses | 40 | 18 | **20** | 2 | `1486`/`1831` @ 0.333 |
+| (a-narrow) + (c) | 208 | 108 | **90** | 10 | `1596`/`1614` @ 0.581 |
+
+The plan's one pre-registered tightening of (a-narrow) — skip `brief:` only when the row
+also has no slug — is a no-op: all 26 moved rows are slug-less already. The DIFFERENT pairs
+are one class: portfolio findings whose claim tokens are the same LIST OF PROJECT NAMES
+("attendance_app, lifeOS, hadir-system, moca-hr-agent") attached to different findings (the
+stalled detector's scope vs zero learnings vs an inert roster). That is a discriminator
+property, out of this brief's scope; the anchor is what keeps them apart today.
+
+Beside the decision, not in it: replaying production's best-match loop on the same corpus
+(the two-pass form for (c)), the absorptions the shipped anchor could not make were — (a)
+alone 17 (16 SAME, 1 DIFFERENT: `1614` → `1596`); (c) alone **8, all SAME** (`1888` → `1801`
+@ 0.414 among them); (a) + (c) 30 (25 SAME, **5 DIFFERENT**, including family 1's own `1883`
+absorbed into `1676` "attendance_app carries four P1 briefs … In Progress 167 days" @ 0.270).
+The loop reading for (c) alone is clean because a same-block home wins first; the pairwise
+rule is the one that was pre-registered, it is the same conservative reading TD-445 decided
+on, and it is the one that decided here. A future brief that wants (c) must re-register the
+rule as loop-faithful BEFORE opening the list, and pay the greedy-head instability recorded
+above (the loop only decides which head absorbs). Cluster counts, for scale and never as the
+verdict — C1 (`created_at < 2026-09-03 12:42:03`, N = 410, 38 anchors) / C2 at 0.25, L2:
+shipped 153 / 181; (c) alone 151 / 178; (a) alone 146 / 174; both 141 / 166. Comparisons
+per candidate on C2: shipped mean 10.1 (max 39); (c) mean 15.7 (max 128); live pending bound
+under (c) 135 `global` + 56 `project:` = 191 of 223 pending rows.
+
+D-0, recorded at planning: family 1 could not have collapsed under ANY anchor at 0.25 — its
+pairwise scores are 0.238 / 0.200 / 0.238, and a number-word drop in `claimTokens` (option
+ii) measured 0.231 / 0.229 / 0.270, still not clearing the line on all three. Both families
+are pinned AS SPLITS in `__tests__/recurrence.test.ts` (live path, verbatim rows) and the
+pairs the anchor alone keeps apart in `__tests__/finding-key.test.ts` (`ANCHOR_HELD_PAIRS`:
+claim gate SAME, anchors unequal, scores to 3 dp). Rejected at planning and not re-argued: a
+`portfolio` anchor from a title regex (fixture-fit, does not touch miss 2, and (a-narrow)
+already sends the rows to `global`); demoting `learning:` (two "merge learning A into B"
+rows have identical claim tokens after the numeric drop — a guaranteed false-merge class);
+a `dedupe_cross_global` config key (a switch nobody would set). Recorded for the next
+attempt: an anchor change re-keys `dedupe_key` — it needs a schema bump that NULLs
+`dedupe_key` / `entity_key` and a JS backfill on the next run (v5's own mechanism), and
+`dismissed_patterns.evidence_signature` stops matching for every moved row. Of TD-445's seven
+un-merged re-emissions this brief closes NONE: `1880`/`1888` @ 0.209 and `1814`/`1823` @ 0.216
+stay TD-445's band; `1879`/`1887` reads DIFFERENT; the anchor half — `1883`, `1885` (below
+the line in any block) and `1888` (the 0.414 pair) — stays split on the evidence above.
+
 The trade is deliberate and asymmetric. **A false merge destroys a true finding** —
 TD-437 measured ~23 of ~25 distinct findings as true and actionable — while a missed
 merge only leaves the row count where it already was. So precision is the axis that

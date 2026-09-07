@@ -595,6 +595,288 @@ describe('TD-445 production window — three misses and one control, pinned as m
 });
 
 // ---------------------------------------------------------------------------
+// TD-452 — THE ANCHOR SPLITS: the pairs the anchor ALONE keeps apart
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Twelve real rows, read on 2026-09-07 from a read-only
+ * `.backup` of the operator brain (1,912 rows) — every field the stored
+ * column byte-for-byte, `entity_key` as the writer stamped it. Labels are
+ * TD-445's row tags (`scripts/td445_row_findings.csv`), derived per pair.
+ *
+ * WHAT THEY ARE. Every pair below MATCHES on the claim at the shipped
+ * threshold — `claimsMatch` says SAME — and is separated ONLY by
+ * `entityKey`. TD-452 measured the two anchor changes that would have made
+ * them comparable (`scripts/td452_anchor_sweep.ts`; the rule, pre-registered
+ * in `plans/TD-452-plan.md`: every newly comparable pair labelled, DIFFERENT
+ * must be 0 at 0.25):
+ *   - demote the illustrative `evidence.brief_id` when the title names no id
+ *     ("a-narrow") → 9 DIFFERENT of 52 (4 on TD-445's tags, all
+ *     `stalled_detector_gap` × `zero_learnings_projects`);
+ *   - compare `global` with `project:*` in a second pass ("cross-block") →
+ *     33 DIFFERENT of 85; its asymmetric narrowings 13 and 20.
+ * So the anchor did not move, and the last pair — family 2, the ONE
+ * production pair the second pass would have caught — is pinned as the cost.
+ * These cases red if an anchor change lands without re-reading that labelled
+ * set: the DIFFERENT pairs' anchors must stay UNEQUAL, and the claim gate must
+ * still say SAME (otherwise the pin is measuring the tokeniser, not the
+ * anchor). `docs/architecture/subconscious_engine.md` §"TD-452 anchor
+ * re-design" carries the census and the loop-faithful reading beside it.
+ */
+interface PinRow {
+  project_slug: string | null;
+  entity_key: string;
+  title: string;
+  evidence: string;
+  suggested_action: string | null;
+}
+
+const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
+  1291: {
+    project_slug: "lifeOS",
+    entity_key: "project:lifeos",
+    title:
+      "lifeOS has 14 open briefs including a P0-Critical a11y regression but zero learnings and no recorded activity — work is being briefed but nothing is being harvested",
+    evidence:
+      "{\"brief_id\":\"BR-023\",\"note\":\"lifeOS: open_briefs 14, learnings 0, days_since_activity null. BR-023 is P0-Critical, In Progress, 105 days since update. Same zero-learning profile applies to attendance_app (4 briefs) and fifty_eco_system (34 briefs).\"}",
+    suggested_action:
+      null,
+  },
+  1341: {
+    project_slug: "fifty_eco_system",
+    entity_key: "project:fifty_eco_system",
+    title:
+      "58 of 61 open suggestions are mechanical 'stalled'/'gap' rows for one project — the review queue is saturated and will bury any genuinely novel finding",
+    evidence:
+      "{\"note\":\"open_suggestions ids 4–32 and 40–42 are 'stalled' rows and 43–69 are 'gap' rows, nearly all project_slug=fifty_eco_system. Every one of those briefs shows days_since_update=169 or 148 — the same freeze, re-reported per brief. One rolled-up suggestion per (project, module) would carry the same information at 1/30th the review cost.\"}",
+    suggested_action:
+      "{\"kind\":\"collapse_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"group_by\":[\"project_slug\",\"source_module\"]}",
+  },
+  1355: {
+    project_slug: "fifty_eco_system",
+    entity_key: "project:fifty_eco_system",
+    title:
+      "60 of the 60 open suggestions are mechanical stalled/gap rows on fifty_eco_system — the review queue is saturated and will hide any real finding",
+    evidence:
+      "{\"note\":\"open_suggestions ids 4–42 are 'stalled' rows and 43–69 are 'marked Done but has unchecked acceptance criteria' rows, nearly all project_slug fifty_eco_system. This is one decision (what to do with the dormant fifty_eco_system backlog), fragmented into 60 items. Recommend a single bulk disposition rather than per-brief triage.\"}",
+    suggested_action:
+      null,
+  },
+  1430: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "Four active projects with open briefs have recorded zero learnings — attendance_app (4 briefs), lifeOS (14), hadir-system (1), moca-hr-agent (1) — so nothing from that work is reaching the brain",
+    evidence:
+      "{\"note\":\"projects[] shows learnings=0 and days_since_activity=null for attendance_app, lifeOS, hadir-system, moca-hr-agent, customerpulse and igris-os-eval. lifeOS in particular carries 14 open briefs including a P0-Critical (BR-023) — either work happens outside the harness or the activity/learning pipeline is not wired for these projects.\"}",
+    suggested_action:
+      "{\"kind\":\"investigate_project_wiring\",\"project_slugs\":[\"lifeOS\",\"attendance_app\",\"hadir-system\",\"moca-hr-agent\"]}",
+  },
+  1434: {
+    project_slug: null,
+    entity_key: "brief:br-001",
+    title:
+      "The stalled detector appears to miss projects with null days_since_activity — attendance_app, lifeOS, hadir-system and hadir briefs idle 118–159 days produce no suggestions",
+    evidence:
+      "{\"brief_id\":\"BR-001\",\"note\":\"hadir-system BR-001 (In Progress, 159 days), hadir BR-027/BR-028 (In Progress, 131–133 days) and lifeOS BR-024..BR-036 (118 days) are all older than the fifty_eco_system briefs that did fire at 48 days, yet none appear in open_suggestions. attendance_app BR-001 fired but its three In Progress siblings did not.\"}",
+    suggested_action:
+      null,
+  },
+  1474: {
+    project_slug: null,
+    entity_key: "brief:br-001",
+    title:
+      "The stalled-brief detector appears scoped to two projects — hadir, hadir-system, igris-ai and lifeOS all have 110+ day stale briefs with no corresponding suggestion",
+    evidence:
+      "{\"brief_id\":\"BR-001\",\"note\":\"hadir-system BR-001 (160 days), hadir BR-027 (134 days), igris-ai FR-112/FR-114/FR-115 (113 days) all exceed the ~48-day threshold that produced suggestions 39-42 for attendance_app/fifty_eco_system, yet none of these projects appear in open_suggestions at all.\"}",
+    suggested_action:
+      "{\"kind\":\"audit_module\",\"module\":\"stalled\",\"note\":\"verify project enumeration and threshold application across all active projects\"}",
+  },
+  1486: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work there is not reaching the brain",
+    evidence:
+      "{\"note\":\"projects rows: lifeOS (14 open briefs, 0 learnings, null activity), attendance_app (4/0/null), hadir-system (1/0/null), moca-hr-agent (1/0/null). Meanwhile briefs in lifeOS and attendance_app carry recent-ish update timestamps (118-156 days), so briefs are being written for these projects but no session activity or learning is being captured — the instrumentation, not the work, is likely missing.\"}",
+    suggested_action:
+      "{\"kind\":\"investigate_instrumentation\",\"project_slugs\":[\"lifeOS\",\"attendance_app\",\"hadir-system\",\"moca-hr-agent\"]}",
+  },
+  1495: {
+    project_slug: "lifeOS",
+    entity_key: "project:lifeos",
+    title:
+      "lifeOS has 14 open briefs including a P0 accessibility regression but zero learnings and no recorded activity — the brain is capturing nothing from this project",
+    evidence:
+      "{\"brief_id\":\"BR-023\",\"note\":\"Project row shows learnings=0 and days_since_activity=null while 14 briefs (BR-023 P0-Critical, plus BR-024..BR-036) sit Ready/In Progress at 118-119 days. Same shape for attendance_app, hadir-system, moca-hr-agent — likely briefs imported without a working session attached.\"}",
+    suggested_action:
+      null,
+  },
+  1596: {
+    project_slug: null,
+    entity_key: "brief:br-024",
+    title:
+      "Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is either happening outside the brain or these are dead entries",
+    evidence:
+      "{\"brief_id\":\"BR-024\",\"note\":\"Project rows show learnings 0 and days_since_activity null for lifeOS, attendance_app, hadir-system, moca-hr-agent, while lifeOS carries 14 open briefs (e.g. BR-024). Learning 1366 documents a related failure mode: perception runs advancing watermarks for tables they never push.\"}",
+    suggested_action:
+      null,
+  },
+  1698: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "Four projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is being briefed but never executed or never harvested",
+    evidence:
+      "{\"note\":\"Project rows: lifeOS (14 open_briefs, 0 learnings, days_since_activity null), attendance_app (4, 0, null), hadir-system (1, 0, null), moca-hr-agent (1, 0, null). 20 open briefs total behind projects the brain has never observed activity on. Contrast with igris-ai/mbrgea-ai/moca-ai-agent, all at days_since_activity 0. Either these projects are worked outside the brain's view (an instrumentation gap) or the briefs are dead inventory.\"}",
+    suggested_action:
+      null,
+  },
+  1801: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "44 of the 60 open suggestions are low-value edge_inference rows — the operator's review queue is 73% noise, which will bury the 16 substantive findings",
+    evidence:
+      "{\"note\":\"open_suggestions ids 1712–1755 are all source_module='edge_inference', each proposing a single learning→learning edge (e.g. 'Inferred related_to edge: learning 224 → learning 227'). These are mechanical graph links, not operator decisions. They should be auto-applied below a confidence threshold, batched into one review item, or routed to a separate queue — not interleaved with findings like 1697 (the only P0 brief stalled 130 days).\"}",
+    suggested_action:
+      "{\"kind\":\"reroute_suggestion_module\",\"source_module\":\"edge_inference\",\"note\":\"Auto-apply or batch edge_inference proposals; keep the review queue for judgement calls.\"}",
+  },
+  1888: {
+    project_slug: "igris-ai",
+    entity_key: "project:igris-ai",
+    title:
+      "44 of 60 open suggestions are low-value edge_inference rows — they crowd out substantive findings in the review queue and should be batched or auto-applied rather than queued individually",
+    evidence:
+      "{\"note\":\"open_suggestions ids 1712–1755 are all source_module=edge_inference, each proposing a single learning→learning edge. They occupy 73% of the operator's queue while carrying no decision content. Commit 6d077a1 ('fix(subconscious): dedup findings on a key stable under LLM paraphrase') shows queue quality is already a known concern; edge inference is the remaining volume source.\"}",
+    suggested_action:
+      "{\"kind\":\"change_suggestion_routing\",\"source_module\":\"edge_inference\",\"from\":\"individual_queued_suggestion\",\"to\":\"batched_review_or_auto_apply_above_threshold\"}",
+  },
+};
+
+const ANCHOR_HELD_PAIRS = [
+  {
+    ids: [1434, 1486] as const,
+    score: 0.303,
+    label: 'DIFFERENT',
+    design: 'a-narrow',
+    note: "stalled_detector_gap × zero_learnings_projects — the highest DIFFERENT pair (on TD-445's tags) that demoting the evidence brief admits",
+  },
+  {
+    ids: [1434, 1596] as const,
+    score: 0.27,
+    label: 'DIFFERENT',
+    design: 'a-narrow',
+    note: "stalled_detector_gap × zero_learnings_projects",
+  },
+  {
+    ids: [1434, 1698] as const,
+    score: 0.265,
+    label: 'DIFFERENT',
+    design: 'a-narrow',
+    note: "stalled_detector_gap × zero_learnings_projects",
+  },
+  {
+    ids: [1474, 1486] as const,
+    score: 0.25,
+    label: 'DIFFERENT',
+    design: 'a-narrow',
+    note: "stalled_detector_gap × zero_learnings_projects — exactly on the line",
+  },
+  {
+    ids: [1291, 1698] as const,
+    score: 0.387,
+    label: 'DIFFERENT',
+    design: 'cross-block',
+    note: "lifeos_dark × zero_learnings_projects — the highest DIFFERENT pair that comparing global with project:* admits",
+  },
+  {
+    ids: [1341, 1801] as const,
+    score: 0.31,
+    label: 'DIFFERENT',
+    design: 'cross-block',
+    note: "queue_flood_stalled_gap × edge_inference_flood — two different floods",
+  },
+  {
+    ids: [1430, 1495] as const,
+    score: 0.303,
+    label: 'DIFFERENT',
+    design: 'cross-block',
+    note: "zero_learnings_projects × lifeos_dark",
+  },
+  {
+    ids: [1355, 1801] as const,
+    score: 0.296,
+    label: 'DIFFERENT',
+    design: 'cross-block',
+    note: "queue_flood_stalled_gap × edge_inference_flood",
+  },
+  {
+    ids: [1801, 1888] as const,
+    score: 0.414,
+    label: 'SAME',
+    design: 'cross-block',
+    note: "family 2 — the cost of the decision: the one SAME production pair the anchor also keeps apart",
+  },
+] as const;
+
+describe('TD-452 anchor splits — the claim gate says SAME, the anchor says no (measured, not moved)', () => {
+  const pinRow = (id: number): PinRow => {
+    const row = ANCHOR_HELD_ROWS[id];
+    expect(row, `no pinned row ${id}`).toBeDefined();
+    return row!;
+  };
+
+  it.each(ANCHOR_HELD_PAIRS)('$ids scores the recorded $score', (p) => {
+    expect(
+      claimSimilarity(claimTokens(pinRow(p.ids[0]).title), claimTokens(pinRow(p.ids[1]).title)),
+    ).toBeCloseTo(p.score, 3);
+  });
+
+  it.each(ANCHOR_HELD_PAIRS)('$ids MATCHES on the claim at the shipped threshold — $note', (p) => {
+    // The arming half: a pair the claim gate refuses would pass the anchor
+    // assertion below for the wrong reason.
+    expect(match(pinRow(p.ids[0]).title, pinRow(p.ids[1]).title)).toBe(true);
+  });
+
+  it.each(ANCHOR_HELD_PAIRS)('$ids is kept apart by the ANCHOR alone ($design)', (p) => {
+    const a = pinRow(p.ids[0]);
+    const b = pinRow(p.ids[1]);
+    const anchorA = entityKey(candidateFromRow(a));
+    const anchorB = entityKey(candidateFromRow(b));
+    // The stored column IS the shipped anchor — reds if the writer drifts.
+    expect(anchorA).toBe(a.entity_key);
+    expect(anchorB).toBe(b.entity_key);
+    expect(anchorA).not.toBe(anchorB);
+  });
+
+  it('the a-narrow pairs are split by an evidence brief the title never names', () => {
+    for (const p of ANCHOR_HELD_PAIRS.filter((x) => x.design === 'a-narrow')) {
+      const briefSide = [pinRow(p.ids[0]), pinRow(p.ids[1])].find((r) =>
+        r.entity_key.startsWith('brief:'),
+      );
+      expect(briefSide, `${p.ids.join('/')} has no brief: side`).toBeDefined();
+      expect(subjectIds(briefSide!.title).size).toBe(0);
+    }
+  });
+
+  it('the cross-block pairs are global × project:, the shape the second pass would compare', () => {
+    for (const p of ANCHOR_HELD_PAIRS.filter((x) => x.design === 'cross-block')) {
+      const classes = [pinRow(p.ids[0]), pinRow(p.ids[1])]
+        .map((r) => r.entity_key.split(':')[0])
+        .sort();
+      expect(classes).toEqual(['global', 'project']);
+    }
+  });
+
+  it('both arms are present — the gate cannot pass on one label alone', () => {
+    const labels = new Set(ANCHOR_HELD_PAIRS.map((p) => p.label));
+    expect(labels).toEqual(new Set(['DIFFERENT', 'SAME']));
+    expect(ANCHOR_HELD_PAIRS.filter((p) => p.label === 'DIFFERENT').length).toBeGreaterThanOrEqual(8);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // backfillFindingKeys
 // ---------------------------------------------------------------------------
 

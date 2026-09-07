@@ -22,6 +22,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { runSubconscious } from '../runner.js';
 import { subconsciousMigrations } from '../schema.js';
+import { claimOf, claimSimilarity, claimTokens, claimsMatch } from '../finding-key.js';
 import {
   DEFAULT_SUBCONSCIOUS_CONFIG,
   type SubconsciousConfig,
@@ -437,5 +438,261 @@ describe('TD-440 AC-5 — rows carry their producer', () => {
     } finally {
       db.close();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-452 — the two anchor splits, pinned AS SPLITS (measured, not moved)
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Six real rows from TD-445's production window, read on
+ * 2026-09-07 from a `sqlite3 -readonly … .backup` copy of the operator brain —
+ * every column below is the stored value byte-for-byte, `entity_key` as the
+ * deployed writer stamped it. Nothing was edited to make a case pass. The
+ * digest whitelist is seeded with the three brief ids the model cited in
+ * `evidence` (the validator rejects a citation the digest does not carry),
+ * which reproduces the live condition rather than editing the rows.
+ *
+ * THE TWO ANCHOR-LEVEL MISSES. (1) A cross-project finding has no
+ * `project_slug`, so `entityKey` falls to the ILLUSTRATIVE
+ * `evidence.brief_id`, which the model varies per run: 1822 / 1883 / 1885 sit
+ * in `brief:br-074` / `brief:ts-003` / `brief:br-001` — one finding, three
+ * blocks. (2) The same finding was filed under `global` (1801) and under
+ * `project:igris-ai` (1888) and the two blocks are never compared, at a
+ * pairwise 0.414 well above the line.
+ *
+ * WHY THEY ARE PINNED AS MISSES AND NOT FIXED. TD-452 measured both candidate
+ * anchor changes against the pre-registered rule (every pair the change
+ * makes newly comparable, labelled, DIFFERENT must be 0 at 0.25 —
+ * `scripts/td452_anchor_sweep.ts`, tags in `scripts/td445_row_findings.csv` +
+ * `scripts/td452_row_findings.csv`). Demoting the evidence brief admits 9
+ * DIFFERENT pairs (4 on TD-445's own tags — `stalled_detector_gap` ×
+ * `zero_learnings_projects`, 1434/1486 @ 0.303 the highest); comparing
+ * `global` with `project:*` admits 33 (1291/1698 @ 0.387), and its asymmetric
+ * narrowings 13 and 20. So the anchor stayed and these cases red if a future
+ * anchor change lands WITHOUT re-reading that labelled set —
+ * `docs/architecture/subconscious_engine.md` §"TD-452 anchor re-design".
+ * Family 1 would not have collapsed either way: its pairwise scores
+ * (0.238 / 0.200 / 0.238) are below the line (D-0 at planning).
+ */
+interface Row {
+  id: number;
+  source_module: string;
+  project_slug: string | null;
+  entity_key: string;
+  priority: 'low' | 'medium' | 'high';
+  confidence: number;
+  title: string;
+  evidence: string;
+  suggested_action: string | null;
+}
+
+const ROW_1801: Row = {
+  id: 1801,
+  source_module: "suggestion_channel_flooded",
+  project_slug: null,
+  entity_key: "global",
+  priority: "high",
+  confidence: 0.8,
+  title:
+    "44 of the 60 open suggestions are low-value edge_inference rows — the operator's review queue is 73% noise, which will bury the 16 substantive findings",
+  evidence:
+    "{\"note\":\"open_suggestions ids 1712–1755 are all source_module='edge_inference', each proposing a single learning→learning edge (e.g. 'Inferred related_to edge: learning 224 → learning 227'). These are mechanical graph links, not operator decisions. They should be auto-applied below a confidence threshold, batched into one review item, or routed to a separate queue — not interleaved with findings like 1697 (the only P0 brief stalled 130 days).\"}",
+  suggested_action:
+    "{\"kind\":\"reroute_suggestion_module\",\"source_module\":\"edge_inference\",\"note\":\"Auto-apply or batch edge_inference proposals; keep the review queue for judgement calls.\"}",
+};
+
+const ROW_1888: Row = {
+  id: 1888,
+  source_module: "self_referential_finding_risk",
+  project_slug: "igris-ai",
+  entity_key: "project:igris-ai",
+  priority: "medium",
+  confidence: 0.65,
+  title:
+    "44 of 60 open suggestions are low-value edge_inference rows — they crowd out substantive findings in the review queue and should be batched or auto-applied rather than queued individually",
+  evidence:
+    "{\"note\":\"open_suggestions ids 1712–1755 are all source_module=edge_inference, each proposing a single learning→learning edge. They occupy 73% of the operator's queue while carrying no decision content. Commit 6d077a1 ('fix(subconscious): dedup findings on a key stable under LLM paraphrase') shows queue quality is already a known concern; edge inference is the remaining volume source.\"}",
+  suggested_action:
+    "{\"kind\":\"change_suggestion_routing\",\"source_module\":\"edge_inference\",\"from\":\"individual_queued_suggestion\",\"to\":\"batched_review_or_auto_apply_above_threshold\"}",
+};
+
+const ROW_1822: Row = {
+  id: 1822,
+  source_module: "in_progress_status_is_meaningless",
+  project_slug: null,
+  entity_key: "brief:br-074",
+  priority: "high",
+  confidence: 0.8,
+  title:
+    "Eleven briefs across five projects are marked 'In Progress' with 132–191 days since update — 'In Progress' is being used as a filing state, not a work state, so no dashboard can tell what is actually being worked on",
+  evidence:
+    "{\"brief_id\":\"BR-074\",\"note\":\"In Progress + stale: BR-074/BR-076/TD-004/TD-006/TD-007/TS-003 (fifty_eco_system, 170-191d), BR-001 hadir-system (175d), BR-002/BR-003/BR-004 attendance_app (170d), BR-027/BR-028 hadir (147-149d), BR-023 lifeOS (132d). Meanwhile igris-ai/mbrgea-ai/moca-ai-agent show days_since_activity 0 with work shipping. Suggestion 1697 covers BR-023 alone; this is the systemic version — a staleness rule that auto-demotes In Progress back to Ready.\"}",
+  suggested_action:
+    "{\"kind\":\"add_brain_gate\",\"gate\":\"stale_in_progress_demotion\",\"rule\":\"A brief in status 'In Progress' with no update for N days (suggest 30) is auto-demoted to 'Ready' and flagged, so 'In Progress' always means someone is on it\"}",
+};
+
+const ROW_1883: Row = {
+  id: 1883,
+  source_module: "in_progress_status_unreliable",
+  project_slug: null,
+  entity_key: "brief:ts-003",
+  priority: "medium",
+  confidence: 0.7,
+  title:
+    "Ten briefs are 'In Progress' with 133–191 days since update across five projects with zero recorded activity — 'In Progress' has decayed into a synonym for 'abandoned mid-flight' and no longer signals anything to the operator",
+  evidence:
+    "{\"brief_id\":\"TS-003\",\"note\":\"In Progress + stale: BR-074, BR-076, TD-004, TD-006, TD-007 (191d), BR-002/003/004 attendance_app and TS-003 (171d), BR-001 hadir-system (175d), BR-027/BR-028 hadir (147-149d), BR-023 lifeOS (133d). attendance_app and lifeOS both report days_since_activity null, so nothing was ever in progress. Suggestion 1697 covers only BR-023; this is the class.\"}",
+  suggested_action:
+    "{\"kind\":\"bulk_status_reset\",\"rule\":\"In Progress with no project activity for >90 days reverts to Ready or Deferred with a note\",\"affected_count\":12}",
+};
+
+const ROW_1885: Row = {
+  id: 1885,
+  source_module: "stale_in_progress_across_system",
+  project_slug: null,
+  entity_key: "brief:br-001",
+  priority: "high",
+  confidence: 0.72,
+  title:
+    "Fourteen briefs across six projects sit at 'In Progress' with 133–191 days since update — no project has more than one genuinely active workstream, so the In Progress set is almost entirely false",
+  evidence:
+    "{\"brief_id\":\"BR-001\",\"note\":\"In Progress briefs with null or ancient activity: attendance_app BR-002/BR-003/BR-004 (171d, activity null), hadir-system BR-001 (175d, activity null), hadir BR-027/BR-028 (147-149d, activity 126d), lifeOS BR-023 (133d, activity null), fifty_eco_system BR-074/BR-076/TD-004/TD-006/TD-007/TS-003 (191d, activity 188d). A system-wide status hygiene pass is needed, not per-project fixes.\"}",
+  suggested_action:
+    "{\"kind\":\"propose_status_hygiene_rule\",\"rule\":\"auto-flag any brief in 'In Progress' whose project has no activity for N days, and require a resume-or-reset decision\",\"threshold_days\":60}",
+};
+
+const ROW_1880: Row = {
+  id: 1880,
+  source_module: "self_diagnosis_from_own_commits",
+  project_slug: "igris-ai",
+  entity_key: "project:igris-ai",
+  priority: "high",
+  confidence: 0.7,
+  title:
+    "The digest's own edge_inference module emitted 44 of 60 open suggestions as one-line 'inferred edge' rows over learnings 6–1447, drowning the 17 substantive findings — the subconscious queue needs the same dedup/batching treatment commit 6d077a1 applied to findings",
+  evidence:
+    "{\"note\":\"open_suggestions ids 1712–1755 are all source_module=edge_inference, each proposing a single graph edge, many over learnings from the 6–425 range (i.e. long-settled history). Commit 6d077a1 'fix(subconscious): dedup findings on a key stable under LLM paraphrase' shows the noise problem is already recognized for findings but not for edge proposals. An operator review queue where 73% of rows are mechanical edge assertions is one an operator stops reading.\"}",
+  suggested_action:
+    "{\"kind\":\"batch_or_autoapply_suggestion_module\",\"source_module\":\"edge_inference\",\"proposal\":\"auto-apply high-confidence edges without operator review, or collapse into a single batched 'N inferred edges' row\"}",
+};
+
+/** The model's response for one stored row — the columns, re-inflated. */
+function emit(...rs: Row[]): string {
+  return JSON.stringify(
+    rs.map((r) => ({
+      kind: r.source_module,
+      project_slug: r.project_slug,
+      title: r.title,
+      priority: r.priority,
+      confidence: r.confidence,
+      evidence: JSON.parse(r.evidence) as Record<string, unknown>,
+      ...(r.suggested_action
+        ? { suggested_action: JSON.parse(r.suggested_action) as Record<string, unknown> }
+        : {}),
+    })),
+  );
+}
+
+/** The ids family 1 cites in `evidence` must be in the digest to pass the validator. */
+function seedCitedBriefs(db: Database.Database): void {
+  const ins = db.prepare(
+    `INSERT INTO brief_status (project, brief_id, title, status, priority, updated_at)
+     VALUES (?, ?, ?, 'In Progress', 'P2', '2026-03-01 00:00:00')`,
+  );
+  ins.run('fifty_eco_system', 'BR-074', 'stale one');
+  ins.run('fifty_eco_system', 'TS-003', 'stale two');
+  ins.run('hadir-system', 'BR-001', 'stale three');
+}
+
+function anchorsById(db: Database.Database): Array<[number, string]> {
+  return rows(db).map((r) => [r.id, r.entity_key as string]);
+}
+
+const score = (a: Row, b: Row): number =>
+  claimSimilarity(claimTokens(a.title), claimTokens(b.title));
+const matches = (a: Row, b: Row): boolean =>
+  claimsMatch(
+    claimOf(a.title),
+    claimOf(b.title),
+    RUNNABLE_CONFIG.dedupe_claim_overlap,
+    RUNNABLE_CONFIG.dedupe_min_claim_tokens,
+  );
+
+describe('TD-452 — the two anchor splits, pinned as measured (the anchor did not move)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeBrain();
+    seedCitedBriefs(db);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it('family 2: the same finding under `global` and `project:igris-ai` files TWO rows (1801 then 1888) — the pair would merge on claim alone', async () => {
+    const deps = statefulDeps([emit(ROW_1801), emit(ROW_1888)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(1);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    // The claim gate says SAME at 0.414; the blocks are what keep them apart.
+    expect(score(ROW_1801, ROW_1888)).toBeCloseTo(0.414, 3);
+    expect(matches(ROW_1801, ROW_1888)).toBe(true);
+    expect(anchorsById(db)).toEqual([
+      [1, 'global'],
+      [2, 'project:igris-ai'],
+    ]);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
+    // Comparing the two blocks would admit 33 pairs hand-labelled DIFFERENT at
+    // the same threshold (measured 2026-09-07) — so this stays a miss.
+  });
+
+  it('family 1: three phrasings of one cross-project finding land in THREE blocks (1822, then 1883 + 1885) — and would not merge in one', async () => {
+    const deps = statefulDeps([emit(ROW_1822), emit(ROW_1883, ROW_1885)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(1);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    // THE SPLIT: the anchor is the illustrative brief each run cited.
+    expect(anchorsById(db)).toEqual([
+      [1, 'brief:br-074'],
+      [2, 'brief:ts-003'],
+      [3, 'brief:br-001'],
+    ]);
+    // AND THE BELOW-LINE MISS (D-0): put in one block they are compared, not
+    // merged — every pair scores under 0.25, TD-445's threshold question.
+    expect(score(ROW_1822, ROW_1883)).toBeCloseTo(0.238, 3);
+    expect(score(ROW_1822, ROW_1885)).toBeCloseTo(0.2, 3);
+    expect(score(ROW_1883, ROW_1885)).toBeCloseTo(0.238, 3);
+    expect(matches(ROW_1822, ROW_1883)).toBe(false);
+    expect(matches(ROW_1822, ROW_1885)).toBe(false);
+    expect(matches(ROW_1883, ROW_1885)).toBe(false);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
+  });
+
+  it('the live three-row shape: 1888 opens its own row beside 1801 (global) and 1880 (its same-block 0.209 miss)', async () => {
+    const deps = statefulDeps([emit(ROW_1801, ROW_1880), emit(ROW_1888)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(2);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(score(ROW_1880, ROW_1888)).toBeCloseTo(0.209, 3);
+    expect(anchorsById(db)).toEqual([
+      [1, 'global'],
+      [2, 'project:igris-ai'],
+      [3, 'project:igris-ai'],
+    ]);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
+  });
+
+  it('NEGATIVE CONTROL: a `brief:`-anchored portfolio row and a `project:` row with different claims stay two rows', async () => {
+    const deps = statefulDeps([emit(ROW_1822), emit(ROW_1880)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(matches(ROW_1822, ROW_1880)).toBe(false);
+    expect(count(db)).toBe(2);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
   });
 });

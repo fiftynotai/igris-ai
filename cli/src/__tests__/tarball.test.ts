@@ -1833,6 +1833,50 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * TD-452 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * a MEASURED-NOT-MOVED brief, and the first row to record a ZERO spend by
+ * the BR-101 / TD-444 method rather than assume one. MEASURED ON A SCRATCH
+ * BUILD THAT RAN `copy-templates.sh`, BOTH arms: `git archive <rev> cli
+ * brain-mcp-server harness-manifest.json` (the control at develop
+ * `bfa3e5b`; the final arm from a `git write-tree` of the working tree —
+ * no commit — so the two new research artifacts were IN the archive), the
+ * three `node_modules` symlinked (root + both packages), `dist` ABSENT so
+ * the copy step's own trigger rebuilt the brain; the TD-426 smoke printed
+ * `(sandboxed)`; `npm pack --dry-run --json --ignore-scripts` twice per
+ * arm. `cli/dist` (`index.js` `Sep  6 21:13:36`) and `brain-mcp-server/dist`
+ * were never written; `~/.igris/config.json` sha unchanged. npm 10.9.8,
+ * node v22.23.2, darwin/arm64. The checksum column is npm's `shasum`.
+ *   control             1_849_991    unpacked 6_732_457, 535 entries, shasum
+ *                                    `d1fe74000271263454dbe1d9e0ea682e3d65c89f`
+ *                                    — the scratch at develop `bfa3e5b`,
+ *                                    taken twice, byte- and sha-identical to
+ *                                    BR-100's MEASURED LAST below.
+ *   packed              1_849_991    unpacked 6_732_457, 535 entries, the
+ *                                    SAME shasum, taken twice, on the final
+ *                                    tree. BR-101's prune listed SEVEN names
+ *                                    on this arm — the five it listed at
+ *                                    BR-100 plus `td452_anchor_sweep.ts` and
+ *                                    `td452_row_findings.csv` — and the
+ *                                    staged `scripts/` held the same 10
+ *                                    files; the manifest carries no `td45`
+ *                                    path.
+ *   TD-452's own share  +0 B         by MEASUREMENT: the brief changed no
+ *                                    packed file. The anchor did not move
+ *                                    (its two candidates each admitted
+ *                                    hand-labelled DIFFERENT pairs at 0.25 —
+ *                                    9 and 33 — under the pre-registered
+ *                                    rule), so `finding-key.ts` and the
+ *                                    match loop are byte-identical to HEAD;
+ *                                    the diff is two `__tests__/` files
+ *                                    (excluded from the emit), two pruned
+ *                                    research artifacts, `docs/` and
+ *                                    `MAINTAINING.md`. Recorded so the next
+ *                                    brief does not read "no ledger row" as
+ *                                    "unmeasured".
+ *   cumulative delta    +6_715 B     unchanged (1_849_991 − 1_843_276)
+ *   headroom remaining  146_885 B    unchanged (153_600 − 6_715)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
  * BR-100 MEASURED LAST (2026-09-06), after its final code-touching step —
  * LANDED, the first consumer of TD-444's re-based grant. MEASURED ON A SCRATCH
  * BUILD THAT RAN `copy-templates.sh` — the BR-101 / TD-444 method. This
