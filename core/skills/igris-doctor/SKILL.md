@@ -81,9 +81,15 @@ Render in this order:
 
 1. **Broken:** `brain-core-missing`, `bridge-missing`, `mcp-unregistered`,
    `hooks-missing`, `hooks-stale`, `skills-pollution`,
-   `antigravity-skills-link`, `path-missing`
+   `antigravity-skills-link`, `path-missing`, `git-hooks-missing` (a
+   registered git repo whose `.git/hooks/{pre-commit,commit-msg}` are absent,
+   foreign, dangling, not executable, or bypassed by `core.hooksPath` — every
+   git-level gate is inert there; the row's text names the cause)
 2. **Degraded / needs judgment:** `secret-perms`, `brain-core-stale`,
-   `channel-mismatch`, `duplicate-path`
+   `channel-mismatch`, `duplicate-path`, `secret-scan-disarmed` (`gitleaks` is
+   not on PATH, so every installed Igris `pre-commit` on this machine runs with
+   `secret-scan=DISARMED` — commits are NOT scanned for credentials; the fix is
+   an operator install, `brew install gitleaks`)
 3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`,
    `machine-identity` (the machine's hostname drifted from its recorded
    identity, or local rows carry hostnames its alias list does not cover — an
@@ -108,6 +114,12 @@ The safe deterministic classes are:
 - `hooks-missing`
 - `hooks-stale`
 - `antigravity-skills-link`
+- `git-hooks-missing` — EXCEPT a row whose text says `core.hooksPath=…
+  bypasses .git/hooks`: that one is reported, never fixed (the operator adds
+  the hooks to their husky/lefthook pipeline). `--fix` backs up any
+  non-symlink hook as `<hook>.pre-igris.bak.<epoch>` before replacing it, and
+  refuses (row stays) when `~/.igris/core/git-hooks/` is absent — run
+  `igris refresh` first.
 
 Treat `skills-pollution` as **mixed**, not blanket-safe. It can contain safe
 migration/stray-projection cleanup, but it can also contain unexpected target
@@ -142,6 +154,10 @@ This is especially important for:
 - `machine-identity`: informational and never auto-fixed. Add to `config.json`
   `machine.aliases` ONLY hostnames this machine has actually used; a name from
   another machine would attribute its rows to this one.
+- `secret-scan-disarmed`: informational and never auto-fixed — the fix is a
+  binary the operator installs (`brew install gitleaks`, or the gitleaks
+  releases page). Until then every commit in every hook-installed project
+  prints a DISARMED box and is NOT scanned.
 - `brain-core-stale` / `channel-mismatch`: these may require a channel or upgrade
   decision.
 

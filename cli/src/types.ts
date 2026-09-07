@@ -84,7 +84,11 @@ export interface DriftRow {
     | "secret-perms"
     | "skills-pollution"
     | "antigravity-skills-link"
-    | "machine-identity";
+    | "machine-identity"
+    /** FR-243: per-project — `.git/hooks/{pre-commit,commit-msg}` absent, foreign, dangling, or not executable; `--fix`able. */
+    | "git-hooks-missing"
+    /** FR-243: brain-level, informational — an installed Igris pre-commit exists but `gitleaks` is not on PATH. */
+    | "secret-scan-disarmed";
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;

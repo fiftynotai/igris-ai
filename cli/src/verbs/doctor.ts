@@ -37,8 +37,29 @@
  *                             identity's aliases, or NULL-id rows under names the
  *                             aliases do not cover; never --fix'able (an alias is
  *                             an operator claim); lowest brain-level precedence.
+ *   secret-scan-disarmed    → (informational, FR-243) ≥1 registered project has
+ *                             the Igris pre-commit installed AND `gitleaks` is
+ *                             not on PATH — every one of those hooks is running
+ *                             with `secret-scan=DISARMED`. Detection is PATH
+ *                             presence (no spawn). Never --fix'able (a binary
+ *                             install is the operator's); beside machine-identity.
  *
  * Per-project:
+ *   git-hooks-missing       → (FR-243) `.git` is a directory and pre-commit or
+ *                             commit-msg in `.git/hooks/` is absent, a non-symlink
+ *                             (foreign), a symlink to somewhere other than the
+ *                             canonical source (the runtime mirror
+ *                             `~/.igris/core/git-hooks/<name>`, or the repo copy
+ *                             when the row IS the igris-ai checkout), dangling,
+ *                             or resolves to a NON-EXECUTABLE file (git then
+ *                             ignores it with a `hint:` and commits anyway) —
+ *                             OR `.git/config` sets `core.hooksPath`, which
+ *                             bypasses `.git/hooks/` entirely. The reason text
+ *                             names the cause. --fix = installGitHooks()
+ *                             (backup-not-clobber; chmod +x only under
+ *                             brainDir()) — except the hooksPath case, which is
+ *                             reported, never fixed. A `.git` FILE (worktree /
+ *                             submodule) yields no row.
  *   path-missing            → orphan (registry row points at deleted dir)
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
@@ -62,7 +83,8 @@
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
  * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
- * hooks-stale → secret-perms → skills-pollution → duplicate-path →
+ * hooks-stale → secret-perms → skills-pollution → machine-identity →
+ * secret-scan-disarmed → duplicate-path → git-hooks-missing →
  * symlink-target → slug-basename-mismatch → clean.
  * (mcp-unregistered + hooks-missing/hooks-stale + secret-perms + skills-pollution
  *  sit next to bridge-missing — all brain-level, config/state-driven, and
@@ -85,6 +107,9 @@
  * rename, realpath-contained, refuse-on-unexpected-target, idempotent — a stray
  * that is not a loadout projection stays flagged for manual resolution; --fix
  * prints the before/after enumeration as the no-loss proof).
+ * --fix repairs git-hooks-missing (FR-243) by installGitHooks(row.path) and
+ * re-inspects before discounting the row from the exit code; a refused install
+ * (core.hooksPath, worktree, missing mirror) keeps the row non-clean.
  * --remove-orphans deletes path-missing rows after per-row confirmation
  * (skip prompt with --yes). A row the brain still references — a project with
  * briefs or sessions — cannot be deleted without orphaning that history, so it
@@ -138,6 +163,11 @@ import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { readMachineIdentity } from "../lib/machine-identity.js";
 import { readConfig } from "../lib/init-config.js";
 import { readUnattributedHostnames } from "../lib/brain-db.js";
+import {
+  gitleaksOnPath,
+  inspectGitHooks,
+  installGitHooks,
+} from "../lib/git-hooks.js";
 import { info, warn, error as logError } from "../lib/log.js";
 import type { DriftRow, RegistryRow } from "../types.js";
 
@@ -334,12 +364,33 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
         }
         skillsPollutionFixApplied = true;
         errored += fixSkillsPollution();
+      } else if (row.driftClass === "git-hooks-missing") {
+        // FR-243: symlink .git/hooks/{pre-commit,commit-msg} -> the canonical
+        // source. Backup-not-clobber; refuses under core.hooksPath / a
+        // worktree / a missing mirror (the refusal is printed and the row
+        // stays non-clean — the exit predicate re-inspects).
+        info(`fix: git-hooks-missing for ${row.slug} — installing the Igris git hooks into ${row.path}/.git/hooks/`);
+        const gh = installGitHooks(row.path);
+        if (gh.outcome === "refused") {
+          errored++;
+          logError(`git-hooks-missing fix (${row.slug}): ${gh.reason}`);
+        } else {
+          for (const h of gh.hooks) {
+            if (h.outcome === "refused" || h.outcome === "failed") {
+              errored++;
+              logError(`git-hooks-missing fix (${row.slug}) ${h.name}: ${h.reason ?? h.outcome}`);
+            } else {
+              info(`  ${h.name}: ${h.outcome} -> ${h.source}${h.backup !== undefined ? ` (previous hook preserved at ${h.backup})` : ""}`);
+            }
+          }
+        }
       } else if (
         row.driftClass === "slug-basename-mismatch" ||
         row.driftClass === "duplicate-path" ||
         row.driftClass === "channel-mismatch" ||
         row.driftClass === "brain-core-stale" ||
-        row.driftClass === "machine-identity"
+        row.driftClass === "machine-identity" ||
+        row.driftClass === "secret-scan-disarmed"
       ) {
         warn(
           `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
@@ -468,6 +519,12 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
       if (r.driftClass === "antigravity-skills-link") {
         return detectAntigravitySkillsLink() !== null;
       }
+      // FR-243: a git-hooks-missing row resolves ONLY if a LIVE re-inspection
+      // of `.git/hooks/` finds both hooks installed and executable. A refused
+      // install (core.hooksPath / worktree / missing mirror) keeps it non-clean.
+      if (r.driftClass === "git-hooks-missing") {
+        return detectGitHooksMissing(r.slug, r.path) !== null;
+      }
     }
     return true;
   });
@@ -554,6 +611,12 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   const mi = detectMachineIdentity();
   if (mi !== null) out.push(mi);
 
+  // secret-scan-disarmed (FR-243): informational, read-only, beside
+  // machine-identity. Fires when at least one registered project has the
+  // Igris pre-commit installed and `gitleaks` is not on PATH.
+  const ssd = detectSecretScanDisarmed(rows);
+  if (ssd !== null) out.push(ssd);
+
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
   // precedence, so we add its rows first and skip those slugs in the
@@ -594,12 +657,15 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
  *                 dir (the one genuinely-broken state a register-only project
  *                 can still be in). Resolved via --remove-orphans.
  * - duplicate-path: any other row whose realpath(row.path) is identical.
+ * - git-hooks-missing (FR-243): `.git/` is a directory and the Igris git hooks
+ *                 are absent / foreign / dangling / not executable, or
+ *                 core.hooksPath bypasses `.git/hooks/`. Resolved via --fix.
  * - slug-basename-mismatch: row.slug !== basename(row.path) (informational).
  * - symlink-target: row.path is a symlink (informational).
  * - clean: registered + path exists (the register-only happy path).
  *
- * Precedence: path-missing > duplicate-path > slug-basename-mismatch >
- *             symlink-target > clean.
+ * Precedence: path-missing > duplicate-path > git-hooks-missing >
+ *             slug-basename-mismatch > symlink-target > clean.
  * (path-missing wins because if the path is gone, everything else is vacuous.)
  */
 export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
@@ -658,6 +724,15 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
     // only model). The old `.claude/`-presence + per-project `settings.json`
     // hooks checks were deleted — they reflected a per-project layer `igris
     // install` no longer writes. Global-hooks drift is a brain-level row.
+
+    // FR-243: the GIT-level gates are a per-project property again — a
+    // symlink chain from `.git/hooks/` to the canonical hook. Broken-tier, so
+    // it sits above the two informational classes below.
+    const gitHooks = detectGitHooksMissing(r.slug, r.path, resolvedPath);
+    if (gitHooks !== null) {
+      out.push(gitHooks);
+      continue;
+    }
 
     if (basename(r.path) !== r.slug) {
       out.push({
@@ -871,6 +946,74 @@ function detectMachineIdentity(): DriftRow | null {
     path: configJsonPath(),
     driftClass: "machine-identity",
     recommendedFix: `informational — ${parts.join("; ")}`,
+  };
+}
+
+/**
+ * git-hooks-missing (FR-243): per-project, read-only. Null when the path is not
+ * a git repository or `.git` is a file (worktree / submodule — no row), or when
+ * both hooks are installed and executable.
+ */
+export function detectGitHooksMissing(
+  slug: string,
+  path: string,
+  resolvedPath?: string,
+): DriftRow | null {
+  const insp = inspectGitHooks(path);
+  if (insp.kind === "not-git" || insp.kind === "worktree") return null;
+  if (insp.kind === "hooks-path-bypass") {
+    return {
+      slug,
+      path,
+      driftClass: "git-hooks-missing",
+      recommendedFix:
+        `core.hooksPath=${insp.hooksPath} bypasses .git/hooks — not auto-fixed; ` +
+        `add ~/.igris/core/git-hooks/{pre-commit,commit-msg} to that pipeline`,
+      resolvedPath,
+    };
+  }
+  const broken = insp.hooks.filter((h) => h.state !== "installed");
+  if (broken.length === 0) return null;
+  const fixable = broken.every((h) => h.state !== "source-missing");
+  return {
+    slug,
+    path,
+    driftClass: "git-hooks-missing",
+    recommendedFix:
+      broken.map((h) => h.reason).join("; ") +
+      (fixable
+        ? " — run 'igris doctor --fix' (or 'igris install <path>')"
+        : " — run 'igris refresh', then 'igris doctor --fix'"),
+    resolvedPath,
+  };
+}
+
+/**
+ * secret-scan-disarmed (FR-243): brain-level, informational. ≥1 registered
+ * project with the Igris pre-commit INSTALLED (symlink resolving to the
+ * canonical source, executable) while `gitleaks` is not resolvable on PATH.
+ * A machine with no installed hook has nothing disarmed — no row. Never
+ * --fix'able: the binary is the operator's to install.
+ */
+export function detectSecretScanDisarmed(rows: RegistryRow[]): DriftRow | null {
+  if (gitleaksOnPath()) return null;
+  const armed: string[] = [];
+  for (const r of rows) {
+    if (!existsSync(r.path)) continue;
+    const insp = inspectGitHooks(r.path);
+    if (insp.kind !== "ok") continue;
+    const pre = insp.hooks.find((h) => h.name === "pre-commit");
+    if (pre !== undefined && pre.state === "installed") armed.push(r.slug);
+  }
+  if (armed.length === 0) return null;
+  return {
+    slug: "(brain)",
+    path: "PATH",
+    driftClass: "secret-scan-disarmed",
+    recommendedFix:
+      `informational — install gitleaks (brew install gitleaks); every installed ` +
+      `Igris pre-commit is running with secret-scan=DISARMED (${armed.length} ` +
+      `project(s): ${armed.join(", ")})`,
   };
 }
 

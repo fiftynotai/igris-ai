@@ -38,6 +38,7 @@ igris install .
 - Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family, from its own file), and Cursor → `~/.cursor/mcp.json`.
 - First-class harnesses — Igris's gates run natively there: Claude Code, OpenCode, Antigravity. Bridge harnesses — brain, skills and MCP reach them, and agents too where the harness has a static-agent surface (Cursor has none; it reads the canonical agent files in-process instead); only the gates soften to advisories: Codex, Gemini CLI, Cursor. The tier derives from `harnesses.<id>.hooks.supported` in `harness-manifest.json` — see [Harness tiers](multi-cli.md#harness-tiers) for the definition and the one-line command that re-derives the membership.
 - **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
+- **Installs the git-level gates into your project (FR-243):** `igris install` step 7b symlinks `.git/hooks/pre-commit` and `.git/hooks/commit-msg` to `~/.igris/core/git-hooks/<name>` (landed by `igris init` / `igris refresh`). These are GIT hooks — the conventional-commit summary length, the acceptance-criteria and agent-event gates on closing commits, the PI-004 phase guard, and the `gitleaks` secret scan — distinct from the HARNESS hooks above. A pre-existing hook of your own is backed up as `<hook>.pre-igris.bak.<epoch>` first; with `core.hooksPath` set (husky / lefthook) nothing is written and the command tells you to add the two files to that pipeline. Opt out with `igris install . --no-git-hooks`. **Prerequisite for the secret scan:** `gitleaks` on PATH (`brew install gitleaks`) — without it the hook still runs but prints a `SECRET SCAN DISARMED` box on every commit and `igris doctor` reports `secret-scan-disarmed` until it is installed.
 - Registers the project in the brain so it shows up in `/ops` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
 
 > **`igris install <path>` is REGISTER-ONLY (FR-212d):** it writes NO per-project
@@ -101,8 +102,17 @@ ls -la ~/.agents/skills/        # the cross-CLI universal store (every skills-ta
 cat ~/.claude/settings.json     # the ONE global Igris hooks block (FR-212c)
 igris doctor                    # registry + brain-MCP + drift health
 
-# The project repo gets NO Igris files (register-only install): no .claude/
-# symlink layer, no settings.json, no .igris_version, no CLAUDE.md.
+# FR-243: the git-level gates. Both should be symlinks into ~/.igris/core/git-hooks/
+ls -l .git/hooks/pre-commit .git/hooks/commit-msg
+# Every commit prints one layers line — read it once. A healthy consumer repo:
+#   [pre-commit] layers: phase-guard=off (no brain db) secret-scan=active (gitleaks defaults) repo-validators=n/a (not the igris-ai checkout)
+# `secret-scan=DISARMED (gitleaks not installed)` means commits are NOT being
+# scanned for credentials: `brew install gitleaks`. `igris doctor` shows the
+# same two facts as `git-hooks-missing` (per project) / `secret-scan-disarmed`.
+
+# The project repo gets NO Igris files inside the working tree (register-only
+# install): no .claude/ symlink layer, no settings.json, no .igris_version, no
+# CLAUDE.md — only the two .git/hooks/ symlinks above, which git never commits.
 
 # Brain-side state (outside the project repo) lives under:
 # ~/.igris/projects/<slug>/

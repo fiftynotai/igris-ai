@@ -42,6 +42,17 @@ non-bypassable net — a `--no-verify` commit still hits the server-side scan.
 The config (`.gitleaks.toml`) **extends the gitleaks default ruleset** rather than
 replacing it (`[extend] useDefault = true`). So every commit is scanned against:
 
+> **Consumer projects (FR-243):** the pre-commit hook passes `--config
+> .gitleaks.toml` only when the repo carries that file; otherwise it runs on
+> gitleaks' **built-in ruleset** (the "Curated defaults" below). The config is
+> deliberately NOT projected into consumer repos: its `igris-operator-vps-ip`
+> rule embeds an operator-private IP family (the TD-157 leak). A consumer that
+> wants the two public Igris rules (`igris-api-key-assignment`,
+> `igris-public-ipv4-in-config`) copies them by hand into its own
+> `.gitleaks.toml`; never copy the operator rule. Before FR-243 the whole scan
+> sat behind `[ -f .gitleaks.toml ]` — a consumer repo was scanned by nothing,
+> silently.
+
 **Curated defaults (gitleaks built-in):**
 - AWS access keys (`AKIA…`), GCP / Azure service credentials
 - Stripe live keys (`sk_live_…`), Slack tokens (`xoxb-`/`xoxp-`)
@@ -194,7 +205,8 @@ the rule's `description` should cite the brief/incident ID.
 # Scan the whole working tree (what the GATE checks; should be 0 findings):
 gitleaks detect --source . --no-git --config .gitleaks.toml
 
-# Scan only the staged diff (what the pre-commit hook runs):
+# Scan only the staged diff (what the pre-commit hook runs in igris-ai;
+# a consumer repo without .gitleaks.toml runs it WITHOUT --config):
 gitleaks protect --staged --config .gitleaks.toml
 
 # Time a staged scan (performance budget: <1s on a typical 10-file diff):

@@ -86,3 +86,88 @@ EOF
   chmod 600 "$IGRIS_BRAIN_DIR/config.json"
   echo "$home"
 }
+
+# --- FR-243: git-level gates helpers ------------------------------------------
+
+# IGRIS_REPO_ROOT — the monorepo checkout (cli/tests/integration/../../..).
+IGRIS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+export IGRIS_REPO_ROOT
+
+# stage_git_hooks_mirror — seeds $IGRIS_BRAIN_DIR/core/git-hooks/{pre-commit,
+# commit-msg} by COPYING the repo's canonical core/git-hooks/* (what `igris
+# refresh` lands). Call AFTER stage_brain. Echoes the mirror dir.
+stage_git_hooks_mirror() {
+  local dir="$IGRIS_BRAIN_DIR/core/git-hooks"
+  mkdir -p "$dir"
+  cp "$IGRIS_REPO_ROOT/core/git-hooks/pre-commit" "$dir/pre-commit"
+  cp "$IGRIS_REPO_ROOT/core/git-hooks/commit-msg" "$dir/commit-msg"
+  chmod +x "$dir/pre-commit" "$dir/commit-msg"
+  echo "$dir"
+}
+
+# stage_git_project <name> — a registered-project tree that IS a git repo
+# (`git init`, empty .git/hooks apart from samples). Echoes the path.
+stage_git_project() {
+  local name="${1:-gproj}"
+  local dir="$BATS_TEST_TMPDIR/$name"
+  mkdir -p "$dir"
+  git -C "$dir" init -q
+  echo "$dir"
+}
+
+# register_project_row <slug> <path> — one registry row (schema as registry.ts).
+register_project_row() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE IF NOT EXISTS projects (
+      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
+      registered_at TEXT, last_session_at TEXT, metadata TEXT
+    );
+    INSERT INTO projects (slug, name, path, igris_version) VALUES ('$1','$1','$2','7.0.0');
+  "
+}
+
+# path_with_stub_gitleaks — echoes a PATH whose FIRST dir holds an executable
+# stub named `gitleaks` (secret-scan-disarmed detection is PATH presence, so a
+# stub is enough — the cli-bats CI job has no real gitleaks).
+path_with_stub_gitleaks() {
+  local bin="$BATS_TEST_TMPDIR/stub-gitleaks-bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho stub\n' > "$bin/gitleaks"
+  chmod +x "$bin/gitleaks"
+  echo "$bin:$PATH"
+}
+
+# path_without_gitleaks — echoes $PATH with every dir carrying a gitleaks
+# binary removed, and a stub dir in front that keeps `node` + `git` resolvable.
+path_without_gitleaks() {
+  local bin="$BATS_TEST_TMPDIR/no-gitleaks-bin"
+  mkdir -p "$bin"
+  local tool p
+  for tool in node git sqlite3; do
+    p="$(command -v "$tool" 2>/dev/null || true)"
+    [ -n "$p" ] && [ ! -e "$bin/$tool" ] && ln -s "$p" "$bin/$tool"
+  done
+  local out="$bin" d
+  local old_ifs="$IFS"; IFS=':'
+  for d in $PATH; do
+    [ -x "$d/gitleaks" ] && continue
+    out="$out:$d"
+  done
+  IFS="$old_ifs"
+  echo "$out"
+}
+
+# Portable stat/md5 (TD-434) — byte-identical in spirit to test/test_helper.bash:
+# GNU stat has no `-f FORMAT`; `md5 -q` is darwin-only. Never call either raw.
+if stat -c %i / >/dev/null 2>&1; then _IGRIS_STAT_DIALECT=gnu; else _IGRIS_STAT_DIALECT=bsd; fi
+
+file_inode() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %i "$1" 2>/dev/null || echo ""
+  else stat -f %i "$1" 2>/dev/null || echo ""; fi
+}
+
+file_md5() {
+  if command -v md5 >/dev/null 2>&1; then md5 -q "$1" 2>/dev/null || echo ""
+  else md5sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}

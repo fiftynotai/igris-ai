@@ -1833,6 +1833,50 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
+ * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the control at develop `f55abc8`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index,
+ * `68863519` — no commit), the three `node_modules` symlinked (root + both
+ * packages), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm. `cli/dist` (`index.js` `Sep  6 21:13:36`)
+ * and `brain-mcp-server/dist` were never written; `~/.igris/config.json` sha
+ * unchanged (`cc52668e…`). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_849_991    unpacked 6_732_457, 535 entries, shasum
+ *                                    `d1fe74000271263454dbe1d9e0ea682e3d65c89f`
+ *                                    — taken twice, byte- and sha-identical to
+ *                                    TD-452's MEASURED LAST below.
+ *   packed              1_860_125    unpacked 6_773_542, 537 entries (+2),
+ *                                    shasum
+ *                                    `76b04181e58cc888cd2afff0f0e928bfb2797ff8`,
+ *                                    taken twice, on the final tree.
+ *   FR-243's own share  +10_134 B    packed. Unpacked +41_085 over 9
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. The two NEW entries are 23_566
+ *                                    of it: `lib/git-hooks.js` 13_557 + its
+ *                                    map 10_009. The rest: `verbs/doctor.js`
+ *                                    +7_355 (map +3_309); `verbs/install.js`
+ *                                    +3_147 (map +2_194); `CHANGELOG.md`
+ *                                    +798; `index.js` +570 (map +146).
+ *                                    Zero from the hooks themselves:
+ *                                    `core/git-hooks/**` is outside
+ *                                    `cli/package.json` `files` and rides the
+ *                                    core channel (`igris refresh`), which is
+ *                                    the whole reason the canonical files
+ *                                    moved under `core/`. Plan §3 Phase 4.5
+ *                                    priced +5–8 KB; the reading is 1.3–2×
+ *                                    that, under the 12 KB stop-and-rethink
+ *                                    line — the overrun is `git-hooks.js`'s
+ *                                    header docblock (the six consumer-safety
+ *                                    rules are prose in a RUNTIME module,
+ *                                    charged once — see coding_guidelines §13).
+ *   cumulative delta    +16_849 B    (16.5 KB, 11.0 % of the grant —
+ *                                    1_860_125 − 1_843_276)
+ *   headroom remaining  136_751 B    (133.5 KB — 153_600 − 16_849)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
  * TD-452 MEASURED LAST (2026-09-07), after its final code-touching step —
  * a MEASURED-NOT-MOVED brief, and the first row to record a ZERO spend by
  * the BR-101 / TD-444 method rather than assume one. MEASURED ON A SCRATCH

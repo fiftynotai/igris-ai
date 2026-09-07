@@ -227,3 +227,154 @@ EOF
   PATH="$STUB_BIN:$PATH" HOME="$STUB_HOME" run $CLI_BIN doctor --fix 2>&1
   [[ "$output" =~ "bridge-missing" ]] || true
 }
+
+# ---- FR-243: git-level gates as a project property ----------------------
+#
+# Two classes in BR-100's shape (read-only byte-witness detectors). The
+# `cli-bats` CI job has NO gitleaks, so `secret-scan-disarmed` is exercised by
+# PATH manipulation (detection is PATH presence): D1/D1b/D1c/D3 put a STUB
+# `gitleaks` on PATH so ONLY the hooks class is under test; D2 strips it.
+
+@test "drift class 9: git-hooks-missing — registered git repo with empty .git/hooks; --fix installs; second run clean" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh1)"
+  register_project_row gh1 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh1 | $PROJ | git-hooks-missing | pre-commit: absent; commit-msg: absent"* ]] || return 1
+  # Read-only: the read pass wrote nothing into .git/hooks.
+  [ ! -L "$PROJ/.git/hooks/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fix: git-hooks-missing for gh1"* ]] || return 1
+  [ -L "$PROJ/.git/hooks/pre-commit" ]
+  [ -L "$PROJ/.git/hooks/commit-msg" ]
+  [ -x "$PROJ/.git/hooks/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  [[ "$output" == *"| gh1 | $PROJ | clean |"* ]] || return 1
+}
+
+@test "drift class 9b: git-hooks-missing (target not executable) — a mode-dropped mirror is a fail-open; --fix restores +x" {
+  MIRROR="$(stage_git_hooks_mirror)"
+  PROJ="$(stage_git_project gh2)"
+  register_project_row gh2 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  # An operator-side `cp` without -p: bytes identical, mode gone. git would
+  # print `hint: ... was ignored because it's not set as executable` and
+  # COMMIT ANYWAY — verify_mirror.sh (byte-only) would call it in sync.
+  chmod -x "$MIRROR/pre-commit"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh2 | $PROJ | git-hooks-missing | pre-commit: target not executable"* ]] || return 1
+  # --fix chmods the target because it lives under IGRIS_BRAIN_DIR (rule 6).
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -x "$MIRROR/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+}
+
+@test "drift class 9c: git-hooks-missing (dangling) — mirror removed under an installed symlink; --fix refuses until refresh" {
+  MIRROR="$(stage_git_hooks_mirror)"
+  PROJ="$(stage_git_project gh3)"
+  register_project_row gh3 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  rm -f "$MIRROR/pre-commit" "$MIRROR/commit-msg"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh3 | $PROJ | git-hooks-missing | pre-commit: dangling symlink"* ]] || return 1
+  # --fix cannot conjure the mirror: refused, row stays non-clean (exit 1).
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"run 'igris refresh' first"* ]] || return 1
+}
+
+@test "drift class 9d: git-hooks-missing (core.hooksPath) — reported, never fixed" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh4)"
+  git -C "$PROJ" config core.hooksPath .husky
+  register_project_row gh4 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh4 | $PROJ | git-hooks-missing | core.hooksPath=.husky bypasses .git/hooks"* ]] || return 1
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ ! -L "$PROJ/.git/hooks/pre-commit" ]
+}
+
+@test "drift class 10: secret-scan-disarmed — installed hooks + no gitleaks on PATH; informational, --fix leaves it" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh5)"
+  register_project_row gh5 "$PROJ"
+  NO_GL_PATH="$(path_without_gitleaks)"
+  # Install the hooks first (with the stub gitleaks present, so this pass is clean).
+  PATH="$(path_with_stub_gitleaks)" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  PATH="$NO_GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| (brain) | PATH | secret-scan-disarmed | informational — install gitleaks"* ]] || return 1
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  PATH="$NO_GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"secret-scan-disarmed"* ]] || return 1
+}
+
+@test "drift class 10 (negative control): installed hooks + gitleaks on PATH -> neither FR-243 class, exit 0" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh6)"
+  register_project_row gh6 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  [[ "$output" != *"secret-scan-disarmed"* ]] || return 1
+}
+
+@test "drift class 9 (negative control): a registered NON-git path yields no git-hooks-missing row" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_project plain)"
+  register_project_row plain "$PROJ"
+  PATH="$(path_with_stub_gitleaks)" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+}
+
+@test "drift class 9e (negative control): core.hooksPath resolving to .git/hooks itself is not a bypass" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh7)"
+  git -C "$PROJ" config core.hooksPath "$PROJ/.git/hooks"
+  register_project_row gh7 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh7 | $PROJ | git-hooks-missing | pre-commit: absent; commit-msg: absent"* ]] || return 1
+  [[ "$output" != *"bypasses"* ]] || return 1
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.git/hooks/pre-commit" ]
+}

@@ -271,7 +271,12 @@ async function main(argv: string[]): Promise<void> {
       "--slug <slug>",
       "registry slug (default: basename of path)",
     )
-    .option("--no-hooks", "accepted for back-compat; a no-op (hooks project globally at `igris init`)")
+    // FR-212d: the retired HARNESS-hooks flag (the per-project settings.json
+    // merge it gated no longer exists). Unrelated to the GIT hooks below.
+    .option("--no-hooks", "accepted for back-compat; a no-op (harness hooks project globally at `igris init`)")
+    // FR-243: git-level gates are a property of a registered project — step
+    // 7b symlinks .git/hooks/{pre-commit,commit-msg} -> ~/.igris/core/git-hooks/.
+    .option("--no-git-hooks", "do not install the Igris git hooks into <path>/.git/hooks/")
     .option(
       "--dry-run",
       "preview the planned writes without performing any",
@@ -283,6 +288,7 @@ async function main(argv: string[]): Promise<void> {
         opts: {
           slug?: string;
           hooks?: boolean;
+          gitHooks?: boolean;
           dryRun?: boolean;
         },
       ): Promise<void> => {
@@ -292,6 +298,8 @@ async function main(argv: string[]): Promise<void> {
           // commander turns --no-hooks into opts.hooks=false. Default is true.
           // FR-212d: install is register-only — installHooks is vestigial.
           installHooks: opts.hooks !== false,
+          // commander turns --no-git-hooks into opts.gitHooks=false (FR-243).
+          installGitHooks: opts.gitHooks !== false,
           dryRun: opts.dryRun === true,
         });
         process.exitCode = code;

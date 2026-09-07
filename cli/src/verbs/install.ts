@@ -12,6 +12,12 @@
  *
  * Pipeline (register-only):
  *   7.  Registry: upsert the explicit slug (NOT basename) — the de-no-op gate.
+ *   7b. Git-level gates (FR-243): symlink `<path>/.git/hooks/{pre-commit,
+ *       commit-msg}` -> `$(brainDir())/core/git-hooks/<name>` (backup-not-
+ *       clobber; refuses under core.hooksPath / a worktree / a missing mirror).
+ *       A refusal WARNs and never fails the install — registration succeeded.
+ *       Opt out with `--no-git-hooks`. `igris doctor --fix` repairs a project
+ *       registered without them (`git-hooks-missing`).
  *   8.  installed_features.json: content hashes (schema v2: brain_channel/ref).
  *   9.  cognition.{perception,subconscious}.enabled=false defaults (only if absent).
  *   10. Remote-brain push (best-effort; failure does not fail install).
@@ -23,7 +29,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { basename, resolve as pathResolve } from "node:path";
+import { basename, join, resolve as pathResolve } from "node:path";
 import { upsertProject } from "../lib/registry.js";
 import {
   computeFeatureHashes,
@@ -40,6 +46,14 @@ import { validateSlug } from "../lib/slug.js";
 import { applyJanitorDefault, applyPerceptionDefault, applySubconsciousDefault, applySynapseDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
 import { readInstallSource } from "../lib/install-source.js";
+import {
+  GIT_HOOK_NAMES,
+  canonicalGitHookSource,
+  hooksPathBypasses,
+  installGitHooks,
+  readCoreHooksPath,
+  resolveGitHooksDir,
+} from "../lib/git-hooks.js";
 import { DryRunCollector } from "../lib/dry-run.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
 
@@ -52,6 +66,11 @@ export interface InstallOptions {
    * type-check; no pipeline step reads it. `--no-hooks` is accepted as a no-op.
    */
   installHooks: boolean;
+  /**
+   * FR-243: install the GIT hooks (step 7b). Default true; `--no-git-hooks`
+   * sets false. Unrelated to `installHooks` (the retired harness-hooks flag).
+   */
+  installGitHooks?: boolean;
   /** Internal: CLI version string, defaults to package.json's version. */
   cliVersion?: string;
   /**
@@ -103,7 +122,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   // install-source). FR-212d: register-only — no per-project layer to enumerate.
   if (opts.dryRun === true) {
     const dry = new DryRunCollector();
-    enumerateInstallPlan(absPath, slug, dry);
+    enumerateInstallPlan(absPath, slug, dry, opts.installGitHooks !== false);
     dry.print();
     return 0;
   }
@@ -135,6 +154,31 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     return 1;
   }
   info(`Registered project: ${slug} -> ${absPath}`);
+
+  // 7b. Git-level gates (FR-243). Best-effort: a refusal is a WARN with the
+  // reason (the exit code stays 0 — the project IS registered), and doctor's
+  // `git-hooks-missing` row keeps it visible until it is resolved.
+  if (opts.installGitHooks !== false) {
+    const gh = installGitHooks(absPath);
+    if (gh.outcome === "refused") {
+      warn(`git hooks not installed: ${gh.reason}`);
+    } else {
+      for (const h of gh.hooks) {
+        if (h.outcome === "refused" || h.outcome === "failed") {
+          warn(`git hook ${h.name}: ${h.outcome} — ${h.reason ?? ""}`);
+        } else if (h.outcome === "already-installed") {
+          debug(`git hook ${h.name}: already-installed -> ${h.source}`);
+        } else {
+          info(`git hook ${h.name}: ${h.outcome} -> ${h.hookPath} -> ${h.source}`);
+          if (h.backup !== undefined) {
+            info(`  previous ${h.name} preserved at ${h.backup}`);
+          }
+        }
+      }
+    }
+  } else {
+    debug("git hooks skipped (--no-git-hooks)");
+  }
 
   // 8. installed_features.json — content hashes for upgrade detection (schema v2).
   const hashes = computeFeatureHashes({ includeHooks: opts.installHooks });
@@ -229,6 +273,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   info(`  path:           ${absPath}`);
   info(`  mode:           register-only`);
   info(`  features:       ${root}/projects/${slug}/installed_features.json`);
+  info(`  git hooks:      ${opts.installGitHooks === false ? "skipped (--no-git-hooks)" : `${absPath}/.git/hooks/{pre-commit,commit-msg} -> ${root}/core/git-hooks/`}`);
 
   // TD-112: when --slug differs from basename(path), preserve a diagnostic
   // hint pointing the user at the explicit slug. Phase 1 said the shell
@@ -265,6 +310,7 @@ function enumerateInstallPlan(
   projectPath: string,
   slug: string,
   dry: DryRunCollector,
+  installGitHooksPlanned: boolean,
 ): void {
   // Registry upsert (no file path, but we record it as an invoked command).
   dry.wouldInvokeCommand(
@@ -284,6 +330,31 @@ function enumerateInstallPlan(
     claudeJsonPath(),
     "register igris-brain MCP server",
   );
+
+  // Git-level gates (FR-243, step 7b) — enumerated with the same refusals the
+  // real step applies, so the plan says "refused" where the run would.
+  if (installGitHooksPlanned) {
+    const dir = resolveGitHooksDir(projectPath);
+    const hp = dir.kind === "dir" ? readCoreHooksPath(dir.gitDir) : null;
+    if (dir.kind === "dir" && (hp === null || !hooksPathBypasses(dir.gitDir, hp))) {
+      for (const name of GIT_HOOK_NAMES) {
+        dry.wouldWriteFile(
+          join(dir.hooksDir, name),
+          `symlink -> ${canonicalGitHookSource(name, { projectPath })} (git hook; a non-symlink hook is backed up first)`,
+        );
+      }
+    } else if (dir.kind === "dir") {
+      dry.wouldInvokeCommand(
+        "(skip)",
+        ["git hooks"],
+        `refused: core.hooksPath=${hp} bypasses .git/hooks`,
+      );
+    } else if (dir.kind === "file") {
+      dry.wouldInvokeCommand("(skip)", ["git hooks"], "refused: .git is a file (worktree/submodule)");
+    } else {
+      dry.wouldInvokeCommand("(skip)", ["git hooks"], "refused: not a git repository");
+    }
+  }
 }
 
 /**
