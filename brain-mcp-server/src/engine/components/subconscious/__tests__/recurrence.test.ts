@@ -696,3 +696,126 @@ describe('TD-452 — the two anchor splits, pinned as measured (the anchor did n
     expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TD-454 — the PROJECT-SET GATE on the live path
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Four real rows, read 2026-09-07 from a `sqlite3 -readonly …
+ * .backup` copy of the operator brain (1,914 rows), every column the stored
+ * value byte-for-byte. `1495` / `1660` share the block `project:lifeos`, score
+ * 0.314 on the tokeniser and are hand-labelled DIFFERENT (`lifeos_dark` vs
+ * `zero_learnings_projects`): at HEAD the second BUMPED the first — a false
+ * merge inside one block that no anchor change could see. They are one of the
+ * six same-block DIFFERENT pairs the gate separates on the whole corpus
+ * (`scripts/td454_pairs_separated.csv` is the cross-block record; the
+ * same-block set is in the sweep's `td454_recall_cost.csv`). `1486` / `1698`
+ * are the equal-list SAME control (both name the same four projects) — the
+ * gate must leave that bump alone, or "two rows" above would be a dead
+ * discriminator rather than a working one.
+ *
+ * THE VOCABULARY IS THE `projects` TABLE, loaded by the extractor per run;
+ * seeding the four slugs here is what arms the gate (M4 in the TD-454 battery
+ * drops the vocabulary from the extractor and this case reds).
+ */
+const ROW_1495: Row = {
+  id: 1495,
+  source_module: "unlearning_project",
+  project_slug: "lifeOS",
+  entity_key: "project:lifeos",
+  priority: "medium",
+  confidence: 0.6,
+  title:
+    "lifeOS has 14 open briefs including a P0 accessibility regression but zero learnings and no recorded activity — the brain is capturing nothing from this project",
+  evidence:
+    "{\"brief_id\":\"BR-023\",\"note\":\"Project row shows learnings=0 and days_since_activity=null while 14 briefs (BR-023 P0-Critical, plus BR-024..BR-036) sit Ready/In Progress at 118-119 days. Same shape for attendance_app, hadir-system, moca-hr-agent — likely briefs imported without a working session attached.\"}",
+  suggested_action: null,
+};
+
+const ROW_1660: Row = {
+  id: 1660,
+  source_module: "unharvested_project",
+  project_slug: "lifeOS",
+  entity_key: "project:lifeos",
+  priority: "low",
+  confidence: 0.65,
+  title:
+    "Four active projects carry 19 open briefs between them and zero learnings — nothing from lifeOS, attendance_app, hadir-system or moca-hr-agent has ever been harvested into the brain",
+  evidence:
+    "{\"note\":\"projects rows: lifeOS (14 open briefs, 0 learnings, days_since_activity null), attendance_app (4, 0, null), hadir-system (1, 0, null), moca-hr-agent (1, 0, null). Contrast with igris-ai (593), mbrgea-ai (188), moca-ai-agent (186). days_since_activity null alongside open briefs suggests these projects are tracked in the brain but worked outside it, so their defect patterns never reach the shared memory.\"}",
+  suggested_action:
+    "{\"kind\":\"harvest\",\"project_slug\":\"lifeOS\"}",
+};
+
+const ROW_1486: Row = {
+  id: 1486,
+  source_module: "learning_capture_gap",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.6,
+  title:
+    "Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work there is not reaching the brain",
+  evidence:
+    "{\"note\":\"projects rows: lifeOS (14 open briefs, 0 learnings, null activity), attendance_app (4/0/null), hadir-system (1/0/null), moca-hr-agent (1/0/null). Meanwhile briefs in lifeOS and attendance_app carry recent-ish update timestamps (118-156 days), so briefs are being written for these projects but no session activity or learning is being captured — the instrumentation, not the work, is likely missing.\"}",
+  suggested_action:
+    "{\"kind\":\"investigate_instrumentation\",\"project_slugs\":[\"lifeOS\",\"attendance_app\",\"hadir-system\",\"moca-hr-agent\"]}",
+};
+
+const ROW_1698: Row = {
+  id: 1698,
+  source_module: "knowledge_capture_gap",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.7,
+  title:
+    "Four projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is being briefed but never executed or never harvested",
+  evidence:
+    "{\"note\":\"Project rows: lifeOS (14 open_briefs, 0 learnings, days_since_activity null), attendance_app (4, 0, null), hadir-system (1, 0, null), moca-hr-agent (1, 0, null). 20 open briefs total behind projects the brain has never observed activity on. Contrast with igris-ai/mbrgea-ai/moca-ai-agent, all at days_since_activity 0. Either these projects are worked outside the brain's view (an instrumentation gap) or the briefs are dead inventory.\"}",
+  suggested_action: null,
+};
+
+describe('TD-454 — the project-set gate on the live path (real rows, real projects table)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeBrain();
+    const ins = db.prepare(`INSERT INTO projects (slug, name, path) VALUES (?, ?, ?)`);
+    for (const slug of ['lifeOS', 'attendance_app', 'hadir-system', 'moca-hr-agent']) ins.run(slug, slug, `/tmp/${slug}`);
+    db.prepare(
+      `INSERT INTO brief_status (project, brief_id, title, status, priority, updated_at)
+       VALUES ('lifeOS', 'BR-023', 'a11y regression', 'In Progress', 'P0', '2026-03-01 00:00:00')`,
+    ).run();
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it('a same-block DIFFERENT pair (1495 then 1660, project:lifeos @ 0.314) files TWO rows — the gate refuses the bump the tokeniser would take', async () => {
+    // The arming half: on the tokeniser alone they MATCH — this was a false merge at HEAD.
+    expect(score(ROW_1495, ROW_1660)).toBeCloseTo(0.314, 3);
+    expect(matches(ROW_1495, ROW_1660)).toBe(true);
+
+    const deps = statefulDeps([emit(ROW_1495), emit(ROW_1660)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(1);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(2);
+    expect(anchorsById(db)).toEqual([
+      [1, 'project:lifeos'],
+      [2, 'project:lifeos'],
+    ]);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
+  });
+
+  it('POSITIVE CONTROL: an equal-list SAME pair (1486 then 1698, global) still BUMPS — the gate refuses unequal sets only', async () => {
+    const deps = statefulDeps([emit(ROW_1486), emit(ROW_1698)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(1);
+    expect(rows(db)[0]!.seen_count).toBe(2);
+  });
+});

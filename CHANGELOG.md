@@ -10,6 +10,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **TD-456** — the cli bats tier fences `HOME` as well as `IGRIS_BRAIN_DIR`.
+  `stage_brain` / `fence_home` export `HOME=$BATS_TEST_TMPDIR/home` and
+  `assert_home_fenced` proves it before any body runs; a guard
+  (`cli/src/__tests__/bats-home-fence.test.ts`, 22 files scanned / 9 invoking,
+  2026-09-07) reds an unfenced `igris install` / `igris init`. Before this, a
+  full `npm run test:bats` against any dist rewrote the operator's real
+  `~/.claude.json` `igris-brain` entry (BR-103's run, 2026-09-07).
+- **TD-455** — `igris install <path>` no longer re-points an existing
+  `~/.claude.json` `igris-brain` registration to the running CLI's bundle. Step
+  11 now decides through `planClaudeMcpRegistration`: write only when the entry
+  is absent or dangling; keep (and name) a foreign-but-existing bundle;
+  `--dry-run` says which. Re-pointing stays `igris init --upgrade` (`--dev`).
+- **TD-453** — the pre-commit phase guard no longer fails OPEN on a hostname,
+  alias, machine id or repo name that carries a quote. Under `/bin/bash` 3.2
+  the hook's double-quoted `"${x//\'/\'\'}"` kept the backslashes literal
+  (`'it\'\'s'`), sqlite3 rejected the literal and the discarded error read
+  as "no active brief"; the six sites are now unquoted assignments.
+  `test/phase_guard.test.bash` h1–h3 + h6 prove the real hook resolves the
+  quoted inputs; h4/h4b/h4c/h4d prove the same alias / hostname / machine-id
+  inputs fail open (or admit an injected foreign row) on a no-escape mutant,
+  with h5 as the control — the project-name sites have no mutant case.
+
+### Changed
+
+- **TD-453** — `config.json` `machine.aliases` is bounded: writers keep the
+  newest `ALIAS_CAP = 16` and evict the oldest on the 17th distinct hostname
+  (both parity-pinned twins; a hand-written oversize list is left alone).
+- **TD-454** — the subconscious finding key gains a PROJECT-SET GATE in
+  `claimsMatch`: two suggestion titles that both name registered projects and
+  name different sets are different findings (`{lifeOS}` is not
+  `{lifeOS, attendance_app, hadir-system, moca-hr-agent}`). The registered
+  slugs are the vocabulary (`loadProjectVocabulary`, loaded once per run); the
+  stored `dedupe_key` is unchanged, so no re-key. Measured on a 1,914-row copy
+  (2026-09-07): 6 same-block false merges separated at the cost of 49 SAME
+  pairs (C1 clusters 153 → 169); the anchor candidates stay unshipped — (c)
+  fails on the queue-flood residual, (a-narrow) now passes the pairwise rule
+  and is a follow-up; slug-stripping was measured and rejected.
+
 ---
 
 ## [7.3.0] - 2026-09-07

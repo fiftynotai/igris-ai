@@ -21,8 +21,9 @@
  *   8.  installed_features.json: content hashes (schema v2: brain_channel/ref).
  *   9.  cognition.{perception,subconscious}.enabled=false defaults (only if absent).
  *   10. Remote-brain push (best-effort; failure does not fail install).
- *   11. Register igris-brain MCP in ~/.claude.json (already global; belt-and-
- *       suspenders for the from-source contributor flow).
+ *   11. Register igris-brain MCP in ~/.claude.json ONLY when absent or dangling
+ *       (TD-455); an existing entry at a different, existing bundle is kept —
+ *       registration is global and owned by `igris init` (`--upgrade`, `--dev`).
  *
  * Flag semantics:
  *   D-4: better-sqlite3 direct DB access (not via MCP).
@@ -38,10 +39,15 @@ import {
 } from "../lib/installed-features.js";
 import {
   brainDir,
+  bundledMcpEntryPath,
   claudeJsonPath,
   installedFeaturesPath,
 } from "../lib/paths.js";
-import { registerMcpInClaudeJson } from "../lib/mcp-register.js";
+import {
+  inspectMcpRegistration,
+  planClaudeMcpRegistration,
+  registerMcpInClaudeJson,
+} from "../lib/mcp-register.js";
 import { validateSlug } from "../lib/slug.js";
 import { applyJanitorDefault, applyPerceptionDefault, applySubconsciousDefault, applySynapseDefault } from "../lib/init-config.js";
 import { pushProjectToRemote } from "../lib/remote-push.js";
@@ -249,22 +255,39 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
     debug(`remote brain push outcome: ${pushOutcome}`);
   }
 
-  // 11. Register igris-brain MCP in ~/.claude.json (TD-168). Belt-and-
-  // suspenders so a user who runs `igris install` without `igris init`
-  // (the from-source contributor flow) still gets the MCP registered.
+  // 11. Register igris-brain MCP in ~/.claude.json (TD-168) ONLY when absent
+  // or dangling (TD-455). The registration is GLOBAL and owned by `igris init`
+  // / `igris doctor --fix`; a per-project install run from another CLI build
+  // (a scratch emit, `npx tsx`, a second global install) must never re-point
+  // it to ITS bundle — FR-243 Phase 3 did exactly that to the live config.
   // Non-fatal: a registration failure WARNs and the install completes.
-  const mcpRes = registerMcpInClaudeJson();
-  if (mcpRes.outcome === "failed") {
-    warn(`MCP registration skipped: ${mcpRes.error}`);
-    warn(
-      `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
+  const running = bundledMcpEntryPath();
+  const plan = planClaudeMcpRegistration(inspectMcpRegistration(), running);
+  if (plan.action === "keep-foreign") {
+    info(
+      `igris-brain MCP kept -> ${plan.existing} (differs from the running bundle ${running}; ` +
+        "a per-project install never re-points a global registration — run 'igris init --upgrade' to re-point)",
     );
-    warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
-  } else if (mcpRes.outcome === "unchanged") {
-    debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
   } else {
-    info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
-    info("  Restart Claude Code to pick up the new MCP server.");
+    const mcpRes = registerMcpInClaudeJson();
+    if (mcpRes.outcome === "failed") {
+      warn(`MCP registration skipped: ${mcpRes.error}`);
+      warn(
+        `  Manual fix: add an "igris-brain" entry to mcpServers in ${mcpRes.claudeJsonPath}`,
+      );
+      warn(`  pointing at: ${mcpRes.mcpEntryPath}`);
+    } else if (mcpRes.outcome === "unchanged") {
+      debug(`igris-brain MCP already registered at ${mcpRes.mcpEntryPath}`);
+    } else if (plan.action === "repair") {
+      info(
+        `re-pointed igris-brain MCP: ${plan.existing ?? "(no path)"} (missing) -> ${mcpRes.mcpEntryPath}; ` +
+          `backup ${mcpRes.claudeJsonPath}.igris.bak`,
+      );
+      info("  Restart Claude Code to pick up the new MCP server.");
+    } else {
+      info(`Registered igris-brain MCP (${mcpRes.outcome}) -> ${mcpRes.mcpEntryPath}`);
+      info("  Restart Claude Code to pick up the new MCP server.");
+    }
   }
 
   info("");
@@ -325,11 +348,31 @@ function enumerateInstallPlan(
     "content hashes for upgrade detection",
   );
 
-  // igris-brain MCP registration in ~/.claude.json (TD-168)
-  dry.wouldWriteFile(
-    claudeJsonPath(),
-    "register igris-brain MCP server",
-  );
+  // igris-brain MCP registration in ~/.claude.json (TD-168) — the same
+  // decision the real step takes (TD-455), so the plan says "keep" where the
+  // run would keep.
+  const plan = planClaudeMcpRegistration(inspectMcpRegistration(), bundledMcpEntryPath());
+  switch (plan.action) {
+    case "keep-foreign":
+      dry.wouldInvokeCommand(
+        "(keep)",
+        ["igris-brain MCP"],
+        `keep (differs from the running bundle): ${plan.existing}`,
+      );
+      break;
+    case "noop":
+      dry.wouldInvokeCommand("(skip)", ["igris-brain MCP"], "already registered (no write)");
+      break;
+    case "repair":
+      dry.wouldWriteFile(
+        claudeJsonPath(),
+        `register igris-brain MCP server (repair: ${plan.existing ?? "(no path)"} missing)`,
+      );
+      break;
+    case "register":
+      dry.wouldWriteFile(claudeJsonPath(), "register igris-brain MCP server (absent)");
+      break;
+  }
 
   // Git-level gates (FR-243, step 7b) — enumerated with the same refusals the
   // real step applies, so the plan says "refused" where the run would.

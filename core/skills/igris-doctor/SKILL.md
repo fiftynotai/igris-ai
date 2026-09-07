@@ -162,7 +162,9 @@ This is especially important for:
   intentional aliases or workspace layout.
 - `machine-identity`: informational and never auto-fixed. Add to `config.json`
   `machine.aliases` ONLY hostnames this machine has actually used; a name from
-  another machine would attribute its rows to this one.
+  another machine would attribute its rows to this one. The writer keeps the
+  newest 16; a name you need to keep past that goes back in by hand (a
+  hand-edited list is never trimmed — only a fresh append evicts).
 - `secret-scan-disarmed`: informational and never auto-fixed — the fix is a
   binary the operator installs (`brew install gitleaks`, or the gitleaks
   releases page). Until then every commit in every hook-installed project

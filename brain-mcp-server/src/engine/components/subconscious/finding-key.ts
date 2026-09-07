@@ -201,26 +201,98 @@ export function claimSimilarity(a: Set<string>, b: Set<string>): number {
   return union === 0 ? 0 : shared / union;
 }
 
+/** Registered slug → its `normalizeForDedup` token sequence (TD-454). */
+export type ProjectVocabulary = ReadonlyMap<string, string[]>;
+
+/**
+ * TD-454: the ONE vocabulary owner — every registered `projects.slug` as the
+ * token sequence `normalizeForDedup` makes of it (`hadir-system` → `hadir
+ * system`; `attendance_app` stays one token). Fail-soft: no table ⇒ empty.
+ */
+export function loadProjectVocabulary(db: Database.Database): ProjectVocabulary {
+  const out = new Map<string, string[]>();
+  let rows: Array<{ slug: unknown }>;
+  try {
+    rows = db.prepare('SELECT slug FROM projects').all() as Array<{ slug: unknown }>;
+  } catch {
+    return out; /* no projects table — the gate is inert */
+  }
+  for (const row of rows) {
+    if (typeof row.slug !== 'string') continue;
+    const tokens = normalizeForDedup(row.slug).split(' ').filter((t) => t.length > 0);
+    if (tokens.length > 0) out.set(row.slug, tokens);
+  }
+  return out;
+}
+
+/**
+ * TD-454: the registered projects a title NAMES — each slug's token sequence
+ * matched over the title's UNFILTERED normalized tokens (so `moca-hr-agent`'s
+ * two-character `hr` still counts), longest sequence first, contiguous and
+ * non-overlapping (`hadir` inside `hadir-system` is one project, not two).
+ * Two slugs with one token sequence (`fifty-dev` / `fifty_dev` do not; the
+ * case twins do) count as the alphabetically-first slug. Lower-cased slugs.
+ */
+export function namedProjects(title: string, vocab: ProjectVocabulary): Set<string> {
+  const out = new Set<string>();
+  if (vocab.size === 0) return out;
+  const words = normalizeForDedup(title ?? '').split(' ').filter((w) => w.length > 0);
+  const bySeq = new Map<string, [string, string[]]>();
+  for (const [slug, seq] of [...vocab.entries()].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+    const key = seq.join(' ');
+    if (!bySeq.has(key)) bySeq.set(key, [slug, seq]);
+  }
+  const entries = [...bySeq.values()].sort((x, y) => y[1].length - x[1].length);
+  const taken: boolean[] = new Array<boolean>(words.length).fill(false);
+  for (const [slug, seq] of entries) {
+    for (let i = 0; i + seq.length <= words.length; i++) {
+      let hit = true;
+      for (let j = 0; j < seq.length; j++) {
+        if (taken[i + j] || words[i + j] !== seq[j]) {
+          hit = false;
+          break;
+        }
+      }
+      if (!hit) continue;
+      for (let j = 0; j < seq.length; j++) taken[i + j] = true;
+      out.add(slug.toLowerCase());
+    }
+  }
+  return out;
+}
+
 /** One side of a {@link claimsMatch} comparison. */
 export interface Claim {
   /** {@link claimTokens} of the title. */
   tokens: Set<string>;
   /** {@link subjectIds} of the title. */
   subject: Set<string>;
+  /** {@link namedProjects} of the title (empty without a vocabulary) — TD-454. */
+  projects: Set<string>;
 }
 
-/** Build a {@link Claim} from a title. */
-export function claimOf(title: string): Claim {
-  return { tokens: claimTokens(title), subject: subjectIds(title) };
+/** Build a {@link Claim} from a title; the vocabulary is optional (absent ⇒ no project set). */
+export function claimOf(title: string, vocab?: ProjectVocabulary): Claim {
+  return {
+    tokens: claimTokens(title),
+    subject: subjectIds(title),
+    projects: vocab ? namedProjects(title, vocab) : new Set<string>(),
+  };
 }
 
 /**
- * Decide whether two claims are the same finding. Three gates, in order:
+ * Decide whether two claims are the same finding. Four gates, in order:
  *
  *  1. **SUBJECT GATE** — if both titles name identifiers and the two sets are
  *     DISJOINT, they are about different things and never match, whatever the
  *     prose similarity. One empty set is not disjoint: a project-level finding
  *     that names no brief still absorbs a re-emission that names an example.
+ *  1b. **PROJECT-SET GATE** (TD-454) — if both titles name registered projects
+ *     and the two sets are NOT EQUAL, they are different findings: a
+ *     project-subset instance of a portfolio class is its own finding, and
+ *     "the stalled detector misses A, B, C" is not "A, B, D have no
+ *     learnings". Equality, not disjointness. Measured: the three DIFFERENT
+ *     shapes and the recall cost are in `docs/architecture/subconscious_engine.md`.
  *  2. **SHORT-CLAIM GUARD** — below `minTokens` the similarity score is not
  *     used at all and the two token sets must be EQUAL. A three-word claim has
  *     no room to be similar-but-different.
@@ -245,6 +317,10 @@ export function claimsMatch(
       }
     }
     if (!shares) return false;
+  }
+  if (a.projects.size > 0 && b.projects.size > 0) {
+    if (a.projects.size !== b.projects.size) return false;
+    for (const p of a.projects) if (!b.projects.has(p)) return false;
   }
   if (Math.min(a.tokens.size, b.tokens.size) < minTokens) {
     if (a.tokens.size !== b.tokens.size) return false;

@@ -124,8 +124,10 @@ Two more things the digest reports that a naive read would miss:
   row whose `machine_id` is NULL (written before the mint, by a bash hook, or
   pulled from another brain — the column deliberately never replicates, so an
   inbound row is "not mine" by construction) is attributed through
-  `config.json` `machine.aliases`: every hostname this machine has been observed
-  under, appended by writers and editable by the operator. So a `no_signal`
+  `config.json` `machine.aliases`: the hostnames this machine has been observed
+  under — writers append the newest `ALIAS_CAP = 16` and evict the oldest on
+  the 17th distinct name (TD-453; a hand-written oversize list is left alone,
+  only an append evicts), and the operator edits. So a `no_signal`
   under a name the machine used before the mint (a laptop that wrote as
   `MacBookAir` on one network and `…-Air-2.local` on another) is the
   operator-adds-alias case: `igris doctor` lists the unattributed names with

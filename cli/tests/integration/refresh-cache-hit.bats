@@ -24,8 +24,7 @@ load _helpers.bash
 
 setup() {
   export IGRIS_BRAIN_DIR="$BATS_TEST_TMPDIR/igris-brain"
-  export HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME"
+  fence_home  # TD-456: HOME=$BATS_TEST_TMPDIR/home, asserted (the seeding init writes under $HOME)
   # The committed clean fixture: <cli>/src/__tests__/fixtures/tarballs/.
   # CLI_DIST is <cli>/dist (set by _helpers.bash), so ../src/... reaches it.
   FIXTURE="$(cd "$CLI_DIST/.." && pwd)/src/__tests__/fixtures/tarballs/clean-core.tar.gz"

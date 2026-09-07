@@ -215,7 +215,7 @@ then deleting `TD-437` instead, reds that site's three lines each time.
 | stage | function | what it does |
 |---|---|---|
 | BLOCK | `entityKey(candidate)` | ONE anchor: the project, else the primary cited brief, else learning, else suggestion, else `global` |
-| DISCRIMINATE | `claimsMatch(a, b, …)` | subject-id gate, then a short-claim guard, then Jaccard over `claimTokens` |
+| DISCRIMINATE | `claimsMatch(a, b, …)` | subject-id gate, then the project-set gate (TD-454: both titles name registered projects and the sets are not equal ⇒ different findings), then a short-claim guard, then Jaccard over `claimTokens` |
 
 `entityKey` deliberately does **not** use the whole set of cited identifiers. The
 model attaches an *illustrative* `evidence.brief_id` to a project-level finding and
@@ -462,6 +462,123 @@ sqlite-vec-absent degradation path. Once the entity is the blocking key the clai
 discriminator only has to separate 1–3 findings within one entity, which is a
 low-resolution problem. If the boundary corpus ever shows lexical overlap failing,
 upgrading the discriminator is a contained change behind `claimsMatch`'s signature.
+
+**TD-454 project-set gate (2026-09-07).** TD-452's DIFFERENT class is not one shape.
+Re-reading the pinned pairs (`__tests__/finding-key.test.ts` `ANCHOR_HELD_PAIRS`) at
+planning gave THREE: (S1) overlapping-but-unequal project lists with different claims
+(`1434`/`1486`, `1434`/`1596`, `1434`/`1698`, `1474`/`1486`); (S2) a project-subset instance
+against its portfolio class (`1291`/`1698`, `1430`/`1495` — `{lifeos}` vs `{lifeos,
+attendance_app, hadir-system, moca-hr-agent}`); (S3) two different QUEUE FLOODS naming no
+project at all (`1341`/`1801` @ 0.310, `1355`/`1801` @ 0.296 — stalled/gap rows vs
+`edge_inference` rows). A project-set discriminator can touch S1 and S2; nothing built from
+project names can touch S3.
+
+*D-1, recorded 2026-09-07 at planning; the operator's decision at APPROVAL: KEEP THE
+PAIRWISE RULE* (TD-445's and TD-452's pre-registered statistic — every pair a design makes
+newly comparable that `claimsMatch`es at 0.25, labelled from per-row tags, DIFFERENT must be
+0). The loop-faithful replay of candidate (c) read 8 absorptions / 0 DIFFERENT at TD-452, but
+it is ONE arrival order: `1341`/`1801` did not absorb only because `1355` was already a head
+in `project:fifty_eco_system` when `1341` arrived — in a fresh brain where the first
+stalled/gap row lands after `1801`, the same loop merges two different floods. A single
+order cannot bound a false-merge class; the pairwise superset can. Consequence: candidate (c)
+cannot ship under any discriminator built here (S3 remains), family 2 (`1801`/`1888` @ 0.414)
+stays the recorded cost, and (a-narrow) may pass iff its unnamed DIFFERENT pairs are S1/S2 —
+in which case it is a follow-up brief (D-3), because an anchor change is a `dedupe_key`
+re-key (schema NULL-all + backfill + dismissed `evidence_signature`s stop matching).
+
+*The discriminator.* `loadProjectVocabulary(db)` reads `SELECT slug FROM projects` (fail-soft:
+no table ⇒ empty) and maps each slug to its `normalizeForDedup` token sequence (`hadir-system`
+→ `hadir system`; `attendance_app` stays one token — `_` is not in the punctuation class;
+`lifeOS` → `lifeos`). `namedProjects(title, vocab)` matches those sequences over the title's
+UNFILTERED normalized tokens (so `moca-hr-agent`'s two-character `hr` still matches), greedy
+longest-first, non-overlapping and contiguous, and returns the lower-cased slugs. `Claim`
+gains `projects`; `claimOf(title, vocab?)` with no vocabulary yields the empty set, so
+`findingKey` — which hashes `tokens` + `subject` ONLY — is unchanged and NO row is re-keyed.
+`claimsMatch` gains gate 1b, the PROJECT-SET GATE, between the subject gate and the
+short-claim guard: both sets non-empty AND not EQUAL ⇒ no match. Equality, not disjointness:
+the labelling rule already says a project-subset instance of a portfolio class is its own
+finding. The extractor loads the vocabulary once per run (`snapshotExistingPending`) and
+builds every pending claim and every candidate claim with it.
+
+*Pre-registered pass criteria, written before the sweep ran (§3.4 of the plan):*
+P-1 (precision) every S1/S2 pair in `ANCHOR_HELD_PAIRS` → `claimsMatch === false` with the
+vocabulary; every DIFFERENT pair of (a-narrow)'s 9 and (c)'s 33 is tagged with its shape and
+its separator; S3 pairs are expected to REMAIN. P-2 (recall) the equal-list SAME pairs
+(`1430`/`1486`, `1486`/`1596`, `1486`/`1698`, `1596`/`1698`) still match; the count of C2 SAME
+pairs that matched at HEAD inside their block and stop matching under the gate is QUOTED;
+TD-440's excerpt corpus keeps DIFFERENT max ≤ 0.192 and every SAME group collapsed; the
+TD-445 window pins keep their scores (the gate cannot change a score, only a verdict).
+P-3 (slug-stripping from the similarity operands lands ONLY if) it separates ≥ 1 labelled
+DIFFERENT pair the gate leaves matched AND breaks 0 SAME pairs the gate keeps; otherwise it
+is recorded as measured and not shipped. P-4 (instrument honesty) the vocab-off self-checks
+reproduce HEAD (C1 = 153, the stored column against `entityKey()`, the eight scores);
+vocab-on figures are reported with their own numbers and a dated reason, never asserted
+as 153.
+
+*What the sweep read (2026-09-07, `sqlite3 -readonly … .backup` copy of 1,914 rows, cut C2
+N = 444, `scripts/td452_anchor_sweep.ts --vocab-from-db --strip-slugs`, tags
+`td445_row_findings.csv` + `td452_row_findings.csv`, 0 unlabelled in every set).* P-4 held:
+vocab-off self-checks all `ok` (stored `entity_key` == `entityKey()` on 1,914 / 1,914; C1 =
+153; the eight scores), and the vocab-off P_new reproduces TD-452 exactly (a 52 / 43 / 9;
+c 85 / 49 / 33; cg 45 / 31 / 13; cp 40 / 18 / 20; ac 208 / 108 / 90). The DIFFERENT pairs by
+shape (gate separates S1 and S2 only): (a-narrow) 9 = 5 S1 + 4 S2, all 9 separated by the
+gate; (c) 33 = 10 S1 + 18 S2 + 4 S3 + 1 EQ, 28 separated, 5 not.
+
+**AC-3 re-evaluation under the PAIRWISE rule with the gate** (P_new recomputed on the gated
+claims — pairs newly comparable AND still matching):
+
+| candidate | pairs | SAME | DIFFERENT | EXCLUDED | unlabelled | highest DIFFERENT | verdict |
+|---|---|---|---|---|---|---|---|
+| (a-narrow) | 15 | 15 | **0** | 0 | 0 | — | **passes** |
+| (c) `global` ↔ `project:*` | 50 | 44 | **5** | 1 | 0 | `1341`/`1801` @ 0.310 (S3) | fails |
+| (c), later `global` crosses | 34 | 31 | **3** | 0 | 0 | `1341`/`1801` @ 0.310 (S3) | fails |
+| (c), later `project:` crosses | 16 | 13 | **2** | 1 | 0 | `1326`/`1888` @ 0.265 (S3) | fails |
+| (a-narrow) + (c) | 87 | 67 | **19** | 1 | 0 | `1816`/`1883` @ 0.324 (S3) | fails |
+
+(c)'s five survivors are the pre-registered residual plus one shape the plan did not name:
+`1341`/`1801`, `1355`/`1801`, `1326`/`1888`, `1271`/`1815` are S3 (a flood row against a
+flood row — no project list on at least one side), and `1297`/`1830` @ 0.257 is **EQ** — both
+titles name exactly `{igris-ai, mbrgea-ai}` and the claims differ. **(a-narrow) passes the
+pairwise rule under the gate → D-3: NOT shipped here** — an anchor change re-keys
+`dedupe_key` (schema NULL-all + `backfillFindingKeys` in a transaction, the
+`schema-v5-migration` version list, the family-1 split pins flip on purpose) and is a
+different risk class from a discriminator; it is reported for a follow-up brief with this
+table.
+
+**P-3, slug-stripping: measured, NOT shipped.** Stripping the named slugs' tokens from the
+similarity operands separates (c)'s EQ pair and nothing else the gate misses (gate+strip
+leaves (c) at 4 DIFFERENT, all S3), but it breaks SAME pairs the gate keeps: inside the
+shipped blocks the same-block SAME pairs that stop matching go from 49 (gate) to 131
+(gate+strip), and (a-narrow) FAILS under gate+strip (`1397`/`1593` @ 0.267, S3). It fails the
+"breaks 0 SAME pairs the gate keeps" clause and is recorded as measured.
+
+**P-2, the recall cost of the gate itself** (the live consequence, independent of any
+anchor): of the C2 pairs that share a stored anchor and match at HEAD, **84 stop matching
+under the gate — 49 SAME (the cost), 6 DIFFERENT (the precision gain at HEAD: all six in
+`project:lifeos`, `{lifeos}` against a four-project list or `{lifeos}` against
+`{fifty_eco_system, lifeos}`; `1495`/`1660` @ 0.314 is the live-path pin in
+`__tests__/recurrence.test.ts`), 14 EXCLUDED, 15 unlabelled.** Cluster counts, L2 @ 0.25:
+C1 153 → 169, C2 183 → 200 on the 1,914-row copy of 2026-09-07 (C1 is cut-bounded and stable; C2 is not — it moves with live growth, and read 187 → 204 on a 1,918-row copy taken 2026-09-08; re-quote both with N and date whenever the sweep is re-run). The 49 are one shape — a re-emission that mentions a second
+project in passing (`1275`/`1515`: `{lifeos}` vs `{fifty_eco_system, lifeos}`; `1312`/`1443`:
+`{fifty_eco_system}` vs `{fifty_eco_system, igris-ai}`) — and each is "a missed merge leaves
+the row count where it was". The excerpt corpus (`finding-key.test.ts`, the labelled
+boundary set) is untouched by the production vocabulary: every SAME group collapse stays at
+its pinned value and the DIFFERENT arm stays ≤ 0.192, so no pin moved. The equal-list SAME
+pairs (`1430`/`1486`, `1486`/`1596`, `1486`/`1698`, `1596`/`1698`) still match. *The plan's
+pre-registered narrowing — equality only when BOTH sets have ≥ 2 members — was measured and
+NOT adopted*: it would recover 34 of the 49 SAME pairs but also give back all 6 DIFFERENT
+same-block pairs, 20 of (c)'s 28 separated pairs and the two pinned S2 pairs (`1291`/`1698`,
+`1430`/`1495`), i.e. it fails P-1. Precision is the axis (TD-437: ~23 of ~25 findings true and
+actionable); the gate ships as pre-registered and the cost is stated here.
+
+**Residual and the next lever.** S3 — two different floods with no project list — is
+untouched by anything built from project names; (c) stays unshippable under the pairwise
+rule for exactly `1341`/`1801` and `1355`/`1801` (plus `1326`/`1888`, `1271`/`1815`). The
+next lever is a `source_module`-name SUBJECT gate (a flood row's own module name —
+`stalled`/`gap` vs `edge_inference` — is the discriminating fact the titles carry and the
+tokeniser cannot weigh), filed as the follow-up, not built here. `1297`/`1830` (EQ) says the
+gate's equality reading has its own floor: two findings about the same two projects need
+the claim to separate them.
 
 ---
 

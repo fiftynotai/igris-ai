@@ -52,6 +52,7 @@ describe('BR-100 — machine-identity pure region parity (brain ⇔ cli)', () =>
       'export interface MachineIdentity',
       'export function resolveIdentity',
       'export function withMintedId',
+      'export const ALIAS_CAP', // TD-453: the alias bound lives in the pinned region
       'export function withObservedHostname',
       'export function isSameMachine',
     ]) {

@@ -3,6 +3,13 @@
 #
 # Every test sets IGRIS_BRAIN_DIR=$BATS_TEST_TMPDIR/igris-brain so the CLI's
 # DB / canonical hooks file / installed_features.json land in tmp space.
+#
+# TD-456: a test that drives a verb which writes under $HOME fences HOME AND
+# IGRIS_BRAIN_DIR. `igris install` step 11 and `igris init` write ~/.claude.json
+# (+ the other harness configs) from os.homedir(); IGRIS_BRAIN_DIR alone is not
+# a fence. `stage_brain` calls `fence_home` FIRST, and `assert_home_fenced`
+# proves the fence before any body runs. The guard
+# cli/src/__tests__/bats-home-fence.test.ts reds an unfenced install/init.
 # We seed:
 #   - $IGRIS_BRAIN_DIR/core/hooks/canonical-settings.json (stub)
 #   - $IGRIS_BRAIN_DIR/memory/ (empty — registry.ts creates table on demand)
@@ -11,6 +18,41 @@
 # install dependency.
 
 set -euo pipefail
+
+# TD-456: the operator's REAL home, captured ONCE at load (before any function
+# runs) so assert_home_fenced can prove HOME moved away from it. A caller that
+# already exported IGRIS_REAL_HOME (a stand-in run: `HOME=<standin> bats …`)
+# keeps its value.
+IGRIS_REAL_HOME="${IGRIS_REAL_HOME:-$HOME}"
+export IGRIS_REAL_HOME
+
+# assert_home_fenced — the fence is ARMED, not assumed (TD-341: one `|| return 1`
+# per line, each with its reason on stderr). Returns 1 when HOME is empty, is the
+# real home, does not exist, or lies outside $BATS_TEST_TMPDIR.
+assert_home_fenced() {
+  [ -n "${HOME:-}" ] || { echo "assert_home_fenced: HOME is empty" >&2; return 1; }
+  [ "$HOME" != "$IGRIS_REAL_HOME" ] || { echo "assert_home_fenced: HOME is the real home ($HOME)" >&2; return 1; }
+  [ -d "$HOME" ] || { echo "assert_home_fenced: HOME does not exist ($HOME)" >&2; return 1; }
+  case "$HOME" in
+    "$BATS_TEST_TMPDIR"/*) ;;
+    *) echo "assert_home_fenced: HOME is outside BATS_TEST_TMPDIR ($HOME)" >&2; return 1 ;;
+  esac
+  return 0
+}
+
+# fence_home — export HOME=$BATS_TEST_TMPDIR/home (the SAME path stage_home
+# seeds, so a file calling both gets a fenced AND seeded home), seed a minimal
+# .gitconfig (git under an empty HOME has no identity; stage_git_project only
+# `git init`s, so a test that commits would otherwise fail for the wrong
+# reason), then prove the fence.
+fence_home() {
+  export HOME="$BATS_TEST_TMPDIR/home"
+  mkdir -p "$HOME"
+  if [ ! -f "$HOME/.gitconfig" ]; then
+    printf '[user]\n\tname = igris-bats\n\temail = bats@igris.invalid\n' > "$HOME/.gitconfig"
+  fi
+  assert_home_fenced
+}
 
 # CLI_DIST resolved at first include — falls back to the workspace dist dir
 # if not preset.
@@ -40,7 +82,10 @@ export STUB_CANONICAL_HOOKS
 
 # stage_brain — populates $BATS_TEST_TMPDIR/igris-brain with the canonical hooks
 # fixture and creates the memory/ dir. Sets IGRIS_BRAIN_DIR for the test.
+# TD-456: fences HOME FIRST — every verb a staged test runs is then fenced on
+# both roots before the body starts.
 stage_brain() {
+  fence_home
   export IGRIS_BRAIN_DIR="$BATS_TEST_TMPDIR/igris-brain"
   mkdir -p "$IGRIS_BRAIN_DIR/core/hooks"
   mkdir -p "$IGRIS_BRAIN_DIR/memory"

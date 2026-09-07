@@ -35,11 +35,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve as pathResolve } from "node:path";
 import * as TOML from "@iarna/toml"; // FR-163: PARSE-ONLY (idempotency + malformed gate); never re-emit.
 import { bundledMcpEntryPath, claudeJsonPath } from "./paths.js";
 // FR-169: reuse the FR-164 pure per-harness shaper + canonical type. mcp-shape.ts
@@ -1629,6 +1630,46 @@ export function inspectMcpRegistration(opts?: {
     registered: true,
     pathExists: existsSync(entryPath),
     entryPath,
+  };
+}
+
+/** What `igris install` step 11 should do with the `~/.claude.json` entry (TD-455). */
+export interface McpRegistrationPlan {
+  /** `noop` same path · `keep-foreign` different existing bundle · `register` absent · `repair` dangling/malformed. */
+  action: "noop" | "keep-foreign" | "register" | "repair";
+  /** The registered entry path (null when absent or malformed). */
+  existing: string | null;
+}
+
+/** Same file after `resolve()`, or after `realpathSync` when both exist (a symlinked global install). */
+function samePath(a: string, b: string): boolean {
+  const ra = pathResolve(a);
+  const rb = pathResolve(b);
+  if (ra === rb) return true;
+  try {
+    return realpathSync(ra) === realpathSync(rb);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * TD-455: decide, without writing, whether `igris install` may touch the global
+ * `igris-brain` registration. Registration is owned by `igris init` / doctor;
+ * install writes ONLY when the entry is absent or dangling, and keeps a
+ * foreign-but-existing bundle rather than re-pointing it to the running one.
+ */
+export function planClaudeMcpRegistration(
+  inspect: McpInspectResult,
+  runningPath: string,
+): McpRegistrationPlan {
+  if (!inspect.registered) return { action: "register", existing: null };
+  if (!inspect.pathExists || inspect.entryPath === null) {
+    return { action: "repair", existing: inspect.entryPath };
+  }
+  return {
+    action: samePath(inspect.entryPath, runningPath) ? "noop" : "keep-foreign",
+    existing: inspect.entryPath,
   };
 }
 

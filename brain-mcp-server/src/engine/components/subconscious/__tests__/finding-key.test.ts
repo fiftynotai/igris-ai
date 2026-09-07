@@ -46,7 +46,7 @@
  * @module engine/components/subconscious/__tests__/finding-key.test
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterAll, beforeAll, describe, it, expect } from 'vitest';
 import Database from 'better-sqlite3';
 import {
   GLOBAL_ENTITY_KEY,
@@ -58,6 +58,8 @@ import {
   claimsMatch,
   entityKey,
   findingKey,
+  loadProjectVocabulary,
+  namedProjects,
   subjectIds,
 } from '../finding-key.js';
 import { subconsciousMigrations } from '../schema.js';
@@ -935,6 +937,188 @@ describe('backfillFindingKeys', () => {
       expect(backfillFindingKeys(db)).toBe(1);
     } finally {
       db.close();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-454 — the PROJECT-SET GATE (a discriminator, not an anchor change)
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-452's DIFFERENT class was recorded as "one shape: the same list of
+ * project names". Re-reading `ANCHOR_HELD_PAIRS` gives THREE shapes, and the
+ * gate below can touch two of them:
+ *   S1 — overlapping-but-unequal project lists, different claims;
+ *   S2 — a project-subset instance against its portfolio class;
+ *   S3 — two different QUEUE FLOODS naming no project at all (nothing built
+ *        from project names can separate these; they are the recorded residual).
+ *
+ * THE GATE. `claimOf(title, vocab)` names the registered projects a title
+ * mentions (slug token sequences matched over the UNFILTERED normalized
+ * tokens, longest-first, contiguous); `claimsMatch` refuses two claims whose
+ * project sets are both non-empty and NOT EQUAL. Equality, not disjointness:
+ * the labelling rule already says a project-subset instance of a portfolio
+ * class is its own finding. `findingKey` hashes tokens + subject ONLY, so the
+ * stored key is unchanged and no row was re-keyed.
+ *
+ * VOCABULARY. `PRODUCTION_SLUGS_2026_09_07` is the live `projects.slug` column,
+ * read once with `sqlite3 -readonly` on 2026-09-07 (35 rows, verbatim, case
+ * included) — it carries the prose-word slugs (`content`, `hadir`,
+ * `award-winning`) and the case/spelling twins that make the gate's recall
+ * cost real, so the corpus pins below run against the real risk, not a
+ * flattering fixture.
+ */
+const PRODUCTION_SLUGS_2026_09_07 = [
+  'CustomerPulse-Android', 'animated-fifty-dev', 'animated-fifty.dev', 'attendance_app',
+  'award-winning', 'brand_os', 'coffee_brand_website', 'content', 'customerpulse',
+  'customerpulse-android', 'customerpulse-flutter', 'customerpulse_flutter', 'fifty-agent-sdk',
+  'fifty-content-pipeline', 'fifty-dev', 'fifty-store', 'fifty_dev', 'fifty_eco_system',
+  'fya-hadir-app', 'gemini-gdc-auth-proxy', 'hadir', 'hadir-system', 'hero-lab', 'igris-ai',
+  'igris-os-eval', 'lifeOS', 'luna-bakery-website', 'mbrgea-ai', 'mbrgea-test',
+  'moca-agent-flutter-client', 'moca-ai-agent', 'moca-app', 'moca-hadir-app', 'moca-hr-agent',
+  'retro_fifty',
+];
+
+function vocabDb(slugs: readonly string[]): Database.Database {
+  const db = new Database(':memory:');
+  db.exec(`CREATE TABLE projects (slug TEXT PRIMARY KEY, name TEXT, path TEXT)`);
+  const ins = db.prepare(`INSERT INTO projects (slug, name, path) VALUES (?, ?, ?)`);
+  for (const s of slugs) ins.run(s, s, `/p/${s}`);
+  return db;
+}
+
+const S1_PAIRS = [[1434, 1486], [1434, 1596], [1434, 1698], [1474, 1486]] as const;
+const S2_PAIRS = [[1291, 1698], [1430, 1495]] as const;
+const S3_PAIRS = [[1341, 1801], [1355, 1801]] as const;
+const EQUAL_LIST_SAME_PAIRS = [[1430, 1486], [1486, 1596], [1486, 1698], [1596, 1698]] as const;
+
+describe('TD-454 project-set gate', () => {
+  const db = vocabDb(PRODUCTION_SLUGS_2026_09_07);
+  let vocab: ReadonlyMap<string, string[]>;
+  beforeAll(() => {
+    vocab = loadProjectVocabulary(db);
+  });
+  afterAll(() => {
+    db.close();
+  });
+  const title = (id: number): string => {
+    const row = ANCHOR_HELD_ROWS[id];
+    expect(row, `no pinned row ${id}`).toBeDefined();
+    return row!.title;
+  };
+  const matchWith = (a: number, b: number): boolean =>
+    claimsMatch(claimOf(title(a), vocab), claimOf(title(b), vocab), THRESHOLD, MIN_TOKENS);
+
+  it('the vocabulary loader maps every live slug to its token sequence (fail-soft on a missing table)', () => {
+    expect(vocab.size).toBe(PRODUCTION_SLUGS_2026_09_07.length);
+    expect(vocab.get('hadir-system')).toEqual(['hadir', 'system']);
+    expect(vocab.get('attendance_app')).toEqual(['attendance_app']); // `_` is not punctuation
+    expect(vocab.get('lifeOS')).toEqual(['lifeos']);
+    expect(vocab.get('moca-hr-agent')).toEqual(['moca', 'hr', 'agent']);
+    expect(vocab.get('animated-fifty.dev')).toEqual(['animated', 'fifty', 'dev']);
+    const bare = new Database(':memory:');
+    try {
+      expect(loadProjectVocabulary(bare).size).toBe(0);
+    } finally {
+      bare.close();
+    }
+  });
+
+  it('every pinned pair still MATCHES on the tokeniser alone (the arming half — vocab-free)', () => {
+    for (const [a, b] of [...S1_PAIRS, ...S2_PAIRS, ...S3_PAIRS]) expect(match(title(a), title(b))).toBe(true);
+  });
+
+  it.each([...S1_PAIRS, ...S2_PAIRS])('(a) S1/S2 pair %d/%d no longer matches with the vocabulary — unequal project sets', (a, b) => {
+    const pa = claimOf(title(a), vocab).projects;
+    const pb = claimOf(title(b), vocab).projects;
+    expect(pa.size).toBeGreaterThan(0);
+    expect(pb.size).toBeGreaterThan(0);
+    expect([...pa].sort()).not.toEqual([...pb].sort());
+    expect(matchWith(a, b)).toBe(false);
+  });
+
+  it.each(EQUAL_LIST_SAME_PAIRS)('(b) equal-list SAME pair %d/%d still matches with the vocabulary (recall pin)', (a, b) => {
+    expect([...claimOf(title(a), vocab).projects].sort()).toEqual([...claimOf(title(b), vocab).projects].sort());
+    expect(matchWith(a, b)).toBe(true);
+  });
+
+  it.each(S3_PAIRS)('(c) S3 flood pair %d/%d is UNCHANGED by the gate — the recorded residual (no project set on the global side)', (a, b) => {
+    expect(claimOf(title(b), vocab).projects.size).toBe(0);
+    expect(matchWith(a, b)).toBe(true);
+  });
+
+  it('(c) family 2 (1801/1888) is unchanged — neither title names a project', () => {
+    expect(claimOf(title(1801), vocab).projects.size).toBe(0);
+    expect(claimOf(title(1888), vocab).projects.size).toBe(0);
+    expect(matchWith(1801, 1888)).toBe(true);
+  });
+
+  it('(d) namedProjects: nested slug not double-counted, underscore slug, mixed case, a 2-char inner token, empty vocab', () => {
+    // 1434 names attendance_app, lifeOS, hadir-system AND hadir (a separate project).
+    expect([...namedProjects(title(1434), vocab)].sort()).toEqual(['attendance_app', 'hadir', 'hadir-system', 'lifeos']);
+    // `hadir` inside `hadir-system` is ONE project, not two.
+    expect([...namedProjects('hadir-system BR-001 has been In Progress 159 days', vocab)]).toEqual(['hadir-system']);
+    // The 2-char inner token `hr` survives because matching runs on the UNFILTERED tokens.
+    expect(namedProjects(title(1430), vocab).has('moca-hr-agent')).toBe(true);
+    // Mixed case in the title and in the slug both fold.
+    expect([...namedProjects('LifeOS and Attendance_App carry stale briefs', vocab)].sort()).toEqual(['attendance_app', 'lifeos']);
+    // Empty vocabulary => empty set; no vocabulary at claimOf => empty set (backward compatible).
+    expect(namedProjects(title(1434), new Map()).size).toBe(0);
+    expect(claimOf(title(1434)).projects.size).toBe(0);
+  });
+
+  it('(d) a slug that is also a prose word is a project name to the gate — the R-9 cost is real and measured, not hidden', () => {
+    expect(namedProjects('the content pipeline is stalled', vocab).has('content')).toBe(true);
+  });
+
+  it('the STORED key is unchanged by the vocabulary — no re-key (findingKey hashes tokens + subject only)', () => {
+    for (const id of Object.keys(ANCHOR_HELD_ROWS).map(Number)) {
+      const row = ANCHOR_HELD_ROWS[id]!;
+      const c = candidateFromRow(row);
+      expect(findingKey(c)).toBe(findingKey(c)); // deterministic
+      // The key cannot see the projects set: the claim with and without vocab differ only there.
+      const withV = claimOf(row.title, vocab);
+      const without = claimOf(row.title);
+      expect([...withV.tokens].sort()).toEqual([...without.tokens].sort());
+      expect([...withV.subject].sort()).toEqual([...without.subject].sort());
+    }
+  });
+
+  it('(e) the labelled boundary corpus with the production vocabulary: DIFFERENT max stays 0.192 and every SAME group collapse is the pinned one', () => {
+    const diff = acrossPairs();
+    for (const [, a, b] of diff) {
+      expect(claimsMatch(claimOf(a, vocab), claimOf(b, vocab), THRESHOLD, MIN_TOKENS)).toBe(false);
+    }
+    const collapse = (titles: string[]): number => {
+      const anchors: Array<ReturnType<typeof claimOf>> = [];
+      for (const t of titles) {
+        const c = claimOf(t, vocab);
+        if (!anchors.some((anchor) => claimsMatch(c, anchor, THRESHOLD, MIN_TOKENS))) anchors.push(c);
+      }
+      return anchors.length;
+    };
+    const expected: Record<string, number> = {
+      'project:fifty_eco_system/abandoned': 1,
+      'project:fifty_eco_system/duplicate_slug': 1,
+      'project:fifty_eco_system/unchecked_ac': 2,
+      'project:fifty_eco_system/queue_flood': 1,
+      'project:lifeOS/p0_unattended': 1,
+      'project:lifeOS/batch_sweep': 1,
+      'project:lifeOS/harvest_gap': 1,
+    };
+    for (const [block, gs] of Object.entries(CORPUS)) {
+      for (const [name, titles] of Object.entries(gs)) {
+        const label = `${block}/${name}`;
+        expect(collapse(titles), label).toBe(expected[label]);
+      }
+    }
+  });
+
+  it('(e) the TD-445 production window keeps its scores and verdicts under the vocabulary (a gate cannot change a score)', () => {
+    for (const p of PRODUCTION_PAIRS) {
+      expect(claimSimilarity(claimOf(p.a.title, vocab).tokens, claimOf(p.b.title, vocab).tokens)).toBeCloseTo(p.score, 3);
+      expect(claimsMatch(claimOf(p.a.title, vocab), claimOf(p.b.title, vocab), THRESHOLD, MIN_TOKENS)).toBe(false);
     }
   });
 });

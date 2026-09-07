@@ -71,6 +71,24 @@
  * `td452_untagged_rows.csv` (rows in a decision set that neither findings
  * file tags — the template for hand-tagging).
  *
+ * TD-454 (2026-09-07): `--vocab-from-db` loads the copy's `projects` slugs
+ * through the shipped `loadProjectVocabulary` and adds three claim VARIANTS
+ * beside the vocab-off claim — `gate` (the shipped project-set gate),
+ * `strip` (the NAMED slugs' tokens removed from the similarity operands) and
+ * `gate+strip` (with `--strip-slugs`). The self-check stays vocab-OFF, so it
+ * still pins the instrument to HEAD; the TD-454 sections report the shape
+ * (S1/S2/S3/EQ) and separator of every DIFFERENT pair in the vocab-off
+ * decision sets, the AC-3 re-evaluation of P_new on each variant, the
+ * same-block recall cost / precision gain, and the loop replay under the
+ * gate. Emits `td454_census.md`, `td454_pairs_separated.csv`
+ * (`id_a,id_b,design,score,label,shape,separated_by,projects_a,projects_b`
+ * — the checked-in record), `td454_recall_cost.csv`, `td454_pnew_variants.csv`.
+ * Outcome on the 1,914-row copy: (a-narrow) 15 / 15 SAME / 0 DIFFERENT under
+ * the gate (passes the pairwise rule — a follow-up, D-3); (c) 50 / 44 / 5
+ * (four S3 floods + one equal-list pair, fails); strip fails P-3 (breaks 82
+ * more SAME pairs than the gate alone); the gate's own same-block cost is 49
+ * SAME pairs / 6 DIFFERENT separated, C1 153 → 169, C2 183 → 200.
+ *
  * Exit codes: 0 ok · 1 self-check failed · 2 bad arguments · 3 refused the
  * live brain path.
  */
@@ -85,8 +103,10 @@ import {
   claimSimilarity,
   claimsMatch,
   entityKey,
+  loadProjectVocabulary,
   subjectIds,
   type Claim,
+  type ProjectVocabulary,
 } from '../src/engine/components/subconscious/finding-key.js';
 import { DEFAULT_SUBCONSCIOUS_CONFIG } from '../src/engine/components/subconscious/types.js';
 
@@ -174,6 +194,10 @@ interface Args {
   out: string;
   findings: string | null;
   findings2: string | null;
+  /** TD-454: build the gate/strip claim variants from the copy's `projects` table. */
+  vocabFromDb: boolean;
+  /** TD-454: also report the slug-stripped similarity variants (measured, ships only per P-3). */
+  stripSlugs: boolean;
 }
 
 function fail(code: number, message: string): never {
@@ -188,6 +212,8 @@ function parseArgs(argv: string[]): Args {
     out: path.join(process.cwd(), 'td452_out'),
     findings: null,
     findings2: null,
+    vocabFromDb: false,
+    stripSlugs: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -212,6 +238,12 @@ function parseArgs(argv: string[]): Args {
         break;
       case '--findings2':
         out.findings2 = need();
+        break;
+      case '--vocab-from-db':
+        out.vocabFromDb = true;
+        break;
+      case '--strip-slugs':
+        out.stripSlugs = true;
         break;
       default:
         fail(2, `unknown flag ${flag}`);
@@ -265,7 +297,12 @@ interface Scored {
   b: string;
   /** The imported `entityKey()` — must equal `a` (self-check). */
   shipped: string;
+  /** The vocab-OFF claim — the deployed matcher at HEAD (the self-check arm). */
   claim: Claim;
+  /** TD-454 variants, present with --vocab-from-db: the gate, slug-stripped tokens, both. */
+  gate?: Claim;
+  strip?: Claim;
+  gateStrip?: Claim;
   title: string;
   status: string;
   created_at: string;
@@ -273,25 +310,52 @@ interface Scored {
   hasSlug: boolean;
 }
 
-function score(rows: Row[]): { scored: Scored[]; nullStored: number } {
+/** TD-454: which claim a variant reads — `base` is the deployed matcher. */
+type Variant = 'base' | 'gate' | 'strip' | 'gateStrip';
+const claimAs = (r: Scored, v: Variant): Claim => (v === 'base' ? r.claim : (r[v] ?? r.claim));
+
+/**
+ * TD-454 slug-STRIPPING (measured, ships only per P-3): the tokens of every
+ * slug the title NAMES are removed from the similarity operands, never from
+ * the hashed set. Only named slugs — stripping every vocabulary token would
+ * take `system`, `app`, `content` out of every title.
+ */
+function strippedTokens(gate: Claim, lower: Map<string, string[]>): Set<string> {
+  const out = new Set(gate.tokens);
+  for (const slug of gate.projects) for (const t of lower.get(slug) ?? []) out.delete(t);
+  return out;
+}
+
+function score(rows: Row[], vocab?: ProjectVocabulary): { scored: Scored[]; nullStored: number } {
   let nullStored = 0;
+  const lower = new Map<string, string[]>();
+  if (vocab) for (const [slug, seq] of vocab) lower.set(slug.toLowerCase(), seq);
   const scored = rows.map((row) => {
     const candidate = candidateFromRow(row);
     const shipped = entityKey(candidate);
     const stored = typeof row.entity_key === 'string' && row.entity_key.length > 0 ? row.entity_key : null;
     if (stored === null) nullStored += 1;
-    return {
+    const title = row.title ?? '';
+    const base: Scored = {
       id: row.id,
       a: stored ?? shipped,
       b: candidateAnchor(row),
       shipped,
-      claim: claimOf(row.title ?? ''),
-      title: row.title ?? '',
+      claim: claimOf(title),
+      title,
       status: row.status,
       created_at: row.created_at,
-      titledIds: subjectIds(row.title ?? '').size,
+      titledIds: subjectIds(title).size,
       hasSlug: candidate.project_slug !== null && candidate.project_slug !== undefined,
     };
+    if (vocab) {
+      const gate = claimOf(title, vocab);
+      const stripped = strippedTokens(gate, lower);
+      base.gate = gate;
+      base.strip = { tokens: stripped, subject: gate.subject, projects: new Set() };
+      base.gateStrip = { tokens: stripped, subject: gate.subject, projects: gate.projects };
+    }
+    return base;
   });
   return { scored, nullStored };
 }
@@ -337,11 +401,12 @@ interface LoopResult {
  * (candidate (c)'s second pass). `comparisons` records how many heads each
  * candidate was scored against; `absorptions` which head took it.
  */
-function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boolean): LoopResult {
+function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boolean, variant: Variant = 'base'): LoopResult {
   const heads = new Map<string, Head[]>();
   const comparisons: number[] = [];
   const absorptions: Absorption[] = [];
   for (const row of rows) {
+    const claim = claimAs(row, variant);
     const anchor = row[arm];
     const own = heads.get(anchor) ?? [];
     let best: Head | null = null;
@@ -349,8 +414,8 @@ function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boole
     let cross = false;
     let compared = own.length;
     for (const head of own) {
-      if (!claimsMatch(row.claim, head.claim, t, MIN_TOKENS)) continue;
-      const s = claimSimilarity(row.claim.tokens, head.claim.tokens);
+      if (!claimsMatch(claim, head.claim, t, MIN_TOKENS)) continue;
+      const s = claimSimilarity(claim.tokens, head.claim.tokens);
       if (s > bestScore) {
         bestScore = s;
         best = head;
@@ -361,8 +426,8 @@ function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boole
         if (other === anchor || !candidateComparable(anchor, other)) continue;
         compared += block.length;
         for (const head of block) {
-          if (!claimsMatch(row.claim, head.claim, t, MIN_TOKENS)) continue;
-          const s = claimSimilarity(row.claim.tokens, head.claim.tokens);
+          if (!claimsMatch(claim, head.claim, t, MIN_TOKENS)) continue;
+          const s = claimSimilarity(claim.tokens, head.claim.tokens);
           if (s > bestScore) {
             bestScore = s;
             best = head;
@@ -375,7 +440,7 @@ function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boole
     if (best) {
       absorptions.push({ cand: row, headId: best.id, headAnchor: best.anchor, score: bestScore, cross });
     } else {
-      own.push({ id: row.id, claim: row.claim, anchor });
+      own.push({ id: row.id, claim, anchor });
       heads.set(anchor, own);
     }
   }
@@ -385,23 +450,24 @@ function clustersL2(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boole
 }
 
 /** L1 — greedy first match, same two-pass shape (TD-440's doc loop). */
-function clustersL1(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boolean): number {
+function clustersL1(rows: Scored[], arm: 'a' | 'b', t: number, crossBlock: boolean, variant: Variant = 'base'): number {
   const heads = new Map<string, Head[]>();
   for (const row of rows) {
+    const claim = claimAs(row, variant);
     const anchor = row[arm];
     const own = heads.get(anchor) ?? [];
-    let hit = own.some((h) => claimsMatch(row.claim, h.claim, t, MIN_TOKENS));
+    let hit = own.some((h) => claimsMatch(claim, h.claim, t, MIN_TOKENS));
     if (!hit && crossBlock) {
       for (const [other, block] of heads) {
         if (other === anchor || !candidateComparable(anchor, other)) continue;
-        if (block.some((h) => claimsMatch(row.claim, h.claim, t, MIN_TOKENS))) {
+        if (block.some((h) => claimsMatch(claim, h.claim, t, MIN_TOKENS))) {
           hit = true;
           break;
         }
       }
     }
     if (!hit) {
-      own.push({ id: row.id, claim: row.claim, anchor });
+      own.push({ id: row.id, claim, anchor });
       heads.set(anchor, own);
     }
   }
@@ -455,8 +521,8 @@ function newComparable(x: Scored, y: Scored, design: Design): boolean {
   }
 }
 
-/** Every pair comparable under `design` and NOT under the shipped rule that matches at the shipped threshold. */
-function newPairs(rows: Scored[], design: Design): Pair[] {
+/** Every pair comparable under `design` and NOT under the shipped rule that matches at the shipped threshold (under `variant`'s claims). */
+function newPairs(rows: Scored[], design: Design, variant: Variant = 'base'): Pair[] {
   const out: Pair[] = [];
   for (let i = 0; i < rows.length; i++) {
     for (let j = i + 1; j < rows.length; j++) {
@@ -464,8 +530,10 @@ function newPairs(rows: Scored[], design: Design): Pair[] {
       const y = rows[j]!;
       if (oldComparable(x, y)) continue;
       if (!newComparable(x, y, design)) continue;
-      if (!claimsMatch(x.claim, y.claim, SHIPPED_THRESHOLD, MIN_TOKENS)) continue;
-      out.push({ a: x, b: y, score: claimSimilarity(x.claim.tokens, y.claim.tokens), design });
+      const cx = claimAs(x, variant);
+      const cy = claimAs(y, variant);
+      if (!claimsMatch(cx, cy, SHIPPED_THRESHOLD, MIN_TOKENS)) continue;
+      out.push({ a: x, b: y, score: claimSimilarity(cx.tokens, cy.tokens), design });
     }
   }
   out.sort((p, q) => q.score - p.score || p.a.id - q.a.id || p.b.id - q.b.id);
@@ -667,7 +735,10 @@ function main(): void {
     say();
 
     const allRows = db.prepare(ALL_SQL).all() as Row[];
-    const { scored: all, nullStored } = score(allRows);
+    // TD-454: the vocabulary only ADDS the gate/strip claim variants; `claim`
+    // (vocab-off) is what every self-check and every TD-452 section reads.
+    const vocab = args.vocabFromDb ? loadProjectVocabulary(db) : undefined;
+    const { scored: all, nullStored } = score(allRows, vocab);
     const corpusIds = new Set((db.prepare(CORPUS_SQL).all() as Row[]).map((r) => r.id));
     const c2 = all.filter((r) => corpusIds.has(r.id));
     const c1 = c2.filter((r) => r.created_at < args.cut);
@@ -796,6 +867,140 @@ function main(): void {
     }
     say();
 
+    // -----------------------------------------------------------------------
+    // TD-454 — the PROJECT-SET GATE, vocab-ON. Everything above ran vocab-OFF,
+    // so the self-check still pins the instrument to the deployed matcher at
+    // HEAD; these sections are REPORTED with their own figures (P-4).
+    // -----------------------------------------------------------------------
+    const separatedCsv: string[] = ['id_a,id_b,design,score,label,shape,separated_by,projects_a,projects_b'];
+    const recallCsv: string[] = ['variant,id_a,id_b,anchor,score,label,projects_a,projects_b,title_a,title_b'];
+    const pnewCsv: string[] = ['variant,design,id_a,id_b,anchor_a,anchor_b,score,label,shape'];
+    if (vocab) {
+      const T = SHIPPED_THRESHOLD;
+      const variants: Variant[] = args.stripSlugs ? ['gate', 'strip', 'gateStrip'] : ['gate'];
+      const vname = (v: Variant): string => (v === 'gateStrip' ? 'gate+strip' : v);
+      const projs = (r: Scored): string => [...r.gate!.projects].sort().join(' ');
+      const shapeOf = (x: Scored, y: Scored): string => {
+        const px = x.gate!.projects;
+        const py = y.gate!.projects;
+        if (px.size === 0 || py.size === 0) return 'S3';
+        const xInY = [...px].every((p) => py.has(p));
+        const yInX = [...py].every((p) => px.has(p));
+        if (xInY && yInX) return 'EQ';
+        return xInY || yInX ? 'S2' : 'S1';
+      };
+      const sepOf = (x: Scored, y: Scored): string => {
+        const seps: string[] = [];
+        for (const v of ['gate', 'strip', 'gateStrip'] as Variant[]) {
+          if (!claimsMatch(claimAs(x, v), claimAs(y, v), T, MIN_TOKENS)) seps.push(vname(v));
+        }
+        return seps.length ? seps.join('|') : 'none';
+      };
+
+      say('## TD-454 — the PROJECT-SET GATE (vocab-ON; the self-check above ran vocab-OFF = the deployed matcher at HEAD)');
+      say(`vocabulary: ${vocab.size} slugs from the copy's projects table. Variants: gate = project-set equality in claimsMatch; strip = the NAMED slugs' tokens removed from the similarity operands (never from the hashed set); gate+strip = both.`);
+      const c1Line = variants.map((v) => `${vname(v)} L2 ${clustersL2(c1, 'a', T, false, v).clusters}`).join(' · ');
+      say(`C1 @${T} under A: vocab-off ${C1_AT_SHIPPED} (asserted above) · ${c1Line} — REPORTED, not asserted: a gate can only refuse, so its figure is ≥ 153 by construction and the excess is the same-block pairs it now keeps apart; strip can move either way.`);
+      const c2Base = clustersL2(c2, 'a', T, false).clusters;
+      const c2Line = variants.map((v) => `${vname(v)} L2 ${clustersL2(c2, 'a', T, false, v).clusters}`).join(' · ');
+      say(`C2 @${T} under A (N=${c2.length}): vocab-off L2 ${c2Base} · ${c2Line} — same reading, whole table.`);
+      say();
+
+      say('### Every DIFFERENT pair of the vocab-off decision sets, tagged with its SHAPE and its SEPARATOR');
+      say('shape: S1 = overlapping-but-unequal project lists · S2 = one list a strict subset of the other · S3 = no project list on at least one side · EQ = equal lists (the gate cannot touch EQ or S3)');
+      say('| design | DIFFERENT | S1 | S2 | S3 | EQ | sep. by gate | by strip | by gate+strip | by none |');
+      say('|---|---|---|---|---|---|---|---|---|---|');
+      const perPair: string[] = [];
+      for (const design of DESIGNS) {
+        const diff = newPairs(c2, design).filter((p) => labelOf(tags, p.a.id, p.b.id) === 'DIFFERENT');
+        const shapes = { S1: 0, S2: 0, S3: 0, EQ: 0 } as Record<string, number>;
+        const seps = { gate: 0, strip: 0, 'gate+strip': 0, none: 0 } as Record<string, number>;
+        for (const p of diff) {
+          const shape = shapeOf(p.a, p.b);
+          const sep = sepOf(p.a, p.b);
+          shapes[shape] = (shapes[shape] ?? 0) + 1;
+          for (const s of sep.split('|')) seps[s] = (seps[s] ?? 0) + 1;
+          separatedCsv.push([p.a.id, p.b.id, design, p.score.toFixed(4), 'DIFFERENT', shape, sep, csvField(projs(p.a)), csvField(projs(p.b))].join(','));
+          if (design === 'a' || design === 'c') {
+            perPair.push(`  [${design}] ${p.a.id}/${p.b.id} @ ${p.score.toFixed(3)}  ${shape}  sep=${sep}  {${projs(p.a)}} vs {${projs(p.b)}}`);
+          }
+        }
+        say(`| ${design} | ${diff.length} | ${shapes.S1} | ${shapes.S2} | ${shapes.S3} | ${shapes.EQ} | ${seps.gate} | ${seps.strip} | ${seps['gate+strip']} | ${seps.none} |`);
+      }
+      say('#### the two candidates, pair by pair');
+      for (const l of perPair) say(l);
+      say();
+
+      say('### AC-3 re-evaluation under the PAIRWISE rule (D-1) with the gate: P_new recomputed on the variant claims (pairs newly comparable AND matching)');
+      for (const v of variants) {
+        say(`#### variant: ${vname(v)}`);
+        say('| design | pairs | SAME | DIFFERENT | EXCLUDED | unlabelled | highest DIFFERENT | rows in set | verdict |');
+        say('|---|---|---|---|---|---|---|---|---|');
+        for (const design of DESIGNS) {
+          const pairs = newPairs(c2, design, v);
+          const same = pairs.filter((p) => labelOf(tags, p.a.id, p.b.id) === 'SAME').length;
+          const diff = pairs.filter((p) => labelOf(tags, p.a.id, p.b.id) === 'DIFFERENT');
+          const excl = pairs.filter((p) => labelOf(tags, p.a.id, p.b.id) === 'EXCLUDED').length;
+          const blank = pairs.length - same - diff.length - excl;
+          const rowsIn = new Set(pairs.flatMap((p) => [p.a.id, p.b.id]));
+          const top = diff[0] ? `${diff[0].a.id}/${diff[0].b.id} @ ${diff[0].score.toFixed(4)} (${shapeOf(diff[0].a, diff[0].b)})` : '—';
+          const verdict = diff.length > 0 ? 'FAILS (DIFFERENT > 0)' : blank > 0 ? 'incomplete (unlabelled)' : 'passes';
+          say(`| ${design} | ${pairs.length} | ${same} | ${diff.length} | ${excl} | ${blank} | ${top} | ${rowsIn.size} | ${verdict} |`);
+          for (const p of pairs) {
+            pnewCsv.push([vname(v), design, p.a.id, p.b.id, p.a.a, p.b.a, p.score.toFixed(4), labelOf(tags, p.a.id, p.b.id), shapeOf(p.a, p.b)].join(','));
+          }
+        }
+        for (const design of ['a', 'c'] as Design[]) {
+          const diff = newPairs(c2, design, v).filter((p) => labelOf(tags, p.a.id, p.b.id) === 'DIFFERENT');
+          say(`${design} — remaining DIFFERENT (${diff.length}): ${diff.map((p) => `${p.a.id}/${p.b.id}@${p.score.toFixed(3)}(${shapeOf(p.a, p.b)})`).join(' ') || 'none'}`);
+        }
+        say();
+      }
+
+      say('### Recall cost / precision gain INSIDE the shipped blocks (C2, same stored anchor): pairs that match at HEAD and stop matching under the variant');
+      for (const v of variants) {
+        let s = 0, d = 0, e = 0, u = 0;
+        const lines: string[] = [];
+        for (let i = 0; i < c2.length; i++) {
+          for (let j = i + 1; j < c2.length; j++) {
+            const x = c2[i]!;
+            const y = c2[j]!;
+            if (x.a !== y.a) continue;
+            if (!claimsMatch(x.claim, y.claim, T, MIN_TOKENS)) continue;
+            if (claimsMatch(claimAs(x, v), claimAs(y, v), T, MIN_TOKENS)) continue;
+            const label = labelOf(tags, x.id, y.id);
+            if (label === 'SAME') s += 1; else if (label === 'DIFFERENT') d += 1; else if (label === 'EXCLUDED') e += 1; else u += 1;
+            const sc = claimSimilarity(x.claim.tokens, y.claim.tokens);
+            lines.push(`    ${x.id}/${y.id} @ ${sc.toFixed(3)} ${x.a}  ${label || '(unlabelled)'}  {${projs(x)}} vs {${projs(y)}}`);
+            recallCsv.push([vname(v), x.id, y.id, x.a, sc.toFixed(4), label, csvField(projs(x)), csvField(projs(y)), csvField(x.title), csvField(y.title)].join(','));
+          }
+        }
+        say(`  ${vname(v)}: ${s + d + e + u} same-block pairs stop matching — SAME ${s} (the recall cost), DIFFERENT ${d} (the precision gain at HEAD), EXCLUDED ${e}, unlabelled ${u}`);
+        for (const l of lines) say(l);
+      }
+      say();
+
+      say('### Loop-faithful replay under the gate (REPORTED, not the decision input)');
+      for (const [name, arm, cross] of [
+        ['candidate a alone (B anchors, own block)', 'b', false],
+        ['candidate c alone (A anchors, two-pass)', 'a', true],
+        ['candidates a+c (B anchors, two-pass)', 'b', true],
+      ] as const) {
+        const res = clustersL2(c2, arm, T, cross, 'gate');
+        const newly = res.absorptions.filter((x) => x.cross || (arm === 'b' && (x.cand.a !== x.cand.b || all.find((r) => r.id === x.headId)!.a !== all.find((r) => r.id === x.headId)!.b)));
+        let s = 0, d = 0, e = 0, u = 0;
+        const lines: string[] = [];
+        for (const x of newly) {
+          const label = labelOf(tags, x.cand.id, x.headId);
+          if (label === 'SAME') s += 1; else if (label === 'DIFFERENT') d += 1; else if (label === 'EXCLUDED') e += 1; else u += 1;
+          lines.push(`    ${x.cand.id} (${x.cand[arm]}) → head ${x.headId} (${x.headAnchor}) @ ${x.score.toFixed(4)}${x.cross ? ' cross-block' : ''}  ${label || '(unlabelled)'}`);
+        }
+        say(`  ${name}: ${newly.length} absorptions the shipped anchor could not make — SAME ${s}, DIFFERENT ${d}, EXCLUDED ${e}, unlabelled ${u} (total absorptions ${res.absorptions.length})`);
+        for (const l of lines) say(l);
+      }
+      say();
+    }
+
     fs.mkdirSync(args.out, { recursive: true });
     const movedCsv = [
       'id,anchor_a,anchor_b,status,has_slug,title_ids,title',
@@ -821,6 +1026,13 @@ function main(): void {
     fs.writeFileSync(path.join(args.out, 'td452_untagged_rows.csv'), `${untaggedCsv}\n`);
     fs.writeFileSync(path.join(args.out, 'td452_anchor_census.md'), `${out.join('\n')}\n`);
     say(`wrote ${args.out}/td452_{anchor_census.md,moved_rows.csv,new_pairs.csv,crossblock_top.csv,untagged_rows.csv}`);
+    if (vocab) {
+      fs.writeFileSync(path.join(args.out, 'td454_pairs_separated.csv'), `${separatedCsv.join('\n')}\n`);
+      fs.writeFileSync(path.join(args.out, 'td454_recall_cost.csv'), `${recallCsv.join('\n')}\n`);
+      fs.writeFileSync(path.join(args.out, 'td454_pnew_variants.csv'), `${pnewCsv.join('\n')}\n`);
+      fs.writeFileSync(path.join(args.out, 'td454_census.md'), `${out.join('\n')}\n`);
+      say(`wrote ${args.out}/td454_{census.md,pairs_separated.csv,recall_cost.csv,pnew_variants.csv}`);
+    }
   } finally {
     db.close();
   }

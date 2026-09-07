@@ -263,6 +263,14 @@ igris init --upgrade --dev --from-source /path/to/igris-ai
 edit-rebuild-test loop is not broken by a repoint to the stale bundled
 copy. `--dev` requires `--from-source`.
 
+A per-project `igris install <path>` never re-points a registration that
+already points at an existing bundle — even when run from a scratch build or
+`npx tsx cli/src/index.ts` (TD-455). It registers only when the entry is
+absent or its bundle path no longer exists (backup at
+`~/.claude.json.igris.bak`, old → new reported); otherwise it prints
+`igris-brain MCP kept -> <existing>` and leaves the file byte-identical.
+Re-pointing is `igris init --upgrade` (`--dev` for a clone).
+
 ### Sandboxing the brain — the env seams
 
 Anything that boots the brain server outside your real `~/.igris` — a test, a

@@ -44,12 +44,15 @@ export function withMintedId(config: Record<string, unknown>, id: string, minted
   return { ...config, machine: { ...(block ?? {}), id, aliases: persistedAliases(block), minted_at: mintedAt } };
 }
 
-/** Config with `host` appended to machine.aliases; unchanged ⇒ the same object. */
+/** Newest hostnames kept in machine.aliases; an append past the cap evicts the oldest; the live hostname is never evicted (TD-453). */
+export const ALIAS_CAP = 16;
+
+/** Config with `host` appended to machine.aliases (newest ALIAS_CAP kept); unchanged ⇒ the same object. */
 export function withObservedHostname(config: Record<string, unknown>, host: string): { next: Record<string, unknown>; changed: boolean } {
   const block = machineBlock(config);
   const aliases = persistedAliases(block);
   if (host.length === 0 || aliases.includes(host)) return { next: config, changed: false };
-  return { next: { ...config, machine: { ...(block ?? {}), aliases: [...aliases, host] } }, changed: true };
+  return { next: { ...config, machine: { ...(block ?? {}), aliases: [...aliases, host].slice(-ALIAS_CAP) } }, changed: true };
 }
 
 /** Row is mine: id equal (id wins), else NULL id + hostname in aliases. */

@@ -320,6 +320,16 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   # $PROJECT is basename(repo) and $HOSTNAME_LOCAL is `hostname` — neither is
   # user-controlled free text. They are still single-quote-escaped (doubling any
   # embedded quote) before interpolation so a stray quote cannot break the SQL.
+  # TD-453 (2026-09-07): the escape is an UNQUOTED assignment on purpose —
+  # under /bin/bash 3.2 (this hook's shebang) the double-quoted form
+  # `"${x//\'/\'\'}"` keeps the backslashes literal (`it\'\'s`), sqlite3
+  # rejects the literal, the error is discarded below and the guard fails OPEN.
+  # test/phase_guard.test.bash: h1-h3 + h6 prove the real hook resolves a
+  # quoted alias / hostname / project name (and admits no injected row);
+  # h4, h4b, h4c, h4d prove the SAME inputs read as "no active brief" (or
+  # admit a foreign row) on a no-escape MUTANT of the alias / hostname /
+  # machine-id sites; h5 is the mutant's surviving control. The PROJECT_SQL
+  # sites have no mutant case. Same idiom as core/hooks/shared/session_start.sh.
   #
   # BR-100: "this machine" is the machine IDENTITY, not the hostname. A row
   # carrying a `machine_id` must match config.json `machine.id`; a row whose
@@ -328,8 +338,8 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   # instances v5 has no column → the hostname-IN-aliases form. No python3 or no
   # config.json → the live hostname alone, i.e. the pre-BR-100 query. bash 3.2.
   if [ -f "$BRAIN_DB" ] && command -v sqlite3 >/dev/null 2>&1; then
-    PROJECT_SQL="${PROJECT//\'/\'\'}"
-    HOSTNAME_SQL="${HOSTNAME_LOCAL//\'/\'\'}"
+    PROJECT_SQL=${PROJECT//\'/\'\'}
+    HOSTNAME_SQL=${HOSTNAME_LOCAL//\'/\'\'}
     MACHINE_ID=""
     ALIASES_SQL="'$HOSTNAME_SQL'"
     # BR-100 identity: begin
@@ -356,7 +366,8 @@ except Exception:
         IFS="$TAB"
         for alias in $ALIAS_REST; do
           [ "$alias" = "$HOSTNAME_LOCAL" ] && continue
-          ALIASES_SQL="$ALIASES_SQL, '${alias//\'/\'\'}'"
+          alias_sql=${alias//\'/\'\'}
+          ALIASES_SQL="$ALIASES_SQL, '$alias_sql'"
         done
         IFS="$OLD_IFS"
       fi
@@ -365,7 +376,7 @@ except Exception:
     INSTANCES_COLS="$(sqlite3 "$BRAIN_DB" "PRAGMA table_info(instances);" 2>/dev/null)"
     case "$INSTANCES_COLS" in
       *'|machine_id|'*)
-        MACHINE_ID_SQL="${MACHINE_ID//\'/\'\'}"
+        MACHINE_ID_SQL=${MACHINE_ID//\'/\'\'}
         MACHINE_WHERE="(machine_id = '$MACHINE_ID_SQL' OR (machine_id IS NULL AND machine_hostname IN ($ALIASES_SQL)))" ;;
       *)
         MACHINE_WHERE="machine_hostname IN ($ALIASES_SQL)" ;;
@@ -421,8 +432,8 @@ except Exception:
     # CANONICAL_STATUSES in brain-mcp-server/src/tools/brief-normalize.ts.
     # This file's own validate_brief_status_vocabulary.sh block (see the
     # header inventory above) is the bash-side observer of that vocabulary.
-    BRIEF_SQL="${ACTIVE_BRIEF//\'/\'\'}"
-    PROJECT_SQL="${PROJECT//\'/\'\'}"
+    BRIEF_SQL=${ACTIVE_BRIEF//\'/\'\'}
+    PROJECT_SQL=${PROJECT//\'/\'\'}
     ACTIVE_PHASE="$(sqlite3 "$BRAIN_DB" \
       "SELECT phase FROM brief_status WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','')='inprogress' LIMIT 1;" \
       2>/dev/null)"

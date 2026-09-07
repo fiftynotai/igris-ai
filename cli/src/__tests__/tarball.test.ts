@@ -1898,6 +1898,66 @@ interface PackReport {
  *   153_600 − 26_730 = 126_870; 541 − 537 = 4; 6_810_979 − 6_773_542 =
  *   37_437 = the per-file sum (36_199 pre-warden + 1_238 = 798 + 440).
  *
+ * BUNDLE TD-456 / TD-455 / TD-453 / TD-454 MEASURED LAST (2026-09-07), after
+ * the bundle's final code-touching step — LANDED. MEASURED ON A SCRATCH BUILD
+ * THAT RAN `copy-templates.sh`, BOTH arms (the BR-101 / TD-444 / BR-103
+ * method): `git archive <rev> cli brain-mcp-server harness-manifest.json` (the
+ * control at develop `774e9bd`, v7.3.0 — taken FRESH, not BR-103's
+ * 1_870_006, which predates the tag commit's CHANGELOG/README bytes; the
+ * final arm from a `git write-tree` of the working tree through a TEMP index,
+ * `6b2aa2cd` — no commit), the three `node_modules` symlinked (root + both
+ * packages; `src/` and `core/` never symlinked), `dist` ABSENT so the copy
+ * step rebuilt the brain; the TD-426 smoke printed `(sandboxed)` on both
+ * arms; `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. `cli/dist` (`index.js` `Sep  7 19:35:25`) and
+ * `brain-mcp-server/dist` (`Sep  7 14:44:53`) were never written — the bats
+ * tier ran against an inert `tsc --outDir` scratch emit under a stand-in
+ * launch HOME; `~/.igris/config.json` sha unchanged (`07449dbf…`), the real
+ * `~/.claude.json` `mcpServers` subtree sha unchanged (`c338fa2e…`). npm
+ * 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_870_167    unpacked 6_811_648, 541 entries, shasum
+ *                                    `9e15909287926789a4d4666f44f23606bfd4925a`
+ *                                    — taken twice, byte-identical
+ *                                    (= BR-103's 1_870_006 + the v7.3.0 tag
+ *                                    commit's 161 B, as the plan predicted).
+ *   packed              1_873_649    unpacked 6_823_773, 541 entries (+0),
+ *                                    shasum
+ *                                    `bcb47675cd7da5c795dc80addf5324c4dc41d275`,
+ *                                    taken twice, on the final tree.
+ *   bundle's own share  +3_482 B     packed. Unpacked +12_125 over 13
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. Per brief, from the per-file
+ *                                    diff (unpacked B): TD-455 4_915 =
+ *                                    `lib/mcp-register.js` +1_129 (map +819)
+ *                                    + `verbs/install.js` +1_928 (map
+ *                                    +1_039); TD-454 5_466 =
+ *                                    `brain-mcp-server/dist/engine/components/
+ *                                    subconscious/finding-key.js` +3_213
+ *                                    (`.d.ts` +1_691) + `…/cognition/
+ *                                    extractors/subconscious.js` +369 (`.d.ts`
+ *                                    +193); TD-453 695 = brain
+ *                                    `machine-identity.js` +207 (`.d.ts`
+ *                                    +197) + `lib/machine-identity.js` +207
+ *                                    (map +84); the four `CHANGELOG.md`
+ *                                    bullets +1_049 (shared); TD-456 0 —
+ *                                    tests only. 4_915 + 5_466 + 695 +
+ *                                    1_049 = 12_125. Entries +0: TD-454's
+ *                                    `scripts/td454_pairs_separated.csv` was
+ *                                    pruned by BR-101's `td<N>_` + `.csv`
+ *                                    rule (the copied-path check: `scripts/
+ *                                    **` IS on the copied list, hence the
+ *                                    scratch build). Plan priced 2.6–4.4 KB;
+ *                                    the reading is inside that band.
+ *   cumulative delta    +30_373 B    (29.7 KB, 19.8 % of the grant —
+ *                                    1_873_649 − 1_843_276)
+ *   headroom remaining  123_227 B    (120.3 KB — 153_600 − 30_373)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_873_649 − 1_870_167 = 3_482; 1_873_649 − 1_843_276 = 30_373;
+ *   153_600 − 30_373 = 123_227; 541 − 541 = 0; 6_823_773 − 6_811_648 =
+ *   12_125 = the per-file sum; 1_870_167 − 1_870_006 = 161.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

@@ -8,8 +8,7 @@ load _helpers.bash
 
 setup() {
   export IGRIS_BRAIN_DIR="$BATS_TEST_TMPDIR/igris-brain"
-  export HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME"
+  fence_home  # TD-456: HOME=$BATS_TEST_TMPDIR/home, asserted (the pre-seed init writes under $HOME)
   SOURCE_REPO="$BATS_TEST_TMPDIR/source-repo"
   stage_source_repo "$SOURCE_REPO"
   # Pre-seed brain via init.

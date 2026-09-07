@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **TD-455** — `igris install <path>` keeps an existing `~/.claude.json`
+  `igris-brain` registration that points at a different, existing bundle
+  (`igris-brain MCP kept -> <existing>`); it writes only when the entry is
+  absent or dangling (old → new reported, backup `~/.claude.json.igris.bak`).
+  Re-pointing is `igris init --upgrade` (`--dev` for a clone). `--dry-run`
+  names the decision.
+- **TD-456** — the bats tier fences `HOME` (`stage_brain` / `fence_home` +
+  `assert_home_fenced`); a guard reds an unfenced `install` / `init`.
+
+### Changed
+
+- **TD-453** — `config.json` `machine.aliases` is bounded: the identity
+  writer keeps the newest `ALIAS_CAP = 16` hostnames and evicts the oldest on
+  the 17th distinct name; a hand-edited oversize list is left alone.
+- **TD-454** (bundled brain) — the subconscious dedup gains a project-set
+  gate: two findings that name different sets of registered projects are
+  never merged as paraphrases. No re-key; the registered slugs are the
+  vocabulary, loaded once per run.
+
 ---
 
 ## [7.3.0] - 2026-09-07

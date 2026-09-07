@@ -62,7 +62,9 @@ import {
   claimsMatch,
   entityKey,
   findingKey,
+  loadProjectVocabulary,
   type Claim,
+  type ProjectVocabulary,
 } from '../../subconscious/finding-key.js';
 
 // ---------------------------------------------------------------------------
@@ -87,6 +89,8 @@ export interface SubconsciousContext {
    * entity block rather than look a key up.
    */
   existingPending: PendingBlocks;
+  /** TD-454: the registered slugs (loaded once per run) every claim's project set is read against. */
+  projectVocab: ProjectVocabulary;
   /** The digest size in UTF-8 bytes (the engine's cost-gate input). */
   digest_bytes: number;
 }
@@ -158,7 +162,10 @@ function parseTitleArray(raw: unknown): string[] {
  * Fail-soft twice over: a pre-v5 schema falls back to a narrow SELECT, and a
  * missing `suggestions` table yields an empty index rather than throwing.
  */
-export function snapshotExistingPending(db: Database.Database): PendingBlocks {
+export function snapshotExistingPending(
+  db: Database.Database,
+  vocab: ProjectVocabulary = new Map(),
+): PendingBlocks {
   const blocks: PendingBlocks = new Map();
   const WIDE = `SELECT id, project_slug, title, evidence, suggested_action, priority,
                        dedupe_key, entity_key, seen_count, recurrence_titles
@@ -196,7 +203,7 @@ export function snapshotExistingPending(db: Database.Database): PendingBlocks {
     const entry: PendingEntry = {
       id: Number(row.id),
       dedupeKey: key,
-      claim: claimOf(shape.title),
+      claim: claimOf(shape.title, vocab),
       title: shape.title,
       seenCount: typeof row.seen_count === 'number' ? row.seen_count : 1,
       priority: ((row.priority as SuggestionPriority) ?? 'medium'),
@@ -285,7 +292,7 @@ export function persistSubconsciousCandidate(
 ): PersistOutcome {
   const anchor = entityKey(candidate);
   const key = findingKey(candidate);
-  const claim = claimOf(candidate.title);
+  const claim = claimOf(candidate.title, ctx.projectVocab);
   const block = ctx.existingPending.get(anchor) ?? [];
 
   // A — exact key hit.
@@ -463,11 +470,15 @@ export function createSubconsciousInstance(
         typeof args.project === 'string' && args.project.length > 0 ? args.project : 'all';
       const digest = buildDigest(db, project, deps.digestDeps);
       const digest_bytes = digest.size_hint.bytes;
-      const existingPending = snapshotExistingPending(db);
+      // TD-454: ONE vocabulary per run — the pending index and every candidate
+      // claim read their project sets against the same slugs.
+      const projectVocab = loadProjectVocabulary(db);
+      const existingPending = snapshotExistingPending(db, projectVocab);
       const ctx: SubconsciousContext = {
         digest,
         project,
         existingPending,
+        projectVocab,
         digest_bytes,
       };
       currentCtx = ctx;
@@ -510,6 +521,7 @@ export function createSubconsciousInstance(
           },
           project: 'all',
           existingPending: new Map(),
+          projectVocab: new Map(),
           digest_bytes: 0,
         };
       // TD-440 — the outcome is DELIBERATELY discarded. `runExtractor` counts

@@ -15,8 +15,7 @@ setup() {
   # 4 supported CLIs in our HOME-overriden config dir, so the
   # detection set is empty regardless.
   export IGRIS_BRAIN_DIR="$BATS_TEST_TMPDIR/igris-brain"
-  export HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME"
+  fence_home  # TD-456: HOME=$BATS_TEST_TMPDIR/home, asserted (init writes every harness config under $HOME)
   SOURCE_REPO="$BATS_TEST_TMPDIR/source-repo"
   stage_source_repo "$SOURCE_REPO"
 }
