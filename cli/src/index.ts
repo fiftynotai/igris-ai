@@ -148,6 +148,11 @@ async function main(argv: string[]): Promise<void> {
       "contributor dev-loop: register the igris-brain MCP from the --from-source clone, not the bundled copy (requires --from-source)",
       false,
     )
+    .option(
+      "--wipe-orphans",
+      "remove core.new.* staging residue left by an interrupted run, then proceed; a core.bak.* backup is never touched (BR-103)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
@@ -159,6 +164,7 @@ async function main(argv: string[]): Promise<void> {
         dryRun?: boolean;
         yes?: boolean;
         dev?: boolean;
+        wipeOrphans?: boolean;
       }): Promise<void> => {
         const code = await runInit({
           fromSource: opts.fromSource,
@@ -170,6 +176,7 @@ async function main(argv: string[]): Promise<void> {
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
           dev: opts.dev === true,
+          wipeOrphans: opts.wipeOrphans === true,
         });
         process.exitCode = code;
       },
@@ -244,6 +251,11 @@ async function main(argv: string[]): Promise<void> {
       false,
     )
     .option("-y, --yes", "skip channel-switch confirmation prompts", false)
+    .option(
+      "--wipe-orphans",
+      "remove core.new.* staging residue left by an interrupted run, then proceed; a core.bak.* backup is never touched (BR-103)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
@@ -251,6 +263,7 @@ async function main(argv: string[]): Promise<void> {
         propagate?: boolean;
         dryRun?: boolean;
         yes?: boolean;
+        wipeOrphans?: boolean;
       }): Promise<void> => {
         const code = await runRefresh({
           fromSource: opts.fromSource,
@@ -259,6 +272,7 @@ async function main(argv: string[]): Promise<void> {
           noPropagate: opts.propagate === false,
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
+          wipeOrphans: opts.wipeOrphans === true,
         });
         process.exitCode = code;
       },

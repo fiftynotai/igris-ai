@@ -422,7 +422,7 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 - **v6 (Q1–Q2 2025):** VPS role flipped — local DB became authoritative, VPS became an async backup hub. Unified `igris` CLI introduced. `igris_tree.json` routing landed; CLAUDE.md slimmed from 93 KB → 5 KB. Mask system retired (single fixed voice in SOUL.md). 5 numbered rules consolidated into one universal rule.
 - **v7 (Q2–Q3 2025; current):** brain MCP server runs locally (no remote dependency for local work); brief-storage is brain-DB-first, filesystem cache is fallback; the OS context is the layered, self-describing `core/os/` module set with a generated `core/os/INDEX.md` routing map (FR-187 retired the `igris_os.md` monolith + the `igris_tree.json` routing tree); 19-component brain engine; subconscious detectors disabled pending FR-118; brief-gate hardened post-TD-150 (no 60 s caching, fresh DB query every time); v7 cleanup pass (TD-147 / TD-148) purged version-string drift and dead scripts.
 
-Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris upgrade`; v6 → v7 is an in-place `igris init --upgrade` (preserves `knowledge.db`, `USER.md`, `config.json` byte-for-byte). Full archive: `docs/archive/`.
+Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris upgrade`; v6 → v7 is an in-place `igris init --upgrade` (preserves `knowledge.db`, `USER.md`, `config.json` byte-for-byte; since BR-103 it refuses on `core.new.*` residue or a backup with no `core/`, and reads `core/` from the recorded source). Full archive: `docs/archive/`.
 
 ---
 

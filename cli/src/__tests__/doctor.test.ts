@@ -667,15 +667,22 @@ describe("doctor — runDoctor exit codes", () => {
   // "second class after bridge-missing" is now the brain-level
   // hooks-missing row (global ~/.claude/settings.json lacking the Igris
   // hooks), whose fix is `mergeGlobalCanonicalHooks`. Test approach (per
-  // L-159): spy on the DEPENDENCY modules `init.js` + `global-hooks.js`
-  // (NOT the SUT `doctor.js`). After --fix:
-  //   - runInit was invoked exactly once (bridge fix)
-  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix)
-  // Both calls in one runDoctor invocation = `break` was replaced with
-  // continue.
+  // L-159): spy on the DEPENDENCY modules (NOT the SUT `doctor.js`).
+  //
+  // BR-103 (2026-09-07) moved the pin: the bridge arm no longer calls
+  // `runInit` at all — that call resolved the DEFAULT channel and swapped a
+  // release tarball over ~/.igris/core (the 2026-09-07 incident), and it
+  // never wrote `cli_targets` anyway (Finding 2: the row it "fixed" could
+  // not clear). The narrow arm records the target in config.json via
+  // `recordCliTarget` and backfills the brain MCP. After --fix:
+  //   - runInit was NOT invoked (was: exactly once — TD-122, 2026-05)
+  //   - recordCliTarget was invoked once, with "claude"
+  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix) — the
+  //     continue-property TD-122 established is preserved
   // -------------------------------------------------------------------
-  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122)", async () => {
+  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122; the bridge arm is config-scoped since BR-103)", async () => {
     const initMod = await import("../verbs/init.js");
+    const cfgMod = await import("../lib/init-config.js");
     const ghMod = await import("../lib/global-hooks.js");
     const bridgeMod = await import("../lib/drift/bridge-missing.js");
     const { runDoctor } = await import("../verbs/doctor.js");
@@ -687,12 +694,14 @@ describe("doctor — runDoctor exit codes", () => {
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
 
-    // Inject a synthetic bridge-missing drift row. The detector itself
-    // is a pure function; spying on it cleanly isolates the doctor
-    // loop's behavior from the brittle PATH/configDir detection logic.
+    // Inject a synthetic bridge-missing drift row ONCE (the classification
+    // pass); the exit-predicate re-probe (BR-103) then runs the REAL detector,
+    // which reads the config.json the fix just wrote. The detector itself is
+    // a pure function; spying on it isolates the doctor loop's behavior from
+    // the brittle PATH/configDir detection logic.
     const bridgeSpy = vi
       .spyOn(bridgeMod, "detectBridgeMissing")
-      .mockReturnValue([
+      .mockReturnValueOnce([
         {
           slug: "(brain)",
           path: "claude",
@@ -701,9 +710,10 @@ describe("doctor — runDoctor exit codes", () => {
         },
       ]);
 
-    // Stub runInit so we don't actually re-init the test brain. Returning
-    // 0 signals "bridge fix succeeded".
-    const initSpy = vi.spyOn(initMod, "runInit").mockResolvedValue(0);
+    // runInit is spied WITHOUT a mock: if the arm still called it, the real
+    // init would run against the fence and the spy would record it.
+    const initSpy = vi.spyOn(initMod, "runInit");
+    const recordSpy = vi.spyOn(cfgMod, "recordCliTarget");
     // Spy on the global-hooks merge (the hooks-missing fix). Let it run for
     // real — it writes into the sandboxed HOME and clears the row.
     const ghSpy = vi.spyOn(ghMod, "mergeGlobalCanonicalHooks");
@@ -712,19 +722,214 @@ describe("doctor — runDoctor exit codes", () => {
       // --fix should visit BOTH classes. The assertion is that both fix
       // paths fired in one invocation (the loop did NOT break after
       // bridge-missing).
-      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
 
-      // Bridge fix invoked exactly once.
-      expect(initSpy).toHaveBeenCalledTimes(1);
-      expect(initSpy).toHaveBeenCalledWith({ upgrade: true, yes: true });
+      // The bridge fix is the config record — never a partial init.
+      expect(initSpy).not.toHaveBeenCalled();
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy).toHaveBeenCalledWith("claude");
+      const cfg = JSON.parse(
+        readFileSync(join(tmpRoot, "config.json"), "utf-8"),
+      ) as { cli_targets: Record<string, unknown> };
+      expect(cfg.cli_targets.claude).toBe(true);
 
       // hooks-missing fix invoked at least once — evidence the loop did
       // NOT break after bridge-missing.
       expect(ghSpy).toHaveBeenCalled();
+      // Both rows re-probe clean: the real detector sees `claude` recorded,
+      // the global hooks were merged. Exit 0 is earned, not discounted.
+      expect(code).toBe(0);
     } finally {
       bridgeSpy.mockRestore();
       initSpy.mockRestore();
+      recordSpy.mockRestore();
       ghSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-103: `--fix` never replaces ~/.igris/core. Two pins:
+//
+//   (1) a SOURCE-SCAN pin — doctor.ts imports nothing from `./init.js` and
+//       contains no `runInit(` — with a planted-copy self-negative (the same
+//       predicate over a copy that re-inserts the import must fail), so the
+//       pin is shown to bite before it is trusted (BR-100 template 2);
+//   (2) a HERMETIC BYTE WITNESS over the fence core: a synthetic
+//       bridge-missing row, the network stubbed at its two seams
+//       (`checkNetwork` → 200, `httpsGetJson` → a fixture tag) and the tarball
+//       body served from a fixture file, then `runDoctor({fix:true})` for real.
+//       At HEAD this run swapped the fixture core over the fence core (tree
+//       sha moved, a core.bak.* appeared, `.install-source.json` was written
+//       as release/<tag>); after BR-103 the tree sha, the bak count and the
+//       record are unchanged — and the same run still recorded the target
+//       (the positive control: "no writes" is not the output of a dead run).
+// ---------------------------------------------------------------------------
+describe("doctor — the exit code re-probes every fixed class instead of discounting it (BR-103)", () => {
+  // Before BR-103 the exit predicate DISCOUNTED brain-core-missing /
+  // bridge-missing / mcp-unregistered blindly under --fix ("conceptually
+  // resolved"). A backfill that lands an entry pointing at a MISSING bundled
+  // path is exactly the case that discount hid: the fix reports success, the
+  // inspector still says unregistered, and the verb must say exit 1.
+  it("mcp-unregistered: a backfill whose entry points at a missing bundled path leaves the row non-clean → exit 1 (the table says so too)", async () => {
+    const pathsMod = await import("../lib/paths.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const missing = join(tmpRoot, "not-built", "brain-mcp-server", "dist", "index.js");
+    const pathSpy = vi.spyOn(pathsMod, "bundledMcpEntryPath").mockReturnValue(missing);
+    // `info()` writes through process.stdout.write (log.ts) — capture the
+    // table there, line by line.
+    let captured = "";
+    const logSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        captured += String(chunk);
+        return true;
+      }) as typeof process.stdout.write);
+    try {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(1);
+      // the entry WAS written (the fix "applied")...
+      const claude = JSON.parse(
+        readFileSync(join(homeOverride, ".claude.json"), "utf-8"),
+      ) as { mcpServers: Record<string, { args: string[] }> };
+      expect(claude.mcpServers["igris-brain"].args[0]).toBe(missing);
+      // ...and the table's live `now` column names the class as still drifted.
+      const row = captured.split("\n").find((l) => l.startsWith("| mcp-unregistered |"));
+      expect(row).toBeDefined();
+      expect(row).toMatch(/\| applied \| mcp-unregistered \|$/);
+    } finally {
+      pathSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe("doctor — --fix never replaces ~/.igris/core (BR-103)", () => {
+  const DOCTOR_SRC = join(__dirname, "..", "verbs", "doctor.ts");
+
+  /** True when the source text is free of the wholesale-replace arm. */
+  function neverInvokesInit(src: string): boolean {
+    return !/from\s+["']\.\/init\.js["']/.test(src) && !/\brunInit\s*\(/.test(src);
+  }
+
+  it("source-scan pin: doctor.ts imports nothing from ./init.js and calls no runInit( — and the pin bites on a planted copy", () => {
+    const src = readFileSync(DOCTOR_SRC, "utf-8");
+    expect(src.length).toBeGreaterThan(1000);
+    expect(neverInvokesInit(src)).toBe(true);
+    // self-negative: the pre-BR-103 arm, planted back into a COPY
+    const planted =
+      src +
+      '\nimport { runInit } from "./init.js";\n' +
+      "async function _planted() { await runInit({ upgrade: true, yes: true }); }\n";
+    expect(neverInvokesInit(planted)).toBe(false);
+  });
+
+  function treeSha(dir: string): string {
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of fs.readdirSync(d).sort()) {
+        const abs = path.join(d, e);
+        const st = fs.lstatSync(abs);
+        if (st.isDirectory()) walk(abs);
+        else if (st.isFile()) files.push(abs);
+      }
+    };
+    walk(dir);
+    const h = createHash("sha256");
+    for (const f of files) {
+      h.update(path.relative(dir, f));
+      h.update("\0");
+      h.update(createHash("sha256").update(fs.readFileSync(f)).digest("hex"));
+      h.update("\n");
+    }
+    return h.digest("hex");
+  }
+
+  it("hermetic byte witness: a bridge-missing --fix leaves the core tree, the bak ring and the install record byte-identical — while recording the target", async () => {
+    const preflightMod = await import("../lib/preflight.js");
+    const httpMod = await import("../lib/http.js");
+    const bridgeMod = await import("../lib/drift/bridge-missing.js");
+    const initMod = await import("../verbs/init.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+
+    const coreDir = join(tmpRoot, "core");
+    // A from-source record pointing at the checkout — the shape of the
+    // machine the incident hit. At HEAD the fix overwrote it as release/<tag>.
+    const isPath = join(tmpRoot, ".install-source.json");
+    writeFileSync(
+      isPath,
+      JSON.stringify(
+        {
+          schema_version: 1,
+          channel: "main",
+          ref: "from-source",
+          fetched_at: "2026-09-07T00:00:00.000Z",
+          content_sha256: "from-source-fixture",
+          source: "from-source",
+          source_path: join(__dirname, "..", "..", ".."),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const w0Tree = treeSha(coreDir);
+    const w0Record = readFileSync(isPath, "utf-8");
+    const bakCount = (): number =>
+      require("node:fs")
+        .readdirSync(tmpRoot)
+        .filter((e: string) => e.startsWith("core.bak.")).length;
+    expect(bakCount()).toBe(0);
+
+    // The two metadata seams + the tarball body: everything init needs to
+    // reach the swap, none of it on the network.
+    const netSpy = vi.spyOn(preflightMod, "checkNetwork").mockResolvedValue(200);
+    const apiSpy = vi
+      .spyOn(httpMod, "httpsGetJson")
+      .mockResolvedValue(JSON.stringify({ tag_name: "v0.0.0-fixture" }));
+    const bridgeSpy = vi
+      .spyOn(bridgeMod, "detectBridgeMissing")
+      .mockReturnValueOnce([
+        {
+          slug: "(brain)",
+          path: "claude",
+          driftClass: "bridge-missing",
+          recommendedFix: "synthetic — BR-103 witness",
+        },
+      ]);
+    const initSpy = vi.spyOn(initMod, "runInit");
+    const prevFixture = process.env.IGRIS_TARBALL_FILE;
+    process.env.IGRIS_TARBALL_FILE = join(
+      __dirname,
+      "fixtures",
+      "tarballs",
+      "clean-core.tar.gz",
+    );
+    try {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      // the witness
+      expect(treeSha(coreDir)).toBe(w0Tree);
+      expect(bakCount()).toBe(0);
+      expect(readFileSync(isPath, "utf-8")).toBe(w0Record);
+      expect(initSpy).not.toHaveBeenCalled();
+      expect(netSpy).not.toHaveBeenCalled();
+      expect(apiSpy).not.toHaveBeenCalled();
+      // the positive control
+      const cfg = JSON.parse(
+        readFileSync(join(tmpRoot, "config.json"), "utf-8"),
+      ) as { cli_targets: Record<string, unknown> };
+      expect(cfg.cli_targets.claude).toBe(true);
+      expect(code).toBe(0);
+    } finally {
+      if (prevFixture === undefined) delete process.env.IGRIS_TARBALL_FILE;
+      else process.env.IGRIS_TARBALL_FILE = prevFixture;
+      netSpy.mockRestore();
+      apiSpy.mockRestore();
+      bridgeSpy.mockRestore();
+      initSpy.mockRestore();
     }
   });
 });
@@ -1116,7 +1321,7 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
 
     const cfg = configJsonPath();
     // cli_targets:{} keeps bridge-missing opted-out so --fix's only action is
-    // the chmod (a spurious bridge-missing would fail the fix's runInit).
+    // the chmod (a spurious bridge-missing would add a config record — BR-103).
     writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
     chmodSync(cfg, 0o644);
     expect(statSync(cfg).mode & 0o777).toBe(0o644);

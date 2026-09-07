@@ -221,11 +221,16 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" =~ "bridge-missing" ]]
   [[ "$output" =~ "codex" ]]
-  # --fix invokes partial init (which will probably fail in the sandbox
-  # with no .install-source.json or remote, but the error is non-fatal —
-  # we just assert the fixer was attempted).
+  # BR-103: --fix records the target in config.json (the narrow, in-process
+  # repair) and the outcome table names it. Before BR-103 this line was
+  # `[[ ... ]] || true` — vacuous — over an arm that called `init --upgrade`
+  # and could never clear the row (init preserves an existing config.json).
   PATH="$STUB_BIN:$PATH" HOME="$STUB_HOME" run $CLI_BIN doctor --fix 2>&1
-  [[ "$output" =~ "bridge-missing" ]] || true
+  echo "$output"
+  grep -qE '^\| bridge-missing \| codex \| .* \| applied \| clean \|$' <<<"$output"
+  [ "$(grep -c 'invoking partial init' <<<"$output")" = "0" ]
+  run python3 -c "import json; d=json.load(open('$IGRIS_BRAIN_DIR/config.json')); print(d['cli_targets']['codex'], 'claude' in d['cli_targets'])"
+  [ "$output" = "True True" ]
 }
 
 # ---- FR-243: git-level gates as a project property ----------------------

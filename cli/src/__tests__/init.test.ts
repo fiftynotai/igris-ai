@@ -450,6 +450,66 @@ describe("init — --upgrade preservation (CRITICAL gate for M1.10)", () => {
       .filter((e: string) => e.startsWith("core.bak."));
     expect(baks.length).toBeGreaterThanOrEqual(1);
   });
+
+  // BR-103: the interrupted-shape definition (plan Finding 3 / decision D-2).
+  // `core.new.*` residue = a staging run that died → REFUSE, nothing written.
+  // A `core.bak.*` beside a healthy core/ is the NORMAL post-upgrade state
+  // (atomicSwap keeps one for recovery) → proceed, no error line.
+  it("--upgrade REFUSES on core.new.* staging residue: exit 1, core/ and the record untouched, residue kept (BR-103)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    expect(await runInit({ fromSource: sourceRepo })).toBe(0);
+    const residue = join(brainRoot, "core.new.99999");
+    mkdirSync(residue, { recursive: true });
+    writeFileSync(join(residue, "partial"), "half\n");
+    const soulBefore = readFileSync(join(brainRoot, "core", "SOUL.md"));
+    const recordBefore = readFileSync(join(brainRoot, ".install-source.json"));
+    writeFileSync(join(sourceRepo, "core", "SOUL.md"), "# soul (moved)\n");
+
+    const code = await runInit({ fromSource: sourceRepo, upgrade: true });
+    expect(code).toBe(1);
+    expect(readFileSync(join(brainRoot, "core", "SOUL.md")).equals(soulBefore)).toBe(true);
+    expect(readFileSync(join(brainRoot, ".install-source.json")).equals(recordBefore)).toBe(true);
+    expect(existsSync(join(residue, "partial"))).toBe(true);
+    const baks = require("node:fs")
+      .readdirSync(brainRoot)
+      .filter((e: string) => e.startsWith("core.bak."));
+    expect(baks.length).toBe(0);
+
+    // the door: --wipe-orphans removes the residue and the upgrade proceeds
+    expect(
+      await runInit({ fromSource: sourceRepo, upgrade: true, wipeOrphans: true }),
+    ).toBe(0);
+    expect(existsSync(residue)).toBe(false);
+    expect(readFileSync(join(brainRoot, "core", "SOUL.md"), "utf-8")).toBe("# soul (moved)\n");
+  });
+
+  it("--upgrade with a retained core.bak.* beside a healthy core/ PROCEEDS (the control) and keeps one bak (BR-103)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    expect(await runInit({ fromSource: sourceRepo })).toBe(0);
+    expect(await runInit({ fromSource: sourceRepo, upgrade: true })).toBe(0);
+    const baksAfterFirst = require("node:fs")
+      .readdirSync(brainRoot)
+      .filter((e: string) => e.startsWith("core.bak."));
+    expect(baksAfterFirst.length).toBe(1);
+    writeFileSync(join(sourceRepo, "core", "SOUL.md"), "# soul (third)\n");
+    expect(await runInit({ fromSource: sourceRepo, upgrade: true })).toBe(0);
+    expect(readFileSync(join(brainRoot, "core", "SOUL.md"), "utf-8")).toBe("# soul (third)\n");
+    const baksAfterSecond = require("node:fs")
+      .readdirSync(brainRoot)
+      .filter((e: string) => e.startsWith("core.bak."));
+    expect(baksAfterSecond.length).toBe(1);
+  });
+
+  it("--upgrade REFUSES a mid-swap shape (core.bak.* present, core/ absent) and never auto-restores (BR-103)", async () => {
+    const { runInit } = await import("../verbs/init.js");
+    expect(await runInit({ fromSource: sourceRepo })).toBe(0);
+    const bak = join(brainRoot, "core.bak.2026-01-01T00-00-00-000Z");
+    require("node:fs").renameSync(join(brainRoot, "core"), bak);
+    const code = await runInit({ fromSource: sourceRepo, upgrade: true });
+    expect(code).toBe(1);
+    expect(existsSync(join(brainRoot, "core"))).toBe(false);
+    expect(existsSync(join(bak, "SOUL.md"))).toBe(true);
+  });
 });
 
 describe("init — error paths", () => {

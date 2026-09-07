@@ -81,6 +81,8 @@ The git-level gates are a **property of being a registered Igris project**, not 
 
 ```bash
 igris refresh                # once per machine: lands ~/.igris/core/git-hooks/
+                             # (from the RECORDED source — a `release` record is pinned to its tag,
+                             #  so a released machine gets these at the next tag: BR-103 O-3)
 igris install /path/to/repo  # step 7b symlinks .git/hooks/{pre-commit,commit-msg} -> ~/.igris/core/git-hooks/<name>
 ```
 

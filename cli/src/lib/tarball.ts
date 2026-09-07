@@ -17,9 +17,11 @@
  *               `..` segments OR begins with `/` BEFORE letting `tar`
  *               touch the filesystem.
  *
- * Allow-list: only entries inside `<top>/core/` are written. The
- * GitHub-style top-level prefix dir (e.g. `igris-ai-<sha>/`) is stripped;
- * what lands at the destination is `core/<rest>`. Entries outside `core/`
+ * Allow-list: only entries inside `<top>/core/` are written — plus the
+ * archive-root `<top>/harness-manifest.json` (BR-103, the runtime descriptor
+ * a core swap regenerates under `core/`). The GitHub-style top-level prefix
+ * dir (e.g. `igris-ai-<sha>/`) is stripped; what lands at the destination is
+ * `core/<rest>` (and `harness-manifest.json`). Other entries outside `core/`
  * (e.g. `README.md`, `cli/`, `scripts/`) are silently skipped.
  *
  * Caller orchestration: `tarball.ts` extracts INTO a caller-provided dir
@@ -520,7 +522,14 @@ function isEntrySafe(entryPath: string, destDir: string): EntryVerdict {
     return { kind: "reject-zip-slip", entryPath };
   }
 
-  // Allow-list: only entries inside `core/` are extracted.
+  // Allow-list: entries inside `core/`, plus the archive-ROOT
+  // `harness-manifest.json` (BR-103): the runtime descriptor the bash
+  // adapters read from `~/.igris/core/` lives at the repo root beside `core/`,
+  // so the swap regenerates it from here (core-runtime-extras.ts). Exact
+  // basename at depth 1 after the strip — a nested or renamed file is not it.
+  if (stripped === "harness-manifest.json") {
+    return { kind: "accept" };
+  }
   if (!stripped.startsWith("core/") && stripped !== "core" && stripped !== "core/") {
     return { kind: "skip-outside-core" };
   }

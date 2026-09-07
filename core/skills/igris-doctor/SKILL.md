@@ -36,6 +36,12 @@ deterministic checks from `cli/src/verbs/doctor.ts`.
   reported non-clean class is a safe deterministic repair. Never auto-delete
   rows, never auto-chmod secret-bearing files, and never resolve judgment calls
   without explicit operator direction.
+- **`--fix` never replaces `~/.igris/core/`** (BR-103). Its one wholesale action
+  is `brain-core-missing` — an ABSENT core, refreshed from the recorded source
+  after a live re-check. Every other repair is scoped to the row it names.
+  `--fix` prints a per-fix outcome table (class, target, action, outcome, now —
+  `now` is a live re-probe that also drives the exit code): read it and report
+  it row by row; a `failed` or `refused` row is the operator's next decision.
 
 ## Usage
 
@@ -108,8 +114,11 @@ Keep the report short: top issues first, then a compact class count summary.
 
 The safe deterministic classes are:
 
-- `brain-core-missing`
-- `bridge-missing`
+- `brain-core-missing` — refreshes an ABSENT core from the recorded source
+  (the only repair that writes under `~/.igris/core/`; a healthy core is never
+  touched)
+- `bridge-missing` — records the named harness in `config.json#cli_targets` and
+  backfills the brain MCP; never `init`, never a core replace (BR-103)
 - `mcp-unregistered`
 - `hooks-missing`
 - `hooks-stale`

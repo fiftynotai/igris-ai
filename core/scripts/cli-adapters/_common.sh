@@ -586,7 +586,7 @@ resolve_harness_descriptor_path() {
     echo "$runtime_core"
     return 0
   fi
-  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. Run 'igris install' or 'igris refresh' to materialize ~/.igris/core/harness-manifest.json (the runtime mirror)." >&2
+  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. The runtime copy is regenerated from the source root by every core swap ('igris init --upgrade' or 'igris refresh', BR-103); if it is absent, re-run one of them." >&2
   exit 1
 }
 

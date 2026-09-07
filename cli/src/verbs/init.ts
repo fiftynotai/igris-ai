@@ -24,6 +24,15 @@
  * --dry-run: every would-be side effect routes through DryRunCollector;
  * zero filesystem writes; zero network calls beyond the channel HEAD.
  *
+ * BR-103 (2026-09-07): `--upgrade` REFUSES a genuinely interrupted shape
+ * (`core.new.*` staging residue, or a `core.bak.*` with no `core/`) before
+ * writing anything — `--wipe-orphans` removes staging residue only; it reads
+ * `core/` from the RECORDED source (`.install-source.json`) when no flag
+ * names one, so a from-source machine never silently switches to the release
+ * channel (a switch is confirmed, `--yes` accepts); and it regenerates /
+ * carries the runtime-only files (`core-runtime-extras.ts`) into the staged
+ * tree before the swap. `igris refresh` shares all three helpers.
+ *
  * Returns process exit code (0 = success, non-zero = failure).
  */
 
@@ -44,8 +53,18 @@ import {
 import { cacheStore, TTL_INFINITE, TTL_MAIN_MS } from "../lib/cache.js";
 import {
   ChannelResolveError,
-  resolveChannel,
+  type LatestReleaseTagFn,
+  type RefClassifyFn,
 } from "../lib/channel.js";
+import {
+  CoreSourceError,
+  recordIsFromSource,
+  resolveCoreSource,
+} from "../lib/core-source.js";
+import {
+  applyCoreExtras,
+  reportCoreExtras,
+} from "../lib/core-runtime-extras.js";
 import {
   applyBridgeOverride,
   detectInstalledCLIs,
@@ -84,6 +103,7 @@ import {
   checkNodeVersion,
   detectInstallShape,
   PreflightError,
+  resolveInterruptedShape,
 } from "../lib/preflight.js";
 import {
   fetchAndExtract,
@@ -92,8 +112,14 @@ import {
   wipeDir,
   ZipSlipError,
 } from "../lib/tarball.js";
-import { writeInstallSource } from "../lib/install-source.js";
-import { setOnboardingComplete } from "../lib/init-config.js";
+import {
+  readInstallSource,
+  writeInstallSource,
+} from "../lib/install-source.js";
+import {
+  cliTargetEntry,
+  setOnboardingComplete,
+} from "../lib/init-config.js";
 import { closeDb } from "../lib/registry.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
 import {
@@ -101,7 +127,7 @@ import {
   type InitInputs,
   type PromptFn,
 } from "../lib/init/prompts.js";
-import type { Channel, CLITarget } from "../types.js";
+import type { Channel, CLITarget, InstallSource } from "../types.js";
 
 export interface InitOptions {
   /** Local repo root for contributor mode. Skips network. */
@@ -147,6 +173,16 @@ export interface InitOptions {
    * this; tests pass `false` to force the non-TTY auto-skip path.
    */
   isTTY?: boolean;
+  /**
+   * BR-103: remove `core.new.*` staging residue left by an interrupted run,
+   * then proceed. Never touches a `core.bak.*` backup.
+   */
+  wipeOrphans?: boolean;
+  /** Test seam (BR-103): the channel-switch confirmation; `--yes` accepts without it. */
+  confirmFn?: (prompt: string) => boolean;
+  /** Test seams: pre-resolve the release tag / classify a ref without the network. */
+  latestReleaseTagFn?: LatestReleaseTagFn;
+  classifyFn?: RefClassifyFn;
 }
 
 const DEFAULT_DIRS = ["memory", "projects", "logs", ".cache"];
@@ -167,15 +203,27 @@ export async function runInit(opts: InitOptions): Promise<number> {
     throw err;
   }
 
-  const shape = detectInstallShape();
-  if (shape.kind === "interrupted") {
-    logError(
-      `Detected interrupted state at ${brainDir()}: orphan dirs ${shape.orphans
-        .map((o) => `'${o}'`)
-        .join(", ")}. Remove them and re-run, or pass --upgrade to recover.`,
+  let shape = detectInstallShape();
+  // BR-103: a genuinely interrupted shape REFUSES here — before the prompts,
+  // the network and the dir tree — so a refused run writes nothing (defect c:
+  // the old code printed the error and proceeded). A retained core.bak.*
+  // beside a healthy core/ is not an interruption (preflight.ts).
+  const interrupted = resolveInterruptedShape(shape, {
+    wipeOrphans: opts.wipeOrphans === true,
+  });
+  if (interrupted.verdict === "refuse") {
+    logError(interrupted.message);
+    return 1;
+  }
+  if (interrupted.verdict === "wiped") {
+    for (const r of interrupted.removed) {
+      info(`Removed staging residue ${r} (--wipe-orphans)`);
+    }
+    shape = detectInstallShape();
+  } else if (interrupted.retainedBaks.length > 0) {
+    debug(
+      `retained backup(s) beside core/: ${interrupted.retainedBaks.join(", ")} (normal — one is kept for recovery)`,
     );
-    if (opts.upgrade !== true) return 1;
-    // With --upgrade, we tolerate orphans (they'll be wiped during swap).
   }
   if (shape.kind === "v7" && opts.upgrade !== true) {
     logError(
@@ -232,9 +280,23 @@ export async function runInit(opts: InitOptions): Promise<number> {
     isTTY: opts.isTTY,
   });
 
+  // --- The record (BR-103) ---------------------------------------------
+  // Read once; it decides the source when no flag names one, and whether the
+  // network probe is needed at all (a from-source record never reaches it —
+  // O-4: the old skip keyed only off the FLAG).
+  let installSrc: InstallSource | null = null;
+  try {
+    installSrc = readInstallSource();
+  } catch (err) {
+    logError(err instanceof Error ? err.message : String(err));
+    return 1;
+  }
+
   // --- Network check ---------------------------------------------------
   const skipNetwork =
-    opts.fromSource !== undefined || opts.skipRemote === true;
+    opts.fromSource !== undefined ||
+    opts.skipRemote === true ||
+    (opts.channel === undefined && recordIsFromSource(installSrc));
   if (!skipNetwork && !dryRun) {
     try {
       await checkNetwork({ skip: false });
@@ -274,12 +336,43 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // Always create a unique staging path (used in both fetch and from-source).
   const stagingDir = stagingDirFor(root);
 
-  if (opts.fromSource !== undefined) {
+  // BR-103: ONE resolver (shared with `refresh`) decides where core/ comes
+  // from — explicit flags, else the RECORD (a from-source machine stays
+  // from-source; a GitHub record re-resolves the same ref), else the latest
+  // release. A switch against the record is confirmed (`--yes` accepts).
+  let resolvedSource;
+  try {
+    resolvedSource = await resolveCoreSource({
+      fromSource: opts.fromSource,
+      channel: opts.channel,
+      installSrc,
+      yes: opts.yes === true,
+      confirmFn: opts.confirmFn,
+      latestReleaseTagFn: opts.latestReleaseTagFn,
+      classifyFn: opts.classifyFn,
+    });
+  } catch (err) {
+    if (err instanceof ChannelResolveError || err instanceof CoreSourceError) {
+      logError(err.message);
+      return 1;
+    }
+    throw err;
+  }
+  if (resolvedSource.outcome === "declined") {
+    info("Init cancelled by user (channel switch declined). Nothing was written.");
+    return 0;
+  }
+  const source = resolvedSource.source;
+  if (resolvedSource.switched) {
+    debug(`channel switch: ${resolvedSource.recordedFlag} -> ${resolvedSource.requestedFlag}`);
+  }
+
+  if (source.kind === "from-source") {
     // Contributor mode.
     channelKind = "main";
     channelRef = "from-source";
     sourceKind = "from-source";
-    sourcePath = pathResolve(opts.fromSource);
+    sourcePath = source.path;
     stagingPath = stagingDir;
     if (dry !== null) {
       dry.wouldCreateDir(stagingPath);
@@ -315,19 +408,9 @@ export async function runInit(opts: InitOptions): Promise<number> {
     }
   } else {
     // Network or cache path.
-    let resolved;
-    try {
-      resolved = await resolveChannel({ flag: opts.channel });
-    } catch (err) {
-      if (err instanceof ChannelResolveError) {
-        logError(err.message);
-        return 1;
-      }
-      throw err;
-    }
-    channelKind = resolved.kind;
-    channelRef = resolved.ref;
-    tarballUrl = resolved.tarballUrl;
+    channelKind = source.channelKind;
+    channelRef = source.ref;
+    tarballUrl = source.tarballUrl;
 
     if (dry !== null) {
       dry.wouldFetchUrl(tarballUrl);
@@ -440,6 +523,17 @@ export async function runInit(opts: InitOptions): Promise<number> {
         return 1;
       }
       const corePath = join(root, "core");
+      // BR-103: runtime-only extras go into the STAGED tree (regenerate
+      // harness-manifest.json from the staged root; carry
+      // docs/component-manifest.md over; report — never carry — anything
+      // else), so the swap stays one atomic rename.
+      reportCoreExtras(
+        applyCoreExtras({
+          stagedRoot: stagingPath,
+          stagedCore: newCorePath,
+          priorCore: existsSync(corePath) ? corePath : null,
+        }),
+      );
       const swapResult = atomicSwap({
         newCorePath,
         existingCorePath: corePath,
@@ -959,7 +1053,7 @@ function renderConfigTemplate(args: {
   raw = raw.replace(/{{IGRIS_VERSION}}/g, args.cliVersion);
   raw = raw.replace(/{{INSTALL_DATE}}/g, args.installDate);
   const cliTargetsObj: Record<string, true> = {};
-  for (const t of args.cliTargets) cliTargetsObj[t] = true;
+  for (const t of args.cliTargets) cliTargetsObj[t] = cliTargetEntry(t);
   raw = raw.replace(/{{CLI_TARGETS_JSON}}/g, JSON.stringify(cliTargetsObj));
 
   // remoteBrain === null reproduces the legacy `--skip-remote` shape;

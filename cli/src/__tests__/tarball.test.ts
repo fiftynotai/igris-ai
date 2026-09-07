@@ -1833,6 +1833,71 @@ interface PackReport {
  *   writing THIS row cannot move the number it records — verified by re-packing
  *   after the edit.
  *
+ * BR-103 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
+ * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the control at develop `e915912`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index,
+ * `0dbc7e51` — no commit), the three `node_modules` symlinked (root + both
+ * packages), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm. `cli/dist` (`index.js` `Sep  7 19:35`)
+ * and `brain-mcp-server/dist` were never written — the bats tier ran
+ * against an inert `tsc --outDir` scratch emit; `~/.igris/config.json` sha
+ * unchanged (`07449dbf…`). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_860_125    unpacked 6_773_542, 537 entries, shasum
+ *                                    `76b04181e58cc888cd2afff0f0e928bfb2797ff8`
+ *                                    — taken twice, byte- and sha-identical to
+ *                                    FR-243's MEASURED LAST below.
+ *   packed              1_870_006    unpacked 6_810_979, 541 entries (+4),
+ *                                    shasum
+ *                                    `54545ddf0062d662dd76cba54c3f08c9ef2833b4`,
+ *                                    taken twice, on the final tree. (The
+ *                                    pre-warden tree read 1_869_684 /
+ *                                    6_809_741 / `99cd6cd1…`; warden round 1
+ *                                    added the uncovered-swap re-check in
+ *                                    `lib/preflight.js` — +798 (map +440),
+ *                                    including round 2's wording nit —
+ *                                    re-measured on the sentinel's rsync
+ *                                    scratch of the same tree, whose first
+ *                                    reading was sha-identical to `99cd6cd1…`,
+ *                                    `tsc` re-run over its `dist`, twice.)
+ *   BR-103's own share  +9_881 B     packed. Unpacked +37_437 over 24
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. The four NEW entries are 17_863
+ *                                    of it: `lib/core-source.js` 5_239 + map
+ *                                    3_649, `lib/core-runtime-extras.js`
+ *                                    5_233 + map 3_742. The rest: `verbs/
+ *                                    init.js` +3_349 (map +1_601);
+ *                                    `lib/preflight.js` +3_791 (map +1_968);
+ *                                    `CHANGELOG.md` +2_531; `lib/init-config.js`
+ *                                    +1_183 (map +565); `lib/from-source.js`
+ *                                    +841 (map +508); `README.md` +730;
+ *                                    `lib/tarball.js` +575 (map +143);
+ *                                    `index.js` +436 (map +184);
+ *                                    `lib/drift/bridge-missing.js` +96 (map
+ *                                    +1) — and TWO NEGATIVE artifacts:
+ *                                    `verbs/refresh.js` −1_364 (map −952) and
+ *                                    `verbs/doctor.js` −804 (its map +4_192):
+ *                                    moving the source resolution and the
+ *                                    fix loop into shared helpers removed
+ *                                    more inline prose than the helpers'
+ *                                    call sites added. Plan priced +6–10 KB;
+ *                                    the reading is inside that band.
+ *                                    Zero from the tests (nine files under
+ *                                    the excluded test globs) and zero from
+ *                                    the skill / `_common.sh` mirrors
+ *                                    (`core/**` is outside `files`).
+ *   cumulative delta    +26_730 B    (26.1 KB, 17.4 % of the grant —
+ *                                    1_870_006 − 1_843_276)
+ *   headroom remaining  126_870 B    (123.9 KB — 153_600 − 26_730)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_870_006 − 1_860_125 = 9_881; 1_870_006 − 1_843_276 = 26_730;
+ *   153_600 − 26_730 = 126_870; 541 − 537 = 4; 6_810_979 − 6_773_542 =
+ *   37_437 = the per-file sum (36_199 pre-warden + 1_238 = 798 + 440).
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

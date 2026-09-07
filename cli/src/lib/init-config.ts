@@ -31,7 +31,7 @@ import {
   isInsecureSyncAllowed,
 } from "./sync-transport.js";
 import { warn } from "./log.js";
-import type { OnboardingState } from "../types.js";
+import type { CLITarget, OnboardingState } from "../types.js";
 
 export type CognitionDefaultOutcome =
   | "config_missing"   // config.json doesn't exist — no-op
@@ -343,4 +343,38 @@ export function setOnboardingWelcomed(): SetConfigOutcome {
  */
 export function setOnboardingComplete(): SetConfigOutcome {
   return setOnboardingField("completed");
+}
+
+/**
+ * The per-target value `config.json#cli_targets` records — the config
+ * template's shape (`init` renders `{ "<target>": true }`). ONE builder so
+ * the doctor's record and the template cannot drift apart (BR-103).
+ */
+export function cliTargetEntry(_target: CLITarget): true {
+  return true;
+}
+
+/**
+ * Record `cli_targets.<target>` — the `bridge-missing` repair (BR-103).
+ * Sibling-preserving, atomic tmp+rename + chmod 600, idempotent. This is the
+ * doctor's ONLY config write. Before BR-103 the "fix" was `init --upgrade`,
+ * which never wrote `cli_targets` (init preserves an existing config.json
+ * byte-for-byte) — so the row could never clear — and which replaced
+ * `~/.igris/core/` wholesale on the way (the 2026-09-07 incident).
+ */
+export function recordCliTarget(target: CLITarget): SetConfigOutcome {
+  const cfg = readConfig();
+  if (cfg === null) {
+    return existsSync(configJsonPath()) ? "config_malformed" : "config_missing";
+  }
+  const targets = (cfg.cli_targets ?? null) as Record<string, unknown> | null;
+  const next: Record<string, unknown> = {
+    ...cfg,
+    cli_targets: {
+      ...(targets ?? {}),
+      [target]: cliTargetEntry(target),
+    },
+  };
+  writeConfigAtomic(next);
+  return "written";
 }

@@ -68,3 +68,37 @@ stage_source_repo() {
   NEW_FETCHED=$(python3 -c "import json; print(json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'))['fetched_at'])")
   [ "$ORIG_FETCHED" != "$NEW_FETCHED" ]
 }
+
+# --- BR-103: `refresh` shares the swap helpers with `init --upgrade` ----------
+
+@test "R1 (BR-103): refresh preserves the runtime-only extras — manifest regenerated from the source root, component-manifest carried, unlisted extra not carried" {
+  printf '{ "harnesses": {}, "v": 1 }\n' > "$SOURCE_REPO/harness-manifest.json"
+  mkdir -p "$IGRIS_BRAIN_DIR/core/docs"
+  printf '# component manifest (runtime-only)\n' > "$IGRIS_BRAIN_DIR/core/docs/component-manifest.md"
+  printf 'stale\n' > "$IGRIS_BRAIN_DIR/core/stray.md"
+  run $CLI_BIN refresh --from-source "$SOURCE_REPO" --no-propagate --verbose
+  echo "$output"
+  [ "$status" -eq 0 ]
+  cmp "$SOURCE_REPO/harness-manifest.json" "$IGRIS_BRAIN_DIR/core/harness-manifest.json"
+  run cat "$IGRIS_BRAIN_DIR/core/docs/component-manifest.md"
+  [ "$output" = "# component manifest (runtime-only)" ]
+  [ ! -e "$IGRIS_BRAIN_DIR/core/stray.md" ]
+}
+
+@test "R2 (BR-103): refresh REFUSES on core.new.* staging residue; --wipe-orphans proceeds" {
+  mkdir "$IGRIS_BRAIN_DIR/core.new.4242"
+  W_IS="$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')"
+  printf '# soul v2\n' > "$SOURCE_REPO/core/SOUL.md"
+  run $CLI_BIN refresh --from-source "$SOURCE_REPO" --no-propagate
+  echo "$output"
+  [ "$status" -ne 0 ]
+  grep -q 'core.new.4242' <<<"$output"
+  [ "$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')" = "$W_IS" ]
+  run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
+  [ "$output" = "# soul v1" ]
+  run $CLI_BIN refresh --from-source "$SOURCE_REPO" --no-propagate --wipe-orphans
+  [ "$status" -eq 0 ]
+  [ ! -d "$IGRIS_BRAIN_DIR/core.new.4242" ]
+  run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
+  [ "$output" = "# soul v2" ]
+}

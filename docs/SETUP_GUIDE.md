@@ -92,6 +92,36 @@ igris init --persona professional
 
 > **Note on `igris refresh`:** a refresh re-fetches `~/.igris/core/` (where `SOUL.md` lives) but preserves your `config.json` toggles. Because the active persona is written under `core/SOUL.md`, **re-run `igris configure --persona <name>`** after a refresh if you want to keep a non-default persona.
 
+### Upgrading the brain core (`igris init --upgrade` / `igris refresh`)
+
+Both verbs stage a fresh `core/` beside the live one and promote it with ONE
+rename, keeping exactly one `core.bak.<ts>` for recovery (older backups are
+pruned). Since BR-103 they share three rules:
+
+- **The recorded source decides.** With no `--from-source` / `--channel`, the
+  source is what `~/.igris/.install-source.json` records: a from-source machine
+  re-copies from that checkout (zero network); a release-channel machine
+  re-resolves the SAME tag. Changing the source is a channel switch and asks
+  for confirmation (`--yes` accepts). Note the release pin: a `release` record
+  is pinned to its recorded tag on `igris refresh` — new core content (the
+  FR-243 git hooks, for example) reaches a released machine at the next tag,
+  only by naming it: `igris refresh --channel <new-tag>` or `igris init
+  --upgrade --channel <new-tag>` — a bare `init --upgrade` re-resolves the
+  recorded tag exactly as `refresh` does, since both share one resolver (O-3,
+  follow-up brief).
+- **A real interruption refuses, before anything is written.** `core.new.*`
+  staging residue (a run that died mid-stage) → refuse; clear it with
+  `--wipe-orphans`, which removes staging residue only and never a backup —
+  and if the wipe uncovers the next shape below, it refuses on that too. A
+  `core.bak.*` with NO `core/` (a swap that died between its two renames) →
+  refuse and print the restore command (`mv <bak> ~/.igris/core`); the verb
+  never restores or deletes a backup for you. A retained backup beside a
+  healthy `core/` is the normal state and proceeds silently.
+- **Runtime-only files survive.** `~/.igris/core/harness-manifest.json` is
+  regenerated from the source root on every swap; `docs/component-manifest.md`
+  is carried over; any other file that only the prior core had is reported
+  under `--verbose` and NOT carried (an upgrade may mean to remove it).
+
 ### Verify Installation
 
 ```bash
@@ -147,8 +177,19 @@ python3 -c "import json; print(json.load(open('$HOME/.claude.json'))['mcpServers
 igris doctor
 ```
 
-If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
-`igris init --upgrade`) to register it, then restart Claude Code.
+If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` to
+register it, then restart Claude Code.
+
+**What `--fix` does and does not do (BR-103).** It runs every repair in
+dependency order, each isolated, and prints a per-fix outcome table
+(`| class | target | action | outcome | now |`; `now` is a live re-probe and
+drives the exit code). It records a missing `bridge-missing` harness in
+`config.json#cli_targets`, backfills the brain MCP, re-merges the global hooks,
+installs the per-project git hooks, links the antigravity skills dir and
+chmods secret files. It **never replaces `~/.igris/core/`** — the one
+exception is `brain-core-missing` (an ABSENT or empty core), which runs
+`igris refresh` from the recorded source after a live re-check. Upgrading the
+core is your call: see the subsection above.
 
 ---
 

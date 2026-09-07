@@ -90,7 +90,11 @@ EOF
 # --- FR-243: git-level gates helpers ------------------------------------------
 
 # IGRIS_REPO_ROOT — the monorepo checkout (cli/tests/integration/../../..).
-IGRIS_REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+# PHYSICAL path (`pwd -P`): under a symlinked scratch layout the logical path
+# resolves to a tree of symlinks INTO the real checkout, and a helper that
+# copies-then-deletes through it deletes the real files (BR-103 forger run,
+# 2026-09-07: `core/git-hooks/*` were removed from the checkout that way).
+IGRIS_REPO_ROOT="$(cd -P "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd -P)"
 export IGRIS_REPO_ROOT
 
 # stage_git_hooks_mirror — seeds $IGRIS_BRAIN_DIR/core/git-hooks/{pre-commit,
@@ -170,4 +174,78 @@ file_inode() {
 file_md5() {
   if command -v md5 >/dev/null 2>&1; then md5 -q "$1" 2>/dev/null || echo ""
   else md5sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}
+
+# --- BR-103: core-swap witnesses + fixtures --------------------------------
+
+# core_tree_sha [dir] — ONE sha256 over every regular file under <dir>
+# (default $IGRIS_BRAIN_DIR/core): sorted path list → per-file sha256 →
+# sha256 of that listing. Portable (find + LC_ALL=C sort + shasum). Symlinks
+# are not files and are not hashed; an empty tree hashes deterministically.
+core_tree_sha() {
+  local dir="${1:-$IGRIS_BRAIN_DIR/core}"
+  (
+    cd "$dir" || exit 1
+    find . -type f | LC_ALL=C sort | xargs shasum -a 256 | shasum -a 256 | awk '{print $1}'
+  )
+}
+
+# bak_count — how many core.bak.* siblings sit beside $IGRIS_BRAIN_DIR/core.
+bak_count() {
+  find "$IGRIS_BRAIN_DIR" -maxdepth 1 -name 'core.bak.*' | wc -l | tr -d ' '
+}
+
+# stage_fixture_tarball — a GitHub-shaped release tarball
+# (`igris-ai-fixture/core/**`, so tarball.ts's `strip: 1` applies) built from
+# the repo's core/ with core/git-hooks/ DELETED: the incident's population, a
+# core OLDER than the checkout. Echoes the .tar.gz path. Built at test time,
+# never checked in.
+stage_fixture_tarball() {
+  local stage="$BATS_TEST_TMPDIR/fixture-tarball"
+  local prefix="igris-ai-fixture"
+  rm -rf "$stage"
+  mkdir -p "$stage/$prefix/core"
+  # Copy the CONTENTS into a real dir we created (never `cp -R <dir>`, which
+  # copies a symlinked source AS a symlink), and refuse to delete through
+  # anything that is not that real dir — the rm below must never follow a
+  # link into the checkout.
+  cp -R "$IGRIS_REPO_ROOT/core/." "$stage/$prefix/core/"
+  if [ -L "$stage/$prefix/core" ] || [ ! -d "$stage/$prefix/core" ] || [ -L "$stage/$prefix/core/git-hooks" ]; then
+    echo "stage_fixture_tarball: refusing — staged core is not a real directory" >&2
+    return 1
+  fi
+  rm -rf "$stage/$prefix/core/git-hooks"
+  tar -czf "$stage.tar.gz" -C "$stage" "$prefix"
+  echo "$stage.tar.gz"
+}
+
+# write_install_source_from_source <source-repo> — a from-source
+# .install-source.json record (the shape `igris init --from-source` writes).
+write_install_source_from_source() {
+  printf '{\n  "schema_version": 1,\n  "channel": "main",\n  "ref": "from-source",\n  "fetched_at": "2026-09-07T00:00:00.000Z",\n  "content_sha256": "from-source-fixture",\n  "source": "from-source",\n  "source_path": "%s"\n}\n' "$1" > "$IGRIS_BRAIN_DIR/.install-source.json"
+}
+
+# GITHUB_STUB_PRELOAD — pass as NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD"
+# with IGRIS_TEST_HTTPS_MODE=stub|block and IGRIS_TEST_HTTPS_COUNT_FILE=<file>.
+GITHUB_STUB_PRELOAD="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixtures/github-stub-preload.cjs"
+export GITHUB_STUB_PRELOAD
+
+# path_minimal — echoes a PATH holding ONLY node, git, sqlite3 (symlinked into
+# a fresh bin dir) and a STUB gitleaks (secret-scan-disarmed is PATH presence;
+# without it the informational row fires on every fence that installs a
+# hook), so cli-detect sees none of the runner's real harness binaries (this
+# machine has all six on PATH). Prepend a stub dir to make one CLI "installed".
+path_minimal() {
+  local bin="$BATS_TEST_TMPDIR/minimal-bin"
+  mkdir -p "$bin"
+  local tool p
+  for tool in node git sqlite3; do
+    p="$(command -v "$tool" 2>/dev/null || true)"
+    [ -n "$p" ] && [ ! -e "$bin/$tool" ] && ln -s "$p" "$bin/$tool"
+  done
+  if [ ! -e "$bin/gitleaks" ]; then
+    printf '#!/bin/sh\necho stub\n' > "$bin/gitleaks"
+    chmod +x "$bin/gitleaks"
+  fi
+  echo "$bin"
 }

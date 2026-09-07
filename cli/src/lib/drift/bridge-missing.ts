@@ -6,8 +6,9 @@
  * `~/.igris/config.json#cli_targets`. The user installed Codex AFTER
  * running `igris init`, and now Codex has no bridge wiring — silent gap.
  *
- * `--fix` runs partial-mode `runInit()` to add the missing bridges
- * (preserving everything else). The detector itself is pure.
+ * `--fix` records the target in `config.json#cli_targets` (`recordCliTarget`,
+ * BR-103) and backfills the brain MCP — in-process, never `init`, never a
+ * `core/` replace. The detector itself is pure.
  *
  * Opt-out semantics: if the user explicitly set `--cli-bridge=none` at
  * `igris init` time, `cli_targets` will be `{}` AND the user's intent
@@ -15,9 +16,9 @@
  * "user opted out" and do NOT flag any detected CLI. This matches the
  * `applyBridgeOverride("none")` contract.
  *
- * The doctor's `--fix` for this class reads the auto-detected set and
- * runs `runInit({ upgrade: true })` (bridges-only — config preserved,
- * core/ untouched).
+ * The doctor's `--fix` for this class is ONE config write per row plus the
+ * shared MCP backfill; the exit code re-probes this detector for the row's
+ * target after the fix (BR-103).
  */
 
 import { existsSync, readFileSync } from "node:fs";

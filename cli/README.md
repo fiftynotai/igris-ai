@@ -169,11 +169,22 @@ FR-212d retired the `not-installed` class — `igris install` is register-only
 and writes no per-project `.claude/` layer, so its absence no longer means
 "not installed"; a registered project whose path exists is clean.
 
-`--fix` repairs `hooks-missing`/`hooks-stale` by re-merging the GLOBAL Igris
-hooks (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
-re-install); `brain-core-missing` by invoking `runRefresh()`; `bridge-missing`
-by invoking partial-mode `runInit()`; `mcp-unregistered` by re-registering the
-brain MCP; `secret-perms` by chmod 600. Other classes require manual decisions.
+`--fix` runs every repair in dependency order, each isolated (one failure
+cannot poison the rest), and prints a per-fix outcome table
+(`| class | target | action | outcome | now |` — `now` is a live re-probe that
+also drives the exit code; no class is discounted blindly). It repairs
+`brain-core-missing` by invoking `runRefresh()` from the RECORDED source
+(guarded by a live re-probe — the only wholesale action, and only for an absent
+core); `git-hooks-missing` per project by `installGitHooks()`;
+`hooks-missing`/`hooks-stale` by re-merging the GLOBAL Igris hooks
+(`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
+re-install); `mcp-unregistered` by re-registering the brain MCP;
+`bridge-missing` by recording `cli_targets.<id>` in `config.json` plus that
+same MCP backfill (BR-103 — before, it invoked `init --upgrade`, which
+replaced `~/.igris/core/` wholesale from the release channel and never wrote
+`cli_targets`); `secret-perms` by chmod 600, last. **`--fix` never replaces
+`~/.igris/core/`** except through the guarded `brain-core-missing` path. Other
+classes require manual decisions.
 
 `--remove-orphans` interactively deletes `path-missing` rows. Skip
 prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`
