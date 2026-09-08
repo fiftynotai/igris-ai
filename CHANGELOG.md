@@ -10,6 +10,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.1] - 2026-09-08
+
+Patch on `v7.3.0`: two fix commits (counted 2026-09-08 with `git log
+v7.3.0..HEAD`; no feature, no breaking change), never published — 7.3.0 was
+tagged but its npm publish was gated on an unset `NPM_TOKEN`, so 7.3.1 is the
+first 7.3.x that reaches npm. The §17.2 pre-tag audit PASSED (zero P0/P1
+broken-feature rows).
+
+Why a patch before the first publish: TD-453 found that the pre-commit phase
+guard FAILED OPEN under bash 3.2 (a quoted SQL escape kept its backslashes,
+sqlite3 rejected the query, the discarded error read as "no active brief"),
+and BR-104 closed the same idiom at nine more sites in the commit-msg hook
+and the brief validators. A fresh install takes its core from the latest
+GitHub release, so those hooks had to be in the release users get. The same
+two bundles fence the CLI's integration tests from the operator's real home
+(TD-456), stop a per-project install from re-pointing a global MCP
+registration (TD-455), bound `machine.aliases` (TD-453), and ship two
+subconscious-dedup changes with their measurements (TD-454, TD-458, TD-457 —
+the last one carries schema v6, which re-keys `suggestions` on the first
+run after upgrade).
+
+Upgrading: from npm, `npm install -g igris-ai@7.3.1` then `igris init
+--upgrade`; from source, rebuild `cli/`, `igris refresh --from-source
+<checkout> --yes`, `igris doctor`. After the first brain run,
+`SELECT COUNT(*) FROM suggestions WHERE dedupe_key IS NULL` reads 0.
+
 ### Fixed
 
 - **BR-104** — the nine remaining double-quoted SQL-escape sites

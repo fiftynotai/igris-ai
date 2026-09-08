@@ -33,7 +33,7 @@ export interface RegisterProjectOptions {
    * Without this flag, a missing path is a hard error (exit 1).
    */
   allowMissingPath?: boolean;
-  /** Internal: CLI version stamp; defaults to 7.3.0. */
+  /** Internal: CLI version stamp; defaults to 7.3.1. */
   cliVersion?: string;
 }
 
@@ -72,7 +72,7 @@ export async function runRegisterProject(
   }
   validateSlug(slug);
 
-  const cliVersion = opts.cliVersion ?? "7.3.0";
+  const cliVersion = opts.cliVersion ?? "7.3.1";
 
   // 4. Registry write — the entire scope of this verb.
   try {

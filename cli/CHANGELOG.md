@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.1] - 2026-09-08
+
+Patch on `v7.3.0`, the first 7.3.x published to npm (7.3.0's publish was
+gated on an unset `NPM_TOKEN`). The CLI half: `igris install <path>` keeps a
+foreign MCP registration (TD-455), the bats tier fences `HOME` (TD-456),
+`machine.aliases` is bounded (TD-453), and the bundled brain carries the
+TD-454 / TD-458 claim gates and TD-457's anchor with schema v6. The
+pre-commit and commit-msg hooks a fresh install fetches from the release no
+longer fail open on a quoted hostname, alias, role or project name (TD-453,
+BR-104 — root `CHANGELOG.md`).
+
 ### Fixed
 
 - **TD-455** — `igris install <path>` keeps an existing `~/.claude.json`
