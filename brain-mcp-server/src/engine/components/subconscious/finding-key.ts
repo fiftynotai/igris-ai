@@ -11,7 +11,10 @@
  * `docs/architecture/subconscious_engine.md`; do not read it as a constant.
  *
  * Two stages, deliberately: {@link entityKey} BLOCKS (which findings could be
- * the same) and {@link claimsMatch} DISCRIMINATES (whether they are). An
+ * the same) and {@link claimsMatch} DISCRIMINATES (whether they are). The
+ * discriminator reads two closed vocabularies the TITLE can name — the
+ * registered projects (TD-454) and the code's own module names (TD-458,
+ * {@link MODULE_VOCABULARY}) — never the row's re-authored labels. An
  * entity-only key would merge `BR-128 carries a malformed status string` with
  * `BR-128 has been In Progress 189 days` — both true, both about the same
  * brief, different findings. Over-merge destroys signal and is worse than the
@@ -102,6 +105,13 @@ function firstIdPart(prefix: string, ...raw: unknown[]): string | null {
  *
  * An anchor is not paraphrasable: `fifty_eco_system` is `fifty_eco_system`
  * under `abandoned_project`, `portfolio_abandonment` or `stalled_epidemic`.
+ *
+ * TD-457 (2026-09-08): the EVIDENCE brief ids are consulted only when the
+ * TITLE names an id — otherwise they are the same illustration the project
+ * rule already refuses (measured: 15 newly comparable pairs, 15 SAME, 0
+ * DIFFERENT under the TD-454 gate; `docs/architecture/subconscious_engine.md`
+ * §TD-457). The ACTION `brief_id` param still anchors: it is the target the
+ * handler acts on, not an example.
  */
 export function entityKey(candidate: SuggestionCandidate): string {
   const evidence = candidate.evidence ?? {};
@@ -119,10 +129,15 @@ export function entityKey(candidate: SuggestionCandidate): string {
   const actionOf = (param: string): unknown => action[param];
   const byPrefix = (prefix: string): unknown[] =>
     ACTION_ID_PARAMS.filter(([, p]) => p === prefix).map(([param]) => actionOf(param));
+  const titled = subjectIds(candidate.title).size > 0;
 
   return (
     idPart('project', slug) ??
-    firstIdPart('brief', evidence.brief_id, evidence.brief_ids, ...byPrefix('brief')) ??
+    firstIdPart(
+      'brief',
+      ...(titled ? [evidence.brief_id, evidence.brief_ids] : []),
+      ...byPrefix('brief'),
+    ) ??
     firstIdPart(
       'learning',
       evidence.learning_id,
@@ -226,14 +241,15 @@ export function loadProjectVocabulary(db: Database.Database): ProjectVocabulary 
 }
 
 /**
- * TD-454: the registered projects a title NAMES — each slug's token sequence
- * matched over the title's UNFILTERED normalized tokens (so `moca-hr-agent`'s
- * two-character `hr` still counts), longest sequence first, contiguous and
- * non-overlapping (`hadir` inside `hadir-system` is one project, not two).
- * Two slugs with one token sequence (`fifty-dev` / `fifty_dev` do not; the
- * case twins do) count as the alphabetically-first slug. Lower-cased slugs.
+ * The names a title carries from a closed vocabulary: each name's token
+ * sequence matched over the title's UNFILTERED normalized tokens (so
+ * `moca-hr-agent`'s two-character `hr` still counts), longest sequence first,
+ * contiguous and non-overlapping (`hadir` inside `hadir-system` is one name,
+ * not two). Two names with one token sequence count as the alphabetically
+ * first. Lower-cased. ONE algorithm for both vocabularies (TD-458 factored it
+ * out of `namedProjects` unchanged — the TD-454 pins re-run byte-for-byte).
  */
-export function namedProjects(title: string, vocab: ProjectVocabulary): Set<string> {
+function namedSequences(title: string, vocab: ProjectVocabulary): Set<string> {
   const out = new Set<string>();
   if (vocab.size === 0) return out;
   const words = normalizeForDedup(title ?? '').split(' ').filter((w) => w.length > 0);
@@ -261,6 +277,47 @@ export function namedProjects(title: string, vocab: ProjectVocabulary): Set<stri
   return out;
 }
 
+/**
+ * TD-454: the registered projects a title NAMES — {@link namedSequences} over
+ * the `projects.slug` vocabulary (`fifty-dev` / `fifty_dev` do not share a
+ * sequence; the case twins do).
+ */
+export function namedProjects(title: string, vocab: ProjectVocabulary): Set<string> {
+  return namedSequences(title, vocab);
+}
+
+/**
+ * TD-458: the closed MODULE vocabulary a title can name — a property of the
+ * CODE, never of the data. The v1 `CHECK (source_module IN (...))` set, the
+ * synapse writer's `edge_inference`, and the four deterministic components
+ * (`extractors/{janitor,arbiter,curator,cartographer}.ts` — the literal each
+ * deterministic writer stamps). NOT `SELECT DISTINCT source_module`: on
+ * `type_inferred = 1` rows that column is the model's own label, re-authored
+ * every run (195 labels over 358 rows, TD-437), so the SAME finding carries
+ * two labels and a gate on the column breaks the pair the gate exists to keep.
+ * The derivation guard in `__tests__/finding-key.test.ts` re-derives this
+ * list from the schema and the writers' source, so a new writer joins it here
+ * or reds there.
+ */
+export const MODULE_VOCABULARY: readonly string[] = [
+  'stalled', 'conflict', 'gap', 'pattern', // schema.ts v1 CHECK set
+  'edge_inference', // cognition/extractors/synapse.ts
+  'janitor', 'arbiter', 'curator', 'cartographer', // the deterministic components' extractors
+];
+
+const MODULE_VOCAB: ProjectVocabulary = new Map(
+  MODULE_VOCABULARY.map((m) => [m, normalizeForDedup(m).split(' ').filter((w) => w.length > 0)]),
+);
+
+/**
+ * TD-458: the modules a title NAMES — {@link namedSequences} over
+ * {@link MODULE_VOCABULARY}. `edge_inference` survives normalisation as one
+ * token (`_` is not punctuation); `stalled/gap` splits into two.
+ */
+export function namedModules(title: string): Set<string> {
+  return namedSequences(title, MODULE_VOCAB);
+}
+
 /** One side of a {@link claimsMatch} comparison. */
 export interface Claim {
   /** {@link claimTokens} of the title. */
@@ -269,6 +326,8 @@ export interface Claim {
   subject: Set<string>;
   /** {@link namedProjects} of the title (empty without a vocabulary) — TD-454. */
   projects: Set<string>;
+  /** {@link namedModules} of the title (the constant vocabulary; always computed) — TD-458. */
+  modules: Set<string>;
 }
 
 /** Build a {@link Claim} from a title; the vocabulary is optional (absent ⇒ no project set). */
@@ -277,6 +336,7 @@ export function claimOf(title: string, vocab?: ProjectVocabulary): Claim {
     tokens: claimTokens(title),
     subject: subjectIds(title),
     projects: vocab ? namedProjects(title, vocab) : new Set<string>(),
+    modules: namedModules(title),
   };
 }
 
@@ -293,6 +353,16 @@ export function claimOf(title: string, vocab?: ProjectVocabulary): Claim {
  *     "the stalled detector misses A, B, C" is not "A, B, D have no
  *     learnings". Equality, not disjointness. Measured: the three DIFFERENT
  *     shapes and the recall cost are in `docs/architecture/subconscious_engine.md`.
+ *  1c. **MODULE-NAME GATE** (TD-458) — if both titles name modules from
+ *     {@link MODULE_VOCABULARY} and the two sets are DISJOINT, they are two
+ *     different findings: "58 of 61 open suggestions are mechanical
+ *     stalled/gap rows" is not "44 of 60 open suggestions are edge_inference
+ *     rows", whatever the prose overlap (0.31). Disjointness, like gate 1 —
+ *     one empty side is not disjoint (a re-emission that drops the module
+ *     word still merges) and `{stalled, gap}` vs `{stalled}` shares a member.
+ *     Measured 2026-09-08 (pre-registered P-A/P-B/P-C, the sweep's
+ *     `--source-module-gate`): all four S3 pairs separated, 0 labelled SAME
+ *     pairs broken, 3 same-block DIFFERENT pairs separated.
  *  2. **SHORT-CLAIM GUARD** — below `minTokens` the similarity score is not
  *     used at all and the two token sets must be EQUAL. A three-word claim has
  *     no room to be similar-but-different.
@@ -321,6 +391,16 @@ export function claimsMatch(
   if (a.projects.size > 0 && b.projects.size > 0) {
     if (a.projects.size !== b.projects.size) return false;
     for (const p of a.projects) if (!b.projects.has(p)) return false;
+  }
+  if (a.modules.size > 0 && b.modules.size > 0) {
+    let shares = false;
+    for (const m of a.modules) {
+      if (b.modules.has(m)) {
+        shares = true;
+        break;
+      }
+    }
+    if (!shares) return false;
   }
   if (Math.min(a.tokens.size, b.tokens.size) < minTokens) {
     if (a.tokens.size !== b.tokens.size) return false;
@@ -417,7 +497,10 @@ export function candidateFromRow(row: {
  *
  * Bounded (only NULL-key rows), idempotent (a keyed row is never revisited) and
  * fail-soft on a pre-v5 schema. Called once per run from `runSubconscious`, a
- * write path — never from `buildContext`, which is a read slot.
+ * write path — never from `buildContext`, which is a read slot. The updates
+ * run in ONE transaction (TD-457): schema v6 NULLs every key, and a queue
+ * half re-keyed under the new anchor and half under none is worse than a
+ * queue keyed under neither.
  *
  * @returns how many rows were keyed.
  */
@@ -437,11 +520,14 @@ export function backfillFindingKeys(db: Database.Database): number {
   const update = db.prepare(
     'UPDATE suggestions SET dedupe_key = ?, entity_key = ? WHERE id = ?',
   );
-  let keyed = 0;
-  for (const row of rows) {
-    const candidate = candidateFromRow(row);
-    update.run(findingKey(candidate), entityKey(candidate), row.id);
-    keyed += 1;
-  }
-  return keyed;
+  const keyAll = db.transaction((pending: BackfillRow[]): number => {
+    let keyed = 0;
+    for (const row of pending) {
+      const candidate = candidateFromRow(row);
+      update.run(findingKey(candidate), entityKey(candidate), row.id);
+      keyed += 1;
+    }
+    return keyed;
+  });
+  return keyAll(rows);
 }

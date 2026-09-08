@@ -1,0 +1,5 @@
+id_a,id_b,design,score,label,shape,modules_a,modules_b,separated_by
+1341,1801,c,0.3103,DIFFERENT,S3,gap stalled,edge_inference,gate|mod|mod+strip
+1355,1801,c,0.2963,DIFFERENT,S3,gap stalled,edge_inference,gate|mod|mod+strip
+1326,1888,c,0.2647,DIFFERENT,S3,gap stalled,edge_inference,gate|mod|mod+strip
+1271,1815,c,0.2500,DIFFERENT,S3,gap stalled,edge_inference,gate|mod|mod+strip

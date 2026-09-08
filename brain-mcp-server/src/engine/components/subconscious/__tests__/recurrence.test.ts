@@ -22,7 +22,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { runSubconscious } from '../runner.js';
 import { subconsciousMigrations } from '../schema.js';
-import { claimOf, claimSimilarity, claimTokens, claimsMatch } from '../finding-key.js';
+import { claimOf, claimSimilarity, claimTokens, claimsMatch, namedModules } from '../finding-key.js';
 import {
   DEFAULT_SUBCONSCIOUS_CONFIG,
   type SubconsciousConfig,
@@ -648,17 +648,20 @@ describe('TD-452 — the two anchor splits, pinned as measured (the anchor did n
     // the same threshold (measured 2026-09-07) — so this stays a miss.
   });
 
-  it('family 1: three phrasings of one cross-project finding land in THREE blocks (1822, then 1883 + 1885) — and would not merge in one', async () => {
+  it('family 1: three phrasings of one cross-project finding land in ONE block since TD-457 (1822, then 1883 + 1885) — and still do not merge there', async () => {
     const deps = statefulDeps([emit(ROW_1822), emit(ROW_1883, ROW_1885)]);
     await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
     expect(count(db)).toBe(1);
     await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
 
-    // THE SPLIT: the anchor is the illustrative brief each run cited.
+    // TD-457 (2026-09-08) MOVED this pin: before, the anchor was the
+    // illustrative brief each run cited (`brief:br-074` / `brief:ts-003` /
+    // `brief:br-001`). The title names no id, so the evidence brief no longer
+    // anchors and all three read `global`. Rows are still 3 — see below.
     expect(anchorsById(db)).toEqual([
-      [1, 'brief:br-074'],
-      [2, 'brief:ts-003'],
-      [3, 'brief:br-001'],
+      [1, 'global'],
+      [2, 'global'],
+      [3, 'global'],
     ]);
     // AND THE BELOW-LINE MISS (D-0): put in one block they are compared, not
     // merged — every pair scores under 0.25, TD-445's threshold question.
@@ -686,7 +689,7 @@ describe('TD-452 — the two anchor splits, pinned as measured (the anchor did n
     expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
   });
 
-  it('NEGATIVE CONTROL: a `brief:`-anchored portfolio row and a `project:` row with different claims stay two rows', async () => {
+  it('NEGATIVE CONTROL: a formerly `brief:`-anchored portfolio row (now `global`, TD-457) and a `project:` row with different claims stay two rows', async () => {
     const deps = statefulDeps([emit(ROW_1822), emit(ROW_1880)]);
     await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
     await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
@@ -817,5 +820,248 @@ describe('TD-454 — the project-set gate on the live path (real rows, real proj
 
     expect(count(db)).toBe(1);
     expect(rows(db)[0]!.seen_count).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-458 — the MODULE-NAME gate on the live path
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Four real rows, read 2026-09-08 from a `sqlite3 -readonly …
+ * .backup` copy of the operator brain (1,918 rows), every column verbatim.
+ * All four are `global`-anchored, so the shipped loop (own block only) DOES
+ * compare them. `1326` / `1815` score 0.250 on the tokeniser and are
+ * hand-labelled DIFFERENT (`queue_flood_stalled_gap` vs
+ * `edge_inference_flood`): at HEAD the second BUMPED the first — a same-block
+ * false merge, one of the three the module gate separates on the whole corpus
+ * (P-C, `scripts/td458_module_recall_cost.csv`). `1815` / `1809` (0.323, both
+ * `edge_inference_flood`) and `1326` / `1384` (0.300, `{gap,stalled}` vs
+ * `{gap}` — shares a member) are the SAME controls the gate must leave alone.
+ * The vocabulary is a CONSTANT in `finding-key.ts` (a property of the code);
+ * nothing in the fixture arms it — which is the point: it is inert on a fresh
+ * brain only in the sense that a fresh brain has no flood rows to separate.
+ */
+const ROW_1326: Row = {
+  id: 1326,
+  source_module: "suggestion_queue_flooded",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.7,
+  title:
+    "62 of 66 open suggestions are single-project fifty_eco_system stalled/gap notices — the queue is drowning higher-value findings and should be collapsed per-project",
+  evidence:
+    "{\"note\":\"open_suggestions holds 66 entries: ids 4-32 and 40-42 are 'stalled' notices all for fifty_eco_system, and ids 43-69 are 27 'gap' notices all of the identical form '<brief> marked Done but has unchecked acceptance criteria' for the same project. One brief-per-suggestion fan-out on a project whose briefs share a single freeze date (167/147 days) produces near-zero marginal signal per row and buries anything from lifeOS, igris-ai, or mbrgea-ai. Recommend the stalled/gap modules emit one rolled-up suggestion per project per module.\"}",
+  suggested_action:
+    "{\"kind\":\"collapse_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"project_slug\":\"fifty_eco_system\",\"reason\":\"Roll per-brief notices into one per-project summary; unblocks the review queue\"}",
+};
+
+const ROW_1384: Row = {
+  id: 1384,
+  source_module: "suggestion_queue_flooding",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.7,
+  title:
+    "66 of 69 queued suggestions are single-project fifty_eco_system stall/gap alerts — the review queue is saturated by one dormant project and will bury anything new",
+  evidence:
+    "{\"note\":\"open_suggestions ids 4–32 and 40–42 are 'stalled' alerts, ids 43–69 are 'Done but unchecked acceptance criteria' gap alerts; all but id 39 (attendance_app) target fifty_eco_system. The 27 gap alerts share one root cause — Done briefs whose criteria were never ticked — and would be better handled as one policy decision than 27 reviews.\"}",
+  suggested_action:
+    "{\"kind\":\"collapse_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"project_slug\":\"fifty_eco_system\",\"proposal\":\"group_into_single_rollup_per_module\"}",
+};
+
+const ROW_1809: Row = {
+  id: 1809,
+  source_module: "edge_inference_flood",
+  project_slug: null,
+  entity_key: "global",
+  priority: "high",
+  confidence: 0.75,
+  title:
+    "44 of the 60 queued suggestions are auto-generated single-edge inferences — the edge_inference module is drowning the review queue and should batch or auto-apply below a threshold",
+  evidence:
+    "{\"note\":\"Suggestion ids 1712-1755 are all source_module='edge_inference', each proposing one learning→learning edge (e.g. 1730 'learning 7 → learning 6', 1755 'learning 425 → learning 424'). They outnumber the 16 substantive findings (1696-1711) nearly 3:1, and most concern learnings in the low id range (6-425) that are not in the recent set — meaning the operator must page through 44 mechanical rows to reach any judgement-requiring item. This is a queue-design defect, not a knowledge finding.\"}",
+  suggested_action:
+    "{\"kind\":\"change_suggestion_module_policy\",\"source_module\":\"edge_inference\",\"policy\":\"batch_into_single_suggestion\",\"note\":\"Collapse per-edge rows into one reviewable batch per run, or auto-apply above a confidence threshold and surface only exceptions.\"}",
+};
+
+const ROW_1815: Row = {
+  id: 1815,
+  source_module: "suggestion_channel_flooded",
+  project_slug: null,
+  entity_key: "global",
+  priority: "high",
+  confidence: 0.8,
+  title:
+    "44 of the 60 open suggestions are auto-generated edge_inference rows (ids 1712-1755) — they drown the 16 substantive findings and should be batch-applied or routed out of the operator queue",
+  evidence:
+    "{\"note\":\"open_suggestions contains ids 1712 through 1755, all source_module=edge_inference, each proposing a single derived_from/related_to/supersedes link between two learnings. They are mechanical, individually low-stakes, and outnumber every other finding 3:1. Reviewing graph edges one at a time is the wrong granularity — they belong in a bulk-accept view or an auto-apply path with a confidence floor, not in the same queue as 'the only P0 brief has been stalled 130 days'.\"}",
+  suggested_action:
+    "{\"kind\":\"route_suggestion_class\",\"source_module\":\"edge_inference\",\"destination\":\"bulk_review_queue\",\"note\":\"Auto-apply above a confidence threshold; keep the operator queue for judgment calls\"}",
+};
+
+describe('TD-458 — the module-name gate on the live path (real rows, one block)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeBrain();
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it('a same-block DIFFERENT pair (1326 then 1815, global @ 0.250, {gap,stalled} vs {edge_inference}) files TWO rows — the false merge at HEAD', async () => {
+    // The arming half: the tokeniser alone would merge them, and the module sets are disjoint.
+    expect(score(ROW_1326, ROW_1815)).toBeCloseTo(0.25, 3);
+    expect([...namedModules(ROW_1326.title)].sort()).toEqual(['gap', 'stalled']);
+    expect([...namedModules(ROW_1815.title)]).toEqual(['edge_inference']);
+
+    const deps = statefulDeps([emit(ROW_1326), emit(ROW_1815)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(1);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(2);
+    expect(anchorsById(db)).toEqual([
+      [1, 'global'],
+      [2, 'global'],
+    ]);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
+  });
+
+  it('POSITIVE CONTROL: a same-module SAME pair (1815 then 1809, both {edge_inference} @ 0.323) still BUMPS', async () => {
+    expect(score(ROW_1815, ROW_1809)).toBeCloseTo(0.323, 3);
+    const deps = statefulDeps([emit(ROW_1815), emit(ROW_1809)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(1);
+    expect(rows(db)[0]!.seen_count).toBe(2);
+    expect(JSON.parse(rows(db)[0]!.recurrence_titles)).toEqual([ROW_1809.title]);
+  });
+
+  it('POSITIVE CONTROL: a shares-a-member SAME pair (1326 then 1384, {gap,stalled} vs {gap} @ 0.300) still BUMPS — DISJOINT, not EQUAL', async () => {
+    expect(score(ROW_1326, ROW_1384)).toBeCloseTo(0.3, 3);
+    expect([...namedModules(ROW_1384.title)]).toEqual(['gap']);
+    const deps = statefulDeps([emit(ROW_1326), emit(ROW_1384)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(1);
+    expect(rows(db)[0]!.seen_count).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-457 — the anchor no longer splits a portfolio finding (live path)
+// ---------------------------------------------------------------------------
+
+/**
+ * PROVENANCE. Four real rows, read 2026-09-08 from a read-only `.backup` copy
+ * (1,918 rows), every column verbatim; `entity_key` is the POST-TD-457 anchor
+ * (the copy stored `brief:br-027` for 1570, `brief:br-001` for 1677 and 1434 —
+ * `scripts/td457_pairs_a_narrow.csv` carries both). `1570` / `1677` is the
+ * highest-scoring pair of the 15 (a-narrow) SAME pairs (0.708, both sides
+ * slug-less and moved): at HEAD they sat in two `brief:` blocks and could
+ * never merge. `1434` / `1486` is the a-narrow DIFFERENT pair TD-452 measured
+ * (0.303, S1): after TD-457 they share `global`, and it is the TD-454
+ * project-set gate — not the anchor — that keeps them two rows.
+ */
+const ROW_1570: Row = {
+  id: 1570,
+  source_module: "duplicate_project_slug",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.6,
+  title:
+    "Four overlapping hadir project slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each hold open briefs — likely one product split across duplicate brain entries",
+  evidence:
+    "{\"brief_id\":\"BR-027\",\"note\":\"Projects list shows hadir (2 open, 116d), hadir-system (1 open, no activity), fya-hadir-app (1 open, 27d), moca-hadir-app (7 open, 26d). hadir-system's BR-001 ('Implement Hadir mobile app UI design system in web admin portal') and hadir's BR-027/BR-028 (MOCA UI updates, report card redesign) read as the same product line. Similar shape on the fifty side: fifty-dev (61 open) vs fifty_eco_system (34 open) vs animated-fifty-dev vs retro_fifty. Worth confirming which slugs are live and merging or archiving the rest before brief counts are used for any prioritisation.\"}",
+  suggested_action:
+    null,
+};
+
+const ROW_1677: Row = {
+  id: 1677,
+  source_module: "duplicate_project_slugs",
+  project_slug: null,
+  entity_key: "global",
+  priority: "low",
+  confidence: 0.5,
+  title:
+    "Overlapping Hadir project slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each hold open briefs — likely one product tracked under four brain identities",
+  evidence:
+    "{\"brief_id\":\"BR-001\",\"note\":\"projects lists hadir (2 briefs, 122d), hadir-system (1 brief, activity null), fya-hadir-app (2 briefs, 0d), moca-hadir-app (7 briefs, 32d). hadir-system BR-001 'Implement Hadir mobile app UI design system in web admin portal' and hadir BR-027 'MOCA UI updates' describe adjacent work. Recent commits 23c880f and 7ef7766 show the brain has been actively folding duplicate project rows onto one directory.\"}",
+  suggested_action:
+    "{\"kind\":\"review_project_identity\",\"slugs\":[\"hadir\",\"hadir-system\",\"fya-hadir-app\",\"moca-hadir-app\"]}",
+};
+
+const ROW_1434: Row = {
+  id: 1434,
+  source_module: "detector_blind_spot",
+  project_slug: null,
+  entity_key: "global",
+  priority: "medium",
+  confidence: 0.6,
+  title:
+    "The stalled detector appears to miss projects with null days_since_activity — attendance_app, lifeOS, hadir-system and hadir briefs idle 118–159 days produce no suggestions",
+  evidence:
+    "{\"brief_id\":\"BR-001\",\"note\":\"hadir-system BR-001 (In Progress, 159 days), hadir BR-027/BR-028 (In Progress, 131–133 days) and lifeOS BR-024..BR-036 (118 days) are all older than the fifty_eco_system briefs that did fire at 48 days, yet none appear in open_suggestions. attendance_app BR-001 fired but its three In Progress siblings did not.\"}",
+  suggested_action:
+    null,
+};
+
+describe('TD-457 — the anchor no longer splits a portfolio finding (live path)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeBrain();
+    seedCitedBriefs(db);
+    db.prepare(
+      `INSERT INTO brief_status (project, brief_id, title, status, priority, updated_at)
+       VALUES ('hadir', 'BR-027', 'moca ui', 'In Progress', 'P2', '2026-03-01 00:00:00')`,
+    ).run();
+    const ins = db.prepare(`INSERT INTO projects (slug, name, path) VALUES (?, ?, ?)`);
+    for (const slug of ['lifeOS', 'attendance_app', 'hadir-system', 'hadir', 'moca-hr-agent']) ins.run(slug, slug, `/tmp/${slug}`);
+  });
+  afterEach(() => {
+    db.close();
+  });
+
+  it('(a) family 1 in two runs -> ONE distinct entity_key (global), three rows (the below-line scores keep them apart)', async () => {
+    const deps = statefulDeps([emit(ROW_1822), emit(ROW_1883, ROW_1885)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(3);
+    expect(new Set(rows(db).map((r) => r.entity_key))).toEqual(new Set(['global']));
+  });
+
+  it('(b) one of the 15 SAME pairs (1570 then 1677 @ 0.708) -> ONE row, seen_count 2, the absorbed title recorded', async () => {
+    expect(score(ROW_1570, ROW_1677)).toBeCloseTo(0.708, 3);
+    const deps = statefulDeps([emit(ROW_1570), emit(ROW_1677)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    expect(count(db)).toBe(1);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(1);
+    const row = rows(db)[0]!;
+    expect(row.entity_key).toBe('global');
+    expect(row.seen_count).toBe(2);
+    expect(JSON.parse(row.recurrence_titles)).toEqual([ROW_1677.title]);
+  });
+
+  it('(c) NEGATIVE CONTROL: a moved global row against a global row with a different claim and unequal project sets (1434 then 1486 @ 0.303) -> TWO rows', async () => {
+    expect(score(ROW_1434, ROW_1486)).toBeCloseTo(0.303, 3);
+    const deps = statefulDeps([emit(ROW_1434), emit(ROW_1486)]);
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+    await runSubconscious(db, 'all', { config: RUNNABLE_CONFIG, deps });
+
+    expect(count(db)).toBe(2);
+    expect(anchorsById(db)).toEqual([
+      [1, 'global'],
+      [2, 'global'],
+    ]);
+    expect(rows(db).every((r) => r.seen_count === 1)).toBe(true);
   });
 });

@@ -12,7 +12,8 @@
  * Component contract:
  *   - schema()   : suggestions + dismissed_patterns (v1), suggestions v3
  *                  rebuild (open source_module + LLM columns), v4 drops the
- *                  dead pattern_observations table.
+ *                  dead pattern_observations table, v5 keys (TD-440), v6
+ *                  re-key (TD-457).
  *   - tools()    : 5 MCP tools — list / dismiss / acted / run / apply_action.
  *   - events()   : emits subconscious.bootstrap_failed; listens engine.ready.
  *                  The run lifecycle is written by the cognition engine under

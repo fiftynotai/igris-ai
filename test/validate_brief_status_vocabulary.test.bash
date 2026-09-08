@@ -22,6 +22,7 @@
 # conditional below is written `... || return 1`.
 
 load test_helper
+load sql_escape_helpers
 
 setup() {
   VALIDATOR="$IGRIS_ROOT/scripts/validate_brief_status_vocabulary.sh"
@@ -60,7 +61,7 @@ seed_brief() {
   local bid="$1" st="$2" proj="${3:-$FIXTURE_PROJECT}"
   sqlite3 "$FIXTURE_DB" \
     "INSERT INTO brief_status (project, brief_id, title, status)
-       VALUES ('$proj', '$bid', 'T $bid', '$(printf '%s' "$st" | sed "s/'/''/g")');"
+       VALUES ('$(sql_q "$proj")', '$bid', 'T $bid', '$(printf '%s' "$st" | sed "s/'/''/g")');"
 }
 
 run_validator() {
@@ -349,4 +350,64 @@ refute_output_has() {
   after="$(sqlite3 "$FIXTURE_DB" "SELECT status FROM brief_status WHERE brief_id='BR-001';")"
   [ "$before" = "$after" ] || return 1
   [ "$after" = "Completed" ] || return 1
+}
+
+# =============================================================================
+# BR-104 (2026-09-08) — the bash-3.2 SQL-escape fail-open. The validator's
+# PROJECT_SQL escape was the double-quoted `"${PROJECT//\'/\'\'}"`; under
+# /bin/bash 3.2 (the interpreter the pre-commit hook's shebang selects) a
+# PROJECT carrying a quote becomes `it\'\'s-proj`, sqlite3 rejects the query,
+# stderr is discarded and the validator reports an EMPTY (clean) pass. The
+# PROJECT here comes from the env override — the pre-commit hook invokes this
+# validator with no PROJECT (all projects), so the hook path never reaches the
+# site; the env override is the only input that does, and it is what the
+# operator's ad-hoc runs use. Reachable by env override only.
+# V3 runs the real validator under /bin/bash; V3m the quoted-form mutant on a
+# scratch copy (RED only under /bin/bash 3.x — skipped with the reason on a
+# newer interpreter); V5 is the clean-name control (real AND mutant both fire).
+# =============================================================================
+
+run_validator_bin_q() {
+  run env BRAIN_DB="$FIXTURE_DB" PROJECT="$FIXTURE_PROJECT" /bin/bash "${1:-$VALIDATOR}"
+}
+
+@test "(V3) BR-104: PROJECT=it's-proj under /bin/bash -> the offender is NAMED (exit 1)" {
+  init_fixture_db
+  FIXTURE_PROJECT="it's-proj"
+  seed_brief "FR-001" "Done"
+  seed_brief "BR-001" "Completed"
+  run_validator_bin_q
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  assert_output_has "STRAY: \"Completed\""
+}
+
+@test "(V3m) BR-104 mutant: the quoted-form validator under /bin/bash 3.x reads an EMPTY PASS on V3's world (exit 0)" {
+  skip_unless_bin_bash_3
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  build_quoted_mutant "$VALIDATOR" "$SCRATCH/validator.quoted" 1 || return 1
+  init_fixture_db
+  FIXTURE_PROJECT="it's-proj"
+  seed_brief "FR-001" "Done"
+  seed_brief "BR-001" "Completed"
+  run_validator_bin_q "$SCRATCH/validator.quoted"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the empty pass (exit 0), got $status; output: [$output]"; return 1; }
+
+  # Positive control in the SAME fixture: the real validator names it.
+  run_validator_bin_q
+  [ "$status" -eq 1 ] || return 1
+  assert_output_has "STRAY: \"Completed\""
+}
+
+@test "(V5-V3) BR-104 control: the same offender under PROJECT=repo fires on the real validator AND on the quoted-form mutant" {
+  command -v python3 >/dev/null 2>&1 || skip "python3 not available"
+  init_fixture_db
+  seed_brief "FR-001" "Done"
+  seed_brief "BR-001" "Completed"
+  run_validator_bin_q
+  [ "$status" -eq 1 ] || return 1
+  assert_output_has "STRAY: \"Completed\""
+  build_quoted_mutant "$VALIDATOR" "$SCRATCH/validator.quoted" 1 || return 1
+  run_validator_bin_q "$SCRATCH/validator.quoted"
+  [ "$status" -eq 1 ] || { echo "mutant on a clean name: expected exit 1, got $status"; return 1; }
+  assert_output_has "STRAY: \"Completed\""
 }

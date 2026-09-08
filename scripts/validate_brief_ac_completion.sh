@@ -123,10 +123,10 @@ fi
 # deliberately NOT a fresh literal list: a fifth definition of "terminal" is how
 # 26 rows sat exempt from the reconciliation invariant for their whole lifetime.
 #
-# $PROJECT is a slug (env override) — single-quote-escaped (doubling any
-# embedded quote) before interpolation, matching the phase-guard idiom.
+# $PROJECT is a slug (env override) — single-quote-escaped (doubled) with an
+# UNQUOTED assignment; the quoted form fails OPEN under /bin/bash 3.2 (BR-104).
 if [ -n "$PROJECT" ]; then
-  PROJECT_SQL="${PROJECT//\'/\'\'}"
+  PROJECT_SQL=${PROJECT//\'/\'\'}
   WHERE_PROJECT="AND bs.project='$PROJECT_SQL'"
   SCOPE="project '$PROJECT'"
 else

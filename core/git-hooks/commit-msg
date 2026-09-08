@@ -165,12 +165,12 @@ BRAIN_DB="$HOME/.igris/memory/knowledge.db"
 [ -f "$BRAIN_DB" ] || exit 0
 command -v sqlite3 >/dev/null 2>&1 || exit 0
 
-# $PROJECT is basename(repo) and each id matched ^[A-Z]{2,3}-[0-9]+$ above —
-# neither is user-controlled free text. Both are still single-quote-escaped
-# (doubling any embedded quote) before interpolation, matching the
-# pre-commit idiom. The DB is opened -readonly: this hook never writes.
+# $PROJECT is basename(repo); an id matched ^[A-Z]{2,3}-[0-9]+$ (:153-154), so
+# BRIEF_SQL can never carry a quote (its escape is uniformity). Every escape is
+# an UNQUOTED assignment — under /bin/bash 3.2 the quoted form keeps its
+# backslashes and the read fails OPEN (TD-453; BR-104). DB opened -readonly.
 PROJECT="$(basename "$REPO_ROOT")"
-PROJECT_SQL="${PROJECT//\'/\'\'}"
+PROJECT_SQL=${PROJECT//\'/\'\'}
 
 # =============================================================================
 # 2. Acceptance-criteria gate (TD-325)
@@ -191,7 +191,7 @@ if [ "${IGRIS_BYPASS_AC_GATE:-0}" != "1" ]; then
 
   if [ -n "$AC_CHECK" ]; then
     for BRIEF_ID in $brief_ids; do
-      BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
+      BRIEF_SQL=${BRIEF_ID//\'/\'\'}
       brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
         "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
         2>/dev/null)"
@@ -256,7 +256,7 @@ if [ "${IGRIS_BYPASS_EVENT_GATE:-0}" != "1" ]; then
       fi
 
       for BRIEF_ID in $brief_ids; do
-        BRIEF_SQL="${BRIEF_ID//\'/\'\'}"
+        BRIEF_SQL=${BRIEF_ID//\'/\'\'}
         brief_content="$(sqlite3 -readonly "$BRAIN_DB" \
           "SELECT content FROM brief_files WHERE project='$PROJECT_SQL' AND brief_id='$BRIEF_SQL' LIMIT 1;" \
           2>/dev/null)"
@@ -271,7 +271,7 @@ if [ "${IGRIS_BYPASS_EVENT_GATE:-0}" != "1" ]; then
         unpaired=""
         while IFS= read -r role; do
           [ -n "$role" ] || continue
-          ROLE_SQL="${role//\'/\'\'}"
+          ROLE_SQL=${role//\'/\'\'}
           all_roles="${all_roles:+$all_roles,}$role"
 
           n_any="$(sqlite3 -readonly "$BRAIN_DB" \

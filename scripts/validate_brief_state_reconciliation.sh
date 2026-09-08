@@ -108,10 +108,10 @@ has_closing_commit() {
 
 # --- Query the canonical store -----------------------------------------------
 # Pull every brief's id/status/phase for the project. $PROJECT is a slug
-# (basename of repo or an env override) — single-quote-escape it (doubling any
-# embedded quote) before interpolation so a stray quote cannot break the SQL,
-# matching the phase-guard idiom.
-PROJECT_SQL="${PROJECT//\'/\'\'}"
+# (basename of repo or an env override) — single-quote-escaped (doubled) with
+# an UNQUOTED assignment: under /bin/bash 3.2 the quoted form keeps its
+# backslashes and the query fails OPEN (TD-453 idiom; BR-104 fixed this site).
+PROJECT_SQL=${PROJECT//\'/\'\'}
 rows="$(sqlite3 -separator '|' "$BRAIN_DB" \
   "SELECT brief_id, status, COALESCE(phase, '') FROM brief_status
      WHERE project='$PROJECT_SQL'

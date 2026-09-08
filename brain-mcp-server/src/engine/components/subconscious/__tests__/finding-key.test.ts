@@ -59,9 +59,13 @@ import {
   entityKey,
   findingKey,
   loadProjectVocabulary,
+  MODULE_VOCABULARY,
+  namedModules,
   namedProjects,
   subjectIds,
 } from '../finding-key.js';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { subconsciousMigrations } from '../schema.js';
 import { DEFAULT_SUBCONSCIOUS_CONFIG, type SuggestionCandidate } from '../types.js';
 
@@ -113,11 +117,44 @@ describe('entityKey', () => {
     expect([...keys]).toEqual(['project:fifty_eco_system']);
   });
 
-  it('falls back through brief, learning, suggestion, then global', () => {
-    expect(entityKey(candidate({ evidence: { brief_id: 'BR-1' } }))).toBe('brief:br-1');
+  // TD-457 (2026-09-08) MOVED this pin: before, `evidence.brief_id: 'BR-1'`
+  // under the helper's title `'a title'` read `brief:br-1`. The evidence brief
+  // is an ILLUSTRATION unless the title names it (the a-narrow measurement:
+  // 15 pairs newly comparable, 15 SAME, 0 DIFFERENT under the project-set gate).
+  it('falls back through brief (when the title names it), learning, suggestion, then global', () => {
+    expect(entityKey(candidate({ title: 'BR-1 is stale', evidence: { brief_id: 'BR-1' } }))).toBe('brief:br-1');
+    expect(entityKey(candidate({ evidence: { brief_id: 'BR-1' } }))).toBe(GLOBAL_ENTITY_KEY);
     expect(entityKey(candidate({ evidence: { learning_id: 42 } }))).toBe('learning:42');
     expect(entityKey(candidate({ evidence: { suggestion_id: 9 } }))).toBe('suggestion:9');
     expect(entityKey(candidate())).toBe(GLOBAL_ENTITY_KEY);
+  });
+
+  it('TD-457: does not anchor on an evidence brief the title never names — the three family-1 shapes read global', () => {
+    // 1822 / 1883 / 1885 verbatim: one portfolio finding, three illustrative briefs.
+    const shapes: Array<[string, Record<string, unknown>]> = [
+      ["Eleven briefs across five projects are marked 'In Progress' with 132–191 days since update — 'In Progress' is being used as a filing state, not a work state, so no dashboard can tell what is actually being worked on", {"brief_id":"BR-074","note":"In Progress + stale: BR-074/BR-076/TD-004/TD-006/TD-007/TS-003 (fifty_eco_system, 170-191d), BR-001 hadir-system (175d), BR-002/BR-003/BR-004 attendance_app (170d), BR-027/BR-028 hadir (147-149d), BR-023 lifeOS (132d). Meanwhile igris-ai/mbrgea-ai/moca-ai-agent show days_since_activity 0 with work shipping. Suggestion 1697 covers BR-023 alone; this is the systemic version — a staleness rule that auto-demotes In Progress back to Ready."}],
+      ["Ten briefs are 'In Progress' with 133–191 days since update across five projects with zero recorded activity — 'In Progress' has decayed into a synonym for 'abandoned mid-flight' and no longer signals anything to the operator", {"brief_id":"TS-003","note":"In Progress + stale: BR-074, BR-076, TD-004, TD-006, TD-007 (191d), BR-002/003/004 attendance_app and TS-003 (171d), BR-001 hadir-system (175d), BR-027/BR-028 hadir (147-149d), BR-023 lifeOS (133d). attendance_app and lifeOS both report days_since_activity null, so nothing was ever in progress. Suggestion 1697 covers only BR-023; this is the class."}],
+      ["Fourteen briefs across six projects sit at 'In Progress' with 133–191 days since update — no project has more than one genuinely active workstream, so the In Progress set is almost entirely false", {"brief_id":"BR-001","note":"In Progress briefs with null or ancient activity: attendance_app BR-002/BR-003/BR-004 (171d, activity null), hadir-system BR-001 (175d, activity null), hadir BR-027/BR-028 (147-149d, activity 126d), lifeOS BR-023 (133d, activity null), fifty_eco_system BR-074/BR-076/TD-004/TD-006/TD-007/TS-003 (191d, activity 188d). A system-wide status hygiene pass is needed, not per-project fixes."}],
+    ];
+    for (const [title, evidence] of shapes) {
+      expect(subjectIds(title).size).toBe(0);
+      expect(entityKey(candidate({ title, evidence }))).toBe(GLOBAL_ENTITY_KEY);
+    }
+  });
+
+  it('TD-457: still anchors on the ACTION target brief the title does not name — a target, not an illustration', () => {
+    // The instrument measured exactly this semantics (`candidateAnchor` removes
+    // evidence.brief_id / brief_ids only): a suggested_action.brief_id is what
+    // the handler acts ON, so two findings that act on BR-9 belong together.
+    expect(entityKey(candidate({ suggested_action: { kind: 'flag_for_review', brief_id: 'TD-9' } }))).toBe('brief:td-9');
+    expect(
+      entityKey(candidate({ evidence: { brief_id: 'BR-1' }, suggested_action: { kind: 'flag_for_review', brief_id: 'TD-9' } })),
+    ).toBe('brief:td-9');
+  });
+
+  it('TD-457: still anchors on a learning the title does not name — id-bound, the measured false-merge class', () => {
+    expect(entityKey(candidate({ evidence: { learning_id: 42 } }))).toBe('learning:42');
+    expect(entityKey(candidate({ evidence: { brief_id: 'BR-1', learning_id: 42 } }))).toBe('learning:42');
   });
 
   it('reads id-shaped params off suggested_action', () => {
@@ -627,13 +664,140 @@ describe('TD-445 production window — three misses and one control, pinned as m
  */
 interface PinRow {
   project_slug: string | null;
+  /** The stored anchor (post-TD-457 for the moved rows; see `entity_key_pre_td457`). */
   entity_key: string;
+  /**
+   * TD-457 (2026-09-08): the value the 2026-09-07/08 copies STORED before the
+   * anchor moved — kept for provenance on the rows the re-key moves. Absent on
+   * an unmoved row.
+   */
+  entity_key_pre_td457?: string;
   title: string;
   evidence: string;
   suggested_action: string | null;
 }
 
 const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
+  // TD-458 (2026-09-08): 1271, the fourth S3 pair's project side (read 2026-09-08, verbatim).
+  1271: {
+    project_slug: "fifty_eco_system",
+    entity_key: "project:fifty_eco_system",
+    title:
+      "60 of 68 open suggestions are mechanical stalled/gap rows for one dormant project — the review queue is unusable until they are batch-resolved",
+    evidence:
+      "{\"note\":\"Open suggestions ids 4-32 and 40-42 are 'stalled' rows and 43-69 are 'gap' rows, nearly all project_slug=fifty_eco_system. Every fifty_eco_system open brief shows days_since_update 143-163, and the project reports days_since_activity=null with 0 learnings — the briefs are abandoned, not stalled individually. Learning 1125 warns a backlog everyone calls noise deserves one measurement before it is cleared.\"}",
+    suggested_action:
+      "{\"kind\":\"bulk_dismiss_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"project_slug\":\"fifty_eco_system\",\"precondition\":\"record the count and per-status breakdown first, per learning 1125\"}",
+  },
+  // TD-457 (2026-09-08): the ten rows of the 15 (a-narrow) SAME pairs not already
+  // pinned above (read 2026-09-08 from the copy, verbatim; `entity_key` is the
+  // post-TD-457 anchor, `entity_key_pre_td457` what the copy stored).
+  1328: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:int-001",
+    title:
+      "Six scratch/test projects (test-v5-verify, agy-deny-test, igris-nobrief-*, igris-agy-hunt-*) sit in the active roster with open briefs, inflating every cross-project count",
+    evidence:
+      "{\"brief_id\":\"INT-001\",\"note\":\"test-v5-verify is status active with open briefs INT-001 ('Integration test brief') and INT-002 ('Auto-cache test brief', priority null), 160 days old. projects[] also carries agy-deny-test, igris-nobrief-72866, igris-nobrief2-74787, igris-agy-hunt-demo and igris-agy-hunt-sandbox as active. These are test fixtures, not work; leaving them active means they will eventually generate their own stalled suggestions.\"}",
+    suggested_action:
+      "{\"kind\":\"archive_projects\",\"project_slugs\":[\"test-v5-verify\",\"agy-deny-test\",\"igris-nobrief-72866\",\"igris-nobrief2-74787\",\"igris-agy-hunt-demo\",\"igris-agy-hunt-sandbox\"],\"reason\":\"Test fixtures polluting the active project roster and future suggestion runs\"}",
+  },
+  1335: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "At least nine throwaway test/sandbox projects (test-v5-verify, agy-deny-test, igris-nobrief-*, igris-agy-hunt-*, mbrgea-test, igris-os-eval) are registered as 'active' and contribute open briefs to the real backlog",
+    evidence:
+      "{\"note\":\"projects[] marks test-v5-verify (2 open briefs, 160 days idle), agy-deny-test (1), igris-nobrief-72866 (1), igris-nobrief2-74787 (1), igris-agy-hunt-demo, igris-agy-hunt-sandbox, igris-os-eval, mbrgea-test as status 'active'. open_briefs INT-001 'Integration test brief' and INT-002 'Auto-cache test brief' are self-identifying fixtures, and INT-002 has a null priority. These inflate every whole-brain count the dashboard now renders (commits aa71389, 67f6d2e).\"}",
+    suggested_action:
+      "{\"kind\":\"archive_projects\",\"slugs\":[\"test-v5-verify\",\"agy-deny-test\",\"igris-nobrief-72866\",\"igris-nobrief2-74787\",\"igris-agy-hunt-demo\",\"igris-agy-hunt-sandbox\",\"igris-os-eval\"],\"dry_run\":true}",
+  },
+  1344: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:int-001",
+    title:
+      "Seven throwaway test/sandbox projects (test-v5-verify, agy-deny-test, igris-nobrief-*, igris-agy-hunt-*, mbrgea-test, igris-os-eval) sit in the active roster, four carrying open briefs that feed the stalled detector",
+    evidence:
+      "{\"brief_id\":\"INT-001\",\"note\":\"INT-001 'Integration test brief' and INT-002 'Auto-cache test brief' under test-v5-verify are open at 161 days; agy-deny-test, igris-nobrief-72866, igris-nobrief2-74787 each hold 1 open brief with no activity data. These are artifacts of test runs, not work — marking them non-active stops them consuming detector and operator attention.\"}",
+    suggested_action:
+      "{\"kind\":\"set_project_status\",\"project_slugs\":[\"test-v5-verify\",\"agy-deny-test\",\"igris-nobrief-72866\",\"igris-nobrief2-74787\",\"igris-agy-hunt-demo\",\"igris-agy-hunt-sandbox\",\"igris-os-eval\"],\"status\":\"archived\"}",
+  },
+  1440: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:br-027",
+    title:
+      "Four hadir-family slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) hold overlapping MOCA/Hadir UI briefs — confirm they are distinct repos or merge the brains",
+    evidence:
+      "{\"brief_id\":\"BR-027\",\"note\":\"hadir BR-027 'MOCA UI updates' and hadir-system BR-001 'Hadir mobile app UI design system in web admin portal' describe adjacent work under different slugs, while attendance_app BR-002/BR-003 are also 'Moca' rebrand briefs. Four active slugs plus attendance_app for one product line fragments the learning pool.\"}",
+    suggested_action:
+      null,
+  },
+  1539: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "The stalled detector never fires on lifeOS, hadir, hadir-system or igris-ai despite briefs 114-161 days idle — its project scope looks incomplete",
+    evidence:
+      "{\"note\":\"open_suggestions from source_module='stalled' cover only fifty_eco_system and attendance_app (id 39). Yet the digest lists lifeOS BR-023..BR-036 at 119-120 days, hadir BR-027/BR-028 at 133-135 days, hadir-system BR-001 at 161 days, and igris-ai FR-112/FR-114/FR-115 at 114 days — all idle longer than the 48-day threshold that triggered id 39. Either those projects are excluded from the sweep or the sweep silently stopped partway; learning 1248 names this exact class: 'a check that reports success without having checked'.\"}",
+    suggested_action:
+      null,
+  },
+  1570: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:br-027",
+    title:
+      "Four overlapping hadir project slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each hold open briefs — likely one product split across duplicate brain entries",
+    evidence:
+      "{\"brief_id\":\"BR-027\",\"note\":\"Projects list shows hadir (2 open, 116d), hadir-system (1 open, no activity), fya-hadir-app (1 open, 27d), moca-hadir-app (7 open, 26d). hadir-system's BR-001 ('Implement Hadir mobile app UI design system in web admin portal') and hadir's BR-027/BR-028 (MOCA UI updates, report card redesign) read as the same product line. Similar shape on the fifty side: fifty-dev (61 open) vs fifty_eco_system (34 open) vs animated-fifty-dev vs retro_fifty. Worth confirming which slugs are live and merging or archiving the rest before brief counts are used for any prioritisation.\"}",
+    suggested_action:
+      null,
+  },
+  1578: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "Four near-duplicate Hadir projects (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each carry open briefs — likely one product split across four brain slices",
+    evidence:
+      "{\"note\":\"Digest projects list: hadir (2 open, 116d), hadir-system (1 open, activity null), fya-hadir-app (1 open, 27d), moca-hadir-app (7 open, 26d). hadir-system BR-001 and hadir BR-027/BR-028 both describe MOCA UI work on the same app. Learning 1328 (moca-ai-agent): a fact spelled twice drifts, and the ritual only ever updates one spelling.\"}",
+    suggested_action:
+      "{\"kind\":\"propose_project_merge\",\"candidates\":[\"hadir\",\"hadir-system\",\"fya-hadir-app\",\"moca-hadir-app\"]}",
+  },
+  1627: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "Learnings are concentrated in three projects while eight active projects with open briefs have recorded none — the harvest habit is not running outside the top repos",
+    evidence:
+      "{\"note\":\"igris-ai (575), moca-ai-agent (186) and mbrgea-ai (184) hold the large majority of learnings. attendance_app (4 open briefs), lifeOS (14 open briefs), hadir-system (1) and moca-hr-agent (1) each report learnings=0 and days_since_activity=null, despite carrying open P1 and P0 work.\"}",
+    suggested_action:
+      null,
+  },
+  1677: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:br-001",
+    title:
+      "Overlapping Hadir project slugs (hadir, hadir-system, fya-hadir-app, moca-hadir-app) each hold open briefs — likely one product tracked under four brain identities",
+    evidence:
+      "{\"brief_id\":\"BR-001\",\"note\":\"projects lists hadir (2 briefs, 122d), hadir-system (1 brief, activity null), fya-hadir-app (2 briefs, 0d), moca-hadir-app (7 briefs, 32d). hadir-system BR-001 'Implement Hadir mobile app UI design system in web admin portal' and hadir BR-027 'MOCA UI updates' describe adjacent work. Recent commits 23c880f and 7ef7766 show the brain has been actively folding duplicate project rows onto one directory.\"}",
+    suggested_action:
+      "{\"kind\":\"review_project_identity\",\"slugs\":[\"hadir\",\"hadir-system\",\"fya-hadir-app\",\"moca-hadir-app\"]}",
+  },
+  1692: {
+    project_slug: null,
+    entity_key: "global",
+    entity_key_pre_td457: "brief:br-002",
+    title:
+      "Four active projects carry 53 open briefs between them and zero recorded learnings — attendance_app, lifeOS, hadir-system, and moca-hr-agent are producing no institutional memory",
+    evidence:
+      "{\"brief_id\":\"BR-002\",\"note\":\"attendance_app (4 open briefs, 0 learnings), lifeOS (14, 0), hadir-system (1, 0), moca-hr-agent (1, 0), all days_since_activity=null. Contrast igris-ai (596 learnings) and mbrgea-ai (202). Briefs like attendance_app BR-002/BR-003/BR-004 have been In Progress 168 days with nothing captured — if that work is real, its lessons are being lost.\"}",
+    suggested_action:
+      "{\"kind\":\"schedule_harvest\",\"project_slugs\":[\"attendance_app\",\"lifeOS\",\"hadir-system\",\"moca-hr-agent\"]}",
+  },
   1291: {
     project_slug: "lifeOS",
     entity_key: "project:lifeos",
@@ -676,7 +840,8 @@ const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
   },
   1434: {
     project_slug: null,
-    entity_key: "brief:br-001",
+    entity_key: "global", // TD-457 (2026-09-08): moved from the value below
+    entity_key_pre_td457: "brief:br-001",
     title:
       "The stalled detector appears to miss projects with null days_since_activity — attendance_app, lifeOS, hadir-system and hadir briefs idle 118–159 days produce no suggestions",
     evidence:
@@ -686,7 +851,8 @@ const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
   },
   1474: {
     project_slug: null,
-    entity_key: "brief:br-001",
+    entity_key: "global", // TD-457 (2026-09-08): moved from the value below
+    entity_key_pre_td457: "brief:br-001",
     title:
       "The stalled-brief detector appears scoped to two projects — hadir, hadir-system, igris-ai and lifeOS all have 110+ day stale briefs with no corresponding suggestion",
     evidence:
@@ -716,7 +882,8 @@ const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
   },
   1596: {
     project_slug: null,
-    entity_key: "brief:br-024",
+    entity_key: "global", // TD-457 (2026-09-08): moved from the value below
+    entity_key_pre_td457: "brief:br-024",
     title:
       "Four active projects with open briefs (lifeOS 14, attendance_app 4, hadir-system 1, moca-hr-agent 1) have zero learnings and null activity — work is either happening outside the brain or these are dead entries",
     evidence:
@@ -743,6 +910,52 @@ const ANCHOR_HELD_ROWS: Record<number, PinRow> = {
       "{\"note\":\"open_suggestions ids 1712–1755 are all source_module='edge_inference', each proposing a single learning→learning edge (e.g. 'Inferred related_to edge: learning 224 → learning 227'). These are mechanical graph links, not operator decisions. They should be auto-applied below a confidence threshold, batched into one review item, or routed to a separate queue — not interleaved with findings like 1697 (the only P0 brief stalled 130 days).\"}",
     suggested_action:
       "{\"kind\":\"reroute_suggestion_module\",\"source_module\":\"edge_inference\",\"note\":\"Auto-apply or batch edge_inference proposals; keep the review queue for judgement calls.\"}",
+  },
+  // TD-458 (2026-09-08): four more real rows from the same-block `global`
+  // set the MODULE gate touches, read 2026-09-08 from a read-only `.backup`
+  // copy (1,918 rows), every column verbatim. 1326/1815 and 1326/1809 are
+  // same-block DIFFERENT pairs the tokeniser merged at HEAD (0.250, 0.258);
+  // 1326/1384 (0.300, {gap,stalled} vs {gap}) and 1809/1815 (0.323) are the
+  // SAME controls the gate must leave alone.
+  1326: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "62 of 66 open suggestions are single-project fifty_eco_system stalled/gap notices — the queue is drowning higher-value findings and should be collapsed per-project",
+    evidence:
+      "{\"note\":\"open_suggestions holds 66 entries: ids 4-32 and 40-42 are 'stalled' notices all for fifty_eco_system, and ids 43-69 are 27 'gap' notices all of the identical form '<brief> marked Done but has unchecked acceptance criteria' for the same project. One brief-per-suggestion fan-out on a project whose briefs share a single freeze date (167/147 days) produces near-zero marginal signal per row and buries anything from lifeOS, igris-ai, or mbrgea-ai. Recommend the stalled/gap modules emit one rolled-up suggestion per project per module.\"}",
+    suggested_action:
+      "{\"kind\":\"collapse_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"project_slug\":\"fifty_eco_system\",\"reason\":\"Roll per-brief notices into one per-project summary; unblocks the review queue\"}",
+  },
+  1384: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "66 of 69 queued suggestions are single-project fifty_eco_system stall/gap alerts — the review queue is saturated by one dormant project and will bury anything new",
+    evidence:
+      "{\"note\":\"open_suggestions ids 4–32 and 40–42 are 'stalled' alerts, ids 43–69 are 'Done but unchecked acceptance criteria' gap alerts; all but id 39 (attendance_app) target fifty_eco_system. The 27 gap alerts share one root cause — Done briefs whose criteria were never ticked — and would be better handled as one policy decision than 27 reviews.\"}",
+    suggested_action:
+      "{\"kind\":\"collapse_suggestions\",\"source_modules\":[\"stalled\",\"gap\"],\"project_slug\":\"fifty_eco_system\",\"proposal\":\"group_into_single_rollup_per_module\"}",
+  },
+  1809: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "44 of the 60 queued suggestions are auto-generated single-edge inferences — the edge_inference module is drowning the review queue and should batch or auto-apply below a threshold",
+    evidence:
+      "{\"note\":\"Suggestion ids 1712-1755 are all source_module='edge_inference', each proposing one learning→learning edge (e.g. 1730 'learning 7 → learning 6', 1755 'learning 425 → learning 424'). They outnumber the 16 substantive findings (1696-1711) nearly 3:1, and most concern learnings in the low id range (6-425) that are not in the recent set — meaning the operator must page through 44 mechanical rows to reach any judgement-requiring item. This is a queue-design defect, not a knowledge finding.\"}",
+    suggested_action:
+      "{\"kind\":\"change_suggestion_module_policy\",\"source_module\":\"edge_inference\",\"policy\":\"batch_into_single_suggestion\",\"note\":\"Collapse per-edge rows into one reviewable batch per run, or auto-apply above a confidence threshold and surface only exceptions.\"}",
+  },
+  1815: {
+    project_slug: null,
+    entity_key: "global",
+    title:
+      "44 of the 60 open suggestions are auto-generated edge_inference rows (ids 1712-1755) — they drown the 16 substantive findings and should be batch-applied or routed out of the operator queue",
+    evidence:
+      "{\"note\":\"open_suggestions contains ids 1712 through 1755, all source_module=edge_inference, each proposing a single derived_from/related_to/supersedes link between two learnings. They are mechanical, individually low-stakes, and outnumber every other finding 3:1. Reviewing graph edges one at a time is the wrong granularity — they belong in a bulk-accept view or an auto-apply path with a confidence floor, not in the same queue as 'the only P0 brief has been stalled 130 days'.\"}",
+    suggested_action:
+      "{\"kind\":\"route_suggestion_class\",\"source_module\":\"edge_inference\",\"destination\":\"bulk_review_queue\",\"note\":\"Auto-apply above a confidence threshold; keep the operator queue for judgment calls\"}",
   },
   1888: {
     project_slug: "igris-ai",
@@ -835,13 +1048,37 @@ describe('TD-452 anchor splits — the claim gate says SAME, the anchor says no 
     ).toBeCloseTo(p.score, 3);
   });
 
-  it.each(ANCHOR_HELD_PAIRS)('$ids MATCHES on the claim at the shipped threshold — $note', (p) => {
-    // The arming half: a pair the claim gate refuses would pass the anchor
+  /**
+   * TD-458 (2026-09-08) MOVED this pin for the two S3 pairs. Before: every
+   * pair MATCHED on `claimsMatch`. Now `claimsMatch` carries the module-name
+   * gate, so 1341/1801 and 1355/1801 ({gap,stalled} vs {edge_inference}) are
+   * refused by the CLAIM as well as the anchor. The arming half is therefore
+   * the TOKENISER (score ≥ threshold — the pair would merge on prose alone);
+   * the other seven pairs still match on the full claim, asserted as before.
+   */
+  const S3_MODULE_GATED = new Set(['1341/1801', '1355/1801']);
+  it.each(ANCHOR_HELD_PAIRS)('$ids MATCHES on the tokeniser at the shipped threshold — $note', (p) => {
+    // The arming half: a pair the tokeniser refuses would pass the anchor
     // assertion below for the wrong reason.
-    expect(match(pinRow(p.ids[0]).title, pinRow(p.ids[1]).title)).toBe(true);
+    const a = pinRow(p.ids[0]).title;
+    const b = pinRow(p.ids[1]).title;
+    expect(claimSimilarity(claimTokens(a), claimTokens(b))).toBeGreaterThanOrEqual(THRESHOLD);
+    if (S3_MODULE_GATED.has(p.ids.join('/'))) {
+      // TD-458: the module gate now separates these two on the claim too.
+      expect(match(a, b)).toBe(false);
+    } else {
+      expect(match(a, b)).toBe(true);
+    }
   });
 
-  it.each(ANCHOR_HELD_PAIRS)('$ids is kept apart by the ANCHOR alone ($design)', (p) => {
+  /**
+   * TD-457 (2026-09-08) MOVED the a-narrow arm of this pin. Before: every pair
+   * was kept apart by the anchor alone. Now the four a-narrow pairs SHARE an
+   * anchor (`global`) — and what keeps them apart is the TD-454 project-set
+   * gate (all four are S1: `td454_pairs_separated.csv`). The cross-block arm
+   * is unchanged: `global` × `project:` blocks are never compared.
+   */
+  it.each(ANCHOR_HELD_PAIRS)('$ids: the anchor ($design) — a-narrow pairs now share one, the gate separates them; cross-block pairs still split', (p) => {
     const a = pinRow(p.ids[0]);
     const b = pinRow(p.ids[1]);
     const anchorA = entityKey(candidateFromRow(a));
@@ -849,16 +1086,26 @@ describe('TD-452 anchor splits — the claim gate says SAME, the anchor says no 
     // The stored column IS the shipped anchor — reds if the writer drifts.
     expect(anchorA).toBe(a.entity_key);
     expect(anchorB).toBe(b.entity_key);
-    expect(anchorA).not.toBe(anchorB);
+    if (p.design === 'a-narrow') {
+      expect(anchorA).toBe(anchorB);
+      expect(anchorA).toBe(GLOBAL_ENTITY_KEY);
+      // The tokeniser still says SAME (the arming half, unchanged) …
+      expect(claimSimilarity(claimTokens(a.title), claimTokens(b.title))).toBeGreaterThanOrEqual(THRESHOLD);
+      // … and the production vocabulary's project-set gate is what refuses.
+      const vocab = loadProjectVocabulary(vocabDb(PRODUCTION_SLUGS_2026_09_07));
+      expect(claimsMatch(claimOf(a.title, vocab), claimOf(b.title, vocab), THRESHOLD, MIN_TOKENS)).toBe(false);
+    } else {
+      expect(anchorA).not.toBe(anchorB);
+    }
   });
 
-  it('the a-narrow pairs are split by an evidence brief the title never names', () => {
+  it("TD-457: the a-narrow rows' PRE-TD-457 anchor was `brief:` with no id in the title; entityKey now reads global", () => {
     for (const p of ANCHOR_HELD_PAIRS.filter((x) => x.design === 'a-narrow')) {
-      const briefSide = [pinRow(p.ids[0]), pinRow(p.ids[1])].find((r) =>
-        r.entity_key.startsWith('brief:'),
-      );
-      expect(briefSide, `${p.ids.join('/')} has no brief: side`).toBeDefined();
-      expect(subjectIds(briefSide!.title).size).toBe(0);
+      const moved = [pinRow(p.ids[0]), pinRow(p.ids[1])].find((r) => r.entity_key_pre_td457 !== undefined);
+      expect(moved, `${p.ids.join('/')} has no moved side`).toBeDefined();
+      expect(moved!.entity_key_pre_td457).toMatch(/^brief:/);
+      expect(subjectIds(moved!.title).size).toBe(0);
+      expect(entityKey(candidateFromRow(moved!))).toBe(GLOBAL_ENTITY_KEY);
     }
   });
 
@@ -922,6 +1169,30 @@ describe('backfillFindingKeys', () => {
     try {
       db.exec(`CREATE TABLE suggestions (id INTEGER PRIMARY KEY, title TEXT)`);
       expect(backfillFindingKeys(db)).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it('TD-457: re-keys every row after v6 clears them, inside ONE transaction — a thrown update leaves no partial re-key', () => {
+    const db = migrated();
+    try {
+      const ins = db.prepare(
+        `INSERT INTO suggestions (id, source_module, project_slug, title, evidence, priority, status)
+         VALUES (?, 'k', ?, ?, '{}', 'low', 'pending')`,
+      );
+      for (let i = 1; i <= 6; i++) ins.run(i, `p${i}`, `finding number ${i} with several words in it`);
+      db.prepare(`UPDATE suggestions SET dedupe_key = NULL, entity_key = NULL`).run();
+      // Inject a failure on the FOURTH row the loop reaches.
+      db.exec(`CREATE TRIGGER fail_on_4 BEFORE UPDATE ON suggestions WHEN NEW.id = 4
+               BEGIN SELECT RAISE(ABORT, 'injected'); END;`);
+      expect(() => backfillFindingKeys(db)).toThrow(/injected/);
+      const keyed = (db.prepare(`SELECT COUNT(*) AS n FROM suggestions WHERE dedupe_key IS NOT NULL`).get() as { n: number }).n;
+      // Without the transaction rows 1-3 would be keyed and 4-6 not: a queue
+      // half re-keyed under the new anchor and half under none.
+      expect(keyed).toBe(0);
+      db.exec(`DROP TRIGGER fail_on_4`);
+      expect(backfillFindingKeys(db)).toBe(6);
     } finally {
       db.close();
     }
@@ -1026,7 +1297,12 @@ describe('TD-454 project-set gate', () => {
   });
 
   it('every pinned pair still MATCHES on the tokeniser alone (the arming half — vocab-free)', () => {
-    for (const [a, b] of [...S1_PAIRS, ...S2_PAIRS, ...S3_PAIRS]) expect(match(title(a), title(b))).toBe(true);
+    for (const [a, b] of [...S1_PAIRS, ...S2_PAIRS]) expect(match(title(a), title(b))).toBe(true);
+    // TD-458 (2026-09-08) MOVED the S3 half: `claimsMatch` now carries the
+    // module gate, so the vocab-free arming assertion for S3 is the SCORE.
+    for (const [a, b] of S3_PAIRS) {
+      expect(claimSimilarity(claimTokens(title(a)), claimTokens(title(b)))).toBeGreaterThanOrEqual(THRESHOLD);
+    }
   });
 
   it.each([...S1_PAIRS, ...S2_PAIRS])('(a) S1/S2 pair %d/%d no longer matches with the vocabulary — unequal project sets', (a, b) => {
@@ -1043,9 +1319,12 @@ describe('TD-454 project-set gate', () => {
     expect(matchWith(a, b)).toBe(true);
   });
 
-  it.each(S3_PAIRS)('(c) S3 flood pair %d/%d is UNCHANGED by the gate — the recorded residual (no project set on the global side)', (a, b) => {
+  it.each(S3_PAIRS)('(c) S3 flood pair %d/%d is untouched by the PROJECT-set gate (no project set on the global side) — and separated by the MODULE gate (TD-458, 2026-09-08)', (a, b) => {
+    // TD-458 MOVED this pin (was: `matchWith(a, b) === true`, the recorded
+    // residual). The project-set gate still cannot see the pair; the
+    // module-name gate can, and the S3 residual is closed.
     expect(claimOf(title(b), vocab).projects.size).toBe(0);
-    expect(matchWith(a, b)).toBe(true);
+    expect(matchWith(a, b)).toBe(false);
   });
 
   it('(c) family 2 (1801/1888) is unchanged — neither title names a project', () => {
@@ -1120,5 +1399,235 @@ describe('TD-454 project-set gate', () => {
       expect(claimSimilarity(claimOf(p.a.title, vocab).tokens, claimOf(p.b.title, vocab).tokens)).toBeCloseTo(p.score, 3);
       expect(claimsMatch(claimOf(p.a.title, vocab), claimOf(p.b.title, vocab), THRESHOLD, MIN_TOKENS)).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-458 — the MODULE-NAME gate (gate 1c): the S3 residual, closed
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-454 left one residual: two different queue FLOODS naming no project (S3).
+ * The discriminating fact the titles carry and the tokeniser cannot weigh is
+ * the MODULE they are about — `stalled`/`gap` vs `edge_inference`. Not the
+ * row's own `source_module` column: on `type_inferred = 1` rows that label is
+ * re-authored every run (1801 = `suggestion_channel_flooded`, 1888 =
+ * `self_referential_finding_risk`, the SAME pair), and AC-4 above pins it out
+ * of the key. The vocabulary is a property of the CODE — the v1 CHECK set,
+ * the synapse writer's literal and the four internal modules — and the guard
+ * below re-derives it from the source so a tenth writer cannot ship unnamed.
+ *
+ * PRE-REGISTERED RULE, measured 2026-09-08 on the 1,918-row copy
+ * (`scripts/td452_anchor_sweep.ts --source-module-gate`; record
+ * `scripts/td458_s3_pairs.csv`): P-A all four S3 pairs separated — 4/4;
+ * P-B 0 labelled SAME pairs broken in P_new of every design and inside the
+ * shipped blocks on C1/C2 — 0; P-C ≥ 1 labelled DIFFERENT pair separated
+ * INSIDE a shipped block — 3 (1326/1809 @ 0.258, 1326/1815 @ 0.250,
+ * 1384/1809 @ 0.250, all `global`). Ship rule met; the DISJOINT reading is
+ * what ships (one empty side is not disjoint; "stalled/gap" vs "stalled"
+ * shares a member). `findingKey` hashes tokens + subject only — no re-key.
+ */
+describe('TD-458 module-name gate (gate 1c)', () => {
+  const db = vocabDb(PRODUCTION_SLUGS_2026_09_07);
+  let vocab: ReadonlyMap<string, string[]>;
+  beforeAll(() => {
+    vocab = loadProjectVocabulary(db);
+  });
+  afterAll(() => {
+    db.close();
+  });
+  const title = (id: number): string => {
+    const row = ANCHOR_HELD_ROWS[id];
+    expect(row, `no pinned row ${id}`).toBeDefined();
+    return row!.title;
+  };
+  const score = (a: number, b: number): number =>
+    claimSimilarity(claimTokens(title(a)), claimTokens(title(b)));
+  const matchWith = (a: number, b: number): boolean =>
+    claimsMatch(claimOf(title(a), vocab), claimOf(title(b), vocab), THRESHOLD, MIN_TOKENS);
+  const mods = (id: number): string[] => [...namedModules(title(id))].sort();
+
+  const S3_ALL = [[1341, 1801], [1355, 1801], [1326, 1888], [1271, 1815]] as const;
+
+  it.each(S3_ALL)('(P-A) S3 pair %d/%d: {gap,stalled} vs {edge_inference}, disjoint — refused with AND without the project vocabulary', (a, b) => {
+    // Arming: the tokeniser alone would merge them.
+    expect(score(a, b)).toBeGreaterThanOrEqual(THRESHOLD);
+    expect(mods(a)).toEqual(['gap', 'stalled']);
+    expect(mods(b)).toEqual(['edge_inference']);
+    expect(matchWith(a, b)).toBe(false);
+    expect(match(title(a), title(b))).toBe(false);
+  });
+
+  it('(P-C) the live same-block pair 1326/1815 (global, 0.250, DIFFERENT) is refused — the false merge at HEAD', () => {
+    expect(score(1326, 1815)).toBeCloseTo(0.25, 3);
+    expect(ANCHOR_HELD_ROWS[1326]!.entity_key).toBe(ANCHOR_HELD_ROWS[1815]!.entity_key);
+    expect(matchWith(1326, 1815)).toBe(false);
+    // ...and 1326/1809 @ 0.258, the second of the three same-block separations.
+    expect(score(1326, 1809)).toBeCloseTo(0.258, 3);
+    expect(matchWith(1326, 1809)).toBe(false);
+  });
+
+  it('(P-B) SAME controls still match: 1809/1815 (both {edge_inference}) and 1326/1384 ({gap,stalled} vs {gap} — shares a member, NOT disjoint)', () => {
+    expect(score(1809, 1815)).toBeCloseTo(0.323, 3);
+    expect(mods(1809)).toEqual(['edge_inference']);
+    expect(matchWith(1809, 1815)).toBe(true);
+    expect(score(1326, 1384)).toBeCloseTo(0.3, 3);
+    expect(mods(1384)).toEqual(['gap']);
+    expect(matchWith(1326, 1384)).toBe(true);
+  });
+
+  it('DISJOINT, not EQUAL: the designed pair "stalled/gap rows" vs "stalled rows" shares a member and still matches', () => {
+    const a = '58 of 61 open suggestions are mechanical stalled/gap rows';
+    const b = '58 of 61 open suggestions are mechanical stalled rows';
+    expect([...namedModules(a)].sort()).toEqual(['gap', 'stalled']);
+    expect([...namedModules(b)]).toEqual(['stalled']);
+    expect(match(a, b)).toBe(true);
+  });
+
+  it('one empty side is NOT disjoint — a re-emission that drops the module word still merges', () => {
+    const a = 'the queue holds 40 stalled rows for one dormant project';
+    const b = 'the queue holds 40 rows for one dormant project';
+    expect([...namedModules(a)]).toEqual(['stalled']);
+    expect(namedModules(b).size).toBe(0);
+    expect(match(a, b)).toBe(true);
+  });
+
+  it('family 2 (1801/1888) is unchanged — both name edge_inference', () => {
+    expect(mods(1801)).toEqual(['edge_inference']);
+    expect(mods(1888)).toEqual(['edge_inference']);
+    expect(matchWith(1801, 1888)).toBe(true);
+  });
+
+  it('the EQ pair 1297/1830 names no module — out of every named mechanism\'s reach (recorded, not a criterion)', () => {
+    expect(namedModules('Learning capture is concentrated in igris-ai/mbrgea-ai while 8 active projects with open briefs have recorded zero learnings').size).toBe(0);
+  });
+
+  it('namedModules is the namedProjects algorithm over the constant list — a module vocabulary passed as a project vocabulary reads the same sets', () => {
+    const asVocab = new Map(MODULE_VOCABULARY.map((m) => [m, [m]]));
+    for (const id of [1341, 1326, 1801, 1809, 1384, 1297]) {
+      const row = ANCHOR_HELD_ROWS[id];
+      if (!row) continue;
+      expect([...namedModules(row.title)].sort()).toEqual([...namedProjects(row.title, asVocab)].sort());
+    }
+    // The project vocabulary is untouched by the refactor: TD-454's (d) pins re-run above.
+    expect([...namedProjects(title(1434), vocab)].sort()).toEqual(['attendance_app', 'hadir', 'hadir-system', 'lifeos']);
+  });
+
+  it('NO RE-KEY: the stored dedupe_key of two module-naming rows reproduces byte-for-byte (2026-09-08 copy)', () => {
+    // `findingKey` hashes entity + subject ids + claim tokens; the module set
+    // is a discriminator, not a key input. These two digests are the stored
+    // `dedupe_key` values on the 2026-09-08 copy — reds if the key ever reads
+    // the module set (or anything else new).
+    expect(findingKey(candidateFromRow(ANCHOR_HELD_ROWS[1341]!))).toBe('0c3b651542f6d7b52a53ed9625620f884c5916e0');
+    expect(findingKey(candidateFromRow(ANCHOR_HELD_ROWS[1801]!))).toBe('ffe3e9401c8c6dc4bb3cfbf580cffc570b480012');
+  });
+
+  it('DERIVATION GUARD: the vocabulary equals the v1 CHECK set ∪ every deterministic writer\'s source_module literal (re-derived from source)', () => {
+    // (1) the v1 CHECK set.
+    const check = /CHECK \(source_module IN \(([^)]+)\)\)/.exec(subconsciousMigrations[0]!.sql);
+    expect(check, 'v1 CHECK clause not found').not.toBeNull();
+    const fromCheck = [...check![1]!.matchAll(/'([a-z_]+)'/g)].map((m) => m[1]!);
+    expect(fromCheck).toEqual(['stalled', 'conflict', 'gap', 'pattern']);
+    // (2) every `INSERT INTO suggestions` writer under engine/components: its
+    //     source_module VALUE is either a 'literal' (deterministic writer) or a
+    //     bound `?` — and exactly ONE writer binds it (the open-typed LLM
+    //     extractor, whose labels are the reason the column is not the lever).
+    const root = join(process.cwd(), 'src', 'engine', 'components');
+    const walk = (dir: string, out: string[] = []): string[] => {
+      for (const name of readdirSync(dir)) {
+        const full = join(dir, name);
+        if (statSync(full).isDirectory()) {
+          if (name !== '__tests__') walk(full, out);
+        } else if (name.endsWith('.ts')) out.push(full);
+      }
+      return out;
+    };
+    const literals = new Set<string>();
+    const bound: string[] = [];
+    let sites = 0;
+    for (const file of walk(root)) {
+      const src = readFileSync(file, 'utf8');
+      const re = /INSERT INTO suggestions\s*\(\s*source_module,[\s\S]*?VALUES\s*\(\s*('([a-z_]+)'|\?)/g;
+      for (const m of src.matchAll(re)) {
+        sites += 1;
+        if (m[2]) literals.add(m[2]);
+        else bound.push(file.slice(root.length + 1));
+      }
+    }
+    expect(sites, 'writer population').toBeGreaterThanOrEqual(8);
+    expect(bound).toEqual([join('cognition', 'extractors', 'subconscious.ts')]);
+    expect([...literals].sort()).toEqual(['arbiter', 'cartographer', 'curator', 'edge_inference', 'janitor']);
+    // (3) the constant IS the union, and nothing else.
+    const derived = [...new Set([...fromCheck, ...literals])].sort();
+    expect([...MODULE_VOCABULARY].sort()).toEqual(derived);
+    expect(MODULE_VOCABULARY).toHaveLength(9);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-457 — the 15 (a-narrow) SAME pairs: the decision set that shipped the anchor
+// ---------------------------------------------------------------------------
+
+/**
+ * `scripts/td457_pairs_a_narrow.csv` is the (a-narrow) decision set under the
+ * TD-454 gate on the 2026-09-08 copy (C2 N = 448): every pair newly comparable
+ * once the illustrative evidence brief stops anchoring, matching at 0.25 —
+ * 15 pairs, 15 SAME, 0 DIFFERENT (the pre-registered pairwise rule). Each
+ * pair's rows are pinned verbatim in `ANCHOR_HELD_ROWS`; this describe reads
+ * the CSV and asserts, per pair, that the shipped `entityKey` now puts both
+ * rows in ONE block, that `claimsMatch` with the production vocabulary says
+ * SAME, and that the recorded score reproduces to 3 dp.
+ */
+describe('TD-457 — the 15 (a-narrow) SAME pairs (scripts/td457_pairs_a_narrow.csv)', () => {
+  const csv = readFileSync(join(process.cwd(), 'scripts', 'td457_pairs_a_narrow.csv'), 'utf8');
+  const parse = (text: string): string[][] => {
+    const out: string[][] = [];
+    let row: string[] = [], field = '', q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (q) {
+        if (ch === '"') { if (text[i + 1] === '"') { field += '"'; i += 1; } else q = false; } else field += ch;
+        continue;
+      }
+      if (ch === '"') q = true;
+      else if (ch === ',') { row.push(field); field = ''; }
+      else if (ch === '\n') { row.push(field); out.push(row); row = []; field = ''; }
+      else if (ch !== '\r') field += ch;
+    }
+    if (field.length || row.length) { row.push(field); out.push(row); }
+    return out;
+  };
+  const [header, ...body] = parse(csv);
+  const col = (name: string): number => header!.indexOf(name);
+  const pairs = body.filter((r) => r.length >= 6).map((r) => ({
+    a: Number(r[col('id_a')]), b: Number(r[col('id_b')]),
+    pre: r[col('anchor_pre')]!, post: r[col('anchor_post')]!,
+    score: Number(r[col('score')]), label: r[col('label')]!,
+  }));
+  const db = vocabDb(PRODUCTION_SLUGS_2026_09_07);
+  let vocab: ReadonlyMap<string, string[]>;
+  beforeAll(() => { vocab = loadProjectVocabulary(db); });
+  afterAll(() => { db.close(); });
+
+  it('is the recorded set: 15 pairs, every one labelled SAME, 15 distinct rows', () => {
+    expect(pairs).toHaveLength(15);
+    expect(pairs.every((p) => p.label === 'SAME')).toBe(true);
+    expect(new Set(pairs.flatMap((p) => [p.a, p.b])).size).toBe(15);
+  });
+
+  it.each(pairs.map((p) => [p.a, p.b, p] as const))('%d/%d shares ONE anchor now, matches with the production vocabulary, scores as recorded', (a, b, p) => {
+    const A = ANCHOR_HELD_ROWS[a];
+    const B = ANCHOR_HELD_ROWS[b];
+    expect(A, `row ${a} not pinned`).toBeDefined();
+    expect(B, `row ${b} not pinned`).toBeDefined();
+    const anchorA = entityKey(candidateFromRow(A!));
+    const anchorB = entityKey(candidateFromRow(B!));
+    expect(anchorA).toBe(anchorB);
+    expect(`${anchorA}|${anchorB}`).toBe(p.post);
+    // The pre-TD-457 anchors differed (that is why the pair was not comparable).
+    const [preA, preB] = p.pre.split('|');
+    expect(preA).not.toBe(preB);
+    expect(claimSimilarity(claimTokens(A!.title), claimTokens(B!.title))).toBeCloseTo(p.score, 3);
+    expect(claimsMatch(claimOf(A!.title, vocab), claimOf(B!.title, vocab), THRESHOLD, MIN_TOKENS)).toBe(true);
   });
 });

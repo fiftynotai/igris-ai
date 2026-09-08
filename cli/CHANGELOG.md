@@ -23,6 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **TD-457** (bundled brain) — the subconscious anchor no longer takes an
+  illustrative `evidence.brief_id` when the title names no brief; schema v6 re-keys
+  `suggestions` on the next run.
+- **TD-458** (bundled brain) — the subconscious claim matcher refuses two findings
+  whose titles name DISJOINT module sets from the code's closed vocabulary (the
+  `stalled`/`gap` flood is not the `edge_inference` flood); 3 same-block false merges
+  fixed on the 2026-09-08 corpus, 0 labelled SAME pairs broken, no re-key.
 - **TD-453** — `config.json` `machine.aliases` is bounded: the identity
   writer keeps the newest `ALIAS_CAP = 16` hostnames and evicts the oldest on
   the 17th distinct name; a hand-edited oversize list is left alone.

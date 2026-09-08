@@ -34,6 +34,7 @@
 #   that the copy actually changed.
 
 load test_helper
+load sql_escape_helpers
 
 ROLES="$IGRIS_ROOT/core/scripts/brief_agent_log_roles.sh"
 AC_CHECK="$IGRIS_ROOT/core/scripts/brief_ac_check.sh"
@@ -128,6 +129,57 @@ seed_event() {
 seed_pair() {
   seed_event "$1" "$2" start "${3:-}"
   seed_event "$1" "$2" stop "${3:-}"
+}
+
+# seed_pair_q <brief_id> <agent> <project> — BR-104: the same start+stop
+# through a python3 PARAMETERISED insert, for an agent or project carrying a
+# quote (seed_event interpolates its arguments into a sqlite3 string).
+seed_pair_q() {
+  python3 - "$DB" "$1" "$2" "$3" <<'PY'
+import sqlite3, sys
+db, brief_id, agent, project = sys.argv[1:5]
+con = sqlite3.connect(db)
+for et in ("start", "stop"):
+    con.execute(
+        "INSERT INTO agent_events (instance_id, agent, event_type, brief_id, project, model_requested)"
+        " VALUES (?,?,?,?,?,?)",
+        ("inst-1", agent, et, brief_id, project, "m"),
+    )
+con.commit()
+PY
+}
+
+# use_quoted_repo — BR-104: a sandbox repo whose basename carries a single
+# quote (the hook's $PROJECT is basename(git rev-parse --show-toplevel)).
+use_quoted_repo() {
+  PROJECT="it's-proj"
+  REPO="$SANDBOX/$PROJECT"
+  mkdir -p "$REPO/core/scripts"
+  git -C "$REPO" init -q
+  git -C "$REPO" config user.email t@t.t
+  git -C "$REPO" config user.name t
+  cp "$ROLES" "$REPO/core/scripts/brief_agent_log_roles.sh"
+  cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
+}
+
+# quoted_role_log <path> — an Agent Log whose Agent cell is `it's`. The parser
+# never strips a quote (normalize_cell), so the role reaches ROLE_SQL as-is.
+quoted_role_log() {
+  write_md "$1" <<'MD'
+# FR-901: a brief
+
+## Acceptance Criteria
+
+- [x] done
+
+## Workflow State
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| 2026-09-08 10:00 | orchestrator | INIT — claim FR-901 | SUCCESS |
+| 2026-09-08 10:05 | it's | build | SUCCESS |
+MD
 }
 
 run_parser() { run bash "$ROLES" "$@"; }
@@ -590,6 +642,114 @@ MD
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"EVENT-GATE FR-256: VERDICT=FAIL"* ]] || return 1
   [[ "$output" != *"EVENT-GATE FR-100"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# BR-104 (2026-09-08) — the bash-3.2 SQL-escape fail-open in §3. Two reachable
+# sites: PROJECT_SQL (basename of the repo — G11/G12) and ROLE_SQL (a role the
+# Agent Log names — G13/G14; normalize_cell never strips a quote). At
+# HEAD-before-BR-104 both were the double-quoted `"${x//\'/\'\'}"`: under
+# /bin/bash 3.2 a quoted PROJECT made `brief_content` read empty (both gates
+# `continue`, silently), and a quoted ROLE made `n_any` read empty (the
+# `''|*[!0-9]*` arm: `WARN could not read agent_events ... (skipped,
+# fail-open)`, exit 0). The real hook runs under /bin/bash; the mutant arms
+# (G11m, G13m, G14m) re-apply the quoted form to a scratch copy and are RED only
+# under /bin/bash 3.x (skipped with the reason elsewhere).
+# -----------------------------------------------------------------------------
+@test "(G11) BR-104: repo named it's-proj, FR-256 under it, empty agent_events -> the real hook under /bin/bash refuses" {
+  use_quoted_repo
+  seed_brief_file FR-256 "$FIXTURES/FR-256.md"
+  closing_msg FR-256
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"EVENT-GATE FR-256: VERDICT=FAIL roles=architect,forger,sentinel missing=architect,forger,sentinel"* ]] || return 1
+}
+
+@test "(G11m) BR-104 mutant: the quoted-form hook under /bin/bash 3.x lets G11's world through SILENTLY" {
+  skip_unless_bin_bash_3
+  build_quoted_mutant "$HOOK_SRC" "$SCRATCH/commit-msg.quoted" 4 || return 1
+  use_quoted_repo
+  seed_brief_file FR-256 "$FIXTURES/FR-256.md"
+  closing_msg FR-256
+
+  run_hook_file_bin "$SCRATCH/commit-msg.quoted"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the fail-open exit 0, got $status"; return 1; }
+  [ "$output" = "" ] || { echo "mutant: expected silence, got: $output"; return 1; }
+
+  # Positive control in the SAME sandbox: the real hook refuses.
+  run_hook_bin
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"missing=architect,forger,sentinel"* ]] || return 1
+}
+
+@test "(G12) BR-104: the quoted repo with a start+stop per role under project it's-proj -> exit 0, no WARN" {
+  use_quoted_repo
+  seed_brief_file FR-256 "$FIXTURES/FR-256.md"
+  seed_pair_q FR-256 architect "$PROJECT"
+  seed_pair_q FR-256 forger "$PROJECT"
+  seed_pair_q FR-256 sentinel "$PROJECT"
+  closing_msg FR-256
+
+  run_hook_bin
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || return 1
+}
+
+@test "(G13) BR-104: a log whose Agent cell is it's, no events -> the real hook refuses naming it's, with NO 'could not read' WARN" {
+  quoted_role_log "$SCRATCH/q.md"
+  seed_brief_file FR-901 "$SCRATCH/q.md"
+  closing_msg FR-901
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"EVENT-GATE FR-901: VERDICT=FAIL roles=it's missing=it's"* ]] || return 1
+  [[ "$output" != *"WARN could not read"* ]] || return 1
+}
+
+@test "(G13m) BR-104 mutant: the quoted-form hook under /bin/bash 3.x reads the role as unreadable -> WARN, exit 0" {
+  skip_unless_bin_bash_3
+  build_quoted_mutant "$HOOK_SRC" "$SCRATCH/commit-msg.quoted" 4 || return 1
+  quoted_role_log "$SCRATCH/q.md"
+  seed_brief_file FR-901 "$SCRATCH/q.md"
+  closing_msg FR-901
+
+  run_hook_file_bin "$SCRATCH/commit-msg.quoted"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the fail-open exit 0, got $status"; return 1; }
+  [[ "$output" == *"WARN could not read agent_events for role 'it's' (skipped, fail-open)"* ]] || return 1
+  [[ "$output" != *"VERDICT=FAIL"* ]] || return 1
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"missing=it's"* ]] || return 1
+}
+
+@test "(G14) BR-104: the it's role with a start+stop -> exit 0, silent" {
+  quoted_role_log "$SCRATCH/q.md"
+  seed_brief_file FR-901 "$SCRATCH/q.md"
+  seed_pair_q FR-901 "it's" "$PROJECT"
+  closing_msg FR-901
+
+  run_hook_bin
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || return 1
+}
+
+@test "(G14m) BR-104 mutant: G14's world under the quoted-form hook on /bin/bash 3.x still WARNs (the skip, not the verdict)" {
+  skip_unless_bin_bash_3
+  build_quoted_mutant "$HOOK_SRC" "$SCRATCH/commit-msg.quoted" 4 || return 1
+  quoted_role_log "$SCRATCH/q.md"
+  seed_brief_file FR-901 "$SCRATCH/q.md"
+  seed_pair_q FR-901 "it's" "$PROJECT"
+  closing_msg FR-901
+
+  run_hook_file_bin "$SCRATCH/commit-msg.quoted"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"WARN could not read agent_events for role 'it's'"* ]] || return 1
+
+  run_hook_bin
+  [ "$status" -eq 0 ] || return 1
+  [ "$output" = "" ] || return 1
 }
 
 # -----------------------------------------------------------------------------

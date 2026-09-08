@@ -34,6 +34,10 @@
  * migration comment for the reasoning, which is recorded there so nobody
  * re-derives it.
  *
+ * TD-457 adds v6: `UPDATE suggestions SET dedupe_key = NULL, entity_key =
+ * NULL` — the re-key after the anchor change, keyed again by the same JS
+ * backfill v5 relies on. No column changes; SYNC_TABLES untouched.
+ *
  * Per-component migration registry (memory #53): these are applied by
  * `storage.runMigrations('subconscious', subconsciousMigrations)` keyed on
  * `(component, version)` in `engine_migrations` — NOT the legacy `db.ts`
@@ -74,6 +78,14 @@ import type { Migration } from '../../types.js';
  *   duplicate row) and `source_instance` (which producer wrote the row).
  *   ALTER-only and idempotent per column via the version guard; the keys are
  *   backfilled in JS because they need normalisation and a hash.
+ *
+ * Version 6 (TD-457): re-key after the anchor change. `entityKey` stopped
+ *   taking an illustrative `evidence.brief_id` when the title names no brief,
+ *   so v6 NULLs `dedupe_key` / `entity_key` on EVERY row and
+ *   `finding-key.ts#backfillFindingKeys` (v5's mechanism, one transaction)
+ *   re-keys them on the next `runSubconscious`. NULL-all rather than a
+ *   targeted WHERE: finding the moved rows in SQL would mean re-implementing
+ *   the old anchor (TD-452 D-2); unmoved rows re-key to identical values.
  */
 export const subconsciousMigrations: Migration[] = [
   {
@@ -253,5 +265,19 @@ export const subconsciousMigrations: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_suggestions_dedupe_key
         ON suggestions(dedupe_key, status);
     `,
+  },
+  {
+    version: 6,
+    description:
+      'TD-457 — re-key suggestions after the anchor change: NULL dedupe_key/entity_key; finding-key.ts#backfillFindingKeys re-keys on the next run',
+    // Design-independent NULL-all over a targeted WHERE (TD-452 D-2): the rows
+    // that move are exactly those the OLD anchor keyed on an evidence brief
+    // the title never names, and locating them in SQL would re-implement that
+    // anchor. Unmoved rows re-key to byte-identical values (pinned in
+    // __tests__/schema-v6-migration.test.ts). No `pre` hook: an UPDATE on an
+    // empty table is a no-op. Between this boot and the first run the readers
+    // tolerate NULL keys (suggestions-read allows null; the dismiss loop falls
+    // back to findingKey(...); snapshotExistingPending keys on the fly).
+    sql: 'UPDATE suggestions SET dedupe_key = NULL, entity_key = NULL;',
   },
 ];

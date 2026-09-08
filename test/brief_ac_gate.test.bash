@@ -33,6 +33,7 @@
 #   `|| return 1`.
 
 load test_helper
+load sql_escape_helpers
 
 AC_CHECK="$IGRIS_ROOT/core/scripts/brief_ac_check.sh"
 HOOK_SRC="$IGRIS_ROOT/scripts/git-hooks/commit-msg"
@@ -113,7 +114,20 @@ PY
 # seed_brief_status <brief_id> <status> [phase]
 seed_brief_status() {
   sqlite3 "$DB" "INSERT INTO brief_status (project, brief_id, title, status, phase)
-                 VALUES ('$PROJECT', '$1', 't', '$2', '${3:-COMPLETE}');"
+                 VALUES ('$(sql_q "$PROJECT")', '$1', 't', '$2', '${3:-COMPLETE}');"
+}
+
+# use_quoted_repo — BR-104: switch the sandbox to a repo whose basename carries
+# a single quote. basename(git rev-parse --show-toplevel) is the hook's
+# $PROJECT, so this is the input that reaches the PROJECT_SQL site.
+use_quoted_repo() {
+  PROJECT="it's-proj"
+  REPO="$SANDBOX/$PROJECT"
+  mkdir -p "$REPO/core/scripts"
+  git -C "$REPO" init -q
+  git -C "$REPO" config user.email t@t.t
+  git -C "$REPO" config user.name t
+  cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 }
 
 # run_parser <args...>
@@ -722,6 +736,109 @@ MD
   [[ "$output" != *"AC gate"* ]] || return 1
 }
 
+# -----------------------------------------------------------------------------
+# BR-104 (2026-09-08) — the bash-3.2 SQL-escape fail-open. The hook is run by
+# git under its `#!/bin/bash` shebang (3.2 on macOS). At HEAD-before-BR-104 the
+# PROJECT_SQL escape was the double-quoted `"${PROJECT//\'/\'\'}"`, which under
+# 3.2 yields `it\'\'s-proj`; sqlite3 rejects the token, `brief_content` reads
+# empty, and BOTH closing-commit gates `continue` — a silent skip on every
+# closing commit in a repo whose name carries a quote. Q1 is the witness
+# (the real hook under /bin/bash), Q1m the mutant (the quoted form re-applied to
+# a scratch copy, RED only under /bin/bash 3.x — skipped with the reason on a
+# newer interpreter). Q2 proves no over-refusal, Q3 is the clean-name control,
+# Q4 pins that BRIEF_SQL is UNREACHABLE by a quote (the footer regex admits
+# only ^[A-Z]{2,3}-[0-9]+$ — the two BRIEF_SQL escapes are uniformity, not a
+# reachable defect), Q5 is the interpreter demonstration.
+# -----------------------------------------------------------------------------
+@test "(Q1) BR-104: repo named it's-proj, TD-347 unticked under it -> the real hook under /bin/bash refuses (exit 1)" {
+  use_quoted_repo
+  seed_brief_file TD-347 "$FIXTURES/TD-347.md"
+  closing_msg TD-347
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || { echo "expected exit 1 (refusal), got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"VERDICT=FAIL"* ]] || return 1
+  [[ "$output" == *"TD-347"* ]] || return 1
+}
+
+@test "(Q1m) BR-104 mutant: the quoted-form hook under /bin/bash 3.x lets Q1's world through SILENTLY (the fail-open)" {
+  skip_unless_bin_bash_3
+  build_quoted_mutant "$HOOK_SRC" "$SCRATCH/commit-msg.quoted" 4 || return 1
+  use_quoted_repo
+  seed_brief_file TD-347 "$FIXTURES/TD-347.md"
+  closing_msg TD-347
+
+  run_hook_file_bin "$SCRATCH/commit-msg.quoted"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the fail-open exit 0, got $status"; return 1; }
+  [ "$output" = "" ] || { echo "mutant: expected silence, got: $output"; return 1; }
+
+  # Positive control in the SAME sandbox: the real hook refuses.
+  run_hook_bin
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"VERDICT=FAIL"* ]] || return 1
+}
+
+@test "(Q2) BR-104: the same quoted repo with every box ticked -> exit 0, no over-refusal" {
+  use_quoted_repo
+  sed 's/^- \[ \]/- [x]/' "$FIXTURES/TD-347.md" > "$SCRATCH/ticked.md"
+  ! grep -q '^- \[ \]' "$SCRATCH/ticked.md" || return 1
+  seed_brief_file TD-347 "$SCRATCH/ticked.md"
+  closing_msg TD-347
+
+  run_hook_bin
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [[ "$output" != *"refusing to close"* ]] || return 1
+}
+
+@test "(Q3) BR-104 control: a clean repo name (gproj) fires on the real hook AND on the quoted-form mutant" {
+  seed_brief_file TD-347 "$FIXTURES/TD-347.md"
+  closing_msg TD-347
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"VERDICT=FAIL"* ]] || return 1
+
+  # The mutant is only wrong on a QUOTED value; on `gproj` the escape never
+  # fires and both spellings agree. This is what isolates Q1m's red to the quote.
+  build_quoted_mutant "$HOOK_SRC" "$SCRATCH/commit-msg.quoted" 4 || return 1
+  run_hook_file_bin "$SCRATCH/commit-msg.quoted"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"VERDICT=FAIL"* ]] || return 1
+}
+
+@test "(Q4) BR-104 unreachability pin: a footer id carrying a quote parses to NO id -> exit 0, silent (BRIEF_SQL cannot see a quote)" {
+  seed_brief_file TD-347 "$FIXTURES/TD-347.md"
+
+  printf "fix(x): y\n\ncloses #TD-'347\ncloses #IT'S-1\n" > "$MSG_FILE"
+  run_hook_bin
+  [ "$status" -eq 0 ] || { echo "expected exit 0 (no id parsed), got $status"; return 1; }
+  [ "$output" = "" ] || { echo "expected silence, got: $output"; return 1; }
+
+  # Positive control: the same unticked brief with a canonical footer refuses,
+  # so Q4's silence is the regex, not an absent fixture. If the footer regex is
+  # ever widened to admit a quote, the first arm reds first.
+  closing_msg TD-347
+  run_hook_bin
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"TD-347"* ]] || return 1
+}
+
+@test "(Q5) BR-104 interpreter demonstration: under /bin/bash 3.x the quoted form keeps the backslashes, the unquoted form doubles the quote" {
+  local major out
+  major="$(bin_bash_major)"
+  cat > "$SCRATCH/demo.sh" <<'SH'
+x="it's"; q="${x//\'/\'\'}"; u=${x//\'/\'\'}; printf '%s | %s' "$q" "$u"
+SH
+  out="$(/bin/bash "$SCRATCH/demo.sh")"
+  echo "/bin/bash major=$major: $out" >&2
+  [[ "$out" == *"| it''s" ]] || return 1
+  if [ "$major" = "3" ]; then
+    [ "$out" = "it\\'\\'s | it''s" ] || { echo "expected the 3.2 divergence, got: $out"; return 1; }
+  else
+    [ "$out" = "it''s | it''s" ] || { echo "expected agreement on bash >= 4, got: $out"; return 1; }
+  fi
+}
+
 # =============================================================================
 # PART 4 — the fail-open matrix. Every tier, because this hook runs on every
 # commit in every repo that installs it.
@@ -918,4 +1035,48 @@ MD
   run_hook
   [ "$status" -eq 1 ]
   [[ "$output" == *"TD-347"* ]] || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (S7) BR-104: the validator on a QUOTED project slug. At HEAD-before-BR-104 the
+#      quoted escape produced `AND bs.project='it\'\'s-proj'` under /bin/bash
+#      3.2, sqlite3 errored, `dump` read empty and the validator exited 0 — an
+#      EMPTY PASS on a project that has an open box. S7 runs the real validator
+#      under /bin/bash; S7m the quoted-form mutant (3.x only).
+# -----------------------------------------------------------------------------
+@test "(S7) BR-104: validator under /bin/bash with PROJECT=it's-proj names the open brief (exit 1)" {
+  PROJECT="it's-proj"
+  write_md "$SCRATCH/open.md" <<'MD'
+# TD-602
+
+## Acceptance Criteria
+- [ ] not met
+MD
+  seed_brief_file TD-602 "$SCRATCH/open.md"; seed_brief_status TD-602 Done
+
+  run bash -c "BRAIN_DB='$DB' PROJECT=\"$PROJECT\" /bin/bash '$VALIDATOR' 2>&1"
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"TD-602"* ]] || return 1
+}
+
+@test "(S7m) BR-104 mutant: the quoted-form validator under /bin/bash 3.x reads an EMPTY PASS on S7's world (exit 0)" {
+  skip_unless_bin_bash_3
+  build_quoted_mutant "$VALIDATOR" "$SCRATCH/validator.quoted" 1 || return 1
+  PROJECT="it's-proj"
+  write_md "$SCRATCH/open.md" <<'MD'
+# TD-602
+
+## Acceptance Criteria
+- [ ] not met
+MD
+  seed_brief_file TD-602 "$SCRATCH/open.md"; seed_brief_status TD-602 Done
+
+  run bash -c "BRAIN_DB='$DB' PROJECT=\"$PROJECT\" /bin/bash '$SCRATCH/validator.quoted' 2>&1"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the empty pass (exit 0), got $status"; return 1; }
+  [[ "$output" != *"TD-602"* ]] || return 1
+
+  # Positive control: the real validator names it.
+  run bash -c "BRAIN_DB='$DB' PROJECT=\"$PROJECT\" /bin/bash '$VALIDATOR' 2>&1"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"TD-602"* ]] || return 1
 }

@@ -86,7 +86,11 @@
  * The numbers this prints are a NEW slope on a NAMED cut. They are not a
  * continuation of TD-440's row; comparability is claimed only where a recorded
  * point reproduces (the self-check points, and L1/C1 at 0.25 against TD-440's
- * 153, which is reported next to it rather than spliced into it).
+ * 153, which is reported next to it rather than spliced into it). TD-457
+ * (2026-09-08) moved the anchor: on a re-keyed brain C1 @0.25 reads 146
+ * (`td452_anchor_sweep.ts` C1_AT_SHIPPED_TD457); this script asserts only
+ * the per-pair anchors/scores (all project-anchored, unmoved) and REPORTS the
+ * stored-vs-recomputed mismatch count (26 on a pre-re-key copy, 0 after).
  *
  * Usage:
  *   npx tsx scripts/td445_claim_threshold_sweep.ts --db <copy> [--cut <iso>]

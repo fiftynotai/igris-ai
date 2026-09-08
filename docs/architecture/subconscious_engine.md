@@ -214,8 +214,8 @@ then deleting `TD-437` instead, reds that site's three lines each time.
 
 | stage | function | what it does |
 |---|---|---|
-| BLOCK | `entityKey(candidate)` | ONE anchor: the project, else the primary cited brief, else learning, else suggestion, else `global` |
-| DISCRIMINATE | `claimsMatch(a, b, …)` | subject-id gate, then the project-set gate (TD-454: both titles name registered projects and the sets are not equal ⇒ different findings), then a short-claim guard, then Jaccard over `claimTokens` |
+| BLOCK | `entityKey(candidate)` | ONE anchor: the project, else the primary cited brief **when the title names an id** (TD-457; the action's `brief_id` target always counts), else learning, else suggestion, else `global` |
+| DISCRIMINATE | `claimsMatch(a, b, …)` | subject-id gate, then the project-set gate (TD-454: both titles name registered projects and the sets are not equal ⇒ different findings), then the module-name gate (TD-458: both titles name modules from the code's closed vocabulary and the sets are DISJOINT ⇒ different findings), then a short-claim guard, then Jaccard over `claimTokens` |
 
 `entityKey` deliberately does **not** use the whole set of cited identifiers. The
 model attaches an *illustrative* `evidence.brief_id` to a project-level finding and
@@ -381,7 +381,7 @@ pass after the own block yields nothing. Copy of 1,912 rows, taken 2026-09-07 wi
 TD-445's tag wins on any overlap; a project-subset instance of a portfolio class is its own
 finding, TD-445's `lifeos_dark` ≠ `zero_learnings_projects` precedent).
 
-**Neither candidate ships.** The decision set, cut C2 (whole table, N = 442, 46 anchors,
+**Neither candidate ships.** *(2026-09-08: (a-narrow) shipped under TD-457 after the TD-454 gate; see §TD-457 below.)* The decision set, cut C2 (whole table, N = 442, 46 anchors,
 `id ASC`), pairwise at 0.25:
 
 | candidate | newly comparable pairs | SAME | DIFFERENT | EXCLUDED | highest DIFFERENT |
@@ -578,7 +578,214 @@ next lever is a `source_module`-name SUBJECT gate (a flood row's own module name
 `stalled`/`gap` vs `edge_inference` — is the discriminating fact the titles carry and the
 tokeniser cannot weigh), filed as the follow-up, not built here. `1297`/`1830` (EQ) says the
 gate's equality reading has its own floor: two findings about the same two projects need
-the claim to separate them.
+the claim to separate them. *2026-09-08: the module-name lever was measured under TD-458 —
+see the next block; (c) is closed there.*
+
+### TD-458 — the S3 residual and the module-name lever (2026-09-08)
+
+**The L-35 read first** (`sqlite3 -readonly`, the 2026-09-08 `.backup` copy, 1,918 rows), the
+nine rows the residual names — `source_module` column, stored anchor, title:
+
+| id | `source_module` (LLM-authored) | anchor | title (abridged) |
+|---|---|---|---|
+| 1271 | `suggestion_queue_flood` | `project:fifty_eco_system` | "60 of 68 open suggestions are mechanical stalled/gap rows for one dormant project …" |
+| 1297 | `learning_capture_gap` | `global` | "Learning capture is concentrated in igris-ai/mbrgea-ai while 8 active projects … zero learnings" |
+| 1326 | `suggestion_queue_flooded` | `global` | "62 of 66 open suggestions are single-project fifty_eco_system stalled/gap notices …" |
+| 1341 | `suggestion_queue_flooding` | `project:fifty_eco_system` | "58 of 61 open suggestions are mechanical 'stalled'/'gap' rows for one project …" |
+| 1355 | `suggestion_queue_flood` | `project:fifty_eco_system` | "60 of the 60 open suggestions are mechanical stalled/gap rows on fifty_eco_system …" |
+| 1801 | `suggestion_channel_flooded` | `global` | "44 of the 60 open suggestions are low-value edge_inference rows …" |
+| 1815 | `suggestion_channel_flooded` | `global` | "44 of the 60 open suggestions are auto-generated edge_inference rows (ids 1712-1755) …" |
+| 1830 | `backlog_growth_outpaces_closure` | `project:igris-ai` | "igris-ai carries 166 open briefs and 612 learnings … no visible closure rate …" |
+| 1888 | `self_referential_finding_risk` | `project:igris-ai` | "44 of 60 open suggestions are low-value edge_inference rows — they crowd out substantive findings …" |
+
+**Why the column lever is dead, on this data.** `1801` and `1888` are the labelled SAME pair
+(family 2, 0.414) and carry two different `source_module` values —
+`suggestion_channel_flooded` vs `self_referential_finding_risk`. On `type_inferred = 1` rows
+the column is re-authored every run (TD-437: 195 labels over 358 rows), so a gate on the row's
+own module label would break the one SAME pair the residual exists to keep; TD-440 AC-4 pins
+the column out of the key on purpose (`finding-key.test.ts`, "survives 50 random
+source_module strings as ONE key"). The lever the TD-454 block actually named is the module
+name **the titles carry**: `stalled`/`gap` on 1271/1326/1341/1355, `edge_inference` on
+1801/1815/1888, nothing on 1297/1830.
+
+**The title-named vocabulary and its rule.** A closed vocabulary that is a property of the
+CODE, not the data: the v1 `CHECK` set `stalled`, `conflict`, `gap`, `pattern`
+(`schema.ts`), the synapse writer's `edge_inference` (`extractors/synapse.ts`), and the four
+internal modules the corpus predicate excludes (`janitor`, `arbiter`, `curator`,
+`cartographer`) — nine literals, each one token under `normalizeForDedup` (`edge_inference`
+survives: `_` is not punctuation). `namedModules(title)` is the shipped `namedProjects`
+algorithm over that list (nothing re-implemented). The rule is **DISJOINT**, the `subjectIds`
+reading of gate 1: both titles name modules and share none ⇒ different findings. One empty
+side is not disjoint (a re-emission that drops the module word still merges), and
+"stalled/gap rows" vs "stalled rows" shares a member — equality would refuse that
+re-emission, so EQUAL is reported beside DISJOINT and is never the verdict. Exposure: 82 of
+the 448 C2 rows name at least one module word (`stalled` 66, `gap` 34, `edge_inference` 6,
+`pattern` 1 — 2026-09-08), so `gap`/`stalled` as English prose is a real cost the rule below
+has to pay for.
+
+**Pre-registered rule, recorded 2026-09-08 at planning (P-A, P-B from the brief; P-C added by
+operator decision D-2 at APPROVAL), BEFORE the sweep was run:**
+
+- **P-A** — the module gate separates all four S3 pairs `1341`/`1801`, `1355`/`1801`,
+  `1326`/`1888`, `1271`/`1815` (cross-block: the shipped loop compares a candidate against
+  its OWN block only, so P-A alone describes pairs the live path never compares).
+- **P-B** — it breaks **0** labelled SAME pairs: in P_new of every design (`a`, `c`, `cg`,
+  `cp`, `ac`) and inside the shipped blocks, on C1 and C2, on the fresh copy.
+- **P-C** — it separates **≥ 1** labelled DIFFERENT pair INSIDE a shipped block (a
+  live-path benefit exists; otherwise the gate ships with no observable effect and a
+  non-zero prose exposure).
+- Ship iff P-A ∧ P-B ∧ P-C; otherwise measured-not-moved. `1297`/`1830` (EQ) is out of
+  scope — no named mechanism reaches it. **(c) closes in either outcome.**
+
+Instrument: `scripts/td452_anchor_sweep.ts --source-module-gate` (self-check points: the
+four pairs' module sets as pinned and DISJOINT; the designed pair NOT disjoint; four
+`namedModules` known-answer titles). Record: `scripts/td458_s3_pairs.csv`.
+
+**Results (sweep run 2026-09-08 on the 1,918-row copy, C2 N = 448, C1 N = 410; every pair
+in every decision set labelled — 0 unlabelled):**
+
+| pair | score | label | shape | modules A | modules B | separated by |
+|---|---|---|---|---|---|---|
+| `1341`/`1801` | 0.310 | DIFFERENT | S3 | {gap, stalled} | {edge_inference} | mod |
+| `1355`/`1801` | 0.296 | DIFFERENT | S3 | {gap, stalled} | {edge_inference} | mod |
+| `1326`/`1888` | 0.265 | DIFFERENT | S3 | {gap, stalled} | {edge_inference} | mod |
+| `1271`/`1815` | 0.250 | DIFFERENT | S3 | {gap, stalled} | {edge_inference} | mod |
+| `1297`/`1830` | 0.257 | DIFFERENT | EQ | {} | {} | none (out of scope) |
+
+- **P-A: PASS, 4/4.** Every S3 pair's module sets are `{gap, stalled}` vs `{edge_inference}` —
+  disjoint under DISJOINT and unequal under EQUAL alike; the EQ pair names no module.
+- **P-B: PASS, 0 broken.** P_new under the module gate, every design: `a` 15 / 15 SAME / 0
+  DIFFERENT (15 rows), `c` 46 / 44 / 1 (the EQ pair), `cg` 31 / 31 / 0, `cp` 15 / 13 / 1 (EQ),
+  `ac` 83 / 67 / 15 — and **0 SAME pairs lost** against the same design under the shipped
+  project-set gate (`a` 15 → 15, `c` 44 → 44, `cg` 31 → 31, `cp` 13 → 13, `ac` 67 → 67).
+  Inside the shipped blocks (same stored anchor, matching under the project-set gate and
+  not under the module gate): **SAME 0** on C1 and on C2.
+- **P-C: PASS, 3.** The same-block pairs the module gate separates are all `global` and all
+  labelled DIFFERENT: `1326`/`1809` @ 0.258, `1326`/`1815` @ 0.250, `1384`/`1809` @ 0.250
+  (`{gap, stalled}` or `{gap}` against `{edge_inference}`; `queue_flood_stalled_gap` vs
+  `edge_inference_flood` on the row tags). At HEAD each of those was a live false merge —
+  the second row bumped the first inside one block. Cluster counts do not move (C1 gate 169
+  → mod 169, C2 204 → 204): the separated candidate lands on another head of its own
+  module in the same block, so the gate's effect is WHICH row absorbs, not how many rows.
+- **Verdict: P-A ∧ P-B ∧ P-C → SHIP.** Gate 1c in `claimsMatch` (`finding-key.ts`):
+  both titles name modules and the sets are DISJOINT ⇒ no match. `Claim.modules` is always
+  computed (the vocabulary is a constant); `findingKey` still hashes tokens + subject only,
+  so **no row is re-keyed** (pinned: the stored `dedupe_key` of `1341` and `1801` reproduce
+  byte-for-byte). A derivation guard re-derives the nine literals from `schema.ts` v1's
+  CHECK set plus every deterministic writer's `VALUES ('…'` and asserts that exactly one
+  writer binds `?` (the open-typed subconscious extractor). Live-path pins:
+  `recurrence.test.ts` "TD-458" (`1326` then `1815` → two rows; `1815`/`1809` and
+  `1326`/`1384` still bump). Unit pins: `finding-key.test.ts` "TD-458 module-name gate";
+  three earlier pins MOVED with this date — the TD-452 arming half for `1341`/`1801` and
+  `1355`/`1801` (tokeniser score, and `claimsMatch` now false), the TD-454 vocab-free
+  arming half for S3 (score), and TD-454 (c) "S3 is UNCHANGED" → "separated by the module
+  gate".
+- **Post-ship agreement (L-930).** With gate 1c inside the imported matcher, the instrument's
+  `--source-module-gate` compares the shipped claims against `noMod` (the same claims with
+  the module set emptied) and reproduces the pre-ship reading exactly — P-A 4/4, P-B 0, P-C
+  the same three pairs, `P_new(gate) == P_new(mod)` on `a` and `c`; the vocab-off self-check
+  still reads C1 = 153 (N = 410), so the TD-440/TD-445 point did not move. The checked-in
+  `scripts/td458_s3_pairs.csv` is the post-ship emission (reproducible from HEAD); the
+  pre-ship emission differed only in `separated_by` (`mod|mod+strip` vs `gate|mod|mod+strip`).
+- **Recorded beside the verdict, not part of it:** the EQUAL reading would also separate
+  the four pairs (all unequal), but it would refuse the designed re-emission "stalled/gap
+  rows" vs "stalled rows"; DISJOINT ships. `mod+strip` (the TD-454 strip variant plus the
+  module gate) admits one DIFFERENT pair on design `a` (`1397`/`1593` @ 0.267, S3) — strip
+  is not shipped (TD-454 P-3) and this is one more reason.
+- **(c) is CLOSED.** With the four S3 pairs separated, (c)'s remaining DIFFERENT is exactly
+  `1297`/`1830` (EQ, 0.257): two findings about the same two projects with no module word,
+  out of reach of the anchor, the project-set gate and the module gate. It is out of scope
+  by the brief's own AC-1, and it is what makes (c) unshippable under the pairwise rule
+  whatever else lands. `anchorsComparable` is NOT shipped (no caller; operator D-1).
+
+### TD-457 — anchor (a-narrow) shipped (2026-09-08)
+
+**Pre-registered rule, recorded 2026-09-08 BEFORE any matcher or key change under this
+brief:** TD-445's pairwise rule under the TD-454 gate — every pair newly comparable under
+(a-narrow) that matches at the shipped threshold is labelled per row, and DIFFERENT must be
+**0** on the labelled P_new of design `a`; every pin the re-key moves is re-measured and
+listed old → new with this date, never relaxed; the ACTION `brief_id` param keeps anchoring
+(a target, not an illustration — the instrument measured exactly that semantics).
+
+**AC-1, the HEAD reproduction (read before TD-458's gate landed, then re-read after it):**
+on the 2026-09-08 copy (1,918 rows, C2 N = 448, 26 rows move — all slug-less, 24 → `global`,
+2 → `learning:`), design `a` under the project-set gate reads **15 pairs / 15 SAME /
+0 DIFFERENT / 0 unlabelled → passes**, both before and after TD-458 (the module gate touches
+no `a` pair). TD-454's reading of the same point on the 2026-09-07 copy was 15 / 15 / 0.
+
+**The shipped rule.** `entityKey` consults `evidence.brief_id` / `brief_ids` only when
+`subjectIds(title)` is non-empty; the ACTION `brief_id` param (`suggested_action.brief_id`) is
+consulted as before — it is the target the handler acts on, so two findings that act on the
+same brief belong together. Byte-equivalent to the instrument's measured `candidateAnchor`
+(remove the evidence brief ids, let the shipped precedence decide). `anchorsComparable` is
+NOT shipped (D-1: no caller once (c) is closed).
+
+**The 15 pairs** (`scripts/td457_pairs_a_narrow.csv`, all SAME, 15 distinct rows, every one
+pinned verbatim in `finding-key.test.ts` and asserted to share one anchor now, match with the
+production vocabulary and score as recorded): 1570/1677 0.708 · 1486/1596 0.677 · 1570/1578
+0.640 · 1430/1596 0.545 · 1596/1698 0.529 · 1335/1344 0.485 · 1578/1677 0.481 · 1430/1692
+0.452 · 1486/1692 0.438 · 1596/1692 0.429 · 1692/1698 0.394 · 1328/1335 0.353 · 1440/1677
+0.345 · 1474/1539 0.258 · 1596/1627 0.250. The instrument's emission after the code change is
+byte-identical to the checked-in file.
+
+**AC-2, the loop-faithful replay** (the shipped loop on the B anchors, own block, C2 N = 448,
+2026-09-08): **9 absorptions the old anchor could not make — SAME 9, DIFFERENT 0.** The 15
+pairs cover 15 rows; the loop keeps 6 heads (1328, 1300, 1474, 1440, 1430, 1578) and absorbs
+the other 9 (1335, 1344, 1360 → 1328; 1397 → 1300; 1539 → 1474; 1570 → 1440; 1596, 1692 →
+1430; 1677 → 1578), each onto a head labelled the same finding. Pairs the loop leaves
+unmerged are the greedy-head effect — e.g. 1570/1677 (0.708) never meet because 1570 was
+absorbed by the earlier head 1440 and 1677 by 1578 — recorded, not fixed; every row still
+lands in a cluster of its own finding.
+
+**The re-key (AC-3), rehearsed on a writable scratch copy** (`--rekey-check`, 2026-09-08):
+schema **v6** `UPDATE suggestions SET dedupe_key = NULL, entity_key = NULL` — NULL (either
+key) after v6 = 1,918 of 1,918; `backfillFindingKeys` (now ONE transaction; a thrown update
+leaves every key NULL — pinned) keyed 1,918; NULL after = **0**; moved (entity_key changed) =
+**26** (the same ids the pre-re-key sweep listed); unmoved rows byte-identical on BOTH keys =
+**1,892 of 1,892** (dedupe_key changed on an unmoved row: 0); 5 spot-checked ids quoted in the
+run. Fresh-vs-migrated agreement (`schema-v6-migration.test.ts`): 18 verbatim rows keyed by
+the WRITER against 18 rows migrated from their stale stored keys — **18/18** equal, the 8
+`brief:`-anchored title-id-less rows read `global`, every unmoved row equals its stored key
+byte-for-byte. Between the v6 boot and the first run the three readers tolerate NULL keys
+(`snapshotExistingPending` keys on the fly; the dismiss loop falls back to `findingKey`;
+`suggestions-read` allows `null`).
+
+**Instrument posture after the re-key** (asserted from the second run on): stored ≠ imported
+on 0 rows, moved 0, design `a` admits **0** new pairs, and C1 @0.25 under the new anchor =
+**146** (`C1_AT_SHIPPED_TD457`; N = 410, anchors 35 — was 153 with 38 anchors: the seven
+one-row `brief:` blocks folded into `global`), first read 2026-09-08 and pinned. On a
+pre-re-key copy the instrument still asserts 153 and `disagree === moved` (26 = 26). C2
+whole-table cluster counts on the re-keyed copy: vocab-off L2 / gate L2 are printed in the
+run and are not pinned (C2 is not cut-bounded).
+
+**D-4, `moved ∩ dismissed`:** of the 26 moved rows, 21 are `dismissed` and 5 `pending`, but
+**0** carry a `dedupe_key` that is a `dismissed_patterns.evidence_signature` (17 rows in that
+table on the copy) — so on this brain no dismissal stops suppressing; the one-time
+re-emission population is empty here and stays bounded by that count elsewhere. Accepted,
+not re-signed.
+
+**What the VPS sees (D-3).** `suggestions` IS in `SYNC_TABLES` but its column list stops at
+`type_inferred`: `dedupe_key` / `entity_key` never cross the wire, the table is push-only, no
+column is added, no manifest regenerates, no deploy order. v6 rides the next ordinary
+`igris sync code`; wherever the bundle boots, `runMigrations('subconscious', …)` NULLs that
+brain's keys and its next `runSubconscious` re-keys. Deploy note: after the first
+post-deploy run, on each brain, read-only —
+`sqlite3 -readonly ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM suggestions WHERE dedupe_key IS NULL"`
+→ 0 expected locally; on the VPS 0 only if cognition runs there, otherwise the pre-existing
+NULL population, harmless.
+
+**Pins moved (old → new, 2026-09-08):** `schema-v5-migration.test.ts` chain `[1,2,3,4,5]` →
+`[1,2,3,4,5,6]`; `finding-key.test.ts` "falls back through brief…" — `evidence.brief_id:'BR-1'`
+under `'a title'` `brief:br-1` → `global` (and `'BR-1 is stale'` keeps `brief:br-1`); TD-452
+"is kept apart by the ANCHOR alone" → a-narrow pairs share `global` and the project-set gate
+refuses (cross-block arm unchanged); "split by an evidence brief the title never names" →
+"PRE-TD-457 anchor was `brief:`; entityKey now reads global" (`PinRow.entity_key_pre_td457`
+keeps the stored values for 1434/1474/1596 and the ten new rows); `recurrence.test.ts` family
+1 `brief:br-074`/`brief:ts-003`/`brief:br-001` → `global` ×3 (rows still 3, scores
+0.238/0.200/0.238 and `matches === false` unchanged); the NEGATIVE CONTROL's comment. Unchanged
+and re-read: the TD-445 window, the excerpt corpus, the TD-454 and TD-458 describes in both
+files, `ABANDONED_FAMILY`, the `suggested_action.brief_id` → `brief:td-9` case. (c) remains
+closed.
 
 ---
 
@@ -667,6 +874,10 @@ an OPEN registry. They surface as the empty-string facet bucket instead.
   `finding-key.ts#backfillFindingKeys`, called once per run from `runSubconscious` —
   a WRITE path, never from `buildContext`, which is a read slot — because the key
   needs normalisation and a hash and cannot be computed in SQL.
+- **v6** (TD-457) — `UPDATE suggestions SET dedupe_key = NULL, entity_key = NULL`: the re-key
+  after the anchor change, NULL-all rather than a targeted WHERE (finding the moved rows in
+  SQL would re-implement the old anchor); `backfillFindingKeys` re-keys every row in one
+  transaction on the next run. No column change; nothing crosses the wire.
 
 ### These tables ARE synced; the new columns are not
 

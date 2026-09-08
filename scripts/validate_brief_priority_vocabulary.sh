@@ -75,11 +75,11 @@ if [ ! -f "$BRAIN_DB" ]; then
 fi
 
 # --- Query the store (read-only) ---------------------------------------------
-# $PROJECT is a slug (env override) — single-quote-escape it (doubling any
-# embedded quote) before interpolation so a stray quote cannot break the SQL,
-# matching the phase-guard idiom.
+# $PROJECT is a slug (env override) — single-quote-escaped (doubled) with an
+# UNQUOTED assignment: under /bin/bash 3.2 the quoted form keeps its backslashes
+# and the query fails OPEN (TD-453 idiom; BR-104 fixed this site).
 if [ -n "$PROJECT" ]; then
-  PROJECT_SQL="${PROJECT//\'/\'\'}"
+  PROJECT_SQL=${PROJECT//\'/\'\'}
   WHERE="WHERE project='$PROJECT_SQL'"
   SCOPE="project '$PROJECT'"
 else

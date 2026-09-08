@@ -44,7 +44,9 @@ describe('subconscious schema v5 (TD-440)', () => {
     expect(subconsciousMigrations.filter((m) => m.version === 5)).toHaveLength(1);
     // Versions are dense and ordered — a gap means a migration was edited in
     // place rather than added, which the per-component registry forbids.
-    expect(subconsciousMigrations.map((m) => m.version)).toEqual([1, 2, 3, 4, 5]);
+    // TD-457 (2026-09-08): v6 re-keys `suggestions` after the anchor change —
+    // `[1, 2, 3, 4, 5]` → `[1, 2, 3, 4, 5, 6]` (schema-v6-migration.test.ts).
+    expect(subconsciousMigrations.map((m) => m.version)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it('adds exactly the six columns and removes none', () => {

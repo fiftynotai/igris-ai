@@ -12,6 +12,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **BR-104** — the nine remaining double-quoted SQL-escape sites
+  (`core/git-hooks/commit-msg` ×4, `scripts/validate_brief_*.sh` ×5) now use the
+  UNQUOTED assignment `q=${x//\'/\'\'}` (the TD-453 idiom). Under `/bin/bash`
+  3.2 — the interpreter git runs the hook under — the quoted form produced
+  `it\'\'s`, sqlite3 rejected the query, and both closing-commit gates skipped
+  silently for a repo whose name carries a quote (the event gate also WARN-skipped
+  a quoted role); the validators reported an empty pass on a quoted `PROJECT`.
+  Such a repo's closing commits are now gated. A source-scan guard
+  (`test/sql_escape_idiom.test.bash`, 16 unquoted sites over 37 files,
+  2026-09-08) reds a re-introduced quoted form; the behavioural witnesses run
+  the hook under `/bin/bash` explicitly (Q1-Q5/S7, G11-G14, V1-V5). No
+  `cli/CHANGELOG.md` twin — the hook ships via the core channel, 0 packed B.
 - **TD-456** — the cli bats tier fences `HOME` as well as `IGRIS_BRAIN_DIR`.
   `stage_brain` / `fence_home` export `HOME=$BATS_TEST_TMPDIR/home` and
   `assert_home_fenced` proves it before any body runs; a guard
@@ -36,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **TD-457** (bundled brain) — the subconscious anchor no longer takes an
+  illustrative `evidence.brief_id` when the title names no brief (the action's
+  `brief_id` target still anchors); 15 newly comparable pairs on the 2026-09-08
+  corpus, all SAME. Schema **v6** NULLs `suggestions.dedupe_key` / `entity_key` and
+  `backfillFindingKeys` re-keys every row in one transaction on the next run (26 of
+  1,918 rows move; unmoved rows re-key byte-identically). Nothing crosses the sync
+  wire; the operator's post-deploy check is a read-only NULL count per brain.
+- **TD-458** (bundled brain) — `claimsMatch` gains a MODULE-NAME gate (gate 1c): two
+  suggestion titles that both name modules from the code's closed vocabulary
+  (`stalled`, `conflict`, `gap`, `pattern`, `edge_inference`, `janitor`, `arbiter`,
+  `curator`, `cartographer`) with DISJOINT sets are different findings. Measured
+  2026-09-08 against the pre-registered rule: all four S3 flood pairs separated, 0
+  labelled SAME pairs broken, 3 same-block false merges fixed (`1326`/`1809`,
+  `1326`/`1815`, `1384`/`1809`). No re-key — `findingKey` does not read the module
+  set. Candidate (c) of TD-452 is closed. Record: `scripts/td458_s3_pairs.csv`.
 - **TD-453** — `config.json` `machine.aliases` is bounded: writers keep the
   newest `ALIAS_CAP = 16` and evict the oldest on the 17th distinct hostname
   (both parity-pinned twins; a hand-written oversize list is left alone).
