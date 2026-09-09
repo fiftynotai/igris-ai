@@ -10,6 +10,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.2] - 2026-09-09
+
+Hotfix on `v7.3.1`. One fix commit (`a0e0a7c`, counted 2026-09-09 with
+`git log v7.3.1..HEAD`), no feature, no breaking change. The §17.2 pre-tag
+audit PASSED. Both defects were found by a Docker clean-room of the
+**published** `igris-ai@7.3.1` — installing from the registry and initialising
+from the GitHub release, which is the path a new user takes and the path no
+developer machine exercises.
+
+Neither defect broke a working install; both made a correct install look or
+feel wrong from the first minute. `igris doctor` called every fresh
+GitHub-channel install stale, and prescribed an `igris refresh` that could not
+clear it. And the package advertised support for a Node it cannot install on.
+
+Upgrading: `npm install -g igris-ai@7.3.2` then `igris init --upgrade`; from
+source, rebuild `cli/`, then `igris refresh --from-source <checkout> --yes`
+and `igris doctor`. An existing 7.3.1 record carries no `ref_commit_sha`, so
+the staleness check stays silent on upgrade rather than reporting a new row.
+
 ### Fixed
 
 - **`igris doctor` no longer reports `brain-core-stale` on every GitHub-channel

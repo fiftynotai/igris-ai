@@ -119,7 +119,7 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   }
   validateSlug(slug);
 
-  const cliVersion = opts.cliVersion ?? "7.3.1";
+  const cliVersion = opts.cliVersion ?? "7.3.2";
   const root = brainDir();
 
   // M3 — dry-run short-circuit. Enumerate would-be writes via DryRunCollector

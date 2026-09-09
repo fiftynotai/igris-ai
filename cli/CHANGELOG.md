@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.3.2] - 2026-09-09
+
+Hotfix on `v7.3.1`. The CLI half: the `brain-core-stale` detector compared a
+tarball content hash against a git commit hash and so fired on every
+GitHub-channel install (TD-301), and `engines.node` advertised a Node the
+package cannot install on (BR-105). See the root `CHANGELOG.md` for the whole.
+
 ### Fixed
 
 - **`brain-core-stale` no longer fires on every GitHub-channel install
