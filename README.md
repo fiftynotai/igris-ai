@@ -1,6 +1,8 @@
 ![igris — the engineering OS for AI coding agents](docs/images/igris-banner.png)
 
 [![tests](https://github.com/fiftynotai/igris-ai/actions/workflows/test.yml/badge.svg?branch=develop)](https://github.com/fiftynotai/igris-ai/actions/workflows/test.yml)
+[![npm](https://img.shields.io/npm/v/igris-ai?color=%23c0392b&label=npm)](https://www.npmjs.com/package/igris-ai)
+[![node](https://img.shields.io/node/v/igris-ai?color=%23c0392b)](https://www.npmjs.com/package/igris-ai)
 
 # IGRIS
 
@@ -185,6 +187,27 @@ the throughline: nothing here is ad-hoc. every extension is either self-describi
 
 that is the line between a tool with plugins and an OS that extends itself — the agent doesn't just use its capabilities, it can add new ones, and know exactly where each belongs.
 
+## see the whole brain.
+
+`igris dashboard` serves a live, loopback-only lens over the brain at `127.0.0.1`. every counter is the state on disk at the moment it was fetched — nothing is regenerated, and every GET leaves the rows alone.
+
+![the overview lens — brief counts, priority split, live sessions and graph scale across every registered project](docs/images/dashboard/overview.jpg)
+
+briefs are the working surface: filter by status, priority, effort or type, search titles and bodies with BM25 fused with vector recall, and read the filed brief rendered in place. set a priority or attach work to a goal without leaving the page.
+
+![the briefs layer — every brief newest first, with status, priority, effort, phase and project on each row](docs/images/dashboard/briefs.jpg)
+
+the graph is the part a list cannot show: which brief blocks which, which learning came out of which bug, and what a goal is actually made of. click any node to inspect the record or trace its lineage.
+
+![the whole-brain graph — briefs, learnings and goals as nodes, with blocks, derived-from and serves-goal edges](docs/images/dashboard/graph.jpg)
+
+```bash
+igris dashboard          # tries port 7317, then an OS-assigned one
+igris dashboard --port 8080
+```
+
+it binds loopback only and runs in the foreground; Ctrl-C stops it. a second invocation re-opens the running instance rather than binding a second port. (screenshots taken against a seeded demo brain, not a real one.)
+
 ## it checks its own health.
 
 an OS spread across harnesses, machines, and projects drifts: a hook goes stale, a symlink breaks, a config wanders from canonical. IGRIS finds that itself.
@@ -200,6 +223,8 @@ npm install -g igris-ai
 igris init
 cd /path/to/your-project && igris install .
 ```
+
+requires **Node 22, 24, 25 or 26** (`>=22.0.0 <23.0.0 || >=24.0.0 <27.0.0`). the gaps are not arbitrary: the native database dependency ships no prebuilt binary for Node 20, 21 or 23, so an install there falls back to a source build. npm will refuse with `EBADENGINE` naming the range rather than dropping you into a compiler error.
 
 `igris init` bootstraps the centralized brain and projects skills, agents, MCP, and hooks globally. `igris install .` is register-only: it records the project in the brain so the global surfaces apply, without copying IGRIS files into your repo.
 
