@@ -10,6 +10,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`igris doctor` no longer reports `brain-core-stale` on every GitHub-channel
+  install (TD-301).** The detector compared the recorded `content_sha256` — a
+  64-hex sha256 of the fetched gzipped tarball — against a 40-hex git commit
+  SHA from the GitHub commits API. Two different hash types can never be equal,
+  so the row fired for every `release`, `tag`, `main` and `branch` install that
+  had ever run `igris init` from GitHub, and the remedy it printed (`igris
+  refresh`) could not clear it: refresh re-wrote the same tarball hash. In a
+  clean-room container on 2026-09-08 a brand-new `igris init --channel v7.3.1`
+  install exited `doctor` with status 1 and the single row
+  `(brain) | ~/.igris/core | brain-core-stale`, and `igris refresh --yes`
+  reported `cache hit, no network` and left it standing.
+
+  The comparison is now commit-SHA against commit-SHA:
+
+  - `release` and `tag` installs are **exempt** — the ref is immutable by
+    construction, so they are never stale and make **no** new network call. A
+    tag that is force-pushed to a different commit is therefore not detected;
+    that is a deliberate, named trade (`igris refresh` still re-fetches on
+    demand).
+  - `main` and `branch` installs record a new optional `ref_commit_sha` in
+    `~/.igris/.install-source.json` (schema v2) at `init`/`refresh` time, and
+    the detector compares that against the ref's current head commit.
+  - A record **without** the field — which is every record written by 7.3.1 and
+    earlier — is never flagged. Absence of evidence is not evidence of
+    staleness. `igris refresh` backfills the field for a mutable channel; an
+    immutable-channel record never gains it and never needs it.
+
+  The fetch of the field is best-effort: it makes no call for `release`/`tag`
+  or a `--from-source` install, swallows every error, and can never fail an
+  install. `--dry-run` makes no call at all.
+
+  **Existing 7.3.1 installs get this from npm alone** — the detector compiles
+  into the published `dist`, not into the GitHub-distributed `core/` tree, so
+  `npm i -g igris-ai@7.3.2` clears the false row with no `igris refresh` and no
+  `igris init --upgrade`.
+
+  Trade-off for the two mutable channels: between installing 7.3.2 and the next
+  `igris refresh`, a genuinely stale `main`/`branch` core is not reported. That
+  is a strict improvement on a row that was 100 % false and whose prescribed
+  remedy was a no-op.
+
+  An older CLI reading a 7.3.2 record is safe by reading: `migrateForwardOnly`
+  short-circuits on `v < 1`, returns the record as-is and ignores the unknown
+  key.
+
+### Changed
+
+- **The advertised Node range is now the MEASURED one: `>=22.0.0 <23.0.0 ||
+  >=24.0.0 <27.0.0` (BR-105).** It was `>=20.0.0 <27.0.0` in three
+  `package.json` files, `>=20.0.0` with no ceiling in
+  `brain-mcp-server/package-lock.json`, and a hard-coded `major < 20` inside
+  `cli/src/lib/preflight.ts` — four different statements of one fact, none of
+  them measured against Node 26 (which did not exist when the old ceiling was
+  written).
+
+  **This does not make Node 20 work. It stops advertising it.** The floor is a
+  property of `better-sqlite3`'s published prebuild matrix, not of our code:
+  where there is no prebuild for a Node ABI, `npm install -g igris-ai` falls
+  through to `node-gyp rebuild` and dies for want of a C++ toolchain.
+
+  Measured 2026-09-08 with `prebuild-probe.sh` — one `npm install -g
+  igris-ai@7.3.1` per major in a stock `node:<major>-bookworm-slim` container
+  (no python3, no make, no cc), docker 29.4.3. Verdict = install exit 0 AND
+  `require("better-sqlite3")` loads:
+
+  | Node major | arm64 | x64 | first error when FAIL |
+  |---|---|---|---|
+  | 20 | FAIL | FAIL | `prebuild-install ... No prebuilt binaries found (target=20.20.2)` |
+  | 21 | FAIL | not measured | `No prebuilt binaries found (target=21.7.3)` |
+  | 22 | PASS | PASS | — |
+  | 23 | FAIL | FAIL | `No prebuilt binaries found (target=23.11.1)` |
+  | 24 | PASS | not measured | — |
+  | 25 | PASS | not measured | — |
+  | 26 | PASS | PASS | — |
+  | 27 | no `node:27` image exists — not measurable; the range EXCLUDES it |
+
+  The pass set is **not contiguous**: 23 (an end-of-life odd major) has no
+  prebuild while 22, 24, 25 and 26 do. The range is written as exactly the
+  measured pass set rather than as a convenient interval, so no major is
+  advertised that was not observed to install. 21 and 23 are both EOL upstream.
+
+  What a Node-20 user sees changes: `npm` prints an `EBADENGINE` warning naming
+  the supported range instead of the install going straight to a
+  `prebuild-install` / `node-gyp` dump. The install still fails.
+
+  Swept in one commit and held by one new test
+  (`cli/src/__tests__/engines-parity.test.ts`, E-1…E-7): the three
+  `engines.node` fields, the four lockfile `engines` entries (hand-edited — the
+  lockfiles are never regenerated for this), `checkNodeVersion` (which now
+  refuses at exactly the advertised boundary, deriving its floor from the range
+  string rather than repeating the number), the three CI `node-version` pins
+  (`test.yml` cli-bats + brain-vitest, `npm-publish.yml`),
+  `docs/SETUP_GUIDE.md` and `scripts/igris_brain_deploy.sh`'s version check.
+
+  Two sharp edges, stated rather than discovered:
+
+  - `igris init` — and only `init`; `doctor`, `install`, `update`, `sync` and
+    `refresh` keep working — now REFUSES on Node 20, 21, 23 and 27+, including
+    `init --upgrade`. Someone who built `better-sqlite3` with a local toolchain
+    on Node 20 and has a working install is affected.
+  - A user with `engine-strict=true` in `.npmrc` gets a HARD failure from `npm
+    i -g igris-ai@7.3.2` on an out-of-range Node where 7.3.1 merely warned.
+
+  **No install-time refusal was added, deliberately (TD-377 owns it).** On the
+  only failing case anyone has reproduced, npm dies while building
+  `better-sqlite3` — a DIRECT dependency of the published package — so a
+  `postinstall` script of ours never runs at all, and a `preinstall` is no
+  better: for `npm install -g <pkg>` the target is reified like a dependency,
+  and its lifecycle scripts run AFTER its dependencies are built. A refusal
+  there would be code that cannot fire on the case it was written for. What a
+  refusal COULD catch is the narrow opposite case — a Node that installs
+  cleanly but sits outside the range — and that needs its own container
+  witness before it ships.
+
 ---
 
 ## [7.3.1] - 2026-09-08

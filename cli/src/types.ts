@@ -145,6 +145,13 @@ export interface InstallSource {
   fetched_at: string;
   /** SHA-256 of the fetched gzipped tarball, used as cache key. */
   content_sha256: string;
+  /**
+   * 40-hex git commit SHA that `ref` pointed at when it was fetched (TD-301).
+   * ABSENT on every pre-7.3.2 record and on immutable channels (`release` /
+   * `tag`), where the ref cannot move. The brain-core-stale detector treats
+   * absence as "not stale", never as "stale".
+   */
+  ref_commit_sha?: string;
   /** Source kind for reproducibility / diagnostics. */
   source: "github" | "from-source" | "cache";
   /** Absolute path when source != "github" (the contributor repo or cached tarball). */

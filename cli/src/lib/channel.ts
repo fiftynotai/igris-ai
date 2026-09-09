@@ -156,6 +156,42 @@ export async function fetchLatestReleaseTag(): Promise<string> {
 }
 
 /**
+ * Fetch the current head COMMIT SHA of a git ref via the GitHub commits API.
+ * Returns a 40-hex commit SHA.
+ *
+ * `refPath` is a branch name, a tag name or "main" — GitHub's
+ * `/commits/<ref>` resolves any of them to the commit they point at.
+ *
+ * Moved here from `lib/drift/brain-core-stale.ts` in TD-301: channel.ts owns
+ * every GitHub-ref call, and this one has three callers — the brain-core-stale
+ * detector and both record writers, via
+ * `install-source.ts#recordRefCommitSha`.
+ *
+ * Throws `ChannelResolveError` (via `httpsGetJson`) on 404 / 5xx / network /
+ * timeout, and a plain Error on a non-JSON or shape-invalid response.
+ */
+export async function fetchRefCommitSha(refPath: string): Promise<string> {
+  const url = `https://api.github.com/repos/${repoOwner()}/${repoName()}/commits/${encodeURIComponent(refPath)}`;
+  const body = await httpsGetJson(url);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch (err) {
+    throw new Error(
+      `commits API returned non-JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("commits API returned unexpected shape");
+  }
+  const sha = (parsed as { sha?: unknown }).sha;
+  if (typeof sha !== "string" || sha.length === 0) {
+    throw new Error("commits API response missing sha");
+  }
+  return sha;
+}
+
+/**
  * Resolve a channel flag to a fetchable URL + ref.
  *
  * Channel grammar:

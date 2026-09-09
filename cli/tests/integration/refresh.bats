@@ -101,3 +101,26 @@ stage_source_repo() {
   run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
   [ "$output" = "# soul v2" ]
 }
+
+# ---- TD-301 (2026-09-08): refresh BACKFILLS ref_commit_sha ------------------
+#
+# The upgrade answer for a 7.3.1 record: a main/branch record gains the field
+# on the next refresh; a release/tag record never gains it and never needs it.
+
+@test "TD-301 refresh: a --channel main refresh BACKFILLS ref_commit_sha onto a v1 record" {
+  STUB_SHA="b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f80"
+  # A pre-7.3.2 record: schema 1, main channel, NO ref_commit_sha.
+  printf '{\n  "schema_version": 1,\n  "channel": "main",\n  "ref": "main",\n  "fetched_at": "2026-01-01T00:00:00Z",\n  "content_sha256": "d1aa7cae3f92b6045e8c17da29bf60e34c5178ab90de2f4361a7c8b5e0d93f26",\n  "source": "github",\n  "source_path": null\n}\n' > "$IGRIS_BRAIN_DIR/.install-source.json"
+  TARBALL="$(stage_fixture_tarball)"
+  COMMITS_FILE="$BATS_TEST_TMPDIR/https-commits"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_HTTPS_COMMITS_COUNT_FILE="$COMMITS_FILE" \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STUB_SHA" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN refresh --channel main --no-propagate
+  echo "$output"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],d.get('ref_commit_sha'))"
+  [ "$output" = "2 main $STUB_SHA" ]
+  [ "$(cat "$COMMITS_FILE")" -ge 1 ]
+}

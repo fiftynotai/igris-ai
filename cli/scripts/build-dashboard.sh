@@ -3,7 +3,7 @@ set -e
 
 # Description: Build the FR-238 dashboard bundle (cli/dashboard -> cli/dist/dashboard).
 # Usage: build-dashboard.sh
-# Dependencies: node >= 20, the cli workspace devDependencies (vite, react, tailwind, gsap)
+# Dependencies: node (the BR-105 supported range, floor 22), the cli workspace devDependencies (vite, react, tailwind, gsap)
 # Exit codes:
 #   0 - Success
 #   1 - Error (vite missing, build failed, or no index.html produced)

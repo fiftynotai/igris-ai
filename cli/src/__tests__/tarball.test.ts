@@ -2027,6 +2027,89 @@ interface PackReport {
  *   153_600 − 33_275 = 120_325; 541 − 541 = 0; 6_833_319 − 6_823_773 =
  *   9_546 = the per-file sum (2_526 + 6_501 + 519); 33_275 − 30_373 = 2_902.
  *
+ * BUNDLE TD-301 / BR-105 MEASURED LAST (2026-09-08), after the bundle's
+ * final code-touching step — LANDED. MEASURED ON A SCRATCH BUILD THAT RAN
+ * `copy-templates.sh`, BOTH arms (the BR-101 / TD-444 / BR-103 / TD-456 /
+ * BR-104 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` — the control taken FRESH at develop `6faeff5`
+ * (= tag `v7.3.1`); the final arm from a `git write-tree` of the working
+ * tree through a TEMP index, `8a4c6b8c` (no commit). The three
+ * `node_modules` symlinked (root + both packages; `src/` and `core/` never
+ * symlinked), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, byte- and sha-identical. NOTE the control
+ * is 1_876_704, not the previous row's final 1_876_551: `6faeff5` is the
+ * release commit that FOLLOWED that tree (1_876_704 − 1_876_551 = 153 B of
+ * version bump + CHANGELOG). `cli/dist` (`index.js` `Sep  8 15:40:35`) and
+ * `brain-mcp-server/dist` (`Sep  8 15:05:51`) were never written;
+ * `~/.igris/config.json` sha unchanged (`07449dbf…`), the real
+ * `~/.claude.json` `mcpServers` subtree sha unchanged (`c338fa2e…`),
+ * `~/.igris/.install-source.json` sha unchanged (`2fa7b5fe…`). npm 10.9.8,
+ * node v22.23.2, darwin/arm64.
+ *   control             1_876_704    unpacked 6_833_899, 541 entries, shasum
+ *                                    `e4e8e9bafbcb4125ce96891eff1a22e5ce310e70`
+ *                                    — taken twice, byte-identical.
+ *   packed              1_879_550    unpacked 6_844_924, 541 entries (+0),
+ *                                    shasum
+ *                                    `b95c40b9b9112ef136593927e1a142e1ef75299a`,
+ *                                    taken twice, on the final tree.
+ *   bundle's own share  +2_846 B     packed. Unpacked +11_025 over 21
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. Per brief, from the per-file
+ *                                    diff (unpacked B) — TD-301: `channel.js`
+ *                                    +1_363 (map +777), `install-source.js`
+ *                                    +1_555 (map +818), `init.js` +396 (map
+ *                                    +221), `refresh.js` +396 (map +221),
+ *                                    `doctor.js` +84 (map +1), `http.js` +68
+ *                                    (map +1), `README.md` +182, and
+ *                                    `brain-core-stale.js` −629 (map −600)
+ *                                    because the commits fetcher MOVED to
+ *                                    channel.ts and the replaced docblock is
+ *                                    shorter than the one it replaced =
+ *                                    4_854; BR-105: `preflight.js` +2_350
+ *                                    (map +1_142), `package.json` +20,
+ *                                    `dist/brain-mcp-server/package.json`
+ *                                    +20, `…/package-lock.json` +20 = 3_552
+ *                                    (the three +20s are the `engines.node`
+ *                                    string growing by 20 chars). SHARED:
+ *                                    `CHANGELOG.md` +2_619 — the cli
+ *                                    CHANGELOG is CHARGED VERBATIM, and this
+ *                                    is EXACT, not an apportionment: the
+ *                                    inserted block is 2_624 B (`wc -c` of
+ *                                    the two sections: TD-301's `### Fixed`
+ *                                    1_051 + BR-105's `### Changed` 1_573)
+ *                                    less the 5-byte `---\n\n` separator it
+ *                                    replaced, and the 5 is charged to
+ *                                    BR-105's section, which now carries the
+ *                                    rule. So TD-301 = 5_905 and BR-105 =
+ *                                    5_120 unpacked. Entries +0 — confirming
+ *                                    `cli/src/__tests__/**` (the new
+ *                                    `engines-parity.test.ts`) and
+ *                                    `cli/tests/**` (the bats edits) are
+ *                                    outside `files`, as priced. The plan
+ *                                    priced the bundle at 1.1–2.2 KB packed;
+ *                                    the first reading came in at 3_952 B, the
+ *                                    shipped docblocks were trimmed against
+ *                                    the TD-423 rule (MAINTAINING.md and the
+ *                                    root CHANGELOG are FREE; `cli/src`
+ *                                    runtime comments and `cli/CHANGELOG.md`
+ *                                    are CHARGED) and re-measured at 2_846 —
+ *                                    still 646 B above the priced band, and
+ *                                    said so rather than re-pricing.
+ *   cumulative delta    +36_274 B    (35.4 KB, 23.6 % of the grant —
+ *                                    1_879_550 − 1_843_276)
+ *   headroom remaining  117_326 B    (114.6 KB — 153_600 − 36_274)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_879_550 − 1_876_704 = 2_846; 1_879_550 − 1_843_276 = 36_274;
+ *   153_600 − 36_274 = 117_326; 541 − 541 = 0; 6_844_924 − 6_833_899 =
+ *   11_025 = the per-file sum; 4_854 + 3_552 + 2_619 = 11_025;
+ *   2_624 − 5 = 2_619; 1_051 + (1_573 − 5) = 2_619; 4_854 + 1_051 = 5_905;
+ *   3_552 + 1_568 = 5_120; 5_905 + 5_120 = 11_025;
+ *   1_876_704 − 1_876_551 = 153; 36_274 − 33_275 = 2_999 (the cumulative
+ *   moved by the bundle's 2_846 PLUS the release commit's 153).
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

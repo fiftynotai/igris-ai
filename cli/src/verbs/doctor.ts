@@ -6,7 +6,8 @@
  *
  * Brain-level (synthetic slug "(brain)"):
  *   brain-core-missing      → ~/.igris/core/ absent or empty
- *   brain-core-stale        → ~/.igris/core/ content hash diverges from channel head
+ *   brain-core-stale        → a MUTABLE channel (main/branch) has moved past the
+ *                             recorded ref_commit_sha; release/tag are exempt (TD-301)
  *   bridge-missing          → CLI on PATH lacks configured bridge
  *   mcp-unregistered        → ~/.claude.json lacks the igris-brain MCP entry
  *                             (or it points at a missing file) — TD-168

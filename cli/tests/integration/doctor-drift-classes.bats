@@ -150,31 +150,83 @@ EOF
   [[ "$output" =~ "brain-core-missing" ]]
 }
 
-@test "drift class 6/8: brain-core-stale — install-source sha differs from channel head" {
-  # Re-stage core (stage_brain populated it; we keep it for stale-detection
-  # to even have a baseline). Then write an .install-source.json whose
-  # content_sha256 cannot match any real GitHub head.
+# ---- drift class 6/8: brain-core-stale (TD-301, rewritten 2026-09-08) ----
+#
+# The case this file shipped until 2026-09-08 ended with
+#   [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+# and the comment "what matters is the verb didn't crash". That accepts every
+# possible exit code of `igris doctor`, so it could not fail — which is why the
+# unconditional-drift defect (a 64-hex content_sha256 compared against a 40-hex
+# commit SHA) reached a published release with a green bats suite. Deleted with
+# this dated reason (test_standards convention 6) and replaced by three cases
+# that drive the REAL detector through the github stub seam and assert the ROW.
+#
+# The stub answers `/commits/<ref>` with IGRIS_TEST_GITHUB_STUB_COMMIT_SHA, so
+# each case has a deterministic head commit and no network.
+
+STALE_HEAD_SHA="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+STALE_OTHER_SHA="b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f80"
+STALE_CONTENT_SHA="d1aa7cae3f92b6045e8c17da29bf60e34c5178ab90de2f4361a7c8b5e0d93f26"
+
+# Write an .install-source.json into the staged brain. $1=channel $2=ref
+# $3=schema_version $4=ref_commit_sha ("" = field ABSENT).
+write_install_source_fixture() {
+  local channel="$1" ref="$2" ver="$3" refsha="$4"
+  local extra=""
+  if [ -n "$refsha" ]; then
+    extra="  \"ref_commit_sha\": \"$refsha\","
+  fi
   cat > "$IGRIS_BRAIN_DIR/.install-source.json" <<EOF
 {
-  "schema_version": 1,
-  "channel": "release",
-  "ref": "v0.0.0-fake",
+  "schema_version": $ver,
+  "channel": "$channel",
+  "ref": "$ref",
   "fetched_at": "2026-01-01T00:00:00Z",
-  "content_sha256": "deadbeef-old-sha-that-cannot-match-any-real-head",
+  "content_sha256": "$STALE_CONTENT_SHA",
+$extra
   "source": "github",
   "source_path": null
 }
 EOF
-  # Without network, the detector returns null on fetch failure (best-effort).
-  # That's the documented behavior — staleness is a positive assertion. We
-  # assert the fixture itself runs without crashing; staleness only surfaces
-  # in environments where the GitHub API call resolves to a different sha.
-  # Set IGRIS_GITHUB_OWNER to a definitely-nonexistent owner so the API
-  # returns 404; the detector swallows the error and returns null.
-  IGRIS_GITHUB_OWNER=this-owner-does-not-exist-fixture run $CLI_BIN doctor
-  # Either status code is fine (depends on what other drift exists);
-  # what matters is the verb didn't crash.
-  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+}
+
+@test "drift class 6a/8: brain-core-stale — a release (immutable ref) record is NEVER flagged" {
+  write_install_source_fixture release v7.3.1 2 ""
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  # Armed liveness: a 127 (CLI not found) would otherwise satisfy the negative
+  # assertion below for the wrong reason — it did, on the first run of this
+  # rewrite (a quoted "$CLI_BIN" under `run env`).
+  [ "$status" -eq 0 ]
+  # The clean-room defect, reproduced in-repo: at HEAD this row IS emitted.
+  # `|| return 1` because a bare non-final [[ ]] is not ERR-trapped by
+  # bats-core 1.12 (it is this file's convention).
+  [[ ! "$output" =~ "brain-core-stale" ]] || return 1
+}
+
+@test "drift class 6b/8: brain-core-stale — a main record whose ref_commit_sha differs IS flagged" {
+  write_install_source_fixture main main 2 "$STALE_OTHER_SHA"
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "brain-core-stale" ]] || return 1
+  [[ "$output" =~ "igris refresh" ]] || return 1
+  [[ "$output" =~ "main" ]] || return 1
+}
+
+@test "drift class 6c/8: brain-core-stale — a pre-7.3.2 record with NO ref_commit_sha is never flagged" {
+  # Hand-written schema_version 1 record: exactly what every 7.3.1 install has.
+  write_install_source_fixture main main 1 ""
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "brain-core-stale" ]] || return 1
 }
 
 @test "drift class 7/8: channel-mismatch — installed_features.json#cli_version newer than CLI" {

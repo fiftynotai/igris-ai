@@ -2,7 +2,7 @@
 
 # Description: Deploy the Igris Brain MCP Server on a VPS with HTTP transport
 # Usage: igris_brain_deploy.sh [--domain <domain>] [--port <port>]
-# Dependencies: node 20+, npm, pm2, nginx
+# Dependencies: node >=22.0.0 <23.0.0 || >=24.0.0 <27.0.0 (BR-105), npm, pm2, nginx
 # Exit codes:
 #   0 - Success
 #   1 - Error (missing dependency, build failure)
@@ -46,16 +46,20 @@ check_prerequisites() {
 
   local missing=0
 
-  # Node.js 20+
+  # Node.js — the BR-105 supported range (floor 22)
   if command -v node &> /dev/null; then
     local node_version
     local node_major
     node_version=$(node --version)
     node_major=$(echo "$node_version" | sed 's/v//' | cut -d. -f1)
-    if [ "$node_major" -ge 20 ]; then
+    # BR-105: the supported set is NOT a simple floor — 23 has no
+    # better-sqlite3 prebuild. Mirrors preflight.ts#SUPPORTED_NODE_RANGE
+    # (">=22.0.0 <23.0.0 || >=24.0.0 <27.0.0").
+    if [ "$node_major" -eq 22 ] ||
+       { [ "$node_major" -ge 24 ] && [ "$node_major" -lt 27 ]; }; then
       echo "  [ok] Node.js: $node_version"
     else
-      echo "  [FAIL] Node.js $node_version found but v20+ is required."
+      echo "  [FAIL] Node.js $node_version found; Igris requires node >=22.0.0 <23.0.0 || >=24.0.0 <27.0.0 (better-sqlite3 prebuilds)."
       missing=1
     fi
   else

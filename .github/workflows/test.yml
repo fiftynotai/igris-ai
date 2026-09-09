@@ -174,14 +174,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node.js
-        # Parity with npm-publish.yml (node 20). `cache: npm` with no explicit
+        # Parity with npm-publish.yml (node 22 — the MEASURED floor of
+        # SUPPORTED_NODE_RANGE, moved from 20 by BR-105 on 2026-09-08 because
+        # better-sqlite3 publishes no prebuild below 22). `cache: npm` with no explicit
         # cache-dependency-path keys off the REPO-ROOT lockfile only — the
         # nested brain-mcp-server/package-lock.json is not part of the key.
         # That is sufficient here: the root lockfile covers the workspaces,
         # which is what `npm ci` below installs.
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
 
       - name: Install sqlite3 CLI
@@ -334,14 +336,16 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up Node.js
-        # Node "20": parity with the cli-bats and npm-publish.yml pins and
-        # with engines `>=20 <27`. Own cache key: the cli-bats job's cache
+        # Node "22": parity with the cli-bats and npm-publish.yml pins and
+        # with engines `>=22.0.0 <23.0.0 || >=24.0.0 <27.0.0` (BR-105,
+        # 2026-09-08 — the pass set is NOT contiguous; 23 has no prebuild).
+        # Own cache key: the cli-bats job's cache
         # keys off the REPO-ROOT lockfile only (see its setup-node comment);
         # this job installs from the NESTED brain-mcp-server/package-lock.json,
         # so the cache is keyed off that file instead.
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: npm
           cache-dependency-path: brain-mcp-server/package-lock.json
 

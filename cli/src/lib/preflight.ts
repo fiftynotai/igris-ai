@@ -3,8 +3,8 @@
  *
  * What we verify:
  *
- *   1. Node version 20+. Older Node misses APIs (fs.cpSync, AbortController).
- *      `engines.node` in package.json is advisory; this is the fail-fast guard.
+ *   1. Node version inside SUPPORTED_NODE_RANGE (BR-105). The reason is the
+ *      better-sqlite3 prebuild matrix, NOT missing language APIs.
  *   2. Network reachability. HEAD `https://api.github.com/`. 5s timeout.
  *      Suppressed when `--from-source` or `--skip-remote` is set, or when the
  *      recorded install source is a local checkout (BR-103).
@@ -57,14 +57,68 @@ export type IgrisInstallShape =
   | { kind: "interrupted-swap"; baks: string[] };
 
 /**
- * Check Node major version. Throws if < 20.
+ * The supported Node range — the SINGLE source of truth (BR-105).
+ *
+ * MEASURED, not chosen: it is a property of `better-sqlite3`'s published
+ * prebuild matrix. Where there is no prebuild for a Node ABI, `npm install -g
+ * igris-ai` falls through to `node-gyp` and dies without a C++ toolchain.
+ * The pass set is NOT contiguous — 23 (EOL) has no prebuild — hence the `||`.
+ *
+ * Method, matrix and dates: MAINTAINING.md "the supported Node range" row and
+ * the BR-105 CHANGELOG entry. Re-measure with
+ * `~/.igris/projects/igris-ai/prebuild-probe.sh` before moving any bound.
+ * Every other copy of this string is pinned to it by
+ * `cli/src/__tests__/engines-parity.test.ts`.
  */
-export function checkNodeVersion(): void {
-  const v = process.versions.node;
+export const SUPPORTED_NODE_RANGE = ">=22.0.0 <23.0.0 || >=24.0.0 <27.0.0";
+
+/** The lowest supported major, DERIVED from the range — never a second literal. */
+export const NODE_FLOOR_MAJOR = Math.min(
+  ...SUPPORTED_NODE_RANGE.split("||").map((set) => {
+    const m = /(?:^|\s)>=\s*(\d+)\./.exec(set);
+    if (m === null) {
+      throw new Error(
+        `SUPPORTED_NODE_RANGE comparator set has no '>=' operand: ${set}`,
+      );
+    }
+    return parseInt(m[1], 10);
+  }),
+);
+
+/**
+ * Is `major` inside `SUPPORTED_NODE_RANGE`? Evaluates the one grammar we
+ * write: `||`-joined sets of `>=X.0.0` / `<Y.0.0`, compared at major
+ * granularity.
+ */
+export function nodeMajorSupported(major: number): boolean {
+  return SUPPORTED_NODE_RANGE.split("||").some((set) => {
+    let ok = true;
+    for (const cmp of set.trim().split(/\s+/)) {
+      const m = /^(>=|<)(\d+)\./.exec(cmp);
+      if (m === null) continue;
+      const n = parseInt(m[2], 10);
+      ok = ok && (m[1] === ">=" ? major >= n : major < n);
+    }
+    return ok;
+  });
+}
+
+/**
+ * Fail-fast Node guard. `engines.node` only WARNS (npm's `engine-strict`
+ * defaults to false); this refuses, at exactly the boundary the manifests
+ * advertise — that parity is BR-105's point. Refusing at INSTALL time is
+ * TD-377's question: a hook of ours cannot fire, because npm dies inside
+ * `better-sqlite3`'s own build first. `versionString` is a test seam.
+ */
+export function checkNodeVersion(versionString?: string): void {
+  const v = versionString ?? process.versions.node;
   const major = parseInt(v.split(".")[0], 10);
-  if (isNaN(major) || major < 20) {
+  if (isNaN(major) || !nodeMajorSupported(major)) {
     throw new PreflightError(
-      `Node ${v} is too old; Igris requires Node 20 or newer. Install a newer Node (e.g. via nvm) and re-run.`,
+      `Node ${v} is not a supported version; Igris requires Node ${SUPPORTED_NODE_RANGE}. ` +
+        `better-sqlite3 publishes no prebuild for this Node ABI, so installing needs a ` +
+        `C++ toolchain (python3, make, a C++ compiler). Install a supported Node ` +
+        `(e.g. via nvm: 'nvm install ${NODE_FLOOR_MAJOR}') and re-run.`,
     );
   }
 }

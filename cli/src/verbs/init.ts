@@ -115,6 +115,7 @@ import {
 import {
   readInstallSource,
   writeInstallSource,
+  recordRefCommitSha,
 } from "../lib/install-source.js";
 import {
   cliTargetEntry,
@@ -772,12 +773,21 @@ export async function runInit(opts: InitOptions): Promise<number> {
   if (dry !== null) {
     dry.wouldWriteFile(installSourcePath(), "record install source");
   } else {
+    // TD-301: best-effort, mutable channels only; no call for release/tag or
+    // a non-github source, every error swallowed. The --dry-run arm above is
+    // deliberately untouched.
+    const refCommitSha = await recordRefCommitSha(
+      channelKind,
+      channelRef,
+      sourceKind,
+    );
     writeInstallSource({
-      schema_version: 1,
+      schema_version: 2,
       channel: channelKind,
       ref: channelRef,
       fetched_at: installDate,
       content_sha256: contentSha256!,
+      ...(refCommitSha !== undefined ? { ref_commit_sha: refCommitSha } : {}),
       source: sourceKind,
       source_path: sourcePath,
     });

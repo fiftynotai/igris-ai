@@ -73,6 +73,7 @@ import type { Channel } from "../types.js";
 import {
   readInstallSource,
   writeInstallSource,
+  recordRefCommitSha,
 } from "../lib/install-source.js";
 import { runUpdate } from "./update.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
@@ -325,12 +326,21 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
   if (dry !== null) {
     dry.wouldWriteFile(installSourcePath(), "update install source record");
   } else {
+    // TD-301: best-effort, mutable channels only; no call for release/tag or
+    // a non-github source, every error swallowed. The --dry-run arm above is
+    // deliberately untouched.
+    const refCommitSha = await recordRefCommitSha(
+      channelKind,
+      channelRef,
+      sourceKind,
+    );
     writeInstallSource({
-      schema_version: 1,
+      schema_version: 2,
       channel: channelKind,
       ref: channelRef,
       fetched_at: fetchedAt,
       content_sha256: contentSha256!,
+      ...(refCommitSha !== undefined ? { ref_commit_sha: refCommitSha } : {}),
       source: sourceKind,
       source_path: sourcePath,
     });

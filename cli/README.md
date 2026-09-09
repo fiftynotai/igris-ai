@@ -159,7 +159,7 @@ drift class:
 | `duplicate-path` | Multiple slugs share the same realpath |
 | `symlink-target` | Registered path is itself a symlink |
 | `brain-core-missing` | `~/.igris/core/` absent or empty (M5) |
-| `brain-core-stale` | `~/.igris/core/` content hash diverges from configured channel head (M5) |
+| `brain-core-stale` | The recorded channel-head commit for a MUTABLE ref (`main`/`branch`) differs from that ref's current head; immutable `release`/`tag` installs are never flagged, and a record without `ref_commit_sha` (every pre-7.3.2 install) is never flagged (M5, TD-301) |
 | `channel-mismatch` | Per-project `cli_version` ahead of current CLI (M5) |
 | `bridge-missing` | CLI on PATH lacks configured bridge (M5) |
 | `mcp-unregistered` | `~/.claude.json` lacks the igris-brain MCP entry (TD-168) |

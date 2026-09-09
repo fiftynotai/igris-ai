@@ -13,7 +13,7 @@ Before you begin, ensure you have:
 - **Python 3** - For JSON manipulation and utilities (usually pre-installed on Mac/Linux)
 - **Bash** - Shell environment (Mac/Linux/WSL on Windows)
 - **sqlite3** - For brain database operations (usually pre-installed)
-- **Node.js 20+** - (Optional) Required only if using the MCP brain server
+- **Node.js `>=22.0.0 <23.0.0 || >=24.0.0 <27.0.0`** - REQUIRED (not optional: the `igris` CLI itself is a Node program). `better-sqlite3` publishes no prebuild outside this range, so another Node cannot install the package without a C++ toolchain. Measured 2026-09-08 in stock `node:<major>-bookworm-slim` containers on arm64 and x64; note the pass set is not contiguous — Node 23 has no prebuild.
 
 ---
 

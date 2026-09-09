@@ -10,7 +10,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`brain-core-stale` no longer fires on every GitHub-channel install
+  (TD-301).** The detector compared `.install-source.json`'s `content_sha256`
+  (64-hex sha256 of the tarball) against a 40-hex git commit SHA — two
+  different hash types, so it was unconditionally true, and the `igris refresh`
+  it recommended could not clear the row (clean-room container, 2026-09-08).
+
+  Both sides are commit SHAs now. `release`/`tag` installs are exempt (the ref
+  is immutable; a force-pushed tag is knowingly not detected, and the default
+  path gains no network call). `main`/`branch` installs record an optional
+  `ref_commit_sha` (schema v2) compared against the ref's head; a record
+  without it — every pre-7.3.2 record — is never flagged, and `igris refresh`
+  backfills it. The write is best-effort: no call on the exempt paths, every
+  error swallowed, `--dry-run` untouched.
+
+  **Take it with `npm i -g igris-ai@7.3.2`** — the fix is in the published
+  `dist`, so no `igris refresh` and no `igris init --upgrade` are needed.
+
+### Changed
+
+- **Supported Node is now `>=22.0.0 <23.0.0 || >=24.0.0 <27.0.0` (BR-105) —
+  measured, not assumed.** It was `>=20.0.0 <27.0.0` in the manifest and a
+  hard-coded `major < 20` in the runtime guard, so the CLI refused at a
+  different boundary than it advertised.
+
+  **This does not make Node 20 work; it stops advertising it.** The floor is a
+  property of `better-sqlite3`'s prebuild matrix: with no prebuild for an ABI,
+  `npm install -g igris-ai` falls through to `node-gyp` and dies without a C++
+  toolchain. Measured 2026-09-08, one `npm install -g` per major in a stock
+  `node:<major>-bookworm-slim` container — arm64: 20 FAIL, 21 FAIL, 22 PASS,
+  23 FAIL, 24 PASS, 25 PASS, 26 PASS; x64: 20 FAIL, 22 PASS, 23 FAIL, 26 PASS;
+  no `node:27` image exists and the range excludes 27. The pass set is not
+  contiguous — 23 (EOL) has no prebuild — hence the two-set `||`.
+
+  A Node-20 user now sees an `EBADENGINE` line naming the range first; the
+  install still fails. `igris init` (the guard's only caller) refuses on
+  20/21/23 and 27+; `doctor`, `install`, `update`, `sync` and `refresh` are
+  unaffected. With `engine-strict=true` in `.npmrc` the install hard-fails
+  where 7.3.1 warned. No install-time refusal was added — TD-377 owns that,
+  and npm dies inside `better-sqlite3`'s build before any hook of ours runs.
+
+  One test (`engines-parity.test.ts`) pins the three `engines.node` fields, the
+  four lockfile entries, the guard's derived floor, the three CI
+  `node-version` pins and the SETUP_GUIDE sentence to the one string.
+
 ---
+
 
 ## [7.3.1] - 2026-09-08
 

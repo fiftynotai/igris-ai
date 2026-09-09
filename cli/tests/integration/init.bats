@@ -318,3 +318,65 @@ PY
   grep -q 'carried over: docs/component-manifest.md' <<<"$UPGRADE_OUT"
   grep -q 'regenerated: harness-manifest.json' <<<"$UPGRADE_OUT"
 }
+
+# ---- TD-301 (2026-09-08): ref_commit_sha is recorded for MUTABLE channels ---
+#
+# The record is what the brain-core-stale detector reads. These three cases pin
+# the writer contract per channel class, driven through the github stub seam
+# (IGRIS_TEST_GITHUB_STUB_COMMIT_SHA) with no network.
+
+TD301_STUB_SHA="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+@test "TD-301 init: a --channel main install RECORDS ref_commit_sha (schema v2)" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  COMMITS_FILE="$BATS_TEST_TMPDIR/https-commits"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TEST_HTTPS_COMMITS_COUNT_FILE="$COMMITS_FILE" \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$TD301_STUB_SHA" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init --channel main
+  echo "$output"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],d.get('ref_commit_sha'))"
+  [ "$output" = "2 main $TD301_STUB_SHA" ]
+  # armed: the commits API was actually consulted
+  [ "$(cat "$COMMITS_FILE")" -ge 1 ]
+}
+
+@test "TD-301 init: a release install records NO ref_commit_sha and makes ZERO commits-API calls" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  COMMITS_FILE="$BATS_TEST_TMPDIR/https-commits"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TEST_HTTPS_COMMITS_COUNT_FILE="$COMMITS_FILE" \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$TD301_STUB_SHA" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init
+  echo "$output"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],'ref_commit_sha' in d)"
+  [ "$output" = "2 release False" ]
+  # armed: the run DID reach the network seam (releases-latest), so the zero
+  # below is scoped to /commits/ and is not "nothing happened".
+  [ "$(cat "$COUNT_FILE")" -ge 1 ]
+  [ "$(cat "$COMMITS_FILE")" = "0" ]
+}
+
+@test "TD-301 init: a --channel main install under BLOCK mode still succeeds, WITHOUT the field (best-effort)" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=block \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init --channel main --skip-remote
+  echo "$output"
+  # An install must never fail because a diagnostic field could not be fetched.
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],'ref_commit_sha' in d)"
+  [ "$output" = "2 main False" ]
+  # armed: the fetch was ATTEMPTED and errored (block mode counts every call).
+  [ "$(cat "$COUNT_FILE")" -ge 1 ]
+}
