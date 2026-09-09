@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import {
   applyMergeLearnings,
   applyPruneLearning,
@@ -199,6 +200,53 @@ describe('FR-116 M3 UNDO — exact pre-state restore per destructive kind', () =
     expect(loser.review_status).toBe('approved');
     expect(loser.deleted_at).toBeNull();
     expect(loser.superseded_by).toBeNull();
+    expect((db.prepare(`SELECT COUNT(*) AS n FROM entity_edges WHERE edge_type='supersedes'`).get() as { n: number }).n).toBe(0);
+  });
+
+  it('resolve_contradiction (evolved_merge with carried specifics): undo restores the EXACT prior winner content and un-supersedes the loser', () => {
+    // TD-439: the guarded merge appends a `Preserved specifics` section to the
+    // synthesis; `prior_content` is captured BEFORE that enriched write, so the
+    // undo path needs no change to reverse it byte-exactly.
+    const priorWinner = 'Prefer the circuit-breaker; see BR-002 and `scripts/breaker.py`.';
+    db.prepare(
+      `INSERT INTO learnings (id, title, content, seen_again_count) VALUES
+         (1,'Loser','use retry backoff — run \`retry --max 5\` (TD-001)', 4),
+         (2,'Winner', ?, 2)`,
+    ).run(priorWinner);
+    db.prepare(`UPDATE learnings SET embedding = X'00', embedding_model = 'm' WHERE id=2`).run();
+    const r = applyResolveContradiction(db, {
+      resolution: 'evolved_merge',
+      winner_id: 2,
+      loser_id: 1,
+      synthesized_content: 'Circuit-breaker over retry backoff.',
+      synthesized_from_hash: createHash('sha256').update(priorWinner, 'utf8').digest('hex'),
+    });
+    expect(r.ok).toBe(true);
+    expect(r.data?.specifics_carried).toBe(2); // one line from each input
+    const merged = (db.prepare(`SELECT content FROM learnings WHERE id=2`).get() as { content: string }).content;
+    expect(merged.startsWith('Circuit-breaker over retry backoff.')).toBe(true);
+    expect(merged).toContain('BR-002');
+    expect(merged).toContain('TD-001');
+    expect((db.prepare(`SELECT review_status FROM learnings WHERE id=1`).get() as { review_status: string }).review_status).toBe('superseded');
+
+    const entries = db.prepare(`SELECT id FROM brain_maintenance_undo ORDER BY id`).all() as Array<{ id: number }>;
+    expect(entries).toHaveLength(2);
+    for (const e of entries) expect(performUndo(db, { entry_id: e.id }).reversed).toBe(1);
+
+    const winner = db.prepare(`SELECT content, seen_again_count, embedding FROM learnings WHERE id=2`).get() as {
+      content: string;
+      seen_again_count: number;
+      embedding: Buffer | null;
+    };
+    expect(winner.content).toBe(priorWinner);
+    expect(winner.seen_again_count).toBe(2);
+    expect(winner.embedding).toBeNull();
+    const loser = db.prepare(`SELECT review_status, deleted_at, superseded_by FROM learnings WHERE id=1`).get() as {
+      review_status: string;
+      deleted_at: string | null;
+      superseded_by: number | null;
+    };
+    expect(loser).toEqual({ review_status: 'approved', deleted_at: null, superseded_by: null });
     expect((db.prepare(`SELECT COUNT(*) AS n FROM entity_edges WHERE edge_type='supersedes'`).get() as { n: number }).n).toBe(0);
   });
 

@@ -38,6 +38,7 @@ Display comprehensive status of the Igris AI system.
 - `P0` or `P1`: Filter by priority
 - `bugs` or `features`: Filter by type
 - `--suggestions`: Append a "Subconscious Suggestions" section (FR-106) below the regular report
+- `--yield`: Append a "Cognition Yield" table (TD-423) under the Cognition Roster — per-instance produced/judged/kept with every denominator named
 
 ## Execution
 
@@ -203,7 +204,7 @@ X agents registered (Y skills available)
 2. [Secondary recommendation]
 ```
 
-### 6.5. Subconscious Suggestions (FR-106)
+### 6.5. Cognition Roster + Subconscious Suggestions (FR-106 / TD-327)
 
 > **TD-102 / FR-118 / FR-191 (V7.1):** This entire section is gated behind the
 > `cognition.subconscious.enabled` config flag (default `false`). FR-118 SHIPPED the
@@ -212,12 +213,19 @@ X agents registered (Y skills available)
 > (`stalled`/`gap`/`conflict`/`pattern` detectors) was deleted. The section
 > stays silent until `cognition.subconscious.enabled` is flipped to `true`.
 
-This section is rendered ONLY when ALL of the following are true:
-1. `cognition.subconscious.enabled` is `true` in `~/.igris/config.json` (key absent = `false`).
+The SUGGESTIONS TABLE below is rendered ONLY when ALL of the following are true:
+1. The `subconscious` entry of the `igris cognition health` digest (see the
+   Cognition Roster sub-section below) has `enabled: true`. That field is the
+   resolution of the instance's OWN declared `gate_keys` — read it from the
+   digest rather than re-reading `~/.igris/config.json`, so a gate that moves
+   brain-side sweeps itself. An absent entry or a `degraded` digest = `false`.
 2. `$ARGUMENTS` contains the literal token `--suggestions`.
 
-If either gate fails, skip this section silently — render nothing, do not
-call any suggestion MCP tools.
+If either gate fails, skip the suggestions table silently — render nothing, do
+not call any suggestion MCP tools. **The Cognition Roster sub-section below is
+NOT gated by either condition**: it renders whenever `/scan` runs, because the
+whole point of TD-327 is that a disabled or silent instance is exactly the thing
+an operator needs to see.
 
 If both gates pass and the `igris-brain` MCP is available:
 
@@ -225,43 +233,51 @@ If both gates pass and the `igris-brain` MCP is available:
    - `status` = `'pending'`
    - `project_slug` = current project slug
    - `limit` = `1000` (handler caps at this value; >1000 pending is a degenerate state)
-2. Group the returned suggestions by `source_module`. Post-FR-118 the
-   `source_module` is OPEN — the LLM names the kind (`type_inferred=1`), so the
-   group set is dynamic, not the fixed `stalled`/`gap`/`conflict`/`pattern`
-   rule modules (those still label any surviving pre-FR-118 rows). Sort the
-   groups by their highest-priority member, then alphabetically by kind. Within
-   each group, the handler already returns rows ordered by `priority`
-   (high > medium > low) then `created_at` DESC, so client-side iteration
-   preserves that order.
+2. Group the returned suggestions by **`source_instance`** — the PRODUCER that
+   wrote the row (`subconscious`, `synapse`, `janitor`, `arbiter`, `curator`,
+   `cartographer`). Do NOT group by `source_module`: it is OPEN post-FR-118 (the
+   LLM names the kind, `type_inferred=1`) and one producer has used 195 distinct
+   values (TD-437's audit, 2026-09-01), so grouping by it renders 195 sections
+   where there are six producer values written by eight sites. Rows written
+   before the producer column existed carry no `source_instance`; group those
+   under `Unattributed`. Sort the groups by their highest-priority member, then
+   alphabetically. Within each group the handler already returns rows ordered
+   by `priority` (high > medium > low) then `created_at` DESC, so client-side
+   iteration preserves that order.
 3. Render each non-empty group as its own subsection (heading = the
-   `source_module` string, title-cased). Empty groups are omitted entirely. If
-   the global `total` is `0`, render the single line `No pending suggestions.`
-   and skip every subsection.
+   `source_instance` string, title-cased). Render `source_module` as a
+   per-row sub-label in the `Kind` column, not as a heading. Empty groups are
+   omitted entirely. If the global `total` is `0`, render the single line
+   `No pending suggestions.` and skip every subsection.
+4. When a row's `seen_count` is greater than 1, append `(seen Nx)` to its title.
+   A finding the brain has re-derived on many runs is a PRIORITY signal, not N
+   rows — that is the whole of TD-440 — so the count is the thing worth showing.
 
 #### Render template
 
 ```
-## Subconscious Suggestions ({total} pending)
+## Suggestions ({total} pending)
 
-### Stalled (N)
-| ID | Priority | Title | Project |
-|----|----------|-------|---------|
-| 12 | high     | TD-005 stalled in In Progress for 35 days | igris-ai |
+### Subconscious (N)
+| ID | Priority | Kind | Title | Project |
+|----|----------|------|-------|---------|
+| 12 | high     | stalled_brief | TD-005 stalled in In Progress for 35 days (seen 6x) | igris-ai |
+| 19 | medium   | abandoned_project | Project "old-app" has been quiet for 95 days | old-app |
 
-### Gap (N)
-| ID | Priority | Title | Project |
-|----|----------|-------|---------|
-| 19 | medium   | Project "old-app" has been quiet for 95 days | old-app |
+### Synapse (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 47 | low      | edge_inference | Edge: learning #112 derived_from #389 |
 
-### Conflict (N)
-| ID | Priority | Title |
-|----|----------|-------|
-| 47 | medium   | Possible contradiction: Learning #112 vs #389 |
+### Janitor (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 51 | low      | near_dupe | Two near-duplicate learnings in igris-ai |
 
-### Pattern (N)
-| ID | Priority | Title |
-|----|----------|-------|
-| 51 | medium   | Pattern: brief activity skews toward Monday in igris-ai (60% of last 50) |
+### Unattributed (N)
+| ID | Priority | Kind | Title |
+|----|----------|------|-------|
+| 3  | medium   | pattern | Pattern: brief activity skews toward Monday in igris-ai |
 ```
 
 If `total` exceeds 1000 (the handler ceiling), append the trailing line:
@@ -273,67 +289,186 @@ End the section with the action hint:
 If `igris-brain` MCP is unavailable, render this single line instead:
 `Subconscious suggestions unavailable (brain MCP offline).`
 
-#### Subconscious health line (FR-118)
+#### Cognition roster — every instance, DERIVED (TD-327)
 
-Independent of the gated suggestions table above, surface a single health line
-for the LLM subconscious engine — when it last fired, the outcome, how many
-suggestions it produced today, and the remaining daily budget. This is the
-subconscious analogue of §6.6's Perception health line and is ALSO gated behind
-`cognition.subconscious.enabled` (skip silently when the flag is absent/`false` —
-the engine does not run, so there is nothing to report).
+`/scan` is the deliberate-inspection surface, so unlike `/boot` (which prints
+only exceptions) this renders the FULL roster: one row per registered cognition
+instance, always. That is the brief's "instance health should not require SQL"
+target.
 
-Query the NEW `cognition.subconscious.*` lifecycle namespace (the engine writes
-these to `event_log` directly under `component = 'cognition.subconscious'` — the
-legacy `subconscious.*` bus events are gone). Prefer the local-DB `sqlite3` read
-(same TD-080 rationale as §6.6 — the local DB is the merged superset):
+Run the deterministic verb. Do NOT read `config.json` and do NOT run SQL here —
+the digest already resolves each instance's declared gate keys, reads the local
+`event_log` / `schedules` / `schedule_runs`, and scopes every reading to THIS
+machine (the TD-080 rationale: `igris_event_log` routes to the REMOTE brain and
+would miss local-only runs).
 
 ```bash
-# Latest run of the day for the lifecycle line + today's run/persist tallies.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT event_name, payload, created_at FROM event_log
-   WHERE component = 'cognition.subconscious'
-   ORDER BY created_at DESC LIMIT 1;"
-
-# suggested_today = sum of payload.persisted across today's run_succeeded rows.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT COALESCE(SUM(json_extract(payload,'\$.persisted')),0)
-   FROM event_log
-   WHERE component = 'cognition.subconscious'
-     AND event_name = 'cognition.subconscious.run_succeeded'
-     AND date(created_at) = date('now');"
+igris cognition health --json 2>/dev/null || true
 ```
 
-Fallback (only when `sqlite3` is absent): call `igris_event_log` with
-`component = 'cognition.subconscious'`, `limit = 1` (it inherits the §6.6
-remote-only blind spot — acceptable degradation).
+This replaced a hand-listed pair of embedded `sqlite3` blocks that covered two
+of seven instances by name. The roster is now DERIVED from the brain's projected
+extractor registry, so an instance added tomorrow renders here with no edit to
+this skill — which is exactly the failure the previous version could not catch.
 
-Render one line under a `### Subconscious Engine` heading. Map the latest event
-suffix to an uppercase status (`run_succeeded`→`SUCCEEDED`,
-`run_failed`→`FAILED`, `run_skipped`→`SKIPPED`, `run_started`→`RUNNING`).
-`budget_remaining` = the run's `payload.budget − payload.used_today` when the
-latest event is a `run_skipped` with `reason='budget'`; otherwise derive it from
-the resolved `cognition.subconscious.llm_daily_budget` minus the count of
-today's `run_started` rows.
+Render every entry of `instances[]`, in the order the digest returns them, under
+a `### Cognition Roster` heading:
 
 ```
-### Subconscious Engine
-Last run: 2026-06-24 06:00 — SUCCEEDED · suggested_today=3 · budget_remaining=2
+### Cognition Roster
+| Instance | Status | Last run (this host) | Gate | Output rows |
+|---|---|---|---|---|
+| perception | OK | 2026-08-06 20:40 | cognition.perception.enabled | 50 |
+| synapse | OK | 2026-08-06 23:01 | cognition.synapse.enabled | 411 |
+| janitor | WEDGED | — | cognition.janitor.enabled | 0 |
+| arbiter | BLOCKED_UPSTREAM | — | cognition.janitor.enabled | 1 |
+| cartographer | DISABLED | — | cognition.janitor.cluster.enabled | 17 |
 ```
 
-When no `cognition.subconscious.*` rows exist (never run, or gate off):
+Column rules:
+- **Status** — `status` uppercased.
+- **Last run (this host)** — `last_run_at` formatted `YYYY-MM-DD HH:MM`, or `—`
+  when null. When `last_run_at` is null but `last_run_any_host` is not, render
+  `— (other host)`: `event_log` syncs, so a run that succeeded elsewhere must
+  never be read as this machine being healthy.
+- **Gate** — `disabled_by` when the instance is disabled (it names WHICH of the
+  declared `gate_keys` is off, and the two gates on a double-gated instance have
+  different remedies); otherwise `gate_keys` joined with ` AND `. Do NOT restate
+  the "an absent key means off" convention when explaining a gate: it is false
+  for perception, whose `gate_default` is `true`. The digest already resolved
+  the key against the instance's declared default — report `enabled`, not your
+  own reading of `config.json`.
+- **Output rows** — `output_rows`, or `—` when null (the declared output
+  expression is not a countable predicate). Hover-equivalent detail lives in the
+  entry's `output` string.
+
+Below the table, render each non-`ok` entry's `reason` as its own bullet, then
+each entry of `warnings[]` as a bullet. Render nothing extra when both are
+empty.
+
+Read the statuses as declared:
+- `no_signal` means "silent for at least `event_log_retention_days` days"
+  (the brain purges `event_log` on every engine init), **NOT** "never ran".
+  Say so when rendering the reason; do not paraphrase it as "never ran".
+- `blocked_upstream` names the DRIVER to fix. The blocked instance has no switch
+  or schedule of its own — investigating it is investigating the wrong thing.
+- `wedged` means the schedule cannot fire because an earlier run never reached a
+  terminal status. Report the open run's age; do not clear it from `/scan`.
+
+If the verb is unavailable or the digest is `degraded`, render the single line
+`Cognition roster unavailable (<degraded_reason>).` and move on. Do NOT block
+`/scan`.
+
+**When `$ARGUMENTS` does NOT contain `--yield`**, render exactly ONE line under
+the roster table and nothing else:
+
 ```
-### Subconscious Engine
-No subconscious runs yet.
+Per-instance yield: igris cognition yield --json
 ```
 
-If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
-Do NOT block /scan.
+That is the whole unconditional cost of the yield surface. The table below is
+opt-in for the same reason the suggestions table is: `/scan` runs every session
+and a table nobody asked for is a token tax on all of them.
+
+#### Cognition yield (opt-in, TD-423)
+
+Rendered ONLY when `$ARGUMENTS` contains the literal token `--yield`. The
+liveness roster above answers *"is this instance running?"*; this answers
+*"is what it produces worth anything?"*.
+
+Run the deterministic verb. Do NOT run SQL here and do NOT compute a rate
+yourself — every rate the digest returns already carries its own numerator,
+denominator and denominator LABEL, and re-deriving one loses exactly the part
+that makes it honest.
+
+```bash
+igris cognition yield --json 2>/dev/null || true
+```
+
+Render every entry of `instances[]`, in the order the digest returns them, under
+a `### Cognition Yield` heading. The list includes derived `(unclaimed:<table>)`
+buckets — rows no registered instance claims — and those are rendered like any
+other row, because an orphaned population is exactly what an operator needs to
+see:
+
+```
+### Cognition Yield
+| Instance | Produced | Judged | Kept | Keep rate (judged only) | Pending share | Expired |
+|---|---|---|---|---|---|---|
+| perception | 569 (surviving) | 224 | 223 | 99.6% (of 224 judged) | unmeasured (0 pending) | 345 |
+| subconscious | 360 | 360 | 186 | 51.7% (of 360 judged) | unmeasured (0 pending) | 0 |
+| synapse | 450 | 450 | 133 | 29.6% (of 450 judged) | unmeasured (0 pending) | 0 |
+| janitor | 0 | 0 | 0 | unmeasured (no verdicts) | unmeasured (0 pending) | 0 |
+| (unclaimed:suggestions) | 844 | 844 | 2 | 0.2% (of 844 judged) | unmeasured (0 pending) | 0 |
+```
+
+Column rules — **every one of them is about not overstating a number**:
+
+- **Every count column obeys the same rule, and it cuts BOTH ways.** Render the
+  number, or `—` when the field is `null`. `null` means the reading could not be
+  made; it does NOT mean zero and must never render as `0`. The converse binds
+  just as hard: a MEASURED `0` renders as `0`, never as `—`, or the table claims
+  a reading was unavailable when it was taken and came back empty. The janitor
+  row above is that case — it produced nothing, so every count on it is a
+  measured zero.
+- **Produced** — `produced_rows`. Append ` (surviving)` when
+  `produced_is_surviving_count` is true: that channel hard-deletes on a reject
+  path, so the count is what SURVIVES, not what the instance ever wrote.
+- **Judged** — `judged`. This is `kept + rejected_judged` and it deliberately
+  EXCLUDES expired and lapsed rows: nobody looked at those.
+- **Kept** — `kept`.
+- **Keep rate (judged only)** — `keep_rate_of_judged`. When `value` is `null`
+  render `unmeasured (no verdicts)` — **never `0%`**. When it is a number, render
+  the percentage AND the denominator: `79.3% (of 29 judged)`. A percentage
+  without its denominator is the defect this whole surface exists to fix.
+- **Pending share** — `pending_share_of_queue`, same rule: `null` renders
+  `unmeasured (0 pending)`, a number renders `28.4% (of 1554 pending)`.
+- **Expired** — `expired_not_judged` + `pending_expired`. Rows that LAPSED
+  instead of being judged. Never describe these as rejections.
+
+Below the table:
+
+- Render each entry's `unmeasured_reason` as a bullet when `measured` is false.
+  An unmeasured instance is a finding about the REVIEW RECORD, not a bad score.
+- Render every entry of `warnings[]` as a bullet, verbatim. Those carry the
+  standing bounds — what `kept` means on each channel, the 30-day `event_log`
+  window, and any auto-apply switch that makes a produced count under-report.
+- Render `channels[]` as one line each:
+  `<table>: <total_rows> rows — <claimed_rows> claimed, <unclaimed_rows> unclaimed`.
+  If `reconciled` is false, say so loudly: the shares above were computed over a
+  population that is not the table.
+
+Read the numbers as declared:
+
+- **`unmeasured` is not zero.** An instance with no verdicts has not been scored
+  badly; it has not been scored. Do not rank it, do not average it in, and do
+  not describe it as underperforming.
+- **A keep rate is a JUDGED-SUBSET rate.** It says nothing about the rows nobody
+  reviewed, and on a large pending queue that is most of them.
+- **An expired row is not a rejection.** Bulk expiry and human judgment write
+  different things; the digest separates them and so must the rendering.
+- **The judgment-event counts are a LOWER BOUND**, bounded by the 30-day
+  `event_log` purge. Never reconcile them against the row-state counts — report
+  the divergence if the digest does.
+
+If the verb is unavailable or the digest is `degraded`, render the single line
+`Cognition yield unavailable (<degraded_reason>).` and move on.
 
 ### 6.6. Perception Engine (TD-074, TD-080)
 
 Surface the latest detached perception extraction run so operators can see
 when the LLM extractor last fired, succeeded, failed, or got skipped by the
 60s min-window guard. Token budget: ~150 tokens.
+
+> **TD-327 — why this section KEEPS its own query.** §6.5's Cognition Roster
+> covers perception like every other instance, but it answers a different
+> question: it is WHOLE-BRAIN and host-scoped, and it carries no inbox signal.
+> This section is PROJECT-scoped (`project_slug = '$PROJECT_SLUG'`) and reports
+> inbox size and staleness. Folding it into the roster would drop both, so it
+> stays. What it must NOT do is contradict the roster: both read the same
+> `component = 'perception'` LITERAL (the legacy namespace — perception does
+> NOT write under `cognition.perception`, and deriving that name is the L-857
+> trap). If the two ever disagree, the roster's host scoping is the difference.
 
 #### Query
 
@@ -495,54 +630,85 @@ When the command returns markdown output, render it under:
 If the primitive is unavailable or errors, omit the section entirely. Do not
 block `/scan`, do not author docs automatically, and do not print a stack trace.
 
-### 6.9. Janitor Engine (FR-119)
+### 6.9. Janitor Engine (FR-119, folded into §6.5 by TD-327)
 
-Surface a single health line for the LLM memory-hygiene engine — when it last
-fired, the outcome, and the counters from its latest maintenance run. This is
-the janitor analogue of §6.5's Subconscious health line and is ALSO gated behind
-`cognition.janitor.enabled` (skip silently when the flag is absent/`false` — the
-engine does not run, so there is nothing to report). Merge PROPOSALS themselves
-render via `igris_suggestion_list` `source_module='janitor'`; this line is the
-engine-health summary only.
+The janitor's lifecycle status, its gate, and its output count are rendered by
+the §6.5 Cognition Roster like every other instance — the janitor is one of
+seven, and a section that named it by hand was half of the hand-list TD-327
+removed. Do NOT re-add a janitor-specific `sqlite3` query here.
 
-Query the `cognition.janitor.*` lifecycle namespace (the engine writes these to
-`event_log` directly under `component = 'cognition.janitor'`) plus the latest
-`brain_maintenance_runs` audit row for the counters. Prefer the local-DB
-`sqlite3` read (same TD-080 rationale as §6.5/§6.6 — the local DB is the merged
-superset):
+**State the residual plainly:** the per-run `brain_maintenance_runs` counters
+(`merges_proposed` / `merges_applied` / `confidence_bumps` / `stale_rejected`)
+are no longer rendered by `/scan`. They are engine-internal run detail rather
+than health, they exist only for the janitor family (so no derived surface can
+carry them without special-casing one instance), and they are reachable on
+demand:
+
+- `igris_brain_maintenance_history` — the audit rows with every counter.
+- `igris_suggestion_list` with `source_module='janitor'` / `'arbiter'` /
+  `'curator'` / `'cartographer'` — the PROPOSALS themselves, which is what an
+  operator acts on.
+
+If an operator asks "what did the last maintenance run actually do", call
+`igris_brain_maintenance_history`. Do not block `/scan` on it.
+
+### 6.10. OS KPI line (FR-268)
+
+ONE line, for the current project, from the OS's own records — never a second
+line and never a table here (`/ops` renders the full digest cross-project).
+
+Run:
 
 ```bash
-# Latest janitor run lifecycle event.
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT event_name, created_at FROM event_log
-   WHERE component = 'cognition.janitor'
-   ORDER BY created_at DESC LIMIT 1;"
-
-# Latest maintenance run counters (proposed / applied / bumps / stale rejected).
-sqlite3 "$HOME/.igris/memory/knowledge.db" \
-  "SELECT status, merges_proposed, merges_applied, confidence_bumps, stale_rejected, finished_at
-   FROM brain_maintenance_runs ORDER BY id DESC LIMIT 1;"
+igris kpi --project <slug> --alarm --json 2>/dev/null || true
 ```
 
-Fallback (only when `sqlite3` is absent): call `igris_event_log` with
-`component = 'cognition.janitor'`, `limit = 1` (it inherits the §6.6 remote-only
-blind spot — acceptable degradation).
+The verb owns every derivation: weeks are Monday–Sunday **UTC**; the line
+compares the last COMPLETE week with the one before it for Done per active
+day and median hunt minutes (`!` marks a |Δ| > 30 % move), then lists each
+ceremony's runs and median minutes for that week and the `unpaired` count
+(ceremony starts without a stop — the runtime observer of the FR-268 stamp
+contract). `/scan` reads `alarm.line` only and never re-derives a number.
 
-Render one line under a `### Janitor Engine` heading. Map the latest event suffix
-to an uppercase status (`run_succeeded`→`SUCCEEDED`, `run_failed`→`FAILED`,
-`run_skipped`→`SKIPPED`, `run_started`→`RUNNING`); append the maintenance-row
-counters.
+Render, when the digest has `degraded: false` and a non-null `alarm`:
 
 ```
-### Janitor Engine
-Last run: 2026-07-02 04:00 — SUCCEEDED · merges_proposed=2 · confidence_bumps=1 · stale_rejected=3
+### KPI
+<alarm.line>
 ```
 
-When no `cognition.janitor.*` rows exist (never run, or gate off):
-```
-### Janitor Engine
-No janitor runs yet.
+If the verb is unavailable, errors, or returns `degraded: true`, omit the
+section entirely. Do NOT block `/scan`, do NOT print an error.
+
+### 6.11. CI status line (TD-434)
+
+ONE line, only when the repo's default-branch CI is RED — a green pipeline
+prints nothing (silence is the healthy state; this line exists because a red
+default branch went unnoticed across every push run for weeks, TD-352's
+class).
+
+Run (guarded — degrade silently when `gh` is absent, unauthenticated, the
+directory is not a repo with GitHub Actions, or no workflow named `test.yml`
+exists). `<default-branch>` is the repo's default working branch (`develop`
+here). The `--workflow test.yml` filter is load-bearing, not decoration: the
+latest run of ANY workflow can be a green run of some other pipeline sitting
+on top of a red test run (measured during TD-434's own demo — an unfiltered
+query answered a green `Secret Scan` while `test.yml` was red).
+
+```bash
+gh run list --branch <default-branch> --workflow test.yml --limit 1 \
+  --json conclusion,workflowName,displayTitle,url 2>/dev/null || true
 ```
 
-If `sqlite3` is absent AND the MCP fallback also fails, omit the line entirely.
-Do NOT block /scan.
+Render, ONLY when the command returned a run whose `conclusion` is non-empty
+and not `success`:
+
+```
+### CI
+RED on <default-branch>: <workflowName> — "<displayTitle>" — <url>
+```
+
+If the command errors, prints nothing, returns `[]`, or the latest run's
+conclusion is `success` or empty (a run still in progress), omit the section
+entirely. Do NOT block `/scan`, do NOT print an error. Exactly one line —
+never a table, never a second line (the run URL is where the detail lives).

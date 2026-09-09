@@ -230,9 +230,10 @@ export function persistCuratorProposal(
   db.prepare(
     `INSERT INTO suggestions
        (source_module, project_slug, title, evidence, priority, status,
-        created_at, expires_at, confidence, suggested_action, type_inferred)
+        created_at, expires_at, confidence, suggested_action, type_inferred,
+        source_instance)
      VALUES ('curator', NULL, ?, ?, 'low', 'pending', datetime('now'),
-             datetime('now', ?), ?, ?, 1)`,
+             datetime('now', ?), ?, ?, 1, 'curator')`,
   ).run(
     title,
     JSON.stringify(evidence),
@@ -278,6 +279,22 @@ export function createCuratorInstance(
 
   return {
     id: 'curator',
+
+    // TD-327 — the REQUIRED observability declaration. Like the arbiter, the
+    // curator has NO switch of its own: `resolveCuratorConfig`
+    // (`curator/types.ts`) DERIVES `enabled` from `cognition.janitor.enabled`
+    // and the runner co-drives it inside `runJanitor`.
+    health: {
+      component: 'cognition.curator',
+      event_prefix: 'cognition.curator',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // derived from the janitor, which ships off
+      driver: 'co_driven',
+      driver_ref: 'janitor',
+      output: "suggestions[source_module='curator']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='curator']",
+    },
 
     async buildContext(
       db: Database.Database,

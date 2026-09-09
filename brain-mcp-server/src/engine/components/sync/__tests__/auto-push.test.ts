@@ -276,11 +276,69 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 20 entries', () => {
+    it('has exactly 21 entries', () => {
       // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
       // task_assignments, agent_capabilities, autonomous_decisions,
       // coordination_config) removed with the worker subsystem teardown.
-      expect(SYNC_TABLES).toHaveLength(20);
+      // FR-268 (2026-08-27): +1 `ceremony_events` (the ceremony record,
+      // instances migration v4), 20→21.
+      expect(SYNC_TABLES).toHaveLength(21);
+    });
+
+    it('EXCLUDES cognition_instances — the roster is per-machine derived state (TD-327)', () => {
+      // `cognition_instances` is a projection of THIS build's extractor
+      // registry, regenerated at every engine boot. Replicating it would assert
+      // one machine's roster onto another — the same class of mistake that put
+      // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
+      // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
+      // wrong to merge, so it stays out and the count above stays 21 (FR-268).
+      expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
+    });
+
+    it('EXCLUDES the six TD-440 v5 columns from the suggestions column list', () => {
+      // MAINTAINING's TD-440 rule (b) says the six v5 columns are DELIBERATELY
+      // out of the sync config; until this test existed that rule had no
+      // mechanical pin, and `suggestions` IS synced, so an editor adding one
+      // here would have shipped a per-row failure against an unmigrated remote.
+      // `columns` is exactly what `mergeRows` reads and writes, so pinning the
+      // list is what makes the omission a decision instead of an oversight.
+      const suggestions = SYNC_TABLES.find((t) => t.table === 'suggestions');
+      expect(suggestions).toBeDefined();
+      for (const v5 of [
+        'dedupe_key', 'entity_key', 'seen_count',
+        'last_seen_at', 'recurrence_titles', 'source_instance',
+      ]) {
+        expect(suggestions!.columns).not.toContain(v5);
+      }
+      // …and the list is otherwise unchanged, so a SEVENTH column cannot slip in
+      // under a name this loop does not name.
+      expect(suggestions!.columns).toEqual([
+        'source_module', 'project_slug', 'title', 'evidence', 'priority',
+        'status', 'created_at', 'expires_at', 'dismissed_at',
+        'dismissed_reason', 'acted_at', 'acted_brief_id',
+        'confidence', 'suggested_action', 'type_inferred',
+      ]);
+    });
+
+    it('EXCLUDES machine_id from event_log, instances AND ceremony_events (BR-100)', () => {
+      // BR-100 (2026-09-06): the machine-identity stamp is a per-machine value
+      // (coding_guidelines §7, TD-440) and its NON-replication is the contract —
+      // L-849 inverted. No reader anywhere compares a FOREIGN row's machine_id;
+      // an inbound row lands with it NULL, which is "not mine" by construction
+      // (AC-5), and a pulled-back copy of my own `instances` row cannot NULL my
+      // id because the LWW UPDATE iterates `config.columns` only. Adding it here
+      // would buy a remote-first deploy (a per-row `has no column named
+      // machine_id` on an un-migrated VPS, which BR-097 does NOT hold the
+      // watermark for), an egress-manifest regeneration and two CLI mirror
+      // edits — for a value nobody remote reads. This pin is the decision.
+      for (const table of ['event_log', 'instances', 'ceremony_events']) {
+        const entry = SYNC_TABLES.find((t) => t.table === table);
+        expect(entry, table).toBeDefined();
+        expect(entry!.columns, table).not.toContain('machine_id');
+        expect(entry!.syncKey, table).not.toContain('machine_id');
+      }
+      // …and the count is unchanged: no new table joined for it either.
+      expect(SYNC_TABLES).toHaveLength(21);
     });
 
     const newTables = [
@@ -289,7 +347,15 @@ describe('Sync Auto-Push', () => {
       // FR-105: typed-edges graph layer
       {
         table: 'entity_edges',
-        syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+        // BR-083 D7 — the two qualifiers are IN the syncKey, because the key
+        // exists to mirror the local uniqueness so the remote INSERT OR IGNORE
+        // shares it. Leaving them out would re-create the same-id fusion ON
+        // THE VPS, which is this brief's defect reproduced on another machine.
+        syncKey: [
+          'from_type', 'from_id', 'from_project',
+          'to_type', 'to_id', 'to_project',
+          'edge_type',
+        ],
         strategy: 'append',
         timestampCol: 'created_at',
       },
@@ -544,7 +610,7 @@ describe('Sync Auto-Push', () => {
       const comp = createSyncComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('metrics.recorded', { project: 'p' });
+      bus.emit('agent_event.recorded', { project: 'p' });
 
       // Not fired yet at 9.9s
       await vi.advanceTimersByTimeAsync(9_999);
@@ -663,7 +729,7 @@ describe('Sync Auto-Push', () => {
       bus.emit('memory.stored', { project: 'p' });
       bus.emit('error.stored', { project: 'p' });
       bus.emit('project.registered', { slug: 's' });
-      bus.emit('metrics.recorded', { project: 'p' });
+      bus.emit('agent_event.recorded', { project: 'p' });
 
       // No DB calls or fetch calls should have been made
       expect(fetchWithRetry).not.toHaveBeenCalled();
@@ -727,7 +793,7 @@ describe('Sync Auto-Push', () => {
         'memory.stored',
         'error.stored',
         'project.registered',
-        'metrics.recorded',
+        'agent_event.recorded',
       ];
 
       const listenNames = listens.map((e) => e.name);

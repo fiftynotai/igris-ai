@@ -128,8 +128,26 @@ Follow the coding guidelines:
 # Run shellcheck on modified scripts
 shellcheck scripts/*.sh
 
-# Run bash tests
-bats test/
+# Suite 1 — repo shell/script tests (test/*.test.bash)
+# Name the files explicitly: `bats test/` (directory mode) globs *.bats only,
+# so on this suite's .test.bash files it runs ZERO tests and exits green
+# (measured 2026-08-31: `bats --count test/` = 0).
+bats test/*.test.bash
+
+# Suite 2 — CLI integration tests (cli/tests/integration/*.bats)
+# Requires a built cli/dist/ — see "Testing" below for why.
+npm ci                       # repo root (workspaces)
+cd cli && npm run build && npm run test:bats && cd ..
+
+# Suite 3 — CLI vitest (cli/src/__tests__/*.test.ts; also needs cli/dist/)
+cd cli && npm test && cd ..
+
+# Suite 4 — brain vitest (brain-mcp-server; no build step needed — the root
+# `npm ci` above already installed its deps)
+cd brain-mcp-server && npm test && cd ..
+
+# All four in one go (needs bats >= 1.7 on PATH; builds the cli first):
+npm run test:all
 
 # TypeScript (if modifying MCP server)
 cd brain-mcp-server && npm run build
@@ -139,6 +157,14 @@ node cli/dist/index.js init --from-source .
 mkdir -p /tmp/test-project
 node cli/dist/index.js install /tmp/test-project
 ```
+
+run `npm ci` at the REPO ROOT — running it inside a workspace member
+reinstalls the root tree and empties the sibling workspaces' `node_modules`
+(observed 2026-08-31; restore with a root `npm ci`).
+
+All four suites are CI-enforced by `.github/workflows/test.yml` — on pushes to
+`main`/`develop` and on every pull request regardless of base branch. Run them
+before opening a PR (`npm run test:all` is the one-shot local equivalent).
 
 ### 3.1 Brief-gate escape hatch (emergency only)
 
@@ -158,7 +184,13 @@ IGRIS_BYPASS_BRIEF_GATE=1 <command>
 When the bypass fires, the hook emits a loud WARNING on stderr and writes
 a `brief_gate.bypassed` row into the brain DB's `event_log` table, so the
 bypass leaves an audit trail. Symmetric with `IGRIS_BYPASS_PHASE_GUARD=1`
-in `scripts/git-hooks/pre-commit`.
+in `scripts/git-hooks/pre-commit`, `IGRIS_BYPASS_AC_GATE=1` in
+`scripts/git-hooks/commit-msg` (TD-325 — the acceptance-criteria gate; the
+healthy path past an unmet criterion is `- [~] **DEFERRED: <why>** -> TD-XXX`,
+not the bypass) and `IGRIS_BYPASS_EVENT_GATE=1` in the same hook (FR-267 —
+the agent-event coverage gate; the healthy path past a missing event is to
+emit it). The two `commit-msg` gates are independent: bypassing one never
+silences the other.
 
 **Critical:** never `export IGRIS_BYPASS_BRIEF_GATE=1` in your shell or rc
 file. Exported env vars inherit into every subprocess — including subagent
@@ -267,7 +299,18 @@ How was this tested?
 
 ### Automated Testing
 
-Igris AI has a comprehensive test suite using the bats framework. Test files use the `.test.bash` extension.
+Igris AI has **four** test suites — two bats, two vitest (TD-312 corrected
+this section from two). They are separate on purpose — different extensions,
+different roots, different prerequisites — and **all four are gated by CI**
+(`.github/workflows/test.yml`). `npm run test:all` at the repo root fans out
+to all four locally.
+
+| Suite | Root | Extension | Run with | CI job |
+|---|---|---|---|---|
+| Repo shell/script tests | `test/` | `.test.bash` | `bats test/*.test.bash` | `test` (ubuntu + macOS matrix) |
+| CLI integration tests | `cli/tests/integration/` | `.bats` | `cd cli && npm run test:bats` | `cli-bats` (ubuntu) |
+| CLI vitest | `cli/src/__tests__/` | `.test.ts` | `cd cli && npm test` | `cli-bats` (ubuntu — FR-238 step; also at tag time in `npm-publish.yml`) |
+| Brain vitest | `brain-mcp-server/` (`src`/`scripts`/`eval` `__tests__/`) | `.test.ts` | `cd brain-mcp-server && npm test` | `brain-vitest` (ubuntu — TD-312) |
 
 **Test Framework:** [bats-core](https://github.com/bats-core/bats-core)
 
@@ -281,10 +324,19 @@ brew install bats-core
 sudo apt install bats
 ```
 
-**Run all tests:**
+> The CLI integration suite needs **bats ≥ 1.7.0** —
+> `cli/tests/integration/awaken-verbs.bats` calls
+> `bats_require_minimum_version`, which older builds do not define (the file
+> then errors at *load*, not as a test failure). CI pins `bats@1.11.1` via
+> `npm install -g`; do the same locally if your distro ships an older build.
+
+#### Suite 1 — repo shell/script tests
+
+**Run all tests** (name the files — `bats test/` directory mode globs `*.bats`
+only and silently runs zero of this suite's `.test.bash` files):
 
 ```bash
-bats test/
+bats test/*.test.bash
 ```
 
 **Run specific test file:**
@@ -296,8 +348,101 @@ bats test/verify_mirror.test.bash
 **Run with verbose output:**
 
 ```bash
-bats test/ --tap
+bats test/*.test.bash --tap
 ```
+
+#### Suite 2 — CLI integration tests
+
+These drive the compiled CLI end-to-end (`igris init`, `install`, `doctor`,
+`refresh`, `sync`, the awaken verbs, …). They are the sole enforcement point
+for several install/lifecycle contracts — notably the `init --upgrade`
+config.json user-data preservation guard in `init.bats` (the BR-077 regression
+class).
+
+**Prerequisites — the #1 reason a first run fails:**
+
+```bash
+npm ci                  # at the REPO ROOT: /package-lock.json is the only
+                        # lockfile covering the `cli` workspace
+cd cli && npm run build # tests/integration/_helpers.bash resolves CLI_DIST
+                        # from cli/dist — without a build EVERY file fails at load
+```
+
+Also needed on PATH: `node` ≥ 20, `python3`, `sqlite3`, `shasum`, `tar`.
+
+**Run the suite:**
+
+```bash
+cd cli && npm run test:bats
+```
+
+**Run a single file:**
+
+```bash
+cd cli && npx bats tests/integration/init.bats
+```
+
+Nothing in this suite is skipped, and nothing should be: a `skip` here
+silently disarms a mapped contract (see `MAINTAINING.md` rows for
+`install-symlinks.bats` and `awaken-verbs.bats`). If a test is
+environment-coupled, isolate it with the `stage_home()` helper in
+`tests/integration/_helpers.bash` rather than skipping it.
+
+> **Heads-up for local runs.** Three files — `install.bats`,
+> `install-symlinks.bats`, `default-install-installs-hooks.bats` — do not
+> override `$HOME`. They run `igris install`, whose register-only path writes
+> your real `~/.claude.json` and leaves a `~/.claude.json.igris.bak` beside it
+> (measured against a clean throwaway `$HOME`; no other global surface is
+> touched). Harmless on an ephemeral CI runner; back the file up if that
+> matters to you locally. Sandboxing these three is tracked as a follow-up —
+> the fix is to adopt `stage_home()` in their `setup()`, as
+> `doctor-drift-classes.bats` now does.
+>
+> Note the contrast: `doctor --fix` has a much wider reach than `install`. It
+> writes `~/.claude.json`, `~/.claude/settings.json`, `~/.codex/config.toml`,
+> `~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json`,
+> `~/.cursor/mcp.json`, `~/.config/opencode/opencode.json` and can migrate the
+> `~/.claude/skills` + `~/.claude/agents` roots. That is why every test in
+> `doctor.bats` and `doctor-drift-classes.bats` sandboxes `$HOME` — never add a
+> `doctor --fix` test that does not.
+
+#### Suite 3 — CLI vitest
+
+`cli/src/__tests__/*.test.ts`, run with `cd cli && npm test`. Several tests
+assert against `cli/dist/`, so it needs the same `npm ci` + `cd cli && npm run
+build` prerequisites as Suite 2. CI runs it as a step inside the `cli-bats`
+job (FR-238) and again at tag time in `npm-publish.yml`.
+
+#### Suite 4 — brain vitest (TD-312)
+
+The brain server's entire test surface — graph engine, cognition, perception,
+sync, embeddings guards, every MCP handler. Measured 2026-08-31 at `3d7d59a`:
+171 files, 2785 passed | 1 skipped, ~36 s locally. No build step needed —
+and no `npm ci` here either: run `npm ci` at the REPO ROOT (a member-dir
+`npm ci` reinstalls the root tree and empties the sibling workspaces'
+`node_modules`; observed 2026-08-31, restored with a root `npm ci`). CI's
+dedicated job is the one place that installs from the nested lockfile,
+on a clean runner with no siblings to empty:
+
+```bash
+# npm ci at the REPO ROOT only — a member-dir npm ci empties sibling workspaces
+cd brain-mcp-server && npm test
+```
+
+CI runs it in the dedicated `brain-vitest` job. Determinism notes (the TD-312
+isolation audit):
+
+- Embeddings are **mocked at the `utils/embeddings.js` seam** in every test
+  file that touches them — no HF model fetch, and the CI job deliberately has
+  no model cache so a fetch regression is loud rather than masked.
+- Engine tests use `:memory:`/`mkdtemp` databases, never your live `~/.igris`.
+- Exactly **2 tests** self-skip on CI via a documented capability predicate:
+  the `it.skipIf(!haveDb)` "real DB smoke" pair in
+  `graph-traversal.integration.test.ts`, which needs a live
+  `~/.igris/memory/knowledge.db`.
+- The four wall-clock P95 benchmarks stay **armed** on CI under the
+  documented `BENCH_SLACK` ×4 headroom factor (same file, TD-312) — sized for
+  GitHub's 2-core runners, never a skip.
 
 ### Writing Tests
 
@@ -359,9 +504,17 @@ node cli/dist/index.js install /tmp/test-project
 ### CI/CD
 
 Tests run automatically on:
-- Every push to `main` branch
-- Every pull request
-- Both Ubuntu and macOS environments
+- Every push to `main` and `develop`
+- Every pull request (any target branch)
+- `test` job: repo shell suite, Ubuntu **and** macOS
+- `cli-bats` job: CLI integration suite + CLI vitest suite (FR-238) +
+  dashboard typecheck, Ubuntu only
+- `brain-vitest` job: brain-mcp-server vitest suite, Ubuntu only (TD-312)
+
+At tag time, `npm-publish.yml` additionally gates publishing on the bundled-MCP
+spawn smoke (`smoke-bundled-mcp.sh`, BR-068/TD-426), the BR-070
+embeddings-resolve check, and a second run of the CLI vitest suite. It runs
+neither bats suite nor the brain suite — those gate upstream on push/PR here.
 
 See `.github/workflows/test.yml` for CI configuration.
 
@@ -443,9 +596,9 @@ you add or remove a script here, update this table in the same PR.
 
 | Script | Invoked by | Purpose |
 |--------|-----------|---------|
-| `scripts/git-hooks/pre-commit` | symlinked into `.git/hooks/pre-commit` (one-time, via `scripts/install_git_hooks.sh`) | Conditional pre-commit validators (enum drift, lockfile sync, harness drift) — runs only when the relevant files are staged. Also enforces the PI-004 phase guard. |
-| `scripts/git-hooks/commit-msg` | symlinked into `.git/hooks/commit-msg` (one-time, via `scripts/install_git_hooks.sh`) | Hard-fails a commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180; ≤72). Bypass with `git commit --no-verify`. |
-| `scripts/install_git_hooks.sh` | manual (one-time, per contributor / fresh checkout) | Symlinks every file in `scripts/git-hooks/` into `.git/hooks/`; backs up any pre-existing non-symlink hook before clobbering (TD-072 F3). Idempotent. |
+| `core/git-hooks/pre-commit` (canonical; `scripts/git-hooks/pre-commit` is a tracked symlink to it — FR-243) | symlinked into `.git/hooks/pre-commit` (one-time, via `scripts/install_git_hooks.sh`); in a CONSUMER project by `igris install <path>` (→ `~/.igris/core/git-hooks/pre-commit`) | Conditional pre-commit validators (enum drift, lockfile sync, harness drift) inside ONE `IGRIS_REPO_INTERNAL` region that runs only on the igris-ai checkout; the PI-004 phase guard; the gitleaks secret scan (`--config .gitleaks.toml` when present, built-in rules otherwise). Prints a `[pre-commit] layers:` line on every run stating which of the three is active. |
+| `core/git-hooks/commit-msg` (canonical; `scripts/git-hooks/commit-msg` is a tracked symlink — FR-243) | symlinked into `.git/hooks/commit-msg` (one-time, via `scripts/install_git_hooks.sh`); in a consumer by `igris install <path>` | Three checks. (1) Hard-fails a commit whose summary (first non-comment, non-blank line) exceeds 72 characters (TD-180; ≤72). (2) TD-325 AC gate: hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no reason or no follow-up brief. Reads `brief_files.content` read-only and delegates the verdict to `core/scripts/brief_ac_check.sh`; fail-open at every tier. (3) FR-267 event gate: on the same footer, hard-fails when a role the brief's Agent Log names has no `agent_events` row for that brief; roles from `core/scripts/brief_agent_log_roles.sh`; a start with no stop/error is a WARN. Bypass (2) with `IGRIS_BYPASS_AC_GATE=1`, (3) with `IGRIS_BYPASS_EVENT_GATE=1` (each skips only its own section), or all three with `git commit --no-verify`. |
+| `scripts/install_git_hooks.sh` | manual (one-time, per contributor / fresh checkout) | Symlinks every file in `scripts/git-hooks/` into `.git/hooks/` (chaining through to `core/git-hooks/`); backs up any pre-existing non-symlink hook before clobbering (TD-072 F3); refuses when `core.hooksPath` is set (FR-243). Idempotent. Contributor path only — consumers use `igris install`. |
 | `scripts/validate_brain_stewardship_enums.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts every `memory_store` enum value (`category`/`scope`/`provenance`) appears in the `brain_stewardship` section of `core/prompts/brain_stewardship.md`, plus schema-shrinkage reverse check. (Renamed from `validate_memory_agency_enums.sh` in TD-148.) |
 | `scripts/validate_lockfile_in_sync.sh` | `scripts/git-hooks/pre-commit` (and standalone) | Asserts `npm ci --dry-run --ignore-scripts` from repo root succeeds — the workspace lockfile is in sync with all `package.json` files. |
 | `scripts/validate_agent.sh` | manual / docs (`docs/archive/MIGRATION_GUIDE-v5-to-v6.md`) | Validates an agent-definition `.md`'s frontmatter and structure. Not yet CI-wired. |
@@ -453,10 +606,14 @@ you add or remove a script here, update this table in the same PR.
 | `scripts/igris_brain_switch.sh` | manual | Switch `~/.claude.json` brain mode: local / remote / dual. Local mode re-points at the bundled brain MCP that `igris install` registered (resolved from the existing `mcpServers["igris-brain"]` entry). Remote/dual refuses a non-local `http://` URL unless `IGRIS_ALLOW_INSECURE_SYNC=1` / `remote_brain.allow_insecure` (TD-256, mirrors the TD-252 sync-transport guard). The VPS half is populated by `igris_brain_deploy.sh`. |
 | `scripts/igris_brain_deploy.sh` | manual (on a VPS) | Deploy the brain MCP server with PM2 + nginx reverse-proxy config + API-key generation; copies `brain-mcp-server/` source into `~/.igris/mcp-server/`. |
 | `core/scripts/verify_mirror.sh` | forger MIRROR_SYNC protocol, sentinel MIRROR_CHECK contract, `/hunt` skill, architect plan template | Byte-equality check between repo `core/*` files and their `~/.igris/core/*` runtime mirrors (realpath-resolved, exit-code-checked, verdict-per-pair output). |
+| `core/scripts/brief_ac_check.sh` | `scripts/git-hooks/commit-msg`, `scripts/validate_brief_ac_completion.sh`, `core/skills/hunt/SKILL.md` (Phase 5 step 0 / Phase 7 step 0), `acGateNote` in `brain-mcp-server/src/tools/briefs.ts` | THE acceptance-criteria checkbox parser (TD-325). Pure and DB-free: content on stdin or a file path, one machine-readable verdict line (`PASS` / `FAIL` / `NO_AC` / `NO_ITEMS` / `DEGRADED`) plus the offending criteria. Every consumer reads THIS file — a second implementation would give the gate and the audit different populations, which is the defect TD-325 removes. |
+| `core/scripts/brief_agent_log_roles.sh` | `scripts/git-hooks/commit-msg` §3, `test/agent_event_gate.test.bash` | THE Agent-Log role parser (FR-267). Pure and DB-free, bash 3.2: content on stdin or a file path; `--roles` prints one normalized role per line, the default prints one verdict line (`OK` / `NO_LOG` / `NO_ROWS` / `DEGRADED`); exit 0 always. Second table cell of every row under an `Agent Log` heading, fenced tables ignored; orchestrator/user/operator/system/none/dash placeholders never gated. Every consumer reads THIS file — a second reader would give the gate and any audit different populations. |
+| `scripts/validate_hunt_agent_event_sites.sh` | `scripts/git-hooks/pre-commit` (HARD-fail when `core/skills/hunt/SKILL.md` or the instances component is staged; and standalone) | FR-267 derivation guard over the hunt skill's `igris_agent_event` call sites: every window names `instance_id`/`agent`/`event_type`/`model_requested`, none passes `duration_ms` or `round`, start sites cover the six gated roles, at least 13 sites. Prints `OK: <n> sites` or the offending line numbers. |
+| `scripts/validate_brief_ac_completion.sh` | `scripts/git-hooks/pre-commit` (WARN-only, and standalone) | TD-325 L3 observer: names every TERMINAL brief whose acceptance criteria are still open, or whose deferral lacks a reason or a follow-up brief. `--list` emits the bare-id worklist that drives TD-075's retroactive sweep. Deliberately never touches the cognition candidate queue (AC #7). |
 | `core/scripts/cli_smoke.sh` | manual diagnostic | CLI smoke test. |
 | `core/scripts/cli-adapters/_common.sh` | sourced by every adapter | Shared helpers (parse_frontmatter, atomic_symlink, validate_manifest, merge_overlay_manifest, toml_escape*). FR-153 RETIRED `md_to_agents_md.sh` + `md_to_gemini_toml.sh` (codex + gemini now read SKILL.md natively via symlink — no aggregation/conversion). FR-152 RETIRED `sync_claude_agents.sh` (claude reads symlink to loadout-vendored canonical). FR-159 RETIRED `sync_codex_agents.sh` (codex MD → TOML emit moved to TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` for vendor-side + bash `assemble_codex_harness_into_loadout` in `compile_harnesses.sh` for compile-side fallback; the .toml is the target of a symlink to `<brain>/loadout/agents/<name>/harness.codex.toml`, parity with claude). No format-converter scripts remain. |
 
-> Build-time helper (not under top-level `scripts/`): `cli/scripts/copy-templates.sh` is run from `cli/` by `npm run build` (`tsc && bash scripts/copy-templates.sh`) to copy template assets into `cli/dist/`.
+> Build-time helpers (not under top-level `scripts/`): `cli`'s `npm run build` is `rm -rf dist && tsc && chmod +x dist/index.js && bash scripts/copy-templates.sh && bash scripts/build-dashboard.sh`. `copy-templates.sh` copies template assets into `cli/dist/` and stages the compiled `brain-mcp-server`; `build-dashboard.sh` builds the dashboard bundle. The `rm -rf` and the `chmod` are TD-373: `tsc` emits but never prunes, so artifacts for deleted sources shipped for months, and it emits 0644, so the `igris` bin was executable only because a past `npm install` had chmod'd it. `brain-mcp-server`'s own build deliberately differs — it compiles to `dist.tmp` and swaps, so a failed build on the VPS leaves the running brain's last-good `dist/` intact.
 
 ---
 

@@ -15,6 +15,19 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import * as os from 'os';
 import type { StorageAdapter } from './engine/types.js';
+// TD-328 (v22): the brief_type fold tables. Imported — never hand-copied — so
+// the migration and the write boundary can never drift (the two-copies class
+// that already bit CANONICAL_PHASES). `tools/brief-normalize.ts` imports
+// nothing, so this edge is acyclic.
+import {
+  CANONICAL_BRIEF_TYPES,
+  BRIEF_TYPE_ALIASES,
+  BRIEF_TYPE_COMPOUND_FOLDS,
+  BRIEF_ID_PREFIX_TYPES,
+  // TD-333 (v25): the status fold table + canonical set, same discipline.
+  CANONICAL_STATUSES,
+  STATUS_ALIASES,
+} from './tools/brief-normalize.js';
 
 /**
  * CommonJS require shim. The package is ESM (`"type": "module"`),
@@ -27,39 +40,40 @@ const requireCjs = createRequire(import.meta.url);
 /** Whether sqlite-vec extension loaded successfully */
 let _vecAvailable = false;
 
-/** Root directory for the Igris brain */
+/**
+ * Root directory for the Igris brain — module-load static, used for NON-DB
+ * brain-dir paths only (starter patterns, sync-ingest file mapping). The DB
+ * path is resolved exclusively through {@link resolveDbPath}, at call time.
+ */
 const BRAIN_DIR = path.join(os.homedir(), '.igris');
 
-/** Default path to the SQLite knowledge database. */
-const DEFAULT_DB_PATH = path.join(BRAIN_DIR, 'memory', 'knowledge.db');
-
 /**
- * Resolve the active DB path. Honors `IGRIS_DB_PATH` env var (if set and
- * non-empty) so test harnesses and CLI scripts (e.g. backfill_brief_edges
- * with `--db /tmp/sandbox.db`) can sandbox writes without touching the
- * production brain DB. Falls back to the default `~/.igris/memory/knowledge.db`.
+ * Resolve the active brain DB path — the ONE resolver (TD-426, re-landing
+ * TD-387). Precedence, highest first; empty strings fall through:
  *
- * Resolved at call time, not module load time, so a script can set the
- * env var before its first `getDb()` call.
+ *   1. `explicit` arg      — a caller that resolved its own path (CLI verbs via
+ *                            `paths.ts#brainDbPath`, scripts with `--db`).
+ *                            Env vars never move it (the FR-241 poison fence).
+ *   2. `IGRIS_DB_PATH`     — full-path override for processes that pass none.
+ *   3. `IGRIS_BRAIN_DIR`   — sandbox dir → `<dir>/memory/knowledge.db`. The
+ *                            seam a sandbox sets; the build guard relies on it.
+ *   4. default             — `~/.igris/memory/knowledge.db`, `os.homedir()`
+ *                            read at CALL time (a fake `HOME` moves it).
+ *
+ * Origin: the stdio boot used a static `DB_PATH` constant, so the build
+ * smoke's `IGRIS_BRAIN_DIR=<tmpdir>` was ignored and `cd cli && npm run
+ * build` migrated the live brain. Never re-introduce a static DB constant.
  */
-function resolveDbPath(): string {
-  const override = process.env.IGRIS_DB_PATH;
-  if (override && override.length > 0) return override;
-  return DEFAULT_DB_PATH;
+export function resolveDbPath(explicit?: string): string {
+  if (explicit && explicit.length > 0) return explicit;
+  const dbOverride = process.env.IGRIS_DB_PATH;
+  if (dbOverride && dbOverride.length > 0) return dbOverride;
+  const brainDirOverride = process.env.IGRIS_BRAIN_DIR;
+  if (brainDirOverride && brainDirOverride.length > 0) {
+    return path.join(brainDirOverride, 'memory', 'knowledge.db');
+  }
+  return path.join(os.homedir(), '.igris', 'memory', 'knowledge.db');
 }
-
-/**
- * Path to the SQLite knowledge database.
- *
- * Kept as a const for backwards compatibility with existing imports
- * (src/index.ts uses it for startup banner + size reporting). The
- * env-var override is honored by `getDb()` at runtime, not by this
- * constant — callers that read DB_PATH at module load time will get
- * the default path. That's acceptable because the override is only
- * meant for CLI/test sandboxing, where the importer (the script) is
- * what holds the connection.
- */
-const DB_PATH = DEFAULT_DB_PATH;
 
 /** Singleton database instance */
 let _db: Database.Database | null = null;
@@ -117,7 +131,48 @@ function isVecAvailable(): boolean {
  *
  * @param db - The database instance to migrate
  */
+/**
+ * MIGRATE WITH `trusted_schema = ON`, THEN RESTORE (BR-089).
+ *
+ * `trusted_schema = OFF` is the runtime hardening posture — it stops a virtual
+ * table being reached from inside a trigger or view, which is the shape a
+ * malicious schema uses. Schema MIGRATION is the operation that must do it
+ * legitimately: `ALTER TABLE ... RENAME TO` makes SQLite re-parse EVERY trigger
+ * in the schema, and the `vec0` cleanup triggers reference virtual tables. Under
+ * `OFF` that re-parse is refused:
+ *
+ *   SqliteError: error in trigger learnings_vec_ad:
+ *     unsafe use of virtual table "learnings_vec"
+ *
+ * The v19 `ALTER TABLE registry RENAME TO catalog` is the first migration to
+ * trip it. **Latent under better-sqlite3 v11, live at v12**, whose newer bundled
+ * SQLite enforces what v11 tolerated. Measured: the brain suite is 161/161 on
+ * v11 and 2 red on v12 with only the driver changed, and a minimal repro fails
+ * on `OFF` and passes on `ON` with the identical message.
+ *
+ * THE TOGGLE LIVES HERE, NOT AT THE CALL SITES, and that is the whole point.
+ * A pragma is a property of a CONNECTION, and `migrateSchema` has TWO callers
+ * on two different connections — `getDb()` (the singleton) and `bootEngine()`
+ * (the engine adapter's own handle, via `storage.rawConnection`). Fixing
+ * `getDb` alone left `bootEngine` broken and cost 64 cli assertions that named
+ * a boot failure rather than a pragma. The function that executes the DDL is
+ * the only place that cannot be forgotten by a third caller.
+ *
+ * Scoped in TIME rather than relaxed permanently, and the `finally` means a
+ * migration that throws still leaves the connection hardened rather than
+ * trusting. Restores to OFF unconditionally: every connection this project
+ * opens sets OFF, so there is no caller whose prior state was ON.
+ */
 function migrateSchema(db: Database.Database): void {
+  db.pragma('trusted_schema = ON');
+  try {
+    migrateSchemaInner(db);
+  } finally {
+    db.pragma('trusted_schema = OFF');
+  }
+}
+
+function migrateSchemaInner(db: Database.Database): void {
   let currentVersion = 0;
   try {
     const row = db.prepare(
@@ -1282,6 +1337,926 @@ function migrateSchema(db: Database.Database): void {
     })();
     console.error('[brain] Schema migrated to version 21 (TD-277 instance activity timestamp rename)');
   }
+
+  // v22: brief_type vocabulary fold (TD-328).
+  //
+  // A one-time, idempotent DATA migration that folds the historical
+  // brief_status rows to the canonical vocabulary the TD-328 write boundary now
+  // enforces. `brief_type` was free text: 50 distinct non-NULL spellings plus
+  // NULL for ~10 concepts. TD-238's v18 fold only ever knew TWO aliases
+  // ('Tech Debt', 'Bug Fix'), and normalizeBriefType ran on WRITE only — so
+  // every pre-existing row kept its spelling. Widening the map without
+  // backfilling (or backfilling without widening) fixes nothing; v22 is the
+  // second half.
+  //
+  // WHAT IT TOUCHES: `brief_status.brief_type`. NOTHING ELSE. Not content, not
+  // title, not status, not phase, not claimed_by, not embedding — and
+  // explicitly NOT `updated_at` (see LWW below). Same column discipline v18
+  // relied on (#230).
+  //
+  // TD-311 CARVE-OUT (stated so a reviewer does not have to derive it): TD-311
+  // forbids resolving brief-STATE contradictions by editing brief data — you do
+  // not fix a status/phase/git disagreement by rewriting the brief. This
+  // migration reads and writes only the TYPE vocabulary. It resolves no state
+  // contradiction and creates none. It is a type-vocabulary NORMALISATION,
+  // categorically outside TD-311's rule — the same carve-out v18 already used
+  // when it folded priority/brief_type while leaving status alone.
+  //
+  // LWW: `brief_type` is in the CLI's sync column sets
+  // (`cli/src/lib/brain-db.ts`), so a folded local row must NOT bump
+  // `updated_at` — that would make folded rows fight an un-migrated remote
+  // brain and rewrite a column v18 explicitly protects. The fold is
+  // DETERMINISTIC, so once v22 has applied on both ends they converge to the
+  // same value regardless of which side wins LWW. Apply v22 on the VPS brain
+  // too; the D6 validator catches anything that leaks back.
+  //
+  // TD-338 AMENDMENT (COMMENT ONLY — no statement of this shipped migration is
+  // edited; the behaviour above is untouched). Two things this paragraph said
+  // or implied need correcting now that ingress normalizes:
+  //   1. "Apply v22 on the VPS brain too" is now HYGIENE, not correctness. An
+  //      un-migrated remote can no longer write a non-canonical spelling into
+  //      us — `mergeRows` folds it on arrival, in both packages. The
+  //      instruction survives because an ingress fold deliberately does not
+  //      write back and no code path lets brain A migrate brain B, so it is
+  //      the only way to make the remote's OWN reads clean. It is not
+  //      retirable, only demotable.
+  //   2. "The D6 validator catches anything that leaks back" was the whole
+  //      defence, and it was never a defence — it reports, it does not prevent.
+  //      The prevention is the ingress fold.
+  // And the cost of NOT applying v22 on the VPS is now MEASURED rather than
+  // hypothesised: 339 `brief_status` rows hold the canonical spelling here and
+  // the pre-v22 spelling there, at identical timestamps, with neither side able
+  // to overwrite the other (read-only census, 2026-08-03). That silent
+  // content divergence at equal timestamps is the deliberate price of the
+  // no-bump rule — see `core/enforcement/sync-ingress-normalization.md`.
+  //
+  // Three fold classes, all WHERE-guarded and all bound-param (§14 — no
+  // interpolation; strictly better than v18's inline literals because the
+  // values come from the single-source map rather than a hand-copied list):
+  //   (A) UNCONDITIONAL alias folds — BRIEF_TYPE_ALIASES, plus a canonical
+  //       case-fold so 'feature' becomes 'Feature'.
+  //   (B) GATED compound folds — BRIEF_TYPE_COMPOUND_FOLDS. A compound
+  //       ('Bug Fix / Compliance') encodes a second fact in a single-value
+  //       field. It folds to its head type ONLY where the qualifier token
+  //       already survives in the row's own title or brief_files.content, so
+  //       nothing recoverable is lost. Rows failing the check stay unfolded and
+  //       are reported. `Bug/Feature` has no head type and is absent from the
+  //       table entirely.
+  //   (C) NULL prefix inference — BRIEF_ID_PREFIX_TYPES. Decoding the mint
+  //       prefix back to a type is a lossless decode of a field `/register`
+  //       assigned from the very type question being asked, and it fills an
+  //       ABSENCE (there is no stated value to destroy). `BR-` is deliberately
+  //       absent from the table because every NULL `BR-` row predates TD-331,
+  //       when `/register` mapped both `bug` and `feature` to that prefix — so
+  //       those rows stay NULL and are reported instead. TD-331 made the mint
+  //       map 1:1 but does NOT license adding the key here: this UPDATE has no
+  //       date gate, so it would retro-assign exactly those historical rows.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 22 is recorded.
+  //
+  // BACKUP — AND THE DELIBERATE DIVERGENCE FROM v19: the snapshot is taken
+  // OUTSIDE the transaction (VACUUM cannot run inside one), exactly like v19.
+  // But v19 treats a failed snapshot as NON-FATAL because its operation (a
+  // table rename) was non-destructive. **v22 IS DESTRUCTIVE** — the old
+  // spelling is unrecoverable from the row itself once folded — so a failed OR
+  // UNVERIFIABLE snapshot MUST ABORT the migration. We do not merely write the
+  // file; we PROVE it: `PRAGMA integrity_check` must return 'ok' AND its
+  // `brief_status` row count must equal the source's. On any failure v22 logs
+  // and skips, leaving the DB at v21; the next boot retries. As in v19, the
+  // snapshot is skipped entirely for `:memory:` / `file::memory:` DBs — there is
+  // no sibling file to snapshot to, and a test DB has nothing to lose.
+  //
+  // Gate behind v21's actual completion (re-read schema_version, L-209) so this
+  // DATA-only migration — which has NO vec dependency — applies even on a
+  // vec-less machine where the v13 vec backfill stopped the chain. The
+  // db-migration-v22.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV21Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV21Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+  // Precondition: `brief_status` must exist. A DB without it is a partial /
+  // fixture schema, not a brain — there is nothing to fold, and recording v22
+  // would falsely mark it migrated. SKIP WITHOUT RECORDING so the next boot
+  // retries once the table is there (the v13 skip-then-heal precedent).
+  const haveBriefStatus =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV21Version >= 21 && postV21Version < 22 && haveBriefStatus) {
+    const dbFile = db.name;
+    const isFileDb =
+      dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+
+    // --- Backup + PROOF (abort on failure — see the divergence note above) ---
+    let backupVerified = true;
+    let abortReason = '';
+    if (isFileDb) {
+      const backupPath = `${dbFile}.pre-v22.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v22 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            backupVerified = false;
+            abortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            backupVerified = false;
+            abortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        backupVerified = false;
+        abortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!backupVerified) {
+      // ABORT at v21. v22 is destructive; without a proven-restorable snapshot
+      // we do not fold. The next boot retries (the stale/partial .bak is left
+      // in place on purpose so an operator can inspect it).
+      console.error(
+        `[brain] v22 ABORTED — backup snapshot unusable (${abortReason}). ` +
+          'DB left at schema version 21; the fold is destructive and will not ' +
+          'run without a verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      const tableExists = (name: string): boolean =>
+        db
+          .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name = ?`)
+          .get(name) !== undefined;
+      const haveBriefFiles = tableExists('brief_files');
+
+      db.transaction(() => {
+        // (A) Unconditional alias folds — the single-source map, bound params.
+        const foldAlias = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NOT NULL AND LOWER(TRIM(brief_type)) = ?`,
+        );
+        for (const [alias, canonical] of Object.entries(BRIEF_TYPE_ALIASES)) {
+          foldAlias.run(canonical, alias);
+        }
+        // (A2) Canonical case-fold — 'feature'/'  Feature ' → 'Feature'. The
+        // `brief_type <> ?` guard keeps already-canonical rows untouched so the
+        // statement is a genuine no-op on a second run.
+        const foldCase = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NOT NULL
+               AND LOWER(TRIM(brief_type)) = ?
+               AND brief_type <> ?`,
+        );
+        for (const canonical of CANONICAL_BRIEF_TYPES) {
+          foldCase.run(canonical, canonical.toLowerCase(), canonical);
+        }
+
+        // (B) Gated compound folds (D4). The qualifier must already survive in
+        // the row's own title or content, else the row is left alone.
+        const foldCompound = db.prepare(
+          haveBriefFiles
+            ? `UPDATE brief_status SET brief_type = ?
+                 WHERE LOWER(TRIM(brief_type)) = ?
+                   AND (
+                     ' ' || LOWER(title) || ' ' LIKE ?
+                     OR EXISTS (
+                       SELECT 1 FROM brief_files bf
+                        WHERE bf.project = brief_status.project
+                          AND bf.brief_id = brief_status.brief_id
+                          AND ' ' || LOWER(bf.content) || ' ' LIKE ?
+                     )
+                   )`
+            : // brief_files absent (a partial/fixture schema) — title-only check.
+              // Strictly more conservative: fewer rows fold, none fold wrongly.
+              `UPDATE brief_status SET brief_type = ?
+                 WHERE LOWER(TRIM(brief_type)) = ?
+                   AND ' ' || LOWER(title) || ' ' LIKE ?`,
+        );
+        for (const [compound, fold] of Object.entries(BRIEF_TYPE_COMPOUND_FOLDS)) {
+          for (const token of fold.tokens) {
+            const pattern = `%${token}%`;
+            if (haveBriefFiles) {
+              foldCompound.run(fold.head, compound, pattern, pattern);
+            } else {
+              foldCompound.run(fold.head, compound, pattern);
+            }
+          }
+        }
+
+        // (C) NULL prefix inference (D5). Fills an absence; never overwrites.
+        const inferFromPrefix = db.prepare(
+          `UPDATE brief_status SET brief_type = ?
+             WHERE brief_type IS NULL AND brief_id LIKE ?`,
+        );
+        for (const [prefix, type] of Object.entries(BRIEF_ID_PREFIX_TYPES)) {
+          inferFromPrefix.run(type, `${prefix}-%`);
+        }
+
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (22)').run();
+      })();
+      console.error(
+        '[brain] Schema migrated to version 22 (TD-328 brief_type vocabulary fold)',
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // v23 (FR-246): `briefs_fts` — the BM25 arm for brief search.
+  // -------------------------------------------------------------------------
+  //
+  // WHY THIS EXISTS AT ALL. Before v23 the ONLY retrieval over briefs was
+  // `briefs_vec`, and that index is much thinner than it looks:
+  // `extractBriefProblem` (`tools/briefs.ts:838-851`) embeds ONLY the title plus
+  // the `## Problem` section (falling back to the first 500 characters), it is
+  // called at CREATE (`briefs.ts:472`) and by the backfill tool (`:1050`) and
+  // NOWHERE ELSE, and the only trigger on `briefs_vec` is `briefs_vec_ad`
+  // (DELETE — see `:544`). Two consequences, both measured on the operator brain
+  // rather than reasoned about:
+  //
+  //   1. A brief's BODY is not searchable today at all. `briefs_fts` is the ONLY
+  //      arm that reaches `brief_files.content`, so it is not merely the offline
+  //      fallback for the vector arm — it is the only arm that can see most of a
+  //      brief.
+  //   2. An EDITED brief carries a STALE vector, because no update path
+  //      re-embeds. The FTS index does not share that defect: its six triggers
+  //      below fire on every write to either source table.
+  //
+  // Whether to re-embed on update is a SEPARATE brief and is deliberately NOT
+  // fixed here (FR-246 operator sign-off, 2026-08-03).
+  //
+  // STORAGE — MEASURED, NOT ESTIMATED. On a `VACUUM INTO` snapshot of the
+  // operator's brain (1,814 `brief_status` rows; 1,597 `brief_files` rows
+  // totalling 6,211,271 bytes of `content`), building this index both ways and
+  // re-VACUUMing gave:
+  //
+  //     contentful fts5(brief_id, title, content)          +11,452,416 B
+  //     contentless_delete=1 (this one)                     +3,846,144 B
+  //
+  // A contentful fts5 keeps a second copy of every indexed byte. The reader
+  // (`tools/briefs-read.ts#hybridSearchBriefs`) needs only `rowid` and `rank`
+  // and hydrates every displayed column from `brief_status`, so that second copy
+  // would buy nothing for 7.6 MB. Hence `content=''` + `contentless_delete=1`.
+  //
+  // The floor for `contentless_delete=1` is SQLite 3.43 (2023-08). Both packages
+  // pin `better-sqlite3: ^11.0.0`, whose oldest member bundles 3.45.3, so the
+  // declared dependency range already guarantees it; this tree measured 3.49.2.
+  // If a host ever violates that floor the CREATE throws, the transaction rolls
+  // back, `schema_version` is NOT advanced, and the reader reports
+  // `bm25 unavailable: briefs_fts absent` — a stated degrade, not a crash.
+  //
+  // WHEN THIS RUNS, stated because it is easy to read the reader's `schema v23
+  // not applied` message as "someone will apply it later": **this block
+  // self-applies on the FIRST brain-server boot after the code lands.**
+  // `getDb()` calls `migrateSchema()` on open (`db.ts` — it is the WRITE door,
+  // learning 1133), so any MCP boot, any CLI path that reaches `getDb()`, and
+  // the bundled-server smoke test in `copy-templates.sh` will each run it. It
+  // is not gated on a verb, a flag or an operator action, and it does not wait
+  // for a release. Verified in the wild during FR-246's own build: v23 applied
+  // to the operator's brain at 13:38 on 2026-08-03 through exactly that path —
+  // `briefs_fts` 1,815 rows against `brief_status` 1,815, `integrity_check` ok,
+  // `updated_at` untouched, and a verified `.pre-v23.bak` beside it. The
+  // `bm25_reason` path therefore describes a brain running OLDER CODE (or one
+  // where the snapshot check aborted), not a brain waiting to be migrated.
+  //
+  // ONE SHARP EDGE OF CONTENTLESS FTS5, since it is invisible in the DDL:
+  // inserting a rowid that is ALREADY indexed is NOT rejected (verified: no
+  // UNIQUE constraint fires), it appends a second index entry for the same
+  // rowid and a later MATCH can then return that rowid twice. Every trigger
+  // below is therefore DELETE-then-INSERT, never a bare INSERT, and the backfill
+  // runs exactly once into a table created in the same transaction.
+  // `__tests__/db-migration-v23.test.ts` drives all four real writer shapes and
+  // pins the resulting row count.
+  //
+  // WHY THE TRIGGERS USE `INSERT ... SELECT` RATHER THAN `VALUES`: the rowid is
+  // `brief_status.id`, but half the content lives in `brief_files`, a different
+  // table. `handleBriefCreate` writes `brief_files` FIRST and `brief_status`
+  // SECOND (`briefs.ts:423-457`, one transaction), so at `brief_files`-insert
+  // time the `brief_status` row may not exist yet. An `INSERT ... SELECT` whose
+  // subquery matches nothing is a silent no-op — which is exactly the wanted
+  // behaviour — and the `brief_status` insert that follows indexes both fields.
+  // A `VALUES` form would have needed a `WHEN EXISTS` guard to do the same thing
+  // less legibly.
+  //
+  // NO WRITER IS BYPASSED — verified by reading every one rather than assuming:
+  // `briefs.ts:423`/`:437` (`ON CONFLICT DO UPDATE`), `:600`/`:615` (UPDATE),
+  // `sync.ts:1595` (`ON CONFLICT DO UPDATE`) and `sync.ts#mergeRows:631-668`
+  // (plain INSERT / UPDATE). None uses `INSERT OR REPLACE`, so the
+  // REPLACE-skips-the-AFTER-UPDATE-trigger footgun is not on any live path.
+  //
+  // `updated_at` IS NEVER BUMPED by this migration. It is in the LWW sync column
+  // set, and v23 issues no UPDATE against any synced table at all — it only
+  // CREATEs new objects and populates them. That holds by construction, not by
+  // care.
+  //
+  // BACKUP. v23 is ADDITIVE — it creates new objects and touches no existing
+  // row, so unlike v22 nothing here is unrecoverable. The verified-snapshot +
+  // ABORT shape is applied anyway, by FR-246 operator sign-off ("v23 follows
+  // v22's shape exactly"), on the ground that this is still a multi-megabyte
+  // structural write into the operator's live brain. Verified the same way v22
+  // verifies: `PRAGMA integrity_check` must return 'ok' AND the backup's
+  // `brief_status` count must equal the source's. Unverifiable ⇒ skip without
+  // recording, and the next boot retries.
+  //
+  // Gate behind v22's actual completion (re-read `schema_version`, L-209).
+  let postV22Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV22Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: both source tables must exist. A DB with neither is a
+  // partial / fixture schema, not a brain — recording v23 against it would
+  // falsely mark it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal
+  // precedent) so the next boot retries once the tables are there.
+  const haveBriefSources =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined &&
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_files'`)
+      .get() !== undefined;
+
+  if (postV22Version >= 22 && postV22Version < 23 && haveBriefSources) {
+    const dbFile = db.name;
+    const isFileDb =
+      dbFile !== '' && dbFile !== ':memory:' && !dbFile.startsWith('file::memory:');
+
+    let backupVerified = true;
+    let abortReason = '';
+    if (isFileDb) {
+      const backupPath = `${dbFile}.pre-v23.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v23 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            backupVerified = false;
+            abortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            backupVerified = false;
+            abortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        backupVerified = false;
+        abortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!backupVerified) {
+      console.error(
+        `[brain] v23 ABORTED — backup snapshot unusable (${abortReason}). ` +
+          'DB left at schema version 22; briefs_fts will not be built without a ' +
+          'verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      try {
+        db.transaction(() => {
+          db.exec(`
+            CREATE VIRTUAL TABLE IF NOT EXISTS briefs_fts USING fts5(
+                brief_id, title, content,
+                content='',
+                contentless_delete=1
+            );
+
+            -- brief_status: the title half, and the rowid authority.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_ai AFTER INSERT ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = new.id;
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                VALUES (
+                    new.id, new.brief_id, new.title,
+                    COALESCE((SELECT bf.content FROM brief_files bf
+                               WHERE bf.project = new.project
+                                 AND bf.brief_id = new.brief_id), '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_au AFTER UPDATE ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = old.id;
+                DELETE FROM briefs_fts WHERE rowid = new.id;
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                VALUES (
+                    new.id, new.brief_id, new.title,
+                    COALESCE((SELECT bf.content FROM brief_files bf
+                               WHERE bf.project = new.project
+                                 AND bf.brief_id = new.brief_id), '')
+                );
+            END;
+
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_status_ad AFTER DELETE ON brief_status BEGIN
+                DELETE FROM briefs_fts WHERE rowid = old.id;
+            END;
+
+            -- brief_files: the content half. The rowid is resolved by subquery
+            -- against brief_status; when that yields nothing the statement is a
+            -- no-op (see the header note on write ORDER).
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_ai AFTER INSERT ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = new.project AND brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, new.content
+                  FROM brief_status bs
+                 WHERE bs.project = new.project AND bs.brief_id = new.brief_id;
+            END;
+
+            -- The UPDATE trigger re-indexes BOTH keys because a re-key
+            -- (project/brief_id changing) would otherwise strand the old brief's
+            -- title. No live writer re-keys, but the cost is two extra
+            -- statements and the alternative is a silent stale row.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_au AFTER UPDATE ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = old.project AND brief_id = old.brief_id);
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = new.project AND brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, ''
+                  FROM brief_status bs
+                 WHERE bs.project = old.project AND bs.brief_id = old.brief_id
+                   AND NOT (bs.project = new.project AND bs.brief_id = new.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, new.content
+                  FROM brief_status bs
+                 WHERE bs.project = new.project AND bs.brief_id = new.brief_id;
+            END;
+
+            -- A deleted file leaves the brief itself alive, so the brief stays
+            -- indexed by TITLE with empty content rather than disappearing from
+            -- search entirely.
+            CREATE TRIGGER IF NOT EXISTS briefs_fts_files_ad AFTER DELETE ON brief_files BEGIN
+                DELETE FROM briefs_fts WHERE rowid IN (
+                    SELECT id FROM brief_status
+                     WHERE project = old.project AND brief_id = old.brief_id);
+                INSERT INTO briefs_fts(rowid, brief_id, title, content)
+                SELECT bs.id, bs.brief_id, bs.title, ''
+                  FROM brief_status bs
+                 WHERE bs.project = old.project AND bs.brief_id = old.brief_id;
+            END;
+          `);
+
+          // Backfill. One statement is enough: the JOIN is on `brief_files`'s
+          // own UNIQUE(project, brief_id) index (verified: zero duplicate keys
+          // on the operator brain), so it emits exactly one row per
+          // `brief_status` row — 1,814 rows / ~6.2 MB of text measured at ~2 s.
+          // The `NOT EXISTS` guard makes it re-runnable even though the table it
+          // fills was created three statements ago.
+          db.exec(`
+            INSERT INTO briefs_fts(rowid, brief_id, title, content)
+            SELECT bs.id, bs.brief_id, bs.title, COALESCE(bf.content, '')
+              FROM brief_status bs
+              LEFT JOIN brief_files bf
+                     ON bf.project = bs.project AND bf.brief_id = bs.brief_id
+             WHERE NOT EXISTS (
+                    SELECT 1 FROM briefs_fts WHERE briefs_fts.rowid = bs.id);
+          `);
+
+          db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (23)').run();
+        })();
+        console.error(
+          '[brain] Schema migrated to version 23 (FR-246 briefs_fts BM25 arm)',
+        );
+      } catch (err) {
+        // Degrade, never throw: the whole brain must still boot without brief
+        // search. `schema_version` stays at 22 and the next boot retries.
+        console.error(
+          '[brain] v23 SKIPPED — briefs_fts could not be created ' +
+            `(${err instanceof Error ? err.message : String(err)}). ` +
+            'schema_version NOT advanced; brief search will report bm25 ' +
+            'unavailable until this succeeds.',
+        );
+      }
+    }
+  }
+
+  // v24: priority vocabulary re-fold (TD-338).
+  //
+  // WHAT IT TOUCHES: `brief_status.priority`. NOTHING ELSE. Not brief_type, not
+  // title, not status, not phase, not claimed_by, not embedding — and
+  // explicitly NOT `updated_at` (see LWW below). Same column discipline v18 and
+  // v22 relied on (#230).
+  //
+  // WHY A SECOND PRIORITY FOLD AFTER v18 ALREADY RAN ONE — and the provenance
+  // CORRECTED, because the obvious story is wrong:
+  //   v18 (2026-06-22 19:15:33 on the operator brain) folded every bare `P1`/
+  //   `P2` that existed at that moment. Eight non-canonical rows nevertheless
+  //   carry `updated_at` values AFTER it. The natural hypothesis — and the one
+  //   TD-338's plan proposed — was that the 2026-06-24 cutover from the old
+  //   cleartext-IP remote to `https://brain.fifty.dev` created a FRESH `sync_state` cursor
+  //   row (the key is `(remote_url, table_name)`), so the first pull from the
+  //   new URL ran with `since=1970` and re-pulled the un-migrated VPS's whole
+  //   `brief_status` back into an already-v18 brain.
+  //
+  //   THAT HYPOTHESIS IS REFUTED. Read-only forensics on the live brain:
+  //     - `sync_state` shows the http remote's `brief_status` pull cursor last
+  //       advanced 2026-06-22 19:17:20 — MORE THAN TWELVE HOURS BEFORE the earliest
+  //       dirty row's `updated_at` (2026-06-23 08:02:02). A pull only advances
+  //       that cursor when it DELIVERS rows for the table, and both ingress
+  //       doors share the key, so no pull delivered these rows.
+  //     - `sync_queue` id 4788 records a PUSH queued 2026-06-23 08:12:35
+  //       carrying `moca-ai-agent/BR-045 priority:"P1"` with its own
+  //       `updated_at:"2026-06-23 08:02:02"` — the local row was already dirty
+  //       ten minutes after it was written, and we EXPORTED it.
+  //     - the VPS today holds `P1-High`/`P2-Medium` for five of those rows (it
+  //       booted a build carrying v18 and folded its own copies) while WE still
+  //       hold the bare forms. The remote is CLEANER than us here.
+  //   So these rows were BORN LOCALLY through a writer that did not normalize,
+  //   and travelled OUT. Sync is not how they arrived. TD-338's ingress fold is
+  //   therefore a PREVENTION (an un-migrated remote can no longer write a
+  //   spelling into us on any future cursor reset or remote-side edit), not the
+  //   cure for these eight rows. This migration is the cure, and it is purely
+  //   local.
+  //
+  // WHY THIS IS SAFE TO RUN AFTER THE INGRESS FOLD LANDS, AND ONLY THEN:
+  //   folding rows before closing ingress would let the next pull undo the work.
+  //   With `mergeRows` normalizing (TD-338), a re-pull of these keys either
+  //   skips (equal timestamps — the live case for all eight) or arrives folded.
+  //
+  // LWW — NO `updated_at` BUMP. `priority` is in both packages' sync column sets
+  // (`sync.ts` SYNC_TABLES, `cli/src/lib/brain-db.ts` BOOT_SYNC_PULL_TABLES), so
+  // a folded local row must NOT bump the LWW comparison column: that would
+  // manufacture a write no operator made and mutate a column the dashboard,
+  // `briefStatusSummary` and velocity ordering all read. The consequence is
+  // stated plainly rather than hidden: after this migration our stored value
+  // differs from the VPS's for the two rows the VPS still holds bare
+  // (igris-ai TD-277 / TD-278), at EQUAL timestamps, and neither side will ever
+  // push it to the other. That silent content divergence is the deliberate
+  // price of keeping LWW honest, and it already exists at scale — 339 rows
+  // diverge this way from the v22 brief_type fold. See the v22 comment above.
+  //
+  // `P4-Trivial` IS DELIBERATELY NOT TOUCHED. No fold table says
+  // `Trivial` = `Low`, so folding it would be INVENTING (the same reasoning
+  // TD-328 used to refuse folding `Spike`/`Investigation`), and adopting it as a
+  // fifth canonical priority would trigger the FR-247 dashboard-picker mirror
+  // sweep (MAINTAINING row 66) for one row of unknown provenance. It stays,
+  // and `scripts/validate_brief_priority_vocabulary.sh` names it on every
+  // pre-commit until a human retypes the brief through `igris_brief_update`.
+  //
+  // NO BACKUP SNAPSHOT — and this is a DECISION, not an oversight. v22 and v23
+  // take a verified `VACUUM INTO` snapshot because v22 is DESTRUCTIVE (the old
+  // brief_type spelling is unrecoverable from the row) and v23 is a
+  // multi-megabyte structural write. v24 is neither: it runs the SAME
+  // WHERE-guarded statements v18 already ran on this table, against SEVEN rows,
+  // and every fold is meaning-preserving by the declaration of PRIORITY_ALIASES
+  // (`P1` IS `P1-High`). There is nothing unrecoverable to snapshot.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 24 is recorded. All values are fixed literals (§14 — no
+  // interpolation).
+  //
+  // Gate behind v23's actual completion (re-read `schema_version`, L-209) so
+  // this DATA-only migration — which has NO vec and NO FTS dependency — applies
+  // even on a machine where an earlier structural step stopped the chain. The
+  // db-migration-v24.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV23Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV23Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: `brief_status` must exist. A DB without it is a partial
+  // / fixture schema, not a brain — recording v24 against it would falsely mark
+  // it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal precedent) so
+  // the next boot retries once the table is there.
+  const haveBriefStatusV24 =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV23Version >= 23 && postV23Version < 24 && haveBriefStatusV24) {
+    try {
+      db.transaction(() => {
+        // The v18 statement set, verbatim. P0/P3 are included for symmetry even
+        // though they match zero rows on the operator brain today — this is the
+        // same total function `normalizePriority` applies, not a hand-picked
+        // subset, so a bare `P0` minted tomorrow by an un-normalized writer is
+        // folded by the same code rather than needing a v25.
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P0-Critical'
+             WHERE priority IN ('P0', 'P0 - Critical')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P1-High'
+             WHERE priority IN ('P1', 'P1 - High')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P2-Medium'
+             WHERE priority IN ('P2', 'P2 - Medium')`,
+        ).run();
+        db.prepare(
+          `UPDATE brief_status SET priority = 'P3-Low'
+             WHERE priority IN ('P3', 'P3 - Low')`,
+        ).run();
+        // Unset family -> NULL. Narrower than v18's version on purpose: v18
+        // used `TRIM(COALESCE(priority,'')) = ''`, which also re-writes every
+        // already-NULL row (a no-op write that still reports `changes`). This
+        // form touches ONLY rows that are actually non-NULL and blank, so a
+        // re-run is genuinely zero-changes.
+        db.prepare(
+          `UPDATE brief_status SET priority = NULL
+             WHERE priority = 'Unset'
+                OR (priority IS NOT NULL AND TRIM(priority) = '')`,
+        ).run();
+
+        db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (24)').run();
+      })();
+      console.error(
+        '[brain] Schema migrated to version 24 (TD-338 priority vocabulary re-fold)',
+      );
+    } catch (err) {
+      // Degrade, never throw: the whole brain must still boot. `schema_version`
+      // stays at 23 and the next boot retries.
+      console.error(
+        '[brain] v24 SKIPPED — priority re-fold failed ' +
+          `(${err instanceof Error ? err.message : String(err)}). ` +
+          'schema_version NOT advanced; the priority validator will keep ' +
+          'reporting the non-canonical rows until this succeeds.',
+      );
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // v25: status vocabulary fold (TD-333).
+  // -------------------------------------------------------------------------
+  //
+  // WHAT IT TOUCHES: `brief_status.status`. NOTHING ELSE. Not brief_type, not
+  // priority, not phase, not title, not content, not claimed_by — and
+  // explicitly NOT `updated_at` (see LWW below). The same column discipline
+  // v18 / v22 / v24 relied on (#230).
+  //
+  // WHAT IT FOLDS — exactly the three entries in STATUS_ALIASES, and the
+  // canonical case-fold. Measured read-only on the operator brain 2026-08-04,
+  // all projects: `Completed` 24 -> `Done`, `Complete` 1 -> `Done`,
+  // `InProgress` 4 -> `In Progress`. 29 rows. Total row count unchanged; the
+  // (project, brief_id) set unchanged; no row created or deleted.
+  //
+  // ===== TD-311, HEAD ON. READ THIS BEFORE CHANGING THE FOLD TABLE. =====
+  //
+  //   TD-311: a brief-state contradiction must NEVER be resolved by editing
+  //   brief data. `status` IS brief state, so this migration does not inherit
+  //   TD-328's "a type fold is not a state edit" carve-out and has to make the
+  //   argument itself.
+  //
+  //   THE ARGUMENT: a brief's STATE is what the operator recorded; a
+  //   predicate's VERDICT is what a consumer computes. The operator who typed
+  //   `Completed` recorded *"this work is finished"*, and `Done` is the
+  //   documented member that means *"this work is finished"*. This migration
+  //   changes SPELLING, not which state any brief is IN. Corroboration from
+  //   the codebase rather than from taste: `tools/projects.ts` already counts
+  //   `status IN ('Done','Completed','Closed')` as ONE terminal bucket.
+  //
+  //   IT RESOLVES ZERO CONTRADICTIONS. It does the OPPOSITE of the forbidden
+  //   move: it removes a SPELLING-BASED EXEMPTION that was HIDING them.
+  //   `scripts/validate_brief_state_reconciliation.sh` evaluated `Done` and
+  //   `Archived` and let everything else fall to a default arm commented
+  //   "other in-flight states" — which was FALSE for 26 terminal rows. Those
+  //   rows were exempt from the Done<->COMPLETE<->commit invariant for their
+  //   entire lifetime.
+  //
+  //   SO EXPECT THE RECONCILIATION COUNTS TO RISE, and by a pre-declared
+  //   amount. Measured before this migration ran: 24 rows are terminal-by-
+  //   meaning, spelled `Completed`/`Complete`, and carry a phase that is not
+  //   `COMPLETE` — they become C1 the moment the spelling is uniform (23 in
+  //   `lifeOS`, 1 in `fifty-agent-sdk`; C2 for those two projects is
+  //   git-dependent and their repos are not on the machine this was measured
+  //   on). C3 must not move AT ALL: no fold source or target touches `Ready`
+  //   or `Draft`, and that is the cheapest tripwire here — if C3 moves,
+  //   something folded that must not have.
+  //
+  //   A brief that "goes red" after v25 was red before v25. The store's answer
+  //   to "is this built?" is unchanged; only the auditor's ability to check it
+  //   changed. The surfaced rows are then handed to a HUMAN, which is exactly
+  //   what TD-311 demands. DO NOT resolve them here.
+  //
+  // WHAT IS DELIBERATELY *NOT* FOLDED — each absence is a decision, not a gap:
+  //   - `Cancelled` (23) / `Superseded` (18) / `Deferred` (7). MISSING STATES,
+  //     not spellings: each names an outcome the documented six cannot
+  //     express. Folding `Cancelled` to `Archived` moves "we decided not to do
+  //     this" to "we finished it and shelved it" — a STATE EDIT. Promoting
+  //     them changes the documented lifecycle and sweeps board.ts, the bash
+  //     validator and the reconciler's terminal-set reasoning, which is
+  //     "changing the state machine itself" and out of TD-333's scope. They
+  //     stay, and `scripts/validate_brief_status_vocabulary.sh` names them in
+  //     its DOCUMENTED GAP class on every run until the follow-up brief lands.
+  //   - `Done(Resolvedbydec8d1f)` (1). Terminal, with a commit sha WELDED ON.
+  //     The sha is operator data with no other copy, so a mechanical fold to
+  //     `Done` would DESTROY it and break the "loses nothing recoverable"
+  //     guarantee TD-328 established. Hand-migrated instead: the sha moves
+  //     into the brief's own content as a `## Resolution` line (its correct
+  //     home — it is closing-commit evidence, which is what reconciliation
+  //     class C2 checks) and only then is the row retyped by hand. Two writes,
+  //     one of which is a genuine operator decision.
+  //   - the two `Split (see FR-...)` rows. A parent brief's SPLIT LINEAGE
+  //     crammed into the state field. `Done`, `Archived` and `Superseded` are
+  //     ALL defensible readings and the operator chose none of them — picking
+  //     one here would be this migration deciding a brief's state. The lineage
+  //     belongs in the edge graph as `derived_from` edges, which is ADDITIVE
+  //     and destroys nothing; the status is left byte-for-byte alone.
+  //   - the empty string. `status` is TEXT NOT NULL and has no unset member,
+  //     so there is nothing to fold it to; `normalizeStatus` passes it through
+  //     for the same reason. Zero such rows exist.
+  //
+  // LWW — NO `updated_at` BUMP. `status` is in both packages' sync column sets
+  // (`sync.ts` SYNC_TABLES, `cli/src/lib/brain-db.ts` BOOT_SYNC_PULL_TABLES),
+  // so a folded local row must NOT bump the LWW comparison column: that would
+  // manufacture a write no operator made. The consequence, stated plainly
+  // rather than hidden: after this migration our stored value differs from an
+  // un-migrated remote's for these rows, at EQUAL timestamps, and neither side
+  // will push it to the other. That silent content divergence is the
+  // deliberate price of keeping LWW honest and it already exists at scale from
+  // the v22 and v24 folds. Asserted by a test, not trusted to this comment.
+  //
+  // BACKUP — v22's shape, and for v22's reason: **v25 IS DESTRUCTIVE.** The old
+  // spelling is unrecoverable from the row itself once folded (unlike v24,
+  // whose folds re-ran statements v18 had already run). So the snapshot is
+  // taken OUTSIDE the transaction (VACUUM cannot run inside one) and then
+  // PROVEN: `PRAGMA integrity_check` must return 'ok' AND the backup's
+  // `brief_status` row count must equal the source's. On any failure or
+  // unverifiability v25 logs and ABORTS, leaving the DB at v24; the next boot
+  // retries. Skipped entirely for `:memory:` / `file::memory:` DBs.
+  //
+  // Idempotency: every UPDATE is WHERE-guarded to a non-canonical source form,
+  // so a second run matches zero rows; the schema_version gate also blocks
+  // re-entry once 25 is recorded. All values are BOUND PARAMS read from the
+  // single-source fold table (§14 — no interpolation, and no hand-copied list
+  // that could drift from `normalizeStatus`).
+  //
+  // Gate behind v24's actual completion (re-read `schema_version`, L-209) so
+  // this DATA-only migration — which has NO vec and NO FTS dependency — applies
+  // even on a machine where an earlier structural step stopped the chain. The
+  // db-migration-v25.test.ts runs WITHOUT loading vec to prove this gate dodge.
+  let postV24Version = currentVersion;
+  try {
+    const row = db
+      .prepare('SELECT version FROM schema_version ORDER BY version DESC LIMIT 1')
+      .get() as { version: number } | undefined;
+    if (row) postV24Version = row.version;
+  } catch {
+    // ignore — fresh DB will not get here
+  }
+
+  // Precondition, v22's: `brief_status` must exist. A DB without it is a partial
+  // / fixture schema, not a brain — recording v25 against it would falsely mark
+  // it migrated. SKIP WITHOUT RECORDING (the v13 skip-then-heal precedent) so
+  // the next boot retries once the table is there.
+  const haveBriefStatusV25 =
+    db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='brief_status'`)
+      .get() !== undefined;
+
+  if (postV24Version >= 24 && postV24Version < 25 && haveBriefStatusV25) {
+    const dbFileV25 = db.name;
+    const isFileDbV25 =
+      dbFileV25 !== '' && dbFileV25 !== ':memory:' && !dbFileV25.startsWith('file::memory:');
+
+    // --- Backup + PROOF (abort on failure — v22's rule, v22's reason) -------
+    let v25BackupVerified = true;
+    let v25AbortReason = '';
+    if (isFileDbV25) {
+      const backupPath = `${dbFileV25}.pre-v25.bak`;
+      const fs = requireCjs('node:fs') as typeof import('node:fs');
+      try {
+        if (!fs.existsSync(backupPath)) {
+          // VACUUM INTO requires a literal/bound string; bind to avoid quoting.
+          db.prepare('VACUUM INTO ?').run(backupPath);
+          console.error(`[brain] v25 backup snapshot written: ${backupPath}`);
+        }
+        // PROVE the snapshot opens and is complete. A backup nobody verified is
+        // not a backup — it is a hope.
+        const sourceCount = (
+          db.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+        ).c;
+        const bak = new Database(backupPath, { readonly: true });
+        try {
+          const integrity = bak.pragma('integrity_check') as Array<{
+            integrity_check: string;
+          }>;
+          const verdict = integrity[0]?.integrity_check ?? '<none>';
+          const bakCount = (
+            bak.prepare('SELECT COUNT(*) AS c FROM brief_status').get() as { c: number }
+          ).c;
+          if (verdict !== 'ok') {
+            v25BackupVerified = false;
+            v25AbortReason = `integrity_check returned "${verdict}"`;
+          } else if (bakCount !== sourceCount) {
+            v25BackupVerified = false;
+            v25AbortReason = `brief_status row count mismatch (source ${sourceCount}, backup ${bakCount})`;
+          }
+        } finally {
+          bak.close();
+        }
+      } catch (err) {
+        v25BackupVerified = false;
+        v25AbortReason = err instanceof Error ? err.message : String(err);
+      }
+    }
+
+    if (!v25BackupVerified) {
+      // ABORT at v24. v25 is destructive; without a proven-restorable snapshot
+      // we do not fold. The next boot retries (the stale/partial .bak is left
+      // in place on purpose so an operator can inspect it).
+      console.error(
+        `[brain] v25 ABORTED — backup snapshot unusable (${v25AbortReason}). ` +
+          'DB left at schema version 24; the status fold is destructive and will ' +
+          'not run without a verified backup. Resolve the snapshot and reboot.',
+      );
+    } else {
+      try {
+        db.transaction(() => {
+          // (A) Unconditional alias folds — driven by the SINGLE-SOURCE table,
+          // bound params. Reading STATUS_ALIASES rather than hand-listing the
+          // three pairs is what makes this migration and `normalizeStatus`
+          // incapable of disagreeing.
+          const foldAlias = db.prepare(
+            `UPDATE brief_status SET status = ?
+               WHERE status IS NOT NULL AND LOWER(TRIM(status)) = ?`,
+          );
+          for (const [alias, canonical] of Object.entries(STATUS_ALIASES)) {
+            foldAlias.run(canonical, alias);
+          }
+          // (A2) Canonical case-fold — 'done' / '  DONE ' -> 'Done'. The
+          // `status <> ?` guard keeps already-canonical rows untouched so the
+          // statement is a genuine no-op on a second run (v22's (A2), verbatim).
+          const foldCase = db.prepare(
+            `UPDATE brief_status SET status = ?
+               WHERE status IS NOT NULL
+                 AND LOWER(TRIM(status)) = ?
+                 AND status <> ?`,
+          );
+          for (const canonical of CANONICAL_STATUSES) {
+            foldCase.run(canonical, canonical.toLowerCase(), canonical);
+          }
+
+          db.prepare('INSERT OR IGNORE INTO schema_version (version) VALUES (25)').run();
+        })();
+        console.error(
+          '[brain] Schema migrated to version 25 (TD-333 status vocabulary fold)',
+        );
+      } catch (err) {
+        // Degrade, never throw: the whole brain must still boot. `schema_version`
+        // stays at 24 and the next boot retries.
+        console.error(
+          '[brain] v25 SKIPPED — status fold failed ' +
+            `(${err instanceof Error ? err.message : String(err)}). ` +
+            'schema_version NOT advanced; the status validator will keep ' +
+            'reporting the non-canonical rows until this succeeds.',
+        );
+      }
+    }
+  }
 }
 
 /**
@@ -1353,4 +2328,4 @@ function closeDb(): void {
   }
 }
 
-export { getDb, closeDb, setAdapter, migrateSchema, loadSqliteVec, isVecAvailable, BRAIN_DIR, DB_PATH };
+export { getDb, closeDb, setAdapter, migrateSchema, loadSqliteVec, isVecAvailable, BRAIN_DIR };

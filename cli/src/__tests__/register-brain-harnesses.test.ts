@@ -37,8 +37,9 @@ import { bundledMcpEntryPath } from "../lib/paths.js";
 // validate `buildHarnessMcpEntry`'s native shapes + the no-clobber/idempotent
 // mergers. That shaper+merger is KEPT (antigravity's ENTRY uses it under the
 // delegate engine), so the tests still pin its byte-shape by forcing the CUSTOM
-// engine here. The DELEGATE-default routing (4 harnesses → add-mcp, antigravity
-// → custom) is covered by the FR-212b delegate tests + the fr212-smoke gate.
+// engine here. The DELEGATE-default routing (every harness EXCEPT antigravity →
+// add-mcp, antigravity → custom) is covered by the FR-212b delegate tests + the
+// fr212-smoke gate.
 function registerBrainAcrossHarnesses(
   opts?: Parameters<typeof registerBrainAcrossHarnessesRaw>[0],
 ): BrainHarnessResult[] {

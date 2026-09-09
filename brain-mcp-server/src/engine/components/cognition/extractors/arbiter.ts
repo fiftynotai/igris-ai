@@ -58,7 +58,7 @@ import {
   type ContradictionPair,
   type ContradictionProposal,
 } from '../../arbiter/types.js';
-import { applyResolveContradiction } from '../../subconscious/actions/kinds.js';
+import { applyResolveContradiction, contentHash } from '../../subconscious/actions/kinds.js';
 
 // ---------------------------------------------------------------------------
 // The instance's private context shape (slot 1 output)
@@ -156,6 +156,7 @@ function proposalPair(proposal: ContradictionProposal): [number, number] | null 
  * consumer (`applyResolveContradiction`) reads — the two MUST stay byte-aligned
  * (the synapse↔add_edge / janitor↔merge_learnings lesson: a shape mismatch makes
  * apply silently fall back to flag_for_review). `resolution` is the discriminator.
+ * The persist slot stamps `synthesized_from_hash` (TD-439).
  */
 export function buildResolveContradictionAction(
   proposal: ContradictionProposal,
@@ -217,12 +218,17 @@ export function persistArbiterProposal(
   ctx.persistedPairs.add(key);
 
   const action = buildResolveContradictionAction(proposal);
+  if (proposal.verdict === 'evolved_merge') {
+    const winner = db
+      .prepare('SELECT content FROM learnings WHERE id = ?')
+      .get(proposal.winner_id) as { content: string } | undefined;
+    if (winner) action.synthesized_from_hash = contentHash(winner.content);
+  }
 
   // AUTO-RESOLVE fork: gated by the config flag AND the cosine floor.
+  // A failed resolve falls through to the INSERT (TD-439).
   if (ctx.autoResolve && proposal.cosine >= ctx.autoResolveThreshold) {
-    const result = applyResolveContradiction(db, action);
-    // A failed direct resolve is not fatal — it simply does not count as resolved.
-    return result.ok ? 'resolved' : 'deduped';
+    if (applyResolveContradiction(db, action).ok) return 'resolved';
   }
 
   const evidence = {
@@ -239,9 +245,10 @@ export function persistArbiterProposal(
   db.prepare(
     `INSERT INTO suggestions
        (source_module, project_slug, title, evidence, priority, status,
-        created_at, expires_at, confidence, suggested_action, type_inferred)
+        created_at, expires_at, confidence, suggested_action, type_inferred,
+        source_instance)
      VALUES ('arbiter', NULL, ?, ?, 'low', 'pending', datetime('now'),
-             datetime('now', ?), ?, ?, 1)`,
+             datetime('now', ?), ?, ?, 1, 'arbiter')`,
   ).run(
     title,
     JSON.stringify(evidence),
@@ -285,6 +292,25 @@ export function createArbiterInstance(
 
   return {
     id: 'arbiter',
+
+    // TD-327 — the REQUIRED observability declaration. THE ARBITER HAS NO
+    // SWITCH OF ITS OWN. `resolveArbiterConfig` (`arbiter/types.ts`) DERIVES
+    // `enabled` from `cognition.janitor.enabled`, and the runner co-drives it
+    // inside `runJanitor`. So an absent `cognition.arbiter` key is not a gate
+    // that defaulted to false — expecting a `cognition.<id>` key here is the
+    // mistake. Its dormancy is always upstream, which is why the classifier
+    // reports `blocked_upstream` rather than `no_signal`.
+    health: {
+      component: 'cognition.arbiter',
+      event_prefix: 'cognition.arbiter',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // derived from the janitor, which ships off
+      driver: 'co_driven',
+      driver_ref: 'janitor',
+      output: "suggestions[source_module='arbiter']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='arbiter']",
+    },
 
     async buildContext(
       db: Database.Database,

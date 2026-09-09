@@ -2,12 +2,13 @@
  * Brain Engine v7.0 — Edges Component
  *
  * Wraps the typed-edges graph layer as a BrainComponent.
- * Provides 11 MCP tools:
+ * Provides 12 MCP tools:
  *   CRUD (FR-105):                igris_edge_create / list / remove
  *   Graph traversal (FR-113):     igris_graph_neighbors / path / subgraph
  *   Node CRUD + search (TD-171 M2): igris_graph_node_create / node_get /
  *                                    search / dashboard
  *   Visualization (FR-111):       igris_brief_graph_render
+ *   Whole-brain graph (FR-237):   igris_graph_brain
  * Subscribes to brief.created so structural Parent edges are captured
  * at insert time without coupling the briefs component to edge logic.
  * FR-210: also subscribes to the enriched memory.stored so learning→brief
@@ -35,8 +36,10 @@ import type {
   Migration,
   ToolDefinition,
 } from '../../types.js';
+import { getDb } from '../../../db.js';
 import { errMsg } from '../../helpers.js';
 import { edgeMigrations } from './schema.js';
+import { createProjectResolver, hintedQualifier } from './node-project.js';
 import {
   handleEdgeCreate,
   handleEdgeList,
@@ -52,6 +55,7 @@ import {
   invalidateSubgraphCache,
 } from './traversal.js';
 import { handleBriefGraphRender } from './visualization-tool.js';
+import { handleGraphBrain } from './whole-graph-tool.js';
 import {
   handleGraphNodeCreate,
   handleGraphNodeGet,
@@ -76,12 +80,27 @@ export function createEdgesComponent(): BrainComponent {
    * Listens on brief.created; expects the payload to optionally include
    * a `parent_brief_id` field populated by the briefs component (parsed
    * from explicit input or `**Parent Brief:** FR-XXX` in markdown).
+   *
+   * BR-083 — THE TWO SIDES OF THE PAYLOAD'S `project` ARE NOT THE SAME KIND OF
+   * FACT, and this is the highest-risk pair in the whole caller sweep because
+   * `brief -> brief` is 313 of the 692 live brief edges.
+   *   - NEAR side: `project` is an ASSERTION. The payload says which project
+   *     this brief was just created in, so it is passed verbatim as
+   *     `from_project` and the ladder verifies it.
+   *   - FAR side: `project` is only a HINT. A parent brief usually lives in the
+   *     same project, but `derived_from`/`parent_of` across projects is legal
+   *     (FR-237 branch 1), so asserting it would REJECT edges that are written
+   *     today. `hintedQualifier` forwards it only where it turns a refusal into
+   *     a resolution: `|P| > 1` and the hint is one of the candidates.
+   * An ambiguous parent with no applicable hint is REFUSED — logged by the
+   * existing `result.isError` branch, never silently written unqualified.
    */
   function onBriefCreated(payload: EventPayload): void {
     if (!_ctx) return;
 
     const briefId = payload.data.brief_id;
     const parentBriefId = payload.data.parent_brief_id;
+    const project = payload.data.project;
 
     if (typeof briefId !== 'string' || !briefId) return;
     if (typeof parentBriefId !== 'string' || !parentBriefId) return;
@@ -90,6 +109,7 @@ export function createEdgesComponent(): BrainComponent {
     if (briefId === parentBriefId) return;
 
     try {
+      const resolver = createProjectResolver(getDb());
       const result = handleEdgeCreate({
         from_type: 'brief',
         from_id: briefId,
@@ -99,6 +119,11 @@ export function createEdgesComponent(): BrainComponent {
         confidence: 1.0,
         provenance: 'observed',
         metadata: { source: 'brief.created' },
+        ...(typeof project === 'string' && project ? { from_project: project } : {}),
+        ...(() => {
+          const hint = hintedQualifier('brief', parentBriefId, project, resolver);
+          return hint ? { to_project: hint } : {};
+        })(),
       });
 
       if (!result.isError) {
@@ -142,7 +167,7 @@ export function createEdgesComponent(): BrainComponent {
    *     `learning → <to_type>` edge of the given `edge_type`.
    *
    * The learning node id is `String(id)` — the settled `numericId` convention
-   * (traversal.ts:237); learning nodes auto-register on first edge reference.
+   * (traversal.ts:415); learning nodes auto-register on first edge reference.
    * Errors are logged, never thrown (mirrors `onBriefCreated`).
    */
   function onMemoryStored(payload: EventPayload): void {
@@ -153,6 +178,16 @@ export function createEdgesComponent(): BrainComponent {
     // Need the new learning id to anchor the edge `from` side.
     if (rawId === undefined || rawId === null || rawId === '') return;
     const fromId = String(rawId);
+
+    // BR-083 — the payload ALREADY carries `project` (MAINTAINING row 106,
+    // FR-210); this hook simply starts reading a field it always received. No
+    // new field on the event. It is the far side's owner HINT, never an
+    // assertion: `learning -> brief` where the brief lives only in another
+    // project is a legitimate cross-project edge, so forwarding the learning's
+    // project as `to_project` would refuse an edge that is written today.
+    // This is the single highest-value line of the sweep — `derived_from` is
+    // 132 of the live brief edges and every one of them is minted here.
+    const storedProject = data.project;
 
     // Local helper: write one learning→X edge, guard degenerate self-edges,
     // emit edge.created on success, log (never throw) on failure.
@@ -172,6 +207,12 @@ export function createEdgesComponent(): BrainComponent {
       const source = typeof metadata.source === 'string' ? metadata.source : 'memory.stored';
 
       try {
+        const hint = hintedQualifier(
+          toType,
+          toId,
+          storedProject,
+          createProjectResolver(getDb()),
+        );
         const result = handleEdgeCreate({
           from_type: 'learning',
           from_id: fromId,
@@ -181,6 +222,7 @@ export function createEdgesComponent(): BrainComponent {
           confidence,
           provenance: 'observed',
           metadata,
+          ...(hint ? { to_project: hint } : {}),
         });
 
         if (!result.isError) {
@@ -246,7 +288,7 @@ export function createEdgesComponent(): BrainComponent {
 
   return {
     name: 'edges',
-    version: '1.3.0',
+    version: '1.6.0',
     depends: ['briefs'],
 
     schema(): Migration[] {
@@ -261,7 +303,7 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_edge_create',
           description:
-            'Create a typed edge between two Igris entities. Idempotent: re-creating an identical (from_type, from_id, to_type, to_id, edge_type) tuple returns the existing edge instead of failing. Self-loops are rejected unless edge_type is "recurs_with".',
+            'Create a typed edge between two Igris entities. Idempotent: re-creating an identical (from_type, from_id, from_project, to_type, to_id, to_project, edge_type) tuple returns the existing edge instead of failing. Self-loops are rejected unless edge_type is "recurs_with". BR-083: an endpoint whose id exists in MORE THAN ONE project must be qualified with from_project / to_project — the call is refused with the candidate list rather than minting an ambiguous row.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -302,7 +344,24 @@ export function createEdgesComponent(): BrainComponent {
                 type: 'object',
                 description: 'Free-form metadata stored as JSON (default {})',
               },
+              from_project: {
+                type: 'string',
+                description:
+                  'BR-083: project qualifying from_id. REQUIRED when the id exists in more than one project (the call is refused, listing the candidates); resolved for free when it exists in exactly one; stored as NULL when the entity has no project.',
+              },
+              to_project: {
+                type: 'string',
+                description:
+                  'BR-083: project qualifying to_id. Same rule as from_project.',
+              },
             },
+            // BR-083 D3 / P2: `required` is DELIBERATELY UNCHANGED. The rule is
+            // conditional on `|P(type, id)| > 1` — a database lookup — which a
+            // static JSON-Schema `required` array cannot express, and a blanket
+            // entry would reject the legitimately project-less concept and
+            // synapse edges. Enforcement lives in `handleEdgeCreate`; see its
+            // header for why that is the choke point. MAINTAINING row 113 is
+            // therefore NOT changed by BR-083.
             required: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
           },
           handler: (args) => {
@@ -338,6 +397,16 @@ export function createEdgesComponent(): BrainComponent {
               to_id: { type: 'string' },
               edge_type: { type: 'string', enum: [...VALID_EDGE_TYPES] },
               provenance: { type: 'string', enum: [...VALID_PROVENANCE] },
+              from_project: {
+                type: 'string',
+                description:
+                  'BR-083: exact-match filter on the stored source qualifier. Rows left deliberately unattributed (NULL) match NO value of this filter.',
+              },
+              to_project: {
+                type: 'string',
+                description:
+                  'BR-083: exact-match filter on the stored target qualifier. See from_project.',
+              },
               min_confidence: {
                 type: 'number',
                 description: 'Filter to edges with confidence >= this value (0-1)',
@@ -393,7 +462,7 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_neighbors',
           description:
-            "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100.",
+            "Return all entity nodes within N hops of a seed node. Direction-aware: 'out' follows from→to, 'in' follows to→from, 'both' is undirected. Excludes soft-deleted edges by default. Caps depth at 10 and result count at 100. Nodes are addressed by the triple (type, project, id) and every returned node carries its `project`: a brief id is unique only WITHIN a project, so `BR-001` names a different brief in each of the 25 projects that use it. `node_project` is optional — when the id lives in exactly one project it is resolved for you; when it is ambiguous the call ERRORS and lists the candidate projects rather than fusing them. Because `entity_edges` has no project column, hops the data cannot disambiguate are dropped and counted in `unresolved_hops` (see igris_graph_brain's `edge_resolution` for the same loss measured brain-wide).",
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -406,6 +475,11 @@ export function createEdgesComponent(): BrainComponent {
               node_id: {
                 type: 'string',
                 description: 'Stable id of the seed entity',
+              },
+              node_project: {
+                type: 'string',
+                description:
+                  'Qualifies the seed only — it does not filter the result to that project (a traversal seeded in one project legitimately reaches another through a cross-project edge). Optional: omit it when node_id is unique brain-wide. Required in practice only for an ambiguous id, where omitting it returns an error naming the candidate projects.',
               },
               depth: {
                 type: 'integer',
@@ -445,15 +519,25 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_path',
           description:
-            'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default.',
+            'Find the shortest directed path from one entity to another following outgoing edges. Returns found=false when no path exists within max_depth. Cycle-safe via visited-set tracking. Excludes soft-deleted edges by default. BOTH endpoints are addressed by the triple (type, project, id) and both are qualified independently, so there is correctly NO path between two same-id briefs in different projects. `from_project` / `to_project` are optional — a unique id is resolved for you; an ambiguous one ERRORS and lists the candidate projects. Hops the data cannot disambiguate are dropped and counted in `unresolved_hops`.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               from_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               from_id: { type: 'string' },
+              from_project: {
+                type: 'string',
+                description:
+                  'Qualifies the source seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous from_id returns an error naming the candidate projects.',
+              },
               to_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               to_id: { type: 'string' },
+              to_project: {
+                type: 'string',
+                description:
+                  'Qualifies the target seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous to_id returns an error naming the candidate projects.',
+              },
               edge_types: {
                 type: 'array',
                 items: { type: 'string', enum: [...VALID_EDGE_TYPES] },
@@ -481,13 +565,18 @@ export function createEdgesComponent(): BrainComponent {
         {
           name: 'igris_graph_subgraph',
           description:
-            'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes; cache invalidated by edge mutations.',
+            'Return the connected subgraph (nodes + edges) reachable from a seed node, bounded by max_nodes. Useful for visualization. Results cached for 5 minutes (the cache key carries the resolved seed project, so one project\'s subgraph is never served to another\'s query); cache invalidated by edge mutations. Nodes are addressed by the triple (type, project, id) and each carries its `project`. `seed_node_project` is optional — a unique id is resolved for you; an ambiguous one ERRORS and lists the candidate projects. Hops the data cannot disambiguate are dropped and counted in `unresolved_hops`.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
             properties: {
               seed_node_type: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
               seed_node_id: { type: 'string' },
+              seed_node_project: {
+                type: 'string',
+                description:
+                  'Qualifies the seed only — it does not filter the result to that project. Optional; omitting it on an ambiguous seed_node_id returns an error naming the candidate projects.',
+              },
               max_nodes: {
                 type: 'integer',
                 description: 'Maximum nodes to include (default 20, max 100)',
@@ -655,6 +744,42 @@ export function createEdgesComponent(): BrainComponent {
           },
           handler: (args) => handleBriefGraphRender(args),
         },
+
+        // -----------------------------------------------------------------
+        // FR-237: igris_graph_brain
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_graph_brain',
+          description:
+            'Return the WHOLE brain as one typed graph — every project, every knowledge layer (briefs, learnings, goals, errors, concept/decision nodes) plus the typed edges between them. Nodes are keyed on the composite triple (type, project, id) so two same-id briefs in different projects stay separate nodes. Pass `project` to drill into that subgraph PLUS its depth-1 boundary nodes (same code path, no second query; boundary nodes are flagged). NO body content is returned (labels + display attrs only) — fetch detail per node via igris_graph_node_get / igris_brief_get. `entity_edges` has no project column, so ambiguous edges are projected intra-project with declared multiplicity: every response carries an `edge_resolution` report and every replica carries `source_edge_id` + `resolution` (filter `resolution === "unique"` for a strict view). A degraded brain returns an empty graph, never an error.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description:
+                  'Optional project slug. Returns that project\'s subgraph plus depth-1 boundary nodes, in the identical response shape.',
+              },
+              node_types: {
+                type: 'array',
+                // BY REFERENCE (MAINTAINING row #104 lockstep) — never a
+                // hand-copied literal.
+                items: { type: 'string', enum: [...VALID_ENTITY_TYPES] },
+                description:
+                  'Optional node-type filter, intersected with the active set (brief, learning, goal, error, concept, decision, session).',
+              },
+              max_edge_replicas: {
+                type: 'integer',
+                description:
+                  'Maximum intra-project instances one ambiguous edge may spawn before it is dropped and reported (default 8, 1-32). 1 gives exclusion semantics.',
+                minimum: 1,
+                maximum: 32,
+              },
+            },
+          },
+          handler: (args) => handleGraphBrain(args),
+        },
       ];
     },
 
@@ -700,7 +825,7 @@ export function createEdgesComponent(): BrainComponent {
       // Self-listen for cache invalidation (FR-113 subgraph cache).
       ctx.bus.on('edge.created', onEdgeMutated);
       ctx.bus.on('edge.removed', onEdgeMutated);
-      ctx.log.info('Edges component initialized (v1.3.0 — TD-171 M2 graph nodes)');
+      ctx.log.info('Edges component initialized (v1.5.0 — BR-078 project-qualified traversal)');
     },
 
     destroy(): void {

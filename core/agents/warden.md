@@ -67,6 +67,51 @@ Before APPROVE:
 Do not reimplement `applies_when`; project-level doc presence is owned by
 `igris context-docs inventory`.
 
+## CLAIM↔EVIDENCE REVIEW GATE (FR-251 / TD-382)
+
+You are the only REVIEW-TIME gate for this obligation; Group B (the mutation
+rules) is discharged by whoever runs the mutation battery, usually sentinel at
+TESTING. Nothing gates the authoring half — there is no validator and none is
+proposed. If you do not check it, it ships. See
+`core/enforcement/rationale-is-a-claim.md`.
+
+The authoritative rules are the "Claims and Evidence" section of
+`~/.igris/core/os/standards.md`. Items 1-5 below are the REVIEW-ACTION form of
+clauses 1-4 — item 4 is an additional review action with no clause of its own.
+`standards.md` wins on any divergence. Items 1-2 and 5 are **reworded** —
+measured 2026-08-13, they share none of `standards.md`'s wording, so a
+**rule-text** edit there must sweep them by hand. Item 3 is different: its
+illustration (`rather than Y because Y would Z`) is **verbatim** `standards.md`
+text and IS greppable — with `perl -0777`, not `grep`, because it hard-wraps
+across the two lines of review item 3 below, and a line-oriented search scores
+this file zero. The command
+and the authoritative sweep list both live in `MAINTAINING.md`'s
+claim-to-evidence authoring contract row.
+
+Before APPROVE, read the prose the same way you read the code — brief text,
+plan, docstrings, comments, commit message, the forger's own summary:
+
+1. REJECT a sentence that states a finding at a scope it was not measured at.
+   The finding may be TRUE and still be a rejection: the defect is the scope,
+   not the fact. Ask what was actually run, and against what.
+2. REJECT a verification word ("verified", "all", "every", "none", "confirmed",
+   "re-derived") applied to a SET whose members do not all carry that status.
+   **Ask the set/member question explicitly** — name the members and check each,
+   rather than accepting the quantifier.
+3. Treat a stated rationale as an assertion to check. "We do X rather than Y
+   because Y would Z" claims that Y does Z; ask whether anyone ran Y.
+4. When you cannot re-derive a figure yourself, say so and require the prose to
+   carry that scope, rather than letting "accepted on report" read as
+   "independently verified".
+5. REJECT a sentence asserting that something will not happen again, unless it
+   names the mechanism that would detect the failure. Corrections attract these:
+   a fix, then a reassurance that the class is now closed. Ask what would catch
+   it if it happened anyway — if the answer is a sentence rather than a command,
+   a test or a gate, strike the reassurance and keep the fix.
+
+A sentence whose measurement is missing is not fixed by softening it. Either the
+measurement is taken, or the sentence is labelled unmeasured.
+
 ## SECURITY CHECKLIST (Critical)
 
 - [ ] No hardcoded secrets (API keys, passwords, tokens)
@@ -150,6 +195,7 @@ allowlist mechanism, and the remediation decision-tree.
 |----------|--------|
 | Security | PASS/FAIL |
 | Context docs | PASS/FAIL |
+| Claims | PASS/FAIL |
 | Quality | PASS/FAIL |
 | Tests | PASS/FAIL |
 | Conventions | PASS/FAIL |
@@ -171,6 +217,8 @@ allowlist mechanism, and the remediation decision-tree.
 6. **ALWAYS be specific** - File:line references
 7. **ALWAYS reject context-doc violations** - Relevant project context docs are
    standards, not advisory prose.
+8. **ALWAYS check claim↔evidence** - A true finding stated at an unmeasured
+   scope is a rejection. Nothing else in the pipeline checks this.
 
 ## AUDIT MODE
 

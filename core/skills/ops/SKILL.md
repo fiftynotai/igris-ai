@@ -91,9 +91,17 @@ sqlite3 ~/.igris/memory/knowledge.db "
          p.name as project_name
   FROM brief_status bs
   LEFT JOIN projects p ON p.slug = bs.project
-  WHERE bs.status IN ('In Progress', 'Blocked')
+  -- Folds NOTATION, not VOCABULARY (TD-340). `InProgress` / `in_progress` /
+  -- `IN-PROGRESS` are the same state as `In Progress` and must appear here;
+  -- `Done` / `Completed` / `Active` / `WIP` are different WORDS and must not.
+  -- Same expression as the §17.2 gate — see MAINTAINING.md `brief_status.status`.
+  -- The `bs.` qualifier is REQUIRED here and is the one deviation from the other
+  -- copies: `projects` also has a `status` column, so a bare `status` inside this
+  -- LEFT JOIN is ambiguous. Do not strip it to restore byte-identity.
+  WHERE replace(replace(replace(lower(bs.status),' ',''),'-',''),'_','') IN ('inprogress','blocked')
   ORDER BY
-    CASE bs.status WHEN 'Blocked' THEN 0 WHEN 'In Progress' THEN 1 ELSE 2 END,
+    CASE replace(replace(replace(lower(bs.status),' ',''),'-',''),'_','')
+      WHEN 'blocked' THEN 0 WHEN 'inprogress' THEN 1 ELSE 2 END,
     bs.updated_at DESC;
 "
 ```
@@ -165,21 +173,28 @@ sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors;"
 sqlite3 ~/.igris/memory/knowledge.db "SELECT COUNT(*) FROM errors WHERE COALESCE(solution, '') != '';"
 ```
 
-Agent metrics, if the table exists:
+Hunt cost per agent and per model (FR-267), from the brain-timed `hunt_runs` view — skip if the view does not exist yet (it arrives with the instances migration v3):
 
 ```bash
 sqlite3 ~/.igris/memory/knowledge.db "
   PRAGMA trusted_schema=ON;
-  SELECT agent,
-         COUNT(*) as total,
-         SUM(CASE WHEN result='success' THEN 1 ELSE 0 END) as successes,
-         ROUND(AVG(duration_ms), 0) as avg_ms
-  FROM agent_metrics
-  GROUP BY agent
-  ORDER BY total DESC
-  LIMIT 8;
+  SELECT agent, model_requested, COUNT(*) AS n, ROUND(AVG(duration_ms)/60000.0,1) AS avg_minutes
+  FROM hunt_runs
+  GROUP BY agent, model_requested
+  ORDER BY agent, model_requested
+  LIMIT 16;
 "
 ```
+
+The same role on two models is comparable row-to-row; add `WHERE project='<slug>'` to scope one project. Per-phase and per-hunt totals are GROUP BYs over the same view, never stored.
+
+OS KPIs (FR-268) — the seven cross-project weekly readings (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost), computed on read from the same records plus `brief_status` and the ceremony record:
+
+```bash
+igris kpi --weeks 4 2>/dev/null || true
+```
+
+Render the verb's markdown WHOLE under `### OS KPIs (FR-268)` in §7. The verb owns every derivation (Monday–Sunday UTC weeks, nearest-rank medians, the current week marked partial; `igris kpi --sql` prints the queries for `sqlite3`). If the verb is unavailable or prints nothing, omit the section.
 
 ### 7. Display
 
@@ -210,6 +225,9 @@ Format as:
 - Journal mode: WAL / other
 - DB size: X KB
 - Knowledge: X learnings (Y global), X errors (Y solved)
+
+### OS KPIs (FR-268)
+<the `igris kpi --weeks 4` markdown, whole — omit the section when the verb is unavailable>
 
 ### Projects
 | Project | Status | Archetype | Stack | Last Session | Path |

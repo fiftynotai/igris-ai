@@ -7,7 +7,7 @@ summary: The Memory capability — the surfaces you can store into and recall fr
 
 # Memory
 
-Memory is your working experience across sessions. It is a store of structured-record kinds — learnings, the knowledge graph, briefs, errors, the project registry, goals, metrics, and subconscious candidates — each with its own tools and its own "when to use it." The **obligations** (what you *must* recall, store, dup-check, look up) live in `conduct`; this is the capability.
+Memory is your working experience across sessions. It is a store of structured-record kinds — learnings, the knowledge graph, briefs, errors, the project registry, goals, the hunt cost record, and subconscious candidates — each with its own tools and its own "when to use it." The **obligations** (what you *must* recall, store, dup-check, look up) live in `conduct`; this is the capability.
 
 Every read surface below has a "when to call" trigger, and you are responsible for reaching for it at the right moment. **A read that is never triggered is invisible:** a correctly-stored memory that is never recalled does not change behavior.
 
@@ -147,7 +147,7 @@ igris_memory_store({
 
 ## 2. Knowledge Graph (`igris_graph_*`)
 
-**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`.
+**Tools:** `igris_graph_node_create`, `igris_graph_node_get`, `igris_edge_create`, `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph`, `igris_graph_search`, `igris_graph_dashboard`, `igris_graph_brain`.
 
 **What's there:** typed nodes and edges (relates-to, supersedes, blocks, derived-from). The graph captures relationships a flat learnings table cannot: chains of supersession, dependency trees between briefs, lineage of decisions. Most nodes are **references** to rows in other stores — a brief, learning, goal, error, or session, addressed by `(type, id)`. The only nodes stored IN the graph table are free-standing **`concept`** nodes (an abstract idea with no home elsewhere).
 
@@ -156,6 +156,7 @@ Brief / learning / error / session / goal nodes live in their own surfaces and a
 ### When to call
 
 - Before proposing a refactor: `igris_graph_neighbors` from the affected module/concept node (depth: 2, direction: 'in') to surface dependents and prior decisions. Use `igris_graph_path` for shortest-path between two known nodes and `igris_graph_subgraph` for the connected component.
+- **Seeding on a brief? Qualify the project.** A brief id is unique only WITHIN a project — `BR-001` names a different brief in each of 25 projects. Pass `node_project` / `from_project` + `to_project` / `seed_node_project` alongside the id. These qualify the SEED only; they do not filter the result, so a traversal legitimately still reaches other projects. Omit them when the id is unique brain-wide (most `FR-`/`TD-` ids in one project) — the tool resolves it for you. If the id is ambiguous the call ERRORS and lists the candidate projects: that is the tool refusing to fuse them, not a failure. Read `unresolved_hops` on every response — non-zero means `entity_edges` could not say which project some edges belonged to and they were dropped rather than guessed.
 - When the user asks "why did we change X to Y?" — `igris_graph_search` the concept node and walk `supersedes` edges.
 - When stitching together a broader context for an architect prompt — the graph gives structured ancestry that recall does not.
 
@@ -185,6 +186,10 @@ Use `igris_graph_search` to find `concept` nodes by partial name when you only k
 
 Use `igris_graph_dashboard` with `summary_only: true` for a topology snapshot during `/scan` and `/boot` — counts only, fast on large graphs. The full call surfaces the top nodes by total degree — reach for it before refactoring to spot god-nodes whose extraction would touch many edges.
 
+### When to View the Whole Brain
+
+Use `igris_graph_brain` when the question spans **more than one project** — "what does the whole brain look like?", "which projects are actually connected?", "where does this knowledge cluster?" — or when you need one typed graph over briefs, learnings, goals, errors and concept nodes in a single call. Every other graph tool starts from a seed node or a single project; this one starts from everything. Pass `project` to drill into that subgraph plus its one-hop boundary nodes — same call, same response shape, no second query. Nodes are keyed on the triple (type, project, id), so two same-id briefs in different projects stay separate nodes (`BR-001` exists in 25 projects and they are never fused). Because `entity_edges` carries no project column, ambiguous edges are projected intra-project with declared multiplicity — read the `edge_resolution` block for the counts, and keep only edges whose `resolution` reads "unique" when you need a strict view. No body text is returned; reach for `igris_graph_node_get` or `igris_brief_get` for one node's detail. A degraded brain returns an empty graph, never an error.
+
 ### Example invocation
 
 ```jsonc
@@ -197,12 +202,22 @@ igris_graph_node_create({
 })
 igris_edge_create({
   from_type: "concept", from_id: "concept:vector-search",
-  to_type: "brief", to_id: "FR-076",
+  to_type: "brief", to_id: "FR-076", to_project: "igris-ai",
   edge_type: "related_to"
 })
+// BR-083: a brief id is unique only WITHIN a project. Qualify any endpoint
+// whose id exists in more than one project with `from_project` / `to_project`
+// — the call is REFUSED with the candidate list rather than storing an edge
+// that resolves to whichever project matched first. An id that exists in
+// exactly one project is resolved for you; a concept has no project and
+// stores NULL.
 
 // Topology snapshot before a refactor.
 igris_graph_dashboard({ project: "igris-ai", summary_only: true })
+
+// The whole brain in one call, then drill into one project.
+igris_graph_brain({})
+igris_graph_brain({ project: "igris-ai" })
 
 // Find a node by partial label.
 igris_graph_search({ query: "memory capability rename", limit: 5 })
@@ -271,7 +286,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ### When to call
 
 - Before a cross-project recommendation: `igris_project_status` the target to verify tech stack and archetype match before suggesting reuse. (For new code prefer `igris_project_dashboard({ slug })` — same detail PLUS a `recent` block.)
-- When onboarding a new project: `igris_project_register` so its briefs and learnings can participate in cross-project recall and promotion.
+- When onboarding a new project: `igris_project_register` so its briefs and learnings can participate in cross-project recall and promotion. **Slug derivation rule (TD-402): `core/skills/harvest/SKILL.md` Phase 2.** One directory gets ONE row.
 - After registration, to flip `status` (e.g., archive a project) or correct `tech_stack` / `archetype`: `igris_project_update` (partial UPDATE — only the fields you pass are written). For brand-new projects use `igris_project_register`, not `_update`.
 - For a unified per-project / cross-project view: `igris_project_dashboard`. Set `slug` for one project's detail; omit `slug` and pass `status` / `archetype` / `tech_stack` filters for narrowed cross-project listings. `summary_only: true` for counts-only during `/scan`.
 - During the `/ops` skill flow.
@@ -279,7 +294,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 ### Example invocation
 
 ```jsonc
-igris_project_status({ slug: "fifty-flutter-kit" })
+igris_project_status({ slug: "fifty_eco_system" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
 ```
@@ -335,22 +350,27 @@ igris_goal_list({ project: "igris-ai", status: "active" })
 igris_goal_dashboard({ project: "igris-ai" })
 ```
 
-## 8. Metrics (`igris_metrics_*`)
+## 8. Hunt cost record (`igris_agent_event`, `hunt_runs`)
 
-**Tools:** `igris_metrics_record`, `igris_metrics_query`, `igris_metrics_dashboard`, `igris_metrics_velocity`.
+**Tools:** `igris_agent_event` (write). Read with `igris kpi` (the seven OS KPIs, computed on read; `--sql` prints the queries) or the `hunt_runs` view with `sqlite3`; the ceremony record is `ceremony_events` / `ceremony_runs`, written by `igris ceremony start|stop` from the four ceremony skills (FR-268). The former metrics tools (record / query / velocity / dashboard) are retired; this record replaced them (FR-267).
 
-**What's there:** time-series of agent invocations, token spend, brief throughput, error rates. The source for agent activity dashboards.
+**What's there:** one row per agent invocation — `project`, `brief_id`, `agent`, `phase`, `round`, `model_requested` / `model_resolved`, `event_type` (`start` / `stop` / `error` / `retry`), `duration_ms`, tokens. The brain stamps every timestamp, computes `duration_ms` from its own clock when a `stop`/`error` pairs with the open `start`, and assigns `round` — a resumed, re-prompted or re-run agent is a NEW invocation with its own row. You never pass duration or round (the schema rejects them). Tokens are recorded when the harness reports them and are NULL — never 0 — when it does not. Durable: no purge, no TTL; the table syncs to the remote brain.
 
 ### When to call
 
-- During `/scan` or `/ops`: pull recent metric snapshots.
-- When the user asks "is this getting faster/slower?": query velocity over the relevant window.
-- Before refactoring a hot path: check the current cost so you can measure the win.
-- For a one-shot agent-utilization view: `igris_metrics_dashboard` returns per-agent invocations / success-rate / avg-duration / retries, per-action and per-result breakdowns, recent invocations with a week-over-week delta, and the longest-running invocations. Pair with `igris_brief_velocity` for completion-rate context. Optional `agent` filter scopes everything to one agent; `summary_only: true` drops the samples block.
+- Before and after every agent you delegate to during `/hunt`: `igris_agent_event` with `instance_id`, `agent`, `event_type` and `model_requested` (the model you chose, or `inherit:<your own model id>`) — all four are required; add `model_resolved` and token counts on `stop` only when the harness reports them. A role named in a brief's Agent Log with no recorded event is refused at the closing commit (`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past it).
+- When the user asks "how long did brief X take, and where did it go?", "is this model slower?", or "where is the pain point?": query `hunt_runs`. Per-invocation grain; per-agent, per-phase and per-hunt totals are GROUP BYs, never stored.
+- During `/ops`: the per-agent / per-model view (the `/ops` skill carries the query).
 
 ### Example invocation
 
 ```jsonc
-igris_metrics_velocity({ project: "igris-ai", days: 30 })
-igris_metrics_dashboard({ project: "igris-ai", agent: "forger" })
+igris_agent_event({ instance_id: "<id>", agent: "forger", event_type: "start", brief_id: "FR-267", phase: "BUILDING", model_requested: "inherit:claude-fable-5" })
+```
+
+```sql
+-- one brief, per agent and per model (sqlite3 ~/.igris/memory/knowledge.db)
+SELECT brief_id, size, agent, model_requested, COUNT(*) AS rounds, ROUND(SUM(duration_ms)/60000.0,1) AS minutes
+FROM hunt_runs WHERE project='igris-ai' AND brief_id='FR-267'
+GROUP BY brief_id, size, agent, model_requested ORDER BY MIN(ended_at);
 ```

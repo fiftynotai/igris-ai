@@ -73,6 +73,7 @@ For each promising idea:
 ### Step 4: Create FR Briefs
 For ideas rated DO NOW or QUICK WIN:
 - Create via `igris_brief_create` MCP tool, fallback to cache write at `~/.igris/projects/{project}/briefs/FR-XXX-{name}.md`
+- If a create is answered `Refused: brief id collision` (TD-395), another session took that id and nothing was written — re-mint on the id the refusal names and call again. That is not an MCP failure, so do not take the cache fallback.
 - Include value assessment and effort estimate
 - Reference related existing features
 

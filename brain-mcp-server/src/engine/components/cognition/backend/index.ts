@@ -3,7 +3,8 @@
  *
  * Composes the ported FR-201 pieces into ONE call the engine uses:
  *   resolveBackend (env.ts) → buildExtractorSpawn (spawn-map.ts) →
- *   execHarness (exec.ts) → extractText (parse-output.ts) → cleanup.
+ *   execHarness (exec.ts) → detectClaudeErrorEnvelope (claude, TD-447) →
+ *   extractText (parse-output.ts) → cleanup.
  *
  * The engine owns the GATES (cold-start, budget, timeout-as-config, lifecycle);
  * this backend owns "run the isolated LLM call on the resolved harness and hand
@@ -17,7 +18,7 @@
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import { buildExtractorSpawn, type SpawnOptions } from './spawn-map.js';
 import { execHarness } from './exec.js';
-import { extractText } from './parse-output.js';
+import { extractText, detectClaudeErrorEnvelope } from './parse-output.js';
 
 export {
   subscriptionOnlyEnv,
@@ -53,7 +54,9 @@ export type BackendFailReason =
   | 'timeout'
   | 'non_zero_exit'
   | 'spawn_error'
-  | 'empty_response';
+  | 'empty_response'
+  | 'api_error' // TD-447: claude reported an API failure inside its result envelope
+  | 'auth_error'; // TD-447: same envelope, 401/403 or an authentication message
 
 /** The result of one isolated LLM call. */
 export interface BackendRunResult {
@@ -117,6 +120,12 @@ export async function runBackend(
         fail_reason: 'non_zero_exit',
         detail: `exit ${String(res.code)}: ${res.stderr.trim().slice(0, 200)}`,
       };
+    }
+    // TD-447: claude reports API/auth failures INSIDE the result envelope (exit 1
+    // with non-empty stdout), which extractText would otherwise lift as the answer.
+    if (harness === 'claude') {
+      const envelope = detectClaudeErrorEnvelope(res.stdout);
+      if (envelope) return { ok: false, text: '', fail_reason: envelope.kind, detail: envelope.detail };
     }
     const text = extractText(harness, res.stdout);
     if (!text.trim()) {

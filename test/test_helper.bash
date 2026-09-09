@@ -208,3 +208,30 @@ export -f require_git
 export -f require_jq
 export -f debug
 export -f show_tree
+
+# ---------------------------------------------------------------------------
+# TD-434 (2026-08-31): portable stat/md5 — same helpers as
+# core/scripts/cli-adapters/_common.sh (duplicated because test files load
+# THIS helper, not _common.sh; keep the two in sync). GNU stat has no
+# `-f FORMAT` — `-f` prints FILESYSTEM status there, so the old
+# `stat -f '%i' X 2>/dev/null || stat -c '%i' X` idiom concatenates BOTH
+# arms' stdout on Linux (fs-status text embeds mutating free-block counts,
+# so even before/after equality checks broke). `md5 -q` is darwin-only.
+# Never call `stat -f` / `md5 -q` directly in a test.
+# ---------------------------------------------------------------------------
+if stat -c %i / >/dev/null 2>&1; then _IGRIS_STAT_DIALECT=gnu; else _IGRIS_STAT_DIALECT=bsd; fi
+
+file_inode() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %i "$1" 2>/dev/null || echo ""
+  else stat -f %i "$1" 2>/dev/null || echo ""; fi
+}
+
+file_nlink() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %h "$1" 2>/dev/null || echo "0"
+  else stat -f %l "$1" 2>/dev/null || echo "0"; fi
+}
+
+file_md5() {
+  if command -v md5 >/dev/null 2>&1; then md5 -q "$1" 2>/dev/null || echo ""
+  else md5sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}

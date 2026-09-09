@@ -7,6 +7,7 @@ allowed-tools:
   - Read
   - Write
   - Edit
+  - Bash
   - mcp__igris-brain__igris_session_file_update
   - mcp__igris-brain__igris_instance_remove
   - mcp__igris-brain__igris_brief_release
@@ -23,6 +24,10 @@ triggers:
 Safely pause or end the current session, saving state for later resumption.
 
 ## Execution
+
+### 0. Ceremony start (FR-268)
+
+Run `igris ceremony start --name rest --project {project} 2>/dev/null || true` — the brain-timed start of this ceremony (FR-268). Never blocks `/rest`; §3.5 writes the matching stop.
 
 ### 1. Read Current Session
 
@@ -67,7 +72,6 @@ If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do N
 If the `igris-brain` MCP server is available:
 - Read `~/.igris/projects/{project}/session/LEARNINGS.md` -- if it has new content since last sync, store each learning via `igris_memory_store` with the current project slug
 - Read `~/.igris/projects/{project}/session/DECISIONS.md` -- if it has new content, store each decision via `igris_memory_store` with category="decision" and the current project slug
-- Call `igris_metrics_record` with session summary: project=current project slug, agent="session", action="rest", result="success"
 - Call `igris_session_sync` with:
   - project = current project slug (basename of project directory)
   - brief_id = active brief ID from CURRENT_SESSION.md (if any)
@@ -79,25 +83,39 @@ If the `igris-brain` MCP server is available:
 
 If brain MCP is not available, skip this step silently. No errors, no warnings.
 
-### 2.6.4.5. Drain Local Sync Queue (Mandatory)
+### 2.6.4.5. Drain Sync Queues (Mandatory)
 
-You MUST drain the local sync queue file before the final push when brain MCP is available. This is NOT optional — briefs queued locally during this session depend on this.
+You MUST drain the sync queues before the final push when brain MCP is available. This is NOT optional — briefs queued locally during this session depend on this.
+
+There are TWO queues, and `igris sync data` drains BOTH in a single run:
+- the LOCAL file `~/.igris/projects/{project}/sync_queue.jsonl`, replayed entry by entry (phase 1);
+- the BRAIN-SIDE `sync_queue` TABLE on the remote host — rows from previously failed pushes — drained by the `igris_sync_queue_drain` call the CLI makes for you (phase 2), reading `remote_brain.url` and `remote_brain.api_key` out of `~/.igris/config.json` itself.
 
 If the `igris-brain` MCP server is available:
 - Invoke the canonical atomic drain via the CLI: `igris sync data` (delegates to `cli/src/lib/sync/queue.ts`). Same contract as `/boot` §3.6.1.1: rename-then-process atomicity (FR-128), `.draining-*` crash recovery, strict-allow-list (TD-128 M3), and `cache_path → content` resolution for `brief_create`.
-- The drain is gated on a non-empty queue: when the queue is empty (the common `/rest` case), the CLI short-circuits after a single filesystem stat plus the remote drain call. No-op-fast.
+- The local half is gated on a non-empty queue: when the file is empty (the common `/rest` case), the CLI short-circuits after a single filesystem stat and proceeds straight to the brain-side drain. No-op-fast.
+- Phase 2 runs ONLY if phase 1 fully succeeded. An entry the brain REJECTS stops the run, preserves the local queue, and the brain-side drain is never reached (BR-080). A non-zero exit therefore means the brain-side table MAY be undrained — either phase 2 was never reached, or it ran and itself failed. Treat a non-zero exit as "not drained" without inferring which; §2.6.5 covers both, and re-draining an already-drained table is a no-op.
 
 If brain MCP is NOT available, skip silently — matching the existing `/rest` skip-on-MCP-unavailable convention. The local queue (and any `.draining-*` temp) is preserved for `/boot` to drain on the next session start. Do NOT block session end.
 
-### 2.6.5. Drain Brain Sync Queue (Mandatory)
+### 2.6.5. Drain Brain Sync Queue — Fallback Only (Conditional)
 
-You MUST drain the brain-side sync queue before the final push. This is NOT optional.
+Do NOT call `igris_sync_queue_drain` here when the `igris sync data` run in §2.6.4.5 exited 0. That run already drained the brain-side table as its phase 2, so a second call is redundant, and its "drained 0" is routinely misread as evidence that the local queue was empty.
 
-If the `igris-brain` MCP server is available:
-1. Call `igris_sync_queue_drain` to process any queued sync operations from previous failed pushes
-2. Display count of drained operations if any were processed
+Call `igris_sync_queue_drain` directly ONLY when §2.6.4.5 left the brain-side table possibly undrained — that is, when the `igris sync data` step was skipped, or when it exited non-zero for ANY reason (a local entry failed to replay so phase 2 was never reached; phase 2 ran and failed; the remote is unconfigured; the snapshot could not be acquired). Do not try to distinguish these — the drain is idempotent, so calling it when the table was already drained costs nothing.
 
-If brain MCP is NOT available or drain fails, skip silently. Do NOT block session end.
+In that case, if a remote brain URL is configured:
+- Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
+- If both are present, call `igris_sync_queue_drain` with:
+  - remote_url = the configured URL
+  - api_key = the configured API key
+- Display the count of drained operations if any were processed
+
+`igris_sync_queue_drain` requires BOTH arguments. Calling it with no arguments is rejected by the brain — it has no config fallback of its own, by design.
+
+If `remote_brain` is not configured, skip with one-line notice: "Brain queue drain skipped (remote brain not configured)." There is no remote to drain to.
+
+If brain MCP is NOT available, skip silently. If the MCP server IS available but the drain call returns an error, display a one-line notice: "Brain queue drain reported an error: [first line of the error]." Do not swallow an error from a server that is present, and never print the API key value in any notice. Either way, do NOT block session end.
 
 ### 2.7. Push to Remote Brain (Mandatory)
 
@@ -109,6 +127,7 @@ If the `igris-brain` MCP server is available AND a remote brain URL is configure
   - remote_url = the configured URL
   - api_key = the configured API key
 - Display sync result summary (e.g., "Pushed 3 learnings, 1 error, 2 sessions to remote brain")
+- If the output names SKIPPED, ERROR or UNACKNOWLEDGED tables, surface those lines verbatim — the rows are retained locally and travel on the next push once the remote is deployed (BR-097).
 
 If remote brain is not configured or push fails, skip with one-line notice: "Brain push skipped ([reason])." Do NOT block session end.
 
@@ -133,6 +152,8 @@ File content:
 **Instance ID:** <instance_id>
 **Updated:** [current date]
 **Active Brief:** [current brief or None]
+**Resume Point:** [one line: brief + phase]
+**Next Steps:** [one line: the single next action]
 
 ---
 
@@ -154,6 +175,12 @@ File content:
 **Completed:** [list completed items]
 **Summary:** [brief summary of work done]
 ```
+
+The `**Resume Point:**` and `**Next Steps:**` lines in `## Status` are the MACHINE surface; the `##` sections below them are the HUMAN surface. `igris session gather` matches those two bold lines with a single-line regex and carries only their values into the boot digest that `/boot` §5 renders, so each must fit on ONE line. The `## Resume Point` and `## Next Session Instructions` sections may be as long as needed — they stay in the file (and in the stored `session_files` row) for whoever opens it, but they are not what the digest carries.
+
+### 3.5. Ceremony stop (FR-268)
+
+Run `igris ceremony stop --name rest --project {project} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed end of this ceremony (FR-268); the brain computes the duration from the §0 start it pairs with. Never blocks. (The row is written after §2.7's push, so it travels on the NEXT push — the record is complete on the machine and one push behind on the remote.)
 
 ### 4. Confirm REST MODE
 

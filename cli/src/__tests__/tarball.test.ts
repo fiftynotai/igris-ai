@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   createReadStream,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -269,6 +270,32 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // `npm pack --dry-run` runs npm + spawns a child; modest headroom
   // over vitest's 5 s default is enough now that node_modules is
   // excluded from the manifest (BR-068).
+  //
+  // TD-336 UPDATE — that "modest headroom" was reasoned about before anyone
+  // measured it. These two TD-168 tests each spawn their OWN un-memoised
+  // `npm pack` and carry 15_000; under the sustained 8-way load that motivated
+  // TD-336 they measured 9464 ms and 7256 ms — 63% and 48% of that budget, for
+  // the SAME operation that now carries PACK_TIMEOUT_MS = 30_000 seven hundred
+  // lines below. They are not reconciled here deliberately: they pass no
+  // `timeout` in their own options objects, so swapping the constant in would
+  // give them one half of a two-half contract whose docblock insists on both.
+  // TD-344 owns doing it properly. Do not "harmonize" these to
+  // PACK_TIMEOUT_MS without also adding options.timeout at :276 and :362.
+  //
+  // TD-378 UPDATE — DONE, both halves, because the prediction came true and
+  // stopped being a flake. `npm pack --dry-run` was TIMED three times back to
+  // back on an otherwise idle machine: **16.53 s, 19.43 s, 19.92 s**, against
+  // TD-336's measurements of 9464 ms and 7256 ms for the same operation under
+  // EIGHT-WAY LOAD. The pack has roughly doubled in wall clock as the tarball
+  // grew this session (796 -> 801 entries, ~1.86 -> ~1.93 MB), so 15_000 is now
+  // exceeded on an IDLE machine, every run. These two stopped being
+  // intermittent and became reliably red.
+  //
+  // So both halves of the contract land together, as the paragraph above
+  // demands: `PACK_TIMEOUT_MS` replaces the two literals AND each `it` gains
+  // the matching `options.timeout`. Harmonising one without the other is what
+  // that sentence exists to prevent, and it is still the right warning — it is
+  // just no longer a reason to wait.
   it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
@@ -289,7 +316,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     expect(
       filePaths.includes("dist/brain-mcp-server/package.json"),
     ).toBe(true);
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 
   // BR-068: the bundle must vendor its production node_modules so the
   // igris-brain MCP can resolve @modelcontextprotocol/sdk on spawn.
@@ -312,43 +339,95 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // error. The brain MCP is a stdio server that idles until killed, so a
   // `timeout`-kill is treated as PASS (server booted OK) and any
   // ERR_MODULE_NOT_FOUND in stderr is FAIL.
-  it("bundled entry spawns clean — no ERR_MODULE_NOT_FOUND (BR-068)", async () => {
+  //
+  // TD-426 HARDENING (re-lands TD-387's, whose commit 8d66b44 never reached
+  // develop) — this test previously spawned the child with the REAL `HOME`
+  // and only `IGRIS_BRAIN_DIR`, which the bundled server ignored for its DB
+  // path: every `cd cli && npm test` on a machine with a pending migration
+  // migrated the operator's live `~/.igris/memory/knowledge.db`, exactly like
+  // the build smoke guard did (instances v3 on 2026-08-26, v4 on 2026-08-27).
+  // It is now hermetic — a fake `HOME` plus an `IGRIS_BRAIN_DIR` sandbox, with
+  // `IGRIS_DB_PATH` stripped so this is a probe of the IGRIS_BRAIN_DIR tier
+  // ALONE (the build guard sets both seams; the tier is held here) — and it
+  // asserts WHERE the DB landed:
+  //   - the sandbox DB was created (the child honoured IGRIS_BRAIN_DIR),
+  //   - the fake-HOME default path was NOT touched (no escape), and
+  //   - the child PRINTED the sandbox path (`[brain] db: <path>`), the line
+  //     cli/scripts/smoke-bundled-mcp.sh parses.
+  // Pre-created `memory/` parents on BOTH paths: better-sqlite3 creates the DB
+  // file but never its parent directory, and a missing parent makes bootEngine
+  // throw — which would masquerade as a clean early exit here. POSIX-only
+  // seam: `os.homedir()` follows `$HOME` on darwin/linux.
+  //
+  // Red-first against HEAD 812ae57's bundle (2026-08-27): `[brain] db:` absent
+  // from stderr, the sandbox DB absent, the fake-HOME DB created.
+  //
+  // SPAWN SHAPE (TD-426, measured 2026-08-27): with a piped or /dev/null stdin
+  // the child sees EOF at once and BR-067's stdin teardown exits it 0 within
+  // ~1 s, AFTER the engine boot (getEngine() runs before the teardown is
+  // installed) — so the healthy path is a clean exit, not a timeout kill, and
+  // the previous `execFileSync` version only read `stderr` inside its `catch`,
+  // i.e. it was the empty string on every healthy run (harmless for the
+  // BR-068 negative match, fatal for a positive one). `spawnSync` returns
+  // stderr on BOTH paths. TD-336: `options.timeout` still SIGTERMs a hung
+  // child; the per-test PACK_TIMEOUT_MS is the outer half.
+  it("bundled entry spawns clean and stays in its sandbox — no ERR_MODULE_NOT_FOUND, no live-brain escape, prints the DB it opened (BR-068 + TD-426)", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
-    const os = await import("node:os");
 
+    const fakeHome = mkdtempSync(join(tmpdir(), "igris-mcp-spawn-home-"));
     const brainDir = mkdtempSync(join(tmpdir(), "igris-mcp-spawn-test-"));
+    const fakeDefaultDb = join(fakeHome, ".igris", "memory", "knowledge.db");
+    const sandboxDb = join(brainDir, "memory", "knowledge.db");
     try {
-      let stderr = "";
-      let timedOut = false;
-      try {
-        cp.execFileSync("node", [bundledEntry], {
-          timeout: 4000,
-          encoding: "utf-8",
-          env: { ...process.env, IGRIS_BRAIN_DIR: brainDir },
-        });
-      } catch (err) {
-        const e = err as {
-          signal?: string;
-          killed?: boolean;
-          stderr?: string;
-        };
-        // A timeout-kill means the server booted and idled — that is the
-        // expected healthy outcome for a stdio server with no stdin.
-        timedOut = e.killed === true || e.signal === "SIGTERM";
-        stderr = e.stderr ?? "";
-      }
+      // Pre-create BOTH memory/ parents (see docblock).
+      mkdirSync(join(fakeHome, ".igris", "memory"), { recursive: true });
+      mkdirSync(join(brainDir, "memory"), { recursive: true });
+
+      // Hermetic child env: fake HOME + sandbox brain dir; IGRIS_DB_PATH and
+      // IGRIS_PIDS_DIR stripped (IGRIS_DB_PATH outranks IGRIS_BRAIN_DIR by
+      // contract — an ambient value would silently retarget the child and
+      // turn this tier probe into a probe of the wrong tier).
+      const childEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        HOME: fakeHome,
+        IGRIS_BRAIN_DIR: brainDir,
+      };
+      delete childEnv.IGRIS_DB_PATH;
+      delete childEnv.IGRIS_PIDS_DIR;
+
+      const res = cp.spawnSync("node", [bundledEntry], {
+        timeout: 4000,
+        encoding: "utf-8",
+        env: childEnv,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const stderr = res.stderr ?? "";
+      // Healthy outcomes: exited 0 on stdin EOF, or idled until the timeout
+      // kill. Anything else (a crash exit code) is a failed boot.
+      expect(
+        res.status === 0 || res.signal === "SIGTERM",
+        `bundle boot failed: status=${res.status} signal=${res.signal}\n${stderr}`,
+      ).toBe(true);
       expect(stderr).not.toMatch(
         /ERR_MODULE_NOT_FOUND|Cannot find package/,
       );
-      // It either idled until the timeout kill, or exited cleanly — both
-      // are acceptable; what is NOT acceptable is a resolution failure.
-      void timedOut;
-      void os;
+      // TD-426: the child must SAY which DB it opened, and it must be the
+      // sandbox — this is the line the build guard parses.
+      expect(stderr).toContain(`[brain] db: ${sandboxDb}`);
+      // …the boot must have used the SANDBOX brain dir…
+      expect(existsSync(sandboxDb)).toBe(true);
+      // …and must NOT have touched the (fake-)HOME default path. Before the
+      // resolveDbPath() fix this is exactly where the child wrote — this
+      // assertion is the red-then-green pivot.
+      expect(existsSync(fakeDefaultDb)).toBe(false);
+      // pidsDir() mirrors the middle tier: no registry under the fake HOME.
+      expect(existsSync(join(fakeHome, ".igris", "brain-mcp-server.pids"))).toBe(false);
     } finally {
       rmSync(brainDir, { recursive: true, force: true });
+      rmSync(fakeHome, { recursive: true, force: true });
     }
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 
   // BR-068: the vendored node_modules is a build/CI artifact only — it
   // MUST NOT ship in the published tarball (platform-locked native
@@ -381,7 +460,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     expect(
       filePaths.includes("dist/brain-mcp-server/package-lock.json"),
     ).toBe(true);
-  }, 15_000);
+  }, PACK_TIMEOUT_MS);
 });
 
 // ----------------------------------------------------------------------
@@ -450,3 +529,3618 @@ function buildAbsoluteEntryTarball(work: string): string {
   fs.writeFileSync(out, gz);
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// FR-238 (T9) — the PUBLISHED PACKAGE MANIFEST.
+//
+// `cli/package.json` `files` lists `"dist"`, so `dist/dashboard/**` ships with
+// no manifest change. That is convenient and it is also exactly why it needs a
+// test: nothing declares the dashboard, so nothing would notice it silently
+// disappearing (a `files` edit, an `.npmignore`, a build-order change).
+//
+// This asserts against `npm pack --dry-run --json` — the real packer, not a
+// reimplementation of its glob semantics.
+// ---------------------------------------------------------------------------
+
+interface PackEntry {
+  path: string;
+  size: number;
+}
+interface PackReport {
+  entryCount: number;
+  size: number;
+  unpackedSize: number;
+  files: PackEntry[];
+}
+
+/**
+ * The dashboard packed-size gate is **one number: a hard ceiling of +150 KB**
+ * over `PACK_BASELINE_PACKED`, asserted below. (It read +550 KB from TD-329
+ * until TD-374 RE-BASED the baseline to a clean measurement and re-derived the
+ * grant; +150 KB over the new origin is a LARGER absolute cap than +550 KB was
+ * over the old one. The TD-329 provenance immediately below narrates the
+ * +400 -> +550 history and is correct as history.) An ordinary CLI change does not
+ * fail the suite; a bundle that doubles does.
+ *
+ * ─────────────────────────────────────────────────────────────────────────────
+ * THE CEILING WAS RAISED ONCE, DELIBERATELY (TD-329, 2026-08-02)
+ * ─────────────────────────────────────────────────────────────────────────────
+ * +400 KB -> +550 KB. This is an OPERATOR decision with a named date, not a
+ * precedent that the number moves whenever it binds. It was raised BEFORE the
+ * work that needed it, with the estimate on the record, rather than after a
+ * failing assertion — which is the distinction that matters.
+ *
+ *   the ask:   "the dashboard is an essential tool, so it justifies going as
+ *              much as it needs to deliver the full functionality we are
+ *              trying to cover" — operator, 2026-08-02
+ *   the state: +376.4 KB spent, 23.6 KB left
+ *   the need:  ~83-115 KB for the five remaining GL-006 briefs, estimated
+ *              against each one's nearest SHIPPED analogue (FR-246 ~ FR-240's
+ *              48 KB shape; FR-247 ~ FR-241's 39 KB shape)
+ *   the grant: +550 KB, leaving 173.6 KB — covers the estimate with real
+ *              margin and still FAILS on a surprise
+ *
+ * Why 550 and not a bigger round number: FR-239 proposed exactly +550 KB
+ * BEFORE measuring, then landed at +283.4 KB and did not need it (the story is
+ * three paragraphs below). It is a figure this repo already considered and
+ * rejected on evidence, which makes it the honest ask rather than an invented
+ * one.
+ *
+ * THE INSTRUCTION INVERTS, IT DOES NOT DISAPPEAR. The next brief that runs out
+ * still cuts scope or vendors less. What this raise buys is room for work that
+ * was already planned and estimated — it does not make the number negotiable.
+ * A brief that blows through the remaining headroom (see the per-brief ledger
+ * below for the current figure — deliberately NOT restated here, because a
+ * claim that carries its own copy of the number is the learning-1131 trap)
+ * has done something wrong and the suite must say so. This gate has caught all three of: a stray runtime dependency,
+ * a vendored asset creeping into `files`, and a ~90 MB HuggingFace model cache
+ * downloading itself during a test run.
+ *
+ * WHY THERE IS ONLY ONE NUMBER NOW — read this before adding a second.
+ * FR-238 shipped a PAIR: a +250 KB "budget" and a +400 KB asserted ceiling.
+ * FR-239's plan (D4) proposed raising the ceiling to +550 KB, reasoning that
+ * the operator's budget increase to +400 KB left budget == ceiling and so
+ * nothing for the gate to trip on.
+ *
+ * That argument was made BEFORE the change was measured, and measurement
+ * refuted it. **FR-239 lands at +283.4 KB** — it clears the ORIGINAL +400 KB
+ * ceiling with ~117 KB to spare and never came near it. Loosening a gate by
+ * 150 KB on behalf of a change that never approached it is how a gate stops
+ * meaning anything, so the ceiling was restored to +400 KB.
+ *
+ * The soft "budget" is retired rather than restored, and that is deliberate:
+ * two numbers where only ONE is asserted is exactly what produced this drift.
+ * The +550 figure survived in three separate places after the constant went
+ * back to 400 — here, `docs/dashboard.md`, and MAINTAINING row 108 — because a
+ * number nothing executes has no way to be caught when it goes stale. What
+ * replaces it is the asserted ceiling plus a recorded MEASUREMENT.
+ *
+ * Measured, cumulative over the family (`cd cli && npm pack --dry-run --json`):
+ *   FR-238 shipped      +187.9 KB
+ *   FR-239 shipped      +283.4 KB   (force-graph +55.3 KB measured in
+ *                                    isolation; ~+40 KB paint layer, view,
+ *                                    CSS and tests)
+ *   FR-240 shipped      +331.8 KB   measured 2026-07-30 at the END of the
+ *                                   warden pass, after the LAST code-touching
+ *                                   step: 1_641_599 packed / 6_439_794
+ *                                   unpacked / 786 entries. FR-240's OWN
+ *                                   contribution is therefore +48.4 KB — four
+ *                                   views, a markdown renderer, the shared
+ *                                   record components and three vendored brain
+ *                                   read modules, for about a sixth of what
+ *                                   FR-239 spent. D4 (no markdown dependency)
+ *                                   is most of the reason.
+ *   FR-241 shipped      +370.6 KB   measured 2026-07-31 at the END of phase 7,
+ *                                   after its LAST code-touching step:
+ *                                   1_681_309 packed / 6_572_495 unpacked /
+ *                                   792 entries. FR-241's OWN contribution is
+ *                                   therefore +38.8 KB (39_710 B over FR-240's
+ *                                   1_641_599) for the whole write path: the
+ *                                   write bridge, the triage endpoint, the
+ *                                   triage view with its pure model and tiered
+ *                                   confirm dialog, the lifted project-scope
+ *                                   layer, and two more vendored brain modules
+ *                                   (`tools/suggestions-read.js` plus the
+ *                                   `engine/index.js` the write door boots).
+ *   headroom remaining  ~29.4 KB    (30_142 B under the THEN-CURRENT +400 KB)
+ *
+ * BR-082 MEASURED LAST TOO, after its final code-touching step:
+ *   packed              1_684_456    unpacked 6_579_731, 792 entries (UNCHANGED
+ *                                    entry count — it added no file to the pack)
+ *   cumulative delta    +373.6 KB    (382_605 B over PACK_BASELINE_PACKED)
+ *   BR-082's own share  +3_147 B     against FR-241's 1_681_309
+ *   headroom remaining  ~26.4 KB     (26_995 B under the THEN-CURRENT +400 KB)
+ *
+ * BR-082 DELETED a client implementation and still grew the tarball, which is
+ * the FR-241 phase-7 lesson repeating: Vite MINIFIES the client so comments
+ * there cost zero, while `tsc` preserves the comments added to `cli/src/lib/**`
+ * verbatim into `dist/lib/**`. Deleting client code does not buy packed
+ * headroom; documenting server code spends it.
+ *
+ * TD-326 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_687_293    unpacked 6_588_345, 792 entries (UNCHANGED
+ *                                    again — it added no file to the pack)
+ *   cumulative delta    +376.4 KB    (385_442 B over PACK_BASELINE_PACKED)
+ *   TD-326's own share  +2_837 B     against BR-082's 1_684_456
+ *   headroom remaining  ~23.6 KB     (24_158 B under the THEN-CURRENT +400 KB)
+ *                                    -> 173.6 KB (177_758 B) under TD-329's +550
+ *
+ * TD-328 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_712_208    unpacked 6_665_472, 793 entries (+1 — the
+ *                                    FIRST entry-count change since FR-241)
+ *   cumulative delta    +400.7 KB    (410_357 B over PACK_BASELINE_PACKED)
+ *   TD-328's own share  +24_915 B    against TD-326's 1_687_293  (24.3 KB)
+ *   headroom remaining  ~149.3 KB    (152_843 B under TD-329's +550)
+ *
+ *   (Moved +2_505 B during warden's round: the B1 fix — the script had been
+ *   calling getDb(), which MIGRATES the DB it was supposed to be reading — plus
+ *   the comment edits that came with it. `tsc` carries all of it into `dist/`.
+ *   Measure-LAST earning its keep for a fourth brief running.)
+ *
+ * FR-244 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_714_296    unpacked 6_671_517, 793 entries (UNCHANGED
+ *                                    — it added no file to the package)
+ *   cumulative delta    +402.8 KB    (412_445 B over PACK_BASELINE_PACKED)
+ *   FR-244's own share  +2_088 B     against TD-328's 1_712_208  (2.04 KB)
+ *   headroom remaining  ~147.2 KB    (150_755 B under TD-329's +550)
+ *
+ *   (Moved +1_912 B during the review round, from 176 B to 2_088 B — a
+ *   TWELVEFOLD increase, and worth the line because of WHERE it came from.
+ *   The code fix in that round was one CSS declaration (`pointer-events: none`
+ *   on the density banner) which Vite minifies to nothing. Essentially all of
+ *   it is the FR-244 entry added to `cli/CHANGELOG.md`, which `files` carries
+ *   and which therefore SHIPS. The operator called that trade explicitly:
+ *   consistency with the five sibling briefs' changelog entries is worth more
+ *   than the bytes, and "defer it to /release" is how it gets forgotten. This
+ *   is the same lesson TD-326 recorded — a structural argument that a review
+ *   round is byte-free is only as good as its enumeration of `files` — landing
+ *   for the second time on the same file.)
+ *
+ * FR-245 MEASURED LAST as well, after its final code-touching step:
+ *   packed              1_717_994    unpacked 6_684_920, 793 entries (UNCHANGED
+ *                                    — it added no file to the package)
+ *   cumulative delta    +406.4 KB    (416_143 B over PACK_BASELINE_PACKED)
+ *   FR-245's own share  +3_698 B     against FR-244's 1_714_296  (3.61 KB)
+ *   headroom remaining  ~143.6 KB    (147_057 B under TD-329's +550)
+ *
+ *   (Estimated at +6-12 KB and spent 3.61 KB, and the reason is the one this
+ *   ledger keeps re-teaching from the other direction: FR-245 wrote ~1,900
+ *   lines, and almost all of them landed where nothing packed can see them.
+ *   The whole feature — a pure column model, two hooks, a board component, a
+ *   180-line CSS block and a comment-dense rewrite of the briefs page — is
+ *   `cli/dashboard/src/**`, which Vite MINIFIES, so its comment density costs
+ *   ~0. The browser gate grew a twelfth gate and eight mutations in
+ *   `cli/scripts/`, which `files` does not carry; three suites grew in
+ *   the test globs under `src` and under `dashboard/src`, both excluded from
+ *   `dist` (spelled in prose, not literally: the pattern contains a star-slash
+ *   pair that would terminate this comment — the trap this file's own glob note
+ *   below records, walked into once while writing this row and caught by `tsc`); `docs/` and `MAINTAINING.md` are outside the package. It added NO
+ *   endpoint by design (D1), so `cli/src/lib/**` — the expensive surface, where
+ *   `tsc` preserves every comment into `dist/` — is untouched, and so is the
+ *   vendored `dist/brain-mcp-server/**` that TD-328 discovered the hard way.
+ *   What it DID spend: the app chunk and its `cli/CHANGELOG.md` entry, which
+ *   SHIPS. Roughly the FR-244 shape at twice the size, for the same reasons.
+ *
+ *   RE-MEASURED after the review round — two further browser-gate mutations, a
+ *   new behavioural check, and three comment/figure corrections — and the
+ *   packed total is UNCHANGED at 1_717_994, with the built chunk byte-identical
+ *   at 549_831 B. That is not luck and it is not an excuse to skip the
+ *   re-measure: every edit in that round landed in `cli/scripts/` (not packed),
+ *   in a test (excluded from `dist`), in `docs/`, or in a source COMMENT that
+ *   Vite minifies away. Contrast FR-244, whose review round moved its own share
+ *   twelvefold on one changelog entry. The rule is the same either way — run
+ *   the measurement, then write the number.
+ *
+ *   (SUPERSEDED BY FR-246's READING BELOW — at FR-245 the chunk was 549_831 B
+ *   with 10_169 B of slack. Kept as the provenance of that figure, not as the
+ *   current one.)
+ *
+ * FR-266 MEASURED LAST, after its final code-touching step:
+ *   packed              1_982_588    unpacked 7_634_086, 809 entries
+ *   FR-266's own share  +9_343 B     (9.12 KB) against HEAD's 1_973_245,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding both artifacts, packing, and
+ *                                    restoring — NOT by subtracting from the
+ *                                    previous ledger entry, which is several
+ *                                    briefs stale. The HEAD arm reproduced the
+ *                                    pre-change bundle figures exactly
+ *                                    (INITIAL 285_689 / TOTAL 573_322), which
+ *                                    is what says the stash was clean.
+ *   entries             +5           804 -> 809, and ALL FIVE are accounted for:
+ *                                    `dist/lib/dashboard/cognition-read.js` and
+ *                                    its `.js.map` (2), plus three new dashboard
+ *                                    assets (3) — the `Diagnostics` route chunk,
+ *                                    the hoisted `api` chunk and the hoisted
+ *                                    `Badge` chunk. The brief's four OTHER new
+ *                                    files are tests or client sources: two live
+ *                                    under a test glob and two are bundled into
+ *                                    the assets above.
+ *   cumulative delta    +116.4 KB    (119_168 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~33.6 KB     (34_432 B under TD-374's +150)
+ *
+ *   THIS ROW WAS RE-MEASURED IN A LATER REVIEW ROUND, AND THE MOVE IS THE
+ *   'MEASURE LAST' RULE BITING RATHER THAN AN ERROR. The first reading was
+ *   1_982_495. A subsequent round corrected two arithmetic claims, one of them
+ *   in `cli/CHANGELOG.md` — which `package.json` `files` NAMES, so it SHIPS —
+ *   and the packed total moved +92 B on prose alone. A THIRD round corrected
+ *   false COUNT-WORDS, two of them in `cli/src/lib/**` (`routes.ts` and
+ *   `brain-write-bridge.ts`), whose comments `tsc` preserves into `dist/`:
+ *   +1 B more, to 1_982_588. Entry count did not move on either occasion.
+ *   That is precisely why this file's head directive says the figure is stale
+ *   the moment another round touches the changelog: a review round is a
+ *   code-touching step for this measurement even when it changes no code.
+ *   `tarball.test.ts` itself is under a test glob `tsconfig` excludes from
+ *   `dist`, so writing THIS row cannot move the number it records — verified
+ *   by re-packing after the edit.
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_982_588 - 1_973_245 = 9_343; 1_982_588 - 1_863_420 = 119_168;
+ *   150*1024 - 119_168 = 34_432; 809 - 804 = 5.
+ *
+ *   WHERE THE 9_343 B WENT, and the split is the instructive part. This brief
+ *   added a whole route, a panel, an endpoint, four test files and a browser-gate
+ *   target — and most of that is unpacked surface: `cli/scripts/browser-gate.mjs`
+ *   is not in `files`; the four suites live under test globs `tsconfig` excludes
+ *   from `dist`; `docs/` and `MAINTAINING.md` are outside the package. What DID
+ *   cost is `cli/src/lib/**` (one new module plus a handler, and `tsc` PRESERVES
+ *   comments into `dist/` and pays for them TWICE, in `.js` and `.js.map`), the
+ *   three new minified dashboard assets, and `cli/CHANGELOG.md`, which SHIPS.
+ *   `brain-mcp-server/**` was not touched at all — the zero that keeps this row
+ *   small, exactly as it did for FR-247.
+ *
+ *   THE OTHER TWO CEILINGS ARE NOT THIS ONE, and FR-266 is the brief where the
+ *   difference bites. TOTAL JS came out at 580_979 B against a 586_923 B ceiling
+ *   — **5_944 B of slack**, versus 33.6 KB here. The JS ceiling is now the
+ *   binding budget for a dashboard brief by a factor of ~6, and it is the one to
+ *   plan against. See `dashboard-chunks.test.ts` for why `MEASURED_*` was NOT
+ *   re-based to make that number look better.
+ *
+ * TD-420 MEASURED LAST, after its final code-touching step:
+ *   packed              1_983_869    unpacked 7_637_162, 809 entries (UNCHANGED
+ *                                    — the brief's one new file is
+ *                                    `src/__tests__/dashboard-count-derivation.test.ts`,
+ *                                    which `tsconfig` excludes from `dist`, and
+ *                                    every other edit is to a file that already
+ *                                    packed)
+ *   TD-420's own share  +1_281 B     (1.25 KB) against HEAD's 1_982_588,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding both artifacts, packing, and
+ *                                    restoring — NOT by subtracting from the
+ *                                    previous ledger entry. The HEAD arm
+ *                                    reproduced FR-266's recorded figures
+ *                                    EXACTLY (1_982_588 packed / 7_634_086
+ *                                    unpacked / 809 entries, bundle INITIAL
+ *                                    286_070 / TOTAL 580_979), which is what
+ *                                    says the stash was clean.
+ *   cumulative delta    +117.6 KB    (120_449 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~32.4 KB     (33_151 B under TD-374's +150)
+ *
+ *   THE SIGN IS THE INTERESTING PART, AND IT IS POSITIVE. TD-420 is a DELETION
+ *   brief — it removes quoted counts from prose — so the plan predicted a
+ *   NEGATIVE own share, and this ledger still has no negative row. It came out
+ *   **+1_281 B**, and the reason is structural rather than an error: deleting the
+ *   word "SIXTEEN" buys a handful of bytes, while replacing it with the citation
+ *   that keeps the sentence meaningful ("derive it from `server.ts`'s arms")
+ *   costs an order of magnitude more. A DERIVATION IS LONGER THAN THE NUMBER IT
+ *   REPLACES; budget for that rather than for the deletion.
+ *
+ *   WHERE THE 1_281 B WENT. Almost all of it is `cli/src/lib/**` — `routes.ts`,
+ *   `params.ts` and `brain-write-bridge.ts`, whose comments `tsc` preserves into
+ *   `dist/` and pays for TWICE (`.js` + `.js.map`). Everything else the brief
+ *   touched is free: `MAINTAINING.md` and `docs/**` are outside `files`; the new
+ *   gate and the two edited suites are under test globs `tsconfig` excludes; the
+ *   one `cli/dashboard/**` edit was a comment and Vite minified it to nothing —
+ *   PROVEN rather than assumed, by the bundle figures coming out byte-identical
+ *   in BOTH arms (INITIAL 286_070 / TOTAL 580_979 each time).
+ *   `brain-mcp-server/**` was not touched at all.
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_983_869 - 1_982_588 = 1_281; 1_983_869 - 1_863_420 = 120_449;
+ *   150*1024 - 120_449 = 33_151; 809 - 809 = 0.
+ *
+ *   THE UNPACKED DELTA RECONCILES EXACTLY, which is the check worth doing when
+ *   the packed figure is small enough to be argued with. +3_076 B unpacked,
+ *   accounted for by SIX dist files and nothing else — `routes.js` +1_317 and
+ *   its map +148, `params.js` +464 and its map +7, `brain-write-bridge.js`
+ *   +1_123 and its map +17. Residual ZERO. Both arms were packed three times
+ *   in one session and neither moved.
+ *
+ *   RE-MEASURED AFTER EACH REVIEW ROUND, AND THE MOVE IS THE 'MEASURE LAST'
+ *   RULE BITING RATHER THAN AN ERROR. Readings were 1_983_284, then 1_983_726,
+ *   then this one — a review round is a code-touching step for this figure even
+ *   when it changes no code.
+ *
+ *   THE WARDEN ROUND EDITED A SHIPPING FILE AND MOVED THIS FIGURE BY ZERO, AND
+ *   THE REASON IS WORTH KNOWING BEFORE YOU BUDGET A DOC BRIEF. It rewrote a
+ *   docblock in `cli/src/lib/brain-write-bridge.ts` — a file that certainly
+ *   ships — and `dist/lib/brain-write-bridge.js` did not move one byte. That
+ *   block documents `export type TriageExtraKey` / `export interface BriefRef`,
+ *   and `tsc` ERASES a type-only declaration together with its JSDoc: neither
+ *   the old sentence nor the new one appears in `dist` at all. So the rule is
+ *   sharper than "comments in `cli/src/lib/**` cost bytes twice" — a comment on
+ *   a FUNCTION or a CONST costs ONCE, a comment on a TYPE costs nothing.
+ *   (TD-443 CORRECTED THE "twice" HALF OF THAT SENTENCE, and the refutation was
+ *   already in this same row: see its THE UNPACKED DELTA RECONCILES EXACTLY
+ *   paragraph, where `routes.js` moved +1_317 B against its map's +148. The
+ *   sharpening was right about WHICH comments cost and wrong about HOW MUCH.
+ *   Grep `CHARGED ONCE PLUS A MAPPINGS SHIFT` in this file for the mechanism and
+ *   the whole-tree census of the sentences that still say twice.)
+ *   VERIFIED rather than inferred: `touch` + rebuild, then grep `dist` for both
+ *   the old and the new wording; both absent, size byte-identical. Closing
+ *   sentinel's F1/F2/F3 added a fourth scan arm and a second part-1 pin (both
+ *   tsc-excluded, both free) but ALSO rewrote three `cli/src/lib/**` comment
+ *   blocks — the shared-read-preamble enumeration in `routes.ts`, the
+ *   `parseFilters` sentence in `params.ts`, and two relocated `count:record`
+ *   markers in `brain-write-bridge.ts` — for +442 B on prose alone. Entry count
+ *   did not move.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit.
+ *
+ * TD-333 MEASURED LAST, after its final code-touching step:
+ *   packed              1_811_683    unpacked 7_138_039, 804 entries (UNCHANGED
+ *                                    — TD-333's two new source files are a bash
+ *                                    validator and a bats suite, neither of
+ *                                    which is packed, and its one new TS file
+ *                                    is `src/__tests__/db-migration-v25.test.ts`,
+ *                                    which `tsconfig` excludes from `dist`)
+ *   TD-333's own share  +17_915 B    (17.50 KB) against HEAD's 1_793_768,
+ *                                    MEASURED by stashing the working tree,
+ *                                    rebuilding, packing, and restoring —
+ *                                    NOT by subtracting from the previous
+ *                                    ledger entry, which is four briefs stale
+ *   cumulative delta    +497.9 KB    (509_832 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~52.1 KB     (53_368 B under TD-329's +550)
+ *   built app chunk     559_384 B    (BYTE-IDENTICAL — the only `cli/dashboard/**`
+ *                                    edit was a docstring, and Vite minifies
+ *                                    comments away)
+ *
+ *   THE SHARE IS ALMOST ENTIRELY COMMENT PROSE IN `brain-mcp-server/**`, and
+ *   that is the ledger's oldest lesson rather than a surprise: TD-333 modified
+ *   NO `cli/src/**` runtime file except the GENERATED normalizer mirror, yet
+ *   still spent 17.5 KB, because `cli` packs the compiled brain server at
+ *   `dist/brain-mcp-server/dist/**` and `tsc` PRESERVES comments into it and
+ *   pays for them TWICE (`.js` and `.js.map`). The unpacked figure moved
+ *   +109_557 B for +17_915 B packed — a ~6.1x compression ratio, which is what
+ *   prose looks like in this budget.
+ *
+ *   WHY THE PREVIOUS ENTRY IS NOT THE BASELINE HERE. FR-250, TD-338 and TD-340
+ *   all shipped after FR-247 WITHOUT recording an entry, so the gap between
+ *   FR-247's 1_757_652 and this reading is 54_031 B of which only 17_915 B is
+ *   TD-333's. Subtracting from the last recorded line would have over-attributed
+ *   this brief by 3x. **Measure against HEAD, not against the ledger's tail** —
+ *   the ledger is a record of readings, not a continuous series.
+ *
+ * FR-247 MEASURED LAST, after its final code-touching step:
+ *   packed              1_757_652    unpacked 6_831_457, 797 entries (UNCHANGED
+ *                                    — FR-247's one new file, `auto-push-fence.ts`,
+ *                                    lives in `src/__tests__` and `tsconfig`
+ *                                    excludes it from `dist`)
+ *   cumulative delta    +445.1 KB    (455_801 B over PACK_BASELINE_PACKED)
+ *   FR-247's own share  +11_132 B    against FR-246's 1_745_049  (10.84 KB)
+ *   headroom remaining  ~104.9 KB    (107_399 B under TD-329's +550)
+ *   built app chunk     559_384 B    (+5_899 B over FR-246's 553_485)
+ *   chunk slack         616 B        (560_000 B limit; Vite kB = 1000 B)
+ *
+ *   EVERY SUBTRACTION ABOVE IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT, not
+ *   carried forward: 1_757_652 - 1_745_049 = 11_132; 1_757_652 - 1_301_851 =
+ *   455_801; 550*1024 - 455_801 = 107_399; 559_384 - 553_485 = 5_899;
+ *   560_000 - 559_384 = 616. That discipline is the FR-246 bracket below —
+ *   a delta carries no copy of either operand, so a class-grep for the packed
+ *   value walks straight past a stale one.
+ *
+ *   BOTH SURFACES WERE ESTIMATED BEFORE THE WORK, which is the FR-246 lesson
+ *   applied. The plan said 2.5-4.6 KB of chunk and 17-32 KB of packed. Actual:
+ *   **5_899 B of chunk (over the estimate) and 11_132 B of packed (under it)**.
+ *   The chunk over-run is the honest one to explain: the estimate costed a
+ *   picker, a goal control, an affordance parameter and a confirm copy, and did
+ *   not cost the SELECTION BAR that hosts them — a component with two labelled
+ *   selects, two buttons, a failure banner and a dialog. The packed under-run
+ *   has the same cause as FR-244's: the bulky work is a browser gate
+ *   (`cli/scripts/`, not packed), four suites (excluded from `dist`), `docs/`
+ *   and MAINTAINING. What DID cost is `dist/lib/**` — `brain-write-bridge.ts`
+ *   grew a Phase-0 probe block, the TD-311 boundary paragraph and two map rows,
+ *   and `tsc` PRESERVES comments into `dist/` and pays for them TWICE — plus
+ *   `cli/CHANGELOG.md`, which ships. **`brain-mcp-server/**` was not touched at
+ *   all**, and that zero is the single largest reason this row is small.
+ *
+ *   **SUPERSEDED BY TD-347 — DO NOT ACT ON THE PARAGRAPH BELOW.** It correctly
+ *   told the next planner to split the chunk as their first step; TD-347 DID
+ *   THAT, so the instruction is discharged, not pending. The current numbers are
+ *   in the TD-347 block further down (initial set 285_390 B against a 309_390 B
+ *   ceiling). Kept as the provenance of the 616 B figure, not as advice.
+ *
+ *   THE CHUNK IS NOW THE BINDING CEILING BY A WIDE MARGIN, and the next
+ *   dashboard brief has to plan around it rather than budget against it:
+ *   **616 B**, against this gate's 104.9 KB. That is not headroom. A brief that
+ *   adds any UI to this bundle should expect to SPLIT the chunk (a route-level
+ *   dynamic import for the layers or the graph) as its first step, not as a
+ *   cut-ladder rung. **Raise NEITHER limit** — the packed one has been moved
+ *   TWICE (TD-329 2026-08-02, TD-374 2026-08-10), each time before the work,
+ *   on a measurement, as a recorded operator decision. Two decisions is not a
+ *   precedent. *(The "raise neither" rule is the one line here that is NOT
+ *   superseded — TD-347 inherits it verbatim for both of its ceilings.)*
+ *
+ *   THE CUT LADDER WAS DECLARED BEFORE THE WORK AND WAS NOT INVOKED. Rung by
+ *   rung, with what each was measured to be worth:
+ *     1. drop the brief-flavoured confirm copy for `confirmCopy`'s generic
+ *        tier-1 path — **NOT AVAILABLE.** That path says "there is no
+ *        un-set_priority tool -- reversing this means hand-editing the brain",
+ *        which is FALSE for a reversible column write, in the register reserved
+ *        for permanent deletion. The nearest available variant is dropping the
+ *        confirm DIALOG entirely, MEASURED at 711 B (559_384 -> 558_673) — not
+ *        taken, because a confirm is what makes a 200-brief bulk safe and 711 B
+ *        does not buy that.
+ *     2/3. move either write to the DETAIL view only — these rungs assume a
+ *        detail-view control already exists as the cheap alternative. It does
+ *        not; building one costs MORE than the list control it would replace.
+ *     4. drop goal attach from v1 — would gut AC-2, and the operator's D1 is
+ *        explicit that attach-to-existing is the half that ships.
+ *     5. no per-row selection — weakens `confineToKeys`' stated safety property.
+ *   Two savings WERE taken, and neither is a ladder rung because neither costs a
+ *   property: an unmotivated `write.actions` membership check in `Briefs.tsx`
+ *   (a state a single-package install cannot reach) and three over-long UI
+ *   strings. Together **461 B** (559_845 -> 559_384).
+ *
+ * FR-246 MEASURED LAST, after its final code-touching step:
+ *   packed              1_745_049    unpacked 6_783_829, 797 entries (+4: the
+ *                                    compiled `briefs-read` and
+ *                                    `utils/substring-search` pairs, each with
+ *                                    a `.d.ts`/`.js` and their maps)
+ *   cumulative delta    +432.8 KB    (443_198 B over PACK_BASELINE_PACKED)
+ *   FR-246's own share  +27_055 B    against FR-245's 1_717_994  (26.42 KB)
+ *   headroom remaining  ~117.2 KB    (120_002 B under TD-329's +550)
+ *   built app chunk     553_485 B    (+3_654 B over FR-245's 549_831)
+ *
+ *   RE-MEASURED after EACH review round, and the packed total MOVED TWICE —
+ *   recorded as a CHAIN (TD-326's shape) so a re-measure does not read as a
+ *   drift, and so neither reading is overwritten by the next:
+ *     1_744_020 -> 1_744_965  (+945 B, r1: ~10 lines in
+ *        `routes.ts#briefsSearch` — drop-and-report for the four brief filters
+ *        that path allow-lists but cannot bind — plus its rationale comment)
+ *     1_744_965 -> 1_745_049  (+84 B, r2: three claim corrections, TWO of them
+ *        comments in `cli/src/lib/**`)
+ *   +1_029 B across both rounds.
+ *
+ *   [The r1 arrow above read `1_744_020 -> 1_745_049, +945 B` for one round.
+ *   The endpoint had been class-grep-swapped to the r2 value while the DELTA
+ *   computed from the r1 value was left standing, so the subtraction was
+ *   false. Worth naming because of the carrier: **a delta carries no copy of
+ *   EITHER operand**, so a grep for the packed value and a grep for the KB
+ *   class both walk straight past it. That is the same blind spot the
+ *   comparative clause had — and it survived the very round that deleted the
+ *   comparative one. When you re-measure, re-derive every SUBTRACTION, not
+ *   just every figure.]
+ *
+ *   `cli/src/lib/**` is the expensive surface precisely because `tsc` PRESERVES
+ *   comments into `dist/` and pays for them TWICE (`.js` and `.js.map`). The
+ *   chunk did NOT move (553_485 B, byte-identical): nothing in the round
+ *   touched `cli/dashboard/src/**`. Contrast FR-245's review round, which moved
+ *   neither number, and FR-244's, which moved its own share twelvefold on one
+ *   changelog entry. The rule is the same in all three cases — run the
+ *   measurement, then write the number; a structural argument that a review
+ *   round is byte-free is only as good as its enumeration of `files`.
+ *
+ *   THE TWO NUMBERS MOVED IN OPPOSITE PROPORTIONS, and the reason is this
+ *   ledger's own recurring lesson rather than a surprise. FR-246 wrote far more
+ *   CLIENT code than FR-245's predecessor rows did — a shared readout
+ *   component, a filter hook, a search mode on the briefs list, `q` wiring on
+ *   four pages — and all of it cost **3.6 KB**, because Vite MINIFIES
+ *   `cli/dashboard/src/**` and this brief is comment-dense. What cost 25 KB is
+ *   everything else, and none of it is client code:
+ *     - `dist/brain-mcp-server/**` — the v23 migration block with its measured
+ *       storage note, the six triggers, and `briefs-read.js` growing from two
+ *       readers to four (22_377 B packed, plus a 12_264 B source map and a
+ *       10_788 B `.d.ts`). Learning 1132's premise, paying out again: a brief
+ *       that touches only the brain STILL spends packed bytes here.
+ *     - `dist/lib/**` — `routes.ts` (`briefsSearch` plus the `q` forwarding),
+ *       `brain-bridge.ts` (the type facade) and `types.ts`. `tsc` PRESERVES
+ *       COMMENTS into `dist/`, so a rationale-dense comment in `cli/src/lib/**`
+ *       costs its full length twice — once in `.js` and again in `.js.map`.
+ *     - `CHANGELOG.md`, which `files` carries and which therefore SHIPS
+ *       (41_579 B total after this entry). The FR-244 row below records the
+ *       same line item moving that brief's share TWELVEFOLD.
+ *   Estimated at ~5.2 KB against the CHUNK budget and spent 3.6 KB there — the
+ *   estimate was right about the surface it was made against, and silent about
+ *   the one that actually moved (26.42 KB, a 7x ratio). **Estimate BOTH
+ *   ceilings, or say which one the estimate is about.**
+ *
+ *   ONE READING FOR THE NEXT PLANNER (SUPERSEDED BY FR-247's ROW ABOVE — the
+ *   chunk is now 559_384 B with 616 B of slack. Kept as the provenance of the
+ *   6_515 B figure, not as the current one), because it is still closer to its
+ *   own limit than this gate is: the single minified app chunk then measured
+ *   **553.49 kB** (553_485 B on disk) against `dashboard/vite.config.ts`'s
+ *   `chunkSizeWarningLimit` of 560 kB — **6_515 B of slack**. Note the UNITS
+ *   differ from this gate's: Vite reports kB as 1000 bytes, the ceiling here is
+ *   KiB. That is a build-time WARNING about one chunk, NOT this gate — the two
+ *   must not be confused — but 6.5 KB of slack against the packed ceiling's
+ *   117.2 KB means the next dashboard brief WILL hit the warning first, and now
+ *   by a wider margin than FR-245 faced. FR-246 declared a cut ladder before
+ *   writing anything and did not need it (3_654 B against 10_169 B); the next
+ *   brief has 6_515 B and should declare one too. **Raise NEITHER limit.**
+ *   *(SUPERSEDED BY TD-347 — DO NOT ACT ON THE CUT-LADDER INSTRUCTION ABOVE.
+ *   The split shipped; there is no single app chunk to declare a ladder
+ *   against. Bracketed DIRECTLY here rather than left to a two-hop chain via
+ *   FR-247's row, and note this paragraph sits ABOVE the TD-347 block's
+ *   'everything below is HISTORY' marker, so the marker does not cover it.
+ *   'Raise NEITHER limit' is the one clause that survives verbatim.)*
+ *
+ * FR-244 IS THE CHEAPEST ROW IN THIS LEDGER, and it is the CONVERSE of TD-328's
+ * lesson rather than a contradiction of it. TD-328 spent 24.3 KB writing only
+ * `brain-mcp-server/`; FR-244 spent 176 B while adding a whole browser gate, a
+ * canvas separability instrument, a sixth sandbox world, four suites' worth of
+ * new assertions and ~200 lines of `docs/`. The rule both obey is the same one:
+ * **what costs is what `package.json` `files` carries into `dist/`.**
+ *   - `cli/scripts/browser-gate.mjs` is NOT packed — `files` names
+ *     `scripts/postinstall.mjs` INDIVIDUALLY, not `scripts/`. Check that before
+ *     assuming a sibling script is free; it is free because of one entry in a
+ *     FIVE-element list — `dist`, `!dist/brain-mcp-server/node_modules`,
+ *     `scripts/postinstall.mjs`, `README.md`, `CHANGELOG.md`. (Counted from
+ *     `package.json` rather than from memory: an earlier revision of this
+ *     sentence said four, having skipped the negation entry. The load-bearing
+ *     premise — that `browser-gate.mjs` is not packed — was right either way,
+ *     but a miscounted enumeration is how the NEXT reader concludes something
+ *     is free when it is not.)
+ *   - `src/__tests__/**` is excluded from `dist` by `tsconfig`, so suites and
+ *     fixtures cost zero however long they get.
+ *   - `docs/` and repo-root `MAINTAINING.md` are outside the package.
+ *   - What FR-244 DID change inside the package is `cli/dashboard/src/**`,
+ *     which Vite MINIFIES — so its comment-dense size law, its several hundred
+ *     lines of rationale in `shapes.ts`/`useGraph.ts`/`Graph.tsx` and the new
+ *     CSS block together came to under 200 bytes of chunk.
+ * The generalisation for the next planner: estimate against WHICH PACKAGE and
+ * WHICH PIPELINE a change lands in, not against how much was written. A
+ * comment in `cli/src/lib/**` costs more than a page of client code. **FR-246
+ * is the sharpest instance so far**: it wrote MORE client code than any row
+ * above and spent 3_654 chunk bytes on it, while the same brief's brain
+ * migration, its `cli/src/lib/**` comments and one changelog entry came to
+ * 26_026 packed bytes — a 7x ratio, in the direction the intuition does not
+ * point.
+ *
+ * TD-328 IS THE ROW THAT BREAKS THE "IT'S ONLY THE DASHBOARD" READING OF THIS
+ * LEDGER, and it is here because a WRONG STRUCTURAL CLAIM was inherited from a
+ * plan and passed to the builder as a technical anchor: "`brain-mcp-server/` is
+ * not in the npm package and has no ceiling pressure". That is FALSE. The `cli`
+ * package BUNDLES the compiled brain server at `dist/brain-mcp-server/dist/**`
+ * — `db.js` alone is ~72 KB packed, `index.js` ~71 KB, `tools/sync.js` ~68 KB.
+ * A brief that touches ONLY `brain-mcp-server/` still spends packed bytes here.
+ * Every prior entry in this ledger is a `cli/`-side brief, which is precisely
+ * how the misreading survived: the evidence was consistent with it by accident.
+ * (Banked as learning 1132.)
+ *
+ * Where TD-328's 24.3 KB went, since it wrote no view and no endpoint:
+ *   - a NEW packed entry, `dist/brain-mcp-server/scripts/normalize_brief_types.ts`
+ *     (~15.9 KB) — the +1 on the entry count. `dist/brain-mcp-server/scripts/`
+ *     ALREADY ships eight comparable maintenance scripts (`backfill_brief_edges.ts`,
+ *     `td286_renormalize_backfill.ts`, …), so this follows an existing precedent
+ *     rather than opening a new class. DO NOT delete it on sight as stray weight.
+ *   - growth in the bundled `db.js`, `tools/brief-normalize.js`, `tools/briefs.js`
+ *     and `engine/components/briefs/index.js` plus their `.map`s — `tsc`
+ *     preserves comments into `dist/`, and this brief is comment-dense by design
+ *     (a migration whose rationale is not written down gets "corrected" later).
+ *   - `cli/CHANGELOG.md`, which SHIPS (see the TD-326 note below).
+ * The BR-082/FR-241 lesson therefore generalises: budget for comments in ANY
+ * `tsc`-compiled package that ends up under `dist/`, not just `cli/src/lib/**`.
+ *
+ * That figure moved TWICE during TD-326's review — 1_686_781 -> 1_686_903 ->
+ * 1_687_005 -> 1_687_293 — the first three because a warden round edited a
+ * comment in `cli/src/lib/**`, which `tsc` carries into `dist/` verbatim, and
+ * the FOURTH for a different reason worth writing down: adding a CHANGELOG
+ * entry. `cli/package.json`'s `files` is `dist`, `scripts/postinstall.mjs`,
+ * `README.md` and **`CHANGELOG.md`** — so `cli/CHANGELOG.md` SHIPS. The rule
+ * "docs cost zero packed bytes" holds for `docs/` and for repo-root
+ * `MAINTAINING.md`, both of which are outside the package, and does NOT hold
+ * for the CLI's own changelog. A structural argument that a round is byte-free
+ * is only as good as its enumeration of `files`. This is the
+ * measure-LAST rule earning its keep for the third brief running: the number is
+ * stale the moment another review round touches a server-side comment, and the
+ * only safe time to write it down is after the FINAL code-touching edit.
+ *
+ * TD-326 touched NINE shipping files, enumerated with `git diff --name-only`
+ * rather than counted from memory (an earlier revision of this paragraph said
+ * SEVEN and "two client files"; warden caught it, and the recount is why the
+ * argument below got STRONGER):
+ *   SERVER (5) — `suggestions-read.ts` (vendored), `brain-bridge.ts`,
+ *                `types.ts`, `params.ts`, `routes.ts`
+ *   CLIENT (4) — `ProjectScope.tsx`, `api.ts`, `useProjectScope.ts`,
+ *                `Triage.tsx`
+ * and still spent +2_837 B (2.77 KB), because the FOUR client files carry most of its
+ * prose and Vite minifies those to nothing. The spend is almost entirely the
+ * comment blocks in `cli/src/lib/**` plus the vendored reader — the BR-082
+ * lesson holding for a third brief running: budget for SERVER comments, not for
+ * client ones. Four minified files rather than two makes that case stronger.
+ *
+ * A STALE FIGURE CORRECTED WHILE PASSING (TD-326). `MAINTAINING.md` row 108
+ * carried BR-082 at 1_683_163 packed / +1_854 B own share / 28_288 B headroom,
+ * while this ledger carried 1_684_456 / +3_147 B / 26_995 B — a 1_293 B
+ * disagreement, because BR-082 re-measured after a later edit and updated one
+ * of the two places. THIS file is the authoritative one (it is the only copy an
+ * assertion runs beside), and row 108 is now re-pointed at it. That is the
+ * same failure the +550 KB paragraph above describes: a number nothing executes
+ * has no way to be caught when it goes stale, so keep the two in sync in the
+ * same commit or do not write the second one.
+ *
+ * READ THIS BEFORE PLANNING THE NEXT BRIEF: **SUPERSEDED BY TD-374 — see the
+ * directive further down, which is the ONE copy — this sentence deliberately
+ * carries no number, because a second copy is exactly how the last three went
+ * stale.** This paragraph is kept as FR-247-era
+ * history, and it is the second copy of this directive: TD-373's changelog
+ * claimed to have re-pointed "the ledger's head directive" and hit only one of
+ * the two. ~104.9 KB was what was left (the
+ * FR-247 reading above; ~117.2 KB was FR-246's, ~143.6 KB FR-245's,
+ * ~147.2 KB FR-244's, ~149.3 KB TD-328's and ~173.6 KB TD-326's, all
+ * superseded).
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * TD-347 (2026-08-06) — THE SINGLE-CHUNK ERA IS OVER. READ THIS FIRST.
+ * ─────────────────────────────────────────────────────────────────────────
+ * Everything below about "the app chunk" and its `chunkSizeWarningLimit` slack
+ * is HISTORY. There is no longer one chunk, and the binding budget is no longer
+ * a Vite warning — it is two EXECUTABLE ceilings in
+ * `cli/src/__tests__/dashboard-chunks.test.ts`, which is now authoritative for
+ * every browser-bundle number. Read the constants from there, never from here.
+ *
+ * THE NEW COMPOSITION, measured via `bash cli/scripts/build-dashboard.sh`:
+ *
+ *   INITIAL SET   285_390 B  over 1 file   (ceiling 309_390 B, 24_000 B slack)
+ *   TOTAL JS      562_923 B  over 7 chunks (ceiling 586_923 B, 24_000 B slack)
+ *   DEFERRED      277_533 B  over 6 chunks, off the critical path
+ *
+ *     Graph       206_455 B   <- the vendored force-graph family lives here
+ *     Layers       45_539 B
+ *     Triage       12_675 B
+ *     useQFilter   11_448 B
+ *     neighbours    1_036 B
+ *     Button          380 B
+ *
+ * The initial set fell 559_516 -> 285_390 B, a **274_126 B (49.0%) reduction**.
+ * Re-derived from the two operands beside it: 559_516 - 285_390 = 274_126;
+ * 274_126 / 559_516 = 49.0%. TOTAL JS went 559_516 -> 562_923 = **+3_407 B**,
+ * which is the chunking overhead and is the honest cost of the split.
+ *
+ * WHICH CEILING YOUR CHANGE IS CHARGED AGAINST — this is the AC #6 answer, and
+ * the reason the table above is spelled out rather than summarised:
+ *   * EAGER, charged to INITIAL_JS_CEILING: `App.tsx`, `router.tsx`,
+ *     `layers/model.ts`, `components/chrome/**`, most of `components/ui/**`,
+ *     `lib/**`, and `pages/Overview.tsx` (eager because `router.tsx#parse` falls
+ *     back to it for `#/` and every unknown hash, AND because its exclusive
+ *     weight is 8_005 B — every import it has is already shared EXCEPT
+ *     `ui/Card.tsx` (~1 KB), so lazying it would buy little and cost a round
+ *     trip on the commonest first paint).
+ *     NOT wholesale `components/ui/**`: `ui/Button.tsx` is used by three LAZY
+ *     routes and no eager one, so it is hoisted into its own DEFERRED
+ *     `Button-<hash>` chunk and charged to TOTAL_JS_CEILING only.
+ *   * DEFERRED, charged to TOTAL_JS_CEILING only: `pages/Graph.tsx` + `graph/**`,
+ *     `pages/Layers.tsx` + `pages/layers/**` + `components/record/**` +
+ *     `markdown/**`, and `pages/Triage.tsx` + `triage/**`.
+ *   * `gsap` stays EAGER regardless of the split — `components/chrome/Cursor.tsx`
+ *     anchors it. It is the largest non-React eager item and the next planner's
+ *     candidate; removing it is a behaviour change and was out of TD-347's scope.
+ *
+ * BOTH CEILINGS ARE `measured + 24_000 B`. The 24_000 B is four briefs at
+ * FR-247's 5_899 B, the largest single-brief chunk spend in this ledger
+ * (FR-246 spent 3_654 B; BR-085 spent 132 B). Re-derive it; do not round it.
+ * **Neither is ever raised to make room** — TD-329's discipline applies to both.
+ *
+ * SCOPE THE SUPERLATIVE. This ledger only starts recording CHUNK deltas at
+ * FR-246, and there is a bigger out-of-ledger case: `vite.config.ts`'s comment
+ * history puts the chunk at ~477 KB after FR-239 and 524.69 KB after FR-240,
+ * i.e. **~+47_700 B in one brief, ~8x FR-247's figure**. One FR-240-shaped brief
+ * busts either ceiling outright. That is NOT a reason to widen the headroom: the
+ * error runs the safe way (a red test and a forced conversation), and a headroom
+ * sized for the worst brief on record would absorb that brief silently. Stated
+ * so the next planner meets the number with the counterexample already in hand.
+ *
+ * WHY THERE ARE TWO AND NOT ONE, demonstrated rather than argued. Three plants,
+ * each built and run:
+ *   * PLANT A — 40 KB imported eagerly from `App.tsx`: INITIAL **RED** by
+ *     16_023 B (325_413 vs 309_390), TOTAL **RED** by the same.
+ *   * PLANT B — the same 40 KB imported ONLY from the lazy `pages/Graph.tsx`:
+ *     INITIAL **GREEN**, unchanged at 285_390; TOTAL **RED** by 16_017 B
+ *     (602_940 vs 586_923). **This is the whole reason the total ceiling
+ *     exists**: without it, `React.lazy` is an unbounded way to spend bytes
+ *     behind a boundary the initial ceiling cannot see — the "it moved
+ *     elsewhere" defect class this repo keeps filing.
+ *   * PLANT C — no bulk; a temporary vendor `manualChunks` pulling React out:
+ *     the entry FILE fell 285_390 -> 95_394 B (−189_996 B) while the INITIAL SET
+ *     moved only 285_390 -> 285_047 B (−343 B, now over two files) and the gate
+ *     stayed green — correctly. This is why `initialSet()` reads the entry
+ *     `<script>` PLUS its `<link rel="modulepreload">` closure: the metric is
+ *     the initial LOAD, not the initial FILE, and a vendor split cannot game it.
+ *
+ * A PLANT-CONSTRUCTION TRAP, recorded because it cost a false reading. The first
+ * draft referenced the bulk as `window.__bulk = BULK.length`. `BULK.length`
+ * constant-folds to a number, `BULK` becomes unused, and the 40 KB literal is
+ * tree-shaken — the build came back +18 B and the gate went green, which reads
+ * exactly like "the ceiling does not catch this". Verified by grepping the built
+ * chunks for the literal: absent. A plant must reference the WHOLE value
+ * (`window.__bulk = BULK`). **A demonstration that silently plants nothing is
+ * worse than no demonstration**, because it produces a confident green.
+ * (An earlier draft was worse still: `"x".repeat(40000)` is 20 characters of
+ * source, so it added 43 B. Use a real literal.)
+ *
+ * `chunkSizeWarningLimit` SURVIVES BUT IS DEMOTED, 560 -> 300. At 560 the
+ * largest chunk (285.39 kB) sat 274.61 kB below it, so it would effectively
+ * never fire again and would measure nothing — the exact defect scope item 4
+ * named. At 300 it is capable of firing, and deliberately TIGHTER than this
+ * gate's 309_390 B so the build warns before the test reddens. It is re-aimed just above the largest chunk and is
+ * now a build-time surprise detector, NOT the gate. The gate is the vitest file.
+ *
+ * HISTORY BELOW THIS LINE, kept as provenance:
+ *
+ * BR-085 measured 2026-08-04: **559_384 -> 559_516 B, +132 B**, spending 21% of
+ * the 616 B FR-247 left. Superseded by TD-347 — that 484 B of slack no longer
+ * exists as a concept.
+ *
+ * CHUNK figure is SOLID; the PACKED figure below is a FLOOR, not a reading.
+ * `npm pack` packs `dist/`, and on this machine `npm run build` in `cli/` is a
+ * live deploy (it rewrites the vendored brain server the operator's MCP runs
+ * from), so `dist/` was NOT rebuilt after this brief's review-round comment
+ * edits. The dashboard bundle WAS rebuilt (`build-dashboard.sh` touches only
+ * the gitignored `dist/dashboard`), which is why the chunk number is real. The
+ * packed total below therefore reflects the pre-review build: **1_812_952 B
+ * over 804 entries**, and the review round added roughly 400 B of comment to
+ * `src/lib/dashboard/routes.ts` that tsc will preserve on the next real build.
+ * Do not read a `+0 B` delta here as "free" — it means the artifact did not
+ * move because it was not rebuilt. Re-take this reading after the next build.
+ *
+ * The 132 B
+ * are the client-side review-scope plumbing (the `review_status` field on the
+ * search row type, the banner's scope source, and the search-params render) —
+ * a genuinely small UI change, which was the point: at 484 B, "small" was no
+ * longer automatically affordable. **RESOLVED BY TD-347** — the split shipped
+ * separately (the operator's choice over folding it into whichever UI brief ran
+ * first), so FR-248 and FR-249 are both unblocked and neither owns it. They now
+ * plan against `INITIAL_JS_CEILING`, with 24_000 B of initial slack and the
+ * composition table above naming which chunk each change is charged to.
+ *
+ * TD-347's OWN PACKED READING, in BR-085's own terms: **unchanged-because-not-
+ * rebuilt, NOT free.** Nothing TD-347 touched is a packed surface —
+ * `dashboard-chunks.test.ts` is under `src/__tests__` (excluded from `dist`),
+ * `browser-gate.mjs` is not packed, and `MAINTAINING.md` / `docs/` are outside
+ * the package. The exception is `cli/CHANGELOG.md`, which IS in `package.json`
+ * `files` and ships, so the next real build moves the packed figure by roughly
+ * that entry's length. Do not record a `+0 B` delta here as a measurement.
+ *
+ * The "five GL-006 briefs remain" this sentence used to carry was not
+ * re-derivable, so it is read off the goal's own edges instead. Re-derived
+ * READ-ONLY at FR-247 (`serves_goal` edges into GL-006, deleted-flag excluded,
+ * project-qualified to `igris-ai` — the join in `getGoal` is NOT
+ * project-qualified, which is BR-078 and is why this reading adds the
+ * predicate itself): BR-082, FR-244, FR-245, FR-246, TD-326, TD-328 and TD-329
+ * are `Done`, and **FR-247 is the brief writing this line**. The goal's
+ * `serves_goal` set is therefore EXHAUSTED — there is no next brief on GL-006
+ * whose estimate this paragraph could carry, and the deferred FR-249 (goal
+ * creation from the dashboard) is not yet attached to it.
+ *
+ * THE RATIOS ARE GONE, DELIBERATELY, AT THE FOURTH FAILURE. This sentence used
+ * to translate the headroom into "N FR-240s of slack" and to name which past
+ * briefs would still fit. It went stale FOUR times. The headroom above is the
+ * number; the per-brief own-share table in this same file is the divisor; a
+ * reader who wants the ratio can divide, and their division cannot rot. Nothing
+ * gated the comparison — `PACK_HARD_CEILING_DELTA` gates the BYTE figure and
+ * there is no assertion anywhere behind a ratio — so it was a claim with no
+ * gradient, which is precisely the failure TD-328 diagnosed about tolerance
+ * without observation, in a different costume. **If you find yourself re-adding
+ * a ratio here, that is the fifth time: don't.** [Kept below: the record of the
+ * four failures, because it is why this paragraph is shaped the way it is.]
+ *
+ * [Corrected AGAIN at FR-246 review — the THIRD time this exact
+ * sentence has gone stale while every copy of the NUMBER six lines up was
+ * updated correctly. At FR-245 it read "roughly ONE FR-240 of slack" (true at
+ * 48.4 KB, false at 143.6); at FR-246 it read "roughly THREE" (true at 143.6,
+ * false at 118.2), and the brief-count clause had gone wrong in a second way —
+ * it named FR-246 as unshipped while FR-246 WAS the brief updating the number
+ * beside it, and the figure moved a THIRD time inside the review round itself
+ * (118.2 -> 117.3 -> 117.2 KB across the two rounds). Three strikes on one sentence is no longer drift, it is a
+ * structural property of the sentence: a claim ABOUT a value carries no copy of
+ * that value, so a class-grep for `1\d\d\.\d KB` finds the figure and walks
+ * straight past the comparison. **Grep the COMPARISON — "FR-240s of slack",
+ * "would fit", "unshipped" — not just the figure**, and if you are editing this
+ * paragraph for a fourth time, consider whether it should carry ratios at
+ * all." At the fourth time, they WERE removed — see above. Past-tensed because
+ * a live imperative inside a preserved history block is the shape that gets
+ * obeyed by someone who did not read twenty lines up.] The answer when it binds is still to cut or to vendor less,
+ * never to raise `PACK_HARD_CEILING_DELTA` — it has moved TWICE (TD-329
+ * 2026-08-02, TD-374 2026-08-10 which also RE-BASED it), each time before the
+ * work, on a measurement, as a recorded operator decision. Two decisions taken
+ * that way are not a sliding number; FR-239 is the proof, having proposed a
+ * raise, measured, not needed it, and RESTORED the old value.
+ *
+ * (An earlier revision of this sentence said the headroom was "smaller than
+ * what any single brief has spent except TD-326 and BR-082". That was true at
+ * ~23.6 KB and became FALSE at 173.6 KB — the number was swapped and the claim
+ * built on it was left standing. Caught in review. It is the learning-1131
+ * failure in its subtlest form: a class-grep finds the VALUE, but a claim
+ * ABOUT the value carries no copy of it.)
+ *
+ * THE CEILING DID NOT MOVE FOR FR-241, and none of its three pre-declared cut
+ * levers was needed. It planned against ~68 KB and spent ~39 KB. The reason the
+ * figure is that small is worth recording, because it is the same reason
+ * FR-240's was: the expensive things this brief added are NOT packed. `docs/`
+ * and `MAINTAINING.md` sit outside `package.json` `files` (which is `dist` plus
+ * three named files), and the test glob under `src` is excluded by
+ * `tsconfig.json`, so no compiled `__tests__` directory exists under `dist` —
+ * two new endpoint suites, a two-process parity differ, a fixture and this
+ * provenance note cost exactly zero packed bytes. What DOES cost is `dist` and
+ * the Vite chunk.
+ *
+ * (That glob is spelled out in prose rather than written literally on purpose:
+ * the exclude pattern contains a star-slash pair, which terminates a block
+ * comment. A provenance note that breaks the build is not a provenance note —
+ * the same trap the FR-241 Phase-0 probe record dodged with its cron fields.)
+ *
+ * Phase 7's own delta is +1_004 B over the phase-6b reading of 1_680_305 —
+ * entirely the expanded `handlePerceptionDashboard` comment block, which `tsc`
+ * preserves into the vendored bundle. Small, but not zero, which is exactly why
+ * the rule is measure LAST rather than reuse the last figure you saw.
+ *
+ * (TWO earlier readings are recorded so the git history is not read as a drift.
+ * +329.6 KB was taken BEFORE the `--smoke` probe list landed in
+ * `verbs/dashboard.ts`. +330.6 KB / 1_640_403 was taken at the end of phase 5,
+ * before the warden pass added the `params.ts` empty-value rule and
+ * `context-docs-read.ts#cutToBytes` — the only two warden-pass edits that SHIP,
+ * worth +1 196 B between them; everything else that pass touched is tests,
+ * `scripts/` and docs, none of which `package.json` `files` includes. The rule
+ * this keeps re-teaching: measure LAST, or the figure you write down is one
+ * commit stale on arrival.)
+ *
+ * TD-373 MEASURED ON A CLEAN TREE — the first reading in this ledger that is
+ * one, and the reason the numbers above all shifted:
+ *   packed              1_863_420    796 entries (a CLEAN build: `rm -rf` on
+ *                                    BOTH `brain-mcp-server/dist` and
+ *                                    `cli/dist`, then rebuild)
+ *   cumulative delta    +548.4 KB    (561_569 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~1.6 KB      (1_631 B under TD-329's +550)
+ *                                    SUPERSEDED BY TD-374 — this reading is
+ *                                    what triggered the re-base and the +150 KB
+ *                                    grant, and is kept as its evidence.
+ *                                    This row SAID `the baseline is ~24 KB
+ *                                    high and correcting it goes ~19.9 KB
+ *                                    NEGATIVE`. TD-374 measured it: the clean
+ *                                    figure went **+189 KB the OTHER way**, and
+ *                                    the baseline was replaced rather than
+ *                                    corrected.
+ *   orphans deleted     -9_624 B     24 files with no source, shipping since
+ *                                    `c6777bc`. Their presence is what put the
+ *                                    working tree 3 B PAST the ceiling.
+ *   TD-373's own share  NOT ISOLATED, deliberately. A clean build of `HEAD`
+ *                                    (873d012) in a scratch worktree read
+ *                                    1_855_430 / +9_621 B headroom. The 5_541 B
+ *                                    between that and the figure above is
+ *                                    uncommitted work that SHIPS — TD-373's own
+ *                                    `cli/CHANGELOG.md` entry AND a concurrent
+ *                                    session's TD-367 changes, in the same
+ *                                    file. Separating them would mean stashing
+ *                                    another agent's live work, so the ledger
+ *                                    says "both" rather than guessing a split.
+ *                                    (This is the TD-333 lesson applied to
+ *                                    itself: an earlier draft of this row
+ *                                    attributed the whole 5_541 B to the other
+ *                                    session and forgot its own changelog
+ *                                    entry, which is exactly the over-
+ *                                    attribution TD-333 warns about.)
+ *
+ *   MEASURED LAST, twice, and the second pass corrected the first. An
+ *   intermediate reading of 1_860_971 / +4_080 B was written here; the review
+ *   round that followed spent **+2_449 B** and the row was re-measured. A draft
+ *   of this paragraph blamed "this very docblock and two CHANGELOG entries",
+ *   which is wrong in the flattering direction: `tsconfig` excludes
+ *   `src/__tests__` from `dist`, so **every byte of prose in THIS file is
+ *   packed-free**, and so is `scripts/copy-templates.sh` (outside
+ *   `package.json` `files`). Re-measuring after the edit confirmed it —
+ *   1_863_420 both before and after, unchanged to the byte. The 2_449 B is
+ *   `cli/CHANGELOG.md`, which `files` ships verbatim, plus a four-line comment
+ *   in `src/lib/sync/code.ts`, which `tsc` compiles into `dist` and charges for
+ *   TWICE (`.js` and `.js.map`). Which prose costs is not intuition; it is a
+ *   property of `files` and `tsconfig`, and it is cheap to check.
+ *
+ *   HOW IT WAS TAKEN, so the next brief does not re-derive it: `git worktree
+ *   add` a detached checkout, symlink `node_modules` at the repo root AND in
+ *   `cli/` AND in `brain-mcp-server/` (the last is required or `tsc` cannot
+ *   resolve `@types/express`), `npm run build`, `npm pack --dry-run --json`.
+ *   The live deploy is never touched because the worktree's `cli/dist` is a
+ *   different path. Four minutes. BR-085 and TD-347 both logged a FLOOR instead
+ *   of doing this, and FR-248's plan then bounded the slack at 52_099 B — 13x
+ *   the truth, against a tree that was already over.
+ *
+ * TD-374 IS THE NEW ORIGIN, and its own row is the first one measured against
+ * itself:
+ *   baseline set        1_863_420    796 entries — the clean measurement of
+ *                                    TD-373's tree, taken on `bd49525`
+ *   packed after        1_865_128    796 entries
+ *   TD-374's own share  +1_708 B     `cli/CHANGELOG.md` ONLY — the root
+ *                                    CHANGELOG is not in `cli`'s `files`, so
+ *                                    an earlier draft saying "its two CHANGELOG
+ *                                    entries" over-attributed by one. The constants,
+ *                                    this docblock and the whole provenance
+ *                                    rewrite cost ZERO, because `tsconfig`
+ *                                    excludes `src/__tests__` from `dist`
+ *   delta after         +1_708 B     headroom +151_892 B under the +150 KB grant
+ *
+ *   MEASURED LAST. The `MAINTAINING.md` row also cost nothing — it is outside
+ *   `package.json` `files`. Which prose costs is a property of `files` and
+ *   `tsconfig`, not intuition, and it is cheap to check before writing.
+ *
+ * FR-248 MEASURED LAST — the first brief to spend against TD-374's origin:
+ *   packed              1_889_030    800 entries
+ *   cumulative delta    +25.0 KB     (25_610 B over PACK_BASELINE_PACKED)
+ *   FR-248's own share  +23_902 B    against its plan's ~26 KB estimate, which
+ *                                    HELD — worth saying, since five other
+ *                                    numbers quoted into this brief did not
+ *   headroom remaining  ~125.0 KB    (127_990 B under TD-374's +150)
+ *   browser surfaces    INITIAL +299 B (estimate said ~300, also held)
+ *                       TOTAL   +8_695 B over 9 chunks (was 8 — Rollup
+ *                       re-partitioned when `SearchReadout` gained a third
+ *                       async importer). NEITHER chunk ceiling re-based:
+ *                       `HEADROOM` is deliberately ~four briefs of CUMULATIVE
+ *                       budget, so moving `MEASURED_TOTAL` would turn it into a
+ *                       per-brief reset.
+ *
+ * FR-249 MEASURED LAST:
+ *   packed              1_896_135    800 entries
+ *   cumulative delta    +31.9 KB     (32_715 B over PACK_BASELINE_PACKED)
+ *   FR-249's own share  +7_105 B     against its plan's +8-18 KB estimate, which
+ *                                    OVER-shot. The charge is `cli/CHANGELOG.md`
+ *                                    verbatim plus the bridge's runtime prose;
+ *                                    the guard rewrite, the five new gates, the
+ *                                    browser gate, `docs/**` and `MAINTAINING.md`
+ *                                    are all packed-free by the rule below
+ *   headroom remaining  ~118.1 KB    (120_885 B under TD-374's +150)
+ *   browser surfaces    INITIAL +0 B — the `lib/api.ts` widening is TYPE-ONLY
+ *                       and the rule below predicted zero. PREDICTED, THEN
+ *                       MEASURED: 285_689 before and after, to the byte
+ *                       TOTAL   +1_704 B over the same 9 chunks — `Layers`
+ *                       45_577 -> 46_789 (the form) and `useQFilter` 6_215 ->
+ *                       6_707 (the create builder and the third `useTriage`
+ *                       wrapper, which live in `triage/**` and are therefore
+ *                       charged to the SHARED chunk rather than to the page
+ *                       that renders them). NEITHER chunk ceiling re-based
+ *
+ *   MEASURE IT THE WAY THE BASELINE WAS TAKEN, OR THE COMPARISON IS OFF BY A
+ *   FILE. `DASH_BUNDLE_REPORT=1 bash scripts/build-dashboard.sh` writes
+ *   `dist/dashboard/.bundle-report.json`, which `files` SHIPS — so an in-place
+ *   pack taken after a report-enabled build reads 801 entries and 1_898_453,
+ *   +3_395 B against an otherwise identical tree. `npm run build` does not set
+ *   that variable, so no clean-worktree baseline in this ledger contains the
+ *   file. Both numbers were taken here; the 800-entry one is the comparable.
+ *   **The ENTRY COUNT is what exposes it** — 801 vs 800 — which is the argument
+ *   for this ledger's convention of recording entries beside every byte figure.
+ *   A 3_395 B phantom looks exactly like code growth if you only read bytes.
+ *   NOW GUARDED: see the assertion "no build DIAGNOSTIC reaches the tarball",
+ *   proven red-first by rebuilding WITH the flag and watching it fire. The
+ *   measuring instrument could inflate the thing it measures; it no longer can.
+ *
+ *   AND THE TOTAL_JS CEILING IS NOW THE TIGHT ONE — 13_601 B after this brief,
+ *   against packed's 121_962. The next brief with a UI hits the browser ceiling
+ *   first, and this row is where it should learn that rather than reading
+ *   packed's comfortable figure and planning against the wrong constraint.
+ *
+ *   WHICH PROSE COSTS IS A PROPERTY OF WHAT IT IS ATTACHED TO, not of which
+ *   file it lives in — and this session made three different claims about it
+ *   before measuring. The rule, verified in both directions:
+ *     - `src/__tests__/**`            FREE. `tsconfig` `exclude`s it from `dist`.
+ *     - `scripts/**`                  FREE. Outside `package.json` `files`.
+ *     - `docs/**`, `MAINTAINING.md`   FREE. Same reason.
+ *     - `cli/CHANGELOG.md`            CHARGED, verbatim — `files` ships it.
+ *     - a comment on RUNTIME code     CHARGED ONCE in the `.js`, plus a small
+ *                                     `mappings` shift in the `.js.map`.
+ *                                     Verified: TD-373's note on `RSYNC_EXCLUDES`
+ *                                     (a `const`) appears in `dist/lib/sync/code.js`.
+ *                                     (READ TWICE UNTIL TD-443 — grep
+ *                                     `CHARGED ONCE PLUS A MAPPINGS SHIFT`.)
+ *     - a comment on a TYPE-ONLY      **FREE.** TypeScript ERASES `type` and
+ *       declaration                   `interface` entirely, and the docblock
+ *                                     above them goes with it. Verified: FR-248
+ *                                     added ~500 B of prose above
+ *                                     `TriageExtraKey`/`BriefRef` in
+ *                                     `brain-write-bridge.ts` and
+ *                                     `dist/lib/brain-write-bridge.js` came back
+ *                                     BYTE-IDENTICAL (same shasum after `touch`
+ *                                     + `tsc --listEmittedFiles` confirmed the
+ *                                     file WAS re-emitted).
+ *   So "it is in `cli/src`, therefore it ships" is too coarse, and so is "it is
+ *   a comment, therefore it is free". Check what the comment sits on.
+ *
+ *   CHARGED ONCE PLUS A MAPPINGS SHIFT — TD-443's correction to the RUNTIME row
+ *   of the `WHICH PROSE COSTS IS A PROPERTY OF WHAT IT IS ATTACHED TO` table
+ *   (grep it; it is in FR-249's row), and it is a CLASS, not a line. Nothing
+ *   here depends on the two staying adjacent. "Charged twice (`.js` + `.js.map`)"
+ *   was never true in either package, and two independent measurements refute
+ *   it. (a) A `.js.map` carries NO `sourcesContent` — the keys are version,
+ *   file, sourceRoot, sources, names, mappings — so the prose is in the map
+ *   nowhere and only the VLQ `mappings` move:
+ *     python3 -c "import json;print(sorted(json.load(open('cli/dist/lib/slug.js.map'))))"
+ *   (b) The shift was measured directly, and it is in TD-420's own row in this
+ *   file — grep `THE UNPACKED DELTA RECONCILES EXACTLY`: `routes.js` +1_317 B
+ *   against its map's +148, `params.js` +464 against +7, `brain-write-bridge.js`
+ *   +1_123 against +17. A few percent, not a second copy. The brain side is
+ *   identical: all 138 vendored `.d.ts.map` carry that same six-key set and no
+ *   `sourcesContent`, so the 138 TD-443 dropped from `files` were pointer files
+ *   rather than a second copy of the prose.
+ *
+ *   THE CENSUS, KEYED TO HEAD SO IT CANNOT COUNT ITSELF. This correction block
+ *   adds occurrences of the phrase it is about, so every figure in THIS BLOCK is
+ *   taken against `1e48af5`, where it is frozen. Strip the leading " * " and run:
+ *
+ *   rm -rf /tmp/h && mkdir /tmp/h && git archive HEAD | tar -x -C /tmp/h && (cd /tmp/h && find . -type f ! -name '*.png' ! -name '*.jpg' -print0 | xargs -0 perl -0777 -ne 's/\s+/ /g; while (/(.{0,170}(?:twice|second time|doubl[ey]).{0,170})/gi) { my $h=$1; print "$ARGV\n  $h\n\n" if $h =~ /tsc|dist\/|comment|docblock|prose|\.js\.map|\.d\.ts\.map/i && $h =~ /charg|cost|pay|paid|spend|spent|byte|packed|tarball/i }')
+ *
+ *   The subshell is load-bearing — a bare `cd` leaves the caller in /tmp/h. Pipe
+ *   the output through `grep -c '^  '` for the window count; it prints 21.
+ *
+ *   MEASURED 2026-09-02: 21 windows over 7 files, adjudicated to 17 MEMBERS and
+ *   4 non-members. COLLAPSE FIRST — the same predicate run line-oriented misses
+ *   every wrap-crossing member, including the rule sentence in TD-420's row,
+ *   whose "cost bytes twice" and its verdict sit on opposite sides of a comment
+ *   wrap. The four non-members are named so nobody re-opens them: FR-245's row
+ *   "at twice the size" (a size comparison), MAINTAINING row 110's "moved the
+ *   packed total TWICE, recorded as a chain" (a count of readings),
+ *   `browser-gate.mjs`'s "the payload is paid for twice" (a network fetch), and
+ *   `npm-publish.yml`'s "double-booking a second build" (a CI job).
+ *
+ *   THE 17, WITH DISPOSITIONS:
+ *     - 3 LIVE RULE SITES, all in this file, all CORRECTED by TD-443: the
+ *       RUNTIME row of the `WHICH PROSE COSTS` table in FR-249's row, the rule
+ *       sharpening in TD-420's row, and TD-374's ceiling derivation under
+ *       `THE CEILING — +150 KB`. Every one is grep-addressable on purpose.
+ *       Two MORE live sites sit
+ *       OUTSIDE THE REPO and were corrected in the same pass: §13's table row
+ *       and its `.d.ts` clause in
+ *       `~/.igris/projects/igris-ai/context/coding_guidelines.md`. `git
+ *       ls-files` CANNOT SEE that file. Run the same perl over `~/.igris` as a
+ *       second pass, or the sweep reports the class clean while the doc every
+ *       brief consults before budgeting prose still states it.
+ *     - 9 HISTORICAL PER-BRIEF NARRATIVES IN THIS FILE, LEFT AS WRITTEN AND
+ *       COVERED BY THIS ENTRY — the rows of FR-266, TD-420, TD-333, FR-247,
+ *       FR-246 (twice), TD-373, BR-089 and BR-083 — plus MAINTAINING row 110
+ *       twice and the root `CHANGELOG.md` TD-374 entry. Each records what its
+ *       brief BELIEVED while measuring, and no FIGURE in any of them depends on
+ *       the belief: every one is a measured packed delta, never an estimate
+ *       arrived at by doubling. Rewriting frozen narrative would put new prose
+ *       into records whose numbers are right; correcting the RULE and
+ *       enumerating the copies is the proportionate half.
+ *     - 2 DECLINED BECAUSE THEY ARE PACKED SURFACES, and the decline is the
+ *       answer rather than an oversight: `cli/CHANGELOG.md`'s TD-374 entry, and
+ *       the `openBrainReadonly` docblock in `cli/src/lib/brain-db.ts`. Both
+ *       ship — the changelog verbatim, the docblock through
+ *       `dist/lib/brain-db.js` — so editing either moves the very total this
+ *       ledger records, and TD-443's round-3 scope forbids the re-pack that
+ *       would be needed to state the new one. The changelog copy has a second
+ *       reason that outlives the scope: it is the verbatim twin of the root
+ *       `CHANGELOG.md` entry, so correcting the free copy alone would DIVERGE
+ *       two changelogs meant to match. Whoever next re-packs for another reason
+ *       should take both in one pass, and re-measure after.
+ *   EIGHT MORE COPIES live in closed briefs and plans under
+ *   `~/.igris/projects/igris-ai/` — the FR-247, FR-248, FR-249, FR-260 and
+ *   FR-268 plans, TD-420's plan, and the TD-373 and TD-374 briefs. They record
+ *   what those briefs planned against and are left for the same reason as the
+ *   ledger rows.
+ *
+ *   THE LAST TWO DIGITS CHASE THEMSELVES, and this row is where that is stated.
+ *   `cli/CHANGELOG.md` SHIPS, so writing the exact byte count into the entry
+ *   changes the byte count. Three iterations converged to within 1 B and then
+ *   oscillated on the digit itself. Resolved by rounding in the changelog
+ *   (`~23.8 KB`) and putting the exact figure HERE — `src/__tests__` is excluded
+ *   from `dist` by `tsconfig`, so this file is packed-free and can carry a
+ *   number the changelog cannot. TD-374's row established that property; this
+ *   row is the first to need it.
+ *
+ * BR-089 MEASURED LAST — a DEPENDENCY bump, so the shape of the spend differs:
+ *   packed              1_899_945    800 entries
+ *   cumulative delta    +35.7 KB     (36_525 B over PACK_BASELINE_PACKED)
+ *   BR-089's own share  +10_915 B    and almost NONE of it is this brief's
+ *                                    prose. `better-sqlite3` 11 -> 12 changes
+ *                                    the vendored `dist/brain-mcp-server`
+ *                                    payload, and the two `trusted_schema`
+ *                                    fixes are comments on RUNTIME code, so
+ *                                    they are charged twice (.js + .js.map) per
+ *                                    the rule below. A dependency bump is the
+ *                                    one change whose packed cost is mostly not
+ *                                    yours to control.
+ *   headroom remaining  ~114.3 KB    (117_075 B under TD-374's +150)
+ *   browser surfaces    UNCHANGED — no `cli/dashboard/**` file was touched.
+ *                       INITIAL 285_689, TOTAL 573_322, slack 13_601 B.
+ *
+ * BR-083 MEASURED LAST — the biggest single spend since the ledger was re-based:
+ *   packed              1_931_485    801 entries (800 + the new backfill script,
+ *                                    which SHIPS on purpose: `copy-templates.sh`
+ *                                    stages `scripts/` into the bundle so the
+ *                                    VPS can run the same backfill this brief
+ *                                    ran locally — see the deploy hazard below)
+ *   cumulative delta    +66.5 KB     (68_065 B over PACK_BASELINE_PACKED)
+ *   BR-083's own share  +31_540 B    the largest of the session, and almost all
+ *                                    of it is the VENDORED BRAIN: a new schema
+ *                                    version, the qualification ladder, the
+ *                                    backfill, and the prose on runtime code
+ *                                    that `tsc` charges TWICE (.js + .js.map)
+ *                                    per the rule below
+ *   headroom remaining  ~83.5 KB     (85_535 B under TD-374's +150)
+ *   browser surfaces    UNCHANGED — INITIAL 285_689, TOTAL 573_322, slack
+ *                       13_601 B. Brain-side brief; the prediction that it
+ *                       would not touch the browser was CHECKED, not assumed.
+ *
+ *   THE DEPLOY HAZARD IS A PACKED FACT, not only a runtime one. `entity_edges`
+ *   is in `SYNC_TABLES` and the new qualifiers join the `syncKey`, so a push to
+ *   a VPS still on `edges@3` fails on every INSERT. The backfill script ships in
+ *   the tarball precisely so the remote can be brought forward with the same
+ *   instrument rather than a hand-written UPDATE -> TD-378.
+ *
+ * TD-378 — a DEPLOY brief, so the packed spend is prose only:
+ *   packed              1_932_758    801 entries (+1_273 B over BR-083, all of
+ *                                    it `cli/CHANGELOG.md`)
+ *   headroom remaining  ~82.3 KB     (84_262 B under TD-374's +150)
+ *
+ *   AND THE PACK ITSELF CROSSED A TEST BUDGET, which is a packed-size
+ *   consequence nobody had costed. `npm pack --dry-run` now takes **16.5-19.9 s
+ *   on an IDLE machine** (timed three times), against TD-336's 9464/7256 ms for
+ *   the same operation under EIGHT-WAY LOAD. The tarball roughly doubled the
+ *   pack's wall clock as it grew this session. Two TD-168 tests carried a
+ *   hand-written `15_000` rather than `PACK_TIMEOUT_MS` and went from
+ *   intermittent to RELIABLY RED. Fixed here, both halves of the contract at
+ *   once as the paragraph at the top of this file demands. **A growing tarball
+ *   costs seconds as well as bytes** — worth knowing before the next brief
+ *   plans a spend.
+ *
+ * FR-267 (2026-08-26) shipped WITHOUT a row, so its share is recovered here
+ * from a clean worktree build of its commit (`edf4497`, the TD-373 method:
+ * `git worktree add … HEAD`, node_modules symlinked, `rm -rf dist` + build,
+ * `npm pack --dry-run --json`):
+ *   packed              1_979_281    801 entries (+46_523 B over TD-378, all
+ *                                    of it `brain-mcp-server` prose + the
+ *                                    hunt-cost handler; the entry count did
+ *                                    not move)
+ *   headroom remaining  ~37.7 KB     (37_739 B under TD-374's +150 —
+ *                                    153_600 − 115_861)
+ *
+ * TD-426 MEASURED LAST (2026-08-27 14:02 UTC), the same build sequence and the
+ * same node_modules as BR-097's reading:
+ *   packed              2_001_634    807 entries (no new entry — the change is
+ *                                    three vendored files: `db.js` (the
+ *                                    four-tier `resolveDbPath` and its
+ *                                    docblock, the deleted `DB_PATH` const),
+ *                                    `index.js` (`_engineDbPath`, the
+ *                                    `[brain] db:` line, two re-pointed sites)
+ *                                    and `stdio-lifecycle.js` (the `pidsDir`
+ *                                    middle tier), plus their maps; two comment
+ *                                    fixes in the staged `scripts/`; and the
+ *                                    `cli/CHANGELOG.md` entry, which SHIPS.
+ *                                    `scripts/smoke-bundled-mcp.sh` and the
+ *                                    bats twin are outside `files`, and this
+ *                                    file is packed-free — the two largest
+ *                                    diffs of the brief cost 0 B)
+ *   cumulative delta    +135.0 KB    (138_214 B over PACK_BASELINE_PACKED)
+ *   TD-426's own share  +1_702 B     (2_001_634 − 1_999_932)
+ *   headroom remaining  ~15.0 KB     (15_386 B under TD-374's +150 —
+ *                                    153_600 − 138_214)
+ *   browser surfaces    +0 B — no dashboard file changed
+ *
+ * BR-097 MEASURED LAST (2026-08-27 10:48 UTC), `cd brain-mcp-server && npm run
+ * build && cd ../cli && npm run build` then `npm pack --dry-run --json`, same
+ * node_modules as FR-268's reading:
+ *   packed              1_999_932    807 entries (re-measured after warden r1:
+ *                                    +93 B over the 1_999_839 first reading —
+ *                                    one comment in the vendored sync
+ *                                    component and the scoped B3 sentence in
+ *                                    `cli/CHANGELOG.md`, which SHIPS; no new
+ *                                    entry — the change is two vendored files:
+ *                                    `sync.js` (the `skipped[]` field, the
+ *                                    acknowledgement stamp rule and the
+ *                                    held-table text in `handleBrainPush`) and
+ *                                    the vendored sync component's `index.js`
+ *                                    (the same rule in `pushTables`), plus one
+ *                                    line in the route)
+ *   cumulative delta    +133.3 KB    (136_512 B over PACK_BASELINE_PACKED)
+ *   BR-097's own share  +2_774 B     (1_999_932 − 1_997_158) against its plan's
+ *                                    <= 3_072 B budget, which HELD
+ *   headroom remaining  ~16.7 KB     (17_088 B under TD-374's +150 —
+ *                                    153_600 − 136_512)
+ *   browser surfaces    +0 B — no dashboard file changed
+ *
+ * FR-268 MEASURED LAST (2026-08-27), both trees built the same way with the
+ * same node_modules, so the two readings are comparable to the byte:
+ *   packed              1_997_158    807 entries (re-measured after warden r1:
+ *                                    +146 B over the 1_997_012 first reading —
+ *                                    the `throughputSql` export, the `||` slug
+ *                                    fallback and two comments)
+ *   cumulative delta    +130.6 KB    (133_738 B over PACK_BASELINE_PACKED)
+ *   FR-268's own share  +17_877 B    (1_997_158 − 1_979_281) against its plan's
+ *                                    <= 20 KB budget, which
+ *                                    HELD. The six new entries are
+ *                                    `dist/lib/kpi-read.js` (21_546 B
+ *                                    unpacked — the seven SQL derivations and
+ *                                    their doc comments, which `tsc` keeps)
+ *                                    + its map, `dist/verbs/{ceremony,kpi}.js`
+ *                                    + maps; the changed ones are
+ *                                    `brain-db.js` (+4_941, the two doors),
+ *                                    `index.js` (+2_688, two registrations),
+ *                                    the vendored instances component
+ *                                    (+2_068, migration v4) and `sync.js`
+ *                                    (+697, one SYNC_TABLES entry).
+ *   headroom remaining  ~19.4 KB     (19_862 B under TD-374's +150 —
+ *                                    153_600 − 133_738)
+ *   browser surfaces    +0 B — no dashboard file changed (INITIAL 286_070,
+ *                       TOTAL 580_979 over 12 chunks, identical before/after)
+ *
+ *   **~19.4 KB IS WHAT IS LEFT.** The next brief that touches `cli/src` or
+ *   `brain-mcp-server/src` must measure before it plans, and a brief of
+ *   FR-267's shape (+46.5 KB) no longer fits. The answer is still to cut or
+ *   to vendor less, not to raise `PACK_HARD_CEILING_DELTA` — but the
+ *   operator conversation that TD-374 had is now one brief away.
+ *
+ * TD-423 MEASURED LAST, after its final code-touching step. Both trees rebuilt
+ * from the same node_modules on both arms, so the readings are comparable:
+ *   packed              2_015_140    unpacked 7_739_090, 807 entries (UNCHANGED
+ *                                    — every new source file is a test or a
+ *                                    fixture under a glob `tsconfig` excludes
+ *                                    from `dist`)
+ *   TD-423's own share  +13_487 B    (13.17 KB) against HEAD's 2_001_653,
+ *                                    MEASURED by stashing the working tree
+ *                                    (`git stash push -u`), rebuilding BOTH
+ *                                    artifacts, packing, restoring, and
+ *                                    verifying every restored file `cmp`-equal
+ *                                    to a pre-stash copy — NOT by subtracting
+ *                                    from the previous ledger row. The HEAD arm
+ *                                    reproduced the recorded bundle figures
+ *                                    EXACTLY (INITIAL 286_070 / TOTAL 580_979),
+ *                                    which is what says the stash was clean.
+ *   cumulative delta    +148.2 KB    (151_720 B over PACK_BASELINE_PACKED)
+ *   headroom remaining  ~1.8 KB      (1_880 B under TD-374's +150 —
+ *                                    153_600 − 151_720)
+ *   browser surfaces    +0 B — no `cli/dashboard/**` file changed
+ *
+ *   **IT DID NOT FIT ON THE FIRST READING, AND THE CEILING DID NOT MOVE.** The
+ *   first measurement was 2_017_493 — 473 B OVER. Per this file's own
+ *   instruction the answer was to cut, not to re-base: 2_567 B was recovered
+ *   by RELOCATING comment prose, not deleting it, to surfaces that are free
+ *   (2_017_493 → 2_014_926), and a later correctness fix in the same brief —
+ *   a channel warning that named the wrong reason — spent 214 B of it back.
+ *   Where the recovery came from is the reusable part.
+ *
+ *   THE RULE "A COMMENT ON A TYPE COSTS NOTHING" IS TRUE FOR `cli/src` AND
+ *   FALSE FOR `brain-mcp-server/src`, and that had not been recorded here. It
+ *   is true in `cli/src` because that build sets `declaration: false`, so a
+ *   type-only declaration and its JSDoc are erased entirely — verified: the new
+ *   `CognitionYieldDigest` family is ~9 KB of source and `dist/types.js` is 95 B.
+ *   It is FALSE across the package boundary: `brain-mcp-server` EMITS `.d.ts`,
+ *   `copy-templates.sh` vendors `dist/brain-mcp-server/dist/**` wholesale, and
+ *   `npm pack` carries 138 `.d.ts` entries totalling 693_914 B. A docblock on an
+ *   INTERFACE FIELD in the brain therefore ships. Trimming the `produced`
+ *   docblock in `cognition/types.ts` from 2_267 B to 1_421 B moved the packed
+ *   total on its own. Budget brain-side type prose; cli-side type prose is free.
+ *
+ *   WHERE THE 13_487 B WENT, and none of it is decoration. The two new reader
+ *   modules dominate: `dist/verbs/cognition.js` +17_114 B and
+ *   `dist/lib/brain-db.js` +16_272 B unpacked, plus +11_181 and +10_983 in
+ *   their maps — 55.5 KB of the 59.2 KB unpacked delta, for ~600 lines of new
+ *   TypeScript. `brain-mcp-server/**` contributed ~2.7 KB across the migration,
+ *   the roster projection and seven one-line extractor declarations. `docs/`,
+ *   `MAINTAINING.md` and `core/skills/**` are outside `files` and cost nothing,
+ *   which is exactly why the long-form account of the yield surface lives in
+ *   `docs/COGNITION.md` and the shipped docblocks point at it.
+ *
+ *   **~1.8 KB IS WHAT IS LEFT, AND THAT IS THE HEADLINE.** HEAD already had
+ *   only 15_367 B before this brief spent 13_487 of it. The next brief that
+ *   touches `cli/src` or `brain-mcp-server/src` cannot fit a feature at all —
+ *   even a pure comment round in a shipped file has moved this number by
+ *   +442 B before now. This is the state TD-374's own text anticipated: "the
+ *   operator conversation that TD-374 had is now one brief away." It has
+ *   arrived. Raising `PACK_HARD_CEILING_DELTA` is an OPERATOR decision with a
+ *   named date, taken BEFORE the work that needs it and with an estimate on the
+ *   record — not something a failing assertion licenses.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit.
+ *
+ * BR-103 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
+ * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the control at develop `e915912`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index,
+ * `0dbc7e51` — no commit), the three `node_modules` symlinked (root + both
+ * packages), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm. `cli/dist` (`index.js` `Sep  7 19:35`)
+ * and `brain-mcp-server/dist` were never written — the bats tier ran
+ * against an inert `tsc --outDir` scratch emit; `~/.igris/config.json` sha
+ * unchanged (`07449dbf…`). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_860_125    unpacked 6_773_542, 537 entries, shasum
+ *                                    `76b04181e58cc888cd2afff0f0e928bfb2797ff8`
+ *                                    — taken twice, byte- and sha-identical to
+ *                                    FR-243's MEASURED LAST below.
+ *   packed              1_870_006    unpacked 6_810_979, 541 entries (+4),
+ *                                    shasum
+ *                                    `54545ddf0062d662dd76cba54c3f08c9ef2833b4`,
+ *                                    taken twice, on the final tree. (The
+ *                                    pre-warden tree read 1_869_684 /
+ *                                    6_809_741 / `99cd6cd1…`; warden round 1
+ *                                    added the uncovered-swap re-check in
+ *                                    `lib/preflight.js` — +798 (map +440),
+ *                                    including round 2's wording nit —
+ *                                    re-measured on the sentinel's rsync
+ *                                    scratch of the same tree, whose first
+ *                                    reading was sha-identical to `99cd6cd1…`,
+ *                                    `tsc` re-run over its `dist`, twice.)
+ *   BR-103's own share  +9_881 B     packed. Unpacked +37_437 over 24
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. The four NEW entries are 17_863
+ *                                    of it: `lib/core-source.js` 5_239 + map
+ *                                    3_649, `lib/core-runtime-extras.js`
+ *                                    5_233 + map 3_742. The rest: `verbs/
+ *                                    init.js` +3_349 (map +1_601);
+ *                                    `lib/preflight.js` +3_791 (map +1_968);
+ *                                    `CHANGELOG.md` +2_531; `lib/init-config.js`
+ *                                    +1_183 (map +565); `lib/from-source.js`
+ *                                    +841 (map +508); `README.md` +730;
+ *                                    `lib/tarball.js` +575 (map +143);
+ *                                    `index.js` +436 (map +184);
+ *                                    `lib/drift/bridge-missing.js` +96 (map
+ *                                    +1) — and TWO NEGATIVE artifacts:
+ *                                    `verbs/refresh.js` −1_364 (map −952) and
+ *                                    `verbs/doctor.js` −804 (its map +4_192):
+ *                                    moving the source resolution and the
+ *                                    fix loop into shared helpers removed
+ *                                    more inline prose than the helpers'
+ *                                    call sites added. Plan priced +6–10 KB;
+ *                                    the reading is inside that band.
+ *                                    Zero from the tests (nine files under
+ *                                    the excluded test globs) and zero from
+ *                                    the skill / `_common.sh` mirrors
+ *                                    (`core/**` is outside `files`).
+ *   cumulative delta    +26_730 B    (26.1 KB, 17.4 % of the grant —
+ *                                    1_870_006 − 1_843_276)
+ *   headroom remaining  126_870 B    (123.9 KB — 153_600 − 26_730)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_870_006 − 1_860_125 = 9_881; 1_870_006 − 1_843_276 = 26_730;
+ *   153_600 − 26_730 = 126_870; 541 − 537 = 4; 6_810_979 − 6_773_542 =
+ *   37_437 = the per-file sum (36_199 pre-warden + 1_238 = 798 + 440).
+ *
+ * BUNDLE TD-456 / TD-455 / TD-453 / TD-454 MEASURED LAST (2026-09-07), after
+ * the bundle's final code-touching step — LANDED. MEASURED ON A SCRATCH BUILD
+ * THAT RAN `copy-templates.sh`, BOTH arms (the BR-101 / TD-444 / BR-103
+ * method): `git archive <rev> cli brain-mcp-server harness-manifest.json` (the
+ * control at develop `774e9bd`, v7.3.0 — taken FRESH, not BR-103's
+ * 1_870_006, which predates the tag commit's CHANGELOG/README bytes; the
+ * final arm from a `git write-tree` of the working tree through a TEMP index,
+ * `6b2aa2cd` — no commit), the three `node_modules` symlinked (root + both
+ * packages; `src/` and `core/` never symlinked), `dist` ABSENT so the copy
+ * step rebuilt the brain; the TD-426 smoke printed `(sandboxed)` on both
+ * arms; `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. `cli/dist` (`index.js` `Sep  7 19:35:25`) and
+ * `brain-mcp-server/dist` (`Sep  7 14:44:53`) were never written — the bats
+ * tier ran against an inert `tsc --outDir` scratch emit under a stand-in
+ * launch HOME; `~/.igris/config.json` sha unchanged (`07449dbf…`), the real
+ * `~/.claude.json` `mcpServers` subtree sha unchanged (`c338fa2e…`). npm
+ * 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_870_167    unpacked 6_811_648, 541 entries, shasum
+ *                                    `9e15909287926789a4d4666f44f23606bfd4925a`
+ *                                    — taken twice, byte-identical
+ *                                    (= BR-103's 1_870_006 + the v7.3.0 tag
+ *                                    commit's 161 B, as the plan predicted).
+ *   packed              1_873_649    unpacked 6_823_773, 541 entries (+0),
+ *                                    shasum
+ *                                    `bcb47675cd7da5c795dc80addf5324c4dc41d275`,
+ *                                    taken twice, on the final tree.
+ *   bundle's own share  +3_482 B     packed. Unpacked +12_125 over 13
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. Per brief, from the per-file
+ *                                    diff (unpacked B): TD-455 4_915 =
+ *                                    `lib/mcp-register.js` +1_129 (map +819)
+ *                                    + `verbs/install.js` +1_928 (map
+ *                                    +1_039); TD-454 5_466 =
+ *                                    `brain-mcp-server/dist/engine/components/
+ *                                    subconscious/finding-key.js` +3_213
+ *                                    (`.d.ts` +1_691) + `…/cognition/
+ *                                    extractors/subconscious.js` +369 (`.d.ts`
+ *                                    +193); TD-453 695 = brain
+ *                                    `machine-identity.js` +207 (`.d.ts`
+ *                                    +197) + `lib/machine-identity.js` +207
+ *                                    (map +84); the four `CHANGELOG.md`
+ *                                    bullets +1_049 (shared); TD-456 0 —
+ *                                    tests only. 4_915 + 5_466 + 695 +
+ *                                    1_049 = 12_125. Entries +0: TD-454's
+ *                                    `scripts/td454_pairs_separated.csv` was
+ *                                    pruned by BR-101's `td<N>_` + `.csv`
+ *                                    rule (the copied-path check: `scripts/
+ *                                    **` IS on the copied list, hence the
+ *                                    scratch build). Plan priced 2.6–4.4 KB;
+ *                                    the reading is inside that band.
+ *   cumulative delta    +30_373 B    (29.7 KB, 19.8 % of the grant —
+ *                                    1_873_649 − 1_843_276)
+ *   headroom remaining  123_227 B    (120.3 KB — 153_600 − 30_373)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_873_649 − 1_870_167 = 3_482; 1_873_649 − 1_843_276 = 30_373;
+ *   153_600 − 30_373 = 123_227; 541 − 541 = 0; 6_823_773 − 6_811_648 =
+ *   12_125 = the per-file sum; 1_870_167 − 1_870_006 = 161.
+ *
+ * BUNDLE BR-104 / TD-458 / TD-457 MEASURED LAST (2026-09-08), after the
+ * bundle's final code-touching step — LANDED. MEASURED ON A SCRATCH BUILD
+ * THAT RAN `copy-templates.sh`, BOTH arms (the BR-101 / TD-444 / BR-103 /
+ * TD-456 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the control at develop `d749eb0` — taken FRESH;
+ * it reproduces the TD-456 bundle's packed reading and sha exactly, as
+ * d749eb0 IS that bundle's commit; the final arm from a `git write-tree` of
+ * the working tree through a TEMP index, `a9cfece5` — no commit), the three
+ * `node_modules` symlinked (root + both packages; `src/` and `core/` never
+ * symlinked), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, byte- and sha-identical. `cli/dist`
+ * (`index.js` `Sep  7 19:35:25`) and `brain-mcp-server/dist` (`Sep  7
+ * 14:44:53`) were never written; `~/.igris/config.json` sha unchanged
+ * (`07449dbf…`), the real `~/.claude.json` `mcpServers` subtree sha unchanged
+ * (`c338fa2e…`). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_873_649    unpacked 6_823_773, 541 entries, shasum
+ *                                    `bcb47675cd7da5c795dc80addf5324c4dc41d275`
+ *                                    — taken twice, byte-identical.
+ *   packed              1_876_551    unpacked 6_833_319, 541 entries (+0),
+ *                                    shasum
+ *                                    `8a06d72d73c447c07e2dd43de4f8dfaf72c228fb`,
+ *                                    taken twice, on the final tree.
+ *   bundle's own share  +2_902 B     packed. Unpacked +9_546 over 7
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. Per brief, from the per-file
+ *                                    diff (unpacked B): BR-104 0 — every
+ *                                    file it touched (`core/git-hooks/`,
+ *                                    `scripts/*.sh`, `test/`, `MAINTAINING.md`,
+ *                                    root `CHANGELOG.md`) is outside `files`,
+ *                                    and no cli CHANGELOG twin was added;
+ *                                    TD-457 alone: `brain-mcp-server/dist/
+ *                                    engine/components/subconscious/schema.js`
+ *                                    +1_668 (`.d.ts` +742) + `…/index.js`
+ *                                    +58 (`.d.ts` +58) = 2_526; SHARED by
+ *                                    TD-458 and TD-457: `…/finding-key.js`
+ *                                    +3_932 (`.d.ts` +2_569) = 6_501,
+ *                                    apportioned by the source-hunk net bytes
+ *                                    of each brief's edits to
+ *                                    `finding-key.ts` (`git diff -U0`,
+ *                                    TD-458 3_284 : TD-457 830) as TD-458
+ *                                    5_189 / TD-457 1_312 — an apportionment,
+ *                                    not two measurements; `CHANGELOG.md`
+ *                                    +519 = the TD-458 bullet 326 + the
+ *                                    TD-457 bullet 193 (exact, `wc -c` of
+ *                                    each). So TD-458 ≈ 5_515 and TD-457 ≈
+ *                                    4_031 unpacked; 5_515 + 4_031 = 9_546.
+ *                                    Entries +0: the copy step's prune echo
+ *                                    listed `td452_anchor_sweep.ts`,
+ *                                    `td454_pairs_separated.csv`,
+ *                                    `td457_pairs_a_narrow.csv` and
+ *                                    `td458_s3_pairs.csv` (BR-101's `td<N>_`
+ *                                    + `.csv` rule; `scripts/**` IS on the
+ *                                    copied list, hence the scratch build).
+ *                                    Plan priced 1.3–2.0 KB for the
+ *                                    measured-not-moved outcome and ~0.9–1.3
+ *                                    KB more if TD-458 shipped; it shipped
+ *                                    (P-A ∧ P-B ∧ P-C held), and 2_902 sits
+ *                                    inside that widened band (2.2–3.3 KB).
+ *   cumulative delta    +33_275 B    (32.5 KB, 21.7 % of the grant —
+ *                                    1_876_551 − 1_843_276)
+ *   headroom remaining  120_325 B    (117.5 KB — 153_600 − 33_275)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_876_551 − 1_873_649 = 2_902; 1_876_551 − 1_843_276 = 33_275;
+ *   153_600 − 33_275 = 120_325; 541 − 541 = 0; 6_833_319 − 6_823_773 =
+ *   9_546 = the per-file sum (2_526 + 6_501 + 519); 33_275 − 30_373 = 2_902.
+ *
+ * BUNDLE TD-301 / BR-105 MEASURED LAST (2026-09-08), after the bundle's
+ * final code-touching step — LANDED. MEASURED ON A SCRATCH BUILD THAT RAN
+ * `copy-templates.sh`, BOTH arms (the BR-101 / TD-444 / BR-103 / TD-456 /
+ * BR-104 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` — the control taken FRESH at develop `6faeff5`
+ * (= tag `v7.3.1`); the final arm from a `git write-tree` of the working
+ * tree through a TEMP index, `8a4c6b8c` (no commit). The three
+ * `node_modules` symlinked (root + both packages; `src/` and `core/` never
+ * symlinked), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, byte- and sha-identical. NOTE the control
+ * is 1_876_704, not the previous row's final 1_876_551: `6faeff5` is the
+ * release commit that FOLLOWED that tree (1_876_704 − 1_876_551 = 153 B of
+ * version bump + CHANGELOG). `cli/dist` (`index.js` `Sep  8 15:40:35`) and
+ * `brain-mcp-server/dist` (`Sep  8 15:05:51`) were never written;
+ * `~/.igris/config.json` sha unchanged (`07449dbf…`), the real
+ * `~/.claude.json` `mcpServers` subtree sha unchanged (`c338fa2e…`),
+ * `~/.igris/.install-source.json` sha unchanged (`2fa7b5fe…`). npm 10.9.8,
+ * node v22.23.2, darwin/arm64.
+ *   control             1_876_704    unpacked 6_833_899, 541 entries, shasum
+ *                                    `e4e8e9bafbcb4125ce96891eff1a22e5ce310e70`
+ *                                    — taken twice, byte-identical.
+ *   packed              1_879_550    unpacked 6_844_924, 541 entries (+0),
+ *                                    shasum
+ *                                    `b95c40b9b9112ef136593927e1a142e1ef75299a`,
+ *                                    taken twice, on the final tree.
+ *   bundle's own share  +2_846 B     packed. Unpacked +11_025 over 21
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. Per brief, from the per-file
+ *                                    diff (unpacked B) — TD-301: `channel.js`
+ *                                    +1_363 (map +777), `install-source.js`
+ *                                    +1_555 (map +818), `init.js` +396 (map
+ *                                    +221), `refresh.js` +396 (map +221),
+ *                                    `doctor.js` +84 (map +1), `http.js` +68
+ *                                    (map +1), `README.md` +182, and
+ *                                    `brain-core-stale.js` −629 (map −600)
+ *                                    because the commits fetcher MOVED to
+ *                                    channel.ts and the replaced docblock is
+ *                                    shorter than the one it replaced =
+ *                                    4_854; BR-105: `preflight.js` +2_350
+ *                                    (map +1_142), `package.json` +20,
+ *                                    `dist/brain-mcp-server/package.json`
+ *                                    +20, `…/package-lock.json` +20 = 3_552
+ *                                    (the three +20s are the `engines.node`
+ *                                    string growing by 20 chars). SHARED:
+ *                                    `CHANGELOG.md` +2_619 — the cli
+ *                                    CHANGELOG is CHARGED VERBATIM, and this
+ *                                    is EXACT, not an apportionment: the
+ *                                    inserted block is 2_624 B (`wc -c` of
+ *                                    the two sections: TD-301's `### Fixed`
+ *                                    1_051 + BR-105's `### Changed` 1_573)
+ *                                    less the 5-byte `---\n\n` separator it
+ *                                    replaced, and the 5 is charged to
+ *                                    BR-105's section, which now carries the
+ *                                    rule. So TD-301 = 5_905 and BR-105 =
+ *                                    5_120 unpacked. Entries +0 — confirming
+ *                                    `cli/src/__tests__/**` (the new
+ *                                    `engines-parity.test.ts`) and
+ *                                    `cli/tests/**` (the bats edits) are
+ *                                    outside `files`, as priced. The plan
+ *                                    priced the bundle at 1.1–2.2 KB packed;
+ *                                    the first reading came in at 3_952 B, the
+ *                                    shipped docblocks were trimmed against
+ *                                    the TD-423 rule (MAINTAINING.md and the
+ *                                    root CHANGELOG are FREE; `cli/src`
+ *                                    runtime comments and `cli/CHANGELOG.md`
+ *                                    are CHARGED) and re-measured at 2_846 —
+ *                                    still 646 B above the priced band, and
+ *                                    said so rather than re-pricing.
+ *   cumulative delta    +36_274 B    (35.4 KB, 23.6 % of the grant —
+ *                                    1_879_550 − 1_843_276)
+ *   headroom remaining  117_326 B    (114.6 KB — 153_600 − 36_274)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_879_550 − 1_876_704 = 2_846; 1_879_550 − 1_843_276 = 36_274;
+ *   153_600 − 36_274 = 117_326; 541 − 541 = 0; 6_844_924 − 6_833_899 =
+ *   11_025 = the per-file sum; 4_854 + 3_552 + 2_619 = 11_025;
+ *   2_624 − 5 = 2_619; 1_051 + (1_573 − 5) = 2_619; 4_854 + 1_051 = 5_905;
+ *   3_552 + 1_568 = 5_120; 5_905 + 5_120 = 11_025;
+ *   1_876_704 − 1_876_551 = 153; 36_274 − 33_275 = 2_999 (the cumulative
+ *   moved by the bundle's 2_846 PLUS the release commit's 153).
+ *
+ * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
+ * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the control at develop `f55abc8`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index,
+ * `68863519` — no commit), the three `node_modules` symlinked (root + both
+ * packages), `dist` ABSENT so the copy step rebuilt the brain; the TD-426
+ * smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm. `cli/dist` (`index.js` `Sep  6 21:13:36`)
+ * and `brain-mcp-server/dist` were never written; `~/.igris/config.json` sha
+ * unchanged (`cc52668e…`). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   control             1_849_991    unpacked 6_732_457, 535 entries, shasum
+ *                                    `d1fe74000271263454dbe1d9e0ea682e3d65c89f`
+ *                                    — taken twice, byte- and sha-identical to
+ *                                    TD-452's MEASURED LAST below.
+ *   packed              1_860_125    unpacked 6_773_542, 537 entries (+2),
+ *                                    shasum
+ *                                    `76b04181e58cc888cd2afff0f0e928bfb2797ff8`,
+ *                                    taken twice, on the final tree.
+ *   FR-243's own share  +10_134 B    packed. Unpacked +41_085 over 9
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. The two NEW entries are 23_566
+ *                                    of it: `lib/git-hooks.js` 13_557 + its
+ *                                    map 10_009. The rest: `verbs/doctor.js`
+ *                                    +7_355 (map +3_309); `verbs/install.js`
+ *                                    +3_147 (map +2_194); `CHANGELOG.md`
+ *                                    +798; `index.js` +570 (map +146).
+ *                                    Zero from the hooks themselves:
+ *                                    `core/git-hooks/**` is outside
+ *                                    `cli/package.json` `files` and rides the
+ *                                    core channel (`igris refresh`), which is
+ *                                    the whole reason the canonical files
+ *                                    moved under `core/`. Plan §3 Phase 4.5
+ *                                    priced +5–8 KB; the reading is 1.3–2×
+ *                                    that, under the 12 KB stop-and-rethink
+ *                                    line — the overrun is `git-hooks.js`'s
+ *                                    header docblock (the six consumer-safety
+ *                                    rules are prose in a RUNTIME module,
+ *                                    charged once — see coding_guidelines §13).
+ *   cumulative delta    +16_849 B    (16.5 KB, 11.0 % of the grant —
+ *                                    1_860_125 − 1_843_276)
+ *   headroom remaining  136_751 B    (133.5 KB — 153_600 − 16_849)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ * TD-452 MEASURED LAST (2026-09-07), after its final code-touching step —
+ * a MEASURED-NOT-MOVED brief, and the first row to record a ZERO spend by
+ * the BR-101 / TD-444 method rather than assume one. MEASURED ON A SCRATCH
+ * BUILD THAT RAN `copy-templates.sh`, BOTH arms: `git archive <rev> cli
+ * brain-mcp-server harness-manifest.json` (the control at develop
+ * `bfa3e5b`; the final arm from a `git write-tree` of the working tree —
+ * no commit — so the two new research artifacts were IN the archive), the
+ * three `node_modules` symlinked (root + both packages), `dist` ABSENT so
+ * the copy step's own trigger rebuilt the brain; the TD-426 smoke printed
+ * `(sandboxed)`; `npm pack --dry-run --json --ignore-scripts` twice per
+ * arm. `cli/dist` (`index.js` `Sep  6 21:13:36`) and `brain-mcp-server/dist`
+ * were never written; `~/.igris/config.json` sha unchanged. npm 10.9.8,
+ * node v22.23.2, darwin/arm64. The checksum column is npm's `shasum`.
+ *   control             1_849_991    unpacked 6_732_457, 535 entries, shasum
+ *                                    `d1fe74000271263454dbe1d9e0ea682e3d65c89f`
+ *                                    — the scratch at develop `bfa3e5b`,
+ *                                    taken twice, byte- and sha-identical to
+ *                                    BR-100's MEASURED LAST below.
+ *   packed              1_849_991    unpacked 6_732_457, 535 entries, the
+ *                                    SAME shasum, taken twice, on the final
+ *                                    tree. BR-101's prune listed SEVEN names
+ *                                    on this arm — the five it listed at
+ *                                    BR-100 plus `td452_anchor_sweep.ts` and
+ *                                    `td452_row_findings.csv` — and the
+ *                                    staged `scripts/` held the same 10
+ *                                    files; the manifest carries no `td45`
+ *                                    path.
+ *   TD-452's own share  +0 B         by MEASUREMENT: the brief changed no
+ *                                    packed file. The anchor did not move
+ *                                    (its two candidates each admitted
+ *                                    hand-labelled DIFFERENT pairs at 0.25 —
+ *                                    9 and 33 — under the pre-registered
+ *                                    rule), so `finding-key.ts` and the
+ *                                    match loop are byte-identical to HEAD;
+ *                                    the diff is two `__tests__/` files
+ *                                    (excluded from the emit), two pruned
+ *                                    research artifacts, `docs/` and
+ *                                    `MAINTAINING.md`. Recorded so the next
+ *                                    brief does not read "no ledger row" as
+ *                                    "unmeasured".
+ *   cumulative delta    +6_715 B     unchanged (1_849_991 − 1_843_276)
+ *   headroom remaining  146_885 B    unchanged (153_600 − 6_715)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ * BR-100 MEASURED LAST (2026-09-06), after its final code-touching step —
+ * LANDED, the first consumer of TD-444's re-based grant. MEASURED ON A SCRATCH
+ * BUILD THAT RAN `copy-templates.sh` — the BR-101 / TD-444 method. This
+ * brief's diff touches none of BR-101's copied paths (its `git diff
+ * --name-only 3bc697f..HEAD` against that list prints nothing), so the
+ * staging method would have been admissible; the scratch build was run
+ * anyway, BOTH arms, so the control below is a REPRODUCTION and not a
+ * citation. The scratch: `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json` (the committed surface — `src/` a real copy, the
+ * manifest at the scratch root), `cli/` and `brain-mcp-server/`
+ * `node_modules` symlinked back PLUS the monorepo ROOT `node_modules`
+ * symlinked at the scratch root (`tsc` and `vite` are hoisted there; neither
+ * package has its own `.bin/tsc`), `brain-mcp-server/dist` ABSENT so the copy
+ * step's own trigger (`dist/ absent`) rebuilt the brain into `dist.tmp` and
+ * swapped; BR-101's prune listed exactly the five names, the TD-426 smoke
+ * printed `(sandboxed)`, the staged `scripts/` held 10 files; then `npm pack
+ * --dry-run --json --ignore-scripts` twice per arm. `cli/dist` (`index.js`
+ * `Sep  4 18:00`) and `brain-mcp-server/dist` were never written. npm 10.9.8,
+ * node v22.23.2, darwin/arm64. The checksum column is npm's `shasum` (SHA-1).
+ *   control             1_843_276    unpacked 6_701_216, 531 entries, shasum
+ *                                    `02fc3c2c641ffc8a2e507ae7f2a986c343787fdb`
+ *                                    — the scratch at develop `3bc697f`, taken
+ *                                    twice, byte- and sha-identical to TD-444's
+ *                                    MEASURED LAST. Manifest census: 0
+ *                                    vendored `.js.map`, 108 cli-own, 139
+ *                                    `.d.ts`.
+ *   packed              1_849_991    unpacked 6_732_457, 535 entries (+4),
+ *                                    shasum
+ *                                    `d1fe74000271263454dbe1d9e0ea682e3d65c89f`,
+ *                                    taken twice, on the scratch at the rebased
+ *                                    branch (develop + BR-100), after the
+ *                                    CHANGELOG bullet. Census: 109 `.js.map`
+ *                                    (cli's new `lib/machine-identity.js.map`),
+ *                                    140 `.d.ts` (the brain twin's).
+ *   BR-100's own share  +6_715 B     packed. Unpacked +31_241 over 25
+ *                                    artifacts, and the per-file sum
+ *                                    reconciles EXACTLY. The four NEW entries
+ *                                    are 19_040 of it: `lib/machine-identity.js`
+ *                                    5_889 + its map 5_693 (cli),
+ *                                    `machine-identity.js` 5_776 + `.d.ts`
+ *                                    1_682 (brain). The rest: `lib/brain-db.js`
+ *                                    +2_293 (map +2_392); `verbs/doctor.js`
+ *                                    +2_286 (map +1_645); `instances/index.js`
+ *                                    +709; `cognition/lifecycle.js` +609;
+ *                                    `CHANGELOG.md` +508; `verbs/session.js`
+ *                                    +335 (map +194); `monitoring/schema.js`
+ *                                    +280; `verbs/ceremony.js` +212 (map
+ *                                    +122); `monitoring/index.js` +152;
+ *                                    `lib/process-liveness.js` +109 (map +34);
+ *                                    `tools/instances.js` +106 (`.d.ts` +32);
+ *                                    `verbs/cognition.js` +89 (map +70);
+ *                                    `lib/init-config.js` +14 (map +10).
+ *                                    Round 1 (parked as `8d6119f`, before
+ *                                    TD-444) read +7_727 B / +38_468 unpacked
+ *                                    on the pre-TD-444 surface by the staging
+ *                                    method; the unpacked difference is
+ *                                    exactly the six brain `.js.map` deltas
+ *                                    that surface counted and TD-444's
+ *                                    packlist now excludes (6_114 + 679 + 161
+ *                                    + 95 + 89 + 89 = 7_227; 38_468 − 7_227 =
+ *                                    31_241) — same source, same 25 non-map
+ *                                    artifacts, same per-file figures.
+ *   cumulative delta    +6_715 B     (6.6 KB, 4.4 % of the grant —
+ *                                    1_849_991 − 1_843_276)
+ *   headroom remaining  146_885 B    (143.4 KB — 153_600 − 6_715)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHAT THE PLAN PRICED, AND WHAT IT COST. Plan §8 estimated ~3_300–3_500 B
+ *   packed (±40 %) against the 4_181 B it was planned to; the reading is
+ *   +6_715 B — 1.9× the estimate, and the two new twin modules (19_040 B
+ *   unpacked, four entries) are the whole overrun. TD-440's cost model
+ *   (0.54–0.73 packed B per brain source byte for a NEW module) was the right
+ *   predictor; §8's blended 0.25 ratio, taken from rows that grew EXISTING
+ *   files, was not. Round 1's checkpoints stand as the trim record: +9_251 B
+ *   after Phases 1–5, +7_569 B after every shipped comment was cut to one
+ *   line and the rationale relocated to `docs/COGNITION.md` + MAINTAINING,
+ *   +7_727 B with the bullet. §8's cuts 1–4 were NOT applied: they remove
+ *   tested, operator-approved function, and TD-444 landing first was §8 step
+ *   6's own outcome.
+ *
+ *   TD-444 NOTE. This row SPENDS against the re-based floor and does not
+ *   re-base: `PACK_BASELINE_PACKED` 1_843_276 and `PACK_HARD_CEILING_DELTA`
+ *   153_600 are unchanged (absolute cap 1_996_876). The "headroom remaining"
+ *   in the TD-444 row is the pre-BR-100 figure; this row's supersedes it.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — the scratch build
+ *   emitted no `__tests__` artifact (`find dist -path '*__tests__*'` on the
+ *   staged tree: nothing) and this file is not in `files`.
+ *
+ * TD-444 MEASURED LAST (2026-09-06), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh` — BR-101's method,
+ * and REQUIRED here rather than optional: `cli/package.json` is on that row's
+ * copied-path list, and this brief's diff touches it. The scratch: `cli/`
+ * copied WITHOUT `node_modules` (symlinked back) and WITHOUT the staged
+ * `dist/brain-mcp-server/` (the copy step regenerates it), `brain-mcp-server/`
+ * assembled from COPIES of `dist/ scripts/ src/ package.json
+ * package-lock.json tsconfig.json` (`src/` copied, not symlinked — the
+ * rebuilt maps' `sources` must match the vendored ones for the identity check
+ * below, even though those maps no longer pack), `node_modules` symlinked,
+ * `harness-manifest.json` at the scratch root. The TD-373 trigger fired
+ * (`src/ newer than dist/index.js` — copy mtimes), the scratch REBUILT the
+ * brain into `dist.tmp` and swapped, and the rebuilt tree `diff -rq`
+ * IDENTICAL to the vendored `cli/dist/brain-mcp-server/dist/`; the staged
+ * `package.json` and `package-lock.json` `cmp` identical to the real
+ * bundle's; the TD-426 smoke printed `(sandboxed)`; the staged `scripts/`
+ * held 10 files (BR-101's prune applied — every reading INCLUDES BR-101).
+ * `cli/dist` and `brain-mcp-server/dist` were never written. npm 10.9.8,
+ * node v22.23.2, darwin/arm64. The checksum column is npm's `shasum`
+ * (SHA-1). Every reading below was taken AFTER the copy step.
+ *   control             2_002_047    unpacked 7_638_295, 670 entries, shasum
+ *                                    `a9eda015884631fc5ba7abfd7b0d57f595088dca`
+ *                                    — the scratch at HEAD `c1aee95`, taken
+ *                                    twice, byte- and sha-identical to
+ *                                    BR-101's MEASURED LAST, and reproduced a
+ *                                    third time as the restore-as-control
+ *                                    after the battery (HEAD `package.json` +
+ *                                    HEAD `CHANGELOG.md` back in place).
+ *                                    Manifest census: 139 `.js.map` under
+ *                                    `dist/brain-mcp-server/`, 108 elsewhere.
+ *                                    NOT the row's control, for the record:
+ *                                    an in-place `npm pack --dry-run` of the
+ *                                    REAL `cli/dist` the same day read
+ *                                    2_090_510 / 8_153_161 / 675 /
+ *                                    `b774d05e…` — the operator's 2026-09-04
+ *                                    build still carrying the five files
+ *                                    BR-101 prunes, plus BR-101's bullet
+ *                                    (unpacked +391 over BR-101's control,
+ *                                    exactly that bullet's cost).
+ *   negation alone      1_842_896    unpacked 6_699_926, 531 entries (−139),
+ *                                    shasum
+ *                                    `4e16cddef0b25ddb0de549d5817c5ce280619748`
+ *                                    — ONE line added to `files` after the
+ *                                    TD-443 negation: a `!` rule matching
+ *                                    `.js.map` at any depth under
+ *                                    `dist/brain-mcp-server/` (the literal is
+ *                                    in the TD-444 pin's failure message and
+ *                                    in `cli/package.json`). Manifest census
+ *                                    on this reading: 0 vendored `.js.map`,
+ *                                    108 cli-own, and
+ *                                    `dist/brain-mcp-server/dist/index.js` +
+ *                                    `engine/index.js` still packed. GLOB
+ *                                    SEMANTICS MEASURED, NOT BELIEVED: the
+ *                                    fallback spelling anchored one segment
+ *                                    deeper (`…/brain-mcp-server/dist/…`)
+ *                                    packs the same 1_842_896 / 531 (+5
+ *                                    unpacked — its own longer literal), so
+ *                                    the nested `dist/brain-mcp-server/
+ *                                    package.json` swallows neither; the
+ *                                    shorter spelling shipped. Unpacked
+ *                                    reconciles EXACTLY: 7_638_295 −
+ *                                    6_699_926 = 938_369 = 938_411 (the 139
+ *                                    maps by `find … -exec cat {} + | wc -c`
+ *                                    on the live dist) − 42 (the new line's
+ *                                    raw bytes in the shipped
+ *                                    `package.json`).
+ *   packed              1_843_276    unpacked 6_701_216, 531 entries, shasum
+ *                                    `02fc3c2c641ffc8a2e507ae7f2a986c343787fdb`,
+ *                                    taken twice, after the CHANGELOG bullet.
+ *                                    THIS IS THE NEW FLOOR — see RE-BASED.
+ *   TD-444's own share  −158_771 B   vs the OLD baseline: −159_151 for the
+ *                                    negation (139 maps out of the manifest,
+ *                                    net of the 42 raw B the `files` line
+ *                                    adds — one manifest, not separable) +
+ *                                    380 for the CHANGELOG bullet (388 when
+ *                                    the same bullet is packed beside the
+ *                                    maps, M1 below — gzip context, not a
+ *                                    second cost). Unpacked −937_079 =
+ *                                    −938_369 + 1_290 (the bullet).
+ *   delta at OLD floor  −20_144 B    (1_843_276 − 1_863_420). THE TRAP
+ *                                    FIGURE, stated: `toBeLessThan(153_600)`
+ *                                    is GREEN on it and would stay green
+ *                                    through 173_744 B of unmeasured growth
+ *                                    (2_017_020 − 1_843_276). OBSERVED, not
+ *                                    inferred — the M2 cell below is that
+ *                                    run, 36/36 green.
+ *   RE-BASED            1_843_276    `PACK_BASELINE_PACKED` 1_863_420 →
+ *                                    1_843_276. OPERATOR DECISION 2026-09-06,
+ *                                    recorded in the brief BEFORE the work
+ *                                    ("drop the vendored brain `.js.map`
+ *                                    only + re-base"; the drop-detecting
+ *                                    assertion was NOT chosen, and a
+ *                                    symmetric lower bound was argued
+ *                                    against in the plan — see the rule at
+ *                                    the constant). `PACK_HARD_CEILING_DELTA`
+ *                                    unchanged at 153_600. Absolute cap
+ *                                    2_017_020 → 1_996_876, DOWN 20_144 B:
+ *                                    the re-base is STRICTER than leaving
+ *                                    the constant alone — it retires the
+ *                                    20_144 B the recovery over-shot the old
+ *                                    floor by instead of handing it back,
+ *                                    and the grant is spent from a real
+ *                                    origin again. Older rows convert with
+ *                                    new_delta = old_delta + 20_144.
+ *   cumulative delta    0 B          by construction — the constant IS this
+ *                                    row's packed figure
+ *   headroom remaining  153_600 B    the whole grant, at delta 0. BR-100's
+ *                                    parked 7_727 B is the first consumer.
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   THE 2×2 — the evidence that the ceiling still bites (AC-3). One tarball
+ *   pair × two constants, whole file each time, all on the scratch:
+ *                          OLD floor 1_863_420        NEW floor 1_843_276
+ *     maps EXCLUDED        GREEN on −20_144           GREEN on 0 — shipped
+ *     (the shipped state)  (M2 — the trap; survives
+ *                          BY DESIGN, not a defect)
+ *     maps RESTORED (M1)   GREEN on +139_015 — the    RED on +159_159 >
+ *                          whole recovery re-spent,   153_600 — the gate
+ *                          nothing red (2_002_435)    bites
+ *   The right column is what makes the recovery defensible; the left column
+ *   is why the re-base was mandatory rather than optional.
+ *
+ *   THE CENSUS, re-measured at implementation time (AC-2), 2026-09-06 on the
+ *   operator's 2026-09-04 18:00 build: 139 `.js.map` under
+ *   `cli/dist/brain-mcp-server/dist/` totalling 938_411 B by `cat | wc -c`;
+ *   108 cli-own `.js.map` under `cli/dist` outside the bundle
+ *   (`cli/tsconfig.json:15` `sourceMap: true`). The brief's 139 + 108 = 247
+ *   held; the brief's earlier 138 was one `finding-key.ts` (TD-440) short.
+ *
+ *   THE PIN — `describe("TD-444 — no vendored brain .js.map ships
+ *   (path-scoped)")` at the end of this file, four tests: the scoped
+ *   exclusion pin WITH THE SCOPE IN ITS NAME (relation, `toEqual([])`, prints
+ *   paths), the `.js`-still-ships inverse, the `dist/index.js.map` presence
+ *   pin (cli's own map, so "cli keeps its maps" is a gate), and `sourceMap:
+ *   true` pinned at `brain-mcp-server/tsconfig.json` (the shipped CHANGELOG
+ *   sentence's durable half; the on-disk half is not pinned, test_standards'
+ *   gitignored-`dist` reason). RED-first on the scratch at HEAD's
+ *   `package.json`: the scoped pin red printing 139 paths (`db.js.map` first,
+ *   `utils/vector-search.js.map` last), the three companions green, the
+ *   ceiling green at the old floor — 1 failed / 35 passed. GREEN after the
+ *   negation: 36 / 36.
+ *
+ *   BATTERY, scratch only, each mutation landed, one whole-file run, restored
+ *   `cmp`-identical before the next:
+ *     M1  negation removed        scoped pin RED (139 paths) AND the ceiling
+ *                                 RED at the new floor (packed 2_002_435,
+ *                                 delta 159_159 > 153_600). Kill.
+ *     M2  constant back to        36 / 36 GREEN; `size − 1_863_420 = −20_144`
+ *         1_863_420, negation in  from the manifest. SURVIVOR, BY DESIGN —
+ *                                 this is the trap the re-base exists for,
+ *                                 recorded here so no one reads the green as
+ *                                 a pass.
+ *     M3  `startsWith` dropped    scoped pin RED printing the 108 cli-own
+ *         from the pin            maps (`dist/index.js.map` first,
+ *                                 `dist/verbs/update.js.map` last) — the
+ *                                 scope claim is load-bearing. Kill.
+ *     M4  glob widened to every   scoped pin GREEN (cannot see the loss);
+ *         `.js.map` under `dist/` presence pin RED on `dist/index.js.map`;
+ *                                 423 entries / 1_681_838 packed — the reason
+ *                                 the presence pin exists. Kill.
+ *     M5a glob typo `.js*`        inverse RED plus six FR-238 presence pins
+ *         instead of `.js.map`    (7 failed; 390 entries). Kill.
+ *     M5b `sourceMap: false` in   tsconfig pin RED; every packlist pin green
+ *         the scratch tsconfig    (nothing rebuilt, so the maps still pack —
+ *                                 the outcome pins are blind to the flag by
+ *                                 construction). Kill.
+ *     C   comment-only edit in    36 / 36; pack byte- and sha-identical
+ *         the TD-444 describe     (`tarball.test.ts` is outside `dist`).
+ *                                 SURVIVES.
+ *
+ *   THE FORENSIC TRADE, at its measured size. Node importing a `.js` whose
+ *   map is absent under `--enable-source-maps` is SILENT (exit 0, both
+ *   streams empty — TD-443's `EVIDENCE FOR THE FOLLOW-ON`); the whole loss is
+ *   one resolved frame, `…/src/utils/fts5.ts:33:25` with the map against
+ *   `…/dist/utils/fts5.js:32:27` without. Two bounds: nothing in Igris spawns
+ *   the brain with `--enable-source-maps` (`grep -rn enable-source-maps
+ *   core/ cli/src brain-mcp-server/src` → 0), so a consumer's frames named
+ *   `dist/` already; and the maps stay on disk in a repo checkout and on the
+ *   VPS (`scripts/igris_brain_deploy.sh` builds from source) — only a
+ *   tarball install lacks them. Recovery: check out the tag in
+ *   `dist/brain-mcp-server/package.json`, build, read the frame against the
+ *   rebuilt `dist/` (`docs/SETUP_GUIDE.md` § Troubleshooting).
+ *
+ *   TD-443's AC-1, RESOLVED HERE AS MET, SCOPED. The dangling-sourcemap class
+ *   is closed for the bundled brain: 0 of 139 vendored `.js.map` in the
+ *   manifest (and 0 `.d.ts.map` since TD-443). The 108 cli-own `.js.map`
+ *   remain BY OPERATOR DECISION and are pinned as SHIPPING (test 3), so they
+ *   are a recorded exception, not a remainder. The unscoped arm was measured
+ *   and not taken: M4's 1_681_838 / 423.
+ *
+ *   POINTERS RE-POINTED (TD-423's rule — brief + date, no direction word):
+ *   this file's head parenthetical (it still read TD-445's 4_181 B, which
+ *   BR-101's row says was never true of the shipped tarball — BR-101
+ *   re-pointed `coding_guidelines.md`'s copy and not this one; both point at
+ *   TD-444 now), `coding_guidelines.md`'s live-reading pointer,
+ *   `docs/dashboard.md`'s two ceiling-history sentences, and
+ *   `MAINTAINING.md` rows 109 (the exclusion set) and 110 (the re-base
+ *   narrative), all in this change.
+ *
+ *   FOLLOW-UP CANDIDATE, not filed: `cli/src/lib/brain-db.ts` still carries
+ *   a shipped comment claiming prose is "paid for TWICE (`.js` and
+ *   `.js.map`)" — false since TD-443 corrected it here (`.js.map` carry no
+ *   `sourcesContent`), and doubly so now that the vendored maps do not ship.
+ *   A `dist/lib/brain-db.js` byte change belongs to a brief that measures it.
+ *
+ * BR-101 MEASURED LAST (2026-09-06), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh` — NOT by the
+ * TD-440 staging method, and the reason is the whole brief (see THE METHOD'S
+ * BLIND SPOT below). `cli/dist` (the live brain bundle) was never rebuilt or
+ * written; `brain-mcp-server/dist` was never written. The scratch: `cli/`
+ * copied without `node_modules` (symlinked back), `brain-mcp-server/`
+ * assembled from copies of `dist/ scripts/ src/ package.json
+ * package-lock.json tsconfig.json` (`src/` COPIED, not symlinked — `tsc`
+ * realpaths a symlinked `src` into the `.js.map` `sources`, and `.js.map`
+ * ships), `node_modules` symlinked, `harness-manifest.json` at the scratch
+ * root. The TD-373 `find -newer` trigger fired (13 `src` files carried
+ * checkout mtimes newer than `dist/index.js`, all committed before the
+ * operator's 2026-09-04 18:00 build), so the scratch REBUILT the brain into
+ * `dist.tmp` and swapped — and the rebuilt tree `diff -rq` IDENTICAL to the
+ * vendored `cli/dist/brain-mcp-server/dist/`. The bundle's `npm install
+ * --omit=dev` re-ran twice; both times the staged `package.json` and
+ * `package-lock.json` `cmp` identical to the real bundle's. The whole staged
+ * `dist/` minus `node_modules` was `diff -rq` identical to the real `cli/dist`
+ * at HEAD. So the scratch build IS the real packed surface, and every reading
+ * below is a delta against it.
+ *   control             2_090_368    unpacked 8_152_770, 675 entries, shasum
+ *                                    `012fd0d85c2e6c14c035054d86e96ffcb8154939`
+ *                                    — the scratch build at HEAD `a060f67` with
+ *                                    the UNMODIFIED script, taken twice, and
+ *                                    byte-identical to an in-place
+ *                                    `npm pack --dry-run` of the real `cli/dist`
+ *                                    (same size, entries and shasum). This is
+ *                                    the figure the ceiling assertion was red
+ *                                    on: delta 226_948, 147.8 % of the grant,
+ *                                    73_348 B over.
+ *   packed              2_002_047    unpacked 7_638_295, 670 entries (−5),
+ *                                    shasum
+ *                                    `a9eda015884631fc5ba7abfd7b0d57f595088dca`,
+ *                                    taken twice, on the scratch build with the
+ *                                    BR-101 prune and the CHANGELOG bullet.
+ *   BR-101's own share  −88_321 B    = −88_486 for the five pruned files
+ *                                    + 165 for the CHANGELOG bullet. Unpacked
+ *                                    −514_475 = −514_866 + 391, and the
+ *                                    514_866 reconciles EXACTLY to `wc -c` of
+ *                                    the five: 387_399 + 64_796 + 26_984
+ *                                    (TD-445's `td445_marginal_pairs_labeled.csv`,
+ *                                    `td445_row_findings.csv`,
+ *                                    `td445_claim_threshold_sweep.ts`) + 11_848
+ *                                    (`td286_renormalize_backfill.ts`) + 23_839
+ *                                    (`td402_fold_project_slugs.mjs`). Packed,
+ *                                    split by a hand-pruned copy of the control
+ *                                    surface: minus the three TD-445 files
+ *                                    alone = 2_012_839 / 7_673_591 / 672 (the
+ *                                    TD-439 row's figure, byte-exact), so the
+ *                                    three cost 77_529 packed; minus all five
+ *                                    = 2_001_882 / 7_637_904 / 670 / shasum
+ *                                    `c411fe5bdca3174117c11bd9c0f9234ac63f075b`,
+ *                                    which the scratch BUILD reproduced
+ *                                    byte-exactly before the bullet — so
+ *                                    `td286` + `td402` cost 10_957 packed.
+ *   cumulative delta    +138_627 B   (135.4 KB, 90.3 % of TD-374's grant —
+ *                                    2_002_047 − 1_863_420)
+ *   headroom remaining  ~14.6 KB     (14_973 B — 153_600 − 138_627). The
+ *                                    TD-445 row's "4_181 B" was never true of
+ *                                    the shipped tarball: the real headroom at
+ *                                    `a060f67` was −73_348 B.
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 22 WENT. `find brain-mcp-server/scripts -maxdepth 1 -type f |
+ *   wc -l` = 22 at `a060f67` (2026-09-06), beside the two directories TD-298
+ *   prunes. −7 by TD-299's named list, −5 by BR-101's pattern = 10, confirmed
+ *   by `find cli/dist/brain-mcp-server/scripts -type f | wc -l` on the
+ *   scratch build (15 before the prune, 10 after; the prune's `-print` listed
+ *   exactly the five). The TD-443 row's "12" is a dated reading of a 19-file
+ *   tree — left as written. The survivors: `render_brief_graph.template.html`
+ *   (19900 B) is the ONE file the package reads at runtime (the compiled
+ *   `visualization-tool.js` ascends to it); the other nine ship by precedent
+ *   and none is runnable from the package — every `.ts` under `scripts/`
+ *   imports `../src/*.js`, the bundle ships no `src/` and vendors no `tsx` —
+ *   see FOLLOW-UP below.
+ *
+ *   THE METHOD'S BLIND SPOT, and the amendment. The staging method adopted at
+ *   the TD-440 row compiles inertly (`npx tsc --outDir <scratch>`) and stages
+ *   COMPILED artifacts against their vendored twins. It never runs
+ *   `copy-templates.sh`, so anything that reaches the tarball BY COPY is
+ *   invisible to it: `dist/brain-mcp-server/scripts/*` (the `cp -R` of
+ *   `brain-mcp-server/scripts`), `dist/brain-mcp-server/package.json` and
+ *   `package-lock.json` (copied, then pruned and regenerated by the vendored
+ *   install), `dist/lib/harness-manifest.json`, `dist/lib/templates/**`, and
+ *   `cli/package.json` `files` itself; `dist/dashboard/**` likewise reaches the
+ *   tarball by `build-dashboard.sh`, not `tsc`. A reading is complete ONLY IF
+ *   EITHER the surface has been through `copy-templates.sh` (a scratch build,
+ *   this row's method) OR the brief's diff touches none of the copied paths —
+ *   and the row must SAY WHICH. The mechanical check for the second arm:
+ *     git diff --name-only <base>..HEAD -- brain-mcp-server/scripts \
+ *       brain-mcp-server/package.json brain-mcp-server/package-lock.json \
+ *       harness-manifest.json cli/src/lib/templates cli/package.json \
+ *       cli/dashboard cli/scripts
+ *   must print nothing (`cli/scripts` because the copy step ITSELF is a
+ *   copied-surface change — BR-101's own diff is one, which is why this row
+ *   could not use the staging method). TD-445's three actors quoted +0 B from the premise
+ *   "`scripts/` never compiles" — true, and irrelevant, because copying is not
+ *   compiling. Its `git diff` against that list would have printed three paths.
+ *
+ *   THE PIN. `describe("BR-101 — no research artifact ships …")` at the end of
+ *   this file: the packlist half, the on-disk half (reads the REAL `cli/dist`
+ *   relative to this file, so it is RED in a working tree whose bundle
+ *   predates the prune — it was, inside the hunt, printing the five names —
+ *   and GREEN wherever the build has run, which CI does before it tests), and
+ *   the presence tripwire on the template plus three precedent-shipped `.ts`.
+ *   Battery, in the scratch: M1 prune absent (the pre-fix scratch tree; halves
+ *   1-2 red printing the five), M2 novel `td999_probe.{csv,ts}` (halves 1-2
+ *   red naming both — a count could not), M3 pattern widened to `*.ts` (only
+ *   the tripwire red, naming the nine — the asymmetry is the point), control
+ *   = a comment-only edit inside the prune block, full re-staging, listing
+ *   empty, pin green, pack byte-identical (`cli/scripts/**` is packed-free).
+ *   ROUND 2 (warden): round 1 spelled the shell prune as `find -name
+ *   'td[0-9]*_*'` — td, ONE digit, ANY run up to a `_` — which took
+ *   `td9legacy_notes.ts` while the regex did not. The shell is now a bash
+ *   loop on `^td[0-9]+_` / `*.csv` (the authority), a fourth test pins the
+ *   regex to it on the boundary names, the battery re-ran unchanged, and the
+ *   pack figure above is unchanged (neither file is packed).
+ *
+ *   OPTION NOT TAKEN — `files` negation. A `!dist/brain-mcp-server/scripts/*.csv`
+ *   pair in `cli/package.json` would protect the tarball ONLY and leave the
+ *   on-disk `cli/dist` — the live brain bundle, and what bats and the TD-373
+ *   guards read — carrying the files; `package.json` ships verbatim so it
+ *   costs packed bytes; and it is a second copy of the rule that can drift
+ *   from the first. TD-443 used `files` because its target must STAY on disk;
+ *   BR-101's target must not be on the staged disk at all. The packlist half
+ *   of the pin gives the tarball the same guarantee for 0 B.
+ *
+ *   TD-444 NOTE. This row RECOVERS headroom and does not re-base:
+ *   `PACK_BASELINE_PACKED` and `PACK_HARD_CEILING_DELTA` are unchanged
+ *   (TD-443's precedent). The headroom TD-444's re-base decision sees is now
+ *   14_973 B, not the 4_181 B it was filed against; whether that changes the
+ *   decision is the operator's call, on the record, before the work.
+ *
+ *   FOLLOW-UP CANDIDATE, not filed. None of the nine surviving `.ts`
+ *   (112961 B unpacked, measured 2026-09-06 on the staged dir) is runnable
+ *   from the package; they ship by precedent with MAINTAINING rows 65 / 102 /
+ *   103 / 117 / 125 / 133 / 139 as their consumers (all repo-path). Pruning
+ *   that class is a different brief with a different blast radius — the
+ *   tripwire names the three that would need a dated retirement.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — re-packed after the
+ *   edit in the scratch: unchanged.
+ *
+ * TD-445 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414 /
+ * TD-439 method. The brain compiled inertly with `npx tsc --outDir <scratch>`
+ * and NO other flag; every artifact `cmp`'d against its vendored twin under
+ * `cli/dist/brain-mcp-server/dist/` (556 artifacts: 11 real differences —
+ * `cache/{handlers,index}.{js,d.ts}`, `subconscious/actions/{kinds,index}.{js,d.ts}`,
+ * `cognition/extractors/arbiter.{js,d.ts}`, `tools/briefs.js` — the still-unbuilt
+ * TD-414 / TD-439 set, plus 278 maps of which 266 differ only in the scratch
+ * `sources` path and 12 belong to those same modules). NONE is TD-445's:
+ * this brief edits no `src` runtime file (its only `src` change is
+ * `subconscious/__tests__/finding-key.test.ts`, under the excluded test glob)
+ * and no `cli/src` runtime file. So the staged set is EMPTY and the reading
+ * IS the control. `cli/dist` and `brain-mcp-server/dist` were never written;
+ * the vendored bundle carries no `TD-445` string (grep, 0 hits).
+ *   control             2_009_297    unpacked 7_658_720, 672 entries, shasum
+ *                                    `21a78d901865338f7b1a34430f5d633234e9c236`,
+ *                                    on an untouched scratch copy of the packed
+ *                                    surface at HEAD `6135014` — 246 B over
+ *                                    TD-439's control 2_009_051, which that row
+ *                                    took before its own CHANGELOG bullet
+ *                                    (172_048 → 172_702 unpacked, +654; the
+ *                                    bullet is now in the tree and this is its
+ *                                    packed size)
+ *   TD-445's own share  +0 B         (nothing packed was touched: a diagnostic
+ *                                    script and two CSVs under
+ *                                    `brain-mcp-server/scripts/` — never
+ *                                    compiled — a test-file fixture, a doc
+ *                                    block, a MAINTAINING cell and this row.
+ *                                    `types.ts` was mutated and restored
+ *                                    byte-identical during the sweep and the
+ *                                    battery; `git diff` is empty on it)
+ *   cumulative delta    +149_419 B   (unchanged from TD-439)
+ *   headroom remaining  ~4.1 KB      (4_181 B — 153_600 − 149_419; the brief's
+ *                                    "10_492 B" was HEAD `6d077a1`'s figure and
+ *                                    predates TD-447, TD-414 and TD-439)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   CORRECTION (BR-101, 2026-09-06): the own share above is WRONG. The three
+ *   files under `brain-mcp-server/scripts/` ship by COPY (`copy-templates.sh`,
+ *   the `cp -R "$MCP_SRC/scripts"` line) and the staging method never runs the
+ *   copy step, so "never compiled" was true and irrelevant. True own share
+ *   +77_529 packed B / +3 entries (479_179 unpacked = 26_984 + 64_796 +
+ *   387_399), measured by BR-101 on the built surface at `a060f67`: 2_090_368
+ *   / 8_152_770 / 675 with the three, 2_012_839 / 7_673_591 / 672 without —
+ *   the TD-439 row's figure, byte-exact. The +81_071 first reported (BR-100's
+ *   forger, 2026-09-06, = 2_090_368 − this row's 2_009_297 control) also
+ *   counts 3_542 packed / 14_871 unpacked B of TD-414 / TD-439 compiled output
+ *   that entered the live dist at the operator's 2026-09-04 18:00 rebuild —
+ *   this row's control was taken on the UNBUILT surface (its "11 real
+ *   differences"). Cumulative at `a060f67` was therefore +226_948 B, 147.8 % of
+ *   the grant, the ceiling assertion red by 73_348 B and CI `Test Shell
+ *   Scripts` red from `a060f67` (bats case 130 runs this file; run
+ *   33882545499 per the BR-101 plan). Reverted by BR-101 (`td286` and `td402`
+ *   went with them). The `+0` line above is left in place as the record of
+ *   what was believed.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
+ * TD-439 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — the TD-447 / TD-414
+ * method, taken twice: once at +2_645 B (over the plan's 2_500 B own-share
+ * budget by 145 B — that reading is void) and once after the plan's cut list
+ * (grammar rule 9, the inline-JSON literal, dropped — its only fixture
+ * identifier is backticked and rule 2 carries it; the CHANGELOG bullet cut to
+ * the TD-447 style the plan specified). Both packages compiled inertly with
+ * `npx tsc --outDir <scratch>` and NO other flag; the staged set was DERIVED
+ * by `cmp` of every inert-compile artifact against its vendored twin (brain:
+ * 400 unchanged, 133 of them `.js.map` whose `sources` rewrite came out
+ * `cmp`-identical BEFORE any changed map was staged; 17 changed = TD-414's
+ * eight still-unbuilt artifacts + this brief's nine; cli: 216 unchanged,
+ * 0 changed — no `cli/src` runtime edit). `cli/dist` and
+ * `brain-mcp-server/dist` were never written. The SHA control on a fresh
+ * untouched copy reproduced 2_009_051 / 7_658_066 / 672 /
+ * `0494960fd0874ac5a17a8321e78f874a4c408b2a` before each staging.
+ *   packed              2_012_839    unpacked 7_673_591, 672 entries (UNCHANGED —
+ *                                    no new module; the guard lives in kinds.ts
+ *                                    beside its one caller) — this is the LIVE
+ *                                    figure: this brief's nine artifacts AND
+ *                                    TD-414's eight staged together (the
+ *                                    TD-414 set alone re-read +1_307 packed /
+ *                                    +5_219 unpacked on this copy against its
+ *                                    row's +1_334 / +5_219 — the unpacked
+ *                                    figure is exact, the packed differs by
+ *                                    gzip context)
+ *   TD-439's own share  +2_481 B     (2.4 KB) against HEAD `2275c17`'s control
+ *                                    2_009_051 — the reading with ONLY this
+ *                                    brief's nine artifacts + the CHANGELOG
+ *                                    bullet staged: 2_011_532 / 7_668_372 /
+ *                                    shasum `7dfb9b76…`, taken twice, identical.
+ *                                    +10_306 unpacked, reconciling EXACTLY to
+ *                                    the nine artifacts' size deltas (9_652)
+ *                                    plus `CHANGELOG.md` (172_048 → 172_702,
+ *                                    +654) — all ten non-zero.
+ *   cumulative delta    +149_419 B   (145.9 KB over PACK_BASELINE_PACKED,
+ *                                    97.3% of TD-374's grant)
+ *   headroom remaining  ~4.1 KB      (4_181 B — 153_600 − 149_419)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 9_652 B WENT (unpacked; ~0.26 packed per unpacked on this mix).
+ *   `subconscious/actions/kinds.ts` +7_514 (.js +3_392 — `contentHash`, the
+ *   7-rule `SPECIFIC_RES` table, `extractSpecifics`, `carryForward`,
+ *   `refuse`, the hash / carry / cap guard and the enriched write; .js.map
+ *   +3_418; .d.ts +704 — five new exports, the `CarrySource` interface and
+ *   the `refused` field), `subconscious/actions/index.ts` +1_598 (.js +784 —
+ *   `persistRefusal` and the `refused:` branch; .js.map +774; .d.ts +40),
+ *   `cognition/extractors/arbiter.ts` +540 (.js +295 — the winner SELECT,
+ *   the stamp and the fall-through fork; .js.map +184; .d.ts +61). New
+ *   shipped comment prose across the three files: NET +394 B (558 added,
+ *   164 replaced; measured against `git diff -U0`; the first draft was
+ *   +1_679 and was trimmed to the plan's ≤ 400 B — the reasoning lives in
+ *   the unshipped `td439-merge-guard.test.ts` docblock, the fixture docblock,
+ *   `docs/architecture/brain_janitor.md` and coding_guidelines §18.17).
+ *   The fixture (`td439-pairs.ts`, 33 KB of harvested text) and the suite
+ *   are under the `__tests__` glob and ship 0 B.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
+ * TD-414 MEASURED LAST (2026-09-04), after its final SHIPPED code-touching
+ * step (the runtime context docs that closed the hunt ship no bytes).
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-447's method, taken
+ * twice: once before and once after the shipped-comment trim (the first
+ * reading, +1_759 packed, is void; only the second is the row). Both packages
+ * compiled inertly with `npx tsc --outDir <scratch>` and NO other flag; the
+ * staged set was DERIVED by `cmp` of every inert-compile artifact against its
+ * vendored twin (brain: 409 unchanged, 136 of them `.js.map` whose `sources`
+ * rewrite came out `cmp`-identical BEFORE any changed map was staged; cli:
+ * 216 unchanged, 0 changed — this brief edits no `cli/src` runtime file).
+ * `cli/dist` and `brain-mcp-server/dist` were never written; no file under
+ * either dist is newer than the edited sources. The three brain sources newer
+ * than the vendored `index.js` are exactly this brief's `cache/handlers.ts`,
+ * `cache/index.ts` and `tools/briefs.ts` (plus its two test files, excluded
+ * from dist).
+ *   packed              2_010_385    unpacked 7_663_285, 672 entries (UNCHANGED —
+ *                                    no new module; the classifier lives in
+ *                                    cache/handlers.ts)
+ *   TD-414's own share  +1_334 B     (1.3 KB) against HEAD `a3d8a4a`'s 2_009_051
+ *                                    (+5_219 unpacked, reconciling EXACTLY to the
+ *                                    eight staged files' size deltas — all eight
+ *                                    non-zero; the SHA control on the untouched
+ *                                    copy reproduced 2_009_051 / 7_658_066 / 672 /
+ *                                    shasum `0494960fd0874ac5a17a8321e78f874a4c408b2a`
+ *                                    twice, before each staging)
+ *   cumulative delta    +146_965 B   (143.5 KB over PACK_BASELINE_PACKED,
+ *                                    95.7% of TD-374's grant)
+ *   headroom remaining  ~6.5 KB      (6_635 B — 153_600 − 146_965)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   WHERE THE 1_334 B WENT. Brain side only, charged three ways:
+ *   `cache/handlers.ts` +3_324 unpacked (.js +1_409 — `cacheRoot`, `dbTimeMs`,
+ *   `briefCachePath`, `diskEditState`, `projectBriefFile`, the `force` and
+ *   `briefs_skipped` plumbing; .js.map +1_367; .d.ts +548 — three new exports
+ *   and two exported string unions), `cache/index.ts` +963 (.js +656 — the
+ *   warn branch, the `force` schema entry and two reworded listen
+ *   descriptions; .js.map +259; .d.ts +48), `tools/briefs.ts` +932 (.js +628 —
+ *   the widened SELECT and the decline note; .js.map +304; .d.ts +0 — the
+ *   signature did not change). 0.26 packed bytes per unpacked byte on this
+ *   mix. New shipped comment prose across the three files: +290 B (measured
+ *   against `git show HEAD:`; the first draft was +996 and was trimmed to the
+ *   plan's ≤ 400 B budget — the reasoning moved to the unshipped test docblock
+ *   and to `docs/architecture/brief-state-source-of-truth.md`).
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
+ * TD-390 MEASURED LAST (2026-09-04), after its final code-touching step.
+ * +0 B PACKED, BY CONSTRUCTION AND BY MEASUREMENT. This brief edits no
+ * `cli/src` runtime file and no brain source: the fix is a bash guard in
+ * `core/scripts/cli-adapters/compile_harnesses.sh` plus a comment in
+ * `check_harness_drift.sh`, and the bash adapters are NOT in the tarball
+ * (`cli/package.json` `files` = `dist` + `scripts/postinstall.mjs` + README +
+ * CHANGELOG; `copy-templates.sh` stages `harness-manifest.json` and the brain
+ * bundle, never `cli-adapters/` — grep: 0 hits; `cli/dist/**\/compile_harnesses.sh`
+ * does not exist). They ARE TD-096 runtime-mirrored, which is a different
+ * surface. No build ran (L-1165: `npm run build` is `rm -rf dist && tsc …` and
+ * `cli/dist` is the live brain bundle path); the bats suite drove the existing
+ * `cli/dist/index.js` read-only. `cli/package.json` declares no `prepack` or
+ * `prepare` hook, so the in-place `npm pack --dry-run` below built nothing.
+ *   packed              2_009_051    unpacked 7_658_066, 672 entries, shasum
+ *                                    `0494960fd0874ac5a17a8321e78f874a4c408b2a`
+ *                                    — the on-disk dist packs at EXACTLY the
+ *                                    TD-414 row's CONTROL reading (identical
+ *                                    shasum), because TD-414 staged its brain
+ *                                    edits into a copy and never built; the
+ *                                    row's live figure 2_010_385 is that staged
+ *                                    reading and is unchanged by this brief.
+ *   TD-390's own share  +0 B         (nothing packed was touched; the only
+ *                                    `cli/` edit is this comment, excluded
+ *                                    from dist)
+ *   cumulative delta    +146_965 B   (unchanged from TD-414)
+ *   headroom remaining  ~6.5 KB      (6_635 B — unchanged)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ * TD-447 MEASURED LAST (2026-09-03), after its final code-touching step.
+ * MEASURED BY STAGING INTO A COPY, NOT BY BUILDING — TD-440 round 4's method,
+ * adopted as that row instructs: both packages compiled inertly with
+ * `npx tsc --outDir <scratch>`, exactly the changed artifacts staged into a
+ * scratch copy of the packed surface, and the pack taken there. `cli/dist` and
+ * `brain-mcp-server/dist` were never written: an in-place `npm pack --dry-run`
+ * AFTER staging differed from the control at exactly ONE entry, `CHANGELOG.md`
+ * (171_658 → 172_048 — the working-tree bullet), so every `dist` entry the real
+ * package would ship is the control's; and the brain sources newer than the
+ * vendored `index.js` are exactly this brief's eleven edited files, no more.
+ * No file under either dist is newer than the edited sources.
+ * Round 2 (the warden's L-1246 finding: perception `runner.ts`'s `LlmStatus`
+ * still printed `failed:unknown` for the new classes) re-took the whole
+ * measurement from the same control; the staged set was DERIVED by `cmp` of
+ * every inert-compile artifact against its vendored twin, not hand-listed.
+ *   packed              2_009_051    unpacked 7_658_066, 672 entries (UNCHANGED —
+ *                                    no new module; the detector lives in
+ *                                    parse-output.ts)
+ *   TD-447's own share  +2_523 B     (2.5 KB) against HEAD `6d077a1`'s 2_006_528
+ *                                    (+9_723 unpacked, reconciling EXACTLY to the
+ *                                    twenty-one staged files' size deltas: eighteen
+ *                                    non-zero, three content-changed at +0 —
+ *                                    monitoring/index.js's `:110` → `:112`
+ *                                    pointer, events.js.map, brain-write-bridge.js.
+ *                                    Round 1 read +2_482 / +9_472; round 2 added
+ *                                    runner.{js,js.map,d.ts} = +41 packed,
+ *                                    +251 unpacked, and nothing else moved)
+ *   cumulative delta    +145_631 B   (142.2 KB over PACK_BASELINE_PACKED,
+ *                                    94.8% of TD-374's grant)
+ *   headroom remaining  ~7.8 KB      (7_969 B — 153_600 − 145_631)
+ *   built app chunk     NOT REMEASURED (no dashboard change)
+ *
+ *   THE CONTROL CORRECTS THE BASE. The scratch copy packed 2_006_528 /
+ *   7_648_343 / 672 / shasum `30eab099c3128b5ac88675dd73fbaa01d89f177b`
+ *   BEFORE staging, and the in-place pack of `cli/dist` gave the identical
+ *   four figures — so HEAD's live reading is 2_006_528 (cumulative 143_108,
+ *   headroom 10_492 B), 371 B ABOVE the 2_006_157 / 10_863 B the TD-440 row
+ *   records. Whether those 371 B are a post-row edit or a staging-vs-build
+ *   difference was not established here; the SHA control is what this row's
+ *   delta is taken against. TD-447's brief quoted "10,492 B" and attributed it
+ *   to a `TD-444`, which matches no file in the tree — the number was right,
+ *   the attribution was not.
+ *
+ *   WHERE THE 2_523 B WENT. Brain side, charged three ways: `parse-output.ts`
+ *   +4_129 unpacked (.js +1_883, .js.map +1_199, .d.ts +1_047 — the detector,
+ *   its exported interface and the auth regex), `backend/index.ts` +857, the
+ *   perception `switch` +363, the perception runner's `LlmStatus` union and
+ *   two `case` lines +251 (.js +132, .js.map +76, .d.ts +43), two `.d.ts`
+ *   comment lines +58. CLI side, charged
+ *   once: `brain-db.ts` +1_543 (.js + map), `verbs/cognition.ts` +2_132
+ *   (.js + map: the `firstSentence` helper, the classifier prefix and its
+ *   WHY comment). `CHANGELOG.md` +390 verbatim. 0.26 packed bytes per unpacked
+ *   byte on this mix. Source maps were staged with their `sources` path
+ *   rewritten from the scratch-relative form to the vendored form
+ *   (`../../../../../src/…`); the rewrite was validated on two UNCHANGED files
+ *   (`exec.js.map`, `kpi-read.js.map`) coming out `cmp`-identical to their
+ *   vendored copies before any changed map was staged.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records.
+ *
+ * TD-440 MEASURED LAST (2026-09-03, re-measured after round 4), after its
+ * final code-touching step.
+ * MEASURED BY STAGING, NOT BY BUILDING, and that distinction is the method:
+ * `npm run build` in `cli/` re-vendors the brain bundle and replaces the binary
+ * the live MCP runs, so it is a DEPLOY and this brief was forbidden one. Both
+ * packages were compiled INERTLY with `npx tsc --outDir <scratch>` and the
+ * artifacts for exactly the changed sources were staged before packing.
+ *   packed              2_006_157    unpacked 7_647_047, 672 entries (+3 — the
+ *                                    one new module's .js, .js.map and .d.ts;
+ *                                    its .d.ts.map is excluded by TD-443)
+ *   TD-440's own share  +22_243 B    (21.7 KB) against HEAD `9bbda40`'s
+ *                                    1_983_914
+ *   round 4's own share +470 B       (2_006_157 − round 3's 2_005_687;
+ *                                    +1_314 unpacked, entries UNCHANGED)
+ *   cumulative delta    +142_737 B   (139.4 KB over PACK_BASELINE_PACKED,
+ *                                    92.9% of TD-374's grant)
+ *   headroom remaining  ~10.6 KB     (10_863 B — 153_600 − 142_737)
+ *   built app chunk     NOT REMEASURED — see the caveat below
+ *
+ *   ROUND 4 STAGED INTO A COPY INSTEAD OF INTO `cli/dist`, and that is the
+ *   better method — adopt it. AMENDED BY BR-101 (2026-09-06): this method
+ *   sees COMPILED artifacts only — a file that reaches the tarball by COPY
+ *   (`copy-templates.sh`) is invisible to it; see `BR-101 MEASURED LAST` for
+ *   the copied-path list and the `git diff --name-only` check that licenses
+ *   skipping the build. The whole packed surface is small (`package.json`
+ *   `files` is `dist` minus `dist/brain-mcp-server/node_modules` minus every
+ *   `.d.ts.map`, plus `scripts/postinstall.mjs`, `README.md`, `CHANGELOG.md`),
+ *   so it copies to a scratch directory in seconds and packs there. `cli/dist`
+ *   is never written, so there is no restore to get wrong and no window in
+ *   which the live MCP bundle is a staged hybrid. THE CONTROL IS THE SAME AND
+ *   IT IS THE SHA, taken on the COPY before staging anything: it reproduced
+ *   HEAD's 1_983_914 / 7_581_990 unpacked / 669 entries / shasum
+ *   `fc4d8d20303b2e1306562a27515754ce9b2c2a1d` byte-exactly, which is what
+ *   licenses reading the post-staging number as a delta. It was taken TWICE —
+ *   once before the first staging and again on a fresh copy after a later edit
+ *   — and reproduced both times. An in-place pack of `cli/dist` confirmed the
+ *   real bundle was never written.
+ *
+ *   ROUND 3 STAGED IN PLACE AND RESTORED, and the failure modes are kept here
+ *   because they are the reason the copy method is better. It took four
+ *   attempts, and both failures LOOKED like a clean restore at a glance: a
+ *   restore loop that fell back to a second destination root wrote four files
+ *   into `dist/brain-mcp-server/dist/` that had never existed there, and
+ *   `cli/dist/types.js.map` came back byte-different because the map embeds
+ *   line mappings and `cli/src/types.ts` grew. Size alone said "off by 51 B";
+ *   only the SHA said which file.
+ *
+ *   WHERE ROUND 4's 474 B WENT, AND WHAT IT DID NOT PAY FOR. Round 4 added a
+ *   value-level assertion per `suggestions` writer site to
+ *   `source-instance.test.ts` — and that cost **ZERO packed bytes**, because
+ *   `brain-mcp-server/tsconfig.json` excludes the `__tests__` glob from the
+ *   emit and the packlist carries no test artifact at all (verified: the
+ *   scratch compile emits no `source-instance` output, and the packed file
+ *   list matches `test` zero times). Every one of the 470 B is PROSE — **+879
+ *   source bytes**, being dated counts, a re-framed threshold and nine stale
+ *   `file.ts:NNN` pointers converted to `file.ts#symbol` anchors. It splits
+ *   +819 across five brain modules (`finding-key.ts` +211, `types.ts` +354,
+ *   `suggestions-read.ts` +159, `runner.ts` +57, `handlers.ts` +38) and +60
+ *   across two cli ones (`brain-bridge.ts` +64, `types.ts` −4) — which `tsc`
+ *   preserves into both the `.js` and the `.js.map` and, for the brain's
+ *   exported declarations, the `.d.ts` as well. That is **0.53 packed bytes per
+ *   source byte** on this round's mix (470 / 879), the low end of the
+ *   0.54-0.73 band above because most of it landed in `.js`/`.js.map` rather
+ *   than in exported-declaration prose. A test is free.
+ *
+ *   WHERE THE 21.7 KB WENT. Almost all of it is `brain-mcp-server/**`, which is
+ *   this ledger's oldest lesson rather than a surprise: `tsc` PRESERVES comments
+ *   into the vendored bundle and pays for them TWICE (`.js` and `.js.map`), and
+ *   the emitted `.d.ts` carries interface prose a third time. The single new
+ *   module `subconscious/finding-key.ts` is 13_432 source B and cost **+9_730 B
+ *   packed on its own** — measured separately, with its own restore control —
+ *   i.e. ~0.72 packed bytes per brain source byte, at the top of the 0.54-0.73
+ *   band this ledger has recorded before. The remaining ~12 KB is spread over
+ *   15 modified brain modules and 4 `cli/src` ones. The four `cli/src` files are
+ *   nearly free where they are type-only: `cli` compiles with
+ *   `declaration: false`, so `types.ts`'s ~40 new lines of interface prose
+ *   erase to nothing in `types.js` — but NOT in `types.js.map`, which is the
+ *   detail that broke the restore control above.
+ *
+ *   WHAT THIS ROW DOES NOT COVER — the browser bundle. `cli/dashboard/src`
+ *   changed (one filter chip in `Triage.tsx`, type-only additions in
+ *   `api.ts`), and rebuilding the dashboard is a separate script this brief also
+ *   did not run, so the built chunk was NOT re-measured and the figure above
+ *   excludes it. The changed JSX is one array entry, one `const` and one `||`
+ *   in a predicate; the type additions erase. Expect a low-hundreds-of-bytes
+ *   move on TOTAL_JS and verify it at the first build rather than trusting this
+ *   sentence — the chunk gate is the binding one and an estimate is not a
+ *   reading.
+ *
+ *   HEADROOM IS NOW ~10.7 KB AND THAT IS THE HEADLINE. TD-443 recovered
+ *   31_426 B by dropping the `.d.ts.map` population from the packlist and this
+ *   brief spent 71% of it. A brief that adds another brain module of this
+ *   size does not fit. The remedy this ledger already names is still the right
+ *   one and is still unspent, and round 4 REPLACED ITS ESTIMATE WITH A
+ *   MEASUREMENT (delete the files from a scratch copy of the packed surface and
+ *   re-pack). The count in the round-3 wording was wrong — "246 vendored" was
+ *   the count of EVERY `.js.map` in the packed `dist`, not the vendored subset:
+ *   *   139 vendored maps (`dist/brain-mcp-server/**`)  −158_296 B (154.6 KB)
+ *   *   247 maps, the whole packed `dist`                −320_240 B (312.7 KB)
+ *   (both measured against a 2_006_098 staging taken mid-round; the later
+ *   +59 B does not move either figure at this resolution)
+ *   The size the round-3 row quoted (~154 KB) was right for the vendored arm;
+ *   only the cardinal was wrong. Both arms are dangling pointers for a
+ *   consumer — a vendored map's `sources` is `["../src/index.ts"]` and there is
+ *   no `sourcesContent`, so it resolves into a tree the tarball does not ship.
+ *   Either arm is a packlist change, not a compiler-flag change, and it needs
+ *   its own brief; the 247-file arm alone would return the whole surface to
+ *   below `PACK_BASELINE_PACKED`.
+ *
+ * TD-443 MEASURED LAST (2026-09-02), after its final code-touching step. The
+ * FIRST ROW IN THIS LEDGER WHOSE OWN SHARE IS NEGATIVE — it is a RECOVERY, not
+ * a typo and not a re-base. No build was run: `npm pack` reads whatever is in
+ * `cli/dist`, and this brief never changed `cli/dist`.
+ *   packed              1_983_914    unpacked 7_581_990, 669 entries (807 → 669,
+ *                                    −138: the whole `.d.ts.map` population)
+ *   TD-443's own share  −31_226 B    (−30.5 KB) against HEAD `1e48af5`'s
+ *                                    2_015_140. Composition, measured in two
+ *                                    steps rather than derived: the packlist
+ *                                    change is −31_426 B (which already pays
+ *                                    the +27 raw B of the new `files` line),
+ *                                    and `cli/CHANGELOG.md`'s 587 raw B of new
+ *                                    prose adds +200 B back. −31_426 + 200 =
+ *                                    −31_226.
+ *   cumulative delta    +117.7 KB    (120_494 B over PACK_BASELINE_PACKED,
+ *                                    78.4% of TD-374's grant — the gate is
+ *                                    still live, not slack)
+ *   headroom remaining  ~32.3 KB     (33_106 B under TD-374's +150 —
+ *                                    153_600 − 120_494). TD-440's worst case
+ *                                    is +20_275 B, which leaves 12_831 B.
+ *   browser surfaces    +0 B — no `cli/dashboard/**` file changed
+ *
+ *   THE CHANGE IS ONE LINE, and it is a PACKLIST change, not a compiler-flag
+ *   change. `cli/package.json` `files` gains a negation matching `.d.ts.map` at
+ *   any depth under `dist`. The literal glob is in that file and in the failure
+ *   message of the TD-443 pin in this file; it is not reproduced in this
+ *   comment because it contains the two-character block-comment terminator.
+ *   `brain-mcp-server/tsconfig.json:15` keeps `declarationMap: true`, nothing
+ *   was deleted from the working tree, and `files` only selects tar members.
+ *   Round 2 turned that from an ASSERTION into a GATE: the third test in the
+ *   TD-443 describe reads the brain tsconfig and pins `declarationMap` and
+ *   `declaration` to true. Both packlist pins are OUTCOME pins and neither can
+ *   see the flag — flip it, rebuild, drop the negation, and every one of them
+ *   stays green while the shipped sentence goes false. Cost: 0 packed B, the
+ *   same reason this row is free.
+ *
+ *   METHOD, and the control that makes these numbers a measurement.
+ *   `npm pack --dry-run --json --ignore-scripts` from `cli/`, four readings.
+ *   NAME THE ALGORITHM: the checksum column is npm's own `shasum` field, which
+ *   is **SHA-1** (40 hex, verified by length on this tree); the `integrity`
+ *   field beside it is `sha512-`. It is NOT a `shasum -a 256` of the tarball,
+ *   and a verifier who assumes otherwise chases a phantom divergence — one
+ *   did.
+ *     A  untouched HEAD          2_015_140 / 807   sha1 6b122d90…
+ *     B  after the `files` line  1_983_714 / 669   sha1 f9a7bb5e…
+ *     C  after reverting it      2_015_140 / 807   sha1 6b122d90…  ← the control
+ *     D  MEASURED LAST           1_983_914 / 669   sha1 fc4d8d20…
+ *   D was taken twice in a row, byte- and sha-identical, after the last edit to
+ *   `cli/CHANGELOG.md` — the only shipped surface this brief touched.
+ *   C reproduced A on size, entry count, unpacked size AND tarball sha — a
+ *   measurement whose control does not restore is not a measurement, and the
+ *   sha is a stricter identity than size + count. Reading B was reproduced
+ *   twice more, byte- and sha-identical each time, after each of the two option
+ *   probes in this row's OPTION NOT TAKEN paragraph — that is what says the
+ *   probes left no residue. `--ignore-scripts` is belt-and-braces:
+ *   `cli/package.json` has no
+ *   `prepack` and no `prepare`, so nothing fires (this is also why `packReport()`
+ *   in this file is safe without it — do not "fix" that).
+ *
+ *   THE DEFECT, since a recovery row has to say what was recovered FROM. Every
+ *   `.d.ts.map` under `dist/brain-mcp-server/dist/` carries a `sources` entry
+ *   like `["../../src/engine/bus.ts"]` and NO `sourcesContent`, while `files`
+ *   ships `dist` only — `dist/brain-mcp-server/src` does not exist in the
+ *   tarball. All 138 were pointers a consumer could not follow. Sharper than
+ *   the brief expected, and worth recording because it removes the last doubt:
+ *   the VENDORED copies are dangling IN THE REPO TOO. `copy-templates.sh`
+ *   stages `dist/**` only. The staging block is `copy-templates.sh:172-173` —
+ *   `mkdir -p "$MCP_DEST/dist"` then `cp -R "$MCP_SRC/dist/."` — and no `cp`
+ *   IN THAT BLOCK has a `src` counterpart: its four are `dist/.`,
+ *   `package.json`, `package-lock.json` and `scripts`. SCOPE THE CARDINAL —
+ *   the script holds SIX `cp` in total (`grep -n 'cp -' copy-templates.sh` →
+ *   `:26`, `:44`, `:173`, `:174`, `:176`, `:178`); the two outside the block
+ *   are `cli`'s own `src/lib/templates` → `dist/lib/templates` walk and the
+ *   harness-manifest copy, neither of which can create
+ *   `dist/brain-mcp-server/src`. What carries the claim is not the count but
+ *   the reference set: the only two `$MCP_SRC/src` references in the file are
+ *   a staleness check and an orphan check, both READS
+ *   (`grep -n 'MCP_SRC/src' copy-templates.sh` → 2 hits). Grep
+ *   `MCP_DEST/dist` if those line numbers move. So
+ *   `cli/dist/brain-mcp-server/src` never exists either — walked and checked,
+ *   0 of 138 vendored maps resolve locally, while
+ *   138 of 138 under `brain-mcp-server/dist/` do. The maps that serve IDE
+ *   go-to-definition are a DIFFERENT SET OF FILES, in the authoring package,
+ *   and a `cli` packlist entry cannot reach them.
+ *
+ *   AC-3 — WHICH OPTION SHIPPED, AND THE ARGUMENT FOR THE ONE NOT TAKEN. The
+ *   narrow one shipped: declaration maps only, not every map. The reason is the
+ *   ASSERTION it makes available, not the bytes it leaves behind.
+ *   `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
+ *   declarations of its own and the staged `dist/brain-mcp-server/scripts/`
+ *   holds `.ts` sources rather than compiled output (12 entries, zero maps).
+ *   THE 12 IS A PRUNED 19, and the pruning is what makes it re-derivable —
+ *   `copy-templates.sh:178` copies `scripts/` WHOLESALE, so the count is not
+ *   the copy, it is the two `rm` that follow it:
+ *     find brain-mcp-server/scripts -maxdepth 1 -type f | wc -l   # 19
+ *     :183  rm -rf .../scripts/__tests__ .../scripts/fixtures     # TD-298,
+ *           the only two subdirectories, so they move no top-level file
+ *     :199  a `for dev_script in` list of SEVEN named files        # TD-299
+ *           (recall_bench.ts, dedup_corpus_eval.ts, td087_check_pair.ts,
+ *            td087_e2e_deterministic.ts, td087_label_pairs.py,
+ *            td087_corpus_pairs_labeled.csv, td285_dedup_recall_audit.ts)
+ *   19 − 7 = 12, confirmed on the staged tree with
+ *   `find cli/dist/brain-mcp-server/scripts -type f | wc -l`. "Zero maps"
+ *   needs no count and does not depend on any of this: nothing in that
+ *   directory is compiled, so nothing there can emit one.
+ *   The tarball's ENTIRE `.d.ts.map` population was therefore the brain's 138,
+ *   and the pin can be stated unscoped — "no packed entry ends in `.d.ts.map`",
+ *   true of the whole tarball with zero exceptions. A `.js.map` pin could not
+ *   be written that way: MEASURED on the same manifest, 246 `.js.map` ship and
+ *   only 138 are the brain's, because `cli/tsconfig.json:15` sets
+ *   `sourceMap: true` and the 108 cli-own maps carry the identical defect
+ *   (`dist/lib/slug.js.map` reads `"sources":["../../src/lib/slug.ts"]`, and
+ *   `src` is not in `files`). Such a pin would have to be path-scoped, and a
+ *   later reader would take it for a whole-tarball guarantee it is not. The
+ *   NARROWER change buys the STRONGER invariant; that inversion is the reason.
+ *
+ *   THE OPTION NOT TAKEN WAS PRICED, IN BOTH OF ITS SHAPES, rather than quoted
+ *   — and the brief's single figure turned out to name only one of them:
+ *     brain-scoped map exclusion   1_829_779 / 531   cumulative −33_641 B
+ *     unscoped map exclusion       1_668_956 / 423   cumulative −194_464 B
+ *   The unscoped shape also takes the 108 cli-own maps, which is why it drops
+ *   384 entries rather than 276. Either puts the tree BELOW
+ *   PACK_BASELINE_PACKED, so the ceiling assertion in this file would pass on a
+ *   NEGATIVE number and stay green through 182.9 KB (187_241 B) or 339.9 KB
+ *   (348_064 B) of unmeasured growth — the headroom each option would leave
+ *   under the same +150 KB grant, which is the measure of how far the gate
+ *   would stop reporting. It would not break; it would go QUIET, which is
+ *   worse, and quiet is the harder failure to notice. The shipped
+ *   option leaves the delta at 78% of the grant, so the gate keeps biting and
+ *   the "cut or vendor less" instruction keeps its teeth.
+ *
+ *   AC-4 — PACK_BASELINE_PACKED AND PACK_HARD_CEILING_DELTA ARE UNCHANGED, and
+ *   that is a decision, not an omission. This brief recovers headroom; it does
+ *   not re-base. Note the shape of it: the option that WOULD have forced a
+ *   re-base conversation is precisely the one not taken, because a ceiling that
+ *   has gone slack is the state in which re-basing becomes the honest
+ *   bookkeeping. If the operator later wants that runway, the re-base is
+ *   THEIRS to decide, before the work, on the record. This row carries the
+ *   numbers that decision needs, and every one of them is re-derivable from the
+ *   four readings and the two option probes it records.
+ *
+ *   THE TRAILERS STAY, AND THAT WAS ESTABLISHED BY MEASUREMENT WITH A PAIRED
+ *   CONTROL rather than assumed. The shipped `.d.ts` keep their
+ *   `sourceMappingURL` trailer (`tools/sync.d.ts` and every sibling) pointing
+ *   at a map that is now absent from the tarball. Extracted the real tarball,
+ *   pointed a consumer project at it through `node_modules` and deep-imported
+ *   `dist/brain-mcp-server/dist/engine/bus.js`: `tsc --noEmit` exit 0, ZERO
+ *   BYTES of diagnostic output. The identical run against a tarball packed WITH
+ *   the maps produced byte-identical (empty) output, so this brief adds no
+ *   diagnostic. Three tool classes answer this question differently and only
+ *   one of them is a consumer, which is why one reading would not have settled
+ *   it: `tsc`/tsserver fall back silently to the `.d.ts` position; `node` is
+ *   silent too (verified — this row's EVIDENCE FOR THE FOLLOW-ON paragraph has
+ *   the reading); vite's SSR loader is NOISY — one ENOENT
+ *   per unresolvable map, recorded at `brain-bridge.test.ts:228-229`, which is
+ *   why that fixture strips the trailer before copying. The `files` route never
+ *   creates that condition anywhere, because every map stays ON DISK.
+ *
+ *   EVIDENCE FOR THE FOLLOW-ON, RECORDED AND NOT ACTED ON. For the `.js.map`
+ *   class this brief did NOT touch, `node --enable-source-maps` importing a
+ *   `.js` whose map is absent while the trailer remains: exit 0, stdout 0 B,
+ *   stderr 0 B. So the cost of dropping them is not noise; it is a thin
+ *   FORENSIC path, and here it is, measured on `utils/fts5.js` by calling it
+ *   with `null` to force a TypeError from inside the module:
+ *     map PRESENT  at Module.sanitizeFts5Query (…/src/utils/fts5.ts:33:25)
+ *     map ABSENT   at Module.sanitizeFts5Query (…/dist/utils/fts5.js:32:27)
+ *   Node reports the ORIGINAL name and line even though it cannot read the
+ *   source — and note the first path does not exist on a consumer machine
+ *   either, though it IS resolvable against the GitHub tag. That is the whole
+ *   of the value, stated at its real size.
+ *
+ *   THE PIN IS A RELATION, NOT A COUNT, which is a deliberate choice against
+ *   `test_standards` rule 4's shape (a hard-coded count pinned with a dated
+ *   reason). `brain-artifact.test.ts` argues the general case and it applies
+ *   here: a count goes green on a delete-plus-add and needs re-blessing every
+ *   time the brain gains a module. The second assertion is a PRESENCE relation
+ *   for the same reason — it exists because a glob typo would also drop the
+ *   138 `.d.ts`, and those are 693_030 B unpacked at THIS tree — re-derivable
+ *   without a pack or a build, because the vendored copies ARE the packed
+ *   copies:
+ *     find cli/dist/brain-mcp-server/dist -name '*.d.ts' -type f | wc -l
+ *     find cli/dist/brain-mcp-server/dist -name '*.d.ts' -type f -exec cat {} + | wc -c
+ *   → 138 and 693030 exactly, run 2026-09-02.
+ *
+ *   TD-423 READ 693_914 FOR THE SAME 138 ENTRIES, AND THE 884 B IS
+ *   UNEXPLAINED. An earlier draft of this paragraph said "the brain has moved
+ *   884 B since", which rejected an alternative nobody had tested — and it is
+ *   refuted by the interval being EMPTY. TD-423's closing commit IS `1e48af5`
+ *   (`git log --oneline --all --grep=TD-423`), and `1e48af5` is the same HEAD
+ *   readings A and C in this row's four-reading table were taken against, so
+ *   `git log 1e48af5..1e48af5 -- brain-mcp-server/src` names no commit at all.
+ *   No COMMIT moved brain source between the two readings; two tarballs of
+ *   identical size and entry count could not have contained 138 shared
+ *   `.d.ts` differing by 884 B anyway. What differs is not the commit but the
+ *   WORKING TREE: both are TD-423's, and only the later one still exists. The
+ *   leading candidate is TD-423's own mid-brief `produced` trim in
+ *   `cognition/types.ts` (2_267 B → 1_421 B, 846 B), which `1e48af5` records
+ *   only as a net +26 lines because both of its states collapse into one
+ *   commit. That is NAMED, NOT ASSERTED: it leaves 38 B unaccounted, and the
+ *   pre-trim `.d.ts` cannot be re-emitted without a build, which this round's
+ *   scope forbids. Re-read the figure rather than carrying it — that lesson
+ *   holds under either explanation, and it is the whole reason this ledger
+ *   records a date beside every figure.
+ *
+ *   SWEEP OF THE CLAIM THIS FALSIFIES, AND THE CENSUS IS A COMMAND RATHER
+ *   THAN AN ARITHMETIC. "The ONE exclusion is
+ *   `dist/brain-mcp-server/node_modules`" became false the moment a second
+ *   exclusion existed. The plan named ONE line; the class has SEVEN members,
+ *   and a line-oriented grep under-reads it by more than half — collapse
+ *   whitespace first. Strip the leading " * " from the next line and run it
+ *   from the repo root:
+ *
+ *   git ls-files -z ':!cli/src/__tests__/tarball.test.ts' | xargs -0 perl -0777 -ne 's/\s+/ /g; while (/(.{0,60}the one[ *]*(?:exclusion|(?:excluded[ *]+)?direc)[a-z*]{0,12}.{0,90})/gi) { my $h=$1; print "$ARGV\n  $h\n" if $h =~ /`files`|package\.json|tarball/i }'
+ *
+ *   MEASURED 2026-09-02: 7 hits against HEAD `1e48af5`, 6 against this tree,
+ *   ZERO false positives in either run. The co-occurrence filter is what earns
+ *   that, and it is not decoration: drop it and the anchor alone returns 9 at
+ *   HEAD and 8 here. The two extra are instructive — MAINTAINING row 93's
+ *   "antigravity is the ONE exclusion" (harness projection, a different sense
+ *   of the word) and `verbs/cognition.ts`'s "in the one direction no stated
+ *   bound explains", where `direc` matched DIRECTION. A third near-miss never
+ *   reaches the anchor at all: `igris doctor`'s "the ONE documented exclusion"
+ *   puts a word between "one" and "exclusion". Widen either half and you
+ *   inherit all three.
+ *   THE COLLAPSE IS LOAD-BEARING, and here is its price: the IDENTICAL regex
+ *   run line-oriented (`perl -ne` instead of `perl -0777 -ne`) finds 3 of the
+ *   7 — row 109 twice and `paths.ts` — and misses `docs/dashboard.md` twice,
+ *   `brain-bridge.ts` and `Learnings.tsx`. The command LOCATES the class; it
+ *   does not adjudicate it, and a member that has been TIGHTENED still
+ *   matches. The seven, with dispositions:
+ *     [1] MAINTAINING row 109, CONSUMERS column: "the ONE exclusion is
+ *         `dist/…/node_modules`". FALSE. Rewritten to name both exclusions and
+ *         their different kinds. This is the one member that LEAVES the class,
+ *         which is the whole of the 7 → 6.
+ *     [2] MAINTAINING row 109, CHANGE-PROCEDURE column: "live in the ONE
+ *         excluded directory". TRUE on a technicality — there is still exactly
+ *         one excluded DIRECTORY. Tightened so "directory" is load-bearing.
+ *         Round 1 rewrote [1] and missed [2]: ONE ROW, TWO COLUMNS, and a
+ *         census that trusted its own reading of the row it had just edited.
+ *         A line-oriented grep DOES find this one — it was a reading miss,
+ *         not a notation miss, and that is the more embarrassing kind.
+ *     [3] and [4] `docs/dashboard.md`, twice. TRUE on the same technicality;
+ *         tightened the same way. 0 packed B — `docs/` is outside `files`.
+ *     [5] `paths.ts#bundledBrainNodeModulesDir` and
+ *     [6] `brain-bridge.ts#loadSqliteVecModule`. TRUE as written, in docblocks
+ *         that SHIP: `tsc` keeps comments, so both sentences are in
+ *         `dist/lib/paths.js` and `dist/lib/brain-bridge.js` right now
+ *         (grepped, 1 each). Correcting an earlier draft of this row, which
+ *         said editing them would charge the tarball "twice over via `.js` and
+ *         `.js.map`": their maps carry NO `sourcesContent` — the keys are
+ *         version, file, sourceRoot, sources, names, mappings — so the prose
+ *         is charged ONCE, in the `.js`, and only the VLQ `mappings` would
+ *         shift. Left alone anyway, and this is the binding reason: a
+ *         `cli/src` edit cannot reach `cli/dist` without a build, so it would
+ *         leave the source and the artifact this row measures out of sync.
+ *     [7] `cli/dashboard/src/pages/layers/Learnings.tsx`. TRUE as written.
+ *         NEW in round 2, named by neither the plan nor round 1 nor the round
+ *         1 review; the line break falls INSIDE the phrase ("the one" /
+ *         "directory"), which is why only a collapsed sweep reaches it. Its
+ *         cost is DIFFERENT from [5] and [6] and the difference was measured:
+ *         the dashboard bundler strips block comments, so this docblock is in
+ *         no shipped asset (zero occurrences of "the one" across all 12
+ *         `dist/dashboard/assets/*.js`, and zero block-comment openers in the
+ *         `Layers-<hash>.js` chunk — `Layers-BIDq1jxt.js` at this tree, and
+ *         the hash moves on every build — which DOES carry the component: its
+ *         `LEARNINGS DEGRADED` string is in there). It would be free even
+ *         after a build; it is left alone for the build reason alone.
+ *
+ *   `tarball.test.ts` is under a test glob `tsconfig` excludes from `dist`, so
+ *   writing THIS row cannot move the number it records — verified by re-packing
+ *   after the edit, the same way TD-423 verified it. Verified a SECOND way in
+ *   round-1 review, and by a different hand: reverting this file alone and
+ *   re-packing reproduced D byte-identically, which is what establishes that
+ *   the whole of B → D is `cli/CHANGELOG.md` and none of it is this row or the
+ *   pin below.
+ *
+ * READ THAT BEFORE PLANNING THE NEXT ONE. **~82.3 KB (84_262 B) is what is
+ * left on PACKED** — FR-249's row below is the live reading. *(SUPERSEDED —
+ * AND NOT BY POSITION. `f8ea15b` re-pointed this parenthetical at "the FR-268
+ * row directly above"; TD-423 then appended its own row between the two, which
+ * falsified the direction and the figure in one edit and left the sentence that
+ * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
+ * than 10x. A direction word cannot survive an append, so this copy carries a
+ * BRIEF, a DATE and no direction: **as of BR-100, measured 2026-09-06,
+ * 146_885 B (143.4 KB) is what is left on PACKED — TD-444's re-based grant
+ * minus the 6_715 B BR-100 spent, the grant's first consumer.** Grep `BR-100
+ * MEASURED LAST` in this file for that reading and the method behind it
+ * (TD-444 is the floor and the re-base, BR-101 the copy-step method both
+ * readings use), and treat the 84_262 B above
+ * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
+ * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
+ * does not cover: it is INTRA-PARAGRAPH — it names the 84_262 B in this same
+ * paragraph's own opening sentence, so separating the pointer from its referent
+ * would take an insertion INSIDE the paragraph, not an append after it. That is
+ * the whole test. A direction word is safe exactly when nothing can be placed
+ * between it and what it names; "the FR-268 row directly above" failed that test
+ * because a row could be, and was. Whoever appends the next row
+ * re-points THIS sentence at their own brief id, date and figure. TD-443 was
+ * the reason the figure last went UP rather than down — it is a recovery row,
+ * so do not read that jump from TD-423's 1_880 B as a ceiling change. TD-440
+ * then spent 22_243 B of what TD-443 recovered; both constants are still
+ * untouched, and the direction of travel is back down.)* **But packed is
+ * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
+ * **13_601 B**, and any brief with a UI will hit that first. Read both — the
+ * packed GRANT is +150 KB and the headroom is what remains under it, and
+ * the figure changed MEANING as well as value: TD-374 re-based the constant to
+ * a clean measurement of TD-373's tree, and the operator granted +150 KB over
+ * it, so this now reads growth-since-clean rather than growth-since-FR-238.
+ * TD-373's row below is the first CLEAN reading this ledger ever carried; it
+ * read ~1.6 KB against the OLD ceiling, which is precisely why the grant
+ * happened. (~104.9 KB
+ * was FR-247's, ~117.2 KB FR-246's, ~143.6 KB FR-245's, ~147.2 KB FR-244's,
+ * ~149.3 KB TD-328's and ~173.6 KB TD-326's, all superseded. Every one of
+ * those was measured on a tree carrying orphan artifacts, so every one was
+ * generous by roughly the 9.6 KB TD-373 deleted — and the last two were
+ * explicitly logged as FLOORS, not readings.) **And the OTHER ceiling is not merely binding now, it is
+ * effectively spent**: **616 B** of chunk slack against this gate's 104.9 KB.
+ * *(THAT CHUNK CLAUSE IS SUPERSEDED BY TD-347 — there is no single chunk any
+ * more, and the browser-bundle budget is now two executable ceilings in
+ * `dashboard-chunks.test.ts`. The PACKED half of this paragraph still stands.
+ * This copy sits below the HISTORY marker but opens with an instruction, so it
+ * is labelled in place rather than left to be read as current.)*
+ * FR-246 estimated against the chunk alone and was right about it (+3_654 B)
+ * while spending +27_055 B here; FR-247 estimated BOTH and inverted the error —
+ * +5_899 B of chunk against a 2.5-4.6 KB estimate, +11_132 B packed against a
+ * 17-32 KB one. Two briefs, two directions, one rule: **estimate BOTH, measure
+ * BOTH, and name which surface any single number is about.** And note TD-328's correction to the SCOPE of this budget: a
+ * brief that touches only
+ * `brain-mcp-server/` spends from it too, because that package is bundled. If the next
+ * brief needs more, the answer is to cut or to vendor less — NOT to raise
+ * `PACK_HARD_CEILING_DELTA`, for the reason the paragraphs above spend thirty
+ * lines on. (FR-241 was told the same thing about its ~68 KB and did not need
+ * the exemption either; the pattern so far is that the estimate before
+ * measuring is the pessimistic one.)
+ *
+ * The budget is CUMULATIVE across the family, not per-brief: a per-brief
+ * reading lets three views bust the ceiling with every individual brief
+ * passing. Subtract the shipped delta before claiming headroom, and measure
+ * rather than estimate. (`PACK_BASELINE_PACKED` was UNCHANGED for the whole
+ * FR-238..TD-373 run; TD-374 re-based it — see the provenance block below.)
+ *
+ * PROVENANCE OF THE BASELINE CONSTANT — RE-BASED TO A MEASURED NUMBER
+ * (TD-374, operator grant 2026-08-10)
+ * ─────────────────────────────────────────────────────────────────────────
+ * The baseline is now **today, measured on a clean tree**, not an archaeological
+ * figure from FR-238. That is a change of MEANING, not just of value:
+ * `delta` used to read "cumulative growth since the dashboard family began" and
+ * now reads "growth since the tree was known clean."
+ *
+ * WHY THE OLD BASELINE WAS ABANDONED RATHER THAN CORRECTED. The previous note
+ * asserted `1_301_851` was ~24 KB HIGH versus a clean build, and instructed a
+ * re-measure once dist-cleaning landed. TD-373 landed it, so TD-374 took the
+ * measurement — and the instruction turned out to rest on an estimate that does
+ * not survive contact:
+ *
+ *   FR-238's commit (`71abaa0`), built CLEAN with today's node_modules:
+ *     packed 1_467_162  /  740 files  /  5_854_678 unpacked
+ *   what this note predicted:
+ *     packed ~1_277_864 /  715 files  /  5_394_552 unpacked
+ *
+ * **+189 KB in the opposite direction from the prediction.** The confound is
+ * dependencies, not sources: `package-lock.json` has drifted since 2026-07-29
+ * (different digest), and the dashboard bundle is built from whatever `vite`,
+ * `react` and `force-graph` are installed. So a "clean FR-238 baseline" is not
+ * one number — it is a number per dependency tree, and recovering the July one
+ * would need a period-accurate `npm ci` to describe a July fact that no longer
+ * governs anything. The old constant is retired rather than corrected because
+ * the question it answers is unanswerable and, once answered, useless.
+ *
+ * HOW THE NEW BASELINE WAS TAKEN, so it can be re-derived:
+ *   `rm -rf cli/dist brain-mcp-server/dist && (cd cli && npm run build)` then
+ *   `npm pack --dry-run --json`, on `bd49525` (TD-373).
+ *     packed 1_863_420  /  796 files
+ *   Never `npm run build` in `cli/` on the operator's machine casually — it is
+ *   a live deploy. TD-373 records the scratch-worktree method for that case.
+ *
+ * READING THE LEDGER'S OLDER ROWS. Every "cumulative delta" above is stated
+ * against the OLD baseline. Convert with a single offset:
+ *   new_delta = old_delta - 561_569        (1_863_420 - 1_301_851)
+ * They are also all measured on trees carrying the orphan artifacts TD-373
+ * deleted, so treat them as historical narrative, not as comparable figures.
+ *
+ * RE-BASED A SECOND TIME (TD-444, 2026-09-06, on `c1aee95` plus this brief's
+ * diff). Dropping the 139 vendored brain `.js.map` from the packlist took the
+ * packed total 20_144 B BELOW the TD-374 floor, and a ceiling that reads a
+ * negative delta has gone QUIET rather than passed: `toBeLessThan(150 KB)`
+ * would have stayed green through 173_744 B of unmeasured growth
+ * (2_017_020 − 1_843_276). The 2×2 in the TD-444 row shows all four cells
+ * (maps excluded/restored × old/new floor); only the re-based floor makes the
+ * restored-maps tarball RED, and that is why the re-base was mandatory.
+ *   new floor  1_843_276  (was 1_863_420) — MEASURED LAST on a scratch build
+ *                         that ran `copy-templates.sh`, taken twice; grep
+ *                         `TD-444 MEASURED LAST` for the method
+ *   grant      153_600    unchanged; absolute cap 2_017_020 → 1_996_876,
+ *                         DOWN 20_144 B — the re-base retires the over-shoot
+ *                         rather than handing it back
+ *   older rows new_delta = old_delta + 20_144   (1_863_420 − 1_843_276) —
+ *                         the conversion above, sign reversed because the
+ *                         floor went DOWN this time
+ * THE RULE, for the next prune: a recovery whose cumulative delta would go
+ * NEGATIVE re-bases `PACK_BASELINE_PACKED` in the SAME change, as an operator
+ * decision recorded before the work. A recovery that stays ABOVE the floor
+ * (TD-443 −31 KB, BR-101 −88 KB) does NOT re-base: the ledger prefers a
+ * recovery to be spent, not retired, and a symmetric lower bound was
+ * considered and NOT added — at delta 0 it would red the next net-negative
+ * docblock trim and make this constant a hot edit (the TD-444 plan, §4).
+ *
+ * THE CEILING — +150 KB, operator grant, 2026-08-10
+ * ─────────────────────────────────────────────────
+ * Raised from +550 KB over the old baseline. In absolute terms the cap moves
+ * 1_865_051 -> 2_017_020, i.e. **+148 KB of real room**, because the old
+ * ceiling had 1_631 B left and GL-006 could not finish inside it.
+ *
+ * DERIVED, not chosen round — though only two of the five inputs are SOURCED
+ * (FR-248's from its own plan, the overhead from this session's measurements);
+ * the other three are labelled estimates rather than presented as readings.
+ * The remaining GL-006 work and its overhead:
+ *   FR-248 cross-layer search      ~26 KB (its own plan's upper estimate)
+ *   FR-249 create-a-goal            ~20 KB  ESTIMATE, by analogy to FR-247
+ *   BR-083 entity_edges project     ~10 KB  ESTIMATE, brain-side migration
+ *   TD-369/370/371/372 follow-ups    ~5 KB  ESTIMATE, all S-Small
+ *   changelog + docstring overhead  ~24 KB (this session measured 2.5-4.4 KB
+ *                                    per brief, and prose in shipped files is
+ *                                    charged ONCE via .js plus a small
+ *                                    .js.map mappings shift — TD-443
+ *                                    corrected "twice" here. THE GRANT DOES
+ *                                    NOT MOVE WITH THE CORRECTION: the
+ *                                    2.5-4.4 KB was MEASURED per brief, not
+ *                                    derived by doubling anything, so the
+ *                                    ~24 KB input stands as taken.)
+ *                                   ───────
+ *                                    ~85 KB, so +150 KB is ~76% margin.
+ *
+ * WHAT THE GRANT DOES NOT LICENSE. The instruction still inverts rather than
+ * disappears: a brief that runs out cuts scope or vendors less. The ceiling was
+ * raised because a MEASUREMENT showed real work did not fit, taken before the
+ * work rather than after a failing assertion — the same standard TD-329 set.
+ * It was NOT raised to accommodate cruft: TD-373 deleted 9_624 B of artifacts
+ * for sources that no longer existed, and that deletion happened FIRST,
+ * deliberately, so this grant is spent on features rather than on leftovers.
+ */
+// TD-444 (2026-09-06): re-based from 1_863_420 (TD-374, measured clean on
+// bd49525) to the floor measured on a scratch build of c1aee95 after the
+// vendored brain .js.map exclusion — grep `TD-444 MEASURED LAST`. RULE: a
+// recovery whose cumulative delta would go NEGATIVE re-bases this constant in
+// the SAME change, on an operator decision recorded before the work; a
+// negative delta is a ceiling that has gone quiet, and quiet is not a pass.
+const PACK_BASELINE_PACKED = 1_843_276;
+const PACK_HARD_CEILING_DELTA = 150 * 1024; // TD-374, operator, 2026-08-10
+
+/**
+ * TD-336: how long a pack-dependent test is allowed to take.
+ *
+ * This is a MEASUREMENT, not a round number chosen to be safely large.
+ * `npm pack --dry-run` on this package, measured 2026-08-04:
+ *
+ * TWO SURFACES, NAMED — per this file's own rule 40 lines up: estimate both,
+ * measure both, and say which surface any single number is about. The `npm
+ * pack --dry-run` CALL and the enclosing TEST are not the same duration, and
+ * an earlier draft of this block quoted one of each as if they were one series.
+ *
+ *   the CALL, idle                1357 / 1427 / 1579 ms
+ *   the CALL, 8-way contention    2460 - 2950 ms
+ *   the TEST, full suite in flight 4438 - 6654 ms over fifteen measured runs
+ *   the TEST, sustained 8-way load  up to 9157 ms
+ *
+ * vitest's default `testTimeout` is 5000 ms, so the TEST straddles it under the
+ * suite's own parallel load — which is why this file failed intermittently, on
+ * whichever pack-dependent test happened to run first, reporting as an
+ * assertion about `index.html` when the actual event was a 6 s subprocess.
+ * The fastest PASSING run of that test was 4438 ms: still 89% of the old
+ * budget. It was never "sometimes slow"; it was always near the line, and the
+ * default reporter shows you nothing about proximity — only about crossing.
+ *
+ * 30 s is ~4.5x the worst full-suite test duration (6654 ms) and ~3.3x the
+ * worst under sustained load (9157 ms). The margin is deliberately generous
+ * because the load that causes this is the CI/dev machine's, not ours.
+ *
+ * TWO HALVES, AND THEY BOUND DIFFERENT THINGS. This constant is used twice:
+ * as each pack-dependent test's `testTimeout`, and as `options.timeout` on the
+ * `execFileSync` itself. The test timeout is POST-HOC DETECTION — it cannot
+ * preempt a synchronous body, so against a genuinely hung npm the worker's
+ * event loop blocks and the timer never fires. Only `options.timeout` SIGTERMs
+ * the child. Keep both: the first attributes the failure to a test, the second
+ * is what actually stops a hang.
+ *
+ * That reasoning holds BECAUSE every pack-dependent body here is synchronous.
+ * If a future edit makes one of them `async`, vitest can preempt it and this
+ * framing silently stops applying to that test — re-derive it rather than
+ * assuming the comment still covers you.
+ *
+ * Measured both ways against a real 20 s hang: WITH `options.timeout` the call
+ * dies at 2008 ms (`spawnSync ETIMEDOUT`); WITHOUT it, the per-test timeout
+ * alone let it run the full 20040 ms and then reported `SyntaxError:
+ * Unexpected end of JSON input` — a misleading error, because the synchronous
+ * body threw before the timeout could be reported. That is the same
+ * "reports as a different bug" failure this brief exists to kill.
+ *
+ * NOT `beforeAll`. Warming the cache in a hook would pay the cost in a place
+ * that is *about* paying it, which is tempting, but a hook failure is far less
+ * legible than a test failure — it fails the whole describe with no assertion
+ * to read. Per-test timeouts keep the failure attached to the thing that failed.
+ */
+const PACK_TIMEOUT_MS = 30_000;
+
+/**
+ * Memoised. `npm pack --dry-run` walks the whole package and takes a couple of
+ * seconds; running it once per file rather than once per assertion keeps the
+ * suite fast, and computing it LAZILY (not in the describe body) keeps it out
+ * of collection for a filtered run of any other test in this file.
+ *
+ * The laziness is load-bearing and TD-336 deliberately preserved it: only the
+ * FIRST pack-dependent test to run pays the subprocess cost, and a filtered run
+ * of any other test in this file never spawns npm at all. Every test that can
+ * reach here carries PACK_TIMEOUT_MS, because any of them may be the first.
+ */
+let packReportCache: PackReport | null = null;
+function packReport(): PackReport {
+  if (packReportCache !== null) return packReportCache;
+  const childProcess = require("node:child_process") as typeof import("node:child_process");
+  const cliRoot = require("node:path").join(__dirname, "..", "..") as string;
+  const raw = childProcess.execFileSync("npm", ["pack", "--dry-run", "--json"], {
+    cwd: cliRoot,
+    encoding: "utf-8",
+    maxBuffer: 32 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "ignore"],
+    // This is what makes the per-test PACK_TIMEOUT_MS mean what its docblock
+    // says. A vitest test timeout is POST-HOC detection: it cannot preempt a
+    // synchronous body, so if npm truly hangs, the worker's event loop blocks
+    // and the timer never fires. `options.timeout` SIGTERMs the child, which
+    // is the half that actually bounds a hang.
+    timeout: PACK_TIMEOUT_MS,
+  });
+  packReportCache = (JSON.parse(raw) as PackReport[])[0];
+  return packReportCache;
+}
+
+function packedPaths(): Set<string> {
+  return new Set(packReport().files.map((f) => f.path));
+}
+
+describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
+
+  it("includes dist/dashboard/index.html", () => {
+    expect(packedPaths().has("dist/dashboard/index.html")).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("includes the three vendored woff2 fonts", () => {
+    const paths = packedPaths();
+    for (const f of [
+      "dist/dashboard/fonts/anton-latin-400-normal.woff2",
+      "dist/dashboard/fonts/space-grotesk-latin-wght-normal.woff2",
+      "dist/dashboard/fonts/jetbrains-mono-latin-400-normal.woff2",
+    ]) {
+      expect(paths.has(f), `missing from tarball: ${f}`).toBe(true);
+    }
+  }, PACK_TIMEOUT_MS);
+
+  it("includes the hashed JS and CSS assets", () => {
+    const assets = [...packedPaths()].filter((p) => p.startsWith("dist/dashboard/assets/"));
+    expect(assets.some((p) => p.endsWith(".js"))).toBe(true);
+    expect(assets.some((p) => p.endsWith(".css"))).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships the vendored brain engine the FR-238 bridge imports", () => {
+    // The bridge is a path-literal dependency on this artifact (R2). If the
+    // `files` exclusion list ever widens to drop it, the dashboard's graph
+    // readout degrades silently — so assert it here, loudly.
+    expect(
+      packedPaths().has(
+        "dist/brain-mcp-server/dist/engine/components/edges/whole-graph.js",
+      ),
+    ).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("ships FR-241's suggestion reader AND the engine module the WRITE door boots", () => {
+    // MAINTAINING row 107, extended again by FR-241. The two entries are
+    // different in kind and the failure modes are not the same:
+    //
+    //   - `suggestions-read.js` is a READ artifact. Losing it degrades
+    //     `/api/suggestions` to an empty queue that looks like a cleared
+    //     backlog — the same silent shape as the three readers below.
+    //   - `engine/index.js` exports `bootEngine` and is the WRITE door. Losing
+    //     it takes the MUTATION surface down, not a readout, and the signal
+    //     that goes false is `/api/health`'s `write.available`. A dashboard
+    //     that cannot triage is a different bug report from one that shows an
+    //     empty list, so it gets its own named assertion rather than joining
+    //     the reader loop.
+    //
+    // Both are reached by path literal from `brain-bridge.ts#MODULE_RELS`, so
+    // they resolve in this repo whether or not they are in the pack. Only a
+    // packaging assertion can catch the consumer-machine case.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/suggestions-read.js",
+      "dist/brain-mcp-server/dist/engine/index.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
+  }, PACK_TIMEOUT_MS);
+
+  it("ships the three FR-240 pure READ modules the layer endpoints import", () => {
+    // MAINTAINING row 107, extended by FR-240. Same failure mode as the builder
+    // above and the same reason it needs a packaging assertion rather than a
+    // runtime one: `loadLayerReaders()` DEGRADES when a module is missing, so a
+    // dropped artifact serves four empty layer views that look exactly like an
+    // empty brain. Nothing at runtime would say "the tarball is incomplete".
+    //
+    // Note two of these are under `dist/tools/`, OUTSIDE `dist/engine/` — the
+    // trap that forced the bridge resolver to anchor on the bundle ROOT.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/briefs-read.js",
+      "dist/brain-mcp-server/dist/tools/memory-read.js",
+      "dist/brain-mcp-server/dist/engine/components/goals/read.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
+  }, PACK_TIMEOUT_MS);
+
+  it("ships the MCP wrappers whose SQL those readers now hold", () => {
+    // The wrappers import the readers. Shipping a reader without its wrapper (or
+    // vice versa) would break the MCP surface `/hunt` and `/awaken` depend on,
+    // and the failure would appear as a module-resolution error at brain boot —
+    // far from its cause.
+    const packed = packedPaths();
+    for (const rel of [
+      "dist/brain-mcp-server/dist/tools/briefs.js",
+      "dist/brain-mcp-server/dist/tools/memory.js",
+      "dist/brain-mcp-server/dist/engine/components/goals/handlers.js",
+    ]) {
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(
+        true,
+      );
+    }
+  }, PACK_TIMEOUT_MS);
+
+  /**
+   * FR-249 — a DIAGNOSTIC must not be able to ship, or to corrupt the reading.
+   *
+   * `DASH_BUNDLE_REPORT=1 bash cli/scripts/build-dashboard.sh` writes
+   * `dist/dashboard/.bundle-report.json` — the file every recent brief has used
+   * to prove which chunk its code landed in. `package.json` `files` ships
+   * `dist`, wholesale, so that diagnostic SHIPS.
+   *
+   * It bit FR-249 immediately and in the worst way: a pack taken right after a
+   * report-enabled build read **801 entries / 1_898_453 B** against the
+   * comparable **800 / 1_895_058** — a 3,395 B phantom delta that looks exactly
+   * like code growth. The ENTRY COUNT is the tell, which is why this ledger
+   * records entries beside every byte figure and why that convention is worth
+   * keeping.
+   *
+   * So the instrument used to measure the budget could silently inflate the
+   * budget. This assertion closes that: it does not care whether the file is
+   * present in the working tree (it legitimately is, mid-diagnosis) — only that
+   * it never reaches the tarball.
+   */
+  it("no build DIAGNOSTIC reaches the tarball (FR-249)", () => {
+    const report = packReport();
+    const leaked = report.files
+      .map((f) => f.path)
+      .filter((p) => /\.bundle-report\.json$|\.tsbuildinfo$|\.vite[/\\]/.test(p));
+    expect(
+      leaked,
+      "a diagnostic artifact is in the published tarball. It inflates the " +
+        "packed delta and every brief downstream reads a phantom number. " +
+        "Rebuild without DASH_BUNDLE_REPORT=1, or exclude it in package.json files.",
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("stays under the hard packed-size ceiling (+150 KB over baseline)", () => {
+    const report = packReport();
+    const delta = report.size - PACK_BASELINE_PACKED;
+    expect(
+      delta,
+      `packed delta ${(delta / 1024).toFixed(1)} KB exceeds the ` +
+        `+${PACK_HARD_CEILING_DELTA / 1024} KB ceiling ` +
+        `(packed ${report.size}, baseline ${PACK_BASELINE_PACKED})`,
+    ).toBeLessThan(PACK_HARD_CEILING_DELTA);
+  }, PACK_TIMEOUT_MS);
+
+  it("ships the vendored graph library — bundled, never fetched (AC #4)", () => {
+    // `force-graph` is a devDependency BUNDLED BY VITE into the dashboard's
+    // hashed JS chunk. It must never appear as a runtime dependency, and it
+    // must never be reached over the network. The absence of a
+    // `dist/node_modules/force-graph` entry is the first half of that; the
+    // artifact test's off-origin scan is the second.
+    const paths = packedPaths();
+    expect(
+      [...paths].some((p) => p.includes("node_modules/force-graph")),
+      "force-graph must be bundled by Vite, not shipped as a runtime dep",
+    ).toBe(false);
+    expect(
+      [...paths].some(
+        (p) => p.startsWith("dist/dashboard/assets/") && p.endsWith(".js"),
+      ),
+      "the hashed dashboard chunk that carries it is missing",
+    ).toBe(true);
+  }, PACK_TIMEOUT_MS);
+});
+
+/**
+ * TD-443 — no declaration map ships, and the pin is UNSCOPED because it can be.
+ *
+ * Every `.d.ts.map` under `dist/brain-mcp-server/dist/` carries a `sources`
+ * array like `["../../src/engine/bus.ts"]` with no `sourcesContent`, while
+ * `files` ships `dist` only — `dist/brain-mcp-server/src` does not exist in the
+ * tarball. Each one is therefore a dangling pointer on a consumer machine: the
+ * path resolves to nothing and there is no inlined fallback. 138 entries,
+ * 31_426 packed B, measured 2026-09-02. They are NOT dead in the repo, where
+ * `dist/` and `src/` are siblings and the maps drive go-to-definition — which
+ * is why the fix is `package.json` `files` and NOT `declarationMap: false`.
+ * `brain-mcp-server/tsconfig.json:15` is untouched, no file left the tree, and
+ * the third test below PINS that flag so this stays true by gate rather than
+ * by claim.
+ *
+ * WHY THIS PIN CARRIES NO PATH SCOPE, and why the `.js.map` class cannot have
+ * one (TD-444 then wrote that pin PATH-SCOPED — the next describe).
+ * `cli/tsconfig.json:14` sets `declaration: false`, so `cli` emits no
+ * declarations of its own, and the staged `dist/brain-mcp-server/scripts/`
+ * holds `.ts` sources rather than compiled output (12 entries, zero maps). The
+ * tarball's ENTIRE `.d.ts.map` population was the brain's 138 — measured
+ * directly off the pack manifest, and corroborated by 807 − 138 = 669 entries
+ * after the exclusion. So "no packed entry ends in `.d.ts.map`" is true of the
+ * whole tarball with zero exceptions. A `.js.map` pin could not be written that
+ * way: 246 `.js.map` ship and only 138 are the brain's, because
+ * `cli/tsconfig.json:15` sets `sourceMap: true` and the 108 cli-own maps carry
+ * the identical defect (`dist/lib/slug.js.map` reads
+ * `"sources":["../../src/lib/slug.ts"]`, and `src` is not in `files`). Such a
+ * pin would have to be path-scoped, and a later reader would take a scoped pin
+ * for a whole-tarball guarantee it is not — which is why TD-444's carries the
+ * scope in its NAME and a presence pin on cli's own map beside it. The
+ * narrower exclusion buys the
+ * stronger invariant, and that inversion is the reason it is the one taken.
+ * The full argument, including the option NOT taken, is in this file's pack
+ * ledger — grep `TD-443 MEASURED LAST`.
+ *
+ * RELATION, NOT COUNT. `brain-artifact.test.ts` states the rule this follows:
+ * "It does not assert a file COUNT … The orphan scan asserts the RELATION."
+ * A count goes green on a delete-plus-add and needs re-blessing every time the
+ * brain gains a module. `toEqual([])` rather than a length check, so a
+ * regression PRINTS the offending paths instead of a bare number.
+ */
+describe("TD-443 — no dangling declaration maps ship", () => {
+  it("packs no .d.ts.map at all — whole tarball, no path scope", () => {
+    const stray = [...packedPaths()].filter((p) => p.endsWith(".d.ts.map"));
+    expect(
+      stray,
+      "declaration maps are back in the published tarball (TD-443). Their " +
+        "`sources` point at `brain-mcp-server/src`, which `files` does not " +
+        "ship, and there is no `sourcesContent` — so every one is weight no " +
+        "consumer can resolve. The 138 of them cost 31_426 packed B. Restore " +
+        'the `"!dist/**/*.d.ts.map"` negation in cli/package.json `files`.',
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships the vendored .d.ts those maps described", () => {
+    // The inverse guard, and the reason it is a PRESENCE relation rather than a
+    // count: a glob typo — `!dist/**/*.d.ts*` — would also drop the 138 `.d.ts`
+    // (693_030 B unpacked, measured 2026-09-02) and the assertion above would
+    // stay green on a far LARGER regression. A count would additionally need
+    // re-blessing whenever the brain gains or loses a module.
+    const declarations = [...packedPaths()].filter(
+      (p) => p.startsWith("dist/brain-mcp-server/dist/") && p.endsWith(".d.ts"),
+    );
+    expect(
+      declarations.length,
+      "the vendored brain declarations are gone from the tarball. TD-443 " +
+        "excluded declaration MAPS only; if this is red, the exclusion glob " +
+        "widened past the maps and took the declarations with it.",
+    ).toBeGreaterThan(0);
+  }, PACK_TIMEOUT_MS);
+
+  it("keeps `declarationMap` ON in the brain's tsconfig — AC-2's mechanism", () => {
+    // BOTH assertions above are OUTCOME pins on the packlist, and neither can
+    // see the mechanism AC-2 actually requires. Flip `declarationMap` to
+    // false, rebuild, and delete the `files` negation: no `.d.ts.map` is
+    // emitted, so none can pack and the first assertion stays green; the
+    // `.d.ts` keep shipping, so the inverse guard stays green too. The tarball
+    // would still be CORRECT — this is not a defect in the fix — but the
+    // shipped sentence in cli/CHANGELOG.md, "`declarationMap` stays on and
+    // every map stays on disk", would be FALSE with the whole suite passing.
+    // This pin is the gate for that sentence. It reads SOURCE, so it fires
+    // without a build, which is the only way it could run in this brief at
+    // all.
+    //
+    // The on-disk half of the claim is deliberately NOT pinned here:
+    // `brain-mcp-server/dist` is gitignored (.gitignore:41), so a clean
+    // checkout has no maps to count and the assertion would be measuring
+    // whether someone had built the brain. The flag is the durable half.
+    //
+    // `declaration` is asserted alongside it because `declarationMap` emits
+    // nothing when declarations are off — the flag would read true and the
+    // claim would still be false.
+    const tsconfigPath = join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "brain-mcp-server",
+      "tsconfig.json",
+    );
+    const raw = readFileSync(tsconfigPath, "utf8");
+    let opts: Record<string, unknown>;
+    try {
+      opts = (JSON.parse(raw) as { compilerOptions: Record<string, unknown> })
+        .compilerOptions;
+    } catch {
+      throw new Error(
+        "brain-mcp-server/tsconfig.json is no longer plain JSON (a comment or " +
+          "a trailing comma would do it) and this pin parses it with " +
+          "JSON.parse. Teach it a tolerant parser — do not delete it.",
+      );
+    }
+    expect(
+      opts.declarationMap,
+      "brain-mcp-server/tsconfig.json no longer sets `declarationMap: true`. " +
+        "TD-443 excluded declaration maps from the PACKLIST and left the " +
+        "compiler alone on purpose, so that in-repo go-to-definition keeps " +
+        "working; turning the flag off is a DIFFERENT change with a different " +
+        "blast radius, and on its own it would leave every packlist assertion " +
+        "in this file green while making the shipped TD-443 CHANGELOG entry " +
+        "false.",
+    ).toBe(true);
+    expect(
+      opts.declaration,
+      "brain-mcp-server/tsconfig.json no longer sets `declaration: true`, so " +
+        "no `.d.ts` is emitted and `declarationMap` has nothing to describe.",
+    ).toBe(true);
+  });
+});
+
+/**
+ * TD-444 — the `.js.map` half of the dangling-sourcemap class, PATH-SCOPED.
+ *
+ * TD-443 dropped the 138 `.d.ts.map` and left the `.js.map` class alone; this
+ * is the remainder, and it is NARROWER on purpose. Two tsconfigs emit `.js.map`
+ * into this tarball: `brain-mcp-server/tsconfig.json` (vendored under
+ * `dist/brain-mcp-server/dist/**` — 139 files, 938_411 unpacked B, measured
+ * 2026-09-06 on the operator's 2026-09-04 build) and `cli/tsconfig.json:15`
+ * `sourceMap: true` (108 cli-own maps: `dist/index.js.map`,
+ * `dist/lib/slug.js.map`, …). The operator decided, 2026-09-06 and recorded in
+ * the brief BEFORE the work, to drop the VENDORED brain maps only and keep
+ * cli's. So the negation in `cli/package.json` `files` matches `.js.map` at
+ * any depth under `dist/brain-mcp-server/` (the literal is in test 1's
+ * failure message), and the first pin below filters on that prefix. Every
+ * vendored map was dangling: `sources` name a `../../src/….ts`, there is no
+ * `sourcesContent`, and `files` ships no
+ * `src` — TD-443's defect on the sibling class (grep `THE DEFECT` in its
+ * row), true of the repo's own `cli/dist` too because `copy-templates.sh`
+ * stages `dist/**` only.
+ *
+ * WHAT IS GIVEN UP, at its measured size (TD-443's `EVIDENCE FOR THE
+ * FOLLOW-ON`): `node --enable-source-maps` importing a `.js` whose map is
+ * absent is SILENT (exit 0, both streams empty); the whole difference is one
+ * resolved frame — `…/src/utils/fts5.ts:33:25` with the map,
+ * `…/dist/utils/fts5.js:32:27` without. Nothing in Igris spawns the brain
+ * with `--enable-source-maps`, so a consumer's frames already named `dist/`;
+ * an operator who needs the `src/` position checks out the tag in
+ * `dist/brain-mcp-server/package.json` and builds. `sourceMap` stays ON (test
+ * 4) and every map stays on disk: a packlist change, as TD-443's was. The
+ * VPS keeps its maps too — `scripts/igris_brain_deploy.sh` builds from source.
+ *
+ * A LATER READER MUST NOT TAKE THIS PIN FOR A WHOLE-TARBALL GUARANTEE — it is
+ * not one, and test 3 is the proof: it pins that cli's OWN `dist/index.js.map`
+ * STILL SHIPS. The two mutations that tell the scope from a glob accident are
+ * in the TD-444 row (grep `TD-444 MEASURED LAST`): widen the ASSERTION to the
+ * whole tarball and it reds on the 108 cli-own maps (M3); widen the GLOB to
+ * `.js.map` at any depth under `dist/` and test 1 stays green while test 3
+ * reds (M4). One
+ * mutation per direction of the boundary.
+ *
+ * THE CEILING WAS RE-BASED IN THE SAME CHANGE. The negation alone recovers
+ * 159_151 packed B, which takes the total BELOW the TD-374 floor of
+ * `1_863_420`: the old constant would have read a NEGATIVE delta, and
+ * `toBeLessThan(150 KB)` passes on a negative through every byte of growth up
+ * to the old cap without a word. TD-443 named that trap and stayed narrow to
+ * avoid it; this brief crosses the floor, so `PACK_BASELINE_PACKED` above now
+ * holds the measured post-exclusion floor and the rule is stated beside it.
+ *
+ * RELATION, NOT COUNT — `toEqual([])` on the filtered list, TD-443's shape.
+ */
+describe("TD-444 — no vendored brain .js.map ships (path-scoped)", () => {
+  const VENDORED_BRAIN_PREFIX = "dist/brain-mcp-server/";
+
+  it("packs no .js.map under dist/brain-mcp-server/ — PATH-SCOPED, and the scope is a decision", () => {
+    // `startsWith` is the scope, and it is LOAD-BEARING: drop it and this test
+    // reds on the 108 cli-own maps that ship by operator decision (M3 in the
+    // TD-444 row). It is not a whole-tarball claim; test 3 pins the boundary
+    // from the other side.
+    const stray = [...packedPaths()].filter(
+      (p) => p.startsWith(VENDORED_BRAIN_PREFIX) && p.endsWith(".js.map"),
+    );
+    expect(
+      stray,
+      "vendored brain source maps are back in the published tarball " +
+        "(TD-444). Every path listed is a `.js.map` under " +
+        "dist/brain-mcp-server/ whose `sources` name a `src/` the tarball " +
+        "does not ship, with no `sourcesContent` — 139 files / 938_411 " +
+        "unpacked B on the 2026-09-04 build, 159_151 packed B. The operator " +
+        "chose (2026-09-06) to drop the VENDORED maps only; cli's own " +
+        "`.js.map` are OUT of this pin's scope on purpose. Restore the " +
+        '`"!dist/brain-mcp-server/**/*.js.map"` negation in cli/package.json ' +
+        "`files`, after the `dist` entry it narrows.",
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships the vendored .js those maps described", () => {
+    // The glob-typo inverse, TD-443's shape: `!dist/brain-mcp-server/**/*.js*`
+    // would take the whole compiled brain along with its maps and the pin
+    // above would stay GREEN on a far larger regression. The FR-238 presence
+    // pins would fire too, but without naming the cause; this one does.
+    const compiled = [...packedPaths()].filter(
+      (p) => p.startsWith("dist/brain-mcp-server/dist/") && p.endsWith(".js"),
+    );
+    expect(
+      compiled.length,
+      "the compiled brain is gone from the tarball. TD-444 excluded source " +
+        "MAPS only; if this is red, the exclusion glob widened past `.js.map` " +
+        "and took the `.js` with it.",
+    ).toBeGreaterThan(0);
+  }, PACK_TIMEOUT_MS);
+
+  it("still ships cli's OWN .js.map — the scope boundary is a decision, not a glob accident", () => {
+    // The pin that makes "cli keeps its maps" a GATE rather than a sentence.
+    // Widen the negation to `!dist/**/*.js.map` and test 1 cannot see the
+    // loss (it filters on the brain prefix); this one reds on
+    // `dist/index.js.map` (M4 in the TD-444 row). `dist/index.js.map` is the
+    // CLI entrypoint's own map — the one name that survives any module
+    // rename under lib/ — and the `some` beside it keeps the relation honest
+    // if that file is ever renamed.
+    const paths = packedPaths();
+    expect(
+      paths.has("dist/index.js.map"),
+      "cli's own entrypoint map `dist/index.js.map` is no longer in the " +
+        "tarball. TD-444's negation is scoped to dist/brain-mcp-server/ by " +
+        "operator decision (2026-09-06); a `!dist/**/*.js.map` spelling, or " +
+        "`sourceMap: false` in cli/tsconfig.json, widened the drop past that " +
+        "scope.",
+    ).toBe(true);
+    expect(
+      [...paths].some(
+        (p) => p.endsWith(".js.map") && !p.startsWith(VENDORED_BRAIN_PREFIX),
+      ),
+      "no cli-own `.js.map` ships at all — the path scope of TD-444's " +
+        "exclusion has been lost.",
+    ).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("keeps `sourceMap` ON in the brain's tsconfig — the CHANGELOG sentence's durable half", () => {
+    // TD-443's third-test pattern. Both packlist pins above are OUTCOME pins:
+    // flip `sourceMap` to false, rebuild, delete the negation — no map is
+    // emitted, none packs, test 1 stays green, the `.js` still ship. The
+    // tarball is still correct; the shipped cli/CHANGELOG.md sentence
+    // "`sourceMap` stays on and every map stays on disk" is FALSE with the
+    // suite green. This pin reads SOURCE, so it fires without a build. The
+    // on-disk half is deliberately NOT pinned: `brain-mcp-server/dist` is
+    // gitignored, so a count there measures whether someone built the brain.
+    const tsconfigPath = join(
+      __dirname,
+      "..",
+      "..",
+      "..",
+      "brain-mcp-server",
+      "tsconfig.json",
+    );
+    const raw = readFileSync(tsconfigPath, "utf8");
+    let opts: Record<string, unknown>;
+    try {
+      opts = (JSON.parse(raw) as { compilerOptions: Record<string, unknown> })
+        .compilerOptions;
+    } catch {
+      throw new Error(
+        "brain-mcp-server/tsconfig.json is no longer plain JSON and this pin " +
+          "parses it with JSON.parse (the TD-443 pin has the same shape). " +
+          "Teach both a tolerant parser — do not delete either.",
+      );
+    }
+    expect(
+      opts.sourceMap,
+      "brain-mcp-server/tsconfig.json no longer sets `sourceMap: true`. " +
+        "TD-444 excluded the vendored `.js.map` from the PACKLIST and left " +
+        "the compiler alone on purpose, so that in-repo debugging keeps its " +
+        "maps; turning the flag off is a DIFFERENT change (the brief's Out " +
+        "of Scope), and on its own it leaves every packlist pin in this file " +
+        "green while making the shipped TD-444 CHANGELOG entry false.",
+    ).toBe(true);
+  });
+});
+
+/**
+ * BR-101 — no research artifact ships from the vendored `scripts/`.
+ *
+ * `cli/scripts/copy-templates.sh` copies `brain-mcp-server/scripts/` WHOLESALE
+ * into `dist/brain-mcp-server/scripts/` and prunes by three rules: TD-298
+ * (the `__tests__` / `fixtures` dirs), TD-299 (a named list) and BR-101 (a
+ * PATTERN — a `*.csv` or a `td<N>_` basename). TD-445 landed a sweep script and two
+ * labelled CSVs that matched neither of the first two, and they shipped:
+ * +77_529 packed B / +3 entries on the built surface (the brief's 81_071 also
+ * counted TD-414/TD-439's rebuilt bytes), the ceiling red by 73_348 B, CI
+ * red at bats case 130. The ledger's staging method never saw them, because it stages
+ * COMPILED artifacts and never runs the copy step — see `BR-101 MEASURED LAST`.
+ *
+ * TWO SURFACES, ONE RULE, ONE AUTHORITY. The SHELL is the authoritative
+ * spelling of the contract: the BR-101 loop in `copy-templates.sh` prunes a
+ * top-level basename matching `^td[0-9]+_` or ending `.csv`. `RESEARCH_ARTIFACT`
+ * below is a second spelling in JS, and the "agree on the boundary cases" test
+ * pins it to the shell on the names that separate the two — round 1's shell
+ * glob `td[0-9]*_*` (td, ONE digit, ANY run up to a `_`) took
+ * `td9legacy_notes.ts`, which the regex did not, and nothing red. Widen or
+ * narrow the shell and you MUST move the regex AND that table, then re-run the
+ * M3 mutation recorded in the BR-101 row. The tarball half reads the packlist
+ * (what a consumer installs);
+ * the on-disk half reads the staged dir (what the LIVE brain bundle carries,
+ * and what bats and the TD-373 guards look at). `files` negation in
+ * package.json was considered and NOT taken — it would protect the tarball
+ * only, cost packed bytes, and be a second copy of the rule (the row says why).
+ *
+ * RELATION, NOT COUNT (TD-443's shape): `toEqual([])` on the filtered list, so
+ * a regression PRINTS the offending paths rather than a bare number, and no
+ * re-blessing is needed when the brain gains or loses a script.
+ *
+ * The on-disk half is RED in a working tree whose `cli/dist` predates the
+ * prune (it reads the live bundle, which only the operator rebuilds); CI builds
+ * before it tests (`test.yml`, the cli-bats job), so there it is the green.
+ */
+const RESEARCH_ARTIFACT = /(^td\d+_)|(\.csv$)/;
+const VENDORED_SCRIPTS_PREFIX = "dist/brain-mcp-server/scripts/";
+
+/** The file name after the last `/` — the packlist is `/`-joined on every OS. */
+function packedBasename(p: string): string {
+  return p.slice(p.lastIndexOf("/") + 1);
+}
+
+describe("BR-101 — no research artifact ships from the vendored scripts/", () => {
+  it("packs no *.csv and no td<N>_ file under dist/brain-mcp-server/scripts/ — the tarball half", () => {
+    // Basename at ANY depth on purpose: the `find` is `-maxdepth 1` because
+    // TD-298 removed the only subdirectories, but a research corpus that
+    // arrives in a NEW subdirectory would ship untouched by all three rules —
+    // this half fires on it, and the fix is to widen the prune, not this test.
+    const stray = [...packedPaths()].filter(
+      (p) =>
+        p.startsWith(VENDORED_SCRIPTS_PREFIX) &&
+        RESEARCH_ARTIFACT.test(packedBasename(p)),
+    );
+    expect(
+      stray,
+      "research artifacts are in the published tarball again (BR-101). Every " +
+        "path listed is a `*.csv` or a `td<N>_` file under " +
+        "dist/brain-mcp-server/scripts/. The prune is the BR-101 loop " +
+        "in cli/scripts/copy-templates.sh (after TD-299's named list); if a " +
+        "path here does not match that loop, the shell and this regex have " +
+        "drifted apart — see `BR-101 MEASURED LAST` in this file.",
+    ).toEqual([]);
+  }, PACK_TIMEOUT_MS);
+
+  it("stages no *.csv and no td<N>_ file into cli/dist/brain-mcp-server/scripts/ — the on-disk half", () => {
+    const stagedScripts = join(
+      __dirname, "..", "..", "dist", "brain-mcp-server", "scripts",
+    );
+    if (!existsSync(stagedScripts)) {
+      // Same shape as bundleBuilt(): a clean checkout has no dist; CI always
+      // builds first. Skipping loudly beats a false red on a fresh clone.
+      console.warn(
+        "[tarball BR-101] skipped: cli/dist/brain-mcp-server/scripts absent " +
+          "— run `npm run build` in cli/ before this test.",
+      );
+      return;
+    }
+    const stray = readdirSync(stagedScripts).filter((name) =>
+      RESEARCH_ARTIFACT.test(name),
+    );
+    expect(
+      stray,
+      "research artifacts are on the STAGED surface (BR-101) — this is the " +
+        "live brain bundle, and what `npm pack` will ship. Either " +
+        "cli/dist predates the BR-101 prune (rebuild: `npm run build` in " +
+        "cli/ — operator-owned when this dist is the running brain) or the " +
+        "BR-101 loop in cli/scripts/copy-templates.sh no longer " +
+        "matches these names.",
+    ).toEqual([]);
+  });
+
+  it("still ships the one file the package READS from scripts/, and the precedent-shipped CLIs — the widening tripwire", () => {
+    // The inverse guard, TD-443's shape. A pattern widened to `*.ts` or `*`
+    // would take every survivor and BOTH halves above would stay GREEN.
+    //
+    // `render_brief_graph.template.html` is the ONE package-runtime file under
+    // scripts/: the compiled `dist/engine/components/edges/visualization-tool.js`
+    // ascends `../../../../scripts/` to read it (visualization-tool.ts, the
+    // `templatePath()` function), reached by `igris_brief_graph_render` and the
+    // `/visualize` skill. Losing it breaks graph rendering on every install.
+    //
+    // The three `.ts` are NOT runnable from the package — each imports
+    // `../src/*.js`, the bundle ships no `src/` and vendors no `tsx` — and ship
+    // by precedent (brief-type-vocabulary.md: "do not delete on sight"). A
+    // future brief that prunes that class retires these three names with a
+    // dated reason (test_standards convention 6) and keeps the template line.
+    const paths = packedPaths();
+    for (const name of [
+      "render_brief_graph.template.html",
+      "perception_extract_cli.ts",
+      "normalize_brief_types.ts",
+      "render_brief_graph.ts",
+    ]) {
+      const p = VENDORED_SCRIPTS_PREFIX + name;
+      expect(
+        paths.has(p),
+        `missing from the tarball: ${p} (BR-101). The research-artifact ` +
+          "prune in cli/scripts/copy-templates.sh matches `*.csv` and " +
+          "`^td[0-9]+_` ONLY; if this file is gone the pattern widened past " +
+          "that, or TD-299's named list gained a runtime name.",
+      ).toBe(true);
+    }
+  }, PACK_TIMEOUT_MS);
+
+  it("agrees with the shell prune on the boundary cases — the two spellings of one contract", () => {
+    // The shell loop in copy-templates.sh is the authority; this table is the
+    // three names that told round 1's glob apart from the contract, plus the
+    // one runtime survivor. `td9legacy_notes.ts` is the discriminator: digits
+    // NOT followed by `_` is not a research name (the glob pruned it; the
+    // contract keeps it). Change the shell and this table reds until the regex
+    // and the table move with it — the row's M3 mutation re-checks the rest.
+    const cases: Array<[string, boolean]> = [
+      ["td9legacy_notes.ts", false],
+      ["td12_probe.csv", true],
+      ["td7_probe.ts", true],
+      ["render_brief_graph.template.html", false],
+    ];
+    for (const [name, pruned] of cases) {
+      expect(
+        RESEARCH_ARTIFACT.test(name),
+        `RESEARCH_ARTIFACT disagrees with the shell prune on ${name}: the ` +
+          `contract says ${pruned ? "PRUNED" : "KEPT"} (BR-101, ` +
+          "copy-templates.sh `research_prefix` + `*.csv`).",
+      ).toBe(pruned);
+    }
+  });
+});

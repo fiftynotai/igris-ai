@@ -405,7 +405,11 @@ describe('edges handlers', () => {
         expect(() => db.exec(migration.sql)).not.toThrow();
       }
 
-      // FR-105 ships 3 indexes; FR-113 v2 migration adds the compound index.
+      // FR-105 ships 3 indexes; FR-113 v2 adds the compound index; BR-083 v4
+      // rebuilds the table and adds three more — the expression UNIQUE index
+      // that replaced the table-level constraint, plus one lookup index per
+      // qualifier. The EXACT-SET assertion is the point: a rebuild that
+      // forgets to recreate an index is exactly the failure this catches.
       const indexes = db
         .prepare(
           "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'entity_edges' AND name NOT LIKE 'sqlite_autoindex_%'",
@@ -415,8 +419,11 @@ describe('edges handlers', () => {
       expect(names).toEqual([
         'idx_edges_compound',
         'idx_edges_from',
+        'idx_edges_from_proj',
         'idx_edges_to',
+        'idx_edges_to_proj',
         'idx_edges_type',
+        'idx_edges_unique',
       ]);
     });
 

@@ -18,7 +18,7 @@
  * NOT clobber).
  */
 
-import { hostname } from "node:os";
+import { ensureMachineIdentity, readMachineIdentity } from "../lib/machine-identity.js";
 import {
   existsSync,
   mkdirSync,
@@ -158,22 +158,60 @@ function parseMode(content: string): string | null {
   return m ? m[1] : null;
 }
 
+/** Escape a caller-supplied label for literal use inside a RegExp. */
+function escapeForRegExp(literal: string): string {
+  return literal.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
- * Extract a labelled field from a handoff file's content. Tries the bold
- * `**Label:** value` form (single-line) used by the per-instance files.
- * Returns "" when absent — the digest carries an empty string rather than
- * null so the skill renders a stable shape.
+ * Extract a labelled field from a handoff file's content. Two surfaces, the
+ * inline one FIRST-WINS:
+ *
+ *   1. MACHINE — a single-line `**Label:** value` in the `## Status` block.
+ *      Both writers emit it: `/rest` SKILL.md §3's template and
+ *      `buildLiveFileContent` below.
+ *   2. HUMAN (TD-360 / D-360-b) — `## Label` alone on its line, whose value is
+ *      the first line beneath it that is non-empty, not `---`, and not itself a
+ *      `##` heading. This exists ONLY so handoffs written under the
+ *      heading-only template that shipped before TD-360 — the rows already
+ *      sitting in `session_files` — still resume; every writer from TD-360 on
+ *      emits surface 1, which wins whenever both are present.
+ *
+ * The fallback is bounded on both ends: only the FIRST matching heading is
+ * consulted, and the scan beneath it stops at the next `##` heading, so it can
+ * never reach into a later section. It returns one trimmed line — a multi-line
+ * prose section is truncated to its first line, which is why surface 1 (a value
+ * the writer has already collapsed onto one line) is the one to write.
+ *
+ * Returns "" when absent — the digest carries an empty string rather than null
+ * so the skill renders a stable shape.
  */
 function parseField(content: string, label: string): string {
   // TD-279: belt-and-suspenders — coerce so a non-string caller can never
   // hit `.match is not a function` (the read boundary already coerces).
   const text = typeof content === "string" ? content : String(content ?? "");
-  const re = new RegExp(
-    `^\\*\\*${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}:\\*\\*\\s*(.+?)\\s*$`,
-    "m",
+  const escaped = escapeForRegExp(label);
+
+  const inline = text.match(
+    new RegExp(`^\\*\\*${escaped}:\\*\\*\\s*(.+?)\\s*$`, "m"),
   );
-  const m = text.match(re);
-  return m ? m[1] : "";
+  if (inline) return inline[1];
+
+  const headingRe = new RegExp(`^##\\s+${escaped}\\s*$`);
+  const lines = text.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    if (!headingRe.test(lines[i])) continue;
+    for (let j = i + 1; j < lines.length; j++) {
+      const line = lines[j].trim();
+      if (line === "" || line === "---") continue;
+      if (line.startsWith("##")) break;
+      return line;
+    }
+    // The first matching heading is authoritative: nothing usable under it
+    // means the field is absent, not that a later heading should be tried.
+    break;
+  }
+  return "";
 }
 
 /**
@@ -203,9 +241,11 @@ function buildGatherDigest(
     string,
     ReturnType<typeof classifyInstanceLiveness>
   >();
+  // BR-100: one identity read per gather (pure).
+  const me = readMachineIdentity();
   for (const inst of instanceRows) {
     instanceById.set(inst.id, inst);
-    const liveness = classifyInstanceLiveness(inst);
+    const liveness = classifyInstanceLiveness(inst, me);
     livenessById.set(inst.id, liveness);
     if (liveness.status === "dead" || liveness.status === "dead_pid_reused") {
       deadIds.add(inst.id);
@@ -269,8 +309,12 @@ function buildGatherDigest(
       instance_id: chosen.instance_id,
       filename: chosen.filename,
       mode: parseMode(content),
-      // Resume fields: per-instance files carry these as bold labels. Try the
-      // common label spellings the awaken skill §5 / §7 write.
+      // Resume fields. `Resume Point` is the inline machine label in the
+      // `/rest` §3 template's `## Status` block; `Next Session Instructions`
+      // is that same template's PROSE heading, which resolves through
+      // parseField's D-360-b fallback — so a handoff written before TD-360
+      // still yields a resume point. Order is deliberate: the machine label
+      // first, the pre-TD-360 spelling second.
       resume_point:
         parseField(content, "Resume Point") ||
         parseField(content, "Next Session Instructions"),
@@ -290,17 +334,54 @@ function buildGatherDigest(
 }
 
 /**
+ * Collapse a possibly multi-line value onto ONE line for a `**Label:** value`
+ * machine line. `parseField`'s inline match is single-line, so a raw multi-line
+ * value would carry only its first line into the digest. Whitespace-only (or
+ * empty) collapses to `fallback` so the label is never emitted bare — the
+ * fallback is explicit at every call site because the right placeholder is the
+ * caller's decision, not this helper's.
+ */
+function collapseToLine(value: string, fallback: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  return collapsed.length > 0 ? collapsed : fallback;
+}
+
+/**
  * Build the LIVE per-instance file content for a FRESH register.
  *
- * Carries the §3.7 line shape the MAINTAINING contract pins — the phase-guard
- * fallback (`scripts/git-hooks/pre-commit`) and `/hunt` both grep these exact
- * bold labels:
- *   - `**Instance ID:** <id>`   (the per-instance keying)
- *   - `**Mode:** Active`        (flips to HUNT MODE once a hunt starts — §7)
- *   - `**Active Brief:** <brief|None>`  (the phase-guard + /hunt parse target)
- * `seedNextSteps` (from gather's chosen handoff) is appended as the resume
- * carry-forward (§3.7 step 2c). Empty seed → a `None yet` placeholder so the
- * label is always present (a stable shape for downstream parsers).
+ * The `## Status` block's bold labels are this file's machine surface. Each one
+ * below is carried because a NAMED consumer reads it — not on the theory that
+ * something downstream might (TD-360: the comment this replaced claimed "a
+ * stable shape for downstream parsers" for a `## Next Steps` heading that
+ * `parseField` could not read):
+ *   - `**Instance ID:** <id>` — the per-instance keying. Read by `/hunt`
+ *     step 7 (SKILL.md "Phase 1: INIT"; the file uses no `§` notation and its
+ *     §4 is State Transitions, which has no steps), `/rest` (§1 and §2.5) and
+ *     `/scan` ("Read the per-instance session file") to resolve this file's own
+ *     path. No CLI code parses it; the verb already knows the id.
+ *   - `**Mode:** Active` — the LIVE marker. `/hunt` step 7 flips it to
+ *     `HUNT MODE`, and `/scan` reads it back ("Current session mode
+ *     (Active/REST MODE)"). `/rest` does NOT read it: `Mode` occurs exactly
+ *     once in `core/skills/rest/SKILL.md`, inside its §3 WRITE template, so
+ *     `/rest` authors this label rather than expecting it. `parseMode` above
+ *     reads the `**Mode:**` line of the chosen HANDOFF row, which is this same
+ *     file only after `/rest` has re-authored it to `REST MODE`.
+ *   - `**Active Brief:** <brief|None>` — grepped by the pre-commit phase guard
+ *     (`scripts/git-hooks/pre-commit:224`, tier 2 of brief discovery) and
+ *     rewritten by `/hunt` step 7. No CLI code parses it.
+ *   - `**Next Steps:** <one line>` — parsed by `parseField` at the gather call
+ *     site into the digest's `handoff.next_steps`, which `/boot` §5 renders and
+ *     §4.4 hands back as the next `--seed-next-steps`. Same qualifier as
+ *     `**Mode:**` above: this LIVE writer's line reaches `handoff.next_steps`
+ *     only once the row is `state='rested'`, and on the normal path `/rest`
+ *     re-authors the whole `## Status` block from its own template first. The
+ *     tests reach it via `restTheRow`.
+ *
+ * `seedNextSteps` (from gather's chosen handoff) is the resume carry-forward
+ * (the §4.4 carry-forward) and appears TWICE by design: collapsed onto one bold line for
+ * the parser, and verbatim under the `## Next Steps` heading for the human,
+ * where it may run to several lines. An empty seed yields `None yet` in both,
+ * so both the label and the section are always present.
  */
 function buildLiveFileContent(
   instanceId: string,
@@ -315,6 +396,7 @@ function buildLiveFileContent(
     `**Instance ID:** ${instanceId}`,
     "**Mode:** Active",
     `**Active Brief:** ${activeBrief ?? "None"}`,
+    `**Next Steps:** ${collapseToLine(seedNextSteps, "None yet")}`,
     "",
     "## Next Steps",
     nextSteps,
@@ -360,19 +442,67 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
   let registration;
   try {
     const owner = resolveOwnerProcess();
-    const now = new Date().toISOString().replace("T", " ").substring(0, 19);
+    // BR-100: a writer mints `machine.id`; the hostname stays the label.
+    const me = ensureMachineIdentity();
+    const machineHostname = me.hostname;
+
+    // D-411-d — the `liveness_*` columns are a LAST-OBSERVED STAMP, never a
+    // source of truth. Every CLI-SIDE reader (`buildGatherDigest` here,
+    // `assess`, `instance`, and the /boot §4.1 display fed by gather's digest)
+    // re-derives liveness through `classifyInstanceLiveness` and ignores what
+    // is stored — and `runInstance`'s list action, the one that SPREADS THE DB
+    // ROW into its payload, additionally overwrites the three stamp keys with
+    // the derived values, so a downstream consumer naming `liveness_status`
+    // cannot resolve a stale one (round-2 review; it previously shipped both).
+    // The differentiator is the spread, NOT emitting a payload: `session
+    // gather` emits one too and its `crashed[]` entries carry `liveness_status`
+    // — but it builds an explicit literal from the DERIVED value, so it never
+    // had the leak. So the stamp is DERIVED through that same classifier,
+    // against the row about to be written, rather than hardcoded `'alive'`.
+    // Hardcoding is what let the 2026-08-21 row read `alive` while every CLI reader
+    // derived `dead` — a column and a classifier that disagree, only one of
+    // which is ever right.
+    //
+    // The CLI-side qualifier is load-bearing and NOT a hedge. `handleInstanceList`
+    // in `brain-mcp-server/src/tools/instances.ts` — behind the
+    // `igris_instance_list` MCP tool, called in the bodies of `/scan` §1.5 and
+    // `/ops` §3 and permitted in `/hunt`'s frontmatter — SELECTs this column
+    // and renders it verbatim into a `Liveness` table cell without ever
+    // calling the classifier (measured: zero occurrences of
+    // `classifyInstanceLiveness` in that file). Deriving the stamp here makes
+    // that surface correct at t=0 and no later: once the harness exits the row
+    // still reads `alive` while every CLI reader derives `dead`. That residual,
+    // and the second unconstrained writer beside it (`handleInstanceState`, behind
+    // `igris_instance_state`, which stores a caller-supplied `liveness_status`
+    // with no derivation), are TD-412's scope — deliberately untouched here.
+    //
+    // Cost note (/boot path, worst case): `resolveOwnerProcess` spends up to
+    // two `ps` calls (the tier-2 tree snapshot plus the owner's start time) and
+    // the classify below spends a third on its start-time comparison — three
+    // calls, 2s timeout each, every one of which degrades to `null` rather than
+    // throwing. So a pathological `ps` costs registration ~6s and still exits 0.
+    const liveness = classifyInstanceLiveness(
+      {
+        machine_hostname: machineHostname,
+        machine_id: me.machine_id,
+        owner_pid: owner ? owner.pid : null,
+        owner_started_at: owner ? owner.started_at : null,
+      },
+      me,
+    );
     registration = registerOrUpdateInstanceState({
       instance_id: opts.selfInstanceId,
-      machine_hostname: hostname(),
+      machine_hostname: machineHostname,
+      machine_id: me.machine_id,
       machine_os: process.platform,
       project_slug: slug,
       project_path: opts.projectPath ?? null,
       harness: caps.harness,
       owner_pid: owner ? owner.pid : null,
       owner_started_at: owner ? owner.started_at : null,
-      liveness_method: owner ? "pid_start_time" : "none",
-      liveness_status: owner ? "alive" : "unknown_no_metadata",
-      liveness_checked_at: now,
+      liveness_method: liveness.method,
+      liveness_status: liveness.status,
+      liveness_checked_at: liveness.checked_at,
     });
   } catch (err) {
     warn(

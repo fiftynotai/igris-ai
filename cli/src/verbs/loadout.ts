@@ -336,7 +336,8 @@ interface SkillsSurface {
 
 /**
  * FR-161 (FR-160 epic): one MCP target — a `type` + `method` (+ optional
- * `enabled`). `type` ∈ {claude,codex,gemini,opencode}, `method` is always
+ * `enabled`). `type` ranges over `mcpTargetTypes()` — every harness declaring an
+ * `mcp` block — and `method` is always
  * "merge". Mirrors one item of `$defs.mcp_surface.targets`. The `McpTargetType`
  * / `McpMethod` aliases (derived from the SEPARATE enums) keep the field types
  * tied to the same allowlist the validator enforces — the FR-162 write-path
@@ -1069,8 +1070,11 @@ export function validateSkillsSurfaceArray(skills: unknown): string | null {
  * FR-161 (FR-160 epic): validate one `surfaces.mcp_servers` block field-for-
  * field against `$defs.mcp_surface`. `additionalProperties:false` →
  * name/layer/scope/canonical/targets only; `name`+`canonical`+`targets`
- * required; `canonical.command` required; targets use the SEPARATE 4-harness
- * enum + the `merge` method const. Returns an error message, or null if valid.
+ * required; `canonical.command` required; targets use the SEPARATE mcp-target
+ * enum — `mcpTargetTypes()`, i.e. every harness declaring an `mcp` block (FR-217
+ * M5 deleted the former hardcoded `VALID_MCP_TARGET_TYPES` const; see the note
+ * at the top of this file) — plus the `merge` method const. Returns an error
+ * message, or null if valid.
  */
 export function validateMcpServersSurface(mcp: unknown): string | null {
   if (typeof mcp !== "object" || mcp === null || Array.isArray(mcp)) {
@@ -4670,7 +4674,7 @@ function runProjectMcp(opts: LoadoutOptions): number {
   const name = opts.name;
   if (opts.harness === undefined) {
     logError(
-      "loadout project-mcp: --harness <claude|codex|gemini|opencode> is required",
+      `loadout project-mcp: --harness is required; one of ${JSON.stringify(mcpTargetTypes())}`,
     );
     return 2;
   }
@@ -4720,7 +4724,8 @@ function runProjectMcp(opts: LoadoutOptions): number {
   }
 
   // FR-212d Phase 2: DELEGATE ENGINE is the default (the smoke gate is green).
-  // For the 4 DELEGATED harnesses (claude/codex/gemini/opencode) route per-row
+  // For the DELEGATED harnesses — `mcpTargetTypes()` minus the antigravity
+  // carve-out documented below — route per-row
   // placement to `add-mcp` (the LOCAL pinned binary, resolved inside the TS
   // delegate — NEVER a bare `npx`), then write the Igris-owned no-prompt GRANT.
   // Igris keeps canonical ownership: the launch spec (command/args/env — env as
@@ -4735,7 +4740,10 @@ function runProjectMcp(opts: LoadoutOptions): number {
   // ENTRY stays CUSTOM (the proven `mergeJsonConfig` at the correct `config/`
   // path via `mcpFacts('antigravity').configPath`) REGARDLESS of the engine — it
   // falls THROUGH to the custom merger body below. The grant is still written by
-  // the delegate path for the other 4; antigravity's own grant is a separate
+  // the delegate path for every harness that ROUTES through it — the same
+  // `mcpTargetTypes()` minus the antigravity carve-out named above, stated as
+  // the property because the count was written here as a bare "the other <N>",
+  // with the noun elided, and was wrong; antigravity's own grant is a separate
   // surface handled elsewhere (the install/remove paths). This is a
   // deterministic per-harness routing decision made BEFORE any tool call, NOT a
   // fallback-on-failure.
@@ -5306,6 +5314,34 @@ function runUnprojectMcp(opts: LoadoutOptions): number {
 }
 
 /**
+ * TD-408: resolve the claude `.claude/settings.json` target for a hook
+ * projection verb, or log the containment refusal and return null.
+ *
+ * Both hook verbs default this root to `process.cwd()`, and both then
+ * tmp-and-rename onto it — `.claude/settings.json` is TRACKED in this checkout,
+ * so under a test runner standing in the real repo that is the TD-406 write
+ * verbatim. `projectSettingsPath` refuses it; this turns the refusal into the
+ * verbs' exit-code contract (1 = write failure) rather than a silent skip.
+ *
+ * Only reached when the caller passed no `--hook-settings-path`; an explicit
+ * target is the caller naming its own file and is not cwd-derived.
+ */
+function containedClaudeSettingsPath(
+  verb: string,
+  projectRoot: string,
+): string | null {
+  const decided = projectSettingsPath(projectRoot);
+  if (decided.allowed) return decided.path;
+  logError(
+    `loadout ${verb}: refusing to write .claude/settings.json under ${projectRoot} — ` +
+      `a canonical repo write is not contained (${decided.refusal}; ` +
+      `IGRIS_REPO_DIR=${decided.declaredRoot ?? "<unset>"}). Declare IGRIS_REPO_DIR, ` +
+      `or pass an explicit settings path.`,
+  );
+  return null;
+}
+
+/**
  * FR-203: `igris loadout unproject-hook` — the INVERSE of `project-hook`.
  * Removes ONE hook block's GROUP from ONE harness's native hook surface:
  *
@@ -5357,10 +5393,19 @@ function runUnprojectHook(opts: LoadoutOptions): number {
 
   // The personal hook command path is provenance-derived from (name, event).
   const command = personalHookCommandPath(name, event);
-  const settingsPath =
-    harness === "antigravity"
-      ? opts.hookSettingsPath ?? antigravityHooksConfigPath()
-      : opts.hookSettingsPath ?? projectSettingsPath(opts.projectRoot ?? process.cwd());
+  let settingsPath: string;
+  if (harness === "antigravity") {
+    settingsPath = opts.hookSettingsPath ?? antigravityHooksConfigPath();
+  } else if (opts.hookSettingsPath !== undefined) {
+    settingsPath = opts.hookSettingsPath;
+  } else {
+    const contained = containedClaudeSettingsPath(
+      "unproject-hook",
+      opts.projectRoot ?? process.cwd(),
+    );
+    if (contained === null) return 1;
+    settingsPath = contained;
+  }
 
   if (!existsSync(settingsPath)) {
     // Nothing to un-merge — idempotent success.
@@ -6268,8 +6313,17 @@ function runProjectHook(opts: LoadoutOptions): number {
   }
 
   // --- claude: config-merge into .claude/settings.json. --------------------
-  const settingsPath =
-    opts.hookSettingsPath ?? projectSettingsPath(projectRoot);
+  // TD-408: `projectRoot` above is `opts.projectRoot ?? process.cwd()`, so this
+  // site is cwd-derived exactly like unproject-hook's — the local variable is
+  // what made it read as "already resolved" and get classified read-only twice.
+  let settingsPath: string;
+  if (opts.hookSettingsPath !== undefined) {
+    settingsPath = opts.hookSettingsPath;
+  } else {
+    const contained = containedClaudeSettingsPath("project-hook", projectRoot);
+    if (contained === null) return 1;
+    settingsPath = contained;
+  }
   return mergeHookGroupIntoFile(name, settingsPath, block, "claude");
 }
 

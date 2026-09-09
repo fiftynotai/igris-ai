@@ -83,6 +83,18 @@ function makeDummyInstance(
 ): CognitionInstance<DummyCtx, DummyCandidate> {
   return {
     id: 'dummy',
+    // TD-327: `health` is REQUIRED on the contract. Overridable via `overrides`
+    // (spread below) so a case can vary it.
+    health: {
+      component: 'cognition.dummy',
+      event_prefix: 'cognition.dummy',
+      gate_keys: ['cognition.dummy.enabled'],
+      gate_default: false,
+      driver: 'manual',
+      driver_ref: null,
+      output: 'nothing (test dummy)',
+      produced: 'nothing (test dummy)',
+    },
     buildContext: async () => ({ bytes: 4096 }),
     promptBuilder: (ctx) => ({ system: 'extract', user: `ctx bytes=${ctx.bytes}` }),
     parseResponse: (raw) => {
@@ -308,6 +320,22 @@ describe('runExtractor — outcomes', () => {
     expect(r.fail_reason).toBe('non_zero_exit');
   });
 
+  it('API ERROR (backend-classified, TD-447) → run_failed payload {reason, detail} and NO response_bytes — a PIN of behaviour the engine already had, not a red-first', async () => {
+    const inst = makeDummyInstance();
+    const detail =
+      'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com. (http 529)';
+    const r = await runExtractor(db, inst, {}, fakeDeps({ ok: false, text: '', fail_reason: 'api_error', detail }));
+    expect(r.outcome).toBe('failed');
+    expect(r.fail_reason).toBe('api_error');
+    expect(names(db)).toEqual([eventName('dummy', 'run_started'), eventName('dummy', 'run_failed')]);
+    // AC-2: read the ROW, not the return value. `response_bytes` belongs to the
+    // parse_error arm only and must be absent here.
+    const payload = JSON.parse(events(db)[1].payload) as Record<string, unknown>;
+    expect(payload.reason).toBe('api_error');
+    expect(payload.detail).toBe(detail);
+    expect('response_bytes' in payload).toBe(false);
+  });
+
   it('PARSE ERROR (opt-out instance): a malformed response that parses to [] → run_failed reason=parse_error (TD-294)', async () => {
     const inst = makeDummyInstance();
     // ok response but the body is not a JSON array → parseResponse returns [].
@@ -489,6 +517,19 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
     const persisted: string[] = [];
     const novelInstance: CognitionInstance<{ bytes: number }, { title: string }> = {
       id: 'roadmap_drift', // a NEW id the engine has never heard of
+      // TD-327: the REQUIRED observability declaration — part of the 4-slot
+      // cost of authoring an instance file, and the reason a new instance shows
+      // up in `igris cognition health` with no edit to any surface.
+      health: {
+        component: 'cognition.roadmap_drift',
+        event_prefix: 'cognition.roadmap_drift',
+        gate_keys: ['cognition.roadmap_drift.enabled'],
+        gate_default: false,
+        driver: 'manual',
+        driver_ref: null,
+        output: "suggestions[source_module='roadmap_drift']",
+        produced: "suggestions[source_module='roadmap_drift']",
+      },
       buildContext: async () => ({ bytes: 5000 }),
       promptBuilder: (ctx) => ({ system: 'watch the roadmap', user: `digest ${ctx.bytes}` }),
       parseResponse: (raw) => (JSON.parse(raw) as { title: string }[]),

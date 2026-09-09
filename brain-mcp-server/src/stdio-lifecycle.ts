@@ -30,13 +30,22 @@ import * as os from 'node:os';
 /**
  * Directory holding one pidfile per live stdio brain-mcp-server instance.
  *
- * Resolved at call time (not module load) so test harnesses can sandbox the
- * registry via `IGRIS_PIDS_DIR` — the same env-override pattern `db.ts` uses
- * for `IGRIS_DB_PATH`. Defaults to `~/.igris/brain-mcp-server.pids/`.
+ * Resolved at call time (not module load). Precedence mirrors the middle tier
+ * of `db.ts#resolveDbPath` (TD-426); empty strings fall through:
+ *
+ *   1. `IGRIS_PIDS_DIR`   — explicit registry override
+ *   2. `IGRIS_BRAIN_DIR`  — sandboxed brain dir → `<dir>/brain-mcp-server.pids`
+ *                           (a sandboxed boot must not write pidfiles into the
+ *                           real ~/.igris — the build smoke guard did)
+ *   3. default            — `~/.igris/brain-mcp-server.pids/`
  */
 export function pidsDir(): string {
   const override = process.env.IGRIS_PIDS_DIR;
   if (override && override.length > 0) return override;
+  const brainDir = process.env.IGRIS_BRAIN_DIR;
+  if (brainDir && brainDir.length > 0) {
+    return path.join(brainDir, 'brain-mcp-server.pids');
+  }
   return path.join(os.homedir(), '.igris', 'brain-mcp-server.pids');
 }
 

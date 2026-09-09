@@ -152,3 +152,72 @@ describe('makeRunEmitter — one-terminal-event-per-run invariant (TD-074)', () 
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-100 — the machine-identity stamp, column-tolerant
+// ---------------------------------------------------------------------------
+
+describe('BR-100 — insertEventLogRow stamps machine_id beside machine_hostname', () => {
+  let sandbox: string;
+  let savedBrainDir: string | undefined;
+
+  beforeEach(async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const { tmpdir } = await import('node:os');
+    sandbox = mkdtempSync(join(tmpdir(), 'br100-lc-'));
+    // The identity writer honours IGRIS_BRAIN_DIR (a WRITE seam) — armed and asserted.
+    savedBrainDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = sandbox;
+    expect(process.env.IGRIS_BRAIN_DIR).toBe(sandbox);
+    writeFileSync(join(sandbox, 'config.json'), '{}\n');
+  });
+
+  afterEach(async () => {
+    if (savedBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
+    else process.env.IGRIS_BRAIN_DIR = savedBrainDir;
+    (await import('node:fs')).rmSync(sandbox, { recursive: true, force: true });
+  });
+
+  it('with the column: machine_id = the minted config.json id, machine_hostname = the live hostname', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const os = await import('node:os');
+    const db = makeEventLogDb();
+    db.exec('ALTER TABLE event_log ADD COLUMN machine_id TEXT');
+    writeExtractorEvent(db, 'synapse', 'run_started', { project: 'p' });
+    const cfg = JSON.parse(readFileSync(join(sandbox, 'config.json'), 'utf-8')) as { machine: { id: string } };
+    expect(cfg.machine.id).toMatch(/^[0-9a-f-]{36}$/);
+    const row = db.prepare('SELECT machine_hostname, machine_id FROM event_log').get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: os.hostname(), machine_id: cfg.machine.id });
+    db.close();
+  });
+
+  it('WITHOUT the column (an un-migrated brain, or the detached extract CLI before the engine migrated): the row is still written, no stderr fallback', () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const db = makeEventLogDb();
+    writeExtractorEvent(db, 'synapse', 'run_started', {});
+    expect(rows(db)).toHaveLength(1);
+    expect(stderrSpy).not.toHaveBeenCalled();
+    stderrSpy.mockRestore();
+    db.close();
+  });
+
+  it('the column memo is per HANDLE: a v1 DB and a v2 DB written in the same process each get the right INSERT', () => {
+    const v1 = makeEventLogDb();
+    const v2 = makeEventLogDb();
+    v2.exec('ALTER TABLE event_log ADD COLUMN machine_id TEXT');
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    writeExtractorEvent(v2, 'a', 'run_started', {});
+    writeExtractorEvent(v1, 'a', 'run_started', {});
+    writeExtractorEvent(v2, 'a', 'run_succeeded', {});
+    expect(stderrSpy).not.toHaveBeenCalled();
+    expect(rows(v1)).toHaveLength(1);
+    const stamped = v2.prepare('SELECT machine_id FROM event_log').all() as { machine_id: string | null }[];
+    expect(stamped).toHaveLength(2);
+    expect(stamped.every((r) => typeof r.machine_id === 'string' && r.machine_id.length === 36)).toBe(true);
+    stderrSpy.mockRestore();
+    v1.close();
+    v2.close();
+  });
+});

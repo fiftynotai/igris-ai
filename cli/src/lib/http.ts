@@ -1,7 +1,8 @@
 /**
  * Shared HTTPS GET helper for GitHub API calls. Consumed by:
  *   - cli/src/lib/channel.ts (release-tag fetcher)
- *   - cli/src/lib/drift/brain-core-stale.ts (commits-API head-SHA fetcher)
+ *   - cli/src/lib/channel.ts (commits-API ref head-SHA fetcher — moved here
+ *     from lib/drift/brain-core-stale.ts in TD-301, 2026-09-08)
  *
  * Origin: extracted in TD-132 from channel.ts (TD-127 seam) so brain-core-
  * stale.ts can stop maintaining a divergent helper. Both call sites now

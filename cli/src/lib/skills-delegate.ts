@@ -7,7 +7,7 @@
  * tool didn't cover the harnesses, and reverted. The README now claims coverage,
  * but the plan does NOT trust the README — this module ships defaulting to
  * `"custom"` so prod behavior is unchanged. A later child flips the default
- * ONLY after the 5-harness smoke gate is green. There is NO custom-engine
+ * ONLY after the FR-212d smoke gate is green. There is NO custom-engine
  * fallback INSIDE the delegate path: when the flag is `delegate`, the delegate
  * is authoritative (a tool failure is an observable FAIL, never a silent
  * fall-through to the custom loop).
@@ -23,12 +23,14 @@
  * <name>` are CONFIRMED with these adjustments —
  *   - `skills add <ABS_LOCAL_DIR> -g -a <agent...> -y` — a LOCAL absolute path is
  *     accepted ("Local path validated"); `-a` takes SPACE-SEPARATED agent ids;
- *     `-y` skips the scope prompt. The 6 Igris harness agent ids are
+ *     `-y` skips the scope prompt. The Igris harness agent ids are
  *     `claude-code codex gemini-cli opencode antigravity cursor` (NOTE: `gemini-cli`,
- *     NOT `gemini` — `gemini` is rejected as an invalid agent).
+ *     NOT `gemini` — `gemini` is rejected as an invalid agent). That list is a
+ *     PROBE RECORD, not the runtime source: `skillAgentIds()` derives the set
+ *     from the descriptor's `agent_id` fields.
  *   - default placement is symlink/universal: claude-code → `~/.claude/skills`,
- *     the other 4 read the shared universal store `~/.agents/skills`. `--copy`
- *     forces a copy instead of a symlink.
+ *     every OTHER skills-target harness reads the shared universal store
+ *     `~/.agents/skills`. `--copy` forces a copy instead of a symlink.
  *   - `skills remove <name> -g --all -y` — removes across all agents, leaving
  *     zero dangling links (verified). This is the un-projection inverse.
  *   - the drift re-check (FR-212a check_harness_drift `verify_skills` delegate
@@ -52,7 +54,7 @@ export type SkillsEngine = "delegate" | "custom";
 
 /**
  * The active skills placement engine. FR-212d Phase 2 (the #832 chokepoint
- * cleared — the 5-harness smoke gate is green) flipped the default to
+ * cleared — the FR-212d smoke gate is green) flipped the default to
  * `"delegate"` AND deleted the custom inline symlink/wrapper loop, so the
  * `skills` CLI is now the ONLY skills-projection engine. There is NO escape
  * hatch: the `IGRIS_SKILLS_ENGINE` env read is gone (operator decision — the

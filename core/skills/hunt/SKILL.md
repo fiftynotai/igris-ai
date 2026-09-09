@@ -76,7 +76,10 @@ Execute the complete implementation workflow for a brief, from planning through 
 
 ### Phase 1: INIT
 
-1. Load brief via `igris_brief_get` (MCP), fallback to cache at `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
+0. **Ceremony start (FR-268):** run `igris ceremony start --name hunt-init --project {project} --brief {BRIEF_ID} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed start of INIT; never blocks. The matching stop follows the Instance State line below.
+1. Load brief via `igris_brief_get` with `project` (the current project slug) and
+   `brief_id` (`$ARGUMENTS`) — both are REQUIRED — falling back to cache at
+   `~/.igris/projects/{project}/briefs/` matching `$ARGUMENTS`
 2. Read brief content
 2.5. **Detect resume + capture recorded phase (FR-189):**
    Read the brief's `## Workflow State` → `**Phase:**` field into RECORDED_PHASE.
@@ -127,8 +130,9 @@ Execute the complete implementation workflow for a brief, from planning through 
          (reclaimable claim) → display: "BR-XXX's claim by {held_by} looks reclaimable
          ({reason}). Reclaim? [y/N]" — WAIT for
          explicit operator input. On **N / anything but y** → HARD STOP, end the
-         skill. On **y** → call `igris_brief_release` with the STALE `held_by`
-         instance_id, then call `igris_brief_claim` again with THIS instance's
+         skill. On **y** → call `igris_brief_release` with `project`, `brief_id`
+         and the STALE `held_by` instance_id, then call `igris_brief_claim` again
+         with the same `project` / `brief_id` and THIS instance's
          `instance_id`; if that second claim returns `claimed: true`, proceed to
          step 7. (If it returns `claimed: false` again — a race where another
          instance grabbed it in the gap — HARD STOP with the live-claim message.)
@@ -178,6 +182,8 @@ Enter the state machine at {RECORDED_PHASE}.
 
 **Instance State:** If Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, run `igris instance state --project {project} --instance-id {instance_id} --current-brief {brief_id} --current-phase {RECORDED_PHASE} --current-task "loading brief" (on a resumed hunt, `--current-task "resuming at {RECORDED_PHASE}"`) --lease-minutes 120`. See "Instance State and Work Lease" below.
 
+**Ceremony stop (FR-268):** run `igris ceremony stop --name hunt-init --project {project} --brief {BRIEF_ID} --instance-id {instance_id} 2>/dev/null || true` — the brain-timed end of INIT (the brain computes the duration from the step-0 start it pairs with); never blocks. This closes the INIT bracket before the phase machine is entered.
+
 **Phase-machine entry (FR-189 — resume-aware):**
 INIT above always ran (re-claim, session update, status sync, heartbeat). Now
 enter the state machine at RECORDED_PHASE instead of always falling through to
@@ -219,6 +225,7 @@ light confirm.
    - instance_id: {Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`}
    - agent: "architect"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
@@ -308,6 +315,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "architect"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "PLANNING"
      - result: {brief summary of architect's output}
@@ -333,6 +343,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "forger"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
@@ -390,6 +401,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "forger"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "BUILDING"
      - result: {brief summary of forger's output}
@@ -406,6 +420,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
@@ -430,6 +445,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "stop" (if PASS) or "error" (if FAIL)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - result: "PASS" or "FAIL" with details
@@ -455,16 +473,37 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "retry"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
      Skip silently if unavailable.
+   - **Emit agent event (start):** Call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "mender"
+     - event_type: "start"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     Skip silently if unavailable. Mender is a role the Agent Log names, so it
+     needs its own start/stop pair like every other agent (FR-267).
    - Delegate to mender agent for diagnosis. Include the sentinel failure output
      verbatim and instruct mender that its first diagnostic action MUST be
      `igris_error_lookup` with the canonical error message before parsing,
      grepping, hypothesizing, or inspecting files. Require mender to return an
      `Error Memory Handoff` block containing `Canonical Error Message`, `Root
      Cause`, and `Proposed Solution`.
+   - **Emit agent event (stop or error):** After mender returns, call `igris_agent_event` with:
+     - instance_id: {Instance ID}
+     - agent: "mender"
+     - event_type: "stop" (if it returned the handoff) or "error" (if it did not)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
+     - brief_id: {brief ID}
+     - phase: "TESTING"
+     - result: {the handoff's Root Cause + Proposed Solution, one line}
+     Skip silently if unavailable.
    - Return to BUILDING with fix instructions
 
 8. **If FAIL and Retry Count >= 3:**
@@ -475,12 +514,51 @@ Agent tool parameters:
 
 ### Phase 5: REVIEWING
 
+0. **Acceptance-criteria reconciliation (TD-325).** Before warden runs, resolve
+   the brief's acceptance criteria against what was actually built. Run the
+   shared parser on the brief's stored content:
+
+   ```bash
+   bash <parser> --brief-id {BRIEF_ID} --guidance <brief-content-file>
+   ```
+
+   The parser is `core/scripts/brief_ac_check.sh` in the project checkout, or
+   `~/.igris/core/scripts/brief_ac_check.sh` at runtime. If neither exists, skip
+   this step silently and continue.
+
+   Read the `VERDICT=` field of its first output line:
+   - `PASS` / `NO_AC` / `NO_ITEMS` / `DEGRADED` — nothing to do, continue.
+   - `FAIL` — resolve every criterion it names, **one at a time**, before
+     REVIEWING proceeds:
+     - **Tick it (`- [x]`) ONLY with cited evidence.** The evidence is an
+       artifact: a test name, a `file:line`, a measured figure, a commit sha.
+       Record it on an `EVIDENCE:` line in the Agent Log beside the tick.
+       A tick you cannot evidence invents the record, which is the move TD-311
+       forbids — it is worse than leaving the box open.
+     - **Otherwise defer it explicitly**, in the brief itself:
+       `- [~] **DEFERRED: <why it is unmet>** -> {FOLLOW_UP_BRIEF_ID}`
+       The follow-up brief is required. A deferral with nowhere to go is
+       indistinguishable from one that was forgotten.
+     - **If you can neither evidence nor honestly defer it, stop and ask the
+       operator.** Do not guess, and do not tick to make the verdict green.
+
+   Write the resolved criteria back with `igris_brief_update`, passing `project`
+   (the current project slug) and `brief_id` (`$ARGUMENTS`) alongside the updated
+   content — both are REQUIRED, and a call omitting either is rejected at the
+   gateway (BR-080). Doing this here rather than at COMMITTING is deliberate:
+   warden then reviews the ticks, and the Phase 7 gate becomes a confirmation
+   instead of a surprise. **If this call is rejected, STOP and report it** — the
+   ticks stay unwritten, and the TD-325 commit-msg gate reads the brain record,
+   not your working notes, so the closing commit would be refused with no
+   indication that the resolution work was ever done.
+
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
+   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
@@ -504,6 +582,14 @@ Agent tool parameters:
   4. No security vulnerabilities.
   5. Tests are adequate.
   6. Documentation is present where required.
+  7. ACCEPTANCE CRITERIA (TD-325). No regex can catch a false tick, so this is
+     yours: for every criterion ticked during this hunt, is there a NAMED
+     artifact in the diff, the tests or the hunt log that establishes it — a
+     test name, a file:line, a measured figure, a commit? REJECT a tick whose
+     evidence you cannot locate; an unevidenced tick invents the record, which
+     is the move TD-311 forbids, and it is worse than an open box. And for
+     every `- [~]`, REJECT if it carries no DEFERRED reason or names no
+     follow-up brief.
 
   Output: APPROVE or REJECT with feedback."
 ```
@@ -513,6 +599,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "stop" (if APPROVE) or "error" (if REJECT)
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - result: "APPROVE" or "REJECT" with feedback
@@ -531,6 +620,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "retry"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - metadata: '{"attempt": {retry_count}, "reason": "review rejection"}'
@@ -570,6 +660,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "start"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
      - brief_id: {current brief ID}
      - phase: "DOCUMENTING"
      Skip silently if MCP unavailable.
@@ -604,6 +695,9 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "document"
      - event_type: "stop"
+     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
+     - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "DOCUMENTING"
      - result: {brief summary of documentation updates, or "Skipped - no docs needed"}
@@ -613,6 +707,27 @@ Agent tool parameters:
    - Proceed to COMMITTING
 
 ### Phase 7: COMMITTING
+
+0. **Acceptance-criteria gate (TD-325) — the confirmation.** Re-run the parser
+   from Phase 5 step 0 on the brief's current stored content. On `FAIL`, do NOT
+   commit: return to the Phase 5 step 0 resolution loop (tick with cited
+   evidence, or defer with a reason and a follow-up brief), then re-run.
+
+   This is a confirmation, not a discovery: Phase 5 step 0 should already have
+   resolved everything. If it fires here, something changed the brief between
+   REVIEWING and COMMITTING, and that is worth knowing before the close.
+
+   The commit below carries a `closes #{BRIEF_ID}` footer, so the commit-msg
+   hook enforces the same verdict mechanically. Reaching that hook by surprise
+   means this step was skipped. `IGRIS_BYPASS_AC_GATE=1` exists for a genuine
+   emergency and is one-shot — it is never the way to get past an open box.
+
+   The same footer triggers the hook's SECOND check (FR-267, agent-event
+   coverage): every role the Agent Log names must have at least one recorded
+   agent event (an `agent_events` row for this brief), or the close is refused
+   with the missing roles named. Emit the missing event before committing;
+   `IGRIS_BYPASS_EVENT_GATE=1` is the one-shot emergency hatch, never the
+   routine path.
 
 1. Update brief: Phase = COMMITTING, Active Agent = none
 2. Run git commands:
@@ -632,7 +747,12 @@ EOF
 
 3. Verify commit succeeded
 4. Update brief: Status = "Done", Completed = today
-5. Call `igris_brief_sync` with status="Done", phase="COMMITTING".
+5. Call `igris_brief_sync` with the SAME `project`, `brief_id`, `brief_type`,
+   `title`, `priority` and `effort` you passed in Phase 1 step 8, plus
+   status="Done", phase="COMMITTING". `project`, `brief_id`, `title` and
+   `status` are REQUIRED — a call omitting any of them is rejected at the
+   gateway (BR-080). Passing the unchanged fields is not redundant: this is an
+   upsert, and a field you omit is written as NULL over the existing value.
    **If brain MCP is NOT available or the call fails:**
    - Display: `WARNING: Brain sync skipped for {BRIEF_ID} (status=Done) — MCP unavailable. Queued locally for next /boot or /sync data.`
    - Append a JSON line to `~/.igris/projects/{project}/sync_queue.jsonl`:
@@ -640,6 +760,16 @@ EOF
      {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMMITTING"}
      ```
    - Do NOT block the hunt workflow — continue to COMPLETE.
+
+   **The brief file on disk is a projection (TD-414).** The file under
+   `~/.igris/projects/{project}/briefs/` is the brain's `brief_files` row
+   projected to disk. A status sync carries no content and never overwrites a
+   local file that is newer than the brain copy — but the acceptance-criteria
+   gate above and the commit-msg gate read the BRAIN record, so a disk-only
+   edit is invisible to both. If you edited the file on disk, push it FIRST:
+   call `igris_brief_update` with `project`, `brief_id` and the file's text as `content`, then sync.
+   A sync that answers `not ruling on acceptance criteria` means that push was
+   skipped — push, then sync again.
 5.5. **Release the brief claim (FR-127):** Call `igris_brief_release` with
    `project` = current project slug, `brief_id` = the brief ID, and
    `instance_id` = the stored Instance ID. The brief is Done — its claim must
@@ -650,7 +780,9 @@ EOF
 ### Phase 8: COMPLETE
 
 1. Update brief: Phase = COMPLETE
-2. Call `igris_brief_sync` with status="Done" (unchanged) and phase="COMPLETE".
+2. Call `igris_brief_sync` with the same full field set as Phase 7 step 5
+   (`project`, `brief_id`, `brief_type`, `title`, `priority`, `effort`), with
+   status="Done" (unchanged) and phase="COMPLETE".
    This is the terminal-phase flip — Phase 7 synced phase="COMMITTING"; this
    step lands the canonical phase=COMPLETE in the brain DB so the
    status↔phase↔git invariant holds (TD-257: the C1 contradiction the
@@ -713,14 +845,31 @@ This ensures other machines can see that the work is still reserved without pret
 
 ## Agent Event Emission (Mandatory When Available)
 
-On each agent invocation, you MUST emit `igris_agent_event` calls if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
+On each agent invocation, you MUST emit `igris_agent_event` calls — each naming `instance_id`, `agent`, `event_type` and `model_requested` — if brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`.
 
-**Pattern for every agent:**
+**Pattern for every agent.** Every call below passes `instance_id` (from the
+per-instance session file), `agent` (the role being invoked) and
+`model_requested` (the model you chose for that role, or
+`inherit:<your own model id>` — an opaque string, never a guess about how the
+harness resolves it) in addition to the fields named — all FOUR of
+`instance_id`, `agent`, `event_type` and `model_requested` are REQUIRED, and a
+call omitting any is rejected at the gateway (BR-080, FR-267):
 
 1. **Before invoking agent:** Call `igris_agent_event` with event_type="start"
-2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary
+2. **After agent returns successfully:** Call `igris_agent_event` with event_type="stop" and result summary; add `model_resolved` and the four token counts (`input_tokens`, `output_tokens`, `cache_read`, `cache_create`) only when the harness reports them — omit them otherwise, never pass 0; and `metadata` as `{"tool_calls": N, "total_tokens": T}` only when the harness reports them (omit the key otherwise, never 0 — `igris kpi` reads `metadata.tool_calls` for KPI 6 and stays NULL until rows carry it, FR-268)
 3. **On agent failure:** Call `igris_agent_event` with event_type="error" and error_message
 4. **On retry:** Call `igris_agent_event` with event_type="retry" and metadata with attempt count and reason
+
+**Every invocation is a row.** A resumed, re-prompted or re-run agent is a NEW
+invocation: emit `start` before it and `stop`/`error` after it, every time.
+The brain assigns `round` and computes duration from its own clock — never
+pass either (`duration_ms` is not a tool argument any more; a call carrying it
+is rejected).
+
+**The gate.** Every role you name in the Agent Log must have at least one
+recorded event, or the closing commit is refused by the `commit-msg` hook
+(`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past it). The rule
+reads the log you wrote, so a phase you legitimately skipped demands nothing.
 
 All agent event emissions are **fire-and-forget**. If the MCP call fails, skip silently. Agent events must NEVER block or delay the hunt workflow.
 
@@ -733,7 +882,10 @@ All agent event emissions are **fire-and-forget**. If the MCP call fails, skip s
 
 ## Agent Log Format
 
-Maintain in brief file under Workflow State:
+Maintain in brief file under Workflow State. The disk file is a projection of
+the brain's `brief_files` row (TD-414): a later brain-side content write
+replaces a local edit, so write the log back first —
+call `igris_brief_update` with `project`, `brief_id` and the whole file as `content` before any brain-side content write.
 
 ```markdown
 ### Agent Log

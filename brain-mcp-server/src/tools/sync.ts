@@ -7,7 +7,7 @@
  *
  * Conflict resolution uses last-write-wins (LWW) based on timestamps,
  * with special merge strategies for tags (union) and counts (max).
- * Append-only tables (sessions, agent_metrics) use composite key
+ * Append-only tables (sessions, agent_metrics, agent_events) use composite key
  * deduplication instead of LWW.
  *
  * Tools:
@@ -26,6 +26,7 @@ import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { basename, isAbsolute, sep } from 'node:path';
 import { getDb } from '../db.js';
+import { normalizeSyncRow } from './brief-normalize.js';
 import { errMsg } from '../engine/helpers.js';
 import { embedNullLearnings } from '../utils/learning-embed.js';
 import { deleteEmbedding, isVectorSearchAvailable } from '../utils/vector-search.js';
@@ -80,6 +81,31 @@ interface SyncTableConfig {
    * appear in `columns` (asserted by the parity test).
    */
   redactCols?: string[];
+  /**
+   * BR-090: the syncKey this table used BEFORE {@link qualifierCols} were added
+   * to it. Declaring it opts the table into the migration-aware reconciliation
+   * in {@link mergeRows}; a table that has never widened its key omits both
+   * fields and is completely unaffected.
+   *
+   * WHY THIS EXISTS. A syncKey is an identity claim, so widening one silently
+   * redefines identity for every replica that has not migrated. The same
+   * logical row, keyed narrowly on one side and widely on the other, does not
+   * match — `mergeRows` takes the INSERT branch and the receiver ends up
+   * holding BOTH copies. `strategy: 'append'` never removes the older one.
+   *
+   * MUST be a strict prefix-in-spirit of `syncKey`: every entry here also
+   * appears in `syncKey`, and `syncKey` minus `qualifierCols` must equal this
+   * array as a SET. Asserted by `sync-legacy-key-parity.test.ts`, not trusted
+   * to this sentence.
+   */
+  legacySyncKey?: string[];
+  /**
+   * BR-090: the NULLABLE columns added to `syncKey` when it widened. The
+   * reconciliation only ever adopts an attribution onto a stored row whose
+   * qualifiers are ALL NULL, so it can never overwrite one attribution with a
+   * different one. Every entry MUST appear in both `syncKey` and `columns`.
+   */
+  qualifierCols?: string[];
 }
 
 function tableColumns(db: Database.Database, name: string): Set<string> {
@@ -219,6 +245,24 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'instance_id', 'agent', 'event_type', 'phase', 'brief_id',
       'duration_ms', 'input_tokens', 'output_tokens', 'cache_read', 'cache_create',
       'result', 'error_message', 'metadata', 'created_at',
+      // FR-267 hunt-cost record (instances migration v3); syncKey unchanged.
+      // A remote without v3 fails these rows per-row (HTTP 207) and the local
+      // watermark is held (BR-097) — deploy the remote first.
+      'model_requested', 'model_resolved', 'round', 'project',
+    ],
+  },
+  {
+    table: 'ceremony_events',
+    // FR-268 (2026-08-27). Hostname is in the key so two machines' same-second
+    // rows never collide. A remote without instances v4 SKIPS the whole table
+    // (named in `skipped[]`, HTTP 207) and the local watermark is held
+    // (BR-097) — deploy first; the held rows travel on the next push.
+    syncKey: ['machine_hostname', 'project', 'ceremony', 'event_type', 'created_at'],
+    timestampCol: 'created_at',
+    strategy: 'append',
+    columns: [
+      'project', 'ceremony', 'event_type', 'machine_hostname', 'instance_id', 'brief_id',
+      'duration_ms', 'metadata', 'created_at',
     ],
   },
   {
@@ -271,16 +315,49 @@ export const SYNC_TABLES: SyncTableConfig[] = [
   {
     // FR-105: typed-edges graph layer.
     // Append strategy + composite syncKey including edge_type matches the
-    // local UNIQUE(from_type, from_id, to_type, to_id, edge_type) so remote
-    // INSERT OR IGNORE has the same idempotency semantics. Soft-deletes are
-    // captured as metadata mutations, not row deletions.
+    // local UNIQUE so remote INSERT OR IGNORE has the same idempotency
+    // semantics. Soft-deletes are captured as metadata mutations, not row
+    // deletions.
+    //
+    // BR-083 D7 — THE QUALIFIERS JOIN BOTH `columns` AND `syncKey`, AND THAT
+    // MAKES THIS A DEPLOY-ORDERING HAZARD.
+    //
+    // `syncKey` exists to MIRROR the local uniqueness so the remote
+    // `INSERT OR IGNORE` shares it. The local rule is now the expression index
+    // over `(from_type, from_id, COALESCE(from_project,''), to_type, to_id,
+    // COALESCE(to_project,''), edge_type)`. Leaving the two projects out of
+    // the key would re-create the FUSION on the VPS: two edges that differ
+    // only by project would collapse into one remote row, which is this
+    // brief's defect reproduced on the other machine.
+    //
+    // DEPLOY ORDER IS NOT OPTIONAL: the VPS must run `edges@4` BEFORE the
+    // first local push, or every INSERT fails on `no such column:
+    // from_project`. Confirm `engine_migrations` shows `edges@4` on
+    // brain.fifty.dev first. A receiver that predates the migration cannot be
+    // degraded around from this side — the column list IS the payload.
     table: 'entity_edges',
-    syncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+    syncKey: [
+      'from_type', 'from_id', 'from_project',
+      'to_type', 'to_id', 'to_project',
+      'edge_type',
+    ],
+    // BR-090 — THE KEY ABOVE WIDENED, AND THAT IS A BREAKING CHANGE FOR EVERY
+    // REPLICA THAT HAS NOT MIGRATED. These two fields are what let a qualified
+    // row recognise its own unqualified self on the other side. Both directions
+    // are affected and PULL is the worse one: it corrupts the origin. See the
+    // reconciliation block in `mergeRows` for the full argument.
+    //
+    // At most ONE all-NULL row can exist per 5-tuple — the `edges@4` expression
+    // UNIQUE INDEX over `COALESCE(from_project,'')` / `COALESCE(to_project,'')`
+    // guarantees it — so the adopt below is never ambiguous.
+    legacySyncKey: ['from_type', 'from_id', 'to_type', 'to_id', 'edge_type'],
+    qualifierCols: ['from_project', 'to_project'],
     timestampCol: 'created_at',
     strategy: 'append',
     columns: [
       'from_type', 'from_id', 'to_type', 'to_id', 'edge_type',
       'confidence', 'provenance', 'created_at', 'metadata',
+      'from_project', 'to_project',
     ],
   },
   {
@@ -575,14 +652,91 @@ export interface MergeRowFailure {
   error: string;
 }
 
+/**
+ * TD-338 — one field folded on ingress, on a row that was actually STORED.
+ * `key` is the `|`-joined syncKey, matching {@link MergeRowFailure.key}.
+ */
+export interface MergeRowNormalization {
+  key: string;
+  field: string;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * TD-338 — one non-canonical value STORED VERBATIM on ingress (never folded).
+ * This is the "arrived via sync" observer the TD-328 write-boundary echo
+ * structurally cannot see: an inbound row is an LWW column copy, not a tool
+ * call, so no response exists to append a NOTE to.
+ */
+export interface MergeRowNonCanonical {
+  key: string;
+  field: string;
+  value: string;
+}
+
+/**
+ * BR-090 — one row whose identity was reconciled across a widened syncKey.
+ *
+ * `action` names WHICH side won, because the two are not symmetric and a fix
+ * that got the direction wrong would look identical in a count:
+ *   - `adopted`  — the stored row had NULL qualifiers and took the incoming
+ *                  attribution. This is the PUSH shape (qualified row arrives
+ *                  at an unmigrated receiver).
+ *   - `retained` — the stored row was already qualified and the incoming row
+ *                  was NULL, so the local attribution was KEPT and the incoming
+ *                  NULL discarded. This is the PULL shape, and getting it
+ *                  backwards would null out every attribution on the origin.
+ */
+export interface MergeRowReconciliation {
+  key: string;
+  action: 'adopted' | 'retained';
+  /** The qualifier columns and the values now stored, after reconciliation. */
+  qualifiers: Record<string, string | null>;
+}
+
 /** Result of a mergeRows call including row-level failure breakdown. */
 export interface MergeRowsResult {
   inserted: number;
   updated: number;
   skipped: number;
   failed: number;
+  /**
+   * BR-090: rows matched across a widened syncKey instead of being duplicated.
+   * Always present; 0 for every table that never widened a key.
+   */
+  reconciled: number;
+  /** Per-row reconciliation detail. Present (and non-empty) only when > 0. */
+  reconciliations?: MergeRowReconciliation[];
   /** Present (and non-empty) only when failed > 0. */
   failures?: MergeRowFailure[];
+  /**
+   * TD-338: count of ROWS (not fields) whose stored value differed from the
+   * inbound value because a write-boundary normalizer folded it. Always
+   * present; 0 on a clean merge.
+   */
+  normalized: number;
+  /** Per-field fold detail. Present (and non-empty) only when normalized > 0. */
+  normalizations?: MergeRowNormalization[];
+  /** Non-canonical values stored verbatim. Present only when non-empty. */
+  nonCanonical?: MergeRowNonCanonical[];
+}
+
+/**
+ * Render a row's syncKey values as the `|`-joined diagnostic key used by
+ * {@link MergeRowFailure}, {@link MergeRowNormalization} and
+ * {@link MergeRowNonCanonical}. Defensive: some entries may be objects.
+ */
+function formatSyncKey(keyValues: unknown[]): string {
+  return keyValues
+    .map((v) => {
+      if (v === null || v === undefined) return '';
+      if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') {
+        return String(v);
+      }
+      try { return JSON.stringify(v); } catch { return '<unserializable>'; }
+    })
+    .join('|');
 }
 
 /**
@@ -602,10 +756,40 @@ export interface MergeRowsResult {
  * row-level catches mean a single bad row no longer poisons sibling rows
  * in the same call.
  *
+ * TD-338 — THIS IS A NORMALIZATION BOUNDARY. Every inbound row for a table in
+ * `SYNC_NORMALIZED_FIELDS` passes through the SAME normalizers the MCP write
+ * boundary applies (`normalizeSyncRow`), so replication can no longer write a
+ * spelling `igris_brief_create` would have folded. Three properties make this
+ * safe rather than a new source of divergence:
+ *
+ *   1. **Only declared synonyms fold.** `P1 ≡ P1-High` is a fold-table fact,
+ *      not a guess. Unknown values (`P4-Trivial`, `Spike`) are stored VERBATIM
+ *      and reported in `nonCanonical`.
+ *   2. **`updated_at` is not in the map, so the fold cannot bump it.** No merge
+ *      path in this codebase writes a timestamp it did not receive, so a folded
+ *      row produces no delta with a newer timestamp: the remote's
+ *      `WHERE updated_at > since` stops selecting it, and our next push carries
+ *      EQUAL timestamps so the remote's own `remoteTs > localTs` is false and it
+ *      skips. The system reaches its fixed point on the FIRST arrival of each
+ *      row version. Pinned by `sync-ingress-normalize.test.ts` (T3), not
+ *      trusted to this paragraph.
+ *   3. **The fold is recorded only for rows actually WRITTEN.** A row that loses
+ *      LWW is skipped before any fold is counted, so normalization can never
+ *      resurrect a stale row nor inflate the report.
+ *
+ * THE REJECTED LEVER, RECORDED: folding AND bumping `updated_at` WOULD heal an
+ * un-migrated remote on our next push (and still would not oscillate — older
+ * remote code never re-writes a row spontaneously). It is rejected because it
+ * manufactures a write no operator made and mutates a column the dashboard,
+ * `briefStatusSummary` and velocity ordering all read. See the v22 comment in
+ * `db.ts` for the same discipline. Pull this lever only on an explicit operator
+ * decision to make sync heal remotes.
+ *
  * @param db - The database instance to merge into
  * @param config - The sync table configuration
  * @param rows - The incoming rows to merge
- * @returns Counts of inserted/updated/skipped/failed plus per-row failures
+ * @returns Counts of inserted/updated/skipped/failed plus per-row failures and
+ *          the TD-338 normalization report
  */
 export function mergeRows(
   db: Database.Database,
@@ -616,31 +800,157 @@ export function mergeRows(
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+  let normalized = 0;
+  let reconciled = 0;
   const failures: MergeRowFailure[] = [];
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
+  const reconciliations: MergeRowReconciliation[] = [];
 
+  // BR-090 — prepared ONCE, and only for a table that declares it widened.
+  // `legacyLookupStmt` stays null for all 19 other tables, so the reconciliation
+  // block below is unreachable for them: this cannot change the behaviour of a
+  // table that never widened a key.
+  const qualifierCols = config.qualifierCols ?? [];
+  // NOTE the absence of a qualifier predicate here: this deliberately returns
+  // EVERY row sharing the legacy key, qualified or not, because the two
+  // directions need different subsets of it (adopt wants the all-NULL row;
+  // retain wants to know whether ANY qualified row exists). Constraining it to
+  // `IS NULL` here would silently make the pull direction fall through to
+  // INSERT — which is the bug.
+  const legacyLookupStmt =
+    config.legacySyncKey && qualifierCols.length > 0
+      ? db.prepare(
+          `SELECT * FROM ${config.table} WHERE ${
+            config.legacySyncKey.map(k => `${k} IS ?`).join(' AND ')
+          }`,
+        )
+      : null;
+
+  // BR-083 — `IS`, NOT `=`. `entity_edges.from_project` / `to_project` are the
+  // first NULLABLE syncKey columns in the table set, and `col = NULL` is NULL,
+  // never true: the lookup would MISS every deliberately-unattributed row, the
+  // merge would take the insert branch, and each pull would append a duplicate
+  // of the ~half of the graph this brief leaves NULL. `IS` is equivalent to `=`
+  // for non-NULL operands, so every other table's behaviour is unchanged, and
+  // SQLite plans it against the same indexes.
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${
-    config.syncKey.map(k => `${k} = ?`).join(' AND ')
+    config.syncKey.map(k => `${k} IS ?`).join(' AND ')
   }`;
   const lookupStmt = db.prepare(lookupSql);
 
   for (const row of rows) {
     const keyValues = config.syncKey.map(k => row[k]);
+    // TD-338: fold BEFORE the row can reach either writer. `normalizeSyncRow`
+    // returns the SAME object for an unmapped table or an already-canonical
+    // row, so this is one map lookup on the hot path. syncKey columns are never
+    // in the map, so the lookup key above is unaffected by the fold.
+    const { row: normRow, folds, nonCanonical: rowNonCanonical } =
+      normalizeSyncRow(config.table, row);
+    // Recorded ONLY from a branch that actually wrote the row — a row that
+    // loses LWW must not appear in the report (T5).
+    const recordNormalization = (): void => {
+      if (folds.length === 0 && rowNonCanonical.length === 0) return;
+      const key = formatSyncKey(keyValues);
+      if (folds.length > 0) {
+        normalized++;
+        for (const f of folds) normalizations.push({ key, ...f });
+      }
+      for (const nc of rowNonCanonical) nonCanonical.push({ key, ...nc });
+    };
     try {
       const existing = lookupStmt.get(...keyValues) as Record<string, unknown> | undefined;
 
-      if (!existing) {
-        const cols = config.columns.filter(c => row[c] !== undefined);
+      // BR-090 — RECONCILE ACROSS A WIDENED syncKey BEFORE INSERTING.
+      //
+      // A miss on the full key does NOT mean "new row". Once a syncKey gains a
+      // column, the same logical row keyed narrowly on one side and widely on
+      // the other misses — and inserting is how the duplicate is born. Ask the
+      // narrower question before concluding the row is new.
+      //
+      // THE TWO DIRECTIONS ARE NOT MIRROR IMAGES, and this is the whole
+      // subtlety of the fix:
+      //
+      //   PUSH  incoming QUALIFIED -> stored NULL  : ADOPT the attribution.
+      //   PULL  incoming NULL      -> stored QUALIFIED : RETAIN the local one.
+      //
+      // A "symmetric" implementation that just copied the incoming qualifiers
+      // over would, on the pull, null out every attribution on the ORIGIN —
+      // 458 of them here — which is strictly worse than the duplication it was
+      // written to prevent. The direction is asserted, not assumed.
+      //
+      // The conflict case is deliberately NOT reconciled: two rows sharing the
+      // legacy key with DIFFERENT non-NULL attributions are genuinely different
+      // edges (`BR-082` in one project vs another — exactly the ambiguity
+      // BR-083 existed to fix), so they fall through and insert.
+      let reconciledThisRow = false;
+      if (!existing && legacyLookupStmt && config.legacySyncKey) {
+        const legacyValues = config.legacySyncKey.map(k => row[k]);
+        const candidates = legacyLookupStmt.all(...legacyValues) as Record<string, unknown>[];
+        const incomingIsQualified = qualifierCols.some(c => normRow[c] != null);
+
+        if (incomingIsQualified) {
+          // At most one all-NULL row can exist per legacy key (the `edges@4`
+          // expression UNIQUE INDEX over COALESCE(...,'') enforces it), so this
+          // find is unambiguous by construction rather than by luck.
+          const unattributed = candidates.find(c => qualifierCols.every(q => c[q] == null));
+          if (unattributed) {
+            const setSql = qualifierCols.map(c => `${c} = ?`).join(', ');
+            const whereSql =
+              config.legacySyncKey.map(k => `${k} IS ?`).join(' AND ') +
+              ' AND ' + qualifierCols.map(c => `${c} IS NULL`).join(' AND ');
+            db.prepare(`UPDATE ${config.table} SET ${setSql} WHERE ${whereSql}`).run(
+              ...qualifierCols.map(c => (normRow[c] ?? null) as string | null),
+              ...legacyValues,
+            );
+            reconciled++;
+            reconciliations.push({
+              key: formatSyncKey(keyValues),
+              action: 'adopted',
+              qualifiers: Object.fromEntries(
+                qualifierCols.map(c => [c, (normRow[c] ?? null) as string | null]),
+              ),
+            });
+            recordNormalization();
+            reconciledThisRow = true;
+          }
+        } else if (candidates.length > 0) {
+          // Incoming carries no attribution and a stored row shares the legacy
+          // key. That stored row MUST be qualified — an unqualified one would
+          // have matched the full key above — so this is the pull shape. Keep
+          // what we have and drop the incoming NULL on the floor.
+          reconciled++;
+          reconciliations.push({
+            key: formatSyncKey(keyValues),
+            action: 'retained',
+            qualifiers: Object.fromEntries(
+              qualifierCols.map(c => [c, (candidates[0][c] ?? null) as string | null]),
+            ),
+          });
+          reconciledThisRow = true;
+        }
+      }
+
+      if (reconciledThisRow) {
+        // Handled above. Deliberately NOT counted as inserted/updated/skipped:
+        // a reconciliation is its own outcome and is reported as one.
+      } else if (!existing) {
+        const cols = config.columns.filter(c => normRow[c] !== undefined);
         const placeholders = cols.map(() => '?').join(', ');
         db.prepare(
           `INSERT INTO ${config.table} (${cols.join(', ')}) VALUES (${placeholders})`
-        ).run(...cols.map(c => row[c] ?? null));
+        ).run(...cols.map(c => normRow[c] ?? null));
         inserted++;
+        recordNormalization();
       } else if (config.strategy === 'append') {
         skipped++;
       } else {
         // LWW strategy: compare timestamps
         const localTs = (existing[config.timestampCol] as string) ?? '';
-        const remoteTs = (row[config.timestampCol] as string) ?? '';
+        // TD-338: `timestampCol` is deliberately absent from
+        // SYNC_NORMALIZED_FIELDS, so normRow[timestampCol] === row[timestampCol]
+        // by construction — the fold can neither advance nor retard LWW.
+        const remoteTs = (normRow[config.timestampCol] as string) ?? '';
 
         if (remoteTs > localTs) {
           const setClauses: string[] = [];
@@ -653,17 +963,17 @@ export function mergeRows(
               setClauses.push(`${col} = ?`);
               setValues.push(mergeTags(
                 (existing[col] as string) || '',
-                (row[col] as string) || ''
+                (normRow[col] as string) || ''
               ));
             } else if (config.mergeFields?.[col] === 'max') {
               setClauses.push(`${col} = ?`);
               setValues.push(Math.max(
                 (existing[col] as number) || 0,
-                (row[col] as number) || 0
+                (normRow[col] as number) || 0
               ));
             } else {
               setClauses.push(`${col} = ?`);
-              setValues.push(row[col] ?? null);
+              setValues.push(normRow[col] ?? null);
             }
           }
 
@@ -679,18 +989,22 @@ export function mergeRows(
           // learnings table only.
           const learningTextChanged =
             config.table === 'learnings' &&
-            (existing.title !== row.title || existing.content !== row.content);
+            (existing.title !== normRow.title || existing.content !== normRow.content);
           if (learningTextChanged) {
             setClauses.push('embedding = ?', 'embedding_model = ?');
             setValues.push(null, null);
           }
 
           if (setClauses.length > 0) {
-            const whereClause = config.syncKey.map(k => `${k} = ?`).join(' AND ');
+            // `IS` for the same reason as the lookup above (BR-083): an UPDATE
+            // keyed on a NULL qualifier with `=` would match zero rows and the
+            // LWW winner would be silently dropped.
+            const whereClause = config.syncKey.map(k => `${k} IS ?`).join(' AND ');
             db.prepare(
               `UPDATE ${config.table} SET ${setClauses.join(', ')} WHERE ${whereClause}`
             ).run(...setValues, ...keyValues);
             updated++;
+            recordNormalization();
 
             // Lockstep vec-delete for the just-NULLed embedding. DEFENSIVE:
             // only when sqlite-vec is available. If the extension is missing the
@@ -721,19 +1035,17 @@ export function mergeRows(
       // error=Too few parameter values were provided") instead of a
       // generic "HTTP 500".
       failed++;
-      // Stringify keyValues defensively — some entries may be objects.
-      const keyStr = keyValues.map((v) => {
-        if (v === null || v === undefined) return '';
-        if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
-        try { return JSON.stringify(v); } catch { return '<unserializable>'; }
-      }).join('|');
+      const keyStr = formatSyncKey(keyValues);
       failures.push({ key: keyStr, error: errMsg(rowErr) });
       console.error(`[brain] mergeRows row failed: table=${config.table} key=${keyStr} error=${errMsg(rowErr)}`);
     }
   }
 
-  const result: MergeRowsResult = { inserted, updated, skipped, failed };
+  const result: MergeRowsResult = { inserted, updated, skipped, failed, normalized, reconciled };
   if (failed > 0) result.failures = failures;
+  if (normalizations.length > 0) result.normalizations = normalizations;
+  if (nonCanonical.length > 0) result.nonCanonical = nonCanonical;
+  if (reconciliations.length > 0) result.reconciliations = reconciliations;
   return result;
 }
 
@@ -743,11 +1055,16 @@ export function mergeRows(
 
 /** Result of processSyncPush — mirrors the JSON body of POST /sync/push. */
 export interface SyncPushResult {
-  /** Per-table merge counts. Tables in `errors` are absent here. */
+  /** Per-table merge counts. Tables in `errors` or `skipped` are absent here. */
   results: Record<string, MergeRowsResult>;
   /** Per-table fatal errors (table-level, not row-level). */
   errors: Record<string, string>;
-  /** True iff `errors` is empty — drives 200 vs 207 status code. */
+  /**
+   * Tables the payload named that this DB lacks (BR-097). ALWAYS present —
+   * its absence tells a client the remote predates BR-097. Never in `errors`.
+   */
+  skipped: string[];
+  /** True iff `errors` and `skipped` are both empty — drives 200 vs 207. */
   ok: boolean;
 }
 
@@ -758,8 +1075,8 @@ export interface SyncPushResult {
  * its OWN try/catch. A row-level crash inside mergeRows is now caught at
  * row level (see mergeRows itself); this outer per-table guard handles
  * table-level errors (e.g. prepare() failures, schema mismatches). A
- * missing table on the local schema is skipped with a stderr log
- * (defense-in-depth carry-over from BR-064).
+ * missing table on the local schema is skipped with a stderr log and named
+ * in `skipped` (BR-064 carry-over; BR-097 makes the skip visible).
  *
  * @param db - The database to merge into
  * @param tables - Wire-format payload from POST /sync/push
@@ -776,12 +1093,14 @@ export function processSyncPush(
 
   const results: Record<string, MergeRowsResult> = {};
   const errors: Record<string, string> = {};
+  const skipped: string[] = [];
 
   for (const config of SYNC_TABLES) {
     const rows = tables[config.table];
     if (!rows || rows.length === 0) continue;
     if (!localTables.has(config.table)) {
       console.error(`[brain] /sync/push skip: table '${config.table}' not present locally`);
+      skipped.push(config.table);
       continue;
     }
     try {
@@ -794,7 +1113,12 @@ export function processSyncPush(
     }
   }
 
-  return { results, errors, ok: Object.keys(errors).length === 0 };
+  return {
+    results,
+    errors,
+    skipped,
+    ok: Object.keys(errors).length === 0 && skipped.length === 0,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -894,7 +1218,9 @@ export async function runPostMergeEmbedPass(db: Database.Database): Promise<void
  * Push local brain changes to a remote brain server.
  *
  * For each sync table, queries rows changed since the last push timestamp,
- * POSTs them to the remote server, and updates the local sync_state on success.
+ * POSTs them to the remote server, and advances `sync_state` only for the
+ * tables the remote acknowledged in `results` and not in `errors` (BR-097);
+ * a held table is re-selected in full by the next push.
  *
  * @param args - Remote URL and API key
  * @returns MCP-formatted response with push summary
@@ -977,6 +1303,12 @@ async function handleBrainPush(
   // Chunk and POST to remote
   const chunks = chunkTablesForPush(tables);
 
+  // BR-097: stamp a table iff the remote named it in `results` (any chunk)
+  // and never in `errors`. `skipped` is absent on a pre-BR-097 remote.
+  const acked = new Set<string>();
+  const failed = new Map<string, string>();
+  const skippedByRemote = new Set<string>();
+
   try {
     for (let i = 0; i < chunks.length; i++) {
       const chunkPayload = {
@@ -1005,13 +1337,18 @@ async function handleBrainPush(
         console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
         throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
+      for (const t of Object.keys(result.results as Record<string, unknown>)) acked.add(t);
       const remoteErrors = (result.errors ?? {}) as Record<string, string>;
       for (const [tableName, errMessage] of Object.entries(remoteErrors)) {
         console.error(`[brain] Remote sync table=${tableName} error: ${errMessage}`);
+        if (!failed.has(tableName)) failed.set(tableName, errMessage);
+      }
+      if (Array.isArray(result.skipped)) {
+        for (const t of result.skipped) skippedByRemote.add(String(t));
       }
     }
 
-    // Update sync_state for each pushed table only after ALL chunks succeed
+    // Advance sync_state only for acknowledged tables, after ALL chunks succeed
     const upsertState = db.prepare(`
       INSERT INTO sync_state (remote_url, table_name, last_push_at)
       VALUES (?, ?, ?)
@@ -1019,22 +1356,54 @@ async function handleBrainPush(
       DO UPDATE SET last_push_at = excluded.last_push_at
     `);
 
+    const notMerged = new Set<string>();
     db.transaction(() => {
       for (const tableName of Object.keys(tables)) {
+        if (!acked.has(tableName) || failed.has(tableName)) {
+          notMerged.add(tableName);
+          continue;
+        }
         upsertState.run(remoteUrl, tableName, pushedAt);
       }
     })();
 
+    // One line per held table (skipped / errored / unacknowledged), for /scan.
+    const holdReason = (name: string): [string, string] => {
+      if (failed.has(name)) {
+        return [
+          `ERROR — ${failed.get(name)} (rows retained locally)`,
+          `${name}: remote error ${failed.get(name)}; rows retained locally`,
+        ];
+      }
+      if (skippedByRemote.has(name)) {
+        return [
+          'SKIPPED — not on remote yet (deploy first; rows retained locally)',
+          `${name} not on remote yet — deploy first; rows retained locally`,
+        ];
+      }
+      return [
+        'UNACKNOWLEDGED — remote returned no result (pre-BR-097 remote?); rows retained locally',
+        `${name} sent but not acknowledged by the remote (pre-BR-097 remote?); rows retained locally`,
+      ];
+    };
+    for (const name of notMerged) console.error(`[brain] sync: ${holdReason(name)[1]}`);
+
     // Format summary
     const tablesSummary = Object.entries(tables)
-      .map(([name, rows]) => `  - ${name}: ${rows.length} row(s)`)
+      .map(([name, rows]) =>
+        notMerged.has(name)
+          ? `  - ${name}: ${holdReason(name)[0]}`
+          : `  - ${name}: ${rows.length} row(s)`)
       .join('\n');
+    const headline = notMerged.size === 0
+      ? 'Brain push completed successfully.'
+      : `Brain push completed — ${notMerged.size} table(s) not merged by the remote (rows retained locally).`;
 
     return {
       content: [{
         type: 'text',
         text: [
-          'Brain push completed successfully.',
+          headline,
           '',
           `Remote: ${remoteUrl}`,
           `Total rows pushed: ${totalRows}`,
@@ -1141,11 +1510,42 @@ async function handleBrainPull(
 
         const result = mergeRows(db, config, rows);
         results[config.table] = result;
-        totalMerged += result.inserted + result.updated;
+        // BR-090: an ADOPTED row changed the database and must be counted, or a
+        // pull that repaired 458 attributions reports "Total merged: 0" while
+        // 458 rows moved — the exact report-success-without-checking shape this
+        // brief exists to kill. A RETAINED row is deliberately NOT counted:
+        // nothing was written, the incoming NULL was discarded, and inflating
+        // the total would be the mirror-image lie.
+        const adopted = (result.reconciliations ?? []).filter(r => r.action === 'adopted').length;
+        totalMerged += result.inserted + result.updated + adopted;
         const failedSuffix = result.failed > 0 ? `, ${result.failed} failed` : '';
+        // TD-338: silent when zero — a clean pull gains no new noise.
+        const normalizedSuffix = result.normalized > 0 ? `, ${result.normalized} normalized` : '';
+        // BR-090: silent when zero, like the TD-338 fold above. A non-zero count
+        // means rows were matched across a widened syncKey instead of being
+        // duplicated — the operator should see that it happened AND which way.
+        const reconciledSuffix = result.reconciled > 0 ? `, ${result.reconciled} reconciled` : '';
         summary.push(
-          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix})`
+          `  - ${config.table}: ${rows.length} received (${result.inserted} inserted, ${result.updated} updated, ${result.skipped} skipped${failedSuffix}${normalizedSuffix}${reconciledSuffix})`
         );
+        for (const r of result.reconciliations ?? []) {
+          summary.push(
+            `      reconciled ${config.table} ${r.key}: ${r.action} ${JSON.stringify(r.qualifiers)}`
+          );
+        }
+        // TD-338: name every fold and every non-canonical passthrough. The
+        // brief's honesty contract — the fold is allowed to be lossy only in
+        // the sense the fold table already licenses, and never silently.
+        for (const n of result.normalizations ?? []) {
+          summary.push(
+            `      normalized ${config.table} ${n.key}: ${n.field} ${JSON.stringify(n.from)} -> ${JSON.stringify(n.to)}`
+          );
+        }
+        for (const nc of result.nonCanonical ?? []) {
+          summary.push(
+            `      NON-CANONICAL (stored as-is) ${config.table} ${nc.key}: ${nc.field}=${JSON.stringify(nc.value)}`
+          );
+        }
         if (result.failures && result.failures.length > 0) {
           // BR-066: surface row-level failures during pull. We do not abort
           // the pull on row failures (last-write-wins is best-effort by

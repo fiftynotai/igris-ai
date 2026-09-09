@@ -30,7 +30,7 @@ stage_brain_with_core() {
 }
 
 setup() {
-  stage_brain_with_core
+  stage_brain_with_core  # HOME fenced by stage_brain (TD-456) — install step 11 writes ~/.claude.json
   export IGRIS_KEEP_BAK=0
 }
 

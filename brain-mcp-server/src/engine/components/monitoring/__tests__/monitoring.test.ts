@@ -69,7 +69,8 @@ function makeCtx(bus: EventBus): ComponentContext {
 function createTestDb(): Database.Database {
   const db = new Database(':memory:');
   db.pragma('journal_mode = WAL');
-  db.exec(monitoringMigrations[0].sql);
+  // BR-100 (2026-09-06): apply the WHOLE chain — v2 adds `machine_id`, which the component INSERT names.
+  for (const m of monitoringMigrations) db.exec(m.sql);
   return db;
 }
 
@@ -161,9 +162,11 @@ describe('Monitoring Component', () => {
           'project_slug',
           'instance_id',
           'created_at',
+          'machine_id',
         ]),
       );
-      expect(columnNames).toHaveLength(8);
+      // BR-100 (2026-09-06): 8 → 9 — monitoring v2 adds `machine_id`.
+      expect(columnNames).toHaveLength(9);
     });
 
     it('indexes exist', () => {
@@ -400,7 +403,7 @@ describe('Monitoring Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('events() declares 24 listened events', () => {
+    it('events() declares 26 listened events', () => {
       // 34 base + 4 perception lifecycle events added in TD-074
       // (perception.run_started/succeeded/failed/skipped). FR-118 M2 removed 6
       // dead subconscious bus listeners (run_start/run_complete/
@@ -410,9 +413,22 @@ describe('Monitoring Component', () => {
       // `subconscious.bootstrap_failed` still rides the bus. 38 - 6 = 32.
       // TD-265 removed 8 task/coordination listeners (7 task.* + 1
       // coordination.self_heal) with the worker-subsystem teardown. 32 - 8 = 24.
+      // FR-241 Phase 6b (D2) added 2: `perception.candidate_approved` and
+      // `perception.candidate_rejected`, which `perception/handlers.ts` has
+      // emitted since FR-109 with nobody listening. 24 + 2 = 26. Updated
+      // DELIBERATELY, not to make a red test green: the counter this unblocks
+      // (`perception_dashboard.rejected_last_n`) had been structurally zero.
       const comp = createMonitoringComponent();
       const { listens } = comp.events();
-      expect(listens).toHaveLength(24);
+      expect(listens).toHaveLength(26);
+      // The COUNT alone would be satisfied by any two events. Name them.
+      const names = listens.map((l) => l.name);
+      expect(names).toContain('perception.candidate_approved');
+      expect(names).toContain('perception.candidate_rejected');
+      // ...and NOT this one: the recurring-reject branch already writes it
+      // directly via `writePerceptionEvent` AND re-emits it on the bus, so a
+      // listener here would double-write it. See EVENT_COMPONENT_MAP.
+      expect(names).not.toContain('perception.rejected_pattern_recurring');
     });
 
     it('events() declares 0 emitted events', () => {
@@ -430,11 +446,13 @@ describe('Monitoring Component', () => {
       expect(toolNames).toContain('igris_event_log_cleanup');
     });
 
-    it('schema() returns 1 migration', () => {
+    it('schema() returns 2 migrations (BR-100: v2 = machine_id)', () => {
       const comp = createMonitoringComponent();
       const migrations = comp.schema();
-      expect(migrations).toHaveLength(1);
+      // BR-100 (2026-09-06): 1 → 2 — v2 adds `event_log.machine_id`.
+      expect(migrations).toHaveLength(2);
       expect(migrations[0].version).toBe(1);
+      expect(migrations[1].version).toBe(2);
     });
   });
 
@@ -454,6 +472,63 @@ describe('Monitoring Component', () => {
       expect(rows[0].event_name).toBe('schedule.created');
 
       comp.destroy();
+    });
+
+    /**
+     * FR-241 Phase 6b (D2) — the BEHAVIOURAL half.
+     *
+     * `event-bus-integrity.test.ts` is a STATIC SOURCE REGEX: it proves the two
+     * events are declared, that a literal `bus.on` exists and that a matching
+     * `bus.off` exists. It cannot prove a row lands, because it never runs the
+     * component. That is exactly the "don't trust a component's self-report"
+     * failure (L-711), so this drives the real bus and reads the real table.
+     *
+     * WHAT THIS PROVES: emitting either event through a live bus writes ONE
+     * `event_log` row whose `component` is the literal `'perception'`.
+     * WHAT IT DOES NOT PROVE: that `handlePerceptionApprove` /
+     * `handlePerceptionReject` actually emit them (this test emits directly),
+     * nor that the dashboard's write path reaches the same code. Siblings:
+     * `perception/__tests__/*` for the handlers, and FR-241's
+     * `cli/src/__tests__/dashboard-triage-parity.test.ts` G-EP-2/3, which boots
+     * a real engine and dispatches the real tool in two separate processes.
+     */
+    it('FR-241 6b: candidate_approved/rejected land in event_log as component=perception', () => {
+      const comp = createMonitoringComponent();
+      comp.init(makeCtx(bus));
+
+      // NEGATIVE CONTROL FIRST, and it exercises the SAME wake-up path: an
+      // event that monitoring deliberately does NOT listen to. Without it,
+      // "two rows appeared" is equally consistent with a listener that logs
+      // everything it is handed.
+      bus.emit('perception.rejected_pattern_recurring', { learning_id: 9 });
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM event_log').get(),
+        'rejected_pattern_recurring must NOT be logged here — the recurring branch writes it directly',
+      ).toEqual({ n: 0 });
+
+      bus.emit('perception.candidate_approved', { learning_id: 7 });
+      bus.emit('perception.candidate_rejected', { learning_id: 8, reason: 'noise' });
+
+      const rows = db
+        .prepare('SELECT event_name, component, payload FROM event_log ORDER BY id')
+        .all() as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[0].event_name).toBe('perception.candidate_approved');
+      // The L-857 trap, asserted as a LITERAL: `writePerceptionEvent` pins the
+      // legacy `'perception'`; `writeExtractorEvent` would produce
+      // `cognition.perception`. A parity differ compares this column.
+      expect(rows[0].component).toBe('perception');
+      expect(rows[1].event_name).toBe('perception.candidate_rejected');
+      expect(rows[1].component).toBe('perception');
+      expect(JSON.parse(String(rows[1].payload))).toEqual({
+        learning_id: 8,
+        reason: 'noise',
+      });
+
+      // `destroy()` really unsubscribes — the `off` half is not decorative.
+      comp.destroy();
+      bus.emit('perception.candidate_approved', { learning_id: 10 });
+      expect(db.prepare('SELECT COUNT(*) AS n FROM event_log').get()).toEqual({ n: 2 });
     });
 
     it('correct component name derived from event', () => {
@@ -635,11 +710,11 @@ describe('Monitoring Component', () => {
       comp.destroy();
     });
 
-    it('metrics.recorded logged with correct component name', () => {
+    it('agent_event.recorded logged with correct component name (FR-267: instances owns the emit)', () => {
       const comp = createMonitoringComponent();
       comp.init(makeCtx(bus));
 
-      bus.emit('metrics.recorded', { metric: 'tokens', value: 100 });
+      bus.emit('agent_event.recorded', { instance_id: 'inst-1', agent: 'forger', event_type: 'stop', brief_id: 'FR-267', project: 'igris-ai' });
 
       const rows = db.prepare('SELECT event_name, component FROM event_log').all() as {
         event_name: string;
@@ -647,7 +722,7 @@ describe('Monitoring Component', () => {
       }[];
 
       expect(rows).toHaveLength(1);
-      expect(rows[0]).toEqual({ event_name: 'metrics.recorded', component: 'metrics' });
+      expect(rows[0]).toEqual({ event_name: 'agent_event.recorded', component: 'instances' });
 
       comp.destroy();
     });
@@ -783,5 +858,91 @@ describe('Monitoring Component', () => {
       const entry = SYNC_TABLES.find((t) => t.table === 'event_log');
       expect(entry!.timestampCol).toBe('created_at');
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100 — monitoring v2 (`event_log.machine_id`) and the identity stamp
+// ---------------------------------------------------------------------------
+
+describe('BR-100 — monitoring v2 and the machine_id stamp', () => {
+  let db: Database.Database;
+  let bus: EventBus;
+  let sandbox: string;
+  let savedBrainDir: string | undefined;
+
+  beforeEach(async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    sandbox = mkdtempSync(join('/tmp', 'br100-mon-'));
+    // The brain identity writer honours IGRIS_BRAIN_DIR (a WRITE seam); the
+    // suite's `node:os` mock has no `homedir`, so an unset seam could not even
+    // resolve the real path — the fence is armed AND asserted.
+    savedBrainDir = process.env.IGRIS_BRAIN_DIR;
+    process.env.IGRIS_BRAIN_DIR = sandbox;
+    expect(process.env.IGRIS_BRAIN_DIR).toBe(sandbox);
+    writeFileSync(join(sandbox, 'config.json'), '{}\n');
+    db = createTestDb();
+    bus = createEventBus();
+    (getDb as ReturnType<typeof vi.fn>).mockReturnValue(db);
+  });
+
+  afterEach(async () => {
+    if (savedBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
+    else process.env.IGRIS_BRAIN_DIR = savedBrainDir;
+    (await import('node:fs')).rmSync(sandbox, { recursive: true, force: true });
+    db.close();
+  });
+
+  it('v2 adds `machine_id`; the applied versions under the monitoring key read [1, 2]', async () => {
+    const { createSqliteAdapter } = await import('../../../storage/sqlite.js');
+    const { join } = await import('node:path');
+    const storage = createSqliteAdapter(join(sandbox, 'v.db'));
+    storage.runMigrations('monitoring', monitoringMigrations);
+    const versions = (storage.rawConnection.prepare(
+      "SELECT version FROM engine_migrations WHERE component = 'monitoring' ORDER BY version",
+    ).all() as { version: number }[]).map((r) => r.version);
+    expect(versions).toEqual([1, 2]);
+    const cols = (storage.rawConnection.pragma('table_info(event_log)') as { name: string }[]).map((c) => c.name);
+    expect(cols).toContain('machine_id');
+    storage.close();
+  });
+
+  it('a DB already at v1 takes v2 on the next boot and keeps its rows', async () => {
+    const { createSqliteAdapter } = await import('../../../storage/sqlite.js');
+    const { join } = await import('node:path');
+    const path = join(sandbox, 'v1.db');
+    const first = createSqliteAdapter(path);
+    first.runMigrations('monitoring', [monitoringMigrations[0]]);
+    first.rawConnection.prepare(
+      "INSERT INTO event_log (event_name, component, machine_hostname) VALUES ('x', 'unknown', 'MacBookAir')",
+    ).run();
+    first.close();
+
+    const second = createSqliteAdapter(path);
+    second.runMigrations('monitoring', monitoringMigrations);
+    const row = second.rawConnection.prepare('SELECT machine_hostname, machine_id FROM event_log').get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: 'MacBookAir', machine_id: null });
+    second.close();
+  });
+
+  it('the component stamps machine_id = the minted config.json machine.id beside machine_hostname', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const comp = createMonitoringComponent();
+    comp.init(makeCtx(bus));
+    bus.emit('schedule.created', {});
+    const stored = JSON.parse(readFileSync(join(sandbox, 'config.json'), 'utf-8')) as { machine: { id: string; aliases: string[] } };
+    expect(stored.machine.id).toMatch(/^[0-9a-f-]{36}$/);
+    expect(stored.machine.aliases).toEqual(['test-host']);
+    const row = db.prepare('SELECT machine_hostname, machine_id FROM event_log').get() as Record<string, unknown>;
+    expect(row).toEqual({ machine_hostname: 'test-host', machine_id: stored.machine.id });
+    comp.destroy();
+  });
+
+  it('v2 is exactly one ALTER and its comment carries the non-replication decision', () => {
+    const v2 = monitoringMigrations.find((m) => m.version === 2)!;
+    expect(v2.sql.trim()).toBe('ALTER TABLE event_log ADD COLUMN machine_id TEXT;');
+    expect(monitoringMigrations).toHaveLength(2);
   });
 });

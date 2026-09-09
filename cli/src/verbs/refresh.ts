@@ -1,15 +1,24 @@
 /**
  * `igris refresh [--channel <ref>] [--from-source <path>] [--no-propagate]
- *                [--dry-run] [--yes]`
+ *                [--dry-run] [--yes] [--wipe-orphans]`
  *
- * Re-fetch `~/.igris/core/` from the channel recorded in
- * `.install-source.json` (or a new channel via --channel). Atomically
- * swap. Optionally propagate to all registered projects via
+ * Re-fetch `~/.igris/core/` from the source recorded in
+ * `.install-source.json` (or a new one via --channel / --from-source).
+ * Atomically swap. Optionally propagate to all registered projects via
  * `runUpdate({ all: true })`.
  *
- * Channel switching: when `--channel <other>` differs from the recorded
- * channel/ref, prompt for confirmation unless `--yes`. Refusing a
- * channel switch is a clean exit (code 0); user said no, that's fine.
+ * Source resolution + channel switching live in ONE helper shared with
+ * `igris init --upgrade` (`core-source.ts`, BR-103): explicit flag, else the
+ * record (a from-source record re-copies from that checkout — no network),
+ * else the latest release. A switch against the record prompts unless
+ * `--yes`; refusing a switch is a clean exit (code 0).
+ *
+ * Interrupted shapes (BR-103): `core.new.*` residue refuses unless
+ * `--wipe-orphans`; a `core.bak.*` with no `core/` refuses with the restore
+ * command. A retained bak beside a healthy core is normal and proceeds.
+ *
+ * Runtime-only files under core/ (`core-runtime-extras.ts`) are regenerated
+ * / carried into the staged tree before the swap.
  *
  * Cache fast-path: when the channel resolves to the same content_sha256
  * recorded in .install-source.json (computed by re-fetching the API
@@ -22,7 +31,7 @@ import {
   existsSync,
   mkdirSync,
 } from "node:fs";
-import { join, resolve as pathResolve } from "node:path";
+import { join } from "node:path";
 import {
   AtomicExtractError,
   atomicSwap,
@@ -32,16 +41,25 @@ import {
   cacheEvict,
   findCached,
 } from "../lib/cache.js";
+import { ChannelResolveError } from "../lib/channel.js";
 import {
-  ChannelResolveError,
-  resolveChannel,
-} from "../lib/channel.js";
+  CoreSourceError,
+  resolveCoreSource,
+} from "../lib/core-source.js";
+import {
+  applyCoreExtras,
+  reportCoreExtras,
+} from "../lib/core-runtime-extras.js";
 import { DryRunCollector } from "../lib/dry-run.js";
 import { copyFromSource, FromSourceError } from "../lib/from-source.js";
 import {
   brainDir,
   installSourcePath,
 } from "../lib/paths.js";
+import {
+  detectInstallShape,
+  resolveInterruptedShape,
+} from "../lib/preflight.js";
 import {
   fetchAndExtractFromFile,
   fetchAndExtract,
@@ -55,6 +73,7 @@ import type { Channel } from "../types.js";
 import {
   readInstallSource,
   writeInstallSource,
+  recordRefCommitSha,
 } from "../lib/install-source.js";
 import { runUpdate } from "./update.js";
 import { info, warn, error as logError, debug } from "../lib/log.js";
@@ -65,6 +84,11 @@ export interface RefreshOptions {
   noPropagate?: boolean;
   dryRun?: boolean;
   yes?: boolean;
+  /**
+   * BR-103: remove `core.new.*` staging residue left by an interrupted run,
+   * then proceed. Never touches a `core.bak.*` backup.
+   */
+  wipeOrphans?: boolean;
   /** Test seam: pre-resolve the channel via injected fn (skips network). */
   latestReleaseTagFn?: () => Promise<string>;
   /**
@@ -96,62 +120,50 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
     return 1;
   }
 
-  // What the .install-source.json actually records — used for switch detection.
-  const recordedFlag = recordedFlagFromInstallSource(installSrc.channel, installSrc.ref);
+  // BR-103: an interrupted shape refuses BEFORE anything is staged or written.
+  const interrupted = resolveInterruptedShape(detectInstallShape(), {
+    wipeOrphans: opts.wipeOrphans === true,
+  });
+  if (interrupted.verdict === "refuse") {
+    logError(interrupted.message);
+    return 1;
+  }
+  if (interrupted.verdict === "wiped") {
+    for (const r of interrupted.removed) {
+      info(`Removed staging residue ${r} (--wipe-orphans)`);
+    }
+  } else if (interrupted.retainedBaks.length > 0) {
+    debug(
+      `retained backup(s) beside core/: ${interrupted.retainedBaks.join(", ")} (normal — one is kept for recovery)`,
+    );
+  }
 
-  // Resolve the requested channel (or default to recorded).
+  // Resolve the source: flag > record > latest release; prompt on a switch.
   let resolved;
-  let channelKind: Channel;
-  let channelRef: string;
-  let tarballUrl: string | null = null;
-
-  if (opts.fromSource !== undefined) {
-    channelKind = "main";
-    channelRef = "from-source";
-  } else {
-    try {
-      // If --channel wasn't specified AND the previous source was
-      // from-source, the user must explicitly opt back into a network
-      // channel. We pick "release" (default) but the switch-prompt
-      // path catches it.
-      const flag =
-        opts.channel ??
-        (installSrc.source === "from-source"
-          ? undefined
-          : recordedChannelToFlag(installSrc.channel, installSrc.ref));
-      resolved = await resolveChannel({
-        flag,
-        latestReleaseTagFn: opts.latestReleaseTagFn,
-        classifyFn: opts.classifyFn,
-      });
-      channelKind = resolved.kind;
-      channelRef = resolved.ref;
-      tarballUrl = resolved.tarballUrl;
-    } catch (err) {
-      if (err instanceof ChannelResolveError) {
-        logError(err.message);
-        return 1;
-      }
-      throw err;
+  try {
+    resolved = await resolveCoreSource({
+      fromSource: opts.fromSource,
+      channel: opts.channel,
+      installSrc,
+      yes: opts.yes === true,
+      confirmFn: opts.confirmFn,
+      latestReleaseTagFn: opts.latestReleaseTagFn,
+      classifyFn: opts.classifyFn,
+    });
+  } catch (err) {
+    if (err instanceof ChannelResolveError || err instanceof CoreSourceError) {
+      logError(err.message);
+      return 1;
     }
+    throw err;
   }
-
-  // Channel switch confirmation.
-  const requestedFlag =
-    opts.fromSource !== undefined
-      ? "from-source"
-      : opts.channel ?? recordedChannelToFlag(channelKind, channelRef);
-  if (
-    requestedFlag !== recordedFlag &&
-    opts.yes !== true
-  ) {
-    const promptText = `Switching channel from ${recordedFlag} to ${requestedFlag} will replace ~/.igris/core/. Continue? [y/N]`;
-    const confirmed = (opts.confirmFn ?? defaultConfirm)(promptText);
-    if (!confirmed) {
-      info("Refresh cancelled by user.");
-      return 0;
-    }
+  if (resolved.outcome === "declined") {
+    info("Refresh cancelled by user.");
+    return 0;
   }
+  const source = resolved.source;
+  const channelKind: Channel = source.kind === "from-source" ? "main" : source.channelKind;
+  const channelRef = source.kind === "from-source" ? "from-source" : source.ref;
 
   // Stage to a fresh dir.
   const stagingPath = stagingDirFor(root);
@@ -160,9 +172,9 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
   let sourceKind: "github" | "from-source" = "github";
   let sourcePath: string | null = null;
 
-  if (opts.fromSource !== undefined) {
+  if (source.kind === "from-source") {
     sourceKind = "from-source";
-    sourcePath = pathResolve(opts.fromSource);
+    sourcePath = source.path;
     if (dry !== null) {
       dry.wouldCreateDir(stagingPath);
       // TD-142: the non-dry path uses copyFromSource(...) — a recursive
@@ -189,10 +201,7 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
       contentSha256 = `from-source-${Date.now()}`;
     }
   } else {
-    if (tarballUrl === null) {
-      logError("internal: tarballUrl unresolved");
-      return 1;
-    }
+    const tarballUrl = source.tarballUrl;
     if (dry !== null) {
       dry.wouldFetchUrl(tarballUrl);
       dry.wouldCreateDir(stagingPath);
@@ -214,8 +223,7 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
       // channel won't match the requested one, and the switch invalidates any
       // hit). The cached tarball is RE-HASHED on read (cheap for ~100KB); a
       // mismatch evicts the corrupt entry and falls through to the network.
-      const channelUnchanged = requestedFlag === recordedFlag;
-      const cacheHandled = channelUnchanged
+      const cacheHandled = !resolved.switched
         ? await tryCacheHit({
             recordedSha: installSrc.content_sha256,
             channelKind,
@@ -279,6 +287,15 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
         return 1;
       }
       const corePath = join(root, "core");
+      // BR-103: runtime-only extras go into the STAGED tree, so the swap
+      // stays one atomic rename and the promoted core already carries them.
+      reportCoreExtras(
+        applyCoreExtras({
+          stagedRoot: stagingPath,
+          stagedCore: newCorePath,
+          priorCore: existsSync(corePath) ? corePath : null,
+        }),
+      );
       const swap = atomicSwap({
         newCorePath,
         existingCorePath: corePath,
@@ -309,12 +326,21 @@ export async function runRefresh(opts: RefreshOptions): Promise<number> {
   if (dry !== null) {
     dry.wouldWriteFile(installSourcePath(), "update install source record");
   } else {
+    // TD-301: best-effort, mutable channels only; no call for release/tag or
+    // a non-github source, every error swallowed. The --dry-run arm above is
+    // deliberately untouched.
+    const refCommitSha = await recordRefCommitSha(
+      channelKind,
+      channelRef,
+      sourceKind,
+    );
     writeInstallSource({
-      schema_version: 1,
+      schema_version: 2,
       channel: channelKind,
       ref: channelRef,
       fetched_at: fetchedAt,
       content_sha256: contentSha256!,
+      ...(refCommitSha !== undefined ? { ref_commit_sha: refCommitSha } : {}),
       source: sourceKind,
       source_path: sourcePath,
     });
@@ -423,54 +449,4 @@ async function tryCacheHit(args: {
     `refresh: cache HIT for ${args.recordedSha.slice(0, 12)}… (${args.channelKind}); skipping network`,
   );
   return "hit-noop";
-}
-
-/**
- * Convert a recorded channel kind + ref back into a flag-style string
- * for resolveChannel's input. Used so we can re-resolve the same
- * channel without round-tripping through a flag.
- */
-function recordedChannelToFlag(channel: Channel, ref: string): string {
-  if (channel === "main") return "main";
-  if (channel === "release") return ref; // tag name verbatim
-  if (channel === "tag") return ref;
-  if (channel === "branch") return ref; // branch name verbatim (TD-154)
-  return ref;
-}
-
-/**
- * What the .install-source.json effectively reads as for switch detection.
- * For from-source records (where .source === "from-source"), the
- * recorded ref is "from-source" — so requesting --channel=main is a
- * legitimate switch and the prompt should fire.
- */
-function recordedFlagFromInstallSource(channel: Channel, ref: string): string {
-  if (ref === "from-source") return "from-source";
-  return recordedChannelToFlag(channel, ref);
-}
-
-/**
- * Default confirmation: read a single line from stdin and accept
- * "y" / "yes" (case-insensitive). All else means "no".
- *
- * NOT used in tests — the test seam `confirmFn` injects a deterministic
- * answer.
- */
-function defaultConfirm(prompt: string): boolean {
-  process.stdout.write(prompt + " ");
-  // Synchronous stdin read via fs trick. We use a 1024-byte buffer
-  // and read until newline. Node 20+ exposes process.stdin as a
-  // Readable; for synchronous reads we shell out to read(1) via fs.
-  // Simpler: just read up to 1024 bytes from /dev/tty.
-  try {
-    const fs = require("node:fs");
-    const buf = Buffer.alloc(1024);
-    const fd = fs.openSync("/dev/tty", "r");
-    const n = fs.readSync(fd, buf, 0, 1024, null);
-    fs.closeSync(fd);
-    const reply = buf.subarray(0, n).toString("utf-8").trim().toLowerCase();
-    return reply === "y" || reply === "yes";
-  } catch {
-    return false;
-  }
 }

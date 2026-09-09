@@ -92,6 +92,10 @@ export const RSYNC_EXCLUDES: readonly string[] = [
   // Workstation history + build outputs (rebuilt on VPS via `npm run build`)
   ".git/",
   "dist/",
+  // TD-373: brain-mcp-server compiles to `dist.tmp` and swaps, so a failed
+  // build leaves the last-good `dist/` serving on the VPS. The directory only
+  // exists mid-build or after a crashed one — never something to ship across.
+  "dist.tmp/",
   "build/",
   // Igris symlinks + local agent memory (each project's VPS has its own ~/.igris)
   // (FR-187 retired the .claude/rules/ symlink layer — no rules dir to exclude.)

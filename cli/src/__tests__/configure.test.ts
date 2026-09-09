@@ -697,6 +697,14 @@ describe("init --persona", () => {
     process.env.PATH = join(workDir, "empty-bin");
     mkdirSync(process.env.PATH, { recursive: true });
 
+    // TD-406: declare the staged repo as the ONLY subtree the canonical write
+    // may land in. Without this the guard fails closed and `sourceRepo`'s
+    // canonical copy is skipped — which this test would not notice, since it
+    // asserts the runtime copy. The declaration is what keeps the from-source
+    // CANONICAL write covered.
+    const prevRepoDir = process.env.IGRIS_REPO_DIR;
+    process.env.IGRIS_REPO_DIR = sourceRepo;
+
     try {
       const reg = await import("../lib/registry.js");
       reg.closeDb();
@@ -714,8 +722,14 @@ describe("init --persona", () => {
       expect(readFileSync(join(brainRoot, "core", "SOUL.md"), "utf-8")).toBe(
         PROFESSIONAL_SOUL,
       );
+      // ...and so is the canonical copy in the (declared) from-source checkout.
+      expect(readFileSync(join(srcCore, "SOUL.md"), "utf-8")).toBe(
+        PROFESSIONAL_SOUL,
+      );
     } finally {
       process.env.PATH = prevPath;
+      if (prevRepoDir === undefined) delete process.env.IGRIS_REPO_DIR;
+      else process.env.IGRIS_REPO_DIR = prevRepoDir;
     }
   });
 });

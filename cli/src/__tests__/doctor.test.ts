@@ -667,15 +667,22 @@ describe("doctor — runDoctor exit codes", () => {
   // "second class after bridge-missing" is now the brain-level
   // hooks-missing row (global ~/.claude/settings.json lacking the Igris
   // hooks), whose fix is `mergeGlobalCanonicalHooks`. Test approach (per
-  // L-159): spy on the DEPENDENCY modules `init.js` + `global-hooks.js`
-  // (NOT the SUT `doctor.js`). After --fix:
-  //   - runInit was invoked exactly once (bridge fix)
-  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix)
-  // Both calls in one runDoctor invocation = `break` was replaced with
-  // continue.
+  // L-159): spy on the DEPENDENCY modules (NOT the SUT `doctor.js`).
+  //
+  // BR-103 (2026-09-07) moved the pin: the bridge arm no longer calls
+  // `runInit` at all — that call resolved the DEFAULT channel and swapped a
+  // release tarball over ~/.igris/core (the 2026-09-07 incident), and it
+  // never wrote `cli_targets` anyway (Finding 2: the row it "fixed" could
+  // not clear). The narrow arm records the target in config.json via
+  // `recordCliTarget` and backfills the brain MCP. After --fix:
+  //   - runInit was NOT invoked (was: exactly once — TD-122, 2026-05)
+  //   - recordCliTarget was invoked once, with "claude"
+  //   - mergeGlobalCanonicalHooks was invoked (hooks-missing fix) — the
+  //     continue-property TD-122 established is preserved
   // -------------------------------------------------------------------
-  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122)", async () => {
+  it("--fix: bridge-missing AND hooks-missing in one invocation (TD-122; the bridge arm is config-scoped since BR-103)", async () => {
     const initMod = await import("../verbs/init.js");
+    const cfgMod = await import("../lib/init-config.js");
     const ghMod = await import("../lib/global-hooks.js");
     const bridgeMod = await import("../lib/drift/bridge-missing.js");
     const { runDoctor } = await import("../verbs/doctor.js");
@@ -687,12 +694,14 @@ describe("doctor — runDoctor exit codes", () => {
       JSON.stringify({ includeGitInstructions: false }) + "\n",
     );
 
-    // Inject a synthetic bridge-missing drift row. The detector itself
-    // is a pure function; spying on it cleanly isolates the doctor
-    // loop's behavior from the brittle PATH/configDir detection logic.
+    // Inject a synthetic bridge-missing drift row ONCE (the classification
+    // pass); the exit-predicate re-probe (BR-103) then runs the REAL detector,
+    // which reads the config.json the fix just wrote. The detector itself is
+    // a pure function; spying on it isolates the doctor loop's behavior from
+    // the brittle PATH/configDir detection logic.
     const bridgeSpy = vi
       .spyOn(bridgeMod, "detectBridgeMissing")
-      .mockReturnValue([
+      .mockReturnValueOnce([
         {
           slug: "(brain)",
           path: "claude",
@@ -701,9 +710,10 @@ describe("doctor — runDoctor exit codes", () => {
         },
       ]);
 
-    // Stub runInit so we don't actually re-init the test brain. Returning
-    // 0 signals "bridge fix succeeded".
-    const initSpy = vi.spyOn(initMod, "runInit").mockResolvedValue(0);
+    // runInit is spied WITHOUT a mock: if the arm still called it, the real
+    // init would run against the fence and the spy would record it.
+    const initSpy = vi.spyOn(initMod, "runInit");
+    const recordSpy = vi.spyOn(cfgMod, "recordCliTarget");
     // Spy on the global-hooks merge (the hooks-missing fix). Let it run for
     // real — it writes into the sandboxed HOME and clears the row.
     const ghSpy = vi.spyOn(ghMod, "mergeGlobalCanonicalHooks");
@@ -712,19 +722,214 @@ describe("doctor — runDoctor exit codes", () => {
       // --fix should visit BOTH classes. The assertion is that both fix
       // paths fired in one invocation (the loop did NOT break after
       // bridge-missing).
-      await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
 
-      // Bridge fix invoked exactly once.
-      expect(initSpy).toHaveBeenCalledTimes(1);
-      expect(initSpy).toHaveBeenCalledWith({ upgrade: true, yes: true });
+      // The bridge fix is the config record — never a partial init.
+      expect(initSpy).not.toHaveBeenCalled();
+      expect(recordSpy).toHaveBeenCalledTimes(1);
+      expect(recordSpy).toHaveBeenCalledWith("claude");
+      const cfg = JSON.parse(
+        readFileSync(join(tmpRoot, "config.json"), "utf-8"),
+      ) as { cli_targets: Record<string, unknown> };
+      expect(cfg.cli_targets.claude).toBe(true);
 
       // hooks-missing fix invoked at least once — evidence the loop did
       // NOT break after bridge-missing.
       expect(ghSpy).toHaveBeenCalled();
+      // Both rows re-probe clean: the real detector sees `claude` recorded,
+      // the global hooks were merged. Exit 0 is earned, not discounted.
+      expect(code).toBe(0);
     } finally {
       bridgeSpy.mockRestore();
       initSpy.mockRestore();
+      recordSpy.mockRestore();
       ghSpy.mockRestore();
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-103: `--fix` never replaces ~/.igris/core. Two pins:
+//
+//   (1) a SOURCE-SCAN pin — doctor.ts imports nothing from `./init.js` and
+//       contains no `runInit(` — with a planted-copy self-negative (the same
+//       predicate over a copy that re-inserts the import must fail), so the
+//       pin is shown to bite before it is trusted (BR-100 template 2);
+//   (2) a HERMETIC BYTE WITNESS over the fence core: a synthetic
+//       bridge-missing row, the network stubbed at its two seams
+//       (`checkNetwork` → 200, `httpsGetJson` → a fixture tag) and the tarball
+//       body served from a fixture file, then `runDoctor({fix:true})` for real.
+//       At HEAD this run swapped the fixture core over the fence core (tree
+//       sha moved, a core.bak.* appeared, `.install-source.json` was written
+//       as release/<tag>); after BR-103 the tree sha, the bak count and the
+//       record are unchanged — and the same run still recorded the target
+//       (the positive control: "no writes" is not the output of a dead run).
+// ---------------------------------------------------------------------------
+describe("doctor — the exit code re-probes every fixed class instead of discounting it (BR-103)", () => {
+  // Before BR-103 the exit predicate DISCOUNTED brain-core-missing /
+  // bridge-missing / mcp-unregistered blindly under --fix ("conceptually
+  // resolved"). A backfill that lands an entry pointing at a MISSING bundled
+  // path is exactly the case that discount hid: the fix reports success, the
+  // inspector still says unregistered, and the verb must say exit 1.
+  it("mcp-unregistered: a backfill whose entry points at a missing bundled path leaves the row non-clean → exit 1 (the table says so too)", async () => {
+    const pathsMod = await import("../lib/paths.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+    rmSync(join(homeOverride, ".claude.json"), { force: true });
+    const missing = join(tmpRoot, "not-built", "brain-mcp-server", "dist", "index.js");
+    const pathSpy = vi.spyOn(pathsMod, "bundledMcpEntryPath").mockReturnValue(missing);
+    // `info()` writes through process.stdout.write (log.ts) — capture the
+    // table there, line by line.
+    let captured = "";
+    const logSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        captured += String(chunk);
+        return true;
+      }) as typeof process.stdout.write);
+    try {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(1);
+      // the entry WAS written (the fix "applied")...
+      const claude = JSON.parse(
+        readFileSync(join(homeOverride, ".claude.json"), "utf-8"),
+      ) as { mcpServers: Record<string, { args: string[] }> };
+      expect(claude.mcpServers["igris-brain"].args[0]).toBe(missing);
+      // ...and the table's live `now` column names the class as still drifted.
+      const row = captured.split("\n").find((l) => l.startsWith("| mcp-unregistered |"));
+      expect(row).toBeDefined();
+      expect(row).toMatch(/\| applied \| mcp-unregistered \|$/);
+    } finally {
+      pathSpy.mockRestore();
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe("doctor — --fix never replaces ~/.igris/core (BR-103)", () => {
+  const DOCTOR_SRC = join(__dirname, "..", "verbs", "doctor.ts");
+
+  /** True when the source text is free of the wholesale-replace arm. */
+  function neverInvokesInit(src: string): boolean {
+    return !/from\s+["']\.\/init\.js["']/.test(src) && !/\brunInit\s*\(/.test(src);
+  }
+
+  it("source-scan pin: doctor.ts imports nothing from ./init.js and calls no runInit( — and the pin bites on a planted copy", () => {
+    const src = readFileSync(DOCTOR_SRC, "utf-8");
+    expect(src.length).toBeGreaterThan(1000);
+    expect(neverInvokesInit(src)).toBe(true);
+    // self-negative: the pre-BR-103 arm, planted back into a COPY
+    const planted =
+      src +
+      '\nimport { runInit } from "./init.js";\n' +
+      "async function _planted() { await runInit({ upgrade: true, yes: true }); }\n";
+    expect(neverInvokesInit(planted)).toBe(false);
+  });
+
+  function treeSha(dir: string): string {
+    const { createHash } = require("node:crypto") as typeof import("node:crypto");
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const files: string[] = [];
+    const walk = (d: string): void => {
+      for (const e of fs.readdirSync(d).sort()) {
+        const abs = path.join(d, e);
+        const st = fs.lstatSync(abs);
+        if (st.isDirectory()) walk(abs);
+        else if (st.isFile()) files.push(abs);
+      }
+    };
+    walk(dir);
+    const h = createHash("sha256");
+    for (const f of files) {
+      h.update(path.relative(dir, f));
+      h.update("\0");
+      h.update(createHash("sha256").update(fs.readFileSync(f)).digest("hex"));
+      h.update("\n");
+    }
+    return h.digest("hex");
+  }
+
+  it("hermetic byte witness: a bridge-missing --fix leaves the core tree, the bak ring and the install record byte-identical — while recording the target", async () => {
+    const preflightMod = await import("../lib/preflight.js");
+    const httpMod = await import("../lib/http.js");
+    const bridgeMod = await import("../lib/drift/bridge-missing.js");
+    const initMod = await import("../verbs/init.js");
+    const { runDoctor } = await import("../verbs/doctor.js");
+
+    const coreDir = join(tmpRoot, "core");
+    // A from-source record pointing at the checkout — the shape of the
+    // machine the incident hit. At HEAD the fix overwrote it as release/<tag>.
+    const isPath = join(tmpRoot, ".install-source.json");
+    writeFileSync(
+      isPath,
+      JSON.stringify(
+        {
+          schema_version: 1,
+          channel: "main",
+          ref: "from-source",
+          fetched_at: "2026-09-07T00:00:00.000Z",
+          content_sha256: "from-source-fixture",
+          source: "from-source",
+          source_path: join(__dirname, "..", "..", ".."),
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    const w0Tree = treeSha(coreDir);
+    const w0Record = readFileSync(isPath, "utf-8");
+    const bakCount = (): number =>
+      require("node:fs")
+        .readdirSync(tmpRoot)
+        .filter((e: string) => e.startsWith("core.bak.")).length;
+    expect(bakCount()).toBe(0);
+
+    // The two metadata seams + the tarball body: everything init needs to
+    // reach the swap, none of it on the network.
+    const netSpy = vi.spyOn(preflightMod, "checkNetwork").mockResolvedValue(200);
+    const apiSpy = vi
+      .spyOn(httpMod, "httpsGetJson")
+      .mockResolvedValue(JSON.stringify({ tag_name: "v0.0.0-fixture" }));
+    const bridgeSpy = vi
+      .spyOn(bridgeMod, "detectBridgeMissing")
+      .mockReturnValueOnce([
+        {
+          slug: "(brain)",
+          path: "claude",
+          driftClass: "bridge-missing",
+          recommendedFix: "synthetic — BR-103 witness",
+        },
+      ]);
+    const initSpy = vi.spyOn(initMod, "runInit");
+    const prevFixture = process.env.IGRIS_TARBALL_FILE;
+    process.env.IGRIS_TARBALL_FILE = join(
+      __dirname,
+      "fixtures",
+      "tarballs",
+      "clean-core.tar.gz",
+    );
+    try {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      // the witness
+      expect(treeSha(coreDir)).toBe(w0Tree);
+      expect(bakCount()).toBe(0);
+      expect(readFileSync(isPath, "utf-8")).toBe(w0Record);
+      expect(initSpy).not.toHaveBeenCalled();
+      expect(netSpy).not.toHaveBeenCalled();
+      expect(apiSpy).not.toHaveBeenCalled();
+      // the positive control
+      const cfg = JSON.parse(
+        readFileSync(join(tmpRoot, "config.json"), "utf-8"),
+      ) as { cli_targets: Record<string, unknown> };
+      expect(cfg.cli_targets.claude).toBe(true);
+      expect(code).toBe(0);
+    } finally {
+      if (prevFixture === undefined) delete process.env.IGRIS_TARBALL_FILE;
+      else process.env.IGRIS_TARBALL_FILE = prevFixture;
+      netSpy.mockRestore();
+      apiSpy.mockRestore();
+      bridgeSpy.mockRestore();
+      initSpy.mockRestore();
     }
   });
 });
@@ -799,12 +1004,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(reg.listProjects().length).toBe(2);
 
     // 'y' for first, 'n' for second — net delete = 1.
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-1", "orphan-2"]),
       false,
       makePrompt(["y", "n"]),
     );
-    expect(removed).toBe(1);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(0);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["orphan-2"]);
   });
@@ -813,12 +1019,14 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     await seedOrphans(["orphan-keep"]);
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-keep"]),
       false,
       makePrompt(["n"]),
     );
-    expect(removed).toBe(0);
+    expect(sweep.removed).toBe(0);
+    // A declined row is not an ATTEMPT — it must not show up as a skip.
+    expect(sweep.results).toEqual([]);
     expect(reg.listProjects().length).toBe(1);
   });
 
@@ -830,12 +1038,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     // We seed exactly one answer; the queue would throw if the loop
     // didn't break (defensive: catches a regression that walks past the
     // 'a' branch).
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["orphan-x", "orphan-y", "orphan-z"]),
       false,
       makePrompt(["a"]),
     );
-    expect(removed).toBe(0);
+    expect(sweep.removed).toBe(0);
+    expect(sweep.results).toEqual([]);
     expect(reg.listProjects().length).toBe(3);
   });
 
@@ -847,12 +1056,13 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     // deleted in the body of the loop without further reads. Queue has
     // exactly one entry; if yesAll didn't latch, the second loop iter
     // would throw "more times than answers queued".
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["bulk-1", "bulk-2", "bulk-3"]),
       false,
       makePrompt(["all"]),
     );
-    expect(removed).toBe(3);
+    expect(sweep.removed).toBe(3);
+    expect(sweep.skipped).toBe(0);
     expect(reg.listProjects().length).toBe(0);
   });
 
@@ -864,14 +1074,212 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
     const reg = await import("../lib/registry.js");
     await seedOrphans(["upper-1", "upper-2"]);
-    const removed = await confirmAndRemoveOrphans(
+    const sweep = await confirmAndRemoveOrphans(
       buildOrphanRows(["upper-1", "upper-2"]),
       false,
       makePrompt(["Y", "n"]),
     );
-    expect(removed).toBe(1);
+    expect(sweep.removed).toBe(1);
     const remaining = reg.listProjects().map((r) => r.slug);
     expect(remaining).toEqual(["upper-2"]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-084: a project that still has briefs must not abort the WHOLE sweep.
+//
+// `brief_status.project` carries a live FK to `projects(slug)` and
+// better-sqlite3's bundled SQLite is compiled with SQLITE_DEFAULT_FOREIGN_KEYS=1,
+// so the DELETE is BLOCKED for such a project — the safe direction. Pre-BR-084
+// the throw was unguarded at all four call sites, so it escaped
+// confirmAndRemoveOrphans and every OTHER orphan in the same run survived too.
+//
+// THE FIXTURE HAS TWO ORPHANS AND THE BRIEFED ONE IS SWEPT FIRST. That is the
+// whole point: with ONE orphan, "aborted after the throw" and "completed with a
+// skip" are indistinguishable — the same single row survives either way. The
+// discriminator is the SECOND, clean orphan: it survives an abort and is removed
+// by a completed sweep.
+// ---------------------------------------------------------------------------
+describe("doctor — --remove-orphans partial failure (BR-084)", () => {
+  const BRIEFED = "orphan-with-briefs";
+  const CLEAN = "orphan-clean";
+
+  function rowsFor(slugs: string[]): Array<{
+    slug: string;
+    path: string;
+    driftClass: "path-missing";
+    recommendedFix: string;
+  }> {
+    return slugs.map((slug) => ({
+      slug,
+      path: `/no/such/dir/${slug}`,
+      driftClass: "path-missing" as const,
+      recommendedFix: "delete row",
+    }));
+  }
+
+  /**
+   * Two registry rows, both path-missing; ONE of them owns a `brief_status` row.
+   *
+   * The brief is written through a SEPARATE, short-lived handle opened only
+   * after `closeDb()` has released the registry's own — never two live RW
+   * connections to the same file at once.
+   *
+   * The fixture ARMS itself before returning: it asserts `foreign_keys` is
+   * actually ON for this handle shape and that the DELETE really is refused.
+   * Without that, a sandbox where the FK happened not to bite would make every
+   * assertion below pass for the wrong reason.
+   */
+  async function seedTwoOrphansOneBriefed(): Promise<void> {
+    const reg = await import("../lib/registry.js");
+    for (const slug of [BRIEFED, CLEAN]) {
+      reg.upsertProject({
+        slug,
+        name: slug,
+        path: `/no/such/dir/${slug}`,
+        tech_stack: "",
+        igris_version: "7.0.0",
+      });
+    }
+    reg.closeDb();
+
+    const { brainDbPath } = await import("../lib/paths.js");
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(brainDbPath());
+    // Mirrors brain-mcp-server/src/db.ts:296-308 — the FK is the load-bearing
+    // part; the column list is trimmed to the NOT NULL ones.
+    db.exec(
+      `CREATE TABLE IF NOT EXISTS brief_status (
+         id INTEGER PRIMARY KEY AUTOINCREMENT,
+         project TEXT NOT NULL,
+         brief_id TEXT NOT NULL,
+         title TEXT NOT NULL,
+         status TEXT NOT NULL,
+         FOREIGN KEY (project) REFERENCES projects(slug)
+       );`,
+    );
+    db.prepare(
+      "INSERT INTO brief_status (project, brief_id, title, status) VALUES (?, ?, ?, ?)",
+    ).run(BRIEFED, "BR-084", "fixture brief", "Open");
+
+    expect(db.pragma("foreign_keys", { simple: true })).toBe(1);
+    let refused = false;
+    try {
+      db.prepare("DELETE FROM projects WHERE slug = ?").run(BRIEFED);
+    } catch {
+      refused = true;
+    }
+    expect(refused).toBe(true);
+    db.close();
+  }
+
+  it("--yes: the briefed project is skipped WITH ITS REASON and the other orphan is still removed", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([CLEAN, BRIEFED]);
+
+    // BRIEFED first — the throw used to happen here, before CLEAN was reached.
+    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true);
+
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(1);
+    // The sweep CONTINUED: the clean orphan is gone, the briefed one is kept.
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+
+    const failed = sweep.results.find((r) => !r.ok);
+    expect(failed?.slug).toBe(BRIEFED);
+    // Reported with the REASON, not a bare "failed": the count and the table
+    // that blocked it are what tell an operator what to do next.
+    expect(failed?.error).toContain("1 brief_status row(s)");
+    expect(failed?.error).toContain("registry row kept");
+    const succeeded = sweep.results.find((r) => r.ok);
+    expect(succeeded?.slug).toBe(CLEAN);
+    expect(succeeded?.error).toBeNull();
+  });
+
+  it("interactive 'y','y': the refusal on the first orphan does not stop the second", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+
+    const answers = ["y", "y"];
+    const sweep = await confirmAndRemoveOrphans(
+      rowsFor([BRIEFED, CLEAN]),
+      false,
+      async () => {
+        const next = answers.shift();
+        if (next === undefined) {
+          throw new Error("test bug: prompt called more times than answers queued");
+        }
+        return next;
+      },
+    );
+
+    // BOTH prompts were consumed — the loop reached the second orphan.
+    expect(answers.length).toBe(0);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.skipped).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+  });
+
+  it("runDoctor --remove-orphans --yes: completes, and exits 1 because the skipped row is STILL drifted", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seedTwoOrphansOneBriefed();
+
+    // Pre-BR-084 this call REJECTED (the throw escaped runDoctor entirely).
+    const code = await runDoctor({ fix: false, removeOrphans: true, yes: true });
+
+    // The sibling test "--remove-orphans --yes deletes path-missing rows" pins
+    // exit 0 for two REMOVABLE orphans in this same baseline, so the 1 here is
+    // attributable to the skipped row and nothing else in the sandbox.
+    expect(code).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual([BRIEFED]);
+  });
+
+  it("rl.close() runs on the throwing path (the interactive path no longer leaks readline)", async () => {
+    // The readline interface is only built on the PRODUCTION path (no injected
+    // prompt), so this is the one test that must reach it. `node:readline` is
+    // mocked for a freshly-reset module graph and restored in `finally`.
+    const reg0 = await import("../lib/registry.js");
+    reg0.closeDb();
+    vi.resetModules();
+
+    let created = 0;
+    let closed = 0;
+    vi.doMock("node:readline", () => {
+      const createInterface = (): unknown => {
+        created++;
+        return {
+          question: (): never => {
+            throw new Error("synthetic stdin failure");
+          },
+          close: (): void => {
+            closed++;
+          },
+        };
+      };
+      const emitKeypressEvents = (): void => {};
+      return { createInterface, emitKeypressEvents, default: { createInterface, emitKeypressEvents } };
+    });
+
+    try {
+      const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+      await expect(
+        confirmAndRemoveOrphans(rowsFor(["never-reached"]), false),
+      ).rejects.toThrow("synthetic stdin failure");
+      // Arm: the production readline branch really was taken. Without this, a
+      // `closed === 0` regression could hide behind "rl was never created".
+      expect(created).toBe(1);
+      // Pre-BR-084 `rl.close()` sat AFTER the loop, so a throw skipped it: 0.
+      expect(closed).toBe(1);
+    } finally {
+      vi.doUnmock("node:readline");
+      vi.resetModules();
+      const reg = await import("../lib/registry.js");
+      reg.closeDb();
+    }
   });
 });
 
@@ -913,7 +1321,7 @@ describe("doctor — secret-perms drift class (TD-220)", () => {
 
     const cfg = configJsonPath();
     // cli_targets:{} keeps bridge-missing opted-out so --fix's only action is
-    // the chmod (a spurious bridge-missing would fail the fix's runInit).
+    // the chmod (a spurious bridge-missing would add a config record — BR-103).
     writeFileSync(cfg, JSON.stringify({ version: "7.0.0", cli_targets: {} }) + "\n");
     chmodSync(cfg, 0o644);
     expect(statSync(cfg).mode & 0o777).toBe(0o644);
@@ -1385,5 +1793,152 @@ describe("doctor — antigravity-skills-link drift class (FR-179)", () => {
       detectSpy.mockRestore();
       linkSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-100: machine-identity drift class — informational, read-only, never fixed.
+// ---------------------------------------------------------------------------
+
+describe("doctor — machine-identity drift class (BR-100)", () => {
+  const LIVE = require("node:os").hostname() as string;
+
+  /** Merge a `machine` block into the staged opt-out config (keeps `cli_targets: {}`). */
+  function withMachine(machine: unknown): void {
+    const p = join(tmpRoot, "config.json");
+    const cfg = JSON.parse(readFileSync(p, "utf-8")) as Record<string, unknown>;
+    if (machine === undefined) delete cfg.machine;
+    else cfg.machine = machine;
+    writeFileSync(p, JSON.stringify(cfg, null, 2) + "\n");
+    chmodSync(p, 0o600);
+  }
+
+  /** A minimal brain with the two tables at their BR-100 shape. */
+  function seedBrain(rows: Array<{ table: "event_log" | "instances"; hostname: string; machine_id: string | null; n?: number }>): string {
+    const Database = require("better-sqlite3");
+    const p = join(tmpRoot, "memory", "knowledge.db");
+    const db = new Database(p);
+    db.exec(`
+      CREATE TABLE event_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL, component TEXT NOT NULL,
+        payload TEXT NOT NULL DEFAULT '{}', machine_hostname TEXT, project_slug TEXT, instance_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), machine_id TEXT);
+      CREATE TABLE instances (id TEXT PRIMARY KEY, machine_hostname TEXT NOT NULL, project_slug TEXT, status TEXT DEFAULT 'active',
+        last_activity_at TEXT NOT NULL DEFAULT (datetime('now')), machine_id TEXT);
+    `);
+    let k = 0;
+    for (const r of rows) {
+      for (let i = 0; i < (r.n ?? 1); i++) {
+        k++;
+        if (r.table === "event_log") {
+          db.prepare("INSERT INTO event_log (event_name, component, machine_hostname, machine_id) VALUES ('x', 'unknown', ?, ?)").run(r.hostname, r.machine_id);
+        } else {
+          db.prepare("INSERT INTO instances (id, machine_hostname, machine_id) VALUES (?, ?, ?)").run(`i-${k}`, r.hostname, r.machine_id);
+        }
+      }
+    }
+    db.close();
+    return p;
+  }
+
+  function sha(p: string): string {
+    return require("node:crypto").createHash("sha256").update(readFileSync(p)).digest("hex");
+  }
+
+  async function machineRow() {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    const drift = await classifyDriftAll(reg.listProjects());
+    return drift.find((r) => r.driftClass === "machine-identity") ?? null;
+  }
+
+  it("clean: no machine block yet (a fresh init, nothing minted) and no brain rows → NO row", async () => {
+    withMachine(undefined);
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("clean: minted, live hostname aliased, every local row attributed → NO row", async () => {
+    withMachine({ id: "X", aliases: [LIVE, "MacBookAir"] });
+    seedBrain([
+      { table: "event_log", hostname: "MacBookAir", machine_id: null, n: 3 },
+      { table: "event_log", hostname: "elsewhere", machine_id: "X" }, // id wins
+      { table: "instances", hostname: LIVE, machine_id: "X" },
+    ]);
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("(b): minted but the live hostname is NOT in the persisted aliases → informational row naming both", async () => {
+    withMachine({ id: "X", aliases: ["MacBookAir"] });
+    const row = await machineRow();
+    expect(row).not.toBeNull();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.path).toBe(join(tmpRoot, "config.json"));
+    expect(row!.recommendedFix).toMatch(/^informational — hostname changed since the last writer ran/);
+    expect(row!.recommendedFix).toContain(`now '${LIVE}'`);
+    expect(row!.recommendedFix).toContain("aliases [MacBookAir]");
+  });
+
+  it("(b) does NOT fire for an UNMINTED identity (no id): the next writer mints and seeds the alias", async () => {
+    withMachine({ aliases: [] });
+    expect(await machineRow()).toBeNull();
+  });
+
+  it("(c): NULL-id rows under hostnames outside the alias list are listed with counts, largest first; id-bearing rows are not counted", async () => {
+    withMachine({ id: "X", aliases: [LIVE] });
+    seedBrain([
+      { table: "event_log", hostname: "MacBookAir", machine_id: null, n: 5 },
+      { table: "instances", hostname: "MacBookAir", machine_id: null, n: 2 },
+      { table: "event_log", hostname: "vps-host", machine_id: null, n: 3 },
+      { table: "event_log", hostname: "foreign-with-id", machine_id: "Y", n: 4 }, // carries an id → not an alias candidate
+      { table: "event_log", hostname: LIVE, machine_id: null, n: 9 }, // mine already
+    ]);
+    const row = await machineRow();
+    expect(row).not.toBeNull();
+    expect(row!.recommendedFix).toContain("seen locally, unattributed (machine_id NULL): 'MacBookAir' (7), 'vps-host' (3)");
+    expect(row!.recommendedFix).not.toContain("foreign-with-id");
+    expect(row!.recommendedFix).toContain("ONLY names this machine has used");
+    expect(row!.recommendedFix).not.toContain("not yet minted");
+  });
+
+  it("(c) names the unminted state when (c) fires before any writer ran", async () => {
+    withMachine(undefined);
+    seedBrain([{ table: "instances", hostname: "MacBookAir", machine_id: null }]);
+    const row = await machineRow();
+    expect(row!.recommendedFix).toContain("'MacBookAir' (1)");
+    expect(row!.recommendedFix).toContain("identity not yet minted (the next writer mints it)");
+  });
+
+  it("read-only: the reader leaves the brain file byte-identical (no -wal on a delete-mode brain); the doctor pass leaves brain + config identical", async () => {
+    withMachine({ id: "X", aliases: ["old-name"] });
+    const dbPath = seedBrain([{ table: "event_log", hostname: "MacBookAir", machine_id: null }]);
+    const cfgPath = join(tmpRoot, "config.json");
+
+    // The READER on its own, before anything else opens the file.
+    const { readUnattributedHostnames } = await import("../lib/brain-db.js");
+    const dbBefore = sha(dbPath);
+    const seen = readUnattributedHostnames({ machine_id: "X", hostname: LIVE, aliases: ["old-name", LIVE] });
+    expect(seen).toEqual([{ hostname: "MacBookAir", rows: 1 }]); // non-vacuous
+    expect(sha(dbPath)).toBe(dbBefore);
+    expect(existsSync(`${dbPath}-wal`)).toBe(false);
+
+    // The whole doctor pass. The registry (`listProjects`) opens the SAME file
+    // read-write and creates its `projects` table on first touch — that is the
+    // registry's write, not the probe's — so the witness brackets the SECOND
+    // pass, where nothing but the probe runs against a settled file.
+    expect(await machineRow()).not.toBeNull();
+    const settled = { db: sha(dbPath), cfg: sha(cfgPath) };
+    const row = await machineRow();
+    expect(row).not.toBeNull(); // both (b) and (c) fired
+    expect({ db: sha(dbPath), cfg: sha(cfgPath) }).toEqual(settled);
+  });
+
+  it("--fix never touches it: the row survives, exit 1, config.json unchanged", async () => {
+    withMachine({ id: "X", aliases: ["old-name"] });
+    const cfgPath = join(tmpRoot, "config.json");
+    const before = sha(cfgPath);
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const code = await runDoctor({ fix: true, removeOrphans: false, yes: true });
+    expect(code).toBe(1);
+    expect(sha(cfgPath)).toBe(before);
+    expect(await machineRow()).not.toBeNull();
   });
 });

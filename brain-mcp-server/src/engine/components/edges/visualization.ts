@@ -97,6 +97,15 @@ export interface ProjectGraphRows {
  *
  * `id` is `${entity_type}|${entity_id}` to avoid collisions between
  * brief ids (FR-XXX) and goal ids (GL-XXX).
+ *
+ * This key is two-part BY JUSTIFIED EXCEPTION (BR-078): every node in this
+ * payload is drawn from a SINGLE project — `fetchProjectGraphRows` filters
+ * `brief_status` by `project`, and `brief_status` is `PRIMARY KEY (project,
+ * brief_id)` — so `brief_id` is unique within the emitted set and the project
+ * axis is implicit. The type-vs-type collision this comment names is therefore
+ * the only collision reachable here, and two segments resolve it. The three-part
+ * `graph-keys.ts` key is required only where the node set SPANS projects
+ * (`traversal.ts`, `whole-graph.ts`).
  */
 export interface GraphNode {
   id: string;
@@ -227,6 +236,14 @@ export function fetchProjectGraphRows(
   // ---- edges ----
   // Soft-delete WHERE clause MUST match handlers.ts handleEdgeList semantics.
   // See COALESCE(json_extract(metadata,'$.deleted'), 0) = 0 in handlers.ts.
+  // BR-078: known residual — this edge query (and the `briefSet` filter in the
+  // large-project branch below) has NO project axis. An edge belonging to
+  // project B whose BOTH endpoint ids also exist in project A is admitted and
+  // drawn as an A-to-A edge: a FALSE EDGE. Same defect class as the fused nodes
+  // BR-078 fixed in `traversal.ts`, different site — and out of BR-078's stated
+  // scope, which names the three traversal tools. Closing it needs a project
+  // column on `entity_edges`. Inherited by TD-308 / FR-239, which retire this
+  // renderer. Do not "fix" it by re-keying the nodes — the nodes are correct.
   let edgeRows: EdgeRow[];
   if (briefIds.length <= SQLITE_PARAM_LIMIT) {
     // Single SQL pass with IN-clause.
@@ -353,6 +370,8 @@ export function fetchProjectGraphRows(
  *
  * - Builds nodes for every brief plus every goal targeted by a serves_goal edge.
  * - Encodes node ids as `${type}|${id}` to avoid GL/FR id-prefix collisions.
+ *   Two-part BY JUSTIFIED EXCEPTION (BR-078) — see the `GraphNode` doc comment:
+ *   this payload never spans projects, so `brief_id` is unique within it.
  * - Computes per-node degree (in + out) in O(E).
  * - Selects top-K god nodes by degree (ties broken by id for stability).
  *

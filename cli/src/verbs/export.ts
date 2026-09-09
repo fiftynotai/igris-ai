@@ -137,6 +137,8 @@ const EXCLUDED_STORES = [
   "sync_queue",
   "agent_metrics",
   "agent_events",
+  // FR-268: the ceremony record is machine-keyed telemetry, not project content — replicated by sync, never exported.
+  "ceremony_events",
   "suggestions",
   "dismissed_patterns",
   "embeddings",

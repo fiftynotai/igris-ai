@@ -1,9 +1,14 @@
 /**
  * Igris Brain -- Agent Event Tools
  *
- * Provides real-time agent lifecycle event tracking for agent activity
- * dashboards. Events are recorded during /hunt workflow phase transitions
- * and consumed by dashboards for live agent activity visualization.
+ * The brain-timed hunt-cost record (FR-267). Every agent invocation is one
+ * `start` row plus one `stop`/`error` row in `agent_events`. The brain stamps
+ * both timestamps, computes `duration_ms` on the closing row from its own
+ * clock, assigns `round` (a resumed or re-run agent is a new invocation and a
+ * new round) and derives `project` from the instance at write time. Nothing
+ * time-related is accepted from the caller. Per-phase and per-hunt costs are
+ * GROUP BYs over the `hunt_runs` view (instances component, migration v3) —
+ * never stored.
  *
  * Tools:
  * - igris_agent_event: Record an agent lifecycle event (start/stop/error/retry)
@@ -18,20 +23,36 @@
  * @author fifty.dev
  */
 
+import type Database from 'better-sqlite3';
 import { getDb } from '../db.js';
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-/** Input shape for igris_agent_event */
+/** The four lifecycle event kinds. Mirrors the DDL CHECK on `agent_events.event_type`. */
+export type AgentEventType = 'start' | 'stop' | 'error' | 'retry';
+
+const EVENT_TYPES: ReadonlySet<string> = new Set<AgentEventType>(['start', 'stop', 'error', 'retry']);
+
+/**
+ * Input shape for igris_agent_event.
+ *
+ * `duration_ms` and `round` are deliberately ABSENT: the brain computes both
+ * (FR-267). A caller passing them is rejected at the gateway
+ * (`additionalProperties: false`) and dropped by the REST route.
+ */
 export interface AgentEventInput {
   instance_id: string;
   agent: string;
-  event_type: 'start' | 'stop' | 'error' | 'retry';
+  event_type: AgentEventType;
+  /** The model the caller chose for this agent, or `inherit:<caller model>`. Required on every event. */
+  model_requested: string;
+  /** The model the harness reports the agent actually ran on. Stop/error only; omit when unknown. */
+  model_resolved?: string;
   phase?: string;
   brief_id?: string;
-  duration_ms?: number;
+  /** Token counts: omit when unknown — never 0 (stored NULL). */
   input_tokens?: number;
   output_tokens?: number;
   cache_read?: number;
@@ -74,51 +95,294 @@ interface ProjectMetricsRow {
   last_event_at: string;
 }
 
+/** What the brain recorded for one event — the wrapper emits from it and the REST route reads `id`. */
+export interface RecordedAgentEvent {
+  id: number;
+  instance_id: string;
+  agent: string;
+  event_type: AgentEventType;
+  brief_id: string | null;
+  /** Derived from `instances.project_slug` at write time; NULL when the instance row is gone. */
+  project: string | null;
+  /** 1 + the number of earlier `start` rows for the round key (see {@link deriveRound}). */
+  round: number;
+  /** Brain-computed on stop/error when an open start exists; NULL on every other row. Read back from the stored row. */
+  duration_ms: number | null;
+  /** The `start` row a stop/error was paired with, or NULL when none was open. */
+  paired_start_id: number | null;
+  model_requested: string;
+  model_resolved: string | null;
+}
+
+/** MCP envelope plus the structured record (stripped by the tool wrapper before it reaches the wire). */
+export interface AgentEventResult {
+  content: { type: string; text: string }[];
+  event: RecordedAgentEvent;
+}
+
+/** The FR-267 rejection text. Pinned verbatim by `agent-events.test.ts`. */
+export const MODEL_REQUESTED_REQUIRED_MESSAGE =
+  'igris_agent_event: model_requested is required (FR-267) — pass the model you chose or inherit:<your model>';
+
+/**
+ * Thrown by {@link handleAgentEvent} on an invalid input. The gateway wraps it
+ * as `isError: true`; `POST /api/agent-event` maps it to HTTP 400 (it bypasses
+ * the gateway, so the handler is the only validator on that path).
+ */
+export class AgentEventValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AgentEventValidationError';
+  }
+}
+
+/** The key `round` is derived over. */
+export interface RoundKey {
+  project: string | null;
+  brief_id: string | null;
+  instance_id: string;
+  agent: string;
+}
+
+/** An open `start` row: the pairing target for a stop/error. */
+export interface OpenStartRow {
+  id: number;
+  round: number;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Pure SQL helpers (exported for tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Find the latest `start` for the pairing key `(instance_id, agent, brief_id)`
+ * that no later `stop`/`error` for the same key has closed. `IS` is the
+ * NULL-safe equality, so brief-less events pair among themselves.
+ *
+ * Any later closing row closes EVERY earlier start of the key, so an orphaned
+ * start (agent crashed, no stop) is never paired with a much later stop.
+ *
+ * @param db - Brain database handle
+ * @param instance_id - Instance the agent ran under
+ * @param agent - Agent role name
+ * @param brief_id - Brief the agent worked, or null
+ * @returns The open start row, or undefined when none is open
+ */
+export function findOpenStart(
+  db: Database.Database,
+  instance_id: string,
+  agent: string,
+  brief_id: string | null,
+): OpenStartRow | undefined {
+  return db.prepare(`
+    SELECT s.id, s.round, s.created_at FROM agent_events s
+    WHERE s.event_type = 'start' AND s.instance_id = ? AND s.agent = ? AND s.brief_id IS ?
+      AND NOT EXISTS (
+        SELECT 1 FROM agent_events e
+        WHERE e.event_type IN ('stop', 'error')
+          AND e.instance_id = s.instance_id AND e.agent = s.agent AND e.brief_id IS s.brief_id
+          AND e.id > s.id
+      )
+    ORDER BY s.id DESC LIMIT 1
+  `).get(instance_id, agent, brief_id) as OpenStartRow | undefined;
+}
+
+/**
+ * Count the `start` rows already recorded for the round key. A brief is
+ * `(project, brief_id)`, so a brief-keyed event counts across instances
+ * (`project IS ?, brief_id IS ?, agent`); a brief-less event falls back to the
+ * pairing key (`instance_id, agent, brief_id IS NULL`).
+ *
+ * @param db - Brain database handle
+ * @param key - Round key
+ * @returns Number of prior start rows
+ */
+function countStarts(db: Database.Database, key: RoundKey): number {
+  if (key.brief_id !== null) {
+    const row = db.prepare(`
+      SELECT COUNT(*) AS c FROM agent_events
+      WHERE event_type = 'start' AND project IS ? AND brief_id IS ? AND agent = ?
+    `).get(key.project, key.brief_id, key.agent) as { c: number };
+    return row.c;
+  }
+  const row = db.prepare(`
+    SELECT COUNT(*) AS c FROM agent_events
+    WHERE event_type = 'start' AND instance_id = ? AND agent = ? AND brief_id IS NULL
+  `).get(key.instance_id, key.agent) as { c: number };
+  return row.c;
+}
+
+/**
+ * Derive the `round` for a new row. A `start` opens a new invocation
+ * (`1 + prior starts`); any other event reports the invocation in flight
+ * (`max(1, starts so far)`) — a paired stop/error uses its start's round
+ * instead, see {@link handleAgentEvent}.
+ *
+ * @param db - Brain database handle
+ * @param event_type - The event being recorded
+ * @param key - Round key
+ * @returns The round to store
+ */
+export function deriveRound(db: Database.Database, event_type: AgentEventType, key: RoundKey): number {
+  const starts = countStarts(db, key);
+  return event_type === 'start' ? starts + 1 : Math.max(1, starts);
+}
+
+/** `instances.project_slug` for the instance, or null when the row is gone (removed on /rest). */
+function lookupProject(db: Database.Database, instance_id: string): string | null {
+  const row = db.prepare('SELECT project_slug FROM instances WHERE id = ?')
+    .get(instance_id) as { project_slug: string | null } | undefined;
+  return row?.project_slug ?? null;
+}
+
+/**
+ * Handler-level validation. Lives here (not only at the gateway) because
+ * `POST /api/agent-event` reaches the handler without the gateway's
+ * `required` walk.
+ */
+function validateAgentEventInput(args: AgentEventInput): void {
+  if (!EVENT_TYPES.has(String(args.event_type))) {
+    throw new AgentEventValidationError(
+      `igris_agent_event: event_type must be one of start, stop, error, retry (got ${JSON.stringify(args.event_type)})`,
+    );
+  }
+  if (typeof args.model_requested !== 'string' || args.model_requested.trim().length === 0) {
+    throw new AgentEventValidationError(MODEL_REQUESTED_REQUIRED_MESSAGE);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // MCP Tool Handler
 // ---------------------------------------------------------------------------
 
-/**
- * Record an agent lifecycle event in the brain database.
- *
- * Called during /hunt workflow at each agent phase transition to track
- * agent start, stop, error, and retry events for live dashboard updates.
- *
- * @param args - Agent event data including instance_id, agent name, and event type
- * @returns MCP-formatted response confirming the recorded event
- */
-export function handleAgentEvent(
-  args: AgentEventInput
-): { content: { type: string; text: string }[] } {
-  const db = getDb();
+const INSERT_COLUMNS =
+  'instance_id, agent, event_type, phase, brief_id, ' +
+  'duration_ms, input_tokens, output_tokens, cache_read, cache_create, ' +
+  'result, error_message, metadata, model_requested, model_resolved, round, project';
 
-  const result = db.prepare(`
-    INSERT INTO agent_events
-      (instance_id, agent, event_type, phase, brief_id,
-       duration_ms, input_tokens, output_tokens, cache_read, cache_create,
-       result, error_message, metadata)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    args.instance_id,
-    args.agent,
-    args.event_type,
-    args.phase ?? null,
-    args.brief_id ?? null,
-    args.duration_ms ?? 0,
-    args.input_tokens ?? 0,
-    args.output_tokens ?? 0,
-    args.cache_read ?? 0,
-    args.cache_create ?? 0,
+/**
+ * Duration computed IN SQL from the brain's own clock: one clock for both ends
+ * of the bracket (`created_at` defaults to `datetime('now')`, second
+ * precision — ±1 s, adequate for minutes-level diagnosis). Binds the start id.
+ */
+const DURATION_FROM_START_SQL =
+  "CAST((julianday('now') - julianday((SELECT created_at FROM agent_events WHERE id = ?))) * 86400000 AS INTEGER)";
+
+function isClosing(event_type: AgentEventType): boolean {
+  return event_type === 'stop' || event_type === 'error';
+}
+
+/** Render the confirmation line so the orchestrator SEES what the brain computed. */
+function formatRecorded(e: RecordedAgentEvent): string {
+  const model = e.model_resolved
+    ? `model ${e.model_requested}, resolved ${e.model_resolved}`
+    : `model ${e.model_requested}`;
+  const duration = isClosing(e.event_type) ? `, duration_ms ${e.duration_ms ?? 'NULL'}` : '';
+  const note = isClosing(e.event_type) && e.paired_start_id === null
+    ? ' (no matching start — duration not computed)'
+    : '';
+  return `Agent event recorded: ${e.agent} ${e.event_type} (id: ${e.id}, round ${e.round}${duration}, ${model})${note}`;
+}
+
+/**
+ * Record an agent lifecycle event in the durable hunt-cost record.
+ *
+ * - `start`: opens an invocation — `round = 1 + prior starts` for the round
+ *   key, `duration_ms` NULL.
+ * - `stop` / `error`: closes the latest open start for the pairing key
+ *   `(instance_id, agent, brief_id)`; `duration_ms` is computed in SQL from
+ *   that start's `created_at`, `round` is the start's. With no open start the
+ *   row is stored with `duration_ms` NULL and the response says so.
+ * - `retry`: a marker row; it never consumes an open start.
+ *
+ * Tokens are stored as given and NULL when omitted (never 0). `project` comes
+ * from `instances.project_slug` at write time because instance rows are
+ * deleted on /rest. Pairing is re-derivable from the rows on any replica — no
+ * local-id foreign key is stored (ids differ per machine).
+ *
+ * Known limitation: two concurrent same-role agents on the same brief AND
+ * instance may mis-pair (per-invocation counts stay right, durations may
+ * swap). See FR-267.
+ *
+ * @param args - Agent event data; `model_requested` is required
+ * @returns MCP-formatted response plus the structured record
+ * @throws AgentEventValidationError on an invalid `event_type` or a missing/empty `model_requested`
+ */
+export function handleAgentEvent(args: AgentEventInput): AgentEventResult {
+  const db = getDb();
+  validateAgentEventInput(args);
+
+  const briefId = args.brief_id ?? null;
+  const project = lookupProject(db, args.instance_id);
+  const roundKey: RoundKey = {
+    project,
+    brief_id: briefId,
+    instance_id: args.instance_id,
+    agent: args.agent,
+  };
+  const modelResolved = args.model_resolved ?? null;
+
+  const headValues = [args.instance_id, args.agent, args.event_type, args.phase ?? null, briefId];
+  const tailValues = (round: number): unknown[] => [
+    args.input_tokens ?? null,
+    args.output_tokens ?? null,
+    args.cache_read ?? null,
+    args.cache_create ?? null,
     args.result ?? null,
     args.error_message ?? null,
-    args.metadata ?? '{}'
-  );
+    args.metadata ?? '{}',
+    args.model_requested,
+    modelResolved,
+    round,
+    project,
+  ];
+
+  const open = isClosing(args.event_type)
+    ? findOpenStart(db, args.instance_id, args.agent, briefId)
+    : undefined;
+
+  let round: number;
+  let pairedStartId: number | null = null;
+  let inserted: Database.RunResult;
+
+  if (open) {
+    round = open.round;
+    pairedStartId = open.id;
+    inserted = db.prepare(`
+      INSERT INTO agent_events (${INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, ${DURATION_FROM_START_SQL}, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(...headValues, open.id, ...tailValues(round));
+  } else {
+    round = deriveRound(db, args.event_type, roundKey);
+    inserted = db.prepare(`
+      INSERT INTO agent_events (${INSERT_COLUMNS})
+      VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(...headValues, ...tailValues(round));
+  }
+
+  const id = Number(inserted.lastInsertRowid);
+  // Report what the ROW holds, not a JS-side computation (L-1248).
+  const stored = db.prepare('SELECT duration_ms FROM agent_events WHERE id = ?')
+    .get(id) as { duration_ms: number | null };
+
+  const event: RecordedAgentEvent = {
+    id,
+    instance_id: args.instance_id,
+    agent: args.agent,
+    event_type: args.event_type,
+    brief_id: briefId,
+    project,
+    round,
+    duration_ms: stored.duration_ms,
+    paired_start_id: pairedStartId,
+    model_requested: args.model_requested,
+    model_resolved: modelResolved,
+  };
 
   return {
-    content: [{
-      type: 'text',
-      text: `Agent event recorded: ${args.agent} ${args.event_type} (id: ${result.lastInsertRowid})`,
-    }],
+    content: [{ type: 'text', text: formatRecorded(event) }],
+    event,
   };
 }
 
@@ -181,7 +445,9 @@ export function handleAgentEventList(
  * Get chronological event log for a specific instance.
  *
  * Returns recent agent events ordered by creation time (newest first),
- * with a configurable limit (default: 50).
+ * with a configurable limit (default: 50). Carries the FR-267 columns
+ * (`model_requested`, `model_resolved`, `round`, `project`) so a reader can
+ * see the record the brain wrote.
  *
  * @param args - Instance ID and optional limit
  * @returns JSON response with array of agent events
@@ -196,7 +462,8 @@ export function handleAgentEventLog(
     SELECT
       id, instance_id, agent, event_type, phase, brief_id,
       duration_ms, input_tokens, output_tokens, cache_read, cache_create,
-      result, error_message, metadata, created_at
+      result, error_message, metadata, created_at,
+      model_requested, model_resolved, round, project
     FROM agent_events
     WHERE instance_id = ?
     ORDER BY created_at DESC

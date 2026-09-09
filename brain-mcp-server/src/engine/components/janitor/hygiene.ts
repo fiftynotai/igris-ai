@@ -198,9 +198,10 @@ export function surfaceReEvalRejections(
     db.prepare(
       `INSERT INTO suggestions
          (source_module, project_slug, title, evidence, priority, status,
-          created_at, expires_at, confidence, suggested_action, type_inferred)
+          created_at, expires_at, confidence, suggested_action, type_inferred,
+          source_instance)
        VALUES ('janitor', NULL, ?, ?, 'low', 'pending', datetime('now'),
-               datetime('now', ?), NULL, ?, 1)`,
+               datetime('now', ?), NULL, ?, 1, 'janitor')`,
     ).run(
       `Re-evaluate ${count} recurring rejected pattern(s)`,
       JSON.stringify({ recurrence_count: count }),

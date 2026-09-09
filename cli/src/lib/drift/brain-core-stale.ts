@@ -1,15 +1,18 @@
 /**
  * brain-core-stale drift detector — M5.
  *
- * Detects when the runtime `~/.igris/core/` content hash diverges from the
- * head of the configured channel. Reads `.install-source.json` to learn
- * what channel/ref the brain claims to be at, then queries GitHub for the
- * current head SHA of that channel and compares.
+ * Detects when a MUTABLE channel (`main` / `branch`) has moved past the commit
+ * this brain was installed from: `.install-source.json`'s `ref_commit_sha`
+ * against that ref's current head, both 40-hex commit SHAs (TD-301).
+ * Immutable channels (`release` / `tag`) are exempt — the ref cannot move, so
+ * no network call is made for them.
  *
  * Returns `null` when the brain is at-channel-head OR when we cannot
- * determine staleness (no install-source file, network failure with no
- * cached fall-back, etc.) — staleness is a positive assertion; absence of
- * evidence is not evidence of staleness.
+ * determine staleness (no install-source file, a malformed one, a
+ * from-source install, an immutable channel, a record with no
+ * `ref_commit_sha` — i.e. every record written before 7.3.2 — or a network
+ * failure): staleness is a positive assertion; absence of evidence is not
+ * evidence of staleness.
  *
  * Test seam: `latestRefShaFn` is parameterizable so tests can swap the
  * GitHub API call for a fixture-returning function. Real code reads from
@@ -18,8 +21,7 @@
 
 import { readInstallSource } from "../install-source.js";
 import type { Channel, DriftRow } from "../../types.js";
-import { repoOwner, repoName } from "../channel.js";
-import { httpsGetJson } from "../http.js";
+import { fetchRefCommitSha } from "../channel.js";
 
 export interface BrainCoreStaleOptions {
   /** Test seam — swap the GitHub head-SHA fetcher. */
@@ -48,7 +50,16 @@ export async function detectBrainCoreStale(
   // doesn't apply (the user explicitly opted out of GitHub fetches).
   if (installSrc.source === "from-source") return null;
 
-  const recordedSha = installSrc.content_sha256;
+  // TD-301: `release`/`tag` name an IMMUTABLE ref — never stale by
+  // construction, and no network call. Force-push is knowingly excluded.
+  if (installSrc.channel === "release" || installSrc.channel === "tag") {
+    return null;
+  }
+
+  // A record written before 7.3.2 has no recorded commit; absence joins the
+  // other silent arms (no file, malformed, from-source, fetch failure) —
+  // staleness is a positive assertion.
+  const recordedSha = installSrc.ref_commit_sha ?? "";
   if (recordedSha.length === 0) return null;
 
   let headSha: string;
@@ -76,58 +87,30 @@ export async function detectBrainCoreStale(
 }
 
 /**
- * Fetch the current head SHA for the configured channel/ref via the
- * GitHub commits API. Returns the commit SHA as a hex string.
+ * Resolve this install's channel/ref to the ref path GitHub knows, and ask
+ * what commit it points at now. Both sides of the detector's comparison are
+ * 40-hex COMMIT SHAs (TD-301). Before TD-301 the recorded side was
+ * `content_sha256` — 64 hex, the sha256 of the gzipped tarball — so the
+ * comparison could never be true and every github install read as stale; the
+ * old text called that "a practical proxy", which it was not. `content_sha256`
+ * is not read here at all now (it keeps its cache-key role in `refresh.ts`).
+ * Full account: the TD-301 CHANGELOG entry and MAINTAINING.md row 185.
  *
- * For channel="main": queries `/commits/main` for the branch HEAD.
- * For channel="release"/"tag": queries `/commits/<ref>` (a tag is a commit
- * ref, GitHub resolves it to the tagged commit).
- * For channel="branch" (TD-154): queries `/commits/<branch>` — GitHub
- * resolves the branch name to its HEAD commit, same as "main".
- *
- * Note: the recorded `content_sha256` in `.install-source.json` is the
- * sha256 of the GZIPPED tarball bytes, NOT a git SHA. For staleness we
- * compare the tarball content hash recorded at install time against the
- * current head's tarball hash. A practical proxy: if the git head sha
- * differs from the one we'd derive from a fresh fetch, the tarball will
- * differ. We compute the proxy by fetching the head commit SHA — if the
- * brain was installed from <ref> and the head of <ref> has moved, drift.
- *
- * The proxy is conservative: it flags moves of the ref pointer (e.g.
- * main advancing) rather than tarball-byte equality. False-positives on
- * force-push of a tag are intentional — the user should know.
+ * `release`/`tag` return null before reaching here, which is what keeps the
+ * default install path free of any new network call and is why a force-pushed
+ * tag is knowingly not detected. The commits call itself lives in
+ * `channel.ts#fetchRefCommitSha`; this wrapper keeps the `(channel, ref)`
+ * shape the `latestRefShaFn` test seam has always had.
  */
 async function fetchChannelHeadSha(
   channel: Channel,
   ref: string,
 ): Promise<string> {
-  // For "release" channel ref="v7.0.0" tag — same endpoint as "tag".
-  // For "main", ref="main". For "branch" (TD-154), ref is the branch name —
-  // GitHub's /commits/<branch> resolves it to the branch HEAD.
   const refPath = channel === "main" ? "main" : ref;
-  const url = `https://api.github.com/repos/${repoOwner()}/${repoName()}/commits/${encodeURIComponent(refPath)}`;
-  const body = await httpsGetJson(url);
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(body);
-  } catch (err) {
-    throw new Error(
-      `commits API returned non-JSON: ${err instanceof Error ? err.message : String(err)}`,
-    );
-  }
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error("commits API returned unexpected shape");
-  }
-  const sha = (parsed as { sha?: unknown }).sha;
-  if (typeof sha !== "string" || sha.length === 0) {
-    throw new Error("commits API response missing sha");
-  }
-  return sha;
+  return fetchRefCommitSha(refPath);
 }
 
-// httpsGetJson was lifted to `cli/src/lib/http.ts` in TD-132 so this
-// helper and channel.ts share TD-124-hardened error classification
-// (404 / 5xx / network distinct ChannelResolveError messages). Behavior
-// change: timeout extends 10s → 15s (channel.ts's value); error type
-// becomes ChannelResolveError (subclass of Error) — caller's
-// `catch { return null }` swallows both as before.
+// TD-132 lifted httpsGetJson into `http.ts` for shared TD-124 error
+// classification; TD-301 moved the fetch itself into channel.ts. The
+// classification, the 15s timeout and the caller's `catch { return null }`
+// are unchanged.

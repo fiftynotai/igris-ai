@@ -21,6 +21,10 @@ body extraction.
 ## Notes
 
 - Plain top-level frontmatter keys, no nested override block.
-- Body has no subagent invocation patterns, so the claude-only heuristic
-  should not trigger.
 - Body has no special characters, so TOML escaping passes it through.
+
+(Historical note: this fixture used to also assert that the body carried no
+subagent-invocation patterns, so the "claude-only" skill-exclusion heuristic
+would not trigger. FR-153 retired the exclusion step and TD-345 deleted the
+`is_claude_only()` helper that implemented it, so there is no such heuristic
+left to trigger.)

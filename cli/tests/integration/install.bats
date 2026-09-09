@@ -11,7 +11,7 @@
 load _helpers.bash
 
 setup() {
-  stage_brain
+  stage_brain  # HOME fenced by stage_brain (TD-456) — install step 11 writes ~/.claude.json
   export IGRIS_KEEP_BAK=0
 }
 
@@ -99,6 +99,30 @@ setup() {
 # settings.json idempotency) were DELETED — install no longer writes a
 # per-project settings.json. The per-project hooks merge's no-clobber/idempotent
 # contract is now exercised at the GLOBAL target by global-hooks.test.ts.
+
+# TD-455 (B1, FR-243's shape): a foreign-but-EXISTING igris-brain registration
+# is KEPT by a per-project install — the file's sha is identical afterwards and
+# the running bundle's path never enters it. RED at HEAD: step 11 re-pointed
+# args[0] to $CLI_DIST/brain-mcp-server/dist/index.js and left a .igris.bak
+# (the FR-243 Phase 3 incident, 2026-09-07). stage_home seeds the entry at
+# $IGRIS_BRAIN_DIR/fake-bundled-mcp.js, a file that exists.
+@test "TD-455: install KEEPS a foreign-but-existing igris-brain registration (sha identical, no re-point, no .igris.bak)" {
+  HOME="$(stage_home)"
+  export HOME
+  assert_home_fenced
+  [ -f "$IGRIS_BRAIN_DIR/fake-bundled-mcp.js" ]
+  SHA_BEFORE="$(shasum -a 256 "$HOME/.claude.json" | awk '{print $1}')"
+  PROJ="$(stage_project keepforeign)"
+  run $CLI_BIN install "$PROJ"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"igris-brain MCP kept -> $IGRIS_BRAIN_DIR/fake-bundled-mcp.js"* ]] || return 1
+  [[ "$output" == *"igris init --upgrade"* ]] || return 1
+  SHA_AFTER="$(shasum -a 256 "$HOME/.claude.json" | awk '{print $1}')"
+  [ "$SHA_AFTER" = "$SHA_BEFORE" ]
+  run grep -c "$CLI_DIST/brain-mcp-server/dist/index.js" "$HOME/.claude.json"
+  [ "$output" = "0" ]
+  [ ! -f "$HOME/.claude.json.igris.bak" ]
+}
 
 @test "re-install over existing is idempotent (no duplicate registry rows)" {
   PROJ="$(stage_project idem)"

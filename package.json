@@ -1,13 +1,16 @@
 {
   "name": "igris-ai-monorepo",
-  "version": "7.2.0",
+  "version": "7.3.2",
   "private": true,
   "description": "Igris AI monorepo — brain MCP server + CLI.",
+  "scripts": {
+    "test:all": "bats test/*.test.bash && npm run build -w cli && npm run test:bats -w cli && npm test -w cli && npm test -w brain-mcp-server"
+  },
   "workspaces": [
     "brain-mcp-server",
     "cli"
   ],
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0 <23.0.0 || >=24.0.0 <27.0.0"
   }
 }

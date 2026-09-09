@@ -41,8 +41,15 @@ setup() {
 
 @test "zip-slip rejection unit test passes (CRITICAL gate)" {
   cd "$CLI_DIST/.."
-  run npx vitest run src/__tests__/tarball.test.ts
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"zip-slip rejection"* ]]
-  [[ "$output" == *"passed"* ]]
+  # TD-434 (2026-08-31): `--reporter=verbose` is load-bearing — vitest 4's
+  # default reporter prints only the run summary to a non-TTY (zero per-test
+  # names), so the describe-name needle below could never match (CI red:
+  # runs 33085032612 → 33388050967, `[[ "$output" == *"zip-slip rejection"* ]]'
+  # failed`). The test still passed locally because a non-final bare [[ ]]
+  # is vacuous under Bats 1.12.0 (TD-341's class) — hence the `|| return 1`
+  # arms, which keep every assertion armed on every bats version.
+  run npx vitest run --reporter=verbose src/__tests__/tarball.test.ts
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"zip-slip rejection"* ]] || return 1
+  [[ "$output" == *"passed"* ]] || return 1
 }

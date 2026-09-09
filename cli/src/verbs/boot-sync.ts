@@ -45,10 +45,12 @@ import {
   mergePulledTables,
   readPullSince,
 } from "../lib/brain-db.js";
+import type { PullMergeSummary } from "../lib/brain-db.js";
 import { basenameOfCwd } from "../lib/sync/util.js";
 import { warn } from "../lib/log.js";
 import type {
   BootSyncDigest,
+  BootSyncNormalization,
   BootSyncPull,
   BootSyncQueueDrain,
 } from "../types.js";
@@ -97,6 +99,56 @@ function summarizeMerge(perTable: Record<string, { inserted: number; updated: nu
     if (merged > 0) parts.push(`${merged} ${config.table}`);
   }
   return parts.length > 0 ? parts.join(", ") : "no new changes";
+}
+
+/**
+ * TD-338 — render the ingress-normalization report, or `undefined` when the
+ * pull folded nothing and received nothing non-canonical.
+ *
+ * The table name is carried in each line rather than nesting per-table, because
+ * the operator question this answers is "what did sync rewrite on the way in",
+ * not "how did each table fare". Every fold and every passthrough is NAMED —
+ * the fold is allowed to be lossy only in the sense the fold table already
+ * licenses, and never silently.
+ */
+function describeNormalization(
+  summary: PullMergeSummary,
+): BootSyncNormalization | undefined {
+  if (
+    summary.totalNormalized === 0 &&
+    summary.normalizations.length === 0 &&
+    summary.nonCanonical.length === 0
+  ) {
+    return undefined;
+  }
+  // CAVEAT: this resolves a key back to its table by SEARCHING the per-table
+  // results, which is exact only while at most one pulled table maps that key.
+  // True today — `SYNC_NORMALIZED_FIELDS` maps `brief_status` alone — but if a
+  // second table ever normalizes and shares a syncKey shape, carry the table
+  // name on the record instead of recovering it here.
+  const tableOf = (key: string): string => {
+    for (const config of BOOT_SYNC_PULL_TABLES) {
+      const r = summary.perTable[config.table];
+      if (!r) continue;
+      if (
+        r.normalizations?.some((n) => n.key === key) ||
+        r.nonCanonical?.some((n) => n.key === key)
+      ) {
+        return config.table;
+      }
+    }
+    return "?";
+  };
+  return {
+    normalized: summary.totalNormalized,
+    folds: summary.normalizations.map(
+      (n) =>
+        `${tableOf(n.key)} ${n.key}: ${n.field} ${JSON.stringify(n.from)} -> ${JSON.stringify(n.to)}`,
+    ),
+    non_canonical: summary.nonCanonical.map(
+      (n) => `${tableOf(n.key)} ${n.key}: ${n.field}=${JSON.stringify(n.value)}`,
+    ),
+  };
 }
 
 /**
@@ -170,11 +222,16 @@ async function runRemotePull(
     const summary = mergePulledTables(remoteUrl, resp.tables);
     const sf = summary.perTable["session_files"];
     const sessionFilesPulled = sf ? sf.inserted + sf.updated : 0;
-    return {
-      pull: { ok: true, summary: summarizeMerge(summary.perTable) },
-      sessionFilesPulled,
-      definitions,
+    const pull: BootSyncPull = {
+      ok: true,
+      summary: summarizeMerge(summary.perTable),
     };
+    // TD-338: attach the ingress-normalization report ONLY when there is
+    // something to say. A clean pull leaves the digest byte-identical to its
+    // pre-TD-338 shape — the honesty contract adds signal, not noise.
+    const normalization = describeNormalization(summary);
+    if (normalization) pull.normalization = normalization;
+    return { pull, sessionFilesPulled, definitions };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     warn(`boot-sync: local merge failed: ${msg}; sync state NOT advanced.`);

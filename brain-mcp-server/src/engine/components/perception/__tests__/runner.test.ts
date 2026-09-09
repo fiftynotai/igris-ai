@@ -482,6 +482,52 @@ describe('runPerception', () => {
     expect(result.llm_status).toBe('failed:non_zero_exit');
   });
 
+  it('runPerception: api_error from extractor lands as failed:api_error, not failed:unknown (TD-447)', async () => {
+    // The 529 envelope classified by the cognition backend reaches the legacy
+    // runner as `perception.run_failed reason=api_error`; before TD-447 round 2
+    // `mapFailureReasonToLlmStatus` had no case for it and the CLI summary line
+    // printed `llm_status=failed:unknown` — the L-232 shape at a sibling site.
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'api_error',
+        error_message: 'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com. (http 529)',
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:api_error');
+    expect(result.llm_status).not.toBe('failed:unknown');
+  });
+
+  it('runPerception: auth_error from extractor lands as failed:auth_error, not failed:unknown (TD-447)', async () => {
+    const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+    const stub: LlmExtractor = async (_evts, _ctx, log) => {
+      log?.onEvent?.('perception.run_failed', {
+        reason: 'auth_error',
+        error_message: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+      });
+      return [];
+    };
+
+    const result = await runPerception(
+      db,
+      { events, project: 'p', source: 's' },
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+      stub,
+    );
+
+    expect(result.llm_status).toBe('failed:auth_error');
+    expect(result.llm_status).not.toBe('failed:unknown');
+  });
+
   it('runPerception: unrecognised reason collapses to failed:unknown (TD-079)', async () => {
     const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
     const stub: LlmExtractor = async (_evts, _ctx, log) => {

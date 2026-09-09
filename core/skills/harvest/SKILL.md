@@ -78,18 +78,47 @@ Present a short scan summary to the operator before proceeding.
 1. From the Phase-1 scan, **suggest** an archetype (e.g. "enterprise mobile MVVM",
    "Flutter design kit", "marketing web", "AI platform").
 2. **Confirm with the operator** — never assume. Let them correct or replace it.
-3. Persist via `igris_project_register`:
+3. **Derive the slug — this is the rule, and it is not negotiable (TD-402).**
+   The slug is `basename(realpath(project_root))` **VERBATIM**: no case change,
+   no `-`/`_` normalisation, no substituting a package name for the directory
+   name. A root manifest whose package name disagrees with the directory
+   (e.g. `~/StudioProjects/fifty_eco_system/pubspec.yaml` declares
+   `name: fifty_flutter_kit`) puts that name in `name`, never in `slug`. A
+   monorepo gets ONE row for the repo root; sub-packages are not projects.
+   Why it is written here: this is the mint site. On 2026-07-04 one directory was
+   registered under three slugs inside 420 ms, and the three are NOT three
+   independent derivations — two of them share the same wrong step. They were the
+   directory basename verbatim (`fifty_eco_system`), that same basename
+   hyphen-normalised (`fifty-eco-system`), and the manifest package name
+   hyphen-normalised (`fifty-flutter-kit`, from `name: fifty_flutter_kit`). The
+   purely manifest-derived spelling was never registered at all. That stranded 36
+   briefs and 7 learnings under slugs `igris detect` never produces. The brain now
+   refuses a path another slug already holds on BOTH of its project tools — the
+   register tool (its own args are named in step 4 below) and
+   `igris_project_update`, which can also set `path`. The CLI's boot-sync pull
+   merge refuses too, but only on its INSERT branch (TD-404); its lww UPDATE
+   branch does not, and neither do `igris install --slug`, `igris import`'s
+   auto-register, or the brain-side push handler (TD-407). Do not quote a count
+   here — derive the writer set from MAINTAINING.md's BR-080 strict-input row.
+   `igris doctor`'s `duplicate-path` class is the detector that covers them all,
+   because it reads state rather than gating a write — which also means it is
+   not a one-shot check after a fold.
+4. Persist via `igris_project_register`:
    ```
    igris_project_register({
-     slug:       "<project-slug>",
+     slug:       "<basename of realpath(project_root), verbatim>",
      name:       "<project-name>",
      path:       "<absolute-project-path>",
      tech_stack: "<comma-separated stack from Phase 1, e.g. 'Flutter:3.9.2,GetX:4.6.6'>",
      archetype:  "<confirmed archetype>"
    })
    ```
-   (Register upserts by `slug` and COALESCEs `archetype`, so this is safe to
-   re-run; it also refreshes `last_session_at`.)
+   (Register upserts by `slug` and COALESCEs `archetype`, so re-running for the
+   SAME slug is safe; it also refreshes `last_session_at`. A DIFFERENT slug at an
+   already-registered path is refused — the response names the slug that holds
+   it. Correct that existing row with `igris_project_update`, never a second row;
+   note it refuses the same duplicate path, so it fixes a row's `name` or stack,
+   it does not let you point a second slug at one directory.)
 
 ## Phase 3 — Module identification (the lego catalog seed)
 
@@ -152,7 +181,6 @@ keeping (resist storing everything — curation is the value).
      tags:             "<comma-separated: domain, tech, archetype>",
      tech_stack:       "<e.g. 'Flutter:3.9.2,GetX:4.6.6'>",
      source_brief:     "<the brief(s) this came from, e.g. 'BR-008,BR-012'>",
-     confidence:       <0.0-1.0, default 0.8 — higher = battle-tested>,
      source_extractor: "distill"
    })
    ```
@@ -167,6 +195,19 @@ keeping (resist storing everything — curation is the value).
      and the channel-tag value are deliberately decoupled.
    - `category` MUST be one of the five enum values above (no others are
      accepted): `pattern`, `decision`, `discovery`, `mistake`, `optimization`.
+   - **Do NOT pass `confidence`.** `igris_memory_store`'s schema is
+     `additionalProperties: false`, so an unknown key is rejected outright
+     (TD-128) and the whole store call fails. Re-adding it to the schema alone
+     would be strictly WORSE than the rejection, not better: the store path has
+     never persisted the field — the INSERT writes `project`, `category`,
+     `title`, `content`, `tags`, `tech_stack`, `source_brief`, `scope`,
+     `provenance`, `review_status`, `source_extractor` and nothing else — so a
+     schema-only fix converts a loud rejection into a SILENT discard. The
+     `learnings.confidence` column exists and defaults to 0.8; setting it needs
+     the schema, the handler input type and the INSERT column list changed
+     together, which is tracked as **TD-364**. Until that ships, harvested rows
+     take the default and confidence is adjusted afterwards via
+     `igris_memory_update`.
    - These rows land at `review_status: 'approved'` by default — they appear in
      recall immediately (operator-curated content needs no perception review).
    - For the exact JSON shape of high-quality learnings (the worked examples:
@@ -197,7 +238,7 @@ Report what was captured:
 - Archetype: <confirmed archetype>
 - Modules cataloged: <M> (<new>, <updated>, <skipped-as-dup>)
 - Learnings stored: <N> (source_extractor: distill)
-  - <title> [<category>, conf <x>]
+  - <title> [<category>]
   - ...
 - Dedup: <k> candidate(s) skipped/merged against existing memory
 ```

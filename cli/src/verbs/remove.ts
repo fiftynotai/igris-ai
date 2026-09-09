@@ -3,8 +3,12 @@
  *
  * The symmetric INVERSE of `igris add` (`verbs/add.ts`). One atomic,
  * self-verifying, mode-announced command that:
- *   1. UN-PROJECTS the surface from every harness (delete the loadout-anchored
- *      symlink/hardlink; un-merge the named native-config block), then
+ *   1. UN-PROJECTS the surface from every harness it REACHED — the same
+ *      per-surface predicate `add` projects by, never the whole roster: skills
+ *      and MCP from every harness with an `agent_id`, agents from the entry's
+ *      own `targets[]`, hooks from every harness with `hooks.supported` true
+ *      (delete the loadout-anchored symlink/hardlink; un-merge the named
+ *      native-config block), then
  *   2. de-materializes it from the loadout/overlay (personal) OR deletes the
  *      `core/` source + un-sweeps the §13 enumeration surfaces (core), then
  *   3. VERIFIES the surface is ABSENT (drift-clean = correctly removed).
@@ -624,8 +628,13 @@ function removeMcpViaDelegate(
   // antigravity's ENTRY was written by the CUSTOM merger to the `config/` path
   // (add-mcp's `antigravity/` path is wrong for our antigravity), so removing it
   // via `add-mcp remove` would leave an ORPHAN. Un-merge antigravity's entry with
-  // the custom `unmergeJsonConfig` at the correct path; the OTHER 4 un-register
-  // via the tool. The grant revoke (step 3) still runs for ALL targeted harnesses.
+  // the custom `unmergeJsonConfig` at the correct path; EVERY OTHER TARGETED
+  // harness un-registers via the tool — that is `toolHarnesses` on the next
+  // line, i.e. the caller's set (defaulting to `mcpTargetTypes()`) minus
+  // antigravity. Stated as the property because this line carried a bare "the
+  // OTHER <N>" — a roster count with the noun elided, so no arm of
+  // scripts/validate_harness_tier_claims.sh could see it — and it was one short.
+  // The grant revoke (step 3) still runs for ALL targeted harnesses.
   const toolHarnesses = harnesses.filter((h) => h !== "antigravity");
   const customHarnesses = harnesses.filter((h) => h === "antigravity");
 

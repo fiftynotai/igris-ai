@@ -15,6 +15,17 @@
  *   - Skip allow-list lines (starting with !) — these UN-ignore and
  *     have no rsync equivalent direction.
  *   - Expand character-class globs: `*.py[cod]` → [*.pyc, *.pyo, *.pyd].
+ *   - Strip a leading double-star recursion prefix (TD-317). The two formats
+ *     anchor in OPPOSITE directions, so that prefix is a gitignore-only
+ *     construct with no rsync counterpart: a gitignore pattern containing a
+ *     non-trailing slash is anchored to the .gitignore's own directory and
+ *     needs the recursion prefix to match at any depth, whereas an unanchored
+ *     rsync pattern is matched against the END of the pathname and is
+ *     therefore already recursive. Mirroring the prefix literally into
+ *     RSYNC_EXCLUDES would be an active BUG, not a harmless no-op: rsync
+ *     requires a literal slash after a double star, so the prefixed form
+ *     matches the NESTED stores but NOT the one at the transfer root — it
+ *     would start shipping root agent memory to the VPS.
  *   - Skip patterns known to be Python virtual-env artifacts that don't
  *     exist in this repo (allow-list: `*$py.class`, `.Python`).
  */
@@ -34,6 +45,15 @@ import { resolve } from "node:path";
  * and remove from this allow-list.
  */
 const GITIGNORE_SKIP_PATTERNS = new Set<string>(["*$py.class", ".Python"]);
+
+/**
+ * Strip a leading double-star recursion prefix — a gitignore-only marker with
+ * no rsync counterpart (see the "Normalization rules" docblock above for why
+ * mirroring it literally would be a bug rather than a harmless no-op).
+ */
+function stripRecursivePrefix(pattern: string): string {
+  return pattern.startsWith("**/") ? pattern.slice(3) : pattern;
+}
 
 /** Expand a single .gitignore pattern into the rsync patterns it implies. */
 function expandPattern(pattern: string): string[] {
@@ -58,7 +78,7 @@ function loadGitignorePatterns(): string[] {
     if (line.startsWith("#")) continue; // comment
     if (line.startsWith("!")) continue; // allow-list (un-ignore)
     if (GITIGNORE_SKIP_PATTERNS.has(line)) continue;
-    for (const expanded of expandPattern(line)) {
+    for (const expanded of expandPattern(stripRecursivePrefix(line))) {
       patterns.push(expanded);
     }
   }

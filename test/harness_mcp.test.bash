@@ -77,7 +77,12 @@ setup() {
 }
 
 teardown() {
-  [ -d "$PROJ" ] && rm -rf "$PROJ"
+  # TD-434 (2026-08-31): `if`-form, not a trailing `[ -d ] &&` AND-list —
+  # when setup() skips at the L-552 guard BEFORE creating $PROJ, the AND-list
+  # made teardown return 1, and a failing teardown turns every skip into
+  # `not ok … # skip` (this file was the macOS suite-killer on run
+  # 26973181843, 2026-06-04, before the PyYAML step masked it).
+  if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
 }
 
 # Write a project-OWNED base manifest declaring one MCP block, 4 targets.

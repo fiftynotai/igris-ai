@@ -44,6 +44,15 @@ actively approved (or were directly stored) ever surface in `recall`,
 `search`, `hybrid_search`, or `pattern_suggest`. (Operators can opt into
 `auto_approve_enabled` to bypass the review step — see "Auto-Approve" below.)
 
+**BR-085 did not widen this.** `memory-read.ts#hybridSearchLearnings` — the
+reader behind `hybrid_search` — now takes a `review_status` option so the
+dashboard's review surface can SEARCH the pending queue, but it defaults to
+`approved`, the MCP wrapper passes no such argument, and
+`igris_memory_hybrid_search` declares no such property under a schema with
+`additionalProperties` false. So the MODEL still cannot ask for a pending row;
+only the operator's own eyes can, which is the FR-240 D9 boundary and not this
+one.
+
 ## Two-Channel Model
 
 The conscious channel (default) and the perception channel share the

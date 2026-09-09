@@ -13,18 +13,86 @@ set -euo pipefail
 # Usage:
 #   check_contract_consumers.sh                 # scan the staged diff (pre-commit)
 #   check_contract_consumers.sh --paths a b c   # advisory: preview consumers of paths
+#                                               # (SPACE-separated; a comma-joined
+#                                               #  argument is a usage error)
 #   check_contract_consumers.sh --map <file>    # override map location (tests)
 #
-# Default verdict: WARN (exit 0) — a renamed/deleted contract is usually
-#   intentional; the checker informs, it does not veto. The ONE hard-fail is a
-#   STALE MAP: a staged MAINTAINING.md whose consumer citation names a file that
-#   does not exist (exit 1). Line-number drift is warned, not failed.
+# ---------------------------------------------------------------------------
+# WHAT AN EXIT 0 ACTUALLY PROVES (TD-334 — read this before trusting it)
+# ---------------------------------------------------------------------------
+# Two independent verdicts come out of this script:
+#
+#   1. Token sweep — WARN only, never blocks. A renamed/deleted mapped contract
+#      is usually intentional, so the checker informs; it does not veto.
+#   2. Map self-consistency — HARD-FAIL (exit 1). Every consumer citation that
+#      is recognised as a repo path must resolve, and its line ref must exist.
+#
+# Verdict 2 does not run in every mode, and that difference is the whole
+# reason an exit 0 gets over-read:
+#   * default (staged) mode runs it ONLY when MAINTAINING.md is itself staged.
+#     With the map unstaged, exit 0 says NOTHING about map health. That gate is
+#     right at commit time (the map WILL be staged then), but an interactive
+#     pre-commit run is not the check a reader assumes.
+#   * `--paths` mode ALWAYS runs it. That is the meaningful manual invocation.
+#   Whenever verdict 2 runs it prints a `map citations: N validated / M skipped`
+#   line, so an exit 0 is never a silent "the whole map is healthy".
+#
+# WHICH CITATIONS ARE VALIDATED (the Consumers column only — map column 3):
+#   Every backtick-quoted token in a Consumers cell is classified. A token is
+#   treated as a repo-path citation, and is therefore VALIDATED, when it
+#     - contains a "/" (a slash-less token like `index.ts` or `handleBriefGet`
+#       is either shorthand or an identifier, and the two are indistinguishable
+#       from here), and
+#     - uses only the path charset [A-Za-z0-9_./*{},+-], and
+#     - is not rooted at "~" or "/" (those document runtime/external readers)
+#       and does not start with ".." (a module-relative import specifier).
+#   Everything else is SKIPPED and COUNTED, not silently dropped: prose, call
+#   signatures (`buildBrainGraph(db, opts)`), JSON-schema pointers
+#   (`$defs/surface_contract`), <angle-bracket> placeholders, placeholder line
+#   refs like `handlers.ts:NN`, and `<other-repo>:<path>` citations.
+#
+#   BOTH citation forms are validated, not just one (before TD-334 the bare
+#   form — the dominant one — was skipped entirely and the line half of the
+#   other was never looked at):
+#     `path/to/file.ts`         -> the path must resolve
+#     `path/to/file.ts:148`     -> the path must resolve AND line 148 must exist
+#     `file.ts:79-102`, `:900,1359` -> every number in the ref must exist
+#
+#   Resolution is repo-root first, then path-SUFFIX against `git ls-files`: the
+#   map deliberately cites short forms (`pages/Graph.tsx`, `edges/traversal.ts`)
+#   relative to a directory the row's own prose establishes. A citation passes
+#   when some tracked file ends with it at a segment boundary. A token ending
+#   in "/" is resolved the same way against tracked directories.
+#
+#   GLOBS ARE RESOLVED, NOT SKIPPED. A token containing "*" or "{" is brace-
+#   and glob-expanded (`core/skills/*/SKILL.md`, `core/os/{conduct,standards}.md`)
+#   and hard-fails when the expansion is empty or when a brace member is
+#   missing — a glob that matches nothing is exactly the staleness worth
+#   catching. "**" is not a bash-3.2 pattern, so a trailing "/**" is validated
+#   as its directory.
+#
+#   GENERATED PATHS ARE SKIPPED. A citation git ignores (`cli/dist/...`) is not
+#   validated: it does not exist on a clean checkout, so failing on it would
+#   make the gate machine-dependent.
+#
+# LINE NUMBERS (TD-322, folded into TD-334) are validated in TWO TIERS, because
+#   the two kinds of drift do not cost the same:
+#     - a number GREATER than the file's line count (or < 1) is a HARD-FAIL:
+#       the citation cannot be pointing at anything.
+#     - a line that exists but is BLANK or a bare closing delimiter ("}", "];")
+#       is a WARNING (exit 0). "Points at a construct" is a cheap proxy, not a
+#       proof, so it informs rather than blocks.
+#   Full symbol resolution is out of scope: this catches drift, it does not
+#   type-check the map.
 #
 # Dependencies: git, grep, sed, awk (all POSIX-standard; no sqlite3/jq).
 # Exit codes:
-#   0 - clean, or consumers surfaced as a WARNING (default non-blocking case)
-#   1 - stale map (a consumer citation's file does not exist)
-#   2 - usage error
+#   0 - clean, or consumers surfaced as a WARNING (default non-blocking case),
+#       possibly with line-drift WARNINGs
+#   1 - stale map (a consumer citation does not resolve, a glob matches
+#       nothing, or a cited line number is out of range)
+#   2 - usage error (unknown flag; --paths with no argument or with a
+#       comma-joined argument)
 
 # ---------------------------------------------------------------------------
 # Dependency validation (coding_guidelines §3) — validate upfront.
@@ -57,6 +125,18 @@ parse_args() {
         MODE="paths"
         shift
         while [ "$#" -gt 0 ] && [ "${1#--}" = "$1" ]; do
+          # TD-334: --paths is SPACE-separated. A comma-joined argument used to
+          # be accepted and resolved to ONE nonexistent path, so the run
+          # reported nothing and looked like a clean pass. Reject it loudly —
+          # same defect class as the gaps this script's map check closes.
+          case "$1" in
+            *,*)
+              echo "Error: --paths is SPACE-separated; the argument '$1' contains a comma." >&2
+              echo "       Use: --paths a b c   (not: --paths a,b,c)" >&2
+              echo "       A comma-joined argument resolves to one nonexistent path and makes the run silently vacuous." >&2
+              exit 2
+              ;;
+          esac
           EXPLICIT_PATHS+=("$1")
           shift
         done
@@ -70,7 +150,11 @@ parse_args() {
         shift 2
         ;;
       -h|--help)
-        sed -n '3,30p' "$0"
+        # Print the whole leading comment block (line 1 is the shebang, line 2
+        # is `set`). A fixed line range goes stale the moment the header grows.
+        awk 'NR == 1 { next }
+             /^#/ { seen = 1; sub(/^#[[:space:]]?/, ""); print; next }
+             seen { exit }' "$0"
         exit 0
         ;;
       *)
@@ -80,6 +164,14 @@ parse_args() {
         ;;
     esac
   done
+
+  # TD-334: `--paths` with no argument is the other silently-vacuous
+  # invocation — it validates the map but previews nothing, and reads as a
+  # clean pass for a path the caller thinks they named.
+  if [ "$MODE" = "paths" ] && [ "${#EXPLICIT_PATHS[@]}" -eq 0 ]; then
+    echo "Error: --paths requires at least one path argument" >&2
+    exit 2
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -156,39 +248,304 @@ parse_map() {
 }
 
 # ---------------------------------------------------------------------------
-# Self-consistency (HARD-FAIL): when MAINTAINING.md itself is staged, every
-# `path:line` citation in a Consumers cell must resolve to an existing file.
-# A citation to a nonexistent file = stale map = exit 1. Line numbers are NOT
-# validated (they drift); only the path's existence is load-bearing.
+# Self-consistency (HARD-FAIL). See the "WHAT AN EXIT 0 ACTUALLY PROVES" block
+# at the top of this file for the full contract; the short version:
+#   - EVERY backticked token in a Consumers cell is classified, not just the
+#     `path:line` form (TD-334 §A: the bare-path form is the dominant one and
+#     used to be skipped outright).
+#   - A token classified as a repo path must RESOLVE, and its line ref must be
+#     in range (TD-334 §B / TD-322: line numbers used to be ignored entirely).
+#   - Skipped tokens are counted and reported, so exit 0 carries a number
+#     instead of reading as "the whole map is healthy".
 # ---------------------------------------------------------------------------
+
+# Index files, populated once per run by build_path_index.
+CITE_FILE_INDEX=""
+CITE_DIR_INDEX=""
+# Set by citation_resolves() to the absolute path the citation resolved to.
+RESOLVED=""
+# Counters reported in the summary line.
+CITE_VALIDATED=0
+CITE_SKIPPED=0
+CITE_LINEREFS=0
+CITE_WARNS=0
+
+# Called explicitly at the end of check_map_self_consistency — deliberately NOT
+# from an EXIT trap. See the TD-334 / TD-345 note below before changing that.
+#
+# TD-345 (RESOLVED — the silent drop is gone).
+# ------------------------------------------------------------------------
+# The defect TD-334 recorded here was real: `token_hit()` was
+# `printf '%s\n' "$BIG" | grep -q PAT` under `set -euo pipefail`. grep -q exits
+# at the first match, printf dies of SIGPIPE (141) with the buffer half
+# written, pipefail promotes 141 to the pipeline status, and the caller reads
+# "no match" for something that MATCHED — a DIFFERENT subset each run, because
+# whether the producer's next write() lands after grep's exit is a scheduling
+# race at the pipe-buffer boundary.
+#
+# The fix was to REMOVE THE SHORT-CIRCUIT, not to touch the trap: all four call
+# sites dropped `-q` and redirect stdout instead (`producer | grep PAT
+# >/dev/null`). grep now reads to EOF, so the producer always finishes writing
+# and can never be orphaned. The pipe is retained deliberately — see the
+# cost note under token_hit(); a herestring is equally correct but measured
+# +33.5% against the oracle where this form measures +3.5%, on a script that
+# runs in the pre-commit hook.
+#
+# Measured (macOS, bash 3.2, 64 KB pipe buffer), on a pinned corpus —
+# `git worktree add --detach WT HEAD` then
+# `git rm --cached scripts/check_contract_consumers.sh core/skills/hunt/SKILL.md
+#  core/scripts/verify_mirror.sh` (76,166 bytes of removed lines):
+#
+# Two measurement rounds were taken; each figure below names its round, because
+# the counts are nondeterministic and mixing rounds is how a false "one run"
+# claim gets built.
+#
+#   ROUND 2 (the round matching the SHIPPED `-q`-dropped build):
+#     before, 12 consecutive runs : 124 126 125 125 125 125 125 126 125 125 122 127
+#                                   (FIVE distinct values: 122 124 125 126 127)
+#     oracle (true value), 3 runs : 152, 152, 152
+#     after,  12 consecutive runs : 152 x12, all 12 token sets byte-identical,
+#                                   and byte-identical to the oracle's
+#
+#   ROUND 1 (taken against an earlier herestring build; the BEFORE arm is the
+#   same HEAD code, so it is a second sample of the same population):
+#     before, 12 consecutive runs : 126 124 125 126 125 126 126 126 126 125 126 126
+#                                   (3 distinct values). This round additionally
+#                                   tracked the token SET across runs: `tier` and
+#                                   `true` appeared in some runs and not others,
+#                                   i.e. it is not merely the count that moves.
+#
+# On a larger corpus the loss is near-total rather than partial: 646,554 bytes
+# of removed lines gave 1/1/1/1/1 against an oracle of 868.
+#
+# TD-345 also fixed `map_is_staged()`, which was the SAME defect sitting in the
+# TRIGGER of the hard-fail gate above — `git diff --cached --name-only |
+# grep -qxF MAINTAINING.md`. The name list is index-sorted, so MAINTAINING.md
+# lands in the first few hundred bytes and grep short-circuits at once. On a
+# 501-path / 27,394-byte staged set it returned false 40/40, which means the map
+# self-consistency check — a gate that can exit 1 — SILENTLY DID NOT RUN and the
+# script still reported exit 0. That was strictly worse than the WARN
+# under-report: a blocking gate reporting clean because it never looked.
+#
+# THE EXIT TRAP IS STILL DELIBERATELY ABSENT, and the reason has changed.
+# TD-334's argument was "an EXIT trap stops bash dying on SIGPIPE, so every
+# `printf | grep -q` starts printing 'write error: Broken pipe' — 30+ lines of
+# noise in the pre-commit hook." THAT PREMISE IS DEAD; do not cite it as a live
+# reason. Note WHY it is dead, because the pipelines are still here: the noise
+# required a producer to be orphaned, and with `-q` gone grep reads to EOF, so
+# nothing ever receives SIGPIPE — with or without a trap. No pipeline in this
+# file can produce a Broken-pipe line any more.
+# What remains is only leak-vs-noise (two small temp files if the script is
+# SIGKILLed mid-run versus the cost of a trap), which is a separate decision and
+# out of TD-345's scope. The trap stays deliberately absent.
+cleanup_path_index() {
+  [ -n "$CITE_FILE_INDEX" ] && rm -f "$CITE_FILE_INDEX"
+  [ -n "$CITE_DIR_INDEX" ] && rm -f "$CITE_DIR_INDEX"
+  CITE_FILE_INDEX=""
+  CITE_DIR_INDEX=""
+  return 0
+}
+
+# Build the tracked-file index and its directory projection. Tracked files (not
+# a filesystem walk) so the index is identical on every clean checkout and does
+# not pick up build output or node_modules.
+build_path_index() {
+  CITE_FILE_INDEX="$(mktemp "${TMPDIR:-/tmp}/ccc-files.XXXXXX")"
+  CITE_DIR_INDEX="$(mktemp "${TMPDIR:-/tmp}/ccc-dirs.XXXXXX")"
+  git -C "$REPO_ROOT" ls-files 2>/dev/null > "$CITE_FILE_INDEX" || true
+  # Every directory prefix of every tracked file, with a trailing slash.
+  awk -F/ '{ p = ""; for (i = 1; i < NF; i++) { p = p $i "/"; print p } }' \
+    "$CITE_FILE_INDEX" | sort -u > "$CITE_DIR_INDEX"
+}
+
+# Is this token a citation of a path in THIS repo? See the header block for the
+# rationale behind each rule. Pure bash — this runs on ~1.5k tokens, so a fork
+# per rule would make the pre-commit hook visibly slow.
+citation_is_repo_path() {
+  local p="$1"
+  case "$p" in
+    "") return 1 ;;
+    "~"*|/*) return 1 ;;      # runtime/external reader, not a repo file
+    ..*) return 1 ;;          # module-relative import specifier (../../db.js)
+    # Any character outside the path charset means prose, a call signature, a
+    # schema pointer, a placeholder, or an <other-repo>:<path> citation.
+    *[!A-Za-z0-9_./*{},+-]*) return 1 ;;
+  esac
+  # A slash-less token is shorthand or an identifier; the two cannot be told
+  # apart here, so it is not a citation we can validate.
+  case "$p" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  return 0
+}
+
+# Does git ignore this path? Only asked when a citation FAILED to resolve, so
+# it costs at most a handful of forks per run.
+path_is_git_ignored() {
+  git -C "$REPO_ROOT" check-ignore -q -- "$1" 2>/dev/null
+}
+
+# Resolve a non-glob citation: repo-root first, then as a path suffix of a
+# tracked file (or tracked directory, for a token ending in "/").
+citation_resolves() {
+  local p="$1" esc hit
+  RESOLVED=""
+  if [ -e "$REPO_ROOT/$p" ]; then
+    RESOLVED="$REPO_ROOT/$p"
+    return 0
+  fi
+  esc="$(escape_ere "$p")"
+  case "$p" in
+    */) hit="$(grep -m1 -xE "(.*/)?$esc" "$CITE_DIR_INDEX" || true)" ;;
+    *)  hit="$(grep -m1 -xE "(.*/)?$esc" "$CITE_FILE_INDEX" || true)" ;;
+  esac
+  if [ -n "$hit" ]; then
+    RESOLVED="$REPO_ROOT/$hit"
+    return 0
+  fi
+  return 1
+}
+
+# Resolve a glob/brace citation. Fails when the expansion is empty (a glob that
+# matches nothing) or when any expanded word is missing (a brace member that no
+# longer exists). The `eval` is safe: citation_is_repo_path already restricted
+# the token to [A-Za-z0-9_./*{},+-], so there is no whitespace, quote, `$`,
+# backtick or `;` left in it to expand.
+GLOB_MISS=""   # set by glob_resolves to the reason it failed
+glob_resolves() {
+  local pat="$1" out word count=0 missing=0
+  GLOB_MISS=""
+  # `**` is not a bash-3.2 pattern. A trailing "/**" means "this directory and
+  # everything beneath it", so validate the directory; an interior "**" is
+  # narrowed to a single "*".
+  case "$pat" in
+    */'**') pat="${pat%'**'}" ;;
+  esac
+  case "$pat" in
+    *'**'*) pat="$(printf '%s' "$pat" | sed 's|\*\*|*|g')" ;;
+  esac
+  out="$(cd "$REPO_ROOT" && shopt -s nullglob && eval "printf '%s\n' $pat" 2>/dev/null || true)"
+  while IFS= read -r word; do
+    [ -n "$word" ] || continue
+    count=$((count + 1))
+    if [ ! -e "$REPO_ROOT/$word" ]; then
+      missing=1
+      GLOB_MISS="brace member '$word' does not exist"
+    fi
+  done <<EOF
+$out
+EOF
+  if [ "$count" -eq 0 ]; then
+    GLOB_MISS="matches nothing under $REPO_ROOT"
+    return 1
+  fi
+  [ "$missing" -eq 0 ]
+}
+
+# Validate the line half of a citation. Out of range -> hard fail (return 1);
+# blank / bare-closing-delimiter -> WARN (return 0, counter bumped).
+check_line_ref() {
+  local file="$1" ref="$2" citation="$3"
+  local total num first="" content trimmed
+  if [ ! -f "$file" ]; then
+    echo "[contract-check] STALE MAP: consumer citation '$citation' has a line number but does not name a file." >&2
+    return 1
+  fi
+  # `wc -l` counts newlines and undercounts a file with no trailing newline.
+  total="$(awk 'END { print NR }' "$file")"
+  # sed, not `tr '-,'` — a BSD tr reads a leading "-" as an option flag.
+  for num in $(printf '%s' "$ref" | sed 's/[-,]/ /g'); do
+    [ -n "$first" ] || first="$num"
+    if [ "$num" -lt 1 ] || [ "$num" -gt "$total" ]; then
+      echo "[contract-check] STALE MAP: consumer citation '$citation' names line $num, but that file has $total lines." >&2
+      return 1
+    fi
+  done
+  content="$(sed -n "${first}p" "$file")"
+  # `read` with the default IFS trims leading and trailing whitespace.
+  read -r trimmed <<EOF
+$content
+EOF
+  if [ -z "$trimmed" ]; then
+    echo "[contract-check] WARN: consumer citation '$citation' points at a BLANK line — line drift, re-point it." >&2
+    CITE_WARNS=$((CITE_WARNS + 1))
+  elif [ -z "$(printf '%s' "$trimmed" | tr -d '[]{}();,>')" ]; then
+    echo "[contract-check] WARN: consumer citation '$citation' points at a bare closing delimiter ('$trimmed') — line drift, re-point it." >&2
+    CITE_WARNS=$((CITE_WARNS + 1))
+  fi
+  return 0
+}
+
 check_map_self_consistency() {
   local bad=0
-  local citation path
-  # Pull every `path:line` token out of the Consumers column. A consumer cell
-  # looks like: `path/to/file.ext:NN` (file) text<br>`other:MM` ...
-  # We accept tokens that contain a "/" and a ":" and end in :<digits>, OR a
-  # bare path:line. Restrict to repo-relative paths (no leading ~ or /).
+  local citation path lineref
+  CITE_VALIDATED=0
+  CITE_SKIPPED=0
+  CITE_LINEREFS=0
+  CITE_WARNS=0
+  build_path_index
   while IFS= read -r citation; do
-    # Strip a trailing :<line> if present.
-    path="${citation%:*}"
-    # Skip home-rooted or absolute citations (e.g. ~/.igris/...): the map
-    # documents those as runtime/external readers, not repo files to validate.
+    # Split a trailing line ref: `:148`, `:79-102`, `:900,1359`. A placeholder
+    # ref (`handlers.ts:NN`) does not match, so the token keeps its colon and
+    # is skipped by the charset rule below — deliberately.
+    if [[ "$citation" =~ ^(.+):([0-9]+([-,][0-9]+)*)$ ]]; then
+      path="${BASH_REMATCH[1]}"
+      lineref="${BASH_REMATCH[2]}"
+    else
+      path="$citation"
+      lineref=""
+    fi
+
+    if ! citation_is_repo_path "$path"; then
+      CITE_SKIPPED=$((CITE_SKIPPED + 1))
+      continue
+    fi
+
     case "$path" in
-      "~"*|/*|"") continue ;;
+      *'*'*|*'{'*)
+        # Glob / brace citation.
+        if glob_resolves "$path"; then
+          CITE_VALIDATED=$((CITE_VALIDATED + 1))
+        elif path_is_git_ignored "$path"; then
+          CITE_SKIPPED=$((CITE_SKIPPED + 1))
+        else
+          echo "[contract-check] STALE MAP: consumer citation '$citation' is a glob that does not resolve: $GLOB_MISS" >&2
+          bad=1
+        fi
+        continue
+        ;;
     esac
-    if [ ! -e "$REPO_ROOT/$path" ]; then
+
+    if ! citation_resolves "$path"; then
+      if path_is_git_ignored "$path"; then
+        CITE_SKIPPED=$((CITE_SKIPPED + 1))
+        continue
+      fi
       echo "[contract-check] STALE MAP: consumer citation '$citation' names a file that does not exist: $REPO_ROOT/$path" >&2
       bad=1
+      continue
+    fi
+    CITE_VALIDATED=$((CITE_VALIDATED + 1))
+
+    if [ -n "$lineref" ]; then
+      CITE_LINEREFS=$((CITE_LINEREFS + 1))
+      check_line_ref "$RESOLVED" "$lineref" "$citation" || bad=1
     fi
   done < <(
-    # Pull `path:line` tokens out of the backtick-quoted citations. The single
+    # Pull every backtick-quoted token out of the Consumers column. The single
     # quotes are deliberate — we match LITERAL backtick characters, not a shell
     # expansion. shellcheck SC2016 does not apply.
+    # NOTE: column 3 is the Consumers cell. A bogus citation planted in the
+    # Contract cell is NOT seen here, by design — only consumer citations are
+    # sweep targets.
     # shellcheck disable=SC2016
     parse_map | cut -f3 | tr ';' '\n' \
-      | grep -oE '`[^`]+`' | tr -d '`' \
-      | grep -E '^[A-Za-z0-9_./~-]+:[0-9]+$' || true
+      | grep -oE '`[^`]+`' | tr -d '`' | sort -u || true
   )
+  cleanup_path_index
+  # Always report the shape of the check, so an exit 0 carries a number.
+  echo "[contract-check] map citations: $CITE_VALIDATED validated ($CITE_LINEREFS with line refs), $CITE_SKIPPED skipped (not a repo path, external, or generated), $CITE_WARNS line-drift warning(s)." >&2
   return "$bad"
 }
 
@@ -219,9 +576,20 @@ collect_changes() {
 }
 
 # Is MAINTAINING.md itself in the staged set (any status)?
+# TD-345: the `-q` is GONE and the pipe is KEPT, deliberately — see token_hit().
+# `git … --name-only | grep -qxF` was the same SIGPIPE-under-pipefail defect as
+# token_hit() had, and here it sat in the TRIGGER of the hard-fail gate: the
+# name list is index-sorted so MAINTAINING.md lands in the first few hundred
+# bytes, grep -q short-circuited immediately, git died of SIGPIPE, pipefail
+# promoted it, and the map self-consistency check silently did not run at all.
+# Measured on a 501-path / 27,394-byte staged set: false 40/40 with `-q`,
+# true 40/40 without it.
+# Without `-q`, grep reads to EOF, so git always finishes writing and its OWN
+# failure still propagates through pipefail — preserving the pre-existing
+# fail-open posture (git fails -> returns 1 -> the map check is skipped).
 map_is_staged() {
   git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null \
-    | grep -qxF "MAINTAINING.md"
+    | grep -xF "MAINTAINING.md" >/dev/null
 }
 
 # ---------------------------------------------------------------------------
@@ -231,6 +599,39 @@ map_is_staged() {
 #   others      -> anchored / word-boundary identifier match in removed lines
 #                  (avoids `phase` matching `phaseout`).
 # Returns 0 (match) / 1 (no match).
+#
+# ###########################################################################
+# TD-345 — THE MISSING `-q` IS THE FIX. DO NOT "OPTIMISE" IT BACK IN.
+# ###########################################################################
+# The old shape was `printf '%s\n' "$BIG" | grep -q PAT` under `set -o
+# pipefail`: grep -q exits at the FIRST match, printf dies of SIGPIPE (141) with
+# the rest of the buffer unwritten, pipefail takes the max, and the caller reads
+# "no match" for something that MATCHED — a different subset each run.
+#
+# Dropping `-q` (and redirecting stdout) forces grep to read to EOF, so the
+# producer always finishes writing and can never be orphaned. The pipe is kept
+# ON PURPOSE: a herestring also fixes the bug, but on macOS bash 3.2 `<<<`
+# writes the whole buffer to a $TMPDIR file on EVERY call — and this script
+# sits in the pre-commit hook.
+#
+# ONE interleaved run, 5 repetitions each, medians, CORPUS-B below. The
+# BASELINE IS THE ORACLE (this script with pipefail off and `-q` kept) — the
+# only variant emitting identical output while differing in one thing. The
+# buggy `grep -q` variant is NOT a control: it emitted 127 warnings where the
+# others emitted 152, so it is doing strictly less work and can never be the
+# denominator.
+#   oracle (pipefail off, `-q` kept)  11.30 s   152 warnings   baseline
+#   `-q` dropped  (SHIPPED)           11.69 s   152 warnings   +3.5%
+#   herestring                        15.09 s   152 warnings   +33.5%
+#
+# So the invariant to preserve is "the reader must not short-circuit", NOT "no
+# pipe". Re-adding `-q` here (or `-m1`, or a `| head`) silently restores the
+# bug. Tests (v)/(w)/(x) in test/check_contract_consumers.test.bash are the
+# guard — they go RED on any such change.
+#
+# Also: do not convert the ERE arm to `[[ =~ ]]`. bash matches the buffer as ONE
+# string, so `^`/`$` would silently become buffer anchors instead of grep's line
+# anchors.
 # ---------------------------------------------------------------------------
 token_hit() {
   local type="$1" token="$2"
@@ -238,12 +639,12 @@ token_hit() {
     file)
       # Path literal in the delete/rename set.
       if [ -n "$CHANGED_PATHS" ] && printf '%s\n' "$CHANGED_PATHS" \
-          | grep -qF -- "$token"; then
+          | grep -F -- "$token" >/dev/null; then
         return 0
       fi
       # Or a removed diff line referencing the path literal.
       if [ -n "$REMOVED_LINES" ] && printf '%s\n' "$REMOVED_LINES" \
-          | grep -qF -- "$token"; then
+          | grep -F -- "$token" >/dev/null; then
         return 0
       fi
       ;;
@@ -253,7 +654,8 @@ token_hit() {
       # `-` per the locale; for dotted/dashed identifiers we anchor on the
       # surrounding non-identifier char set explicitly.
       if [ -n "$REMOVED_LINES" ] && printf '%s\n' "$REMOVED_LINES" \
-          | grep -qE "(^|[^A-Za-z0-9_])$(escape_ere "$token")([^A-Za-z0-9_]|\$)"; then
+          | grep -E "(^|[^A-Za-z0-9_])$(escape_ere "$token")([^A-Za-z0-9_]|\$)" \
+            >/dev/null; then
         return 0
       fi
       ;;

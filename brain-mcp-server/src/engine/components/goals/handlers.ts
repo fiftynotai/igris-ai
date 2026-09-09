@@ -20,7 +20,17 @@
 
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
-import { errorResult, successResult, WhereBuilder } from '../../helpers.js';
+import { errorResult, successResult } from '../../helpers.js';
+// FR-240 D1 — the pure `db`-param read layer. This file is the MCP WRAPPER over
+// it for list/get; `read.ts` imports no singleton and issues no writes, which is
+// what lets the FR-238 dashboard reach the same queries with its own read-only
+// handle. Do not move query logic back up here.
+import { listGoals, getGoal } from './read.js';
+// BR-083 — PROBE, do not assume. A brain predating `edges@4` (an older export,
+// a VPS mid-deploy, a hand-rolled fixture) has no qualifier columns and must
+// degrade rather than throw `no such column`.
+import { edgeProjectPredicate } from '../edges/node-project.js';
+import type { GoalRow } from './read.js';
 
 /**
  * SQLite-compatible "now" formatter: `YYYY-MM-DD HH:MM:SS`.
@@ -76,22 +86,15 @@ const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)
 // Row shapes
 // ---------------------------------------------------------------------------
 
-/** Shape of a row in `goals` as returned to callers. */
-export interface GoalRow {
-  id: number;
-  goal_id: string;
-  project_slug: string | null;
-  title: string;
-  description: string | null;
-  outcome: string;
-  deadline: string | null;
-  status: string;
-  priority: string;
-  created_at: string;
-  updated_at: string;
-  achieved_at: string | null;
-  metadata: string;
-}
+/**
+ * Shape of a row in `goals` as returned to callers.
+ *
+ * DECLARED in `./read.ts` (FR-240 lifted it there so the pure reader does not
+ * have to reach up into this `db.js`-importing file for a type) and re-exported
+ * here so every existing `import { GoalRow } from './handlers.js'` still
+ * resolves. The declaration must not be duplicated back into this file.
+ */
+export type { GoalRow };
 
 /** Result shape for handleGoalProgress. */
 export interface GoalProgress {
@@ -208,10 +211,17 @@ function queryServingBriefBuckets(
 ): ServingBriefBuckets {
   const row = db
     .prepare(
+      // BR-083 — the same project predicate as `goals/read.ts::getGoal`. This
+      // is `igris_goal_progress`'s counter, and without it a Done brief that
+      // merely SHARES an id with a serving brief counted toward completion in
+      // another project's goal. The `IS NULL` arm preserves today's behaviour
+      // for deliberately unattributed rows rather than deleting them.
       `WITH serving AS (
          SELECT bs.status AS s
          FROM entity_edges e
-         JOIN brief_status bs ON bs.brief_id = e.from_id
+         JOIN brief_status bs
+           ON bs.brief_id = e.from_id
+          AND ${edgeProjectPredicate(db, 'e', 'bs')}
          WHERE e.to_type = 'goal'
            AND e.to_id = ?
            AND e.from_type = 'brief'
@@ -392,18 +402,16 @@ export function handleGoalList(args: Record<string, unknown>): ToolResult {
     );
   }
 
-  const where = new WhereBuilder()
-    .add('project_slug = ?', args.project)
-    .add('status = ?', args.status);
-
-  // upcoming_days narrows to active goals with deadlines within N days.
+  // upcoming_days narrows to active goals with deadlines within N days. The
+  // VALIDATION stays here (its message is a wire contract); the clause itself
+  // lives in `read.ts#listGoals`.
+  let upcomingDays: number | undefined;
   if (args.upcoming_days !== undefined) {
     const days = Number(args.upcoming_days);
     if (!Number.isFinite(days) || days < 0) {
       return errorResult('upcoming_days must be a non-negative number');
     }
-    where.addAlways("deadline IS NOT NULL AND status = 'active'");
-    where.addAlways("date(deadline) <= date('now', ?)", `+${Math.floor(days)} days`);
+    upcomingDays = Math.floor(days);
   }
 
   const rawLimit = args.limit !== undefined ? Number(args.limit) : 25;
@@ -417,41 +425,32 @@ export function handleGoalList(args: Record<string, unknown>): ToolResult {
   }
   const offset = rawOffset;
 
-  // Sort: deadline ASC NULLS LAST, then created_at DESC. This puts goals
-  // approaching their deadline at the top while keeping deadline-less
-  // goals visible at the bottom.
-  const rows = db
-    .prepare(
-      `SELECT
-         g.*,
-         (
-           SELECT COUNT(*)
-           FROM entity_edges e
-           WHERE e.to_type = 'goal'
-             AND e.to_id = g.goal_id
-             AND e.from_type = 'brief'
-             AND e.edge_type = 'serves_goal'
-             AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
-         ) AS serving_briefs_count
-       FROM goals g
-       ${where.toSQL()}
-       ORDER BY (g.deadline IS NULL) ASC, g.deadline ASC, g.created_at DESC
-       LIMIT ? OFFSET ?`,
-    )
-    .all(...where.values(), limit, offset) as (GoalRow & { serving_briefs_count: number })[];
+  // FR-240 D1: filters, the `serving_briefs_count` subquery and the
+  // deadline-ASC-nulls-last ordering all live in `read.ts#listGoals`. The
+  // returned object IS the wire payload — key order is the contract.
+  const result = listGoals(db, {
+    project: args.project,
+    status: args.status,
+    upcoming_days: upcomingDays,
+    limit,
+    offset,
+  });
 
-  const countRow = db
-    .prepare(`SELECT COUNT(*) AS total FROM goals ${where.toSQL()}`)
-    .get(...where.values()) as { total: number };
-
+  // FR-246: `search` is a DASHBOARD field and is projected out here on purpose.
+  // This object is `JSON.stringify`d STRAIGHT onto the MCP wire, whose exact key
+  // set `tools/__tests__/wrapper-wire-parity.test.ts` pins, and `igris_goal_list`
+  // has no `q` to report — so emitting it would add a permanently-`null` key to
+  // a contract the skills parse, in exchange for nothing. Listing the keys
+  // explicitly rather than deleting one also makes the wire shape readable at
+  // the call site.
   return successResult(
     JSON.stringify(
       {
-        goals: rows,
-        count: rows.length,
-        total: countRow.total,
-        limit,
-        offset,
+        goals: result.goals,
+        count: result.count,
+        total: result.total,
+        limit: result.limit,
+        offset: result.offset,
       },
       null,
       2,
@@ -477,42 +476,14 @@ export function handleGoalGet(args: Record<string, unknown>): ToolResult {
     return errorResult('Missing required field: goal_id');
   }
 
-  const db = getDb();
-  const goal = db
-    .prepare('SELECT * FROM goals WHERE goal_id = ?')
-    .get(goalId) as GoalRow | undefined;
+  // FR-240 D1: both SELECTs and the learning count live in `read.ts#getGoal`.
+  const detail = getGoal(getDb(), goalId);
 
-  if (!goal) {
+  if (detail === null) {
     return errorResult(`Goal not found: ${goalId}`);
   }
 
-  const servingBriefs = db
-    .prepare(
-      `SELECT bs.brief_id, bs.title, bs.status, bs.priority
-       FROM entity_edges e
-       JOIN brief_status bs ON bs.brief_id = e.from_id
-       WHERE e.to_type = 'goal'
-         AND e.to_id = ?
-         AND e.from_type = 'brief'
-         AND e.edge_type = 'serves_goal'
-         AND COALESCE(json_extract(e.metadata, '$.deleted'), 0) != 1
-       ORDER BY bs.brief_id ASC`,
-    )
-    .all(goalId) as { brief_id: string; title: string; status: string; priority: string }[];
-
-  const servingLearningsCount = queryServingLearningsCount(db, goalId);
-
-  return successResult(
-    JSON.stringify(
-      {
-        goal,
-        serving_briefs: servingBriefs,
-        serving_learnings_count: servingLearningsCount,
-      },
-      null,
-      2,
-    ),
-  );
+  return successResult(JSON.stringify(detail, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +741,15 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
   // quick-glance surface, not a full report. Days-remaining is computed in
   // SQL (julianday diff) so callers get an integer rather than re-parsing.
   // Serving-brief counts are subqueries on entity_edges (mirrors handleGoalList).
+  //
+  // BR-083 — `serving_brief_count` counts EDGES and joins nothing, so it was
+  // never a fan-out victim and is deliberately left alone. It is also what
+  // makes the pair readable: after this brief `serving_brief_count` and
+  // `getGoal(...).serving_briefs.length` finally AGREE (on the live brain,
+  // GL-006: 32 edges vs 44 joined rows before, 32 vs 32 after).
+  // `completed_brief_count` DOES join `brief_status`, so a Done brief in
+  // another project that merely shares an id inflated it — those four sites
+  // carry the project predicate.
   const upcomingSql = projectFilter
     ? `SELECT
          g.goal_id,
@@ -784,7 +764,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
          ) AS serving_brief_count,
          (
            SELECT COUNT(*) FROM entity_edges e
-           JOIN brief_status bs ON bs.brief_id = e.from_id
+           JOIN brief_status bs
+             ON bs.brief_id = e.from_id
+            AND ${edgeProjectPredicate(db, 'e', 'bs')}
            WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
              AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
              AND bs.status IN ('Done', 'Archived')
@@ -810,7 +792,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
          ) AS serving_brief_count,
          (
            SELECT COUNT(*) FROM entity_edges e
-           JOIN brief_status bs ON bs.brief_id = e.from_id
+           JOIN brief_status bs
+             ON bs.brief_id = e.from_id
+            AND ${edgeProjectPredicate(db, 'e', 'bs')}
            WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
              AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
              AND bs.status IN ('Done', 'Archived')
@@ -852,7 +836,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
            ) AS serving_brief_count,
            (
              SELECT COUNT(*) FROM entity_edges e
-             JOIN brief_status bs ON bs.brief_id = e.from_id
+             JOIN brief_status bs
+               ON bs.brief_id = e.from_id
+              AND ${edgeProjectPredicate(db, 'e', 'bs')}
              WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
                AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
                AND bs.status IN ('Done', 'Archived')
@@ -877,7 +863,9 @@ export function handleGoalDashboard(args: Record<string, unknown>): ToolResult {
            ) AS serving_brief_count,
            (
              SELECT COUNT(*) FROM entity_edges e
-             JOIN brief_status bs ON bs.brief_id = e.from_id
+             JOIN brief_status bs
+               ON bs.brief_id = e.from_id
+              AND ${edgeProjectPredicate(db, 'e', 'bs')}
              WHERE e.to_type = 'goal' AND e.to_id = g.goal_id
                AND e.from_type = 'brief' AND e.edge_type = 'serves_goal'
                AND bs.status IN ('Done', 'Archived')

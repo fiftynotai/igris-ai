@@ -111,6 +111,10 @@ function makeBriefIsolationDb(): Database.Database {
       UNIQUE(project, brief_id)
     );
 
+    -- BR-083 edges@4 shape: nullable qualifiers and an EXPRESSION unique
+    -- index (a table-level UNIQUE would treat two NULL qualifiers as distinct
+    -- and break idempotency for every project-less edge). A receiver that has
+    -- NOT migrated is a different scenario and has its own test below.
     CREATE TABLE entity_edges (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       from_type TEXT NOT NULL,
@@ -122,8 +126,12 @@ function makeBriefIsolationDb(): Database.Database {
       provenance TEXT NOT NULL DEFAULT 'observed',
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       metadata TEXT NOT NULL DEFAULT '{}',
-      UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+      from_project TEXT,
+      to_project TEXT
     );
+    CREATE UNIQUE INDEX idx_edges_unique ON entity_edges(
+      from_type, from_id, COALESCE(from_project, ''),
+      to_type, to_id, COALESCE(to_project, ''), edge_type);
   `);
 
   // Stub the rest of SYNC_TABLES so iteration finds them but they are
@@ -262,6 +270,67 @@ describe('BR-066 /sync/push per-table isolation', () => {
   });
 
   // -------------------------------------------------------------------------
+  // BR-083 R2 — the deploy-ordering hazard, pinned rather than described.
+  // -------------------------------------------------------------------------
+
+  it('BR-083: a receiver that has NOT run edges@4 fails entity_edges ALONE, loudly', () => {
+    // THE HAZARD: `SYNC_TABLES.entity_edges.columns` now names two columns a
+    // pre-edges@4 receiver does not have, so the VPS MUST migrate before the
+    // first push. This test pins what happens if that ordering is broken:
+    // entity_edges fails with a message that NAMES the missing column, every
+    // sibling table still merges, and the failure is reported rather than
+    // swallowed. That is the difference between an operator who reads
+    // "no such column: from_project" and one who reads "HTTP 500".
+    const stale = makeBriefIsolationDb();
+    stale.exec('DROP TABLE entity_edges');
+    stale.exec(`
+      CREATE TABLE entity_edges (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_type TEXT NOT NULL, from_id TEXT NOT NULL,
+        to_type TEXT NOT NULL, to_id TEXT NOT NULL,
+        edge_type TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 1.0,
+        provenance TEXT NOT NULL DEFAULT 'observed',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        metadata TEXT NOT NULL DEFAULT '{}',
+        UNIQUE(from_type, from_id, to_type, to_id, edge_type)
+      );
+    `);
+
+    const result = processSyncPush(stale, {
+      event_log: [
+        {
+          id: 3001, event_name: 'brief.synced', component: 'briefs',
+          payload: '{}', created_at: '2026-05-05T11:00:00Z',
+        },
+      ],
+      entity_edges: [
+        {
+          from_type: 'brief', from_id: 'TD-099', to_type: 'brief', to_id: 'FR-111',
+          edge_type: 'parent_of', confidence: 1, provenance: 'observed',
+          created_at: '2026-05-05T11:00:00Z', metadata: '{}',
+          from_project: 'igris-ai', to_project: 'igris-ai',
+        },
+      ],
+    });
+
+    // The sibling merged — isolation held.
+    expect(result.results.event_log.inserted).toBe(1);
+
+    // entity_edges did NOT, and the reason names the column. Whether the
+    // failure surfaces per-table or per-row, it must be VISIBLE and specific.
+    const edgeErr =
+      result.errors.entity_edges ??
+      result.results.entity_edges?.failures?.[0]?.error ??
+      '';
+    expect(String(edgeErr)).toMatch(/no such column: from_project/i);
+    expect(
+      (stale.prepare('SELECT COUNT(*) as c FROM entity_edges').get() as { c: number }).c,
+    ).toBe(0);
+    stale.close();
+  });
+
+  // -------------------------------------------------------------------------
   // All-good path remains all-good — no regression for healthy chunks.
   // -------------------------------------------------------------------------
 
@@ -277,6 +346,7 @@ describe('BR-066 /sync/push per-table isolation', () => {
 
     expect(result.ok).toBe(true);
     expect(result.errors).toEqual({});
+    expect(result.skipped).toEqual([]); // BR-097: always present
     expect(result.results.event_log.inserted).toBe(2);
     expect(result.results.event_log.failed).toBe(0);
     expect(result.results.event_log.failures).toBeUndefined();
@@ -303,8 +373,17 @@ describe('BR-066 /sync/push per-table isolation', () => {
     // event_log went through; goals was skipped with a stderr log.
     expect(result.results.event_log.inserted).toBe(1);
     expect(result.results.goals).toBeUndefined();
+    // BR-097 (2026-08-27): a skipped table is now VISIBLE — `ok` false (the
+    // route answers 207) and `skipped` names it; `errors.goals` stays
+    // undefined so a pre-BR-097 client never queues a skip. Pinned `ok: true`
+    // before this brief — the skip was invisible, so FR-268's early push could
+    // not tell a skipped table from a merged one; the stamp itself was
+    // `handleBrainPush`'s unconditional loop (T1 in sync.test.ts pins that
+    // half; this pin covers visibility — plan M2 reds this and T6 while T1
+    // stays green).
     expect(result.errors.goals).toBeUndefined();
-    expect(result.ok).toBe(true);
+    expect(result.skipped).toEqual(['goals']);
+    expect(result.ok).toBe(false);
   });
 
   // -------------------------------------------------------------------------
@@ -316,6 +395,7 @@ describe('BR-066 /sync/push per-table isolation', () => {
     expect(result.ok).toBe(true);
     expect(result.results).toEqual({});
     expect(result.errors).toEqual({});
+    expect(result.skipped).toEqual([]); // BR-097: always present
   });
 });
 
@@ -328,6 +408,8 @@ describe('BR-066 /sync/push per-table isolation', () => {
 
 import { vi } from 'vitest';
 import { handleSyncQueueDrain } from '../tools/sync.js';
+import { createGateway } from '../engine/gateway.js';
+import { createSyncComponent } from '../engine/components/sync/index.js';
 
 // We need handleSyncQueueDrain to read from a real DB. Mock getDb to point
 // at the test DB. This is a boundary mock (the DB factory), not the SUT.
@@ -405,22 +487,59 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
     vi.restoreAllMocks();
   });
 
-  it('marks all rows as sent when remote returns ok=true', async () => {
-    // Seed three event_log rows in sync_queue.
+  /** Seed N actionable event_log rows into sync_queue. */
+  function seedPendingRows(count: number): void {
     const insert = db.prepare(`
       INSERT INTO sync_queue (table_name, row_data, status, retry_count, max_retries)
       VALUES (?, ?, 'pending', 0, 5)
     `);
-    insert.run('event_log', JSON.stringify({ id: 1, event_name: 'a', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:00Z' }));
-    insert.run('event_log', JSON.stringify({ id: 2, event_name: 'b', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:01Z' }));
-    insert.run('event_log', JSON.stringify({ id: 3, event_name: 'c', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:02Z' }));
+    for (let i = 1; i <= count; i++) {
+      insert.run(
+        'event_log',
+        JSON.stringify({
+          id: i,
+          event_name: `e${i}`,
+          component: 'c',
+          payload: '{}',
+          created_at: `2026-05-05T00:00:0${i}Z`,
+        }),
+      );
+    }
+  }
 
+  /** Count rows in sync_queue by status, read back from the DB. */
+  function statusCounts(): Record<string, number> {
+    const rows = db
+      .prepare('SELECT status, COUNT(*) as c FROM sync_queue GROUP BY status')
+      .all() as Array<{ status: string; c: number }>;
+    return Object.fromEntries(rows.map((r) => [r.status, r.c]));
+  }
+
+  /** Remote that accepts everything. */
+  function stubOkFetch(inserted: number): void {
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
       status: 200,
-      json: async () => ({ ok: true, results: { event_log: { inserted: 3, updated: 0, skipped: 0, failed: 0 } }, errors: {} }),
+      json: async () => ({ ok: true, results: { event_log: { inserted, updated: 0, skipped: 0, failed: 0 } }, errors: {} }),
       text: async () => '',
     })) as unknown as typeof globalThis.fetch;
+  }
+
+  it('marks all rows as sent when remote returns ok=true', async () => {
+    seedPendingRows(3);
+    stubOkFetch(3);
+
+    // BR-080 PRE-STATE ASSERTION — read back from sync_queue, NOT from the
+    // insert statement's return. `handleSyncQueueDrain` short-circuits with
+    // "Sync queue is empty. No items to drain." when the queue holds nothing
+    // actionable, so without this line the post-state assertions below are
+    // satisfiable by a fixture that never seeded anything: `map.sent` would be
+    // undefined... but so would `map.pending`, and the whole test would be
+    // proving that an empty queue stays empty. The pre-check is what makes the
+    // post-check mean "the drain MOVED N rows."
+    const before = statusCounts();
+    expect(before.pending).toBe(3);
+    expect(before.sent ?? 0).toBe(0);
 
     const result = await handleSyncQueueDrain({
       remote_url: 'http://test-remote.local',
@@ -429,11 +548,52 @@ describe('BR-066 handleSyncQueueDrain — bisect-on-failure + 207 partial succes
 
     const text = (result.content?.[0]?.text as string) ?? '';
     expect(text).toMatch(/drain completed successfully/i);
+    expect(text).not.toMatch(/queue is empty/i);
 
-    const counts = db.prepare('SELECT status, COUNT(*) as c FROM sync_queue GROUP BY status').all() as Array<{status: string; c: number}>;
-    const map = Object.fromEntries(counts.map((r) => [r.status, r.c]));
-    expect(map.sent).toBe(3);
-    expect(map.pending ?? 0).toBe(0);
+    const after = statusCounts();
+    expect(after.sent).toBe(3);
+    expect(after.pending ?? 0).toBe(0);
+  });
+
+  /**
+   * BR-080 A2-gw — the SAME fixture routed through the real `gateway.dispatch`
+   * with valid args, rather than calling the handler directly.
+   *
+   * WHAT THIS PROVES: the new missing-required guard sits IN FRONT OF a drain
+   * that still works. This is the liveness half of the BR-080 guard — it uses
+   * the same wake-up path as the rejection tests in
+   * `src/tools/__tests__/sync-queue-drain-contract.test.ts` (a real gateway,
+   * the real registered `igris_sync_queue_drain` tool, `gateway.dispatch`), so
+   * a guard that had been made unconditional would fail HERE rather than
+   * hiding behind a suite of tests that only ever observe rejections.
+   *
+   * WHAT IT DOES NOT PROVE: anything about the missing-arg case (sibling: the
+   * R1 regression test), nor that the remote actually accepted the rows
+   * (`globalThis.fetch` is stubbed — the remote boundary is out of scope here).
+   */
+  it('A2-gw: the same populated queue drains when routed through gateway.dispatch', async () => {
+    seedPendingRows(3);
+    stubOkFetch(3);
+
+    const gateway = createGateway();
+    gateway.register(createSyncComponent().tools());
+
+    const before = statusCounts();
+    expect(before.pending).toBe(3);
+    expect(before.sent ?? 0).toBe(0);
+
+    const result = await gateway.dispatch('igris_sync_queue_drain', {
+      remote_url: 'http://test-remote.local',
+      api_key: 'test',
+    });
+
+    const text = (result.content?.[0]?.text as string) ?? '';
+    expect(text).toMatch(/drain completed successfully/i);
+    expect(text).not.toMatch(/queue is empty/i);
+
+    const after = statusCounts();
+    expect(after.sent).toBe(3);
+    expect(after.pending ?? 0).toBe(0);
   });
 
   it('on HTTP 207 with per-table errors, marks failed-table rows retrying with table-specific message', async () => {

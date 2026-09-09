@@ -26,6 +26,18 @@
  * was never in SYNC_TABLES (nothing to migrate cross-machine). `suggestions`
  * and `dismissed_patterns` are untouched by the drop.
  *
+ * TD-440 adds v5: six additive `suggestions` columns (the finding key, the
+ * recurrence counter and the producer id) + two indexes. ALTER-only, no
+ * rebuild. `suggestions` and `dismissed_patterns` ARE both in `SYNC_TABLES`
+ * (`tools/sync.ts`) — the doc that says otherwise is being corrected — but the
+ * six new columns are DELIBERATELY not added to that config; see the v5
+ * migration comment for the reasoning, which is recorded there so nobody
+ * re-derives it.
+ *
+ * TD-457 adds v6: `UPDATE suggestions SET dedupe_key = NULL, entity_key =
+ * NULL` — the re-key after the anchor change, keyed again by the same JS
+ * backfill v5 relies on. No column changes; SYNC_TABLES untouched.
+ *
  * Per-component migration registry (memory #53): these are applied by
  * `storage.runMigrations('subconscious', subconsciousMigrations)` keyed on
  * `(component, version)` in `engine_migrations` — NOT the legacy `db.ts`
@@ -59,6 +71,21 @@ import type { Migration } from '../../types.js';
  * Version 4 (FR-118 M4b): `DROP TABLE IF EXISTS pattern_observations`.
  *   Idempotent; safe on a brain that never applied v2 (the table is simply
  *   absent). `suggestions` / `dismissed_patterns` are not touched.
+ *
+ * Version 5 (TD-440): six additive `suggestions` columns + two indexes —
+ *   `dedupe_key` / `entity_key` (the finding key), `seen_count` /
+ *   `last_seen_at` / `recurrence_titles` (the recurrence record that replaces a
+ *   duplicate row) and `source_instance` (which producer wrote the row).
+ *   ALTER-only and idempotent per column via the version guard; the keys are
+ *   backfilled in JS because they need normalisation and a hash.
+ *
+ * Version 6 (TD-457): re-key after the anchor change. `entityKey` stopped
+ *   taking an illustrative `evidence.brief_id` when the title names no brief,
+ *   so v6 NULLs `dedupe_key` / `entity_key` on EVERY row and
+ *   `finding-key.ts#backfillFindingKeys` (v5's mechanism, one transaction)
+ *   re-keys them on the next `runSubconscious`. NULL-all rather than a
+ *   targeted WHERE: finding the moved rows in SQL would mean re-implementing
+ *   the old anchor (TD-452 D-2); unmoved rows re-key to identical values.
  */
 export const subconsciousMigrations: Migration[] = [
   {
@@ -194,5 +221,63 @@ export const subconsciousMigrations: Migration[] = [
     sql: `
       DROP TABLE IF EXISTS pattern_observations;
     `,
+  },
+  {
+    version: 5,
+    description:
+      'Add the TD-440 finding-key, recurrence and producer columns to suggestions (6 additive columns + 2 indexes)',
+    // ALTER-ONLY — no table rebuild. SQLite permits `ADD COLUMN` with NOT NULL
+    // when a non-null DEFAULT is supplied, which is why the two counters can be
+    // NOT NULL while the three keys stay nullable (they are backfilled in JS by
+    // `finding-key.ts#backfillFindingKeys`; the key needs normalisation and a
+    // hash, so it cannot be computed in SQL).
+    //
+    // WHY NONE OF THESE JOINS `SYNC_TABLES`, recorded here so the next reader
+    // does not re-derive it (MAINTAINING carries the same reasoning):
+    //   - `suggestions` IS in SYNC_TABLES (`tools/sync.ts`) and so is
+    //     `dismissed_patterns`. The claim in
+    //     `docs/architecture/subconscious_engine.md` that it is not was FALSE
+    //     and is corrected by this brief.
+    //   - `mergeRows` reads and writes only `config.columns`, and push filters
+    //     to the configured column list, so a column absent from that config is
+    //     invisible to every replication path.
+    //   - `suggestions` is PUSH-ONLY (absent from `BOOT_SYNC_PULL_TABLES`) and
+    //     excluded from export, so no inbound row can ever arrive with these
+    //     columns NULL.
+    //   - The precedent is exact: `learnings.seen_again_count` / `last_seen_at`
+    //     are excluded from SYNC_TABLES BY DESIGN because a rediscovery count is
+    //     a per-machine usage signal. `seen_count` here is the same quantity for
+    //     the same reason, and the three keys are derived-on-receiver.
+    // Adding any of them to the sync config would make the remote's unmigrated
+    // schema a per-row failure and would oblige a manifest regeneration and a
+    // remote-first deploy. It buys nothing: a recurrence count is about THIS
+    // machine's runs.
+    sql: `
+      ALTER TABLE suggestions ADD COLUMN dedupe_key TEXT;
+      ALTER TABLE suggestions ADD COLUMN entity_key TEXT;
+      ALTER TABLE suggestions ADD COLUMN seen_count INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE suggestions ADD COLUMN last_seen_at TEXT;
+      ALTER TABLE suggestions ADD COLUMN recurrence_titles TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE suggestions ADD COLUMN source_instance TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_suggestions_entity_key
+        ON suggestions(entity_key, status);
+      CREATE INDEX IF NOT EXISTS idx_suggestions_dedupe_key
+        ON suggestions(dedupe_key, status);
+    `,
+  },
+  {
+    version: 6,
+    description:
+      'TD-457 — re-key suggestions after the anchor change: NULL dedupe_key/entity_key; finding-key.ts#backfillFindingKeys re-keys on the next run',
+    // Design-independent NULL-all over a targeted WHERE (TD-452 D-2): the rows
+    // that move are exactly those the OLD anchor keyed on an evidence brief
+    // the title never names, and locating them in SQL would re-implement that
+    // anchor. Unmoved rows re-key to byte-identical values (pinned in
+    // __tests__/schema-v6-migration.test.ts). No `pre` hook: an UPDATE on an
+    // empty table is a no-op. Between this boot and the first run the readers
+    // tolerate NULL keys (suggestions-read allows null; the dismiss loop falls
+    // back to findingKey(...); snapshotExistingPending keys on the fly).
+    sql: 'UPDATE suggestions SET dedupe_key = NULL, entity_key = NULL;',
   },
 ];

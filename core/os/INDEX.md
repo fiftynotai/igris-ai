@@ -22,7 +22,7 @@ builds this by scanning each module's self-describing frontmatter
 | memory | capability | boot | orchestrator | The Memory capability — the surfaces you can store into and recall from, and when to reach for each. The obligations live in conduct. | — |
 | self-extension | capability | boot | orchestrator | Self-extension — to grow the OS, identify the kind of extension and follow its way. | — |
 | SOUL | identity | boot | orchestrator | The OS persona — name, voice, traits. Customizable; reskin freely. | — |
-| standards | conduct | boot | universal | Cross-actor baseline every Igris actor follows — commits, code quality, security, testing, brief-first. | — |
+| standards | conduct | boot | universal | Cross-actor baseline every Igris actor follows — commits, code quality, security, testing, claims-and-evidence, brief-first. | — |
 | USER | operator | boot | orchestrator | who I serve — operator identity + preferences (machine-home: ~/.igris/USER.md) | — |
 | knowledge-map | knowledge-map | on-demand | orchestrator | The map of where knowledge lives — the stores, what each holds, and the rule for routing a fact to the right one. | deciding where a piece of knowledge belongs / routing knowledge across stores |
 | self-maintenance | reference | on-demand | orchestrator | How to correctly extend the Igris OS itself — find the layer, follow its rule, sweep the consumers. | before working on or extending the Igris OS itself |

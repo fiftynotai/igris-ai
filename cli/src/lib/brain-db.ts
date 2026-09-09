@@ -30,14 +30,35 @@
  * Lazy-handle shape, WAL, busy_timeout, and the IGRIS_BRAIN_DIR sandbox seam
  * all mirror `registry.ts` (#11) — tests call `closeDb()` between cases to
  * swap in a different sandboxed DB.
+ *
+ * TWO DOORS SINCE TD-319. `getDb()` below still opens read-WRITE and sets
+ * `journal_mode = WAL`, because the writers in this module (the instance-state
+ * upsert, the session-file upsert, boot-sync's pull merge) need it. The PURE
+ * readers behind the dashboard tier go through a second door instead —
+ * {@link readProjectProfile} (converted IN PLACE — it is a pure read with no
+ * write caller, so it got no twin), {@link briefStatusSummaryReadonly},
+ * {@link listInstancesReadonly} — which open via
+ * `brain-bridge.ts#openBrainReadonly` (`{readonly: true}` + `query_only = ON`)
+ * and therefore never flip an operator's journal mode. Each read-only variant
+ * shares the SELECT with its read-write twin, so there is still exactly one
+ * definition of every query.
  */
 
 import Database from "better-sqlite3";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, sep } from "node:path";
+import { openBrainReadonly } from "./brain-bridge.js";
 import { brainDbPath } from "./paths.js";
+import { sameMachineSql, type MachineIdentity } from "./machine-identity.js";
+// TD-338: the GENERATED mirror of the brain's write-boundary normalizers. Never
+// hand-edited — `npm run gen:brief-normalize-mirror` in brain-mcp-server/ writes
+// it, and a brain-side parity test byte-locks it. See coding_guidelines §13.
+import { normalizeSyncRow } from "./brief-normalize.generated.js";
+// FR-268: the PURE KPI reader (db-param, SELECT-only). This module is its
+// wrapper — the only place that opens a door for it.
+import { absentKpiDigest, buildKpiDigest, type KpiReadOptions } from "./kpi-read.js";
 import type {
   SessionFileRow,
   InstanceRow,
@@ -53,6 +74,7 @@ import type {
   ImportAncestorUpdate,
   ImportStoreResult,
   ImportResult,
+  KpiDigest,
 } from "../types.js";
 
 let db: Database.Database | null = null;
@@ -152,20 +174,78 @@ function optionalProjection(
 }
 
 /**
- * Read the local project profile row used by `context-docs inventory`.
+ * How to project and order by the instances activity timestamp, given the
+ * columns THIS brain actually has.
  *
- * Read-only and create-never: an absent DB, absent `projects` table, absent
- * row, or older schema with missing columns all degrade into a partial/null
- * profile rather than throwing or running DDL. Unlike most accessors in this
- * module, this checks the DB file before opening it so a fresh sandbox does
- * not get a newly-created empty DB just because inventory ran.
+ * TD-319 needed this because {@link ensureInstancesActivityColumn} is DDL — an
+ * `ALTER TABLE … RENAME COLUMN` — and the read-only door cannot run it (nor
+ * should a GET). So the read path RESOLVES the column instead of renaming it:
+ * an un-upgraded brain still sorts and reports correctly, it just keeps its
+ * retired column name on disk until a writer comes along.
+ *
+ * The read-WRITE path calls `ensureInstancesActivityColumn` first, so it always
+ * lands on the first branch and emits the SAME SQL it emitted before TD-319 —
+ * the bare column name, not an alias. That is deliberate: the SQL is a verbatim
+ * mirror of `handleInstanceList` and a gratuitous alias would make the mirror
+ * harder to diff against its source.
  */
-export function readProjectProfile(slug: string): ProjectProfileResult {
-  if (!existsSync(brainDbPath())) {
-    return { degraded: true, profile: null };
+function activityProjection(columns: ReadonlySet<string>): {
+  select: string;
+  order: string;
+} {
+  if (columns.has("last_activity_at")) {
+    return {
+      select: "last_activity_at",
+      order: "ORDER BY last_activity_at DESC",
+    };
   }
+  if (columns.has("last_heartbeat_at")) {
+    return {
+      select: "last_heartbeat_at AS last_activity_at",
+      order: "ORDER BY last_heartbeat_at DESC",
+    };
+  }
+  // Neither column exists (a shape no migration produces, but a SELECT naming a
+  // missing column would throw where the rest of this module degrades).
+  return { select: "NULL AS last_activity_at", order: "" };
+}
 
-  const handle = getDb();
+/**
+ * Open the READ-ONLY door and run `fn`, closing the handle afterwards.
+ *
+ * TD-319. The single place this module reaches
+ * `brain-bridge.ts#openBrainReadonly` — `{readonly: true, fileMustExist: true}`
+ * with `query_only = ON` armed on both of its branches. `absent` is the value
+ * returned when there is no readable brain file at all, which is deliberately
+ * the SAME shape each caller returns for "the table is missing": a read-only
+ * lens has no business distinguishing an unmigrated brain from an absent one by
+ * creating something.
+ *
+ * Per-call open/close rather than a cached handle, matching the dashboard's
+ * layer readers: a `/hunt` writing to the brain is visible on the next read.
+ */
+function withReadonlyBrain<T>(
+  absent: T,
+  fn: (handle: Database.Database) => T,
+): T {
+  const handle = openBrainReadonly();
+  if (handle === null) return absent;
+  try {
+    return fn(handle);
+  } finally {
+    try {
+      handle.close();
+    } catch {
+      /* already closed — nothing to do */
+    }
+  }
+}
+
+/** The `projects`-profile projection, shared by both doors. */
+function selectProjectProfile(
+  handle: Database.Database,
+  slug: string,
+): ProjectProfileResult {
   if (!tableExists(handle, "projects")) {
     return { degraded: true, profile: null };
   }
@@ -208,6 +288,32 @@ export function readProjectProfile(slug: string): ProjectProfileResult {
       !columns.has("tech_stack"),
     profile,
   };
+}
+
+/**
+ * Read the local project profile row used by `context-docs inventory`.
+ *
+ * Read-only and create-never: an absent DB, absent `projects` table, absent
+ * row, or older schema with missing columns all degrade into a partial/null
+ * profile rather than throwing or running DDL.
+ *
+ * TD-319 MADE THAT STRUCTURAL. The docstring above already claimed "read-only",
+ * but the handle came from `getDb()` — read-WRITE, and `journal_mode = WAL` on
+ * open. So a `GET /api/context-docs` (which reaches here through
+ * `verbs/context-docs.ts#buildContextDocsInventoryDigest`) rewrote the `.db`
+ * header of a `delete`-mode brain, as did the plain
+ * `igris context-docs inventory` verb. This now opens through the READ-ONLY
+ * door instead. Both callers are pure reads and neither depended on the WAL
+ * flip or on the file being materialised; the OLD `existsSync(brainDbPath())`
+ * preflight is gone because `openBrainReadonly`'s `fileMustExist: true` is the
+ * same guarantee enforced by the connection rather than by a check upstream of
+ * it.
+ */
+export function readProjectProfile(slug: string): ProjectProfileResult {
+  return withReadonlyBrain<ProjectProfileResult>(
+    { degraded: true, profile: null },
+    (handle) => selectProjectProfile(handle, slug),
+  );
 }
 
 /**
@@ -314,7 +420,36 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
   if (!tableExists(handle, "instances")) {
     return [];
   }
-  const columns = ensureInstancesActivityColumn(handle);
+  // The read-WRITE door still performs the TD-277 rename before reading, so the
+  // retired column name is repaired the first time a writer's process lists.
+  return selectInstances(handle, ensureInstancesActivityColumn(handle), args);
+}
+
+/**
+ * {@link listInstances} through the READ-ONLY door (TD-319).
+ *
+ * Same rows, same filters, same order. The differences are exactly the two
+ * things a GET had no business doing: it does not set `journal_mode = WAL`, and
+ * it does not run the TD-277 `ALTER TABLE … RENAME COLUMN` — an un-upgraded
+ * brain is READ through {@link activityProjection} instead of being migrated by
+ * a page view. `/api/summary` is the caller.
+ */
+export function listInstancesReadonly(
+  args: ListInstancesArgs = {},
+): InstanceRow[] {
+  return withReadonlyBrain<InstanceRow[]>([], (handle) => {
+    if (!tableExists(handle, "instances")) return [];
+    return selectInstances(handle, tableColumns(handle, "instances"), args);
+  });
+}
+
+/** The `instances` query, defined ONCE and run by both doors. */
+function selectInstances(
+  handle: Database.Database,
+  columns: ReadonlySet<string>,
+  args: ListInstancesArgs,
+): InstanceRow[] {
+  const activity = activityProjection(columns);
 
   // Dynamic WHERE — verbatim shape from handleInstanceList:140-157.
   const conditions: string[] = [];
@@ -340,7 +475,7 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
     .prepare(
       `
       SELECT id, machine_hostname, machine_os, project_slug, current_brief,
-             current_phase, current_task, status, last_activity_at,
+             current_phase, current_task, status, ${activity.select},
              ${optionalProjection(columns, "harness")},
              ${optionalProjection(columns, "harness_session_id")},
              ${optionalProjection(columns, "owner_pid")},
@@ -349,10 +484,11 @@ export function listInstances(args: ListInstancesArgs = {}): InstanceRow[] {
              ${optionalProjection(columns, "liveness_status")},
              ${optionalProjection(columns, "liveness_checked_at")},
              ${optionalProjection(columns, "lease_expires_at")},
-             ${optionalProjection(columns, "state_updated_at")}
+             ${optionalProjection(columns, "state_updated_at")},
+             ${optionalProjection(columns, "machine_id")}
       FROM instances
       ${whereClause}
-      ORDER BY last_activity_at DESC
+      ${activity.order}
     `,
     )
     .all(...params) as InstanceRow[];
@@ -396,6 +532,8 @@ export interface InstanceStateRegistrationInput {
   liveness_status?: string | null;
   liveness_checked_at?: string | null;
   lease_expires_at?: string | null;
+  /** BR-100 — `ensureMachineIdentity().machine_id`; stamped only when the column exists (instances v5). */
+  machine_id?: string | null;
 }
 
 /** Result of a {@link registerOrUpdateInstanceState} upsert. */
@@ -484,6 +622,7 @@ export function registerOrUpdateInstanceState(
     ["liveness_status", input.liveness_status ?? null],
     ["liveness_checked_at", input.liveness_checked_at ?? null],
     ["lease_expires_at", input.lease_expires_at ?? null],
+    ["machine_id", input.machine_id ?? null],
     [
       "state_updated_at",
       new Date().toISOString().replace("T", " ").substring(0, 19),
@@ -661,13 +800,96 @@ export function sessionFileUpsert(input: SessionFileUpsertInput): void {
  * NOT the full brief table (briefs.ts:266-281) — D-A / SKILL.md §4 want only the
  * aggregate counts. L-133 preflight: a brain DB without `brief_status` yields
  * an empty summary (total 0), never a throw, never a CREATE.
+ *
+ * `slug === null` DROPS the project predicate — it does not invent a new query.
+ * The handler this mirrors already builds its `summaryWhere` conditionally
+ * (`briefs.ts:203-210`: `if (args.project)` … else the clause is the empty
+ * string), so an omitted project is the handler's own unfiltered branch rather
+ * than a CLI-side deviation from it. BR-082 needed it for the unscoped
+ * dashboard Overview; `verbs/assess.ts` always passes a slug and is unchanged.
+ *
+ * What the unfiltered branch counts is EVERY `brief_status` row. For THIS
+ * table that equals "the sum over the registered projects", and the mechanism
+ * is worth stating precisely because a WRONG statement of it survived a review
+ * and then caused a REJECT of correct code.
+ *
+ * The mechanism: `project` is `NOT NULL` with a declared FK to `projects(slug)`
+ * (db.ts:283-295), AND better-sqlite3 enables `foreign_keys` BY DEFAULT on
+ * every handle it opens. The brain's explicit `pragma('foreign_keys = ON')`
+ * (db.ts:1315) is belt-and-braces; it is not what makes this hold, and calling
+ * the FK "engine-enforced" implies a distinction between connections that does
+ * not exist.
+ *
+ * MEASURED against the real schema on this connection's exact shape
+ * (`busy_timeout` only, no FK pragma), 2026-07-31:
+ *
+ *     foreign_keys on this handle = 1
+ *     DELETE FROM projects WHERE slug='igris-ai'  (654 briefs)
+ *       -> BLOCKED: FOREIGN KEY constraint failed
+ *
+ * So an orphan cannot be created through this path at all — the coincidence is
+ * enforced rather than merely observed. Corroborating census: 1,803 rows,
+ * 0 NULL, 35 distinct projects, 0 absent from `projects`.
+ *
+ * CONSEQUENCE worth knowing: `registry.ts#deleteProjectRow` issues a bare
+ * DELETE with no cascade, and its caller is `igris doctor --remove-orphans`.
+ * On a project that still has briefs — or sessions, since `sessions.project`
+ * carries the same FK (db.ts:290) — that DELETE is REFUSED rather than
+ * orphaning the dependents, which is the safe direction.
+ *
+ * Until BR-084 the refusal was an UNGUARDED throw at all four call sites, and
+ * the cost was NOT "the verb cannot remove that one project": the exception
+ * escaped `confirmAndRemoveOrphans` and ABORTED THE WHOLE SWEEP, so every other
+ * orphan that would have deleted cleanly survived too, and the interactive path
+ * leaked its readline interface on the way out. One reachable input took down a
+ * bulk-cleanup verb wholesale.
+ *
+ * Since BR-084 the refusal is a per-project RESULT, which is FR-241 D6's
+ * posture applied here: `deleteProjectRow` returns `{slug, ok, error}` and does
+ * not throw, the sweep CONTINUES, and the blocked project is reported with the
+ * dependent count that blocked it. Its registry row is KEPT — no cascade, since
+ * destroying brief history is not an action a `doctor` verb should take — and
+ * because that row is still drifted it keeps `igris doctor` at exit 1.
+ *
+ * Do NOT generalise that to the other tables a caller may widen alongside this
+ * one. `instances.project_slug` is nullable with no FK, so an unfiltered
+ * instance count is strictly the larger set; `suggestions` diverges by 377 rows
+ * (TD-326). Which set a NUMBER means is the caller's statement to make — see
+ * `dashboard/routes.ts#summary` and `pages/Overview.tsx`.
  */
-export function briefStatusSummary(slug: string): AssessBriefs {
-  const handle = getDb();
+export function briefStatusSummary(slug: string | null): AssessBriefs {
+  return selectBriefStatusSummary(getDb(), slug);
+}
 
+/**
+ * {@link briefStatusSummary} through the READ-ONLY door (TD-319).
+ *
+ * Identical counts from an identical query on a `query_only = ON` connection,
+ * so `GET /api/summary` no longer sets `journal_mode = WAL` on the operator's
+ * brain. An absent brain file reads as the same empty summary the missing-table
+ * preflight already produced.
+ */
+export function briefStatusSummaryReadonly(slug: string | null): AssessBriefs {
+  return withReadonlyBrain<AssessBriefs>(
+    { total: 0, by_status: {}, by_priority: {} },
+    (handle) => selectBriefStatusSummary(handle, slug),
+  );
+}
+
+/** The two GROUP-BY counts, defined ONCE and run by both doors. */
+function selectBriefStatusSummary(
+  handle: Database.Database,
+  slug: string | null,
+): AssessBriefs {
   if (!tableExists(handle, "brief_status")) {
     return { total: 0, by_status: {}, by_priority: {} };
   }
+
+  // `WHERE project = ?` when scoped, no WHERE at all when not — the shape of
+  // handleBriefDashboard's `summaryWhere` (briefs.ts:203-210), built once and
+  // used by both counts exactly as the handler does.
+  const where = slug === null ? "" : "WHERE project = ?";
+  const params = slug === null ? [] : [slug];
 
   // SQL verbatim from handleBriefDashboard:205-211 (status counts) — project
   // filter only, ORDER BY count DESC.
@@ -676,12 +898,12 @@ export function briefStatusSummary(slug: string): AssessBriefs {
       `
       SELECT status, COUNT(*) as count
       FROM brief_status
-      WHERE project = ?
+      ${where}
       GROUP BY status
       ORDER BY count DESC
     `,
     )
-    .all(slug) as { status: string; count: number }[];
+    .all(...params) as { status: string; count: number }[];
 
   // SQL verbatim from handleBriefDashboard:226-232 (priority counts).
   const priorityRows = handle
@@ -689,12 +911,12 @@ export function briefStatusSummary(slug: string): AssessBriefs {
       `
       SELECT priority, COUNT(*) as count
       FROM brief_status
-      WHERE project = ?
+      ${where}
       GROUP BY priority
       ORDER BY count DESC
     `,
     )
-    .all(slug) as { priority: string | null; count: number }[];
+    .all(...params) as { priority: string | null; count: number }[];
 
   const byStatus: Record<string, number> = {};
   for (const r of statusRows) {
@@ -881,19 +1103,68 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
   },
 ];
 
-/** Per-row merge failure — verbatim from `MergeRowFailure` (sync.ts:537-540). */
+/** Per-row merge failure — verbatim from `MergeRowFailure` (sync.ts). */
 export interface MergeRowFailure {
   key: string;
   error: string;
 }
 
-/** Merge counts for one table — verbatim from `MergeRowsResult` (sync.ts:543-550). */
+/**
+ * TD-338 — one field folded on ingress. Verbatim from `MergeRowNormalization`
+ * (sync.ts).
+ */
+export interface MergeRowNormalization {
+  key: string;
+  field: string;
+  from: string;
+  to: string | null;
+}
+
+/**
+ * TD-338 — one non-canonical value stored verbatim. Verbatim from
+ * `MergeRowNonCanonical` (sync.ts).
+ */
+export interface MergeRowNonCanonical {
+  key: string;
+  field: string;
+  value: string;
+}
+
+/** Merge counts for one table — verbatim from `MergeRowsResult` (sync.ts). */
 export interface MergeRowsResult {
   inserted: number;
   updated: number;
   skipped: number;
   failed: number;
   failures?: MergeRowFailure[];
+  /** TD-338: count of ROWS whose stored value differed from the inbound value. */
+  normalized: number;
+  normalizations?: MergeRowNormalization[];
+  nonCanonical?: MergeRowNonCanonical[];
+}
+
+/**
+ * Render a row's syncKey values as the `|`-joined diagnostic key.
+ * Verbatim from `formatSyncKey` (sync.ts).
+ */
+function formatSyncKey(keyValues: unknown[]): string {
+  return keyValues
+    .map((v) => {
+      if (v === null || v === undefined) return "";
+      if (
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean"
+      ) {
+        return String(v);
+      }
+      try {
+        return JSON.stringify(v);
+      } catch {
+        return "<unserializable>";
+      }
+    })
+    .join("|");
 }
 
 /**
@@ -908,8 +1179,46 @@ function mergeTags(localTags: string, remoteTags: string): string {
 }
 
 /**
+ * TD-404 — resolve a path for identity comparison. Mirrors `resolveForCompare`
+ * (`brain-mcp-server/src/tools/projects.ts`, TD-402) so the pull-side refusal
+ * and the register/update-side refusal answer the same question.
+ *
+ * `realpathSync` THROWS for a directory absent from this disk, and a pulled row
+ * routinely names another machine's path. The raw string is therefore the
+ * fallback, which keeps such a row in the comparison instead of dropping it out.
+ */
+function resolveForCompare(p: string): string {
+  try {
+    return realpathSync(p);
+  } catch {
+    return p;
+  }
+}
+
+/**
+ * TD-404 — the slug already holding `path`, or `undefined` when the directory is
+ * free. The pull-side twin of TD-402's `findPathHolder`.
+ *
+ * `stmt` selects every `projects` row; no `slug != ?` exclusion is needed because
+ * the only caller is `mergeRows`' INSERT branch, which runs only when the syncKey
+ * lookup found NO row for the incoming slug — so every row this sees already has
+ * a different slug. (An exclusion would also be a trap: `slug != NULL` matches
+ * nothing, silently disabling the guard.)
+ */
+function findPathHolderOnInsert(
+  stmt: Database.Statement,
+  path: string,
+): { slug: string; path: string } | undefined {
+  const incoming = resolveForCompare(path);
+  const rows = stmt.all() as { slug: string; path: unknown }[];
+  return rows
+    .filter((r): r is { slug: string; path: string } => typeof r.path === "string" && r.path !== "")
+    .find((r) => resolveForCompare(r.path) === incoming);
+}
+
+/**
  * Merge incoming rows into the local DB for one table config — the last-write-
- * wins upsert. Verbatim port of `mergeRows` (sync.ts:574-667):
+ * wins upsert. Verbatim port of `mergeRows` (sync.ts):
  *   - manual `SELECT * WHERE syncKey = ?` lookup (NOT ON CONFLICT — syncKey
  *     columns are not UNIQUE; see the section header);
  *   - absent row → INSERT only the columns the row defines;
@@ -919,6 +1228,28 @@ function mergeTags(localTags: string, remoteTags: string): string {
  *     fields; equal-or-older → skip;
  *   - row-level try/catch: one bad row records a failure + continues (never
  *     poisons sibling rows). Caller wraps the whole table set in a transaction.
+ *
+ * TD-338 — THIS IS A NORMALIZATION BOUNDARY, and it is THE LIVE ONE ON A
+ * WORKSTATION. Awaken / `igris boot-sync` pulls VPS→local through THIS copy,
+ * not through the brain's `handleBrainPull`, so a brain-only fix would have
+ * closed the door nobody walks through. Every inbound row for a table in
+ * `SYNC_NORMALIZED_FIELDS` passes through the same write-boundary normalizers
+ * (`normalizeSyncRow`, from the GENERATED mirror — never a hand copy).
+ *
+ * TD-404 — THE INSERT BRANCH IS ALSO A `projects.path` WRITER. `syncKey` is
+ * `["slug"]`, so a locally-DELETED slug is indistinguishable from a never-seen
+ * one and a cursor reset replays the remote row into a directory a local slug
+ * already holds. A `projects` INSERT therefore asks {@link findPathHolderOnInsert}
+ * first and throws when the directory is taken, landing in the per-row
+ * `try`/`catch` below: `failed++`, the key + reason recorded, loop continues.
+ * `syncKey` is deliberately NOT widened — BR-090 is why.
+ *
+ * `updated_at` is deliberately absent from that map, so the fold cannot bump
+ * the LWW comparison column: a folded row produces no delta with a newer
+ * timestamp, our next push carries EQUAL timestamps and the remote skips, and
+ * the fixed point is reached on the first arrival of each row version. Folds
+ * are recorded ONLY from a branch that actually wrote the row, so a row that
+ * loses LWW is never folded nor reported.
  */
 function mergeRows(
   handle: Database.Database,
@@ -929,7 +1260,10 @@ function mergeRows(
   let updated = 0;
   let skipped = 0;
   let failed = 0;
+  let normalized = 0;
   const failures: MergeRowFailure[] = [];
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
 
   const lookupSql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
     .map((k) => `${k} = ?`)
@@ -939,31 +1273,84 @@ function mergeRows(
   }
   const lookupStmt = handle.prepare(lookupSql);
   const existingColumns = tableColumns(handle, config.table);
+  // TD-404: prepared once, and only for the table + columns the guard reads. A
+  // local `projects` without a `path` column cannot be given one by the INSERT
+  // (the `cols` filter drops it), so there is nothing to guard.
+  //
+  // `config.table === "projects"` is REDUNDANT with the column check today:
+  // `projects` is the only BOOT_SYNC_PULL_TABLES member declaring both `slug`
+  // and `path` (`instances` carries `project_slug` / `project_path`, which this
+  // check does not match), so no real config reaches the column check with the
+  // term false. NO TEST ARMS IT — deleting it leaves boot-sync-project-path-guard.test.ts green, and arming
+  // it would take a fabricated config. Kept as defence in depth: the statement
+  // below names `projects` LITERALLY, so a future member that gained both columns
+  // would otherwise have its incoming path compared against PROJECTS rows. What
+  // is pinned instead is the PREMISE — the "only pull table declaring both" test
+  // in `cli/src/__tests__/boot-sync-project-path-guard.test.ts` reds the day it
+  // stops holding and the term becomes load-bearing.
+  const pathHolderStmt =
+    config.table === "projects" &&
+    existingColumns.has("path") &&
+    existingColumns.has("slug")
+      ? handle.prepare("SELECT slug, path FROM projects")
+      : undefined;
 
   for (const row of rows) {
     const keyValues = config.syncKey.map((k) => row[k]);
+    // TD-338: fold BEFORE the row can reach either writer. Returns the SAME
+    // object for an unmapped table or an already-canonical row (one map lookup
+    // on the hot full-re-pull path). syncKey columns are never in the map, so
+    // the lookup key above is unaffected.
+    const {
+      row: normRow,
+      folds,
+      nonCanonical: rowNonCanonical,
+    } = normalizeSyncRow(config.table, row);
+    const recordNormalization = (): void => {
+      if (folds.length === 0 && rowNonCanonical.length === 0) return;
+      const key = formatSyncKey(keyValues);
+      if (folds.length > 0) {
+        normalized++;
+        for (const f of folds) normalizations.push({ key, ...f });
+      }
+      for (const nc of rowNonCanonical) nonCanonical.push({ key, ...nc });
+    };
     try {
       const existing = lookupStmt.get(...keyValues) as
         | Record<string, unknown>
         | undefined;
 
       if (!existing) {
+        // TD-404: one directory keeps one project row. See the docblock.
+        const incomingPath = normRow.path;
+        if (pathHolderStmt && typeof incomingPath === "string") {
+          const holder = findPathHolderOnInsert(pathHolderStmt, incomingPath);
+          if (holder) {
+            throw new Error(
+              `refused: path ${JSON.stringify(incomingPath)} is already held by slug ` +
+                `${JSON.stringify(holder.slug)} (${holder.path}) — one directory keeps one project row`,
+            );
+          }
+        }
         const cols = config.columns.filter(
-          (c) => row[c] !== undefined && existingColumns.has(c),
+          (c) => normRow[c] !== undefined && existingColumns.has(c),
         );
         const placeholders = cols.map(() => "?").join(", ");
         handle
           .prepare(
             `INSERT INTO ${config.table} (${cols.join(", ")}) VALUES (${placeholders})`,
           )
-          .run(...cols.map((c) => row[c] ?? null));
+          .run(...cols.map((c) => normRow[c] ?? null));
         inserted++;
+        recordNormalization();
       } else if (config.strategy === "append") {
         skipped++;
       } else {
-        // LWW strategy: compare timestamps.
+        // LWW strategy: compare timestamps. `timestampCol` is deliberately
+        // absent from SYNC_NORMALIZED_FIELDS, so normRow[timestampCol] ===
+        // row[timestampCol] by construction — the fold cannot move LWW.
         const localTs = (existing[config.timestampCol] as string) ?? "";
-        const remoteTs = (row[config.timestampCol] as string) ?? "";
+        const remoteTs = (normRow[config.timestampCol] as string) ?? "";
 
         if (remoteTs > localTs) {
           const setClauses: string[] = [];
@@ -978,7 +1365,7 @@ function mergeRows(
               setValues.push(
                 mergeTags(
                   (existing[col] as string) || "",
-                  (row[col] as string) || "",
+                  (normRow[col] as string) || "",
                 ),
               );
             } else if (config.mergeFields?.[col] === "max") {
@@ -986,12 +1373,12 @@ function mergeRows(
               setValues.push(
                 Math.max(
                   (existing[col] as number) || 0,
-                  (row[col] as number) || 0,
+                  (normRow[col] as number) || 0,
                 ),
               );
             } else {
               setClauses.push(`${col} = ?`);
-              setValues.push(row[col] ?? null);
+              setValues.push(normRow[col] ?? null);
             }
           }
 
@@ -1003,6 +1390,7 @@ function mergeRows(
               )
               .run(...setValues, ...keyValues);
             updated++;
+            recordNormalization();
           } else {
             skipped++;
           }
@@ -1012,29 +1400,22 @@ function mergeRows(
       }
     } catch (rowErr) {
       failed++;
-      const keyStr = keyValues
-        .map((v) => {
-          if (v === null || v === undefined) return "";
-          if (
-            typeof v === "string" ||
-            typeof v === "number" ||
-            typeof v === "boolean"
-          )
-            return String(v);
-          try {
-            return JSON.stringify(v);
-          } catch {
-            return "<unserializable>";
-          }
-        })
-        .join("|");
+      const keyStr = formatSyncKey(keyValues);
       const error = rowErr instanceof Error ? rowErr.message : String(rowErr);
       failures.push({ key: keyStr, error });
     }
   }
 
-  const result: MergeRowsResult = { inserted, updated, skipped, failed };
+  const result: MergeRowsResult = {
+    inserted,
+    updated,
+    skipped,
+    failed,
+    normalized,
+  };
   if (failed > 0) result.failures = failures;
+  if (normalizations.length > 0) result.normalizations = normalizations;
+  if (nonCanonical.length > 0) result.nonCanonical = nonCanonical;
   return result;
 }
 
@@ -1064,6 +1445,15 @@ export interface PullMergeSummary {
   totalMerged: number;
   /** Per-table merge counts, keyed by table name (only tables with received rows). */
   perTable: Record<string, MergeRowsResult>;
+  /**
+   * TD-338: total rows folded on ingress across all tables. 0 on a clean pull —
+   * the boot-sync digest stays silent at zero so a clean sync gains no noise.
+   */
+  totalNormalized: number;
+  /** Every fold, named. Empty when nothing folded. */
+  normalizations: MergeRowNormalization[];
+  /** Every non-canonical value stored verbatim — the "arrived via sync" observer. */
+  nonCanonical: MergeRowNonCanonical[];
 }
 
 /**
@@ -1115,6 +1505,9 @@ export function mergePulledTables(
 
   const perTable: Record<string, MergeRowsResult> = {};
   let totalMerged = 0;
+  let totalNormalized = 0;
+  const normalizations: MergeRowNormalization[] = [];
+  const nonCanonical: MergeRowNonCanonical[] = [];
 
   // One transaction around the whole merge (matches handleBrainPull:965).
   handle.transaction(() => {
@@ -1132,6 +1525,7 @@ export function mergePulledTables(
           updated: 0,
           skipped: 0,
           failed: rows.length,
+          normalized: 0,
           failures: [
             {
               key: "*",
@@ -1145,11 +1539,16 @@ export function mergePulledTables(
       const result = mergeRows(handle, config, rows);
       perTable[config.table] = result;
       totalMerged += result.inserted + result.updated;
+      // TD-338: aggregate the ingress-normalization report across tables so
+      // boot-sync can surface it in one place.
+      totalNormalized += result.normalized;
+      if (result.normalizations) normalizations.push(...result.normalizations);
+      if (result.nonCanonical) nonCanonical.push(...result.nonCanonical);
       upsertState.run(remoteUrl, config.table, pulledAt);
     }
   })();
 
-  return { totalMerged, perTable };
+  return { totalMerged, perTable, totalNormalized, normalizations, nonCanonical };
 }
 
 // ===========================================================================
@@ -1219,13 +1618,24 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
   // sync.ts:271-285 — brief↔brief subset filtered in readBriefBriefEdges; the
   // concept-graph reuses this config for its concept-touching edges.
   {
+    // BR-083 — VERIFIED as a verbatim mirror of `SYNC_TABLES`, not assumed:
+    // both qualifiers join `columns` AND `syncKey`, exactly as sync.ts does,
+    // so a pack cannot re-fuse two projects' same-id edges on import.
+    // An OLDER pack that lacks the columns still imports: `readExportRows`
+    // intersects `columns` with the columns that actually exist, and the
+    // import writer binds a missing key as NULL rather than failing.
     table: "entity_edges",
-    syncKey: ["from_type", "from_id", "to_type", "to_id", "edge_type"],
+    syncKey: [
+      "from_type", "from_id", "from_project",
+      "to_type", "to_id", "to_project",
+      "edge_type",
+    ],
     timestampCol: "created_at",
     strategy: "append",
     columns: [
       "from_type", "from_id", "to_type", "to_id", "edge_type",
       "confidence", "provenance", "created_at", "metadata",
+      "from_project", "to_project",
     ],
   },
   // sync.ts:301-317 — project_slug-scoped.
@@ -1716,10 +2126,29 @@ export function lookupLocalRow(
 ): Record<string, unknown> | undefined {
   const handle = getDb();
   if (!tableExists(handle, config.table)) return undefined;
-  const sql = `SELECT * FROM ${config.table} WHERE ${config.syncKey
-    .map((k) => `${k} = ?`)
+  // BR-083 — `IS`, NOT `=`. `entity_edges.from_project` / `to_project` are the
+  // first NULLABLE syncKey columns, and `col = NULL` is NULL rather than true:
+  // with `=` an unattributed edge would never be found locally, every import
+  // would classify it NEW, and the append strategy would duplicate it. `IS`
+  // behaves identically to `=` for every non-NULL key, so no other store moves.
+  //
+  // BR-083 — the key is also INTERSECTED with the columns that actually exist,
+  // matching `readExportRows`. On a brain that predates `edges@4` the two
+  // qualifiers are not merely NULL, they are ABSENT, and naming them would
+  // throw `no such column` on a path whose whole job is to tolerate an older
+  // artifact. Degrading to the pre-BR-083 key there loses NOTHING: that
+  // database holds no qualifier to distinguish rows by.
+  const existing = tableColumns(handle, config.table);
+  const keyCols = config.syncKey.filter((k) => existing.has(k));
+  const keyVals = config.syncKey
+    .map((k, i) => [k, keyValues[i]] as const)
+    .filter(([k]) => existing.has(k))
+    .map(([, v]) => v);
+  if (keyCols.length === 0) return undefined;
+  const sql = `SELECT * FROM ${config.table} WHERE ${keyCols
+    .map((k) => `${k} IS ?`)
     .join(" AND ")}`;
-  return handle.prepare(sql).get(...keyValues) as
+  return handle.prepare(sql).get(...keyVals) as
     | Record<string, unknown>
     | undefined;
 }
@@ -1973,11 +2402,19 @@ export function applyImport(
   const seedRows: { store: string; rowPlan: ImportRowPlan }[] = [];
   let projectRegistered = false;
 
-  // Enforce the same referential integrity the brain does (db.ts sets
-  // `foreign_keys = ON`) so the `brief_status`→`projects(slug)` FK is honored and
-  // the in-txn auto-register (C2) is load-bearing. Scoped to this apply — the CLI
-  // connection default is OFF; restore it after. Set BEFORE the transaction:
-  // SQLite ignores a `foreign_keys` PRAGMA issued inside an open transaction.
+  // Enforce the same referential integrity the brain does so the
+  // `brief_status`→`projects(slug)` FK is honored and the in-txn auto-register
+  // (C2) is load-bearing. Set BEFORE the transaction: SQLite ignores a
+  // `foreign_keys` PRAGMA issued inside an open transaction.
+  //
+  // CORRECTION (BR-082): this block previously read "the CLI connection default
+  // is OFF; restore it after". That was FALSE — better-sqlite3 enables
+  // `foreign_keys` by DEFAULT on every handle, measured. The save/restore below
+  // is therefore a no-op in practice and is kept only because it is correct
+  // under any default. The false comment was read by a reviewer as evidence
+  // that the CLI could orphan `brief_status` rows, and it cost a REJECT round
+  // on correct code. A comment asserting a runtime default is a claim; measure
+  // it before writing it.
   const prevForeignKeys = handle.pragma("foreign_keys", { simple: true });
   handle.pragma("foreign_keys = ON");
   try {
@@ -2095,4 +2532,1222 @@ export function applyImport(
   }
 
   return { perStore, conflicts, ancestorUpdates, projectRegistered };
+}
+
+// ---------------------------------------------------------------------------
+// TD-327 — cognition instance health readers (READ-ONLY door only)
+// ---------------------------------------------------------------------------
+
+/**
+ * TD-327 — one projected roster row, read back from `cognition_instances`.
+ *
+ * THE ROSTER IS THE REGISTRY'S PROJECTION, NEVER A CLI-SIDE LIST. That is the
+ * whole point: `cli/` and `brain-mcp-server/` are separate npm packages with no
+ * cross-imports, so the only honest way to enumerate an OPEN registry from here
+ * is to read what the registry itself wrote. A literal list in this file would
+ * be the exact regression TD-327 closes — it could not report on the instance
+ * nobody remembered to add to it.
+ *
+ * Column contract mirrored from
+ * `brain-mcp-server/src/engine/components/cognition/schema.ts` v1; MAINTAINING
+ * pins the pair.
+ */
+export interface CognitionRosterRow {
+  /** `cognition_instances.id`. */
+  id: string;
+  /** `cognition_instances.component` — the `event_log.component` LITERAL. */
+  component: string;
+  /** `cognition_instances.event_prefix` — the `event_name` prefix LITERAL. */
+  event_prefix: string;
+  /** `cognition_instances.gate_keys`, JSON-parsed. Empty when unparseable. */
+  gate_keys: string[];
+  /**
+   * `cognition_instances.gate_default` — what an ABSENT gate key resolves to.
+   * Declared per instance because the "absent means off" convention has one
+   * exception: perception's RESOLVER default is ON for a truly absent key, so
+   * hard-coding "absent means off" would misreport a config where the key was
+   * never written. That is NOT the shipped posture — `igris install` writes
+   * `enabled: false` (FR-191), so a stock fresh install has perception OFF.
+   */
+  gate_default: boolean;
+  /** `cognition_instances.driver`. */
+  driver: string;
+  /** `cognition_instances.driver_ref`. */
+  driver_ref: string | null;
+  /** `cognition_instances.output`. */
+  output: string;
+  /**
+   * `cognition_instances.produced` (TD-423) — the IDENTITY predicate: which rows
+   * are attributable to this instance regardless of review state.
+   *
+   * DISTINCT from `output`, which is legitimately a STATE predicate (perception
+   * declares its INBOX and therefore reads 0 the moment the queue is drained).
+   * `''` means the roster was projected by a brain build predating the column,
+   * and the yield digest reports that instance `unmeasured` with a named reason
+   * — never as a zero.
+   */
+  produced: string;
+}
+
+/** TD-327 — outcome of {@link readCognitionRoster}. */
+export interface CognitionRosterResult {
+  /** True when there is no readable brain DB or no `cognition_instances` table. */
+  degraded: boolean;
+  /** Why; null when not degraded. */
+  reason: string | null;
+  /** The projected rows, in insertion (registry) order. */
+  rows: CognitionRosterRow[];
+}
+
+/**
+ * Read the projected instance roster.
+ *
+ * `rowid` ordering preserves the order the projector wrote, which is
+ * `registry.all()` insertion order — i.e. the extractors-barrel order. A brain
+ * that has never booted this build has no table, which is a DEGRADED read (the
+ * health surface has nothing to report on), never a created table: the brain
+ * owns this schema and `brain-db.ts` is create-never.
+ */
+export function readCognitionRoster(): CognitionRosterResult {
+  return withReadonlyBrain<CognitionRosterResult>(
+    { degraded: true, reason: "brain DB not readable", rows: [] },
+    (handle) => {
+      if (!tableExists(handle, "cognition_instances")) {
+        return {
+          degraded: true,
+          reason:
+            "cognition_instances not present — this brain has not booted a build that projects the roster",
+          rows: [],
+        };
+      }
+      // A roster projected by an OLDER brain build can be missing a column this
+      // CLI knows about. SELECTing it would throw and take the whole digest
+      // with it, so the shape is checked first and the absent column degrades
+      // to its documented default — the same create-never / tolerant-read
+      // posture the rest of this module uses.
+      const columns = tableColumns(handle, "cognition_instances");
+      const hasGateDefault = columns.has("gate_default");
+      const gateDefaultSelect = hasGateDefault
+        ? "gate_default"
+        : "0 AS gate_default";
+      // TD-423, the same tolerance for the same reason. `produced` arrived in
+      // cognition migration v2; a roster projected by an older build has no such
+      // column and SELECTing it would throw and take the whole digest with it.
+      // The absent column degrades to `''`, which the yield reader reports as
+      // `unmeasured` with a named reason — never as a zero.
+      const hasProduced = columns.has("produced");
+      const producedSelect = hasProduced ? "produced" : "'' AS produced";
+      const raw = handle
+        .prepare(
+          `SELECT id, component, event_prefix, gate_keys, ${gateDefaultSelect},
+                  driver, driver_ref, output, ${producedSelect}
+             FROM cognition_instances ORDER BY rowid`,
+        )
+        .all() as Array<{
+        id: string;
+        component: string;
+        event_prefix: string;
+        gate_keys: string;
+        gate_default: number;
+        driver: string;
+        driver_ref: string | null;
+        output: string;
+        produced: string;
+      }>;
+
+      const rows: CognitionRosterRow[] = raw.map((r) => ({
+        id: r.id,
+        component: r.component,
+        event_prefix: r.event_prefix,
+        gate_keys: parseGateKeys(r.gate_keys),
+        gate_default: r.gate_default === 1,
+        driver: r.driver,
+        driver_ref: r.driver_ref,
+        output: r.output,
+        produced: r.produced ?? "",
+      }));
+      // Both fidelity notes are reported, not just the first — an older brain is
+      // missing BOTH columns and a reader that reported one would hide the other.
+      const notes: string[] = [];
+      if (!hasGateDefault) {
+        notes.push(
+          "cognition_instances predates the gate_default column — every instance is read as absent-key-means-off, which is wrong for perception",
+        );
+      }
+      if (!hasProduced) {
+        notes.push(
+          "cognition_instances predates the produced column (TD-423, cognition migration v2) — every instance reports yield as unmeasured until this brain boots a build that projects it",
+        );
+      }
+      return {
+        degraded: false,
+        reason: notes.length === 0 ? null : notes.join("; "),
+        rows,
+      };
+    },
+  );
+}
+
+/**
+ * Parse the stored `gate_keys` JSON array.
+ *
+ * Tolerant on purpose: a roster row written by a NEWER brain build with a shape
+ * this CLI does not understand degrades to "no declared gate", which the
+ * classifier reports as such — it does not throw and take the whole digest with
+ * it. Only string members survive.
+ */
+function parseGateKeys(raw: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((k): k is string => typeof k === "string");
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * TD-327 — the `event_log` signals for ONE instance, split by host.
+ *
+ * The host split is not cosmetic. `event_log` is a SYNC table carrying a
+ * `machine_hostname` column, so a run that succeeded on the VPS replicates
+ * here; an unscoped "latest terminal event" read would render a locally-wedged
+ * instance green. `this_host` is what the verdict is computed from; `any_host`
+ * is reported alongside so the operator can see that the instance is alive
+ * SOMEWHERE.
+ */
+export interface CognitionRunSignals {
+  /** Latest terminal event on this host: its ISO timestamp. */
+  last_terminal_at: string | null;
+  /** Latest terminal event on this host: its `event_name`. */
+  last_terminal_name: string | null;
+  /** Latest terminal event on this host: its `payload.reason`, when the payload carries a string one (TD-447). */
+  last_terminal_reason: string | null;
+  /**
+   * Latest terminal event on this host: its `payload.detail` — or perception's
+   * `error_message`, the same slot under the older key — when present (TD-447).
+   */
+  last_terminal_detail: string | null;
+  /** Latest terminal event on ANY host. */
+  last_terminal_any_host_at: string | null;
+  /** `run_started` rows on this host today (UTC). */
+  runs_today: number;
+}
+
+/**
+ * Read one instance's run signals.
+ *
+ * `component` and `event_prefix` are passed in as LITERALS read out of the
+ * roster — never derived as `cognition.${id}` here. Perception writes under the
+ * bare `perception` component with `perception.run_*` event names, so a derived
+ * namespace would report the single healthiest instance as never having run.
+ * MAINTAINING's L-857 row states the rule.
+ *
+ * ORDERING NOTE: `event_log.created_at` holds BOTH `YYYY-MM-DD HH:MM:SS` and
+ * ISO-8601 `…THH:MM:SS.sssZ` forms (measured on a live brain). Plain string
+ * ordering puts every space-form row before every ISO-form row WITHIN a shared
+ * date, because `' ' < 'T'`. `datetime()` normalises both, so the ORDER BY goes
+ * through it; the raw value is still what is RETURNED, so no timestamp is
+ * silently reformatted for the operator.
+ */
+export function readInstanceRunSignals(
+  component: string,
+  eventPrefix: string,
+  me: MachineIdentity,
+): CognitionRunSignals {
+  const empty: CognitionRunSignals = {
+    last_terminal_at: null,
+    last_terminal_name: null,
+    last_terminal_reason: null,
+    last_terminal_detail: null,
+    last_terminal_any_host_at: null,
+    runs_today: 0,
+  };
+  return withReadonlyBrain<CognitionRunSignals>(empty, (handle) => {
+    if (!tableExists(handle, "event_log")) return empty;
+
+    const terminals = [
+      `${eventPrefix}.run_succeeded`,
+      `${eventPrefix}.run_failed`,
+      `${eventPrefix}.run_skipped`,
+    ];
+
+    // BR-100: "this host" = the machine identity, column-tolerant.
+    const mine = sameMachineSql(me, tableColumns(handle, "event_log").has("machine_id"));
+    const thisHost = handle
+      .prepare(
+        `SELECT event_name, created_at, payload FROM event_log
+          WHERE component = ? AND event_name IN (?, ?, ?)
+            AND ${mine.sql}
+          ORDER BY datetime(created_at) DESC LIMIT 1`,
+      )
+      .get(component, ...terminals, ...mine.params) as
+      | { event_name: string; created_at: string; payload: string | null }
+      | undefined;
+
+    // TD-447: parse the payload in JS, never `json_extract` in SQL — a malformed
+    // row would throw inside withReadonlyBrain and degrade the WHOLE signal.
+    let reason: string | null = null;
+    let detail: string | null = null;
+    try {
+      const p = JSON.parse(thisHost?.payload ?? "{}") as Record<string, unknown>;
+      if (typeof p.reason === "string") reason = p.reason;
+      // The cognition engine writes `detail`; perception's extractor writes
+      // the same message under `error_message`.
+      const d = typeof p.detail === "string" ? p.detail : p.error_message;
+      if (typeof d === "string") detail = d;
+    } catch {
+      /* malformed payload → both null; the digest is NOT degraded */
+    }
+
+    const anyHost = handle
+      .prepare(
+        `SELECT created_at FROM event_log
+          WHERE component = ? AND event_name IN (?, ?, ?)
+          ORDER BY datetime(created_at) DESC LIMIT 1`,
+      )
+      .get(component, ...terminals) as { created_at: string } | undefined;
+
+    const today = handle
+      .prepare(
+        `SELECT COUNT(*) AS n FROM event_log
+          WHERE component = ? AND event_name = ?
+            AND ${mine.sql}
+            AND date(datetime(created_at)) = date('now')`,
+      )
+      .get(component, `${eventPrefix}.run_started`, ...mine.params) as { n: number };
+
+    return {
+      last_terminal_at: thisHost?.created_at ?? null,
+      last_terminal_name: thisHost?.event_name ?? null,
+      last_terminal_reason: reason,
+      last_terminal_detail: detail,
+      last_terminal_any_host_at: anyHost?.created_at ?? null,
+      runs_today: today.n,
+    };
+  });
+}
+
+/** TD-327 — the retention floor of the local `event_log`. */
+export function readEventLogFloor(): string | null {
+  return withReadonlyBrain<string | null>(null, (handle) => {
+    if (!tableExists(handle, "event_log")) return null;
+    const row = handle
+      .prepare(`SELECT MIN(datetime(created_at)) AS oldest FROM event_log`)
+      .get() as { oldest: string | null };
+    return row.oldest ?? null;
+  });
+}
+
+/**
+ * TD-327 — the `schedules` + `schedule_runs` cross-check for one schedule NAME.
+ *
+ * Neither table is purged, which is what makes this the antidote to the 30-day
+ * `event_log` window: an instance with no events at all is still distinguishable
+ * from one that never existed if its schedule row is present and overdue.
+ *
+ * `schedules` is queried by NAME and the result is a COUNT, not a single row.
+ * The bootstrap's idempotency check is `WHERE name = ?` while the table syncs on
+ * a per-machine random `id`, so two brains each keep their own row under the
+ * same name — a duplicate pair was measured on this brain. Reporting the count
+ * makes a recurrence visible immediately.
+ */
+export interface CognitionScheduleRead {
+  /** How many `schedules` rows carry this name. 0 means the schedule is absent. */
+  rows: number;
+  /** True when ANY matching row is enabled. */
+  enabled: boolean;
+  /** The earliest `next_run_at` across matching rows. */
+  next_run_at: string | null;
+  /** An OPEN `status='running'` run's id, if any. */
+  open_run_id: string | null;
+  /** That run's `started_at`. */
+  open_run_started_at: string | null;
+}
+
+export function readScheduleSignals(name: string): CognitionScheduleRead {
+  const empty: CognitionScheduleRead = {
+    rows: 0,
+    enabled: false,
+    next_run_at: null,
+    open_run_id: null,
+    open_run_started_at: null,
+  };
+  return withReadonlyBrain<CognitionScheduleRead>(empty, (handle) => {
+    if (!tableExists(handle, "schedules")) return empty;
+
+    const scheduleRows = handle
+      .prepare(
+        `SELECT id, enabled, next_run_at FROM schedules WHERE name = ?`,
+      )
+      .all(name) as Array<{
+      id: string;
+      enabled: number;
+      next_run_at: string | null;
+    }>;
+
+    if (scheduleRows.length === 0) return empty;
+
+    const nextRuns = scheduleRows
+      .map((r) => r.next_run_at)
+      .filter((v): v is string => typeof v === "string" && v.length > 0)
+      .sort();
+
+    let openId: string | null = null;
+    let openStarted: string | null = null;
+    if (tableExists(handle, "schedule_runs")) {
+      const placeholders = scheduleRows.map(() => "?").join(", ");
+      const open = handle
+        .prepare(
+          `SELECT id, started_at FROM schedule_runs
+            WHERE schedule_id IN (${placeholders}) AND status = 'running'
+            ORDER BY datetime(started_at) ASC LIMIT 1`,
+        )
+        .get(...scheduleRows.map((r) => r.id)) as
+        | { id: string; started_at: string }
+        | undefined;
+      openId = open?.id ?? null;
+      openStarted = open?.started_at ?? null;
+    }
+
+    return {
+      rows: scheduleRows.length,
+      enabled: scheduleRows.some((r) => r.enabled === 1),
+      next_run_at: nextRuns[0] ?? null,
+      open_run_id: openId,
+      open_run_started_at: openStarted,
+    };
+  });
+}
+
+/**
+ * TD-327 — count the rows an instance's DECLARED output predicate selects.
+ *
+ * The declaration is prose-shaped by design (`suggestions[source_module='arbiter']`
+ * reads as documentation in the extractor file and in `docs/COGNITION.md`), so
+ * this parses the countable subset of that shape and returns `null` for the
+ * rest. `subconscious` names an OPEN `source_module` — the LLM chooses it — and
+ * therefore has no fixed predicate; `null` is the honest answer there rather
+ * than a number that means something other than what its label says.
+ *
+ * The table is checked against an ALLOWLIST and the column against a strict
+ * identifier pattern before either is interpolated; the VALUE is always bound.
+ * Both are read out of a table the brain writes, but "the input came from our
+ * own DB" is not a reason to interpolate it unchecked.
+ */
+const OUTPUT_TABLE_ALLOWLIST = new Set(["suggestions", "learnings", "entity_edges"]);
+
+export function readOutputCounts(outputExpr: string): number | null {
+  const m = /^([a-z_]+)\[([a-z_]+)='([^']*)'\]$/.exec(outputExpr.trim());
+  if (m === null) return null;
+  const [, table, column, value] = m;
+  if (!OUTPUT_TABLE_ALLOWLIST.has(table)) return null;
+
+  return withReadonlyBrain<number | null>(null, (handle) => {
+    if (!tableExists(handle, table)) return null;
+    if (!tableColumns(handle, table).has(column)) return null;
+    const row = handle
+      .prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE ${column} = ?`)
+      .get(value) as { n: number };
+    return row.n;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// TD-423 — cognition YIELD readers (READ-ONLY door only)
+//
+// The yield question is "is what this instance produces worth anything", and it
+// needs a predicate `output` cannot supply. `output` is legitimately a STATE
+// expression — perception declares its INBOX — so after a queue drain it selects
+// zero rows for the instance with the highest measured validity in the brain.
+// The instance therefore declares a SECOND, IDENTITY predicate (`produced`), and
+// everything below parses and counts exactly that.
+//
+// Three rules hold all of this together and none of them is optional:
+//   1. NOTHING here enumerates instance ids. The complement that isolates the
+//      subconscious is computed from the ROSTER's own sibling declarations, so
+//      an eighth instance registered tomorrow shrinks it with zero edit.
+//   2. Table names go through an ALLOWLIST and column names through a strict
+//      identifier regex before either is interpolated; every VALUE is bound.
+//   3. Every predicate is built NULL-SAFE (`IS` / `IS NOT`, never `=` / `NOT
+//      IN`), because the unclaimed bucket is the NEGATION of the union of every
+//      instance predicate — and a three-valued disjunct would make rows with a
+//      NULL key vanish from BOTH sides of a reconciliation that claims to be
+//      total.
+//
+// The `(unclaimed)` bucket is therefore DERIVED as "rows no roster row claims",
+// never as a list of retired detector names — which is what lets it find the
+// 844 legacy `gap`/`stalled`/`pattern`/`conflict` rows, and whatever the next
+// orphaned population turns out to be, without either being named here.
+//
+// A NOTE ON WHERE THE PROSE LIVES IN THIS FILE, because it looks uneven and is
+// not. `tsc` ERASES a type-only declaration together with its JSDoc but
+// PRESERVES a comment on a function or a const into `dist/` — and `cli/dist` is
+// packed, so a function docblock is paid for TWICE (`.js` and `.js.map`)
+// against `tarball.test.ts`'s asserted packed-size ceiling. TD-423 trimmed the
+// function docblocks below and moved their content up here and onto the
+// interfaces, where it is free. Read the interfaces for the argument; the
+// functions carry the pointer.
+// ---------------------------------------------------------------------------
+
+/** One parsed clause of a `produced` predicate. */
+export interface ProducedClause {
+  /** The column, already checked against a strict identifier regex. */
+  column: string;
+  /**
+   * `literal` — this exact value. `other` — the COMPLEMENT of every literal any
+   * OTHER roster row declares for this same table+column, resolved by the
+   * caller from the roster.
+   */
+  kind: "literal" | "other";
+  /** Present only for `literal`. A bound value, never interpolated. */
+  value?: string | number;
+}
+
+/**
+ * A parsed `produced` declaration.
+ *
+ * GRAMMAR, mirrored from
+ * `brain-mcp-server/.../cognition/types.ts:CognitionInstanceHealth#produced`:
+ *
+ *   `table[col='literal']`
+ *   `table[col=123, col2=OTHER]`
+ *
+ * A clause value is a QUOTED string, a bare integer, or the bare token `OTHER`.
+ * `OTHER` means "the complement of every literal any OTHER roster row declares
+ * for this same table+column", resolved from the ROSTER by
+ * {@link ProducedSiblingLiterals} — so registering an eighth literal instance
+ * shrinks the complement with zero code edit here. That is what makes the
+ * subconscious ONE digest entry instead of one per LLM-minted `source_module`.
+ *
+ * A declaration this cannot parse is refused WHOLE. Counting the clauses we
+ * happened to understand would produce a number whose label is a lie.
+ */
+export interface ProducedPredicate {
+  /** The output table, already checked against {@link OUTPUT_TABLE_ALLOWLIST}. */
+  table: string;
+  /** The clause CONJUNCTION. Never empty (an empty bracket fails the parse). */
+  clauses: ProducedClause[];
+}
+
+/**
+ * Parse a `produced` declaration into a bindable predicate, or `null`.
+ * Grammar + `OTHER` semantics: {@link ProducedPredicate}. PURE; exported for
+ * tests. `null` rather than a throw is the degrade-to-a-DEFINED-unknown
+ * posture — the caller reports `unmeasured`, which is not `zero`.
+ */
+export function parseProducedPredicate(expr: string): ProducedPredicate | null {
+  const outer = /^([a-z_]+)\[([^\]]+)\]$/.exec(expr.trim());
+  if (outer === null) return null;
+  const [, table, body] = outer;
+  if (!OUTPUT_TABLE_ALLOWLIST.has(table)) return null;
+
+  const clauses: ProducedClause[] = [];
+  for (const raw of body.split(",")) {
+    const m = /^\s*([a-z_][a-z0-9_]*)\s*=\s*(.+?)\s*$/.exec(raw);
+    if (m === null) return null;
+    const [, column, token] = m;
+
+    if (token === "OTHER") {
+      clauses.push({ column, kind: "other" });
+      continue;
+    }
+    const quoted = /^'([^']*)'$/.exec(token);
+    if (quoted !== null) {
+      clauses.push({ column, kind: "literal", value: quoted[1] });
+      continue;
+    }
+    if (/^-?\d+$/.test(token)) {
+      clauses.push({ column, kind: "literal", value: Number(token) });
+      continue;
+    }
+    // Anything else — the subconscious's LEGACY `output` token `LLM-named`, a
+    // function call, a bare identifier — is not countable. Refuse the whole
+    // declaration rather than counting the clauses we happened to understand.
+    return null;
+  }
+  if (clauses.length === 0) return null;
+  return { table, clauses };
+}
+
+/**
+ * The sibling literals that resolve an `OTHER` clause, keyed `table.column`.
+ * Built by the caller from the WHOLE roster — that is the AC-5 seam.
+ */
+export type ProducedSiblingLiterals = Map<string, Array<string | number>>;
+
+/** `table.column` — the key shape of {@link ProducedSiblingLiterals}. */
+export function siblingKey(table: string, column: string): string {
+  return `${table}.${column}`;
+}
+
+/** A bindable SQL fragment plus its parameters. Never interpolates a value. */
+interface BoundPredicate {
+  sql: string;
+  params: unknown[];
+}
+
+/** `col IS ?` / `col IS CAST(? AS INTEGER)` — NULL-safe, affinity-explicit. */
+function equalityFragment(column: string, value: string | number, negate: boolean): BoundPredicate {
+  const op = negate ? "IS NOT" : "IS";
+  return typeof value === "number"
+    ? { sql: `${column} ${op} CAST(? AS INTEGER)`, params: [value] }
+    : { sql: `${column} ${op} ?`, params: [value] };
+}
+
+/**
+ * Compile a parsed predicate into a NULL-SAFE boolean SQL expression. `null`
+ * when a declared column is absent — reported as unmeasured, never counted
+ * around.
+ */
+function compileProducedPredicate(
+  parsed: ProducedPredicate,
+  siblings: ProducedSiblingLiterals,
+  columns: Set<string>,
+): BoundPredicate | null {
+  const parts: string[] = [];
+  const params: unknown[] = [];
+
+  for (const clause of parsed.clauses) {
+    if (!columns.has(clause.column)) return null;
+
+    if (clause.kind === "literal") {
+      const frag = equalityFragment(clause.column, clause.value as string | number, false);
+      parts.push(frag.sql);
+      params.push(...frag.params);
+      continue;
+    }
+
+    // OTHER — subtract every literal any sibling roster row declared here. An
+    // EMPTY sibling set means the complement of nothing, i.e. everything: that
+    // is the honest reading and it is still bounded by the conjunction's other
+    // clauses. It is not silently narrowed to "no rows".
+    const values = siblings.get(siblingKey(parsed.table, clause.column)) ?? [];
+    if (values.length === 0) {
+      parts.push("1");
+      continue;
+    }
+    const subs: string[] = [];
+    for (const v of values) {
+      const frag = equalityFragment(clause.column, v, true);
+      subs.push(frag.sql);
+      params.push(...frag.params);
+    }
+    parts.push(`(${subs.join(" AND ")})`);
+  }
+
+  return { sql: parts.join(" AND "), params };
+}
+
+/**
+ * The judgment model, keyed on the TABLE rather than on the instance.
+ *
+ * THE STATED BOUND, and it is in the code because it belongs next to the thing
+ * it bounds: **the roster derivation is TOTAL over instances; the judgment model
+ * is a CLOSED SET over tables.** Six instances share the `suggestions` channel
+ * and therefore share its status vocabulary, so keying this on the instance
+ * would be six copies of one fact. Adding an instance costs nothing. Adding a
+ * new OUTPUT TABLE costs one edit here, and until it is made that instance
+ * reports `unmeasured` with a named reason — never a number.
+ *
+ * `expired` vs `rejected_judged` is the TD-423 AC-4 compensation, and it is
+ * READER-SIDE by choice (no writer is touched by this brief). The discriminator
+ * was verified against the live brain before it was written down:
+ *
+ *   - `learnings`: `rejectStalePending` (`janitor/hygiene.ts`) bulk-flips stale
+ *     pending rows to `review_status='rejected'` and NEVER touches `deleted_at`;
+ *     the judgment path (`perception/handlers.ts#handlePerceptionReject`,
+ *     recurring branch) sets BOTH. So `rejected AND deleted_at IS NULL` is
+ *     EXPIRY and `rejected AND deleted_at IS NOT NULL` is a human verdict.
+ *   - `suggestions`: no writer flips an expired suggestion to `dismissed` —
+ *     `expires_at` is a soft column — so a lapsed row stays `pending` and is
+ *     counted as `pending_expired`, which is UNJUDGED and never a rejection.
+ *
+ * `kept` for `learnings` is deliberately BROADER than `='approved'`: a row
+ * approved at review time and later merged/superseded/pruned by the janitor was
+ * still KEPT when it was judged, so counting only `approved` under-reports.
+ */
+interface JudgmentModel {
+  /** Columns without which the model cannot discriminate. Absent → unmeasured. */
+  required: string[];
+  kept: string;
+  rejected_judged: string;
+  pending_live: string;
+  pending_expired: string;
+  expired: string;
+  /** The whole-table pending predicate — the `pending_share_of_queue` denominator. */
+  queue_pending: string;
+  /** A free-text label column counted DISTINCT, or null when the table has none. */
+  label_column: string | null;
+  /**
+   * What `kept` on this channel DOES and DOES NOT mean, in operator words.
+   *
+   * Carried per-model rather than written once in the digest builder because it
+   * is a property OF THE MODEL: a new channel arrives with its own bound, and a
+   * bound stated in the consumer would be a hand-list of table names one layer
+   * away from the table it describes. Surfaced on every run — it is a standing
+   * BOUND, not an anomaly.
+   */
+  stated_bound: string;
+}
+
+const JUDGMENT_MODELS: Record<string, JudgmentModel> = {
+  suggestions: {
+    required: ["status"],
+    kept: "status = 'acted'",
+    rejected_judged: "status = 'dismissed'",
+    pending_live:
+      "status = 'pending' AND (expires_at IS NULL OR datetime(expires_at) >= datetime('now'))",
+    pending_expired:
+      "status = 'pending' AND expires_at IS NOT NULL AND datetime(expires_at) < datetime('now')",
+    // No suggestion is ever expiry-FLIPPED into a verdict-looking state, so this
+    // bucket is structurally empty here. Declared rather than omitted so the
+    // per-channel shape is uniform and the reconciliation sum is comparable.
+    expired: "0",
+    queue_pending: "status = 'pending'",
+    label_column: "source_module",
+    stated_bound:
+      "suggestions: every row is BORN 'pending', so `kept` here does mean a human marked it acted. `expires_at` is a soft column — no writer flips a lapsed suggestion to 'dismissed' — so a lapsed row stays pending and is counted as pending_expired, never as a rejection.",
+  },
+  learnings: {
+    required: ["review_status", "deleted_at"],
+    kept: "review_status NOT IN ('pending_review', 'rejected')",
+    rejected_judged: "review_status = 'rejected' AND deleted_at IS NOT NULL",
+    pending_live: "review_status = 'pending_review'",
+    pending_expired: "0",
+    expired: "review_status = 'rejected' AND deleted_at IS NULL",
+    queue_pending: "review_status = 'pending_review'",
+    label_column: null,
+    stated_bound:
+      "learnings: a row can be BORN 'approved' — a direct memory_store, a /distill import, or an extractor running with auto-approve on — so `kept` on this channel means 'never rejected', NOT 'approved by a reviewer'. Read a keep rate here alongside judged_share_of_produced. And the common reject path HARD-deletes, so produced is a surviving-row count.",
+  },
+};
+
+/** The output tables this reader carries a judgment model for. */
+export const JUDGED_CHANNELS: string[] = Object.keys(JUDGMENT_MODELS);
+
+/** What `kept` means on one channel — see {@link JudgmentModel}. */
+export function judgmentModelBound(table: string): string | null {
+  return JUDGMENT_MODELS[table]?.stated_bound ?? null;
+}
+
+/** TD-423 — one instance's (or the unclaimed bucket's) raw disposition counts. */
+export interface CognitionProducedDisposition {
+  /** Rows the predicate selects. `null` when the read could not be made. */
+  produced: number | null;
+  /** Judged and kept. */
+  kept: number;
+  /** Judged and rejected — a HUMAN verdict, never an expiry. */
+  rejected_judged: number;
+  /** Unjudged and still inside its TTL. */
+  pending_live: number;
+  /** Unjudged and lapsed. NOT a rejection. */
+  pending_expired: number;
+  /** Expiry-flipped into a rejected-looking state. NOT a rejection. */
+  expired: number;
+  /** Earliest `created_at` in the selected set. */
+  first_produced_at: string | null;
+  /** Latest `created_at` in the selected set. */
+  last_produced_at: string | null;
+  /**
+   * DISTINCT values of the channel's free-text label column across the selected
+   * set. A LABEL-DRIFT / emission-cadence proxy, NOT a count of distinct
+   * findings — see the field's own label in the digest.
+   */
+  distinct_label_values: number | null;
+  /**
+   * True when the bucket sum equals `produced`. False means a row carries a
+   * status outside the model's vocabulary, which the digest surfaces as a
+   * warning rather than silently absorbing.
+   */
+  buckets_reconcile: boolean;
+  /** Why the read degraded; null on success. */
+  reason: string | null;
+}
+
+const EMPTY_DISPOSITION: CognitionProducedDisposition = {
+  produced: null,
+  kept: 0,
+  rejected_judged: 0,
+  pending_live: 0,
+  pending_expired: 0,
+  expired: 0,
+  first_produced_at: null,
+  last_produced_at: null,
+  distinct_label_values: null,
+  buckets_reconcile: true,
+  reason: null,
+};
+
+function degraded(reason: string): CognitionProducedDisposition {
+  return { ...EMPTY_DISPOSITION, reason };
+}
+
+/** Read the disposition of the rows ONE predicate selects. */
+export function readProducedDisposition(
+  parsed: ProducedPredicate,
+  siblings: ProducedSiblingLiterals,
+): CognitionProducedDisposition {
+  return withReadonlyBrain<CognitionProducedDisposition>(
+    degraded("brain DB not readable"),
+    (handle) => {
+      const model = JUDGMENT_MODELS[parsed.table];
+      if (model === undefined) {
+        return degraded(
+          `no judgment model for output table ${parsed.table} — the model is a CLOSED set over tables (${JUDGED_CHANNELS.join(", ")})`,
+        );
+      }
+      if (!tableExists(handle, parsed.table)) {
+        return degraded(`${parsed.table} is not present in this brain`);
+      }
+      const columns = tableColumns(handle, parsed.table);
+      const missing = model.required.filter((c) => !columns.has(c));
+      if (missing.length > 0) {
+        return degraded(
+          `${parsed.table} is missing the column(s) the judgment model discriminates on: ${missing.join(", ")}`,
+        );
+      }
+      const where = compileProducedPredicate(parsed, siblings, columns);
+      if (where === null) {
+        return degraded(
+          `the declared predicate names a column absent from ${parsed.table}`,
+        );
+      }
+
+      const hasCreatedAt = columns.has("created_at");
+      const labelColumn =
+        model.label_column !== null && columns.has(model.label_column)
+          ? model.label_column
+          : null;
+
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*)                                        AS produced,
+                  SUM(CASE WHEN ${model.kept}            THEN 1 ELSE 0 END) AS kept,
+                  SUM(CASE WHEN ${model.rejected_judged} THEN 1 ELSE 0 END) AS rejected_judged,
+                  SUM(CASE WHEN ${model.pending_live}    THEN 1 ELSE 0 END) AS pending_live,
+                  SUM(CASE WHEN ${model.pending_expired} THEN 1 ELSE 0 END) AS pending_expired,
+                  SUM(CASE WHEN ${model.expired}         THEN 1 ELSE 0 END) AS expired,
+                  ${hasCreatedAt ? "MIN(created_at)" : "NULL"}    AS first_produced_at,
+                  ${hasCreatedAt ? "MAX(created_at)" : "NULL"}    AS last_produced_at,
+                  ${labelColumn === null ? "NULL" : `COUNT(DISTINCT ${labelColumn})`} AS distinct_label_values
+             FROM ${parsed.table}
+            WHERE ${where.sql}`,
+        )
+        .get(...where.params) as {
+        produced: number;
+        kept: number | null;
+        rejected_judged: number | null;
+        pending_live: number | null;
+        pending_expired: number | null;
+        expired: number | null;
+        first_produced_at: string | null;
+        last_produced_at: string | null;
+        distinct_label_values: number | null;
+      };
+
+      const kept = row.kept ?? 0;
+      const rejected_judged = row.rejected_judged ?? 0;
+      const pending_live = row.pending_live ?? 0;
+      const pending_expired = row.pending_expired ?? 0;
+      const expired = row.expired ?? 0;
+
+      return {
+        produced: row.produced,
+        kept,
+        rejected_judged,
+        pending_live,
+        pending_expired,
+        expired,
+        first_produced_at: row.first_produced_at,
+        last_produced_at: row.last_produced_at,
+        distinct_label_values: row.distinct_label_values,
+        buckets_reconcile:
+          kept + rejected_judged + pending_live + pending_expired + expired ===
+          row.produced,
+        reason: null,
+      };
+    },
+  );
+}
+
+/**
+ * The COMPLEMENT of a set of predicates over one table — the `(unclaimed)`
+ * bucket, DERIVED rather than hand-listed. Every fragment is NULL-safe by
+ * construction, so `NOT (p1 OR ...)` is exact and
+ * `sum(produced) + unclaimed === total` is an invariant, not a hope.
+ */
+export function readUnclaimedDisposition(
+  table: string,
+  claimed: ProducedPredicate[],
+  siblings: ProducedSiblingLiterals,
+): CognitionProducedDisposition {
+  return withReadonlyBrain<CognitionProducedDisposition>(
+    degraded("brain DB not readable"),
+    (handle) => {
+      const model = JUDGMENT_MODELS[table];
+      if (model === undefined) return degraded(`no judgment model for ${table}`);
+      if (!tableExists(handle, table)) {
+        return degraded(`${table} is not present in this brain`);
+      }
+      const columns = tableColumns(handle, table);
+      const missing = model.required.filter((c) => !columns.has(c));
+      if (missing.length > 0) {
+        return degraded(
+          `${table} is missing the column(s) the judgment model discriminates on: ${missing.join(", ")}`,
+        );
+      }
+
+      const parts: string[] = [];
+      const params: unknown[] = [];
+      for (const p of claimed) {
+        if (p.table !== table) continue;
+        const frag = compileProducedPredicate(p, siblings, columns);
+        if (frag === null) continue;
+        parts.push(`(${frag.sql})`);
+        params.push(...frag.params);
+      }
+      // No claim at all → every row is unclaimed. That is the honest answer, and
+      // it is what a brain whose roster predates `produced` reports.
+      const whereSql = parts.length === 0 ? "1" : `NOT (${parts.join(" OR ")})`;
+
+      const hasCreatedAt = columns.has("created_at");
+      const labelColumn =
+        model.label_column !== null && columns.has(model.label_column)
+          ? model.label_column
+          : null;
+
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*)                                        AS produced,
+                  SUM(CASE WHEN ${model.kept}            THEN 1 ELSE 0 END) AS kept,
+                  SUM(CASE WHEN ${model.rejected_judged} THEN 1 ELSE 0 END) AS rejected_judged,
+                  SUM(CASE WHEN ${model.pending_live}    THEN 1 ELSE 0 END) AS pending_live,
+                  SUM(CASE WHEN ${model.pending_expired} THEN 1 ELSE 0 END) AS pending_expired,
+                  SUM(CASE WHEN ${model.expired}         THEN 1 ELSE 0 END) AS expired,
+                  ${hasCreatedAt ? "MIN(created_at)" : "NULL"}    AS first_produced_at,
+                  ${hasCreatedAt ? "MAX(created_at)" : "NULL"}    AS last_produced_at,
+                  ${labelColumn === null ? "NULL" : `COUNT(DISTINCT ${labelColumn})`} AS distinct_label_values
+             FROM ${table}
+            WHERE ${whereSql}`,
+        )
+        .get(...params) as {
+        produced: number;
+        kept: number | null;
+        rejected_judged: number | null;
+        pending_live: number | null;
+        pending_expired: number | null;
+        expired: number | null;
+        first_produced_at: string | null;
+        last_produced_at: string | null;
+        distinct_label_values: number | null;
+      };
+
+      const kept = row.kept ?? 0;
+      const rejected_judged = row.rejected_judged ?? 0;
+      const pending_live = row.pending_live ?? 0;
+      const pending_expired = row.pending_expired ?? 0;
+      const expired = row.expired ?? 0;
+
+      return {
+        produced: row.produced,
+        kept,
+        rejected_judged,
+        pending_live,
+        pending_expired,
+        expired,
+        first_produced_at: row.first_produced_at,
+        last_produced_at: row.last_produced_at,
+        distinct_label_values: row.distinct_label_values,
+        buckets_reconcile:
+          kept + rejected_judged + pending_live + pending_expired + expired ===
+          row.produced,
+        reason: null,
+      };
+    },
+  );
+}
+
+/** TD-423 — the whole-table denominators one channel's rates are computed over. */
+export interface CognitionChannelTotals {
+  /** Every row in the table. */
+  total: number | null;
+  /** Rows still awaiting a verdict — the `pending_share_of_queue` denominator. */
+  pending: number | null;
+}
+
+/** One channel's whole-table totals. Degrades to nulls, never throws. */
+export function readChannelTotals(table: string): CognitionChannelTotals {
+  return withReadonlyBrain<CognitionChannelTotals>(
+    { total: null, pending: null },
+    (handle) => {
+      const model = JUDGMENT_MODELS[table];
+      if (model === undefined) return { total: null, pending: null };
+      if (!tableExists(handle, table)) return { total: null, pending: null };
+      const columns = tableColumns(handle, table);
+      if (model.required.some((c) => !columns.has(c))) {
+        return { total: null, pending: null };
+      }
+      const row = handle
+        .prepare(
+          `SELECT COUNT(*) AS total,
+                  SUM(CASE WHEN ${model.queue_pending} THEN 1 ELSE 0 END) AS pending
+             FROM ${table}`,
+        )
+        .get() as { total: number; pending: number | null };
+      return { total: row.total, pending: row.pending ?? 0 };
+    },
+  );
+}
+
+/** TD-423 — the SECOND judgment record, read from `event_log`. */
+export interface CognitionJudgmentEventCounts {
+  approved: number;
+  rejected: number;
+  /** The event names counted, so a `0` reads as "no such rows", not "no judgments". */
+  approved_event: string;
+  rejected_event: string;
+  /** Latest `created_at` across the two, for the divergence note. */
+  last_at: string | null;
+}
+
+/**
+ * Count an instance's review-path verdict events. `component`/`eventPrefix` are
+ * roster LITERALS, never `cognition.${id}` — perception writes under the bare
+ * `perception`, so a derived namespace finds zero rows for the one instance
+ * with a review path (L-857). WHOLE-BRAIN, not host-scoped: a RUN belongs to a
+ * machine, a JUDGMENT belongs to whoever made it.
+ */
+export function readJudgmentEventCounts(
+  component: string,
+  eventPrefix: string,
+): CognitionJudgmentEventCounts {
+  const approvedEvent = `${eventPrefix}.candidate_approved`;
+  const rejectedEvent = `${eventPrefix}.candidate_rejected`;
+  const empty: CognitionJudgmentEventCounts = {
+    approved: 0,
+    rejected: 0,
+    approved_event: approvedEvent,
+    rejected_event: rejectedEvent,
+    last_at: null,
+  };
+  return withReadonlyBrain<CognitionJudgmentEventCounts>(empty, (handle) => {
+    if (!tableExists(handle, "event_log")) return empty;
+    const cols = tableColumns(handle, "event_log");
+    if (!cols.has("component") || !cols.has("event_name")) return empty;
+    const row = handle
+      .prepare(
+        `SELECT SUM(CASE WHEN event_name = ? THEN 1 ELSE 0 END) AS approved,
+                SUM(CASE WHEN event_name = ? THEN 1 ELSE 0 END) AS rejected,
+                ${cols.has("created_at") ? "MAX(created_at)" : "NULL"} AS last_at
+           FROM event_log
+          WHERE component = ? AND event_name IN (?, ?)`,
+      )
+      .get(
+        approvedEvent,
+        rejectedEvent,
+        component,
+        approvedEvent,
+        rejectedEvent,
+      ) as { approved: number | null; rejected: number | null; last_at: string | null };
+    return {
+      approved: row.approved ?? 0,
+      rejected: row.rejected ?? 0,
+      approved_event: approvedEvent,
+      rejected_event: rejectedEvent,
+      last_at: row.last_at,
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// FR-268 — the ceremony record: WRITE door (`igris ceremony`) and the KPI READ
+// door (`igris kpi`). Two doors, not a flipped one (TD-319).
+// ---------------------------------------------------------------------------
+
+/** Input for {@link ceremonyEventWrite}. No timestamp: `created_at` is the DB clock. */
+export interface CeremonyEventWriteInput {
+  project: string;
+  ceremony: string;
+  event_type: "start" | "stop";
+  machine_hostname: string;
+  instance_id?: string | null;
+  brief_id?: string | null;
+  /** BR-100 — the minted machine identity; stamped only when the column exists (instances v5). */
+  machine_id?: string | null;
+  /** BR-100 — the identity's alias list for the pairing predicate; defaults to `[machine_hostname]`. */
+  aliases?: string[];
+}
+
+/** What {@link ceremonyEventWrite} returns — every field READ BACK from the row. */
+export interface CeremonyEventWriteResult {
+  id: number;
+  created_at: string;
+  /** stop: whether an open start was found; start: null. */
+  paired: boolean | null;
+  paired_start_id: number | null;
+  /** SQL-computed on a paired stop; NULL otherwise — never 0. */
+  duration_ms: number | null;
+}
+
+/**
+ * Duration computed IN SQL from the brain's own clock — a verbatim mirror of
+ * `brain-mcp-server/src/tools/agent_events.ts:269-270` (`DURATION_FROM_START_SQL`)
+ * with the table renamed. One clock for both ends of the bracket; binds the
+ * start id.
+ */
+const CEREMONY_DURATION_FROM_START_SQL =
+  "CAST((julianday('now') - julianday((SELECT created_at FROM ceremony_events WHERE id = ?))) * 86400000 AS INTEGER)";
+
+/**
+ * The latest open `start` for `(project, ceremony, this machine)` — the start
+ * no later `stop` of the same key has closed. Mirror of
+ * `brain-mcp-server/src/tools/agent_events.ts:172-189` (`findOpenStart`), keyed
+ * by machine rather than instance because `boot`'s start predates the instance
+ * mint; since BR-100 "this machine" is the identity (`sameMachineSql`), so a
+ * stop after a network change still closes its start and a foreign id never
+ * does. Any later stop closes EVERY earlier start of the key.
+ *
+ * Known limitation (the FR-267 class): two concurrent same-ceremony runs for
+ * one project on one machine may mis-pair — counts stay right, durations may swap.
+ */
+function findOpenCeremonyStart(
+  handle: Database.Database,
+  project: string,
+  ceremony: string,
+  me: MachineIdentity,
+  hasMachineId: boolean,
+): { id: number; created_at: string } | undefined {
+  const s = sameMachineSql(me, hasMachineId, "s");
+  const e = sameMachineSql(me, hasMachineId, "e");
+  return handle
+    .prepare(
+      `SELECT s.id, s.created_at FROM ceremony_events s
+        WHERE s.event_type = 'start' AND s.project = ? AND s.ceremony = ? AND ${s.sql}
+          AND NOT EXISTS (SELECT 1 FROM ceremony_events e
+                           WHERE e.event_type = 'stop' AND e.project = s.project AND e.ceremony = s.ceremony
+                             AND ${e.sql} AND e.id > s.id)
+        ORDER BY s.id DESC LIMIT 1`,
+    )
+    .get(project, ceremony, ...s.params, ...e.params) as { id: number; created_at: string } | undefined;
+}
+
+/**
+ * Write one ceremony stamp (FR-268). The WRITE door: `getDb()`, create-never —
+ * a brain without `ceremony_events` (older than instances v4) throws
+ * {@link BrainTableMissingError} and the verb degrades; it never CREATEs.
+ *
+ * `created_at` is the row default (`datetime('now')`, the DB clock, UTC);
+ * `duration_ms` on a stop is computed IN SQL from the paired open start's
+ * `created_at` and NULL when no start is open (never 0 — §18.12). The caller
+ * supplies only what it alone knows: the names, the host, an instance id and
+ * a brief id when it has them.
+ */
+export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEventWriteResult {
+  const handle = getDb();
+  if (!tableExists(handle, "ceremony_events")) {
+    throw new BrainTableMissingError("ceremony_events");
+  }
+  const instanceId = input.instance_id ?? null;
+  const briefId = input.brief_id ?? null;
+  // BR-100: stamp when the column exists (v5); pair on the identity.
+  const hasMachineId = tableColumns(handle, "ceremony_events").has("machine_id");
+  const me: MachineIdentity = {
+    machine_id: input.machine_id ?? null,
+    hostname: input.machine_hostname,
+    aliases: input.aliases ?? [input.machine_hostname],
+  };
+  const idCol = hasMachineId ? ", machine_id" : "";
+  const idVal = hasMachineId ? ", ?" : "";
+  const idParams = hasMachineId ? [me.machine_id] : [];
+
+  let id: number;
+  let paired: boolean | null = null;
+  let pairedStartId: number | null = null;
+  if (input.event_type === "start") {
+    const info = handle
+      .prepare(
+        `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol})
+         VALUES (?, ?, 'start', ?, ?, ?${idVal})`,
+      )
+      .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams);
+    id = Number(info.lastInsertRowid);
+  } else {
+    const open = findOpenCeremonyStart(handle, input.project, input.ceremony, me, hasMachineId);
+    paired = open !== undefined;
+    pairedStartId = open?.id ?? null;
+    const info = open
+      ? handle
+          .prepare(
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol}, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?${idVal}, ${CEREMONY_DURATION_FROM_START_SQL})`,
+          )
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams, open.id)
+      : handle
+          .prepare(
+            `INSERT INTO ceremony_events (project, ceremony, event_type, machine_hostname, instance_id, brief_id${idCol}, duration_ms)
+             VALUES (?, ?, 'stop', ?, ?, ?${idVal}, NULL)`,
+          )
+          .run(input.project, input.ceremony, input.machine_hostname, instanceId, briefId, ...idParams);
+    id = Number(info.lastInsertRowid);
+  }
+
+  // Read back (L-1248): the digest echoes the ROW, not what we meant to write.
+  const row = handle
+    .prepare("SELECT id, created_at, duration_ms FROM ceremony_events WHERE id = ?")
+    .get(id) as { id: number; created_at: string; duration_ms: number | null };
+  return {
+    id: row.id,
+    created_at: row.created_at,
+    paired,
+    paired_start_id: pairedStartId,
+    duration_ms: row.duration_ms,
+  };
+}
+
+/**
+ * The KPI digest through the READ-ONLY door (`openBrainReadonly`,
+ * `query_only = ON`). An absent brain file yields the absent digest; a brain
+ * missing `hunt_runs` / `ceremony_events` degrades inside `buildKpiDigest`
+ * with the missing object named. Never writes — `kpi-read.test.ts` pins the
+ * file's sha256 / mtime / size across a full read.
+ */
+export function readKpiDigest(opts: KpiReadOptions): KpiDigest {
+  return withReadonlyBrain<KpiDigest>(absentKpiDigest(opts), (handle) => buildKpiDigest(handle, opts));
+}
+
+// ---------------------------------------------------------------------------
+// BR-100 — the doctor's `machine-identity` reader (READ door)
+// ---------------------------------------------------------------------------
+
+/** BR-100 doctor: a hostname outside the alias list + its local NULL-id row count. */
+export interface UnattributedHostname {
+  hostname: string;
+  rows: number;
+}
+
+/** NULL-id `event_log` (last `days`) + `instances` rows under hostnames outside `me.aliases`, counted. Read-only; column-tolerant. */
+export function readUnattributedHostnames(me: MachineIdentity, days = 30): UnattributedHostname[] {
+  return withReadonlyBrain<UnattributedHostname[]>([], (handle) => {
+    const counts = new Map<string, number>();
+    const scan = (table: string, where: string, params: unknown[]): void => {
+      if (!tableExists(handle, table)) return;
+      const nullId = tableColumns(handle, table).has("machine_id") ? "AND machine_id IS NULL" : "";
+      const rows = handle
+        .prepare(
+          `SELECT machine_hostname AS h, COUNT(*) AS n FROM ${table}
+            WHERE machine_hostname IS NOT NULL ${nullId} ${where}
+            GROUP BY machine_hostname`,
+        )
+        .all(...params) as { h: string; n: number }[];
+      for (const r of rows) {
+        if (!me.aliases.includes(r.h)) counts.set(r.h, (counts.get(r.h) ?? 0) + r.n);
+      }
+    };
+    scan("event_log", "AND datetime(created_at) >= datetime('now', ?)", [`-${days} days`]);
+    scan("instances", "", []);
+    return [...counts]
+      .map(([hostname, rows]) => ({ hostname, rows }))
+      .sort((a, b) => b.rows - a.rows || a.hostname.localeCompare(b.hostname));
+  });
 }

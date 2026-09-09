@@ -22,6 +22,7 @@
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { brainDir } from "../lib/paths.js";
+import { resolveCanonicalRoot } from "../lib/canonical-root.js";
 import { error as logError } from "../lib/log.js";
 
 export type HarnessAction = "compile" | "check";
@@ -201,8 +202,48 @@ function resolveAdapterInvocation(
 }
 
 /**
- * Run the harness verb. Returns the adapter's exit code (passthrough), or 2
- * on a usage error (bad action).
+ * TD-408: the containment check for the BASH half.
+ *
+ * The adapters write under `--project-root`; at this repo root that reaches
+ * tracked files (`git ls-files --error-unmatch harness-manifest.json
+ * .claude/settings.json CLAUDE.md` succeeds). They write in bash, where the seam
+ * does not exist — `grep -rn IGRIS_REPO_DIR scripts/ core/scripts/` returns
+ * nothing — so the check happens HERE, before the spawn.
+ *
+ * Not ported to bash, for three reasons: containment is realpath-over-the-
+ * longest-existing-prefix plus a test-context probe, so a port is a SECOND
+ * implementation free to drift with no compiler to notice; it would need
+ * remembering once per adapter; and a check inside the script has already
+ * started the process TD-388 exists to keep off the operator's config. The cost
+ * is the residual: a direct `bash compile_harnesses.sh` does not pass through
+ * here, so this contains the TS-invoked population — the one a test runner
+ * reaches.
+ *
+ * The root is read back off the CONSTRUCTED argv rather than recomputed, so the
+ * value checked is the value the child would have received.
+ *
+ * Returns an error message to log, or null when the spawn may proceed.
+ */
+function uncontainedSpawnRefusal(
+  action: HarnessAction,
+  args: string[],
+): string | null {
+  const i = args.indexOf("--project-root");
+  const root = i >= 0 ? args[i + 1] : undefined;
+  if (root === undefined) return null;
+  const decision = resolveCanonicalRoot(root);
+  if (decision.allowed) return null;
+  return (
+    `harness ${action}: refusing to run the adapter with --project-root ${root} — ` +
+    `it writes under that root and this is not a contained target ` +
+    `(${decision.reason}; IGRIS_REPO_DIR=${decision.declaredRoot ?? "<unset>"}). ` +
+    `Declare IGRIS_REPO_DIR, or pass --project-root pointing inside it.`
+  );
+}
+
+/**
+ * Run the harness verb. Returns the adapter's exit code (passthrough), 1 on a
+ * refused spawn (TD-408), or 2 on a usage error (bad action).
  */
 export async function runHarness(opts: HarnessOptions): Promise<number> {
   const inv = resolveAdapterInvocation(opts);
@@ -214,6 +255,17 @@ export async function runHarness(opts: HarnessOptions): Promise<number> {
   }
 
   const runner = opts.runAdapter ?? defaultAdapterRunner;
+  // TD-408: the guard is on the SPAWN, so it applies to the default runner only.
+  // An injected runner creates no subprocess, so there is nothing to contain —
+  // it is itself the seam, the way `IGRIS_BRAIN_DIR` is for the runtime tree.
+  // A caller that injects a runner which spawns has taken that ownership.
+  if (runner === defaultAdapterRunner) {
+    const refusal = uncontainedSpawnRefusal(opts.action, inv.args);
+    if (refusal !== null) {
+      logError(refusal);
+      return 1;
+    }
+  }
   return runner(inv.scriptPath, inv.args);
 }
 
@@ -297,6 +349,14 @@ export async function runHarnessStructured(
   }
 
   const capture = opts.captureAdapter ?? defaultAdapterCapture;
+  // TD-408: same spawn guard as `runHarness` — see `uncontainedSpawnRefusal`.
+  if (capture === defaultAdapterCapture) {
+    const refusal = uncontainedSpawnRefusal(opts.action, inv.args);
+    if (refusal !== null) {
+      logError(refusal);
+      return parseHarnessOutput(1, refusal);
+    }
+  }
   const { code, output } = capture(inv.scriptPath, inv.args);
   return parseHarnessOutput(code, output);
 }

@@ -25,7 +25,7 @@ flowchart TB
 
 | Layer | Role | Primary entry-point |
 |-------|------|---------------------|
-| **0 — Brain DB + MCP server** | Authoritative state: briefs, learnings, errors, tasks, events, perception. Tools served via the `igris-brain` MCP server with `additionalProperties: false` strict-input contract. | `brain-mcp-server/src/index.ts:1-250`; engine boot at `brain-mcp-server/src/engine/index.ts:71-144` |
+| **0 — Brain DB + MCP server** | Authoritative state: briefs, learnings, errors, tasks, events, perception. Tools served via the `igris-brain` MCP server with `additionalProperties: false` strict-input contract. | `brain-mcp-server/src/index.ts:1-250`; engine boot at `bootEngine()` in `brain-mcp-server/src/engine/index.ts` (cited by symbol — FR-267 shifted its span) |
 | **1 — Igris OS orchestrator** | Single Claude Code session that loads the layered OS context (via the `core/os/INDEX.md` module map), enforces brief-first protocol, tracks session state, and delegates to agents via the `Agent` tool. | `~/.igris/core/os/INDEX.md` + the boot-tier modules it lists (also live at `core/os/` in the repo) |
 | **2 — Subagents + skills** | The specialized agents (read or write tools restricted at the definition level) and the slash-command skills that compose multi-step workflows. | `~/.igris/core/agents/*.md`, `~/.igris/core/skills/*/SKILL.md` |
 | **3 — Agent Teams / multi-session** | Experimental layer that spawns parallel Claude Code instances; coordination via the shared brain DB and the VPS replication hub. | `core/skills/team/SKILL.md`; status: experimental |
@@ -34,9 +34,9 @@ flowchart TB
 
 ## 3. The Brain DB
 
-**Engine:** TypeScript MCP server (`brain-mcp-server/`) booted by the unified `igris` CLI. Database is SQLite WAL mode with FTS5 and sqlite-vec extensions; busy timeout is 30 s. Static schema migrations live in `brain-mcp-server/src/db.ts` (v1–v25+); each component runs its own programmatic migrations at boot (`engine/index.ts:123`).
+**Engine:** TypeScript MCP server (`brain-mcp-server/`) booted by the unified `igris` CLI. Database is SQLite WAL mode with FTS5 and sqlite-vec extensions; busy timeout is 30 s. Static schema migrations live in `brain-mcp-server/src/db.ts` (v1–v25+); each component runs its own programmatic migrations at boot (`brain-mcp-server/src/engine/index.ts` (`registry.boot()`, cited by symbol — the line moved under FR-267)).
 
-**The 19 components** (booted in dependency order at `engine/index.ts:94-114`):
+**The 15 components** (the `componentFactories` array in `brain-mcp-server/src/engine/index.ts`, booted in dependency order — counted from that array on 2026-08-26 UTC and cited by symbol so the pin cannot drift):
 
 | # | Component | Purpose (one sentence) |
 |---|-----------|------------------------|
@@ -44,30 +44,31 @@ flowchart TB
 | 2 | `errors` | Error catalog & root-cause analysis |
 | 3 | `projects` | Registry of installed projects (path, slug, status, config) |
 | 4 | `context` | Cache of context files (coding guidelines, architecture maps, etc.) |
-| 5 | `metrics` | Agent performance telemetry (tools used, error rates, latency) |
-| 6 | `sessions` | Session lifecycle bookkeeping |
-| 7 | `briefs` | Brief storage with status & phase tracking |
-| 8 | `edges` | Typed entity relationships (FR-105) — provenance graph |
-| 9 | `goals` | Outcome-level goal tracking (FR-110) |
-| 10 | `tasks` | Autonomous task queue (v3 schema with retry + capability gates) |
-| 11 | `instances` | Agent instance lifecycle (run ID, hostname, model, tokens) |
-| 12 | `sync` | VPS sync queue & replication state |
-| 13 | `cache` | Brain-to-filesystem cache (v6 read-only backup) |
-| 14 | `schedules` | Cron schedule + event-based triggers |
-| 15 | `coordination` | Autonomous decision rules & coordination config |
-| 16 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
-| 17 | `perception` | Observation & pattern extraction from sessions |
-| 18 | `monitoring` | Agent & system observability (activity, SLA) |
-| 19 | `registry` | Reusable-assets catalog (templates/modules — the "lego" store; FR-099/FR-198) |
+| 5 | `sessions` | Session lifecycle bookkeeping |
+| 6 | `briefs` | Brief storage with status & phase tracking |
+| 7 | `edges` | Typed entity relationships (FR-105) — provenance graph |
+| 8 | `goals` | Outcome-level goal tracking (FR-110) |
+| 9 | `tasks` | Autonomous task queue (v3 schema with retry + capability gates) |
+| 10 | `instances` | Agent instance lifecycle (run ID, hostname, model, tokens) |
+| 11 | `sync` | VPS sync queue & replication state |
+| 12 | `cache` | Guarded projection of `brief_files` / `session_files` to `~/.igris/projects/{project}/` (TD-414: a local brief file newer than the brain copy is never overwritten; `igris_cache_rebuild force:true` is the only override) |
+| 13 | `schedules` | Cron schedule + event-based triggers |
+| 14 | `coordination` | Autonomous decision rules & coordination config |
+| 15 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
+| 16 | `perception` | Observation & pattern extraction from sessions |
+| 17 | `monitoring` | Agent & system observability (activity, SLA) |
+| 18 | `registry` | Reusable-assets catalog (templates/modules — the "lego" store; FR-099/FR-198) |
 
-**Tool count:** 120+ brain tools distributed across the 19 components (the `igris-brain` MCP server is the single gateway). Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced at `brain-mcp-server/src/engine/gateway.ts:47-138`). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
+_2026-08-26 UTC — Rows other than the metrics removal were not re-verified by FR-267 (the table still carries 18 names against the array's 15) — TD-430 tracks the sweep._
+
+**Tool count:** 108 brain tools across the 15 components — the figure is the pin in `brain-mcp-server/src/engine/__tests__/gateway-tool-count.test.ts` (`toBe(108)`: 112 at FR-237 − 4, FR-267 retired the metrics component) — served by the `igris-brain` MCP server as the single gateway. Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced in `brain-mcp-server/src/engine/gateway.ts`'s `dispatch` — cited by symbol because TD-321 shifted that span and a range citation drifts on every edit inside it). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
 
 **Key tables** (subset; the per-component schema files are the source of truth):
 
 | Table | Purpose |
 |-------|---------|
 | `brief_status` | Canonical brief catalog (id, project, type, status, priority, effort, phase, timestamps) |
-| `brief_files` | Brief markdown archive (immutable audit trail) |
+| `brief_files` | Brief markdown store — the RECORD the gates read; upserted by `igris_brief_create`, `igris_brief_update` and `igris_brief_file_sync`, projected to disk by the cache component (TD-414) |
 | `learnings` + `learnings_fts` + `learnings_vec` | Auto-extracted knowledge with BM25 ranking & 384-D vectors |
 | `errors` | Error catalog & RCA |
 | `event_log` | Audit trail of all events (used for perception extraction) |
@@ -88,7 +89,7 @@ The rule-based subconscious detectors (`subconscious_engine.md`) had a 2% true-p
 These are intentional, not bugs — documented openly because a stated limitation is maturity:
 
 - **No auto-release listener on `brief.completed`** — releasing or archiving a completed brief is an explicit operator action, never an automatic side-effect of completion (Lock-1: nothing auto-ships or auto-destroys). You `/archive` or `/release` deliberately.
-- **Agent events are fire-and-forget** — `igris_agent_event` emissions during `/hunt` never block the workflow and can gap silently if the brain MCP is briefly unavailable. The dashboard may under-count a phase; the hunt itself is never delayed or failed by a missed event. Correctness over telemetry completeness.
+- **Agent events are fire-and-forget at EMISSION time, gated at CLOSE** (FR-267) — `igris_agent_event` emissions during `/hunt` never block the workflow and can gap silently if the brain MCP is briefly unavailable; the hunt itself is never delayed or failed by a missed event. But the gap is not silent forever: the `commit-msg` hook refuses the closing commit when a role the brief's Agent Log names has no recorded event (`IGRIS_BYPASS_EVENT_GATE=1` is the one-shot hatch), and the record itself is durable — `agent_events`, brain-timed, no purge; see [`docs/reference/hunt-cost-record.md`](../reference/hunt-cost-record.md). Correctness over telemetry completeness at emission time; completeness enforced at close.
 
 ---
 
@@ -153,6 +154,8 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 **Escape hatches** (one-shot, never `export`, loud + event-logged):
 - `IGRIS_BYPASS_BRIEF_GATE=1` — bypass the brief-gate hook for one command.
 - `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest activity timestamp), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
+- `IGRIS_BYPASS_AC_GATE=1` — bypass the acceptance-criteria gate for one commit (TD-325). The gate lives in `scripts/git-hooks/commit-msg`, not in the pre-commit phase guard: it keys on the `closes #<ID>` footer that DEFINES a closing commit, so a WIP commit needs no exemption, and it is free of `IGRIS_BYPASS_PHASE_GUARD` — which `/hunt` sets on the exact commit that must be gated.
+- `IGRIS_BYPASS_EVENT_GATE=1` — bypass the agent-event coverage gate for one commit (FR-267). Same hook, same footer: it refuses the close when a role the brief's Agent Log names has no `agent_events` row for that brief. Independent of `IGRIS_BYPASS_AC_GATE` — each bypass skips only its own section, so neither silences the other. The healthy path is to emit the missing `start`/`stop` pair; that row is the hunt-cost record.
 - `IGRIS_ALLOW_INSECURE_SYNC=1` — allow remote VPS sync over plain `http://` to a non-local host (TD-252). By default the transport classifier (`cli/src/lib/sync-transport.ts`) REFUSES non-local `http://` because the `api_key` would travel in cleartext; this override allows it with a loud per-sync warning. `https://` and `http://` to localhost (`127.0.0.1`/`::1`) are always allowed. Also settable persistently as `config.json` `remote_brain.allow_insecure: true`.
 
 ---
@@ -167,7 +170,7 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 
 **Claude-only** (project-local in `.claude/settings.json`; merged but not Igris-owned):
 
-`SubagentStart`, `SubagentStop`, `Stop`, `Notification`, `TaskCompleted`, `TeammateIdle`.
+`Stop`, `Notification`, `TaskCompleted`, `TeammateIdle` (`SubagentStart` and `SubagentStop` were removed by FR-267 on 2026-08-26 together with their dead `http` hooks — they held nothing else).
 
 The merge logic in `cli/src/lib/json-merge.ts` (`mergeCanonicalHooks()`) preserves project-local Claude hooks and inserts Igris hooks first.
 
@@ -178,7 +181,7 @@ flowchart TB
     A["Write/Edit invoked"] --> B["Resolve project slug<br/>(realpath ancestors → projects.path,<br/>fallback basename)"]
     B --> C{"Slug valid?<br/>^[a-z0-9_-]+$"}
     C -->|"no"| ALLOW1["ALLOW<br/>(exempt path or unknown project)"]
-    C -->|"yes"| D{"Brain DB has<br/>brief status='In Progress'<br/>for slug?"}
+    C -->|"yes"| D{"Brain DB has an<br/>in-flight brief for slug?<br/>(status folded, TD-340)"}
     D -->|"yes"| ALLOW2["ALLOW"]
     D -->|"no / DB error"| E{"Filesystem grep<br/>~/.igris/projects/&lt;slug&gt;/briefs/<br/>finds '**Status:** In Progress'?"}
     E -->|"yes"| ALLOW3["ALLOW<br/>+ emit brief_gate.fallback_fired"]
@@ -188,7 +191,7 @@ flowchart TB
 ```
 
 **Resolution order** (cite `core/hooks/shared/pre_tool_use.sh:23-36`):
-1. Brain DB query: `SELECT brief_id FROM brief_status WHERE project = '{slug}' AND status = 'In Progress'`.
+1. Brain DB query: `SELECT brief_id FROM brief_status WHERE project = '{slug}' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress'`. The fold is TD-340: it collapses NOTATION (`InProgress`, `in_progress`, `IN-PROGRESS`) but never VOCABULARY (`Done`, `Completed`, `Active`, `WIP` stay out). Before it, an `InProgress` brief left this gate silently inert.
 2. If brain miss / error → filesystem grep against `~/.igris/projects/{slug}/briefs/*.md`; emit `brief_gate.fallback_fired`.
 3. If both empty → DENY and emit `brief_gate.denied`.
 
@@ -200,7 +203,7 @@ flowchart TB
 
 ### 5.4 Cross-CLI hook bridges
 
-Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemini) emit Igris-compatible events. Configuration: `~/.igris/config.json:cli_targets.*.hooks`. See [`docs/multi-cli.md`](../multi-cli.md) and [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) for the dispatcher contract.
+Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemini) emit Igris-compatible events. Configuration: `~/.igris/config.json:cli_targets.*.hooks`. See [`docs/multi-cli.md`](../multi-cli.md) for the dispatcher contract ([`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) is a RETIRED stub since FR-267 — the HTTP hook-event receiver it described is deleted).
 
 ---
 
@@ -208,16 +211,16 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 **Principle:** the local brain DB is always authoritative. The VPS is the **always-on peer** that local brains sync to and offload long-running work to — not a backup, not the source of truth. If the VPS is unavailable, the engineer's work continues uninterrupted; on the next connectivity, `/boot` pulls any VPS changes and merges them locally.
 
-**VPS roles (5):**
+**VPS roles (5, one retired):**
 1. Cross-machine sync hub — machine A's push is visible to machine B on next `/boot` pull. Local CLIs push deltas via `brain_push_async.sh` on session end.
 2. Dashboard backend — serves the web UI at `/dashboard`.
 3. Scheduler — owns cron-style routines (`igris_schedule_*`) that fire without local presence.
-4. Hook event sink — local CLI POSTs hook events to `/api/hooks/event` for cross-machine observability.
+4. Hook event sink — **RETIRED** (FR-267, 2026-08-26): the `/api/hooks/event` receiver and the five HTTP hooks that fed it are deleted; agent cost now rides the `agent_events` sync table (role 1) via `igris_agent_event` — see [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) (stub).
 5. Code repo mirror — `igris sync code` rsyncs the repo to VPS (separate from brain sync).
 
 **Mental model:** local brains are the active drivers (low-latency stdio MCP, offline-tolerant). The VPS is the persistent peer they sync deltas to when the operator's session ends. Wiping the VPS does not lose the local brain — but it does lose the scheduler state, dashboard history, and cross-machine merge point. Treat it as a peer node, not a copy.
 
-**Sync queue mechanism:** `sync_queue.jsonl` per project holds rows that failed to push. On the next `/boot`, `/rest`, or `/sync data`, the `igris_sync_queue_drain` tool retries each row. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts:224`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
+**Sync queue mechanism — TWO queues, not one (BR-080 / TD-321):** the LOCAL queue is `sync_queue.jsonl` per project, holding rows that failed to push; the BRAIN-SIDE queue is the `sync_queue` table inside the brain DB. On the next `/boot`, `/rest`, or `igris sync data`, `runSyncData` runs both halves in order: phase 1 replays each local jsonl row through `dispatchEntry` (in `cli/src/lib/sync/data.ts`), which deletes a local entry ONLY on a readable success envelope and preserves the queue on every other outcome; phase 2 then calls the `igris_sync_queue_drain` tool, which drains the brain-side TABLE and never reads the local jsonl file. Conflating the two is the misdiagnosis this section exists to prevent — "the drain returned 0" says nothing about the local file. Callers must use `ALLOWED_KEYS_PER_OP` (in `cli/src/lib/sync/data.ts`) to build tool args — never spread arbitrary JSON from queue entries (TD-128 strict-input contract).
 
 **Egress disclosure + path redaction (TD-253):** what egresses to the VPS is disclosed in a generated manifest — [`docs/reference/sync-egress-manifest.md`](../reference/sync-egress-manifest.md) — derived from `SYNC_TABLES` (`brain-mcp-server/src/tools/sync.ts`), the single source of truth, and drift-guarded by a parity test. Before egress, absolute local filesystem paths (`projects.path`, `instances.project_path`) are relativized (home → `~`, foreign-absolute → basename) at all three push choke points via `redactTablesForEgress`, applied BEFORE chunking and the failure-retry queue so retries never leak. The disclosure is surfaced at the `igris init` / `igris configure` VPS consent prompt and in `igris sync data --dry-run`.
 
@@ -323,7 +326,7 @@ File: `core/hooks/shared/post_tool_use.d/<NN>-name.sh` (executable).
 3. Exit 0 even on inner failure (don't break subsequent handlers).
 4. Log to `~/.igris/projects/{slug}/session/<name>.log`.
 5. Sync to runtime: `igris refresh` or follow the TD-096 mirror-sync protocol (`cp` + `verify_mirror.sh`).
-6. Document the handler in [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md).
+6. Document the handler in the hook tables of [`docs/multi-cli.md`](../multi-cli.md) ([`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) is a retired stub since FR-267).
 
 ### 8.3 Add a skill
 
@@ -404,7 +407,7 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 2. **Mirror invariant (TD-096)** — `~/.igris/core/` mirrors repo `core/` byte-for-byte. Verify with `core/scripts/verify_mirror.sh`; sentinel runs MIRROR_CHECK on every changed `core/` file.
 3. **Strict-input MCP gateway (TD-128)** — every brain tool's `inputSchema` declares `additionalProperties: false`; callers use `ALLOWED_KEYS_PER_OP` allowlists.
 4. **Local-primary sync** — never treat the VPS as authoritative; on divergence, trust the local DB.
-5. **Carried-but-not-committed drift** — `.claude/agent-memory/*/MEMORY.md`, `brain-mcp-server/.claude/`, and `.igris_version` regenerate post-install and are gitignored or carried-not-committed. Do not "clean" them in a code-touching commit. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
+5. **Carried-but-not-committed drift** — agent working memory (`**/.claude/agent-memory/`, gitignored in *every* package since TD-317) and `.igris_version` regenerate post-install. Do not "clean" them in a code-touching commit. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
 8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CONTRIBUTING.md` "Project structure", any README banner. `CLAUDE.md` carries no version string (TD-267 — boot-pointer only). TD-147 is the cautionary tale.
@@ -419,7 +422,7 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 - **v6 (Q1–Q2 2025):** VPS role flipped — local DB became authoritative, VPS became an async backup hub. Unified `igris` CLI introduced. `igris_tree.json` routing landed; CLAUDE.md slimmed from 93 KB → 5 KB. Mask system retired (single fixed voice in SOUL.md). 5 numbered rules consolidated into one universal rule.
 - **v7 (Q2–Q3 2025; current):** brain MCP server runs locally (no remote dependency for local work); brief-storage is brain-DB-first, filesystem cache is fallback; the OS context is the layered, self-describing `core/os/` module set with a generated `core/os/INDEX.md` routing map (FR-187 retired the `igris_os.md` monolith + the `igris_tree.json` routing tree); 19-component brain engine; subconscious detectors disabled pending FR-118; brief-gate hardened post-TD-150 (no 60 s caching, fresh DB query every time); v7 cleanup pass (TD-147 / TD-148) purged version-string drift and dead scripts.
 
-Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris upgrade`; v6 → v7 is an in-place `igris init --upgrade` (preserves `knowledge.db`, `USER.md`, `config.json` byte-for-byte). Full archive: `docs/archive/`.
+Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris upgrade`; v6 → v7 is an in-place `igris init --upgrade` (preserves `knowledge.db`, `USER.md`, `config.json` byte-for-byte; since BR-103 it refuses on `core.new.*` residue or a backup with no `core/`, and reads `core/` from the recorded source). Full archive: `docs/archive/`.
 
 ---
 
@@ -437,7 +440,7 @@ Migration: v4 → v5 was a one-time `ai/`-to-brain copy; v5 → v6 used `igris u
 
 **Adjacent reference docs:**
 
-- [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) — Hook event JSON contract.
+- [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) — RETIRED stub (FR-267); kept so links resolve.
 - [`docs/multi-cli.md`](../multi-cli.md) — Cross-CLI adapters.
 - [`docs/visualization.md`](../visualization.md) — `/visualize` skill internals.
 - [`docs/operations/cli_lifecycle.md`](../operations/cli_lifecycle.md) — Install, refresh, upgrade.

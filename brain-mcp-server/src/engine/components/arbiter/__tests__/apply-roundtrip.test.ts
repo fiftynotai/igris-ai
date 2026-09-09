@@ -26,6 +26,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { applyAction } from '../../subconscious/actions/index.js';
 import { applyResolveContradiction } from '../../subconscious/actions/kinds.js';
 import { subconsciousMigrations } from '../../subconscious/schema.js';
@@ -188,18 +189,27 @@ describe('FR-116 M2 resolve_contradiction round-trip (propose → apply)', () =>
 
   it('evolved_merge: writes the synthesized understanding onto the winner + supersedes the loser', () => {
     db.prepare(`UPDATE learnings SET embedding = X'00', embedding_model = 'm' WHERE id=2`).run();
+    // TD-439 2026-09-04: evolved_merge is hash-guarded; a hash-less action is
+    // refused (see td439-merge-guard.test.ts T1b). The action now carries
+    // sha256 of the winner's CURRENT content, as `persistArbiterProposal` stamps it.
     const result = applyResolveContradiction(db, {
       resolution: 'evolved_merge',
       winner_id: 2,
       loser_id: 1,
       synthesized_content: 'prefer circuit-breaker; retry backoff only for idempotent calls',
+      synthesized_from_hash: createHash('sha256')
+        .update('never use retry backoff, it is wrong; use circuit-breaker', 'utf8')
+        .digest('hex'),
     });
     expect(result.ok).toBe(true);
 
     const winner = db
       .prepare(`SELECT content, seen_again_count, embedding, review_status FROM learnings WHERE id=2`)
       .get() as { content: string; seen_again_count: number; embedding: Buffer | null; review_status: string };
+    // Neither input carries an executable specific, so the carry-forward appends
+    // nothing (measured carried = 0) and the content is the synthesis exactly.
     expect(winner.content).toBe('prefer circuit-breaker; retry backoff only for idempotent calls');
+    expect(result.data?.specifics_carried).toBe(0);
     expect(winner.seen_again_count).toBe(2 + 3 + 1); // rolled
     expect(winner.embedding).toBeNull();
     expect(winner.review_status).toBe('approved');

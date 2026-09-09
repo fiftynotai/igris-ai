@@ -420,9 +420,10 @@ verify_md_agent_symlink_drift() {
 #   5. inode mismatch AND byte-content differs → DRIFTED (target diverged
 #      from loadout; recompile re-establishes).
 #
-# Note: BSD `stat -f` and macOS `md5 -q` are darwin-only flags. TD-096 mirror
-# is darwin-only per current ops; Linux portability is a future brief if
-# needed (gate via `case "$(uname -s)" in Darwin) ...; *) ...; esac`).
+# Note: inode/nlink/md5 reads go through the portable `file_inode` /
+# `file_nlink` / `file_md5` helpers in _common.sh (TD-434, 2026-08-31 — the
+# raw darwin-only `stat -f` / `md5 -q` calls made this verdict 100 %
+# false-DRIFTED on the ubuntu CI runner).
 # ---------------------------------------------------------------------------
 verify_gemini_agent_hardlink_drift() {
   local name="$1"
@@ -448,9 +449,12 @@ verify_gemini_agent_hardlink_drift() {
   fi
 
   local tgt_inode src_inode src_nlink
-  tgt_inode=$(stat -f %i "$target_abs" 2>/dev/null || echo "")
-  src_inode=$(stat -f %i "$expected_target" 2>/dev/null || echo "")
-  src_nlink=$(stat -f %l "$expected_target" 2>/dev/null || echo "0")
+  # TD-434 (2026-08-31): portable helpers from _common.sh — the raw
+  # `stat -f %i` here made this verdict 100 % false-DRIFTED on Linux
+  # (GNU stat -f prints filesystem status; see the _common.sh block).
+  tgt_inode=$(file_inode "$target_abs")
+  src_inode=$(file_inode "$expected_target")
+  src_nlink=$(file_nlink "$expected_target")
 
   if [ -n "$tgt_inode" ] && [ "$tgt_inode" = "$src_inode" ]; then
     # Defensive nlink check: a same-inode hit on a single-link file should be
@@ -473,8 +477,8 @@ verify_gemini_agent_hardlink_drift() {
   # Inode mismatch — fall through to content-equality check for the
   # DRIFT-WARN case (operator replaced the hard link with a `cp` copy).
   local tgt_md5 src_md5
-  tgt_md5=$(md5 -q "$target_abs" 2>/dev/null || echo "")
-  src_md5=$(md5 -q "$expected_target" 2>/dev/null || echo "")
+  tgt_md5=$(file_md5 "$target_abs")
+  src_md5=$(file_md5 "$expected_target")
   if [ -n "$tgt_md5" ] && [ "$tgt_md5" = "$src_md5" ]; then
     echo "  [$name/gemini] DRIFT-WARN"
     echo "      target    : $target_abs [inode $tgt_inode, real-file copy]"
@@ -1446,6 +1450,12 @@ fi
 # dispatch loop. The `[ -n "$MCP_DRIFT_ROWS" ]` guard stays here.
 # ---------------------------------------------------------------------------
 verify_mcp() {
+# BR-099: the (harness|config|map-key) triples the per-row loop resolves — one
+# per line, deduped — and the manifest's declared MCP names as `<harness>:<name>`
+# tokens, one per (block,target) row, so a name is declared PER HARNESS. Both
+# feed the mcp-fixture arm at the bottom of this function.
+MCP_SCANNED_CONFIGS=""
+MCP_DECLARED_NAMES=""
 MCP_DRIFT_ROWS=$(flatten_mcp_rows "$MERGED_MANIFEST" "$CORE_SURFACES" "all" "$PROJECT_ROOT")
 if [ -n "$MCP_DRIFT_ROWS" ]; then
   mcp_secrets_path="${IGRIS_SECRETS_PATH:-$BRAIN_DIR/secrets.env}"
@@ -1467,6 +1477,21 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     # Resolve config path + map key per harness. Per-harness env overrides
     # (IGRIS_MCP_<HARNESS>_CONFIG) are the test-sandbox seam; defaults are the
     # native $HOME-anchored paths (byte-identical to paths.ts).
+    #
+    # TD-390 — THIS SEAM IS READ-ONLY, and this `case` is its definition site.
+    # It redirects TWO readers and nothing else: the per-entry verify_mcp arm
+    # below, and (since BR-099) the mcp-fixture arm at the bottom of this
+    # function, which re-reads the SAME resolved $d_config collected right
+    # after this `case` (harness_mcp_fixture_guard T5 pins that). The MCP WRITER — compile_harnesses.sh#project_mcp → `igris loadout
+    # project-mcp` → add-mcp (module-load homedir(), no path flag) + the grant
+    # (paths.ts) — resolves every config from $HOME, so a compile invoked with
+    # any IGRIS_MCP_*_CONFIG set REFUSES its MCP pass (exit 1, a counted FAIL
+    # row) instead of writing the live config; a sandboxed WRITE is an isolated
+    # HOME. The grant-drift arm further down (`loadout verify-mcp-grant`) reads
+    # $HOME too — the seam does not redirect it. IGRIS_MCP_ENGINE is a
+    # different, retired knob, not a seam. Contract row: MAINTAINING.md
+    # ("IGRIS_MCP_<HARNESS>_CONFIG read-only drift seam"); pinned by
+    # test/harness_mcp_seam_guard.test.bash.
     case "$d_type" in
       claude)
         d_map_key="mcpServers"
@@ -1498,6 +1523,23 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
         continue
         ;;
     esac
+
+    # BR-099: remember this (harness|config|map-key) triple for the mcp-fixture
+    # arm below, so it reads EXACTLY the seam-resolved path this row reads.
+    # Line-exact dedup (two blocks targeting one harness share a config — a
+    # double scan would double-count a hit); bash-3.2 `case` glob, no arrays.
+    _fx_nl='
+'
+    _fx_key="$d_type|$d_config|$d_map_key"
+    case "${_fx_nl}${MCP_SCANNED_CONFIGS}" in
+      *"${_fx_nl}${_fx_key}${_fx_nl}"*) ;;
+      *) MCP_SCANNED_CONFIGS="${MCP_SCANNED_CONFIGS}${_fx_key}${_fx_nl}" ;;
+    esac
+    # Keyed by the row's target: a block declaring `demo-mcp` for claude exempts
+    # the claude config ONLY. (Round 1 kept a project-wide name list, which
+    # exempted the same name in EVERY scanned harness — T9b.) A `:` inside a
+    # name survives: the arm strips only the first `<harness>:` prefix.
+    MCP_DECLARED_NAMES="$MCP_DECLARED_NAMES $d_type:$d_name"
 
     verify_mcp_entry_drift "$d_name" "$d_type" "$d_config" "$d_map_key" \
       "$d_canon" "$d_enabled" "$mcp_secrets_path"
@@ -1591,7 +1633,14 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
     while IFS= read -r _aid; do
       [ -z "$_aid" ] && continue
       TOTAL=$((TOTAL + 1))
-      if printf '%s\n' "$_agentid_supported" | grep -qxF "$_aid"; then
+      # TD-345: the missing `-q` is deliberate — do not add it back. Under this
+      # file's `set -euo pipefail` (line 39) a `printf | grep -q` reports a
+      # false "no match" when grep short-circuits with the producer still
+      # writing; without `-q` grep reads to EOF and printf can never be
+      # orphaned. The supported-agent list is short TODAY, but size-immunity is
+      # a snapshot, not an invariant — a false "no match" here would report a
+      # DRIFTED agent-id that is actually fine.
+      if printf '%s\n' "$_agentid_supported" | grep -xF "$_aid" >/dev/null; then
         # Silent MATCH (mirrors the grant invariant — loud only on drift).
         MATCH=$((MATCH + 1))
       else
@@ -1601,6 +1650,66 @@ if [ -n "$MCP_DRIFT_ROWS" ]; then
       fi
     done < <(read_harness_descriptor "$_agentid_descriptor" agent_ids)
   fi
+fi
+
+# BR-099: TEST-FIXTURE MCP SERVER GUARD. Three test fixtures (`demo-mcp` =
+# `npx -y evil` with env.API=${API_TOKEN}, `personal-mcp` = `node /p.js`,
+# `core-mcp` = `echo hi`) sat in the operator's REAL ~/.claude.json for weeks —
+# the three CONNECTION_CLOSED servers at every Claude Code session start. They
+# are add-mcp output: cli/src/__tests__/registry-project-mcp.test.ts sandboxes
+# only `configPath`, a seam the delegate writer never reads (loadout.ts routes
+# to runProjectMcpViaDelegate BEFORE `configPath` is consulted), so a run of
+# that suite that reached the delegate engine under a real HOME wrote the live
+# file while its assertions read the mkdtemp copy. This arm re-reads every
+# config the per-row loop above resolved (the SAME seam-resolved paths —
+# TD-390's read-only seam now has TWO readers) and flags any entry whose name
+# is a known fixture name or carries the fixture prefix — unless the manifest
+# declares that name FOR THAT HARNESS (the declaring block's targets[] scope
+# the exemption: a test manifest projecting `demo-mcp` to claude exempts the
+# claude config only, and the same name in the gemini config is still a leak;
+# the igris-ai manifest + overlay declare only igris-brain) — or whose launch
+# tokens are the npx-wrap of the collision
+# fixture's bare-word `evil` (never skipped). Rules + names live in _common.sh
+# (IGRIS_MCP_FIXTURE_NAMES / IGRIS_MCP_FIXTURE_PREFIX / scan_mcp_fixture_entries).
+#
+# VERDICT SHAPE IS LOAD-BEARING (TD-390): scripts/validate_harness_drift.sh
+# classifies verdict LINES (`MATCH|DRIFTED|MISSING`) — a new token would be
+# invisible at the commit gate — so a hit is `[mcp-fixture/<name>/<harness>]
+# DRIFTED` + a `config :` line, and the reason MUST NOT contain the
+# `differing key(s):` clause (that clause is what routes an mcp/* block into
+# the TD-388 sibling-worktree exemption; with no clause the block is
+# unconditionally fatal — harness_drift_gate W10 pins it). Silent AND
+# count-neutral on a clean config (the FR-202 M0 clean-run bytes are an
+# oracle); per hit TOTAL++ / DRIFT++. Gated on $MCP_DRIFT_ROWS (brain MCP in
+# scope) and on FILTER='*': `igris add/remove mcp` verify with `--filter
+# <name>` and must not false-fail on a pre-existing fixture entry. Limit:
+# antigravity's file is not a brain-MCP target (mcp.projected:false) and is
+# not scanned. Never prints env/args/values — name + rule only.
+# Gate: test/harness_mcp_fixture_guard.test.bash (T1–T9b; T9b pins the
+# per-harness scope of the exemption).
+if [ -n "$MCP_DRIFT_ROWS" ] && [ -n "$MCP_SCANNED_CONFIGS" ] \
+   && { [ -z "$FILTER" ] || [ "$FILTER" = "*" ]; }; then
+  while IFS='|' read -r _fx_type _fx_config _fx_map_key; do
+    [ -z "$_fx_type" ] && continue
+    # The names declared for THIS harness only (bash-3.2 word loop over the
+    # `<harness>:<name>` tokens; no associative arrays).
+    _fx_declared=""
+    for _fx_tok in $MCP_DECLARED_NAMES; do
+      case "$_fx_tok" in
+        "$_fx_type:"*) _fx_declared="$_fx_declared ${_fx_tok#*:}" ;;
+      esac
+    done
+    _fx_hits="$(scan_mcp_fixture_entries "$_fx_config" "$_fx_map_key" "$_fx_declared")"
+    [ -z "$_fx_hits" ] && continue
+    while IFS=$'\t' read -r _fx_name _fx_why; do
+      [ -z "$_fx_name" ] && continue
+      TOTAL=$((TOTAL + 1))
+      echo "  [mcp-fixture/$_fx_name/$_fx_type] DRIFTED"
+      echo "      config    : $_fx_config"
+      echo "      reason    : test-fixture MCP server '$_fx_name' ($_fx_why) is registered in a REAL harness config — a test suite wrote the live file (BR-099); back the file up, then remove the entry by hand — never via \`igris harness compile\`"
+      DRIFT=$((DRIFT + 1))
+    done <<< "$_fx_hits"
+  done <<< "$MCP_SCANNED_CONFIGS"
 fi
 }
 

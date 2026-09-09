@@ -74,18 +74,91 @@ if [ ! -d "$MCP_SRC" ]; then
   exit 1
 fi
 
-# Build brain-mcp-server (tsc) when its dist/ is absent OR src/ is newer
-# than the compiled entrypoint. On a clean publish machine the monorepo
-# install brings brain-mcp-server's devDeps, so `tsc` is available.
+# Build brain-mcp-server (tsc) when its dist/ is absent, when src/ is newer
+# than the compiled entrypoint, OR when dist/ holds output for a source that no
+# longer exists. On a clean publish machine the monorepo install brings
+# brain-mcp-server's devDeps, so `tsc` is available.
+#
+# THE THIRD CONDITION IS NOT REDUNDANT (TD-373). An mtime comparison answers
+# "is anything NEWER", and a DELETED source makes nothing newer — so the first
+# two conditions pass, no rebuild runs, and `tsc` (which emits but never
+# prunes) leaves the orphaned `.js`/`.d.ts`/`.map` in place forever. That is
+# not hypothetical: `c6777bc` deleted the rule-detector engine and its 24
+# artifacts kept shipping for months, until they pushed the packed tarball 3 B
+# over TD-329's ceiling. Nothing failed, because nothing was asking.
+#
+# The orphan scan is the count-vs-identity lesson applied to a build: a guard
+# that only ever looks at the files PRESENT cannot report one that should not
+# be. Cost is a single `find` over dist/.
 mcp_needs_build=0
+mcp_build_reason=""
 if [ ! -f "$MCP_SRC/dist/index.js" ]; then
   mcp_needs_build=1
+  mcp_build_reason="dist/ absent"
 elif [ -n "$(find "$MCP_SRC/src" -type f -newer "$MCP_SRC/dist/index.js" -print -quit 2>/dev/null)" ]; then
   mcp_needs_build=1
+  mcp_build_reason="src/ newer than dist/index.js"
+else
+  # Orphan scan: every emitted `.js` / `.d.ts` under dist/ must trace back to a
+  # `.ts` (or `.tsx`) under src/. Longest suffix first, so `foo.d.ts` strips to
+  # `foo` rather than being tested against a source literally named `foo.d.ts`
+  # — otherwise every declaration file in the tree reads as an orphan.
+  #
+  # The `find` deliberately does NOT list `.map` files. A `.js.map` cannot
+  # exist without its `.js`, so scanning maps would only ever re-report a
+  # sibling this loop has already caught, and one hit is enough — the loop
+  # breaks on the first. Maps are still DELETED, because the fix is a rebuild
+  # that clears the whole directory; they simply are not how it is detected.
+  # (The `*.map` arms below are kept as a guard for the day someone widens the
+  # `find`, not because they fire today.)
+  #
+  # `__tests__` needs no exclusion here, unlike the vitest guard's mtime walk:
+  # `tsconfig.json` scopes emit to `src/**/*` with `rootDir: ./src`, and test
+  # files are excluded from the program, so no emitted file traces to one.
+  mcp_orphan=""
+  while IFS= read -r emitted; do
+    rel="${emitted#"$MCP_SRC/dist/"}"
+    stem="$rel"
+    case "$stem" in
+      *.d.ts.map) stem="${stem%.d.ts.map}" ;;
+      *.js.map)   stem="${stem%.js.map}" ;;
+      *.d.ts)     stem="${stem%.d.ts}" ;;
+      *.js)       stem="${stem%.js}" ;;
+      *) continue ;;
+    esac
+    if [ ! -f "$MCP_SRC/src/$stem.ts" ] && [ ! -f "$MCP_SRC/src/$stem.tsx" ]; then
+      mcp_orphan="$rel"
+      break
+    fi
+  done <<EOF
+$(find "$MCP_SRC/dist" -type f \( -name '*.js' -o -name '*.d.ts' \) 2>/dev/null)
+EOF
+  if [ -n "$mcp_orphan" ]; then
+    mcp_needs_build=1
+    mcp_build_reason="dist/ holds output for a deleted source ($mcp_orphan)"
+  fi
 fi
 
 if [ "$mcp_needs_build" -eq 1 ]; then
-  echo "copy-templates: building brain-mcp-server (dist/ missing or stale)..."
+  echo "copy-templates: building brain-mcp-server ($mcp_build_reason)..."
+  # Its `build` script BUILDS TO `dist.tmp` AND SWAPS (TD-373), rather than
+  # cleaning `dist/` in place the way `cli`'s does. The clean is what actually
+  # removes an orphan — tsc alone only re-emits alongside one — but the two
+  # packages earn different shapes because they have different callers:
+  #
+  #   brain-mcp-server  `igris sync code` and `scripts/igris_brain_deploy.sh`
+  #                     run this ON THE VPS while PM2 `igris-brain` is STILL
+  #                     SERVING; the restart is a later step, gated on a smoke
+  #                     check whose whole documented purpose is "fail loud
+  #                     BEFORE we tear down the running brain". An in-place
+  #                     `rm -rf dist` would delete the last-good artifact
+  #                     before knowing the new one compiles, so a failed build
+  #                     plus any later PM2 restart finds no dist/index.js.
+  #                     Build-then-swap keeps that invariant: on failure dist/
+  #                     is byte-identical and the old brain keeps serving.
+  #   cli               local + CI only (`prepublishOnly`, the workflows,
+  #                     CONTRIBUTING). No live consumer reads cli/dist mid-build
+  #                     on a server, so the simpler in-place clean is fine.
   (cd "$MCP_SRC" && npm run build)
 fi
 
@@ -119,10 +192,16 @@ rm -rf "$MCP_DEST/scripts/__tests__" "$MCP_DEST/scripts/fixtures"
 #   - perception_extract_cli.ts     — invoked by core/hooks/shared/
 #                                      perception_extract_and_persist.sh
 #   - render_brief_graph.{ts,template.html} — the standalone CLI the `visualize`
-#                                      skill points users at
+#                                      skill points users at. The .template.html
+#                                      is the ONE file the shipped package itself
+#                                      reads (dist/engine/components/edges/
+#                                      visualization-tool.js ascends to it).
 #   - gen-egress-manifest.ts, backfill_brief_edges.ts — package.json scripts
-#   - fr219_embed_null_learnings.ts, td286_renormalize_backfill.ts,
-#     reap-stale-instances.ts       — operational one-off migrations/ops CLIs
+#   - fr219_embed_null_learnings.ts, reap-stale-instances.ts
+#                                   — operational one-off migrations/ops CLIs
+# td286_renormalize_backfill.ts stood in this KEEP list from TD-299 until
+# BR-101 superseded that entry: it is a brief-numbered one-off with no shipped
+# consumer, so it now falls to the PATTERN prune below. Do not restore it here.
 for dev_script in \
   recall_bench.ts \
   dedup_corpus_eval.ts \
@@ -132,6 +211,38 @@ for dev_script in \
   td087_corpus_pairs_labeled.csv \
   td285_dedup_recall_audit.ts; do
   rm -f "$MCP_DEST/scripts/$dev_script"
+done
+
+# BR-101: prune RESEARCH ARTIFACTS by PATTERN. TD-445 landed a sweep script and
+# two labelled CSVs (479 KB unpacked, +77_529 packed B) that matched neither
+# TD-298's directory rule nor TD-299's named list above, and the pack ledger's
+# staging method could not see them (it stages COMPILED artifacts and never
+# runs this script — copying is not compiling). Two classes, one rule, tested
+# on the BASENAME of each top-level file (TD-298 already removed the only
+# subdirectories):
+#   *.csv        — a labelled corpus is never runtime
+#   ^td[0-9]+_   — a brief-numbered research or one-off script: `td`, one or
+#                  MORE digits, then `_` IMMEDIATELY. `td9legacy_notes.ts` is
+#                  NOT in the class (the digits are not followed by `_`).
+# The prefix is therefore a NAMING CONTRACT (MAINTAINING.md, the BR-101 row):
+# a script the shipped package must reach may NOT take a td<N>_ name, and a
+# research artifact MUST take it (or join TD-299's list). THIS BLOCK IS THE
+# AUTHORITATIVE SPELLING of the contract; the JS regex in
+# cli/src/__tests__/tarball.test.ts ("BR-101 — no research artifact ships")
+# is PINNED to agree with it on named boundary cases, so widening or
+# narrowing this block reds that pin until the regex moves with it.
+# A bash loop, not `find`: round 1's `-name 'td[0-9]*_*'` (td, ONE digit, ANY
+# run up to a `_`) was broader than the contract; `find -regex` / `-E` diverge
+# between BSD (macOS) and GNU (CI's Linux); and `[[ =~ ]]` with the pattern in
+# a VARIABLE is what bash 3.2 (/bin/bash here) treats as a regex.
+research_prefix='^td[0-9]+_'
+for f in "$MCP_DEST/scripts"/*; do
+  [ -f "$f" ] || continue
+  base="$(basename "$f")"
+  if [[ "$base" =~ $research_prefix ]] || [[ "$base" == *.csv ]]; then
+    echo "$base"
+    rm -f -- "$f"
+  fi
 done
 
 # Fail loud if the staged entrypoint is missing — a publish with a broken
@@ -207,41 +318,10 @@ fi
 echo "copy-templates: bundled brain-mcp-server -> $MCP_DEST"
 
 # --- Post-build spawn smoke guard (BR-068 acceptance criterion) ------
-# Spawn the bundled entrypoint and assert it boots without a
-# module-resolution error. The brain MCP is a stdio server that idles
-# until killed, so this is a spawn-wait-kill check: a process still alive
-# after the wait booted cleanly; ERR_MODULE_NOT_FOUND / "Cannot find
-# package" in stderr fails the build. macOS-safe — no GNU-only `timeout`.
+# Spawn the bundled entrypoint in a throwaway sandbox and assert it boots
+# without a module-resolution error AND opened its DB inside that sandbox —
+# never the operator's live ~/.igris/memory/knowledge.db. The guard lives in
+# scripts/smoke-bundled-mcp.sh (TD-426; also run by .github/workflows/
+# npm-publish.yml; twin: tests/integration/build-smoke-sandbox.bats).
 echo "copy-templates: smoke-testing bundled MCP spawn..."
-smoke_brain_dir="$(mktemp -d "${TMPDIR:-/tmp}/igris-mcp-smoke.XXXXXX")"
-smoke_stderr="$(mktemp "${TMPDIR:-/tmp}/igris-mcp-smoke-err.XXXXXX")"
-smoke_cleanup() { rm -rf "$smoke_brain_dir" "$smoke_stderr"; }
-trap smoke_cleanup EXIT
-
-IGRIS_BRAIN_DIR="$smoke_brain_dir" node "$MCP_DEST/dist/index.js" >/dev/null 2>"$smoke_stderr" &
-smoke_pid=$!
-sleep 2
-
-smoke_alive=0
-if kill -0 "$smoke_pid" 2>/dev/null; then
-  smoke_alive=1
-  kill "$smoke_pid" 2>/dev/null || true
-  wait "$smoke_pid" 2>/dev/null || true
-else
-  wait "$smoke_pid" 2>/dev/null
-fi
-
-if grep -qE 'ERR_MODULE_NOT_FOUND|Cannot find package' "$smoke_stderr"; then
-  echo "copy-templates: bundled MCP smoke test FAILED — module resolution error:" >&2
-  cat "$smoke_stderr" >&2
-  exit 1
-fi
-
-if [ "$smoke_alive" -eq 1 ]; then
-  echo "copy-templates: bundled MCP smoke test passed (server booted and idled)"
-else
-  echo "copy-templates: bundled MCP smoke test passed (server exited cleanly)"
-fi
-
-smoke_cleanup
-trap - EXIT
+bash "$ROOT/scripts/smoke-bundled-mcp.sh" "$MCP_DEST/dist/index.js"

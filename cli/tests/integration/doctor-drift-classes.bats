@@ -18,9 +18,35 @@
 
 load _helpers.bash
 
+# TD-303: every test in this file gets a sandboxed HOME with a CLEAN doctor
+# baseline, mirroring doctor.bats:19-40 (TD-299).
+#
+# Before this, `stage_brain` sandboxed only IGRIS_BRAIN_DIR. Tests 2/3 called
+# stage_home() and test 8 passed a stub HOME per-invocation, but tests 1/4/5/6/7
+# ran under the developer's REAL $HOME — and four of them invoke
+# `doctor --fix`, which (doctor.ts) merges global canonical hooks into
+# ~/.claude/settings.json from the STUB hooks in _helpers.bash, re-points the
+# igris-brain MCP entry + writes no-prompt grant files across ~/.claude.json /
+# ~/.gemini / ~/.codex, and can migrate the real ~/.claude/skills + agents roots
+# from a coreSkillsSource() that does not exist under stage_brain.
+#
+# It also made the file order-dependent: `bats tests/integration` runs
+# alphabetically, so default-install-installs-hooks.bats mutated the same real
+# ~/.claude.json this file then read.
+#
+# stage_home() (not a bare empty HOME) is used deliberately: it seeds a clean
+# baseline so ONLY the drift a test deliberately injects fires. A bare sandbox
+# would add ambient hooks-missing/mcp-unregistered rows and make these tests
+# pass by permissiveness — the thing this change exists to remove.
+#
+# Tests 2/3 re-call stage_home() and tests 2/3/8 pass HOME= explicitly per
+# invocation; both remain correct (stage_home is idempotent and resolves the
+# same $BATS_TEST_TMPDIR/home path).
 setup() {
   stage_brain
   export IGRIS_KEEP_BAK=0
+  HOME="$(stage_home)"
+  export HOME
 }
 
 # ---- Phase 1 classes (existing detector exercise) ------------------
@@ -124,31 +150,83 @@ EOF
   [[ "$output" =~ "brain-core-missing" ]]
 }
 
-@test "drift class 6/8: brain-core-stale — install-source sha differs from channel head" {
-  # Re-stage core (stage_brain populated it; we keep it for stale-detection
-  # to even have a baseline). Then write an .install-source.json whose
-  # content_sha256 cannot match any real GitHub head.
+# ---- drift class 6/8: brain-core-stale (TD-301, rewritten 2026-09-08) ----
+#
+# The case this file shipped until 2026-09-08 ended with
+#   [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+# and the comment "what matters is the verb didn't crash". That accepts every
+# possible exit code of `igris doctor`, so it could not fail — which is why the
+# unconditional-drift defect (a 64-hex content_sha256 compared against a 40-hex
+# commit SHA) reached a published release with a green bats suite. Deleted with
+# this dated reason (test_standards convention 6) and replaced by three cases
+# that drive the REAL detector through the github stub seam and assert the ROW.
+#
+# The stub answers `/commits/<ref>` with IGRIS_TEST_GITHUB_STUB_COMMIT_SHA, so
+# each case has a deterministic head commit and no network.
+
+STALE_HEAD_SHA="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+STALE_OTHER_SHA="b7c8d9e0f1a2b3c4d5e6f708192a3b4c5d6e7f80"
+STALE_CONTENT_SHA="d1aa7cae3f92b6045e8c17da29bf60e34c5178ab90de2f4361a7c8b5e0d93f26"
+
+# Write an .install-source.json into the staged brain. $1=channel $2=ref
+# $3=schema_version $4=ref_commit_sha ("" = field ABSENT).
+write_install_source_fixture() {
+  local channel="$1" ref="$2" ver="$3" refsha="$4"
+  local extra=""
+  if [ -n "$refsha" ]; then
+    extra="  \"ref_commit_sha\": \"$refsha\","
+  fi
   cat > "$IGRIS_BRAIN_DIR/.install-source.json" <<EOF
 {
-  "schema_version": 1,
-  "channel": "release",
-  "ref": "v0.0.0-fake",
+  "schema_version": $ver,
+  "channel": "$channel",
+  "ref": "$ref",
   "fetched_at": "2026-01-01T00:00:00Z",
-  "content_sha256": "deadbeef-old-sha-that-cannot-match-any-real-head",
+  "content_sha256": "$STALE_CONTENT_SHA",
+$extra
   "source": "github",
   "source_path": null
 }
 EOF
-  # Without network, the detector returns null on fetch failure (best-effort).
-  # That's the documented behavior — staleness is a positive assertion. We
-  # assert the fixture itself runs without crashing; staleness only surfaces
-  # in environments where the GitHub API call resolves to a different sha.
-  # Set IGRIS_GITHUB_OWNER to a definitely-nonexistent owner so the API
-  # returns 404; the detector swallows the error and returns null.
-  IGRIS_GITHUB_OWNER=this-owner-does-not-exist-fixture run $CLI_BIN doctor
-  # Either status code is fine (depends on what other drift exists);
-  # what matters is the verb didn't crash.
-  [ "$status" -eq 0 ] || [ "$status" -eq 1 ]
+}
+
+@test "drift class 6a/8: brain-core-stale — a release (immutable ref) record is NEVER flagged" {
+  write_install_source_fixture release v7.3.1 2 ""
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  # Armed liveness: a 127 (CLI not found) would otherwise satisfy the negative
+  # assertion below for the wrong reason — it did, on the first run of this
+  # rewrite (a quoted "$CLI_BIN" under `run env`).
+  [ "$status" -eq 0 ]
+  # The clean-room defect, reproduced in-repo: at HEAD this row IS emitted.
+  # `|| return 1` because a bare non-final [[ ]] is not ERR-trapped by
+  # bats-core 1.12 (it is this file's convention).
+  [[ ! "$output" =~ "brain-core-stale" ]] || return 1
+}
+
+@test "drift class 6b/8: brain-core-stale — a main record whose ref_commit_sha differs IS flagged" {
+  write_install_source_fixture main main 2 "$STALE_OTHER_SHA"
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" =~ "brain-core-stale" ]] || return 1
+  [[ "$output" =~ "igris refresh" ]] || return 1
+  [[ "$output" =~ "main" ]] || return 1
+}
+
+@test "drift class 6c/8: brain-core-stale — a pre-7.3.2 record with NO ref_commit_sha is never flagged" {
+  # Hand-written schema_version 1 record: exactly what every 7.3.1 install has.
+  write_install_source_fixture main main 1 ""
+  run env NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" \
+    IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$STALE_HEAD_SHA" \
+    $CLI_BIN doctor
+  [ "$status" -eq 0 ]
+  [[ ! "$output" =~ "brain-core-stale" ]] || return 1
 }
 
 @test "drift class 7/8: channel-mismatch — installed_features.json#cli_version newer than CLI" {
@@ -195,9 +273,165 @@ EOF
   [ "$status" -eq 1 ]
   [[ "$output" =~ "bridge-missing" ]]
   [[ "$output" =~ "codex" ]]
-  # --fix invokes partial init (which will probably fail in the sandbox
-  # with no .install-source.json or remote, but the error is non-fatal —
-  # we just assert the fixer was attempted).
+  # BR-103: --fix records the target in config.json (the narrow, in-process
+  # repair) and the outcome table names it. Before BR-103 this line was
+  # `[[ ... ]] || true` — vacuous — over an arm that called `init --upgrade`
+  # and could never clear the row (init preserves an existing config.json).
   PATH="$STUB_BIN:$PATH" HOME="$STUB_HOME" run $CLI_BIN doctor --fix 2>&1
-  [[ "$output" =~ "bridge-missing" ]] || true
+  echo "$output"
+  grep -qE '^\| bridge-missing \| codex \| .* \| applied \| clean \|$' <<<"$output"
+  [ "$(grep -c 'invoking partial init' <<<"$output")" = "0" ]
+  run python3 -c "import json; d=json.load(open('$IGRIS_BRAIN_DIR/config.json')); print(d['cli_targets']['codex'], 'claude' in d['cli_targets'])"
+  [ "$output" = "True True" ]
+}
+
+# ---- FR-243: git-level gates as a project property ----------------------
+#
+# Two classes in BR-100's shape (read-only byte-witness detectors). The
+# `cli-bats` CI job has NO gitleaks, so `secret-scan-disarmed` is exercised by
+# PATH manipulation (detection is PATH presence): D1/D1b/D1c/D3 put a STUB
+# `gitleaks` on PATH so ONLY the hooks class is under test; D2 strips it.
+
+@test "drift class 9: git-hooks-missing — registered git repo with empty .git/hooks; --fix installs; second run clean" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh1)"
+  register_project_row gh1 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh1 | $PROJ | git-hooks-missing | pre-commit: absent; commit-msg: absent"* ]] || return 1
+  # Read-only: the read pass wrote nothing into .git/hooks.
+  [ ! -L "$PROJ/.git/hooks/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"fix: git-hooks-missing for gh1"* ]] || return 1
+  [ -L "$PROJ/.git/hooks/pre-commit" ]
+  [ -L "$PROJ/.git/hooks/commit-msg" ]
+  [ -x "$PROJ/.git/hooks/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  [[ "$output" == *"| gh1 | $PROJ | clean |"* ]] || return 1
+}
+
+@test "drift class 9b: git-hooks-missing (target not executable) — a mode-dropped mirror is a fail-open; --fix restores +x" {
+  MIRROR="$(stage_git_hooks_mirror)"
+  PROJ="$(stage_git_project gh2)"
+  register_project_row gh2 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  # An operator-side `cp` without -p: bytes identical, mode gone. git would
+  # print `hint: ... was ignored because it's not set as executable` and
+  # COMMIT ANYWAY — verify_mirror.sh (byte-only) would call it in sync.
+  chmod -x "$MIRROR/pre-commit"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh2 | $PROJ | git-hooks-missing | pre-commit: target not executable"* ]] || return 1
+  # --fix chmods the target because it lives under IGRIS_BRAIN_DIR (rule 6).
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -x "$MIRROR/pre-commit" ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+}
+
+@test "drift class 9c: git-hooks-missing (dangling) — mirror removed under an installed symlink; --fix refuses until refresh" {
+  MIRROR="$(stage_git_hooks_mirror)"
+  PROJ="$(stage_git_project gh3)"
+  register_project_row gh3 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  rm -f "$MIRROR/pre-commit" "$MIRROR/commit-msg"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh3 | $PROJ | git-hooks-missing | pre-commit: dangling symlink"* ]] || return 1
+  # --fix cannot conjure the mirror: refused, row stays non-clean (exit 1).
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"run 'igris refresh' first"* ]] || return 1
+}
+
+@test "drift class 9d: git-hooks-missing (core.hooksPath) — reported, never fixed" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh4)"
+  git -C "$PROJ" config core.hooksPath .husky
+  register_project_row gh4 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh4 | $PROJ | git-hooks-missing | core.hooksPath=.husky bypasses .git/hooks"* ]] || return 1
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ ! -L "$PROJ/.git/hooks/pre-commit" ]
+}
+
+@test "drift class 10: secret-scan-disarmed — installed hooks + no gitleaks on PATH; informational, --fix leaves it" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh5)"
+  register_project_row gh5 "$PROJ"
+  NO_GL_PATH="$(path_without_gitleaks)"
+  # Install the hooks first (with the stub gitleaks present, so this pass is clean).
+  PATH="$(path_with_stub_gitleaks)" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  PATH="$NO_GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| (brain) | PATH | secret-scan-disarmed | informational — install gitleaks"* ]] || return 1
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  PATH="$NO_GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"secret-scan-disarmed"* ]] || return 1
+}
+
+@test "drift class 10 (negative control): installed hooks + gitleaks on PATH -> neither FR-243 class, exit 0" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh6)"
+  register_project_row gh6 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  [ "$status" -eq 0 ]
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+  [[ "$output" != *"secret-scan-disarmed"* ]] || return 1
+}
+
+@test "drift class 9 (negative control): a registered NON-git path yields no git-hooks-missing row" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_project plain)"
+  register_project_row plain "$PROJ"
+  PATH="$(path_with_stub_gitleaks)" run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"git-hooks-missing"* ]] || return 1
+}
+
+@test "drift class 9e (negative control): core.hooksPath resolving to .git/hooks itself is not a bypass" {
+  stage_git_hooks_mirror >/dev/null
+  PROJ="$(stage_git_project gh7)"
+  git -C "$PROJ" config core.hooksPath "$PROJ/.git/hooks"
+  register_project_row gh7 "$PROJ"
+  GL_PATH="$(path_with_stub_gitleaks)"
+  PATH="$GL_PATH" run $CLI_BIN doctor
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| gh7 | $PROJ | git-hooks-missing | pre-commit: absent; commit-msg: absent"* ]] || return 1
+  [[ "$output" != *"bypasses"* ]] || return 1
+  PATH="$GL_PATH" run $CLI_BIN doctor --fix
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ -L "$PROJ/.git/hooks/pre-commit" ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "igris-brain-mcp-server",
-  "version": "7.2.0",
+  "version": "7.3.2",
   "description": "Igris AI Centralized Brain MCP Server — persistent memory, project management, cross-project intelligence",
   "main": "dist/index.js",
   "type": "module",
@@ -8,7 +8,7 @@
     "igris-brain-mcp-server": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist.tmp && tsc --outDir dist.tmp && rm -rf dist && mv dist.tmp dist",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "start:http": "node dist/index.js --http",
@@ -16,15 +16,18 @@
     "test": "vitest run",
     "eval:memory": "tsx eval/memory/src/run.ts",
     "backfill-edges": "tsx scripts/backfill_brief_edges.ts",
+    "normalize-brief-types": "tsx scripts/normalize_brief_types.ts",
     "gen:egress-manifest": "tsx scripts/gen-egress-manifest.ts",
-    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check"
+    "gen:egress-manifest:check": "tsx scripts/gen-egress-manifest.ts --check",
+    "gen:brief-normalize-mirror": "tsx scripts/gen-brief-normalize-mirror.ts",
+    "gen:brief-normalize-mirror:check": "tsx scripts/gen-brief-normalize-mirror.ts --check"
   },
   "author": "fifty.dev",
   "license": "MIT",
   "dependencies": {
     "@huggingface/transformers": "^3.8.1",
     "@modelcontextprotocol/sdk": "^1.22.0",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "express": "^4.21.0",
     "sqlite-vec": "^0.1.7"
   },
@@ -37,6 +40,6 @@
     "vitest": "^4.0.18"
   },
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0 <23.0.0 || >=24.0.0 <27.0.0"
   }
 }

@@ -14,9 +14,29 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import type DatabaseType from 'better-sqlite3';
 import { getDb } from '../db.js';
-import { normalizePhase, normalizePriority, normalizeBriefType } from './brief-normalize.js';
-import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL, EmbeddingsUnavailableError } from '../utils/embeddings.js';
+// FR-240 D1 — the pure `db`-param read layer. This file is the MCP WRAPPER over
+// it; `briefs-read.ts` holds the SQL and imports no singleton, which is what
+// lets the FR-238 dashboard reach the same queries with its own read-only
+// handle. Do not move query logic back up here.
+import { listBriefs, getBrief, searchBriefsByVector } from './briefs-read.js';
+import { diskEditState } from '../engine/components/cache/handlers.js';
+import {
+  normalizePhase,
+  normalizePriority,
+  normalizeBriefType,
+  normalizeStatus,
+  nonCanonicalBriefTypeNote,
+  nonCanonicalPriorityNote,
+  nonCanonicalStatusNote,
+  isTerminalBriefStatus,
+} from './brief-normalize.js';
+import { generateEmbedding, embeddingToBuffer, processInBatches, EMBEDDING_MODEL } from '../utils/embeddings.js';
 import { isVectorSearchAvailable, insertEmbeddingInto, vectorSearchFrom } from '../utils/vector-search.js';
 import { l2ToCosine } from '../utils/hybrid-search.js';
 
@@ -114,6 +134,132 @@ interface BriefUpdateInput {
 }
 
 /**
+ * Resolve the ONE acceptance-criteria parser (TD-325).
+ *
+ * `core/scripts/brief_ac_check.sh` is the single implementation of the checkbox
+ * grammar; `/hunt`, the commit-msg gate, the L3 validator and this note all read
+ * it. Reimplementing the grammar in TypeScript here would create a SECOND
+ * parser — and a second parser means a second population, which is the precise
+ * failure TD-325 exists to remove (the cognition queue was a 45%-coverage index
+ * of the same signal, and a cleared queue read as "handled"). So the note shells
+ * out to the shared script rather than re-deriving its verdict.
+ *
+ * Path: the TD-096 runtime mirror at `~/.igris/core/scripts/`, which is the
+ * stable location for a `core/` script at runtime. `IGRIS_AC_CHECK` overrides it
+ * — that is what keeps the unit test hermetic instead of depending on whatever
+ * the operator's mirror happens to contain.
+ *
+ * @returns an absolute path, or null when no parser is installed (fail-open)
+ */
+function resolveAcCheckScript(): string | null {
+  const explicit = process.env.IGRIS_AC_CHECK;
+  if (explicit) {
+    return existsSync(explicit) ? explicit : null;
+  }
+  const mirrored = join(homedir(), '.igris', 'core', 'scripts', 'brief_ac_check.sh');
+  return existsSync(mirrored) ? mirrored : null;
+}
+
+/**
+ * The AC-completion OBSERVER note (TD-325) — the fourth sibling of the three
+ * `nonCanonical*Note` calls below. Informs; never rejects, never alters what
+ * was stored.
+ *
+ * WHY THIS IS AN OBSERVER AND NOT A GATE — the argument, not the assumption.
+ * Both of `/hunt`'s terminal syncs run AFTER the commit has landed: Phase 7
+ * orders 7.1 phase=COMMITTING, 7.2 `git commit`, 7.4 status=Done, 7.5 sync;
+ * Phase 8.2 then syncs phase=COMPLETE. A rejecting gate here cannot un-close
+ * anything — it can only refuse to RECORD something already true in the world.
+ * Refusing at 7.5 leaves a landed commit with the store saying open (C3
+ * "committed-but-open"); refusing at 8.2 manufactures C1 "Done-but-not-COMPLETE"
+ * — the exact contradiction TD-257 shipped that second sync to eliminate — and
+ * TD-311 then forbids resolving C1 by editing brief data, so the operator is
+ * trapped in a state the system will not let them leave. Either key makes the
+ * store LESS truthful, which is the failure class TD-311 exists to prevent.
+ *
+ * The refusal therefore lives UPSTREAM of the commit, in
+ * `scripts/git-hooks/commit-msg`, keyed on the `closes #<ID>` footer.
+ *
+ * Guarded on the STORED status (like its three siblings), TERMINAL only: a
+ * mid-hunt sync says nothing, because unticked criteria mid-build are normal.
+ *
+ * Every failure mode returns null: no parser installed, no `brief_files` row,
+ * no `brief_files` TABLE, a parser that hangs, a parser that errors. This runs
+ * inside a WRITE path and must never be able to throw.
+ *
+ * @param db - the open brain handle (the row is already written when this runs)
+ * @param project - project slug
+ * @param briefId - brief id
+ * @param storedStatus - the status as STORED, not the raw argument
+ * @returns the note text, or null when there is nothing to say
+ */
+export function acGateNote(
+  db: DatabaseType.Database,
+  project: string,
+  briefId: string,
+  storedStatus: string | null | undefined,
+): string | null {
+  try {
+    if (!isTerminalBriefStatus(storedStatus)) return null;
+
+    const script = resolveAcCheckScript();
+    if (script === null) return null;
+
+    // Wrapped separately: a brain without `brief_files` (an old schema, a
+    // partially-migrated remote) must be silent, not throw.
+    let content: string | null = null;
+    let row: { filename?: string; content?: string; updated_at?: string } | undefined;
+    try {
+      row = db
+        .prepare('SELECT filename, content, updated_at FROM brief_files WHERE project = ? AND brief_id = ? LIMIT 1')
+        .get(project, briefId) as typeof row;
+      content = row?.content ?? null;
+    } catch {
+      return null;
+    }
+    if (!content) return null;
+
+    // TD-414: a newer local file is an un-pushed edit — decline, do not FAIL.
+    if (diskEditState(project, row?.filename ?? `${briefId}.md`, { content, updated_at: row?.updated_at ?? '' }) === 'local-newer') {
+      return (
+        `NOTE: ${briefId} reached a terminal status but the local brief file is newer than\n` +
+        '      the brain copy — not ruling on acceptance criteria. Push it with\n' +
+        '      igris_brief_update (project, brief_id, content) and re-sync.'
+      );
+    }
+
+    // The parser exits 1 on FAIL, which makes execFileSync throw; its stdout is
+    // carried on the error object. Both paths are read the same way.
+    let out = '';
+    try {
+      out = execFileSync('bash', [script, '--brief-id', briefId, '-'], {
+        input: content,
+        encoding: 'utf8',
+        timeout: 10_000,
+        maxBuffer: 4 * 1024 * 1024,
+      });
+    } catch (err) {
+      out = (err as { stdout?: string }).stdout ?? '';
+    }
+
+    const headline = out.split('\n', 1)[0] ?? '';
+    if (!headline.includes('VERDICT=FAIL')) return null;
+
+    return (
+      `NOTE: ${briefId} reached a terminal status with unmet acceptance criteria.\n` +
+      `      ${headline.trim()}\n` +
+      '      The brief was stored EXACTLY as synced — this informs, it does not\n' +
+      '      reject (TD-325). Resolve each criterion in the brief itself: tick it\n' +
+      '      with cited evidence, or defer it explicitly as\n' +
+      '      `- [~] **DEFERRED: <why>** -> TD-XXX`. A tick you cannot evidence is\n' +
+      '      the record-invention TD-311 forbids.'
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Sync a brief status change to the brain.
  *
  * Uses INSERT ... ON CONFLICT DO UPDATE to maintain one record per
@@ -125,6 +271,25 @@ interface BriefUpdateInput {
  */
 function handleBriefSync(args: BriefSyncInput): { content: { type: string; text: string }[] } {
   const db = getDb();
+
+  // TD-333: `status` is the canonical build-state source and had no normalizer
+  // until now. The `?? args.status` tail is not defensive noise: normalizeStatus
+  // returns null ONLY for a null/undefined input, so this preserves the
+  // pre-TD-333 binding EXACTLY for a caller that omitted the (schema-required)
+  // field, instead of turning it into a NOT NULL constraint error.
+  const storedStatus = normalizeStatus(args.status) ?? args.status;
+
+  // Same shape for the two sibling vocabulary fields, so every echo below can
+  // report the STORED value rather than the raw argument. These must be
+  // guarded on the STORED value, not the arg: the unset family ('Unset', '')
+  // is TRUTHY but folds to null, so an inline
+  // `args.priority ? \`Priority: ${normalizePriority(args.priority)}\``
+  // would print the literal `Priority: null`. Hoisting also collapses what
+  // were three separate normalizePriority(args.priority) calls (the insert,
+  // the note, and the echo) into one.
+  const storedPriority = normalizePriority(args.priority);
+  const storedPhase = normalizePhase(args.phase);
+  const storedBriefType = normalizeBriefType(args.brief_type);
 
   db.prepare(`
     INSERT INTO brief_status
@@ -142,13 +307,28 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
     args.project,
     args.brief_id,
     // TD-238: normalize metadata only (phase/brief_type/priority); never content.
-    normalizeBriefType(args.brief_type),
+    storedBriefType,
     args.title,
-    args.status,
-    normalizePriority(args.priority),
+    storedStatus,
+    storedPriority,
     args.effort ?? null,
-    normalizePhase(args.phase)
+    storedPhase
   );
+
+  // TD-328 D6(c) / TD-338 / TD-333: report a non-canonical STORED value back to
+  // the caller, for each of the three vocabulary fields. Informs; never rejects,
+  // never alters what was stored. `nonCanonicalPriorityNote` shipped with
+  // TD-338 and had ZERO callers until TD-333 wired it here.
+  const typeNote = nonCanonicalBriefTypeNote(storedBriefType);
+  const priorityNote = nonCanonicalPriorityNote(storedPriority);
+  const statusNote = nonCanonicalStatusNote(storedStatus);
+  // TD-325: the fourth note. Same posture as the three above — guarded on the
+  // STORED value, informs without rejecting — but it reads the brief's CONTENT
+  // rather than a metadata field, so it needs the db handle and the ids. It is
+  // the accumulation net for a close that never produces a commit (/archive, a
+  // direct sync, the dashboard, remote sync), which the commit-msg gate is
+  // structurally unable to see. See acGateNote for why it does not reject.
+  const acNote = acGateNote(db, args.project, args.brief_id, storedStatus);
 
   return {
     content: [{
@@ -159,10 +339,22 @@ function handleBriefSync(args: BriefSyncInput): { content: { type: string; text:
         `Project: ${args.project}`,
         `Brief: ${args.brief_id}`,
         `Title: ${args.title}`,
-        `Status: ${args.status}`,
-        args.priority ? `Priority: ${args.priority}` : null,
+        // TD-333: echo what was STORED, not the raw argument. This line printed
+        // `args.status` before, so a caller that synced `Completed` was told
+        // `Status: Completed` while the row held `Done` — a response that
+        // contradicts the store is worse than no response at all. The same was
+        // true one line down for `priority` and `phase`, which echoed raw while
+        // storing normalized, so they now follow the same rule. `effort` is
+        // stored verbatim (no normalizer), so echoing the arg IS the stored
+        // value there.
+        `Status: ${storedStatus}`,
+        storedPriority ? `Priority: ${storedPriority}` : null,
         args.effort ? `Effort: ${args.effort}` : null,
-        args.phase ? `Phase: ${args.phase}` : null,
+        storedPhase ? `Phase: ${storedPhase}` : null,
+        typeNote ? `\n${typeNote}` : null,
+        priorityNote ? `\n${priorityNote}` : null,
+        statusNote ? `\n${statusNote}` : null,
+        acNote ? `\n${acNote}` : null,
       ].filter(Boolean).join('\n'),
     }],
   };
@@ -322,65 +514,16 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
     };
   }
 
-  const db = getDb();
+  // FR-240 D1: the SQL lives in `briefs-read.ts#getBrief` so the dashboard can
+  // reach the SAME query with its own read-only handle. This wrapper owns only
+  // the handle, the validation above, and the wire format below.
+  const record = getBrief(getDb(), args.project, args.brief_id);
 
-  // Try JOIN first for full data (content + metadata)
-  const joined = db.prepare(`
-    SELECT bf.content, bf.filename, bf.content_hash, bf.updated_at AS file_updated_at,
-           bs.title, bs.status, bs.priority, bs.effort, bs.phase, bs.brief_type,
-           bs.updated_at AS status_updated_at
-    FROM brief_files bf
-    LEFT JOIN brief_status bs ON bs.project = bf.project AND bs.brief_id = bf.brief_id
-    WHERE bf.project = ? AND bf.brief_id = ?
-  `).get(args.project, args.brief_id) as Record<string, unknown> | undefined;
-
-  if (joined) {
+  if (record === null) {
     return {
       content: [{
         type: 'text',
-        text: JSON.stringify({
-          project: args.project,
-          brief_id: args.brief_id,
-          content: joined.content,
-          filename: joined.filename,
-          content_hash: joined.content_hash,
-          title: joined.title ?? null,
-          status: joined.status ?? null,
-          priority: joined.priority ?? null,
-          effort: joined.effort ?? null,
-          phase: joined.phase ?? null,
-          brief_type: joined.brief_type ?? null,
-          updated_at: joined.status_updated_at ?? joined.file_updated_at,
-        }, null, 2),
-      }],
-    };
-  }
-
-  // Fallback: metadata-only from brief_status
-  const statusOnly = db.prepare(`
-    SELECT title, status, priority, effort, phase, brief_type, updated_at
-    FROM brief_status
-    WHERE project = ? AND brief_id = ?
-  `).get(args.project, args.brief_id) as Record<string, unknown> | undefined;
-
-  if (statusOnly) {
-    return {
-      content: [{
-        type: 'text',
-        text: JSON.stringify({
-          project: args.project,
-          brief_id: args.brief_id,
-          content: null,
-          filename: null,
-          content_hash: null,
-          title: statusOnly.title,
-          status: statusOnly.status,
-          priority: statusOnly.priority ?? null,
-          effort: statusOnly.effort ?? null,
-          phase: statusOnly.phase ?? null,
-          brief_type: statusOnly.brief_type ?? null,
-          updated_at: statusOnly.updated_at,
-        }, null, 2),
+        text: `Brief not found: ${args.brief_id} in project ${args.project}`,
       }],
     };
   }
@@ -388,7 +531,7 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
   return {
     content: [{
       type: 'text',
-      text: `Brief not found: ${args.brief_id} in project ${args.project}`,
+      text: JSON.stringify(record, null, 2),
     }],
   };
 }
@@ -403,89 +546,88 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
  * @returns MCP-formatted response with brief array
  */
 function handleBriefList(args: BriefListInput): { content: { type: string; text: string }[] } {
-  const db = getDb();
-
-  // Resolve pagination params (0 = return all, default 25, clamped to non-negative integers)
-  const limit = args.limit === 0 ? 0 : Math.max(1, Math.floor(args.limit ?? 25));
-  const offset = Math.max(0, Math.floor(args.offset ?? 0));
-
-  const conditions: string[] = [];
-  const params: unknown[] = [];
-
-  if (args.project) {
-    conditions.push('bs.project = ?');
-    params.push(args.project);
-  }
-  if (args.status) {
-    conditions.push('bs.status = ?');
-    params.push(args.status);
-  }
-  if (args.brief_type) {
-    conditions.push('bs.brief_type = ?');
-    params.push(args.brief_type);
-  }
-  if (args.priority) {
-    conditions.push('bs.priority = ?');
-    params.push(args.priority);
-  }
-
-  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-
-  // Total count (same filters, no pagination)
-  const countRow = db.prepare(`
-    SELECT COUNT(*) AS total FROM brief_status bs ${whereClause}
-  `).get(...params) as { total: number };
-  const total = countRow.total;
-
-  const includeContent = args.include_content === true;
-
-  const selectCols = includeContent
-    ? `bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
-       bs.priority, bs.effort, bs.phase, bs.updated_at,
-       bf.content, bf.filename, bf.content_hash`
-    : `bs.project, bs.brief_id, bs.brief_type, bs.title, bs.status,
-       bs.priority, bs.effort, bs.phase, bs.updated_at`;
-
-  const joinClause = includeContent
-    ? 'LEFT JOIN brief_files bf ON bf.project = bs.project AND bf.brief_id = bs.brief_id'
-    : '';
-
-  // Build LIMIT/OFFSET clause conditionally
-  const dataParams = [...params];
-  let limitClause = '';
-  if (limit > 0) {
-    limitClause = 'LIMIT ? OFFSET ?';
-    dataParams.push(limit, offset);
-  }
-
-  const rows = db.prepare(`
-    SELECT ${selectCols}
-    FROM brief_status bs
-    ${joinClause}
-    ${whereClause}
-    ORDER BY bs.updated_at DESC
-    ${limitClause}
-  `).all(...dataParams) as Record<string, unknown>[];
+  // FR-240 D1: pagination resolution, filter binding and the SELECTs all live
+  // in `briefs-read.ts#listBriefs`. The returned object IS the wire payload —
+  // its key order is the contract the calling SKILLS parse (see briefs-read.ts's
+  // note on how to re-derive that list rather than trust it), and
+  // `__tests__/wrapper-wire-parity.test.ts` pins it.
+  const result = listBriefs(getDb(), {
+    project: args.project,
+    status: args.status,
+    brief_type: args.brief_type,
+    priority: args.priority,
+    include_content: args.include_content,
+    limit: args.limit,
+    offset: args.offset,
+  });
 
   return {
     content: [{
       type: 'text',
-      text: JSON.stringify({ briefs: rows, count: rows.length, total, limit, offset }, null, 2),
+      text: JSON.stringify(result, null, 2),
     }],
   };
 }
 
 /**
+ * The next unused id in a brief id's own prefix family, or null when the id is
+ * not of the form `PREFIX-NNN`.
+ *
+ * TD-395. The collision refusal below is only useful if it also hands back the
+ * id to re-mint on: a caller made to re-derive it re-runs the very read that
+ * lost the race. Counted over BOTH tables — a body-less `brief_status` row
+ * (what `igris_brief_sync` and a remote pull leave behind) still holds its id,
+ * and handing that id out as free would mint the next collision.
+ *
+ * The width of the incoming id is preserved, so `TD-0001` yields `TD-0002`.
+ * `Math.max(max, incoming)` keeps the helper total for a caller that asks
+ * about an id which is not stored at all; on the refusal path the colliding id
+ * is present by construction, so `max` already covers it.
+ *
+ * Exported for the unit tests in `__tests__/brief-create-collision.test.ts`.
+ */
+export function nextFreeBriefId(
+  db: DatabaseType.Database,
+  project: string,
+  briefId: string,
+): string | null {
+  const shape = /^([A-Za-z]+)-(\d+)$/.exec(briefId);
+  if (!shape) return null;
+  const [, prefix, digits] = shape;
+  const like = `${prefix}-%`;
+
+  const rows = db.prepare(`
+    SELECT brief_id FROM brief_status WHERE project = ? AND brief_id LIKE ?
+    UNION
+    SELECT brief_id FROM brief_files  WHERE project = ? AND brief_id LIKE ?
+  `).all(project, like, project, like) as { brief_id: string }[];
+
+  let max = 0;
+  for (const row of rows) {
+    const found = /^[A-Za-z]+-(\d+)$/.exec(row.brief_id);
+    if (found) max = Math.max(max, Number(found[1]));
+  }
+
+  const next = Math.max(max, Number(digits)) + 1;
+  return `${prefix}-${String(next).padStart(digits.length, '0')}`;
+}
+
+/**
  * Create a new brief with content and metadata.
  *
- * Atomically inserts/upserts into both brief_files and brief_status
- * within a transaction. Auto-embeds the brief for similarity search
- * and warns if similar briefs are detected (>= 0.85 cosine similarity).
+ * Inserts into both brief_files and brief_status inside ONE transaction, then
+ * auto-embeds the brief for similarity search and warns if similar briefs are
+ * detected (>= 0.85 cosine similarity).
+ *
+ * REFUSES (TD-395) when a row already exists for (project, brief_id) whose
+ * content hash DIFFERS — that is a minting collision, and both statements
+ * below are upserts, so without the refusal the existing brief is destroyed
+ * silently. An identical re-create still succeeds.
  *
  * @param args - Brief data including project, brief_id, title, content
- * @returns MCP-formatted response confirming creation
+ * @returns MCP-formatted response confirming creation, or the refusal
  */
-async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { type: string; text: string }[] }> {
+async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { type: string; text: string }[]; isError?: boolean }> {
   if (!args.project || !args.brief_id || !args.title || !args.content) {
     return {
       content: [{
@@ -500,7 +642,56 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
   const fileId = randomUUID();
   const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
   const filename = args.filename ?? `${args.brief_id}.md`;
-  const status = args.status ?? 'Ready';
+  // TD-333: normalize at the MINT surface too. `?? 'Ready'` runs FIRST so an
+  // omitted status still defaults exactly as before, then the default (which is
+  // canonical) passes through the normalizer unchanged.
+  const status = normalizeStatus(args.status ?? 'Ready') ?? 'Ready';
+
+  // TD-395 — the create-collision guard, and the ONLY early return between here
+  // and the transaction, so a refusal leaves both tables untouched.
+  //
+  // Keyed on CONTENT, deliberately: an identical re-create is a replay, not a
+  // collision, and `/register` plus the offline `sync data` drain depend on it
+  // succeeding. A matching hash with different metadata also upserts — that is
+  // the metadata-only repair path TD-402's recovery needed, and it can lose no
+  // content. A `brief_status` row with no `brief_files` row is likewise not
+  // guarded: it holds no content to destroy, and refusing there would break the
+  // legitimate "status arrived first (remote pull / `igris_brief_sync`), body
+  // follows" path.
+  const existingFile = db.prepare(
+    'SELECT content_hash FROM brief_files WHERE project = ? AND brief_id = ?',
+  ).get(args.project, args.brief_id) as { content_hash: string } | undefined;
+
+  if (existingFile && existingFile.content_hash !== contentHash) {
+    const existingStatus = db.prepare(
+      'SELECT title FROM brief_status WHERE project = ? AND brief_id = ?',
+    ).get(args.project, args.brief_id) as { title: string } | undefined;
+    const freeId = nextFreeBriefId(db, args.project, args.brief_id);
+
+    return {
+      isError: true,
+      content: [{
+        type: 'text',
+        text: [
+          `Refused: brief id collision. ${args.brief_id} already exists in ${args.project} with DIFFERENT content.`,
+          '',
+          `Existing title: ${existingStatus?.title ?? '(brief_status has no row for this id)'}`,
+          `Existing content hash: ${existingFile.content_hash.substring(0, 12)}`,
+          `Your content hash:     ${contentHash.substring(0, 12)}`,
+          '',
+          'Nothing was written. brief_files and brief_status both still hold the',
+          'existing brief. Another session minted this id between your read and',
+          'your write (TD-395).',
+          '',
+          freeId
+            ? `Re-mint on the next free id: ${freeId}`
+            : `${args.brief_id} is not a PREFIX-NNN id, so no successor can be derived — pick a free id yourself.`,
+          'Then call igris_brief_create again with that brief_id. Re-creating the',
+          'SAME content under this id is not a collision and still succeeds.',
+        ].join('\n'),
+      }],
+    };
+  }
 
   db.transaction(() => {
     // Upsert brief_files
@@ -598,6 +789,13 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
     embeddingNote = '\nEmbedding: skipped (will be generated on backfill)';
   }
 
+  // TD-328 D6(c): the mint surface is where a 51st spelling is born, so this is
+  // the highest-value place to report one. Informs; never rejects. TD-333 adds
+  // the status twin and wires TD-338's priority twin, which had no callers.
+  const typeNote = nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type));
+  const priorityNote = nonCanonicalPriorityNote(normalizePriority(args.priority));
+  const statusNote = nonCanonicalStatusNote(status);
+
   return {
     content: [{
       type: 'text',
@@ -610,7 +808,10 @@ async function handleBriefCreate(args: BriefCreateInput): Promise<{ content: { t
         `Status: ${status}`,
         `Content hash: ${contentHash.substring(0, 12)}...`,
         `Size: ${args.content.length} chars`,
-      ].join('\n') + embeddingNote + similarityWarning,
+      ].join('\n') + embeddingNote + similarityWarning +
+        (typeNote ? `\n\n${typeNote}` : '') +
+        (priorityNote ? `\n\n${priorityNote}` : '') +
+        (statusNote ? `\n\n${statusNote}` : ''),
     }],
   };
 }
@@ -699,14 +900,16 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
 
     // Update brief_status if metadata fields provided
     // Whitelist of allowed columns to prevent SQL injection.
-    // TD-238: normalize metadata only (phase/brief_type/priority) and ONLY
-    // when the field was actually provided — preserve partial-update semantics
-    // (an undefined field stays undefined so the loop below skips it; never
-    // turn a not-provided field into an explicit null write). Content/title/
-    // status are never normalized.
+    // TD-238 + TD-333: normalize the four VOCABULARY fields
+    // (phase/brief_type/priority/status) and ONLY when the field was actually
+    // provided — preserve partial-update semantics (an undefined field stays
+    // undefined so the loop below skips it; never turn a not-provided field
+    // into an explicit null write). CONTENT and TITLE are still never
+    // normalized: they are free text with no canonical vocabulary. `status`
+    // WAS in that sentence until TD-333 gave it one.
     const allowedColumns: Record<string, unknown> = {
       title: args.title,
-      status: args.status,
+      status: args.status !== undefined ? normalizeStatus(args.status) : undefined,
       priority: args.priority !== undefined ? normalizePriority(args.priority) : undefined,
       effort: args.effort,
       phase: args.phase !== undefined ? normalizePhase(args.phase) : undefined,
@@ -742,8 +945,9 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
           args.project,
           args.brief_id,
           args.title ?? '',
-          args.status ?? 'Ready',
-          // TD-238: normalize metadata only (phase/brief_type/priority).
+          // TD-333: same shape as `_create` — default first, then normalize.
+          normalizeStatus(args.status ?? 'Ready') ?? 'Ready',
+          // TD-238: normalize metadata only (phase/brief_type/priority/status).
           normalizePriority(args.priority),
           args.effort ?? null,
           normalizePhase(args.phase),
@@ -764,6 +968,21 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
     };
   }
 
+  // TD-328 D6(c): only when the field was actually part of this update —
+  // re-typing a brief is the other way a non-canonical value enters the store.
+  // TD-333 adds the status and priority twins on the same "only if provided"
+  // condition, so an update that never mentions a field says nothing about it.
+  const typeNote =
+    args.brief_type !== undefined
+      ? nonCanonicalBriefTypeNote(normalizeBriefType(args.brief_type))
+      : null;
+  const priorityNote =
+    args.priority !== undefined
+      ? nonCanonicalPriorityNote(normalizePriority(args.priority))
+      : null;
+  const statusNote =
+    args.status !== undefined ? nonCanonicalStatusNote(normalizeStatus(args.status)) : null;
+
   return {
     content: [{
       type: 'text',
@@ -773,7 +992,10 @@ function handleBriefUpdate(args: BriefUpdateInput): { content: { type: string; t
         `Project: ${args.project}`,
         `Brief: ${args.brief_id}`,
         `Updated fields: ${updated.join(', ')}`,
-      ].join('\n'),
+        typeNote ? `\n${typeNote}` : null,
+        priorityNote ? `\n${priorityNote}` : null,
+        statusNote ? `\n${statusNote}` : null,
+      ].filter(Boolean).join('\n'),
     }],
   };
 }
@@ -921,10 +1143,20 @@ function extractBriefProblem(title: string, content: string): string {
 }
 
 /**
- * Find briefs that are semantically similar to a query.
+ * Find briefs that are semantically similar to a query — MCP wrapper.
  *
- * Uses vector search against briefs_vec and converts L2 distance to
- * cosine similarity, filtering by threshold.
+ * FR-246 D1-b: the query body moved DOWN to
+ * `briefs-read.ts#searchBriefsByVector`; this handler keeps exactly two things,
+ * which is what a wrapper is for — it resolves the handle and it renders the
+ * prose. Every sentence below is byte-identical to the pre-extraction version
+ * and is pinned by `__tests__/wrapper-wire-parity.test.ts`, because `/register`
+ * reads this output to decide whether a brief is a duplicate.
+ *
+ * **This tool stays PURE VECTOR** while `/api/briefs/search` is hybrid. The
+ * reason is in the threshold: it accepts a candidate at cosine similarity
+ * `>= 0.85`, and a BM25 hit has no cosine similarity to compare. Adding a
+ * lexical arm here would not "improve" dup detection, it would feed it rows it
+ * cannot score. See the FR-246 note at the head of the reader pair.
  *
  * @param args - Search parameters
  * @returns MCP-formatted response with similar briefs
@@ -934,123 +1166,66 @@ async function handleBriefSimilar(args: BriefSimilarInput): Promise<{ content: {
   const threshold = args.threshold ?? 0.85;
   const limit = args.limit ?? 5;
 
-  if (!isVectorSearchAvailable(db)) {
-    return {
-      content: [{
-        type: 'text',
-        text: 'Brief similarity search unavailable: sqlite-vec extension is not loaded.',
-      }],
-    };
-  }
+  const result = await searchBriefsByVector(db, {
+    query: args.query,
+    project: args.project,
+    threshold,
+    limit,
+  });
 
-  let queryEmbedding: Float32Array;
-  try {
-    queryEmbedding = await generateEmbedding(args.query);
-  } catch (err) {
-    // BR-070: when the embeddings backend is unavailable (transformers
-    // absent, offline cold-cache, or native-load failure), return a clean
-    // capability message mirroring the sqlite-vec-unavailable branch above
-    // rather than leaking a raw ERR_MODULE_NOT_FOUND string. Other errors
-    // still surface their detail for diagnosis.
-    if (err instanceof EmbeddingsUnavailableError) {
-      return {
-        content: [{
-          type: 'text',
-          text: 'Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).',
-        }],
-      };
+  const say = (text: string) => ({ content: [{ type: 'text', text }] });
+
+  switch (result.status) {
+    case 'vector_unavailable':
+      return say('Brief similarity search unavailable: sqlite-vec extension is not loaded.');
+
+    case 'vector_table_absent':
+      // The one NEW sentence (see `BriefVectorSearchResult`'s doc comment): this
+      // state used to throw, so no consumer can have depended on the old output.
+      return say('Brief similarity search unavailable: briefs_vec index is absent on this brain.');
+
+    case 'embeddings_unavailable':
+      // BR-070: a clean capability message rather than a leaked
+      // ERR_MODULE_NOT_FOUND.
+      return say('Brief similarity search unavailable: embeddings backend not loaded (semantic search disabled, keyword search still available).');
+
+    case 'embedding_failed':
+      return say(`Failed to generate embedding for query: ${result.error}`);
+
+    case 'no_vector_hits':
+      return say('No similar briefs found.');
+
+    case 'below_threshold':
+      return say(`No briefs found above similarity threshold (${threshold}).`);
+
+    case 'ok': {
+      const results = result.matches.map((match) => {
+        const row = match.row ?? {};
+        return [
+          `--- Similarity: ${match.similarity.toFixed(4)} ---`,
+          `Brief: ${row.brief_id}`,
+          `Project: ${row.project}`,
+          `Title: ${row.title}`,
+          `Status: ${row.status}`,
+          `Priority: ${row.priority || '(none)'}`,
+          `Type: ${row.brief_type || '(none)'}`,
+        ].join('\n');
+      });
+
+      if (results.length === 0) {
+        // Reached when a project filter dropped every threshold-passing row.
+        return say(
+          args.project
+            ? `No similar briefs found in project "${args.project}" above threshold (${threshold}).`
+            : `No briefs found above similarity threshold (${threshold}).`,
+        );
+      }
+
+      return say(
+        `Found ${results.length} similar brief(s) (threshold >= ${threshold}):\n\n${results.join('\n\n')}`,
+      );
     }
-    return {
-      content: [{
-        type: 'text',
-        text: `Failed to generate embedding for query: ${err instanceof Error ? err.message : String(err)}`,
-      }],
-    };
   }
-
-  // Search with extra headroom for filtering
-  const vecResults = vectorSearchFrom(db, 'briefs_vec', queryEmbedding, limit * 3);
-
-  if (vecResults.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: 'No similar briefs found.',
-      }],
-    };
-  }
-
-  // Convert to cosine similarity and filter by threshold
-  const candidates = vecResults
-    .map(r => ({ rowid: r.rowid, similarity: l2ToCosine(r.distance) }))
-    .filter(r => r.similarity >= threshold);
-
-  if (candidates.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: `No briefs found above similarity threshold (${threshold}).`,
-      }],
-    };
-  }
-
-  // Fetch full brief metadata
-  const ids = candidates.map(c => c.rowid);
-  const placeholders = ids.map(() => '?').join(',');
-  let sql = `
-    SELECT bs.id, bs.project, bs.brief_id, bs.title, bs.status, bs.priority, bs.brief_type
-    FROM brief_status bs
-    WHERE bs.id IN (${placeholders})
-  `;
-  const params: unknown[] = [...ids];
-
-  if (args.project) {
-    sql += ' AND bs.project = ?';
-    params.push(args.project);
-  }
-
-  const rows = db.prepare(sql).all(...params) as Record<string, unknown>[];
-
-  // Build lookup
-  const rowMap = new Map<number, Record<string, unknown>>();
-  for (const row of rows) {
-    rowMap.set(row.id as number, row);
-  }
-
-  // Format results in similarity order
-  const results: string[] = [];
-  for (const candidate of candidates) {
-    const row = rowMap.get(candidate.rowid);
-    if (!row) continue;
-    results.push([
-      `--- Similarity: ${candidate.similarity.toFixed(4)} ---`,
-      `Brief: ${row.brief_id}`,
-      `Project: ${row.project}`,
-      `Title: ${row.title}`,
-      `Status: ${row.status}`,
-      `Priority: ${row.priority || '(none)'}`,
-      `Type: ${row.brief_type || '(none)'}`,
-    ].join('\n'));
-    if (results.length >= limit) break;
-  }
-
-  if (results.length === 0) {
-    return {
-      content: [{
-        type: 'text',
-        text: args.project
-          ? `No similar briefs found in project "${args.project}" above threshold (${threshold}).`
-          : `No briefs found above similarity threshold (${threshold}).`,
-      }],
-    };
-  }
-
-  return {
-    content: [{
-      type: 'text',
-      text: `Found ${results.length} similar brief(s) (threshold >= ${threshold}):\n\n${results.join('\n\n')}`,
-    }],
-  };
 }
 
 /**

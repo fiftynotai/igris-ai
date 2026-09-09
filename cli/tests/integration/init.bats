@@ -15,8 +15,7 @@ setup() {
   # 4 supported CLIs in our HOME-overriden config dir, so the
   # detection set is empty regardless.
   export IGRIS_BRAIN_DIR="$BATS_TEST_TMPDIR/igris-brain"
-  export HOME="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$HOME"
+  fence_home  # TD-456: HOME=$BATS_TEST_TMPDIR/home, asserted (init writes every harness config under $HOME)
   SOURCE_REPO="$BATS_TEST_TMPDIR/source-repo"
   stage_source_repo "$SOURCE_REPO"
 }
@@ -177,4 +176,207 @@ PY
   [ "$BEFORE_SHA" = "$AFTER_SHA" ]
   # No backup or tmp litter from the refused write.
   [ ! -f "$HOME/.claude.json.igris.bak" ]
+}
+
+# --- BR-103: `init --upgrade` refuses a real interruption, honours the record,
+# and preserves the runtime-only extras. `stage_source_repo` above is the
+# fixture core; I4 uses the REAL checkout so the mirror sweep is over the
+# repo's own `git ls-files core`.
+
+@test "I1 (BR-103): init --upgrade REFUSES on core.new.* staging residue — exit 1, nothing written; --wipe-orphans is the door" {
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+  mkdir "$IGRIS_BRAIN_DIR/core.new.99999"
+  printf 'half-written\n' > "$IGRIS_BRAIN_DIR/core.new.99999/partial"
+  W_TREE="$(core_tree_sha)"
+  W_IS="$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')"
+  W_CFG="$(shasum -a 256 "$IGRIS_BRAIN_DIR/config.json" | awk '{print $1}')"
+  # a proceed would be visible: the source moved
+  printf '# soul (bats v2)\n' > "$SOURCE_REPO/core/SOUL.md"
+
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
+  echo "$output"
+  [ "$status" -ne 0 ]
+  grep -q 'interrupted' <<<"$output"
+  grep -q 'core.new.99999' <<<"$output"
+  grep -q -- '--wipe-orphans' <<<"$output"
+  # nothing written: tree, record, config (so no onboarding stamp), residue kept, no bak
+  [ "$(core_tree_sha)" = "$W_TREE" ]
+  [ "$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')" = "$W_IS" ]
+  [ "$(shasum -a 256 "$IGRIS_BRAIN_DIR/config.json" | awk '{print $1}')" = "$W_CFG" ]
+  [ -f "$IGRIS_BRAIN_DIR/core.new.99999/partial" ]
+  [ "$(bak_count)" = "0" ]
+  run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
+  [ "$output" = "# soul (bats)" ]
+
+  # the door: staging residue is removed, the upgrade proceeds
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade --wipe-orphans
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ ! -d "$IGRIS_BRAIN_DIR/core.new.99999" ]
+  run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
+  [ "$output" = "# soul (bats v2)" ]
+}
+
+@test "I2 (BR-103): control — a retained core.bak.* beside a healthy core/ is NOT an interruption: --upgrade proceeds with no error line" {
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
+  [ "$status" -eq 0 ]
+  [ "$(bak_count)" = "1" ]
+  printf '# soul (bats v3)\n' > "$SOURCE_REPO/core/SOUL.md"
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(grep -c 'Detected interrupted state' <<<"$output")" = "0" ]
+  [ "$(grep -c 'error:' <<<"$output")" = "0" ]
+  run cat "$IGRIS_BRAIN_DIR/core/SOUL.md"
+  [ "$output" = "# soul (bats v3)" ]
+  # one retained bak: the older one was pruned, the newest kept
+  [ "$(bak_count)" = "1" ]
+}
+
+@test "I3 (BR-103): init --upgrade REFUSES a mid-swap shape (core.bak.* present, core/ absent) with a restore hint; never auto-restores, never wipes the bak" {
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+  BAK="$IGRIS_BRAIN_DIR/core.bak.2026-01-01T00-00-00-000Z"
+  mv "$IGRIS_BRAIN_DIR/core" "$BAK"
+  W_BAK="$(core_tree_sha "$BAK")"
+  W_IS="$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')"
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
+  echo "$output"
+  [ "$status" -ne 0 ]
+  grep -q 'interrupted' <<<"$output"
+  grep -q "mv $BAK $IGRIS_BRAIN_DIR/core" <<<"$output"
+  [ ! -e "$IGRIS_BRAIN_DIR/core" ]
+  [ -d "$BAK" ]
+  [ "$(core_tree_sha "$BAK")" = "$W_BAK" ]
+  [ "$(shasum -a 256 "$IGRIS_BRAIN_DIR/.install-source.json" | awk '{print $1}')" = "$W_IS" ]
+  # the operator's move is the recovery; after it the upgrade proceeds
+  mv "$BAK" "$IGRIS_BRAIN_DIR/core"
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade
+  [ "$status" -eq 0 ]
+}
+
+@test "I4 (BR-103): init --upgrade with NO flags on a from-source record re-copies from the RECORDED checkout — zero network; every repo core/** file MATCHes; git-hooks executable" {
+  run $CLI_BIN init --from-source "$IGRIS_REPO_ROOT"
+  [ "$status" -eq 0 ]
+  # a from-source record pointing at THIS checkout
+  run python3 -c "import json; d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json')); print(d['source'], d['source_path'])"
+  [ "$output" = "from-source $IGRIS_REPO_ROOT" ]
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  # NO --from-source, NO --channel: the record decides. Any https call errors
+  # (block mode) and is counted; IGRIS_BLOCK_NETWORK fences the tarball seam too.
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=block \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" IGRIS_BLOCK_NETWORK=1 \
+    run $CLI_BIN init --upgrade
+  echo "$output"
+  echo "https calls: $(cat "$COUNT_FILE")"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$COUNT_FILE")" = "0" ]
+  run python3 -c "import json; d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json')); print(d['source'], d['source_path'], d['channel'], d['ref'])"
+  [ "$output" = "from-source $IGRIS_REPO_ROOT main from-source" ]
+  # the mirror sweep: every tracked repo core/** file vs the fenced runtime core
+  PAIRS=""
+  for f in $(git -C "$IGRIS_REPO_ROOT" ls-files core); do
+    PAIRS="$PAIRS $IGRIS_REPO_ROOT/$f $IGRIS_BRAIN_DIR/$f"
+  done
+  N_FILES="$(git -C "$IGRIS_REPO_ROOT" ls-files core | wc -l | tr -d ' ')"
+  run bash "$IGRIS_REPO_ROOT/core/scripts/verify_mirror.sh" $PAIRS
+  echo "$output" | tail -3
+  [ "$status" -eq 0 ]
+  # the primitive's own SUMMARY line: every pair MATCH, zero of every other verdict
+  grep -q "^SUMMARY: $N_FILES pairs — $N_FILES MATCH, 0 MISMATCH, 0 MISSING, 0 SAME_INODE, 0 TYPE_ERROR, 0 ERROR" <<<"$output"
+  [ -x "$IGRIS_BRAIN_DIR/core/git-hooks/pre-commit" ]
+  [ -x "$IGRIS_BRAIN_DIR/core/git-hooks/commit-msg" ]
+  # the runtime-only extra regenerated from the source ROOT
+  cmp "$IGRIS_REPO_ROOT/harness-manifest.json" "$IGRIS_BRAIN_DIR/core/harness-manifest.json"
+}
+
+@test "I5 (BR-103): runtime-only extras across an upgrade — harness-manifest.json REGENERATED from the source root, docs/component-manifest.md CARRIED over, an unlisted extra is reported and NOT carried" {
+  printf '{ "harnesses": {}, "v": 1 }\n' > "$SOURCE_REPO/harness-manifest.json"
+  run $CLI_BIN init --from-source "$SOURCE_REPO"
+  [ "$status" -eq 0 ]
+  cmp "$SOURCE_REPO/harness-manifest.json" "$IGRIS_BRAIN_DIR/core/harness-manifest.json"
+  # prior core carries the two runtime-only files + one stale unlisted extra
+  mkdir -p "$IGRIS_BRAIN_DIR/core/docs"
+  printf '# component manifest (runtime-only)\n' > "$IGRIS_BRAIN_DIR/core/docs/component-manifest.md"
+  printf 'stale\n' > "$IGRIS_BRAIN_DIR/core/stray.md"
+  # the source root's manifest moved: REGENERATE must pick the new one up
+  printf '{ "harnesses": {}, "v": 2 }\n' > "$SOURCE_REPO/harness-manifest.json"
+  run $CLI_BIN init --from-source "$SOURCE_REPO" --upgrade --verbose
+  echo "$output"
+  [ "$status" -eq 0 ]
+  UPGRADE_OUT="$output"
+  cmp "$SOURCE_REPO/harness-manifest.json" "$IGRIS_BRAIN_DIR/core/harness-manifest.json"
+  [ -f "$IGRIS_BRAIN_DIR/core/docs/component-manifest.md" ]
+  run cat "$IGRIS_BRAIN_DIR/core/docs/component-manifest.md"
+  [ "$output" = "# component manifest (runtime-only)" ]
+  [ ! -e "$IGRIS_BRAIN_DIR/core/stray.md" ]
+  # the --verbose lines name each disposition
+  grep -q 'not carried: stray.md' <<<"$UPGRADE_OUT"
+  grep -q 'carried over: docs/component-manifest.md' <<<"$UPGRADE_OUT"
+  grep -q 'regenerated: harness-manifest.json' <<<"$UPGRADE_OUT"
+}
+
+# ---- TD-301 (2026-09-08): ref_commit_sha is recorded for MUTABLE channels ---
+#
+# The record is what the brain-core-stale detector reads. These three cases pin
+# the writer contract per channel class, driven through the github stub seam
+# (IGRIS_TEST_GITHUB_STUB_COMMIT_SHA) with no network.
+
+TD301_STUB_SHA="a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"
+
+@test "TD-301 init: a --channel main install RECORDS ref_commit_sha (schema v2)" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  COMMITS_FILE="$BATS_TEST_TMPDIR/https-commits"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TEST_HTTPS_COMMITS_COUNT_FILE="$COMMITS_FILE" \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$TD301_STUB_SHA" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init --channel main
+  echo "$output"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],d.get('ref_commit_sha'))"
+  [ "$output" = "2 main $TD301_STUB_SHA" ]
+  # armed: the commits API was actually consulted
+  [ "$(cat "$COMMITS_FILE")" -ge 1 ]
+}
+
+@test "TD-301 init: a release install records NO ref_commit_sha and makes ZERO commits-API calls" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  COMMITS_FILE="$BATS_TEST_TMPDIR/https-commits"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=stub \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TEST_HTTPS_COMMITS_COUNT_FILE="$COMMITS_FILE" \
+    IGRIS_TEST_GITHUB_STUB_COMMIT_SHA="$TD301_STUB_SHA" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init
+  echo "$output"
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],'ref_commit_sha' in d)"
+  [ "$output" = "2 release False" ]
+  # armed: the run DID reach the network seam (releases-latest), so the zero
+  # below is scoped to /commits/ and is not "nothing happened".
+  [ "$(cat "$COUNT_FILE")" -ge 1 ]
+  [ "$(cat "$COMMITS_FILE")" = "0" ]
+}
+
+@test "TD-301 init: a --channel main install under BLOCK mode still succeeds, WITHOUT the field (best-effort)" {
+  TARBALL="$(stage_fixture_tarball)"
+  COUNT_FILE="$BATS_TEST_TMPDIR/https-calls"
+  NODE_OPTIONS="--require $GITHUB_STUB_PRELOAD" IGRIS_TEST_HTTPS_MODE=block \
+    IGRIS_TEST_HTTPS_COUNT_FILE="$COUNT_FILE" \
+    IGRIS_TARBALL_FILE="$TARBALL" \
+    run $CLI_BIN init --channel main --skip-remote
+  echo "$output"
+  # An install must never fail because a diagnostic field could not be fetched.
+  [ "$status" -eq 0 ]
+  run python3 -c "import json;d=json.load(open('$IGRIS_BRAIN_DIR/.install-source.json'));print(d['schema_version'],d['channel'],'ref_commit_sha' in d)"
+  [ "$output" = "2 main False" ]
+  # armed: the fetch was ATTEMPTED and errored (block mode counts every call).
+  [ "$(cat "$COUNT_FILE")" -ge 1 ]
 }

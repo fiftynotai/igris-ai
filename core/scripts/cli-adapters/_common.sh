@@ -54,6 +54,25 @@ IGRIS_ADAPTER_COMMON_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 IGRIS_SURFACE_IDS="agents skills mcp hook"
 IGRIS_SURFACE_LABELS="agent skills mcp hook"
 
+# ---------------------------------------------------------------------------
+# BR-099 — the test-fixture MCP server guard's inputs (consumed by
+# scan_mcp_fixture_entries below and by check_harness_drift.sh#verify_mcp's
+# mcp-fixture arm). Three of these names sat in the operator's REAL
+# ~/.claude.json for weeks: a vitest suite reached the add-mcp delegate
+# writer (module-load homedir(), no path flag) under a real HOME. The first
+# three names ARE the entry names the fixture files construct —
+# cli/src/__tests__/registry-project-mcp.test.ts, test/harness_mcp.test.bash,
+# test/harness_agent_id_coverage.test.bash, test/harness_schema.test.bash —
+# so renaming a fixture MUST update this list (MAINTAINING.md, "MCP
+# fixture-name guard"). `evil` is NOT a fixture entry name: it is only the
+# `command` value under `demo-mcp` in the two collision fixtures
+# (registry-project-mcp.test.ts, harness_mcp.test.bash); it is listed here as
+# the defensive name-rule twin of the launch-token rule below. A NEW fixture
+# takes the prefix instead (test_standards.md); the list never grows for a
+# new test.
+IGRIS_MCP_FIXTURE_NAMES="demo-mcp personal-mcp core-mcp evil"
+IGRIS_MCP_FIXTURE_PREFIX="igris-fixture-"
+
 # igris_surface_is_valid <value>
 #   Returns 0 if <value> is a known surface id OR the literal `all`; 1 otherwise.
 #   Replaces the hard-coded `case "$SURFACE_KIND" in agents|skills|…|all)` enum
@@ -275,34 +294,15 @@ sys.stdout.write("".join(lines[body_start:]))
 PY
 }
 
-# ---------------------------------------------------------------------------
-# is_claude_only <skill-md-path> [cli]
-#
-# Returns 0 (true) when the skill should be excluded from the target CLI:
-#   (a) frontmatter has `platform_overrides.{cli}.include: false`, OR
-#   (b) body contains `\bAgent\(` or `\bSkill\(` invocation patterns.
-# Returns 1 (false) otherwise.
-#
-# `cli` defaults to `codex` — the primary consumer of this heuristic.
-# Does not read stdin; safe in pipelines.
-# ---------------------------------------------------------------------------
-is_claude_only() {
-  local skill_path="$1"
-  local cli="${2:-codex}"
-  # Signal (a): explicit opt-out in frontmatter.
-  local include_flag
-  include_flag=$(get_skill_field "$skill_path" "platform_overrides.${cli}.include" || true)
-  if [ "$include_flag" = "false" ]; then
-    return 0
-  fi
-  # Signal (b): body contains Agent( or Skill( invocation patterns.
-  local body
-  body=$(strip_frontmatter "$skill_path")
-  if printf '%s' "$body" | grep -Eq '\bAgent\(|\bSkill\(' ; then
-    return 0
-  fi
-  return 1
-}
+# TD-345 removed `is_claude_only()` here. FR-153 retired the skill-exclusion
+# step entirely (every SKILL.md gets a per-skill symlink under every consumer),
+# after which the helper was kept only as "back-compat / defence-in-depth". It
+# had ZERO callers repo-wide and ZERO tests, and none of the 24 core SKILL.md
+# bodies matched its `\bAgent\(|\bSkill\(` signal — so it was dead code that
+# still carried a live defect (a `printf | grep -Eq` under this file's
+# `set -euo pipefail`, which inverted its verdict on any body past the pipe
+# buffer). Deleted rather than repaired. See docs/multi-cli.md § Skill
+# Projection for the projection model that replaced it.
 
 # ---------------------------------------------------------------------------
 # toml_escape <multiline-string>
@@ -586,7 +586,7 @@ resolve_harness_descriptor_path() {
     echo "$runtime_core"
     return 0
   fi
-  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. Run 'igris install' or 'igris refresh' to materialize ~/.igris/core/harness-manifest.json (the runtime mirror)." >&2
+  echo "Error: harness descriptor (harness-manifest.json) not found — looked in '$repo_root' and '$runtime_core'. The runtime copy is regenerated from the source root by every core swap ('igris init --upgrade' or 'igris refresh', BR-103); if it is absent, re-run one of them." >&2
   exit 1
 }
 
@@ -2057,6 +2057,120 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# scan_mcp_fixture_entries <config-path> <map-key> [<declared-names>]
+#
+# BR-099. Reads ONE harness MCP config (JSON, or TOML for codex — the SAME
+# loader shape as extract_mcp_entry above) and prints one `<name>\t<why>`
+# line per entry under <map-key> that is a TEST FIXTURE:
+#   known-fixture-name   name is in IGRIS_MCP_FIXTURE_NAMES
+#   fixture-prefix       name starts with IGRIS_MCP_FIXTURE_PREFIX
+#   npx-y-evil-command   launch tokens start `npx -y evil` or `evil` — the
+#                        add-mcp npx-wrap of the collision fixture's bare-word
+#                        `command: "evil"` (claude/gemini/codex: command+args;
+#                        opencode: the FUSED command list)
+# The two NAME rules are skipped for a name in <declared-names> (space-
+# separated: the names the manifest declares FOR THE HARNESS whose config this
+# call scans — the caller filters its `<harness>:<name>` row tokens per config;
+# passing every harness's names would exempt a leak in a harness the declaring
+# block never targets, the round-1 defect T9b pins).
+# A test manifest that declares `demo-mcp` projects it into ITS fenced sandbox
+# on purpose (harness_agent_id_coverage / harness_mcp), while the igris-ai
+# manifest + personal overlay declare only igris-brain — so a fixture leaked
+# onto the operator's disk is undeclared and flagged. The COMMAND rule is never
+# skipped: `evil` is never a legitimate registration.
+#
+# Absent file / unparseable / non-dict map → prints nothing, exit 0 (the
+# per-entry verdict already reports unparseable). No TOML parser → prints
+# nothing (extract_mcp_entry's MISSING-safe posture). NEVER prints `env`,
+# `args` or any value — only the name and the rule that matched. Never
+# throws under `set -euo pipefail`; the python exits 0 on every path.
+# Gate: test/harness_mcp_fixture_guard.test.bash.
+# ---------------------------------------------------------------------------
+scan_mcp_fixture_entries() {
+  local config_path="$1"
+  local map_key="$2"
+  local declared="${3:-}"
+  python3 - "$config_path" "$map_key" "$IGRIS_MCP_FIXTURE_NAMES" \
+    "$IGRIS_MCP_FIXTURE_PREFIX" "$declared" <<'PY' || true
+import json
+import os
+import sys
+
+config_path, map_key, names_raw, prefix, declared_raw = sys.argv[1:6]
+fixture_names = set(names_raw.split())
+declared = set(declared_raw.split())
+
+if not os.path.exists(config_path):
+    sys.exit(0)
+
+is_toml = config_path.endswith(".toml")
+data = None
+try:
+    if is_toml:
+        try:
+            import tomllib  # py3.11+
+            with open(config_path, "rb") as fh:
+                data = tomllib.load(fh)
+        except ImportError:
+            for mod in ("tomli", "toml"):
+                try:
+                    m = __import__(mod)
+                    with open(config_path, "rb" if mod == "tomli" else "r",
+                              encoding=None if mod == "tomli" else "utf-8") as fh:
+                        data = m.load(fh)
+                    break
+                except ImportError:
+                    continue
+    else:
+        with open(config_path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+except (ValueError, OSError):
+    sys.exit(0)
+
+if not isinstance(data, dict):
+    sys.exit(0)
+server_map = data.get(map_key)
+if not isinstance(server_map, dict):
+    sys.exit(0)
+
+
+def launch_tokens(entry):
+    """[command, *args] for the separate shape; the fused list for opencode."""
+    if not isinstance(entry, dict):
+        return []
+    cmd = entry.get("command")
+    if isinstance(cmd, list):
+        return [t for t in cmd if isinstance(t, str)]
+    if not isinstance(cmd, str):
+        return []
+    toks = [cmd]
+    args = entry.get("args")
+    if isinstance(args, list):
+        toks.extend(t for t in args if isinstance(t, str))
+    return toks
+
+
+for name in sorted(server_map):
+    if not isinstance(name, str):
+        continue
+    why = None
+    if name not in declared:
+        if name in fixture_names:
+            why = "known-fixture-name"
+        elif prefix and name.startswith(prefix):
+            why = "fixture-prefix"
+    if why is None:
+        toks = launch_tokens(server_map[name])
+        if toks[:1] == ["evil"] or toks[:3] == ["npx", "-y", "evil"]:
+            why = "npx-y-evil-command"
+    if why is not None:
+        safe = name.replace("\t", " ").replace("\n", " ")
+        sys.stdout.write("%s\t%s\n" % (safe, why))
+sys.exit(0)
+PY
+}
+
+# ---------------------------------------------------------------------------
 # normalize_mcp_shape <canonical-json> <harness> <enabled>
 #
 # The §18.1 / L-554 SHARED SHAPE HELPER. Given the canonical launch spec (as
@@ -2338,7 +2452,6 @@ PY
 export -f parse_frontmatter
 export -f get_skill_field
 export -f strip_frontmatter
-export -f is_claude_only
 export -f toml_escape
 export -f toml_escape_description
 export -f read_canonical_version
@@ -2359,3 +2472,41 @@ export -f normalize_mcp_shape
 # and is pinned by a TS-only golden; it has no bash counterpart by design.
 export -f flatten_hook_rows
 export -f verify_hook_entry_present
+
+# ---------------------------------------------------------------------------
+# TD-434 (2026-08-31): portable stat/md5 helpers.
+#
+# BSD stat formats with `-f FORMAT`; GNU stat formats with `-c FORMAT` — and
+# GNU `stat -f` "succeeds" printing FILESYSTEM status, so the once-conventional
+# `stat -f %i FILE 2>/dev/null || stat -c %i FILE` fallback is broken on GNU:
+# the first arm exits ~0-or-1 while printing multi-line fs-status text (which
+# embeds the file path and MUTATING free-block counts), and command
+# substitution concatenates BOTH arms' stdout. Measured live: the gemini
+# hard-link verdict in check_harness_drift.sh was 100 % false-DRIFTED on the
+# ubuntu CI runner ("different bytes AND different inode" about byte-identical
+# hard links — rehearsal run 33402042908), because the fs-status strings never
+# compare equal and `md5 -q` does not exist on Linux (both hashes empty, the
+# content-equality arm silently skipped). Detect the stat dialect ONCE; never
+# call `stat -f` / `md5 -q` / `md5sum` directly — call these.
+# ---------------------------------------------------------------------------
+if stat -c %i / >/dev/null 2>&1; then _IGRIS_STAT_DIALECT=gnu; else _IGRIS_STAT_DIALECT=bsd; fi
+
+file_inode() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %i "$1" 2>/dev/null || echo ""
+  else stat -f %i "$1" 2>/dev/null || echo ""; fi
+}
+
+file_nlink() {
+  if [ "$_IGRIS_STAT_DIALECT" = gnu ]; then stat -c %h "$1" 2>/dev/null || echo "0"
+  else stat -f %l "$1" 2>/dev/null || echo "0"; fi
+}
+
+file_md5() {
+  if command -v md5 >/dev/null 2>&1; then md5 -q "$1" 2>/dev/null || echo ""
+  else md5sum "$1" 2>/dev/null | awk '{print $1}'; fi
+}
+
+export _IGRIS_STAT_DIALECT
+export -f file_inode   # TD-434
+export -f file_nlink   # TD-434
+export -f file_md5     # TD-434

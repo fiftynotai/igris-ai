@@ -27,19 +27,22 @@ export type McpHarness = HarnessId;
 /**
  * Canonical→per-harness env-VALUE emit rule.
  * INPUT: a canonical `${VAR}` ref (or, defensively, an already-literal value).
- * OUTPUT per harness:
- *   claude      → `${VAR}` verbatim (harness resolves + inherits exported env)
- *   gemini      → `${VAR}` verbatim (harness resolves + inherits exported env)
- *   antigravity → `${VAR}` verbatim (gemini lineage — resolves its own refs)
- *   opencode→ `{env:VAR}`         (token translation; harness resolves)
- *   codex   → the RESOLVED LITERAL from `secrets` (Codex resolves neither refs
- *             nor inherited env — sandbox `inherit="core"`; secrets MUST be
- *             passed for codex)
+ * OUTPUT — THREE forms, and the roster is partitioned by them with no residue.
+ * Read the switch below, not a list here: the two SPECIAL cases are named and
+ * everything else falls in the verbatim arm, so onboarding a harness cannot
+ * leave this comment short the way a hand-listed roster does.
+ *   opencode → `{env:VAR}` (token translation; harness resolves)
+ *   codex    → the RESOLVED LITERAL from `secrets` (Codex resolves neither refs
+ *              nor inherited env — sandbox `inherit="core"`; secrets MUST be
+ *              passed for codex)
+ *   EVERY OTHER harness → `${VAR}` verbatim (the harness resolves the ref and
+ *              inherits exported env; antigravity and cursor are gemini- and
+ *              claude-lineage respectively and resolve their own refs)
  *
  * For codex, when the ref's VAR is missing from `secrets`, returns
  * { value: null, missing: "<VAR>" } — NEVER a partial/empty literal, and NEVER
- * logs the (absent) value. For claude/gemini/opencode `secrets` is unused
- * (refs pass through), so it is optional.
+ * logs the (absent) value. codex is the ONLY harness that reads `secrets` at
+ * all, so the parameter is optional for every other one.
  *
  * A non-reference (already-literal) value passes through verbatim for EVERY
  * harness — opencode does NOT wrap a non-ref, and codex returns it as-is via

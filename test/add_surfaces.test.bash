@@ -113,7 +113,12 @@ EOF
 }
 
 teardown() {
-  [ -d "$PROJ" ] && rm -rf "$PROJ"
+  # TD-434 (2026-08-31): `if`-form, not a trailing `[ -d ] &&` AND-list —
+  # when setup() skips at the L-552 guard BEFORE creating $PROJ, the AND-list
+  # made teardown return 1, and a failing teardown turns every skip into
+  # `not ok … # skip`, killing the whole CI matrix suite on this file
+  # (first file alphabetically; red 2026-06-04 → 2026-08-31).
+  if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
 }
 
 @test "add skill (personal): vendors + projects the symlink + verifies, exit 0" {

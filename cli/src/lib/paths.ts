@@ -4,11 +4,19 @@
  * The brain root defaults to `~/.igris/` but honors `IGRIS_BRAIN_DIR` env
  * override (matches the existing shell convention from `igris_hooks_sync.sh`
  * and `verify_mirror.sh`). Tests sandbox the brain by setting that env var.
+ *
+ * `projectSettingsPath` is the one builder here that resolves into a repo
+ * CHECKOUT rather than the runtime tree, so it honours the twin `IGRIS_REPO_DIR`
+ * seam (TD-406/TD-408) and returns a decision instead of a bare string.
  */
 
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  resolveCanonicalRoot,
+  type CanonicalRootRefusal,
+} from "./canonical-root.js";
 
 /** Absolute path to the brain root (default: `~/.igris/`, override via IGRIS_BRAIN_DIR). */
 export function brainDir(): string {
@@ -157,9 +165,47 @@ export function loadoutOriginsPath(): string {
   return join(loadoutDirPath(), "origins.json");
 }
 
-/** Absolute path to a project's .claude/settings.json. */
-export function projectSettingsPath(projectPath: string): string {
-  return join(projectPath, ".claude", "settings.json");
+/**
+ * The outcome of resolving a project's `.claude/settings.json` — a path, or a
+ * refusal from the TD-406 containment seam.
+ */
+export type ProjectSettingsPathDecision =
+  | { allowed: true; path: string }
+  | {
+      allowed: false;
+      refusal: CanonicalRootRefusal;
+      declaredRoot: string | null;
+    };
+
+/**
+ * Absolute path to a project's `.claude/settings.json`, CONTAINED (TD-408).
+ *
+ * `.claude/settings.json` is tracked in this checkout, and its callers resolve
+ * the root from an `opts.projectRoot ?? process.cwd()` default — derive the
+ * current set with `grep -rn projectSettingsPath cli/src` — so the shape TD-406
+ * fixed for `core/SOUL.md` applies verbatim. The seam sits here, in the path
+ * builder, rather than at the call sites: the union return means a caller that
+ * ignores the refusal does not COMPILE, whereas a call-site guard is only as
+ * complete as the sweep that placed it, and TD-406's sweep — which read call
+ * sites — is the reason this brief exists. It also reads the way this module
+ * already reads: `brainDir()` at the top honours `IGRIS_BRAIN_DIR`, and
+ * `IGRIS_REPO_DIR` is its twin for the checkout half.
+ *
+ * Production (neither env var, no test context) always returns `allowed: true`
+ * with the byte-identical `join(projectPath, ".claude", "settings.json")`.
+ */
+export function projectSettingsPath(
+  projectPath: string,
+): ProjectSettingsPathDecision {
+  const decision = resolveCanonicalRoot(projectPath);
+  if (!decision.allowed) {
+    return {
+      allowed: false,
+      refusal: decision.reason,
+      declaredRoot: decision.declaredRoot,
+    };
+  }
+  return { allowed: true, path: join(decision.root, ".claude", "settings.json") };
 }
 
 /**
@@ -287,6 +333,83 @@ export function claudeJsonPath(): string {
 export function bundledMcpEntryPath(): string {
   const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
   return join(here, "..", "..", "dist", "brain-mcp-server", "dist", "index.js");
+}
+
+/**
+ * FR-240: absolute path to the bundled brain's compiled ROOT —
+ * `cli/dist/brain-mcp-server/dist/`.
+ *
+ * Same walk-up idiom (and therefore the same source/compiled duality) as
+ * {@link bundledMcpEntryPath}.
+ *
+ * WHY THE ROOT AND NOT THE `engine/` DIR. FR-238 only ever imported
+ * `engine/components/edges/whole-graph.js`, so {@link bundledBrainEngineDir}
+ * was anchored one level too deep to be reusable. FR-240's pure read layer puts
+ * two of its three modules under `dist/tools/`, which is OUTSIDE `dist/engine/`
+ * — so the resolver is anchored here and every consumer supplies its own
+ * relative path.
+ *
+ * MAINTAINING contract: this is a PATH-LITERAL dependency on a build artifact.
+ * A change to `copy-templates.sh`'s staging layout or to the brain's compiled
+ * tree MUST re-point this helper and `brain-bridge.ts` together, or the bridge
+ * degrades silently to `null` (R2).
+ */
+export function bundledBrainDistRoot(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "brain-mcp-server", "dist");
+}
+
+/**
+ * FR-238: absolute path to the bundled brain ENGINE directory —
+ * `cli/dist/brain-mcp-server/dist/engine/`.
+ *
+ * Retained as a NAMED sub-path of {@link bundledBrainDistRoot} rather than a
+ * second walk-up: two independent literals for one location is exactly the
+ * drift the MAINTAINING row warns about.
+ */
+export function bundledBrainEngineDir(): string {
+  return join(bundledBrainDistRoot(), "engine");
+}
+
+/**
+ * FR-240: absolute path to the bundled brain's VENDORED `node_modules` —
+ * `cli/dist/brain-mcp-server/node_modules/`.
+ *
+ * `sqlite-vec` and `@huggingface/transformers` are PRODUCTION dependencies of
+ * `brain-mcp-server`, so they live here rather than in the CLI's own tree. This
+ * is the one directory `cli/package.json` `files` EXCLUDES from the published
+ * tarball; `scripts/postinstall.mjs` restores it on a consumer machine. A
+ * dashboard reaching for the vector arm before that postinstall has run must
+ * therefore degrade, not throw.
+ */
+export function bundledBrainNodeModulesDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "brain-mcp-server", "node_modules");
+}
+
+/**
+ * FR-238: absolute path to the built dashboard bundle root —
+ * `cli/dist/dashboard/`.
+ *
+ * Resolved by the same walk-up idiom as {@link bundledMcpEntryPath}, which is
+ * exactly why it survives a global install: `dirname(fileURLToPath(
+ * import.meta.url))` resolves through a symlinked npm bin to the real package
+ * directory, so `npm i -g` and a repo checkout both land on the real
+ * `dist/dashboard/` (R1).
+ */
+export function dashboardBundleDir(): string {
+  const here = dirname(fileURLToPath(import.meta.url)); // cli/dist/lib or cli/src/lib
+  return join(here, "..", "..", "dist", "dashboard");
+}
+
+/**
+ * FR-238: absolute path to the single-instance lockfile
+ * `~/.igris/dashboard.lock`. Honors IGRIS_BRAIN_DIR via brainDir() — the same
+ * sandbox seam every other helper uses, so the bats/vitest suites can exercise
+ * double-invocation without touching the operator's real lock.
+ */
+export function dashboardLockPath(): string {
+  return join(brainDir(), "dashboard.lock");
 }
 
 /**

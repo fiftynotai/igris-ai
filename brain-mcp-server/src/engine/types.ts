@@ -62,6 +62,36 @@ export interface Migration {
   description: string;
   /** SQL to execute (may contain multiple statements separated by ;) */
   sql: string;
+  /**
+   * BR-083 D1a — OPTIONAL pre-flight, run OUTSIDE `db.transaction()`.
+   *
+   * `runMigrations` executes `sql` inside a transaction. Two things a
+   * destructive migration needs cannot happen there, and BOTH fail SILENTLY
+   * rather than loudly:
+   *
+   *  - `VACUUM INTO` (the shipped backup mechanism, `db.ts:1466`) **cannot run
+   *    inside a transaction** — SQLite refuses it.
+   *  - `PRAGMA foreign_keys = OFF`, required by SQLite's documented 12-step
+   *    table rebuild, is a **no-op inside a transaction** and reports no error.
+   *    The adapter sets `foreign_keys = ON` at `sqlite.ts:115`.
+   *
+   * Returning `false` ABORTS this migration: the component stays at the
+   * previous version and the next boot retries. That is `db.ts` v22's posture
+   * verbatim — *a backup nobody verified is not a backup, it is a hope*.
+   * A throw is treated the same way as `false` (logged, migration skipped) so
+   * a broken pre-flight can never take the process down mid-boot.
+   *
+   * `post` runs after the transaction COMMITS, for assertions that need the
+   * new schema to exist (`PRAGMA foreign_key_check`) and for restoring any
+   * pragma `pre` toggled. It cannot un-apply the migration — it reports.
+   *
+   * Typed as `unknown` rather than `Database.Database` because `types.ts` is
+   * the engine's driver-agnostic contract and must not import better-sqlite3;
+   * `sqlite.ts` passes its real handle and the hook narrows it.
+   */
+  pre?: (db: unknown) => boolean;
+  /** BR-083 D1a — optional post-commit verification. See {@link Migration.pre}. */
+  post?: (db: unknown) => void;
 }
 
 // ---------------------------------------------------------------------------

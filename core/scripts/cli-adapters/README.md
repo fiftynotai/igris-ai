@@ -37,8 +37,8 @@ resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
 
 | Script | Contract | Output |
 |--------|----------|--------|
-| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|all]` | Orchestrates: reads the manifest. All three agent harnesses (claude/codex/gemini) α-project from loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`). claude + codex emit via symlink; gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_loadout` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
-| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). All three agent harnesses use the per-harness loadout-resident file as their verdict basis (FR-159 retired the codex body-sha verdict). |
+| `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|opencode\|all]` | Orchestrates: reads the manifest. Every agent-target harness (`agentTargetTypes()` — claude/codex/gemini/opencode) α-projects from loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`). claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_loadout` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
+| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). Every agent-target harness uses the per-harness loadout-resident file as its verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
 
 `sync_codex_agents.sh` was RETIRED by FR-159 — the codex TOML emit moved to
 TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` (vendor-side) with a
@@ -210,6 +210,30 @@ or leaking a value while "documenting" it — is a regression. The 5 emitters +
 this drift compare ARE the thin MCP surface; there is nothing to delete and
 nothing to rewrite for distribution (npx is already a verbatim `command`).
 
+**The mcp-fixture arm (BR-099) is the fourth `verify_mcp` arm**, after the
+per-entry compare, the FR-212b grant invariant and the TD-284 agent-id
+coverage. It re-reads every (harness, config, map-key) triple the per-entry
+loop resolved — the SAME seam-resolved path, so `IGRIS_MCP_<HARNESS>_CONFIG`
+now has two readers — through `_common.sh::scan_mcp_fixture_entries`, which
+prints `<name>\t<why>` for each entry that is a test fixture: `known-fixture-name`
+(`IGRIS_MCP_FIXTURE_NAMES` = `demo-mcp personal-mcp core-mcp evil`),
+`fixture-prefix` (`IGRIS_MCP_FIXTURE_PREFIX` = `igris-fixture-`), or
+`npx-y-evil-command` (launch tokens `npx -y evil` / `evil` — claude/gemini/
+codex `command`+`args`, opencode's FUSED `command` list). The two name rules
+are skipped for a name the manifest declares FOR THAT HARNESS: `verify_mcp`
+collects one `<harness>:<name>` token per (block,target) row and passes the
+scan only the names whose declaring block targets the harness being scanned,
+so a block projecting `demo-mcp` to claude exempts the claude config only and
+the same name in the gemini config is still flagged; the command rule never
+is. Per hit: `[mcp-fixture/<name>/<harness>] DRIFTED` + `config :`
++ a reason with NO `differing key(s)` clause (so the TD-388 worktree exemption
+in `scripts/validate_harness_drift.sh` cannot swallow it), `TOTAL++`/`DRIFT++`;
+silent and count-neutral on a clean config. Gates: `$MCP_DRIFT_ROWS` non-empty
+and `FILTER='*'`. Never prints `env`, `args` or any value. TOML (codex) uses
+`extract_mcp_entry`'s loader fallback; with no TOML parser it prints nothing.
+Tests: `test/harness_mcp_fixture_guard.test.bash` (T1–T9b) and
+`harness_drift_gate.test.bash` W10.
+
 ## Orchestrator-identity surface — RETIRED (FR-202 M4)
 
 The `os_identity` projection surface (TD-233) was **removed**. Igris no longer
@@ -340,7 +364,7 @@ each surface `$def`):
 |---------|------|--------------|------------|----------------------------|
 | **agents** | material | portable-format | **shape-emit** — formats genuinely diverge (Claude MD / Gemini MD / OpenCode MD / Codex TOML); `compile_md_agent_target` translates each | `verify_agents` — per-agent tree-hash + symlink/hardlink-realpath verdict |
 | **skills** | material | portable-format | place-in-standard-dir | `verify_skills` — per-skill tree-hash + symlink/wrapper presence |
-| **mcp** | material | npx | merge-region | `verify_mcp` — secret-safe per-(mcp,target) compare (`verify_mcp_entry_drift`) |
+| **mcp** | material | npx | merge-region | `verify_mcp` — secret-safe per-(mcp,target) compare (`verify_mcp_entry_drift`) + the BR-099 mcp-fixture arm (`scan_mcp_fixture_entries`: fixture-named / `npx -y evil` entries in a real config → DRIFTED) |
 | **hooks** | material | native-add | merge-region | `verify_hook` — `verify_hook_entry_present` (presence-based MATCH/MISSING) |
 
 All four projected surfaces are **material** (content projected into a per-harness

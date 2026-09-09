@@ -24,6 +24,12 @@
  * Lifecycle pattern: top-level `main()` sets `process.exitCode` rather than
  * calling `process.exit(code)` so any pending async cleanup can flush.
  * better-sqlite3 itself is sync and explicitly closed in registry.ts.
+ *
+ * ONE EXCEPTION to "run and exit" (FR-238): `dashboard` is a LONG-LIVED
+ * foreground verb. Its action awaits a promise that does not resolve until
+ * SIGINT/SIGTERM arrives, so the exit code is set on shutdown rather than
+ * synchronously. Everything else about the pattern is unchanged — it still
+ * sets `process.exitCode` and never calls `process.exit`.
  */
 
 import { Command } from "commander";
@@ -50,10 +56,18 @@ import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
+import { runCognition } from "./verbs/cognition.js";
+import { runCeremony } from "./verbs/ceremony.js";
+import { runKpi } from "./verbs/kpi.js";
+import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
 import type { ExportTier, OnConflictPolicy } from "./types.js";
 import type { McpHarness } from "./lib/mcp-env-normalize.js";
+// TD-367 round 6: the `--cli-bridge` help text DERIVES its roster. The literal
+// it replaced named four targets while `applyBridgeOverride` validates against
+// this same accessor (six), so the shipped help contradicted the shipped error.
+import { knownCLITargets } from "./lib/cli-detect.js";
 import { setVerbosity, info, error as logError } from "./lib/log.js";
 
 /** Commander reducer for a repeatable option: accumulate into an array. */
@@ -117,7 +131,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--cli-bridge <list>",
-      "override auto-detected bridges: 'none' or 'claude,codex,gemini,opencode'",
+      `override auto-detected bridges: 'none' or a comma-separated subset of ${knownCLITargets().join(",")}`,
     )
     .option(
       "--dry-run",
@@ -134,6 +148,11 @@ async function main(argv: string[]): Promise<void> {
       "contributor dev-loop: register the igris-brain MCP from the --from-source clone, not the bundled copy (requires --from-source)",
       false,
     )
+    .option(
+      "--wipe-orphans",
+      "remove core.new.* staging residue left by an interrupted run, then proceed; a core.bak.* backup is never touched (BR-103)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
@@ -145,6 +164,7 @@ async function main(argv: string[]): Promise<void> {
         dryRun?: boolean;
         yes?: boolean;
         dev?: boolean;
+        wipeOrphans?: boolean;
       }): Promise<void> => {
         const code = await runInit({
           fromSource: opts.fromSource,
@@ -156,6 +176,7 @@ async function main(argv: string[]): Promise<void> {
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
           dev: opts.dev === true,
+          wipeOrphans: opts.wipeOrphans === true,
         });
         process.exitCode = code;
       },
@@ -230,6 +251,11 @@ async function main(argv: string[]): Promise<void> {
       false,
     )
     .option("-y, --yes", "skip channel-switch confirmation prompts", false)
+    .option(
+      "--wipe-orphans",
+      "remove core.new.* staging residue left by an interrupted run, then proceed; a core.bak.* backup is never touched (BR-103)",
+      false,
+    )
     .action(
       async (opts: {
         fromSource?: string;
@@ -237,6 +263,7 @@ async function main(argv: string[]): Promise<void> {
         propagate?: boolean;
         dryRun?: boolean;
         yes?: boolean;
+        wipeOrphans?: boolean;
       }): Promise<void> => {
         const code = await runRefresh({
           fromSource: opts.fromSource,
@@ -245,6 +272,7 @@ async function main(argv: string[]): Promise<void> {
           noPropagate: opts.propagate === false,
           dryRun: opts.dryRun === true,
           yes: opts.yes === true,
+          wipeOrphans: opts.wipeOrphans === true,
         });
         process.exitCode = code;
       },
@@ -257,7 +285,12 @@ async function main(argv: string[]): Promise<void> {
       "--slug <slug>",
       "registry slug (default: basename of path)",
     )
-    .option("--no-hooks", "accepted for back-compat; a no-op (hooks project globally at `igris init`)")
+    // FR-212d: the retired HARNESS-hooks flag (the per-project settings.json
+    // merge it gated no longer exists). Unrelated to the GIT hooks below.
+    .option("--no-hooks", "accepted for back-compat; a no-op (harness hooks project globally at `igris init`)")
+    // FR-243: git-level gates are a property of a registered project — step
+    // 7b symlinks .git/hooks/{pre-commit,commit-msg} -> ~/.igris/core/git-hooks/.
+    .option("--no-git-hooks", "do not install the Igris git hooks into <path>/.git/hooks/")
     .option(
       "--dry-run",
       "preview the planned writes without performing any",
@@ -269,6 +302,7 @@ async function main(argv: string[]): Promise<void> {
         opts: {
           slug?: string;
           hooks?: boolean;
+          gitHooks?: boolean;
           dryRun?: boolean;
         },
       ): Promise<void> => {
@@ -278,6 +312,8 @@ async function main(argv: string[]): Promise<void> {
           // commander turns --no-hooks into opts.hooks=false. Default is true.
           // FR-212d: install is register-only — installHooks is vestigial.
           installHooks: opts.hooks !== false,
+          // commander turns --no-git-hooks into opts.gitHooks=false (FR-243).
+          installGitHooks: opts.gitHooks !== false,
           dryRun: opts.dryRun === true,
         });
         process.exitCode = code;
@@ -478,7 +514,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "INTERNAL (project-mcp/project-hook): which harness to project ONE entry into: claude | codex | gemini | opencode",
+      "INTERNAL (project-mcp/project-hook): which harness to project ONE entry into. Any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); the run verb then narrows it to the harnesses that declare the surface — project-mcp to mcpTargetTypes(), project-hook to hookTargetTypes()",
     )
     .option(
       "--overlay <path>",
@@ -718,7 +754,11 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-180: one-step add of a surface (skill | agent | mcp | hook) — " +
         "materializes (vendor/register for personal, write core/ for core), projects " +
-        "to all four harnesses (claude/gemini/codex/opencode), AND verifies drift-clean. " +
+        "to every harness whose descriptor declares that surface (skills/mcp: every " +
+        "harness with an agent_id; agents: every harness with an 'agents' block; " +
+        "hooks: every harness with hooks.supported true — run " +
+        "`jq -r '.harnesses | keys[]' harness-manifest.json` to re-derive the roster), " +
+        "AND verifies drift-clean. " +
         "Never silently no-ops (TD-235). Core-vs-personal is auto-detected (igris-ai " +
         "checkout = core) and overridable with --core / --no-core; the resolved mode is " +
         "always printed. ALL FOUR surfaces (skill, agent, mcp, hook) ship " +
@@ -747,7 +787,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "restrict projection to one harness: claude | codex | gemini | opencode",
+      "restrict projection to one harness — any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); a harness that does not declare the surface projects nothing",
     )
     // FR-180 Phase 3: MCP launch options (the `mcp` arm — same surface as
     // `loadout add-mcp`). --env values MUST be ${VAR} indirection refs.
@@ -858,8 +898,12 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-203: the symmetric inverse of `igris add` — one-step removal of a " +
         "surface (skill | agent | mcp | hook). UN-PROJECTS from every harness " +
-        "(deletes the loadout-anchored symlink/hardlink, un-merges the named " +
-        "native-config block), de-materializes from the loadout (personal) / " +
+        "the surface actually REACHED — never the whole roster: skills/mcp from " +
+        "every harness with an agent_id, agents from the entry's own targets[], " +
+        "hooks from every harness with hooks.supported true (run " +
+        "`jq -r '.harnesses | keys[]' harness-manifest.json` to re-derive the " +
+        "roster). Deletes the loadout-anchored symlink/hardlink, un-merges the " +
+        "named native-config block, de-materializes from the loadout (personal) / " +
         "deletes the core/ source + un-sweeps the §13 enumeration surfaces (core), " +
         "then VERIFIES the surface is ABSENT (drift-clean = removed). Core-vs-" +
         "personal is auto-detected and overridable with --core / --no-core; the " +
@@ -879,7 +923,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--harness <type>",
-      "restrict un-projection to one harness: claude | codex | gemini | opencode | antigravity",
+      "restrict un-projection to one harness — any declared harness id (`jq -r '.harnesses | keys[]' harness-manifest.json`); a harness the surface never reached un-projects nothing",
     )
     .option(
       "--event <event>",
@@ -1153,6 +1197,108 @@ async function main(argv: string[]): Promise<void> {
         process.exitCode = code;
       },
     );
+
+  program
+    .command("cognition <action>", { hidden: true })
+    .description(
+      "TD-327 / TD-423: per-instance liveness and yield for the cognition subsystem. Actions: health, yield. BOTH derive their roster from the brain's projected extractor registry (cognition_instances), never a hand-list — a new extractor appears in each with no edit. health answers \"is it running?\"; yield answers \"is what it produces worth anything?\" from each instance's declared `produced` identity predicate: rows produced, judged, kept, and the pending-queue share. Every yield rate carries its numerator, denominator and a denominator LABEL, and reads null — never 0 — over an empty denominator; an instance with no verdicts reports unmeasured. Expiry is separated from judgment, so an expired row is never a rejection. Reads are read-only and LOCAL (igris_event_log routes to the remote and would miss local-only runs). Full account: docs/COGNITION.md. Prints a JSON digest. Exit 0 even when degraded; unknown action → exit 2.",
+    )
+    .option("--json", "emit the digest as JSON to stdout (default; on for the boot path)", true)
+    .action((action: string, opts: { json?: boolean }): void => {
+      process.exitCode = runCognition({
+        action,
+        json: opts.json !== false,
+      });
+    });
+
+  program
+    .command("ceremony <action>", { hidden: true })
+    .description(
+      "FR-268: brain-timed ceremony stamps. Actions: start, stop. Writes ceremony_events through the local write door (create-never); created_at is the DB clock and duration_ms is SQL-computed on stop from the paired open start — never caller-supplied. The four ceremony skills call this as their first and last executable step. Prints a JSON digest. Exit 0 even when degraded; unknown action/name → exit 2.",
+    )
+    .option("--name <ceremony>", "boot | rest | register | hunt-init")
+    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .option("--instance-id <id>", "instance id when known (boot's start predates the mint — omit there)")
+    .option("--brief <id>", "brief id (register / hunt-init)")
+    .option("--json", "emit the digest as JSON to stdout (default)", true)
+    .action(
+      (
+        action: string,
+        opts: { name?: string; project?: string; instanceId?: string; brief?: string; json?: boolean },
+      ): void => {
+        process.exitCode = runCeremony({
+          action,
+          name: opts.name,
+          project: opts.project,
+          instanceId: opts.instanceId,
+          brief: opts.brief,
+          json: opts.json !== false,
+        });
+      },
+    );
+
+  // FR-268 — a REPORTING verb (markdown by default), visible: the operator
+  // asks it directly; /ops renders it whole and /scan renders its --alarm line.
+  program
+    .command("kpi")
+    .description(
+      "FR-268: the seven OS KPIs (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost) computed on read from the brain's records — hunt_runs, brief_status, ceremony_runs. Weeks are Monday–Sunday UTC. Read-only. --sql prints the derivations for sqlite3; --alarm prints the one-line week-over-week reading /scan shows. Exit 0 even when degraded.",
+    )
+    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the cwd basename)")
+    .option("--weeks <n>", "how many UTC weeks back, counting the current partial one", "4")
+    .option("--json", "emit the digest as JSON", false)
+    .option("--sql", "print the seven derivations verbatim and exit", false)
+    .option("--alarm", "print the one-line alarm: last complete week vs the one before", false)
+    .action((opts: { project?: string; weeks?: string; json?: boolean; sql?: boolean; alarm?: boolean }): void => {
+      process.exitCode = runKpi({
+        project: opts.project,
+        weeks: opts.weeks === undefined ? undefined : Number.parseInt(opts.weeks, 10),
+        json: opts.json === true,
+        sql: opts.sql === true,
+        alarm: opts.alarm === true,
+      });
+    });
+
+  // FR-238 — the CLI's first LONG-LIVED verb. Visible (not hidden): the
+  // dashboard is a product surface, not an internal boot-lifecycle step.
+  // NOTE the lifecycle exception: `runDashboard` does not resolve until a
+  // signal arrives, so `process.exitCode` is set after the await rather than
+  // synchronously. That is the whole point of a foreground server.
+  program
+    .command("dashboard")
+    .description(
+      "FR-238/FR-241: start the local IGRIS dashboard — a loopback-only server " +
+        "(127.0.0.1) " +
+        "serving a live lens over the brain, and open it in the browser. " +
+        "Every GET changes no row; since FR-241 one endpoint (POST /api/triage) " +
+        "writes — it triages cognition suggestions and perception candidates, " +
+        "and rejecting a first-time candidate DELETES it. Runs in the " +
+        "foreground; Ctrl-C stops it. A second invocation re-opens the running " +
+        "instance instead of binding a second port.",
+    )
+    .option(
+      "--port <n>",
+      "exact port to bind. Without this the verb tries 7317, then an OS-assigned port. An explicit port that is taken is a hard failure — explicit intent is never silently reassigned.",
+    )
+    .option("--no-open", "do not launch a browser")
+    .option("--smoke", "hidden self-check: start, probe, print a JSON digest, exit", false)
+    .action(async (opts: { port?: string; open?: boolean; smoke?: boolean }) => {
+      let port: number | undefined;
+      if (opts.port !== undefined) {
+        port = Number.parseInt(opts.port, 10);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) {
+          logError(`dashboard: --port must be an integer 1-65535 (got "${opts.port}")`);
+          process.exitCode = 2;
+          return;
+        }
+      }
+      process.exitCode = await runDashboard({
+        port,
+        noOpen: opts.open === false,
+        smoke: opts.smoke === true,
+        cliVersion: readPackageVersion(),
+      });
+    });
 
   program
     .command("export <project>")

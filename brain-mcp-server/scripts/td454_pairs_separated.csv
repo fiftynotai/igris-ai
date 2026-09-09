@@ -1,0 +1,166 @@
+id_a,id_b,design,score,label,shape,separated_by,projects_a,projects_b
+1596,1614,a,0.5806,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1486,1614,a,0.4063,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1614,1698,a,0.3235,DIFFERENT,S2,gate|gate+strip,attendance_app lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1434,1486,a,0.3030,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1430,1614,a,0.2941,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1434,1596,a,0.2703,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1434,1698,a,0.2647,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1331,1434,a,0.2571,DIFFERENT,S1,gate|strip|gate+strip,attendance_app fifty_eco_system hadir-system lifeos,attendance_app hadir hadir-system lifeos
+1474,1486,a,0.2500,DIFFERENT,S1,gate|strip|gate+strip,hadir hadir-system igris-ai lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1291,1698,c,0.3871,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1486,1831,c,0.3333,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1486,1695,c,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1695,1698,c,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir hadir-system moca-hadir-app,attendance_app hadir-system lifeos moca-hr-agent
+1341,1801,c,0.3103,DIFFERENT,S3,none,,
+1430,1495,c,0.3030,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1355,1801,c,0.2963,DIFFERENT,S3,none,fifty_eco_system,
+1430,1695,c,0.2903,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1446,1486,c,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1446,1698,c,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1430,1831,c,0.2826,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1430,1810,c,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1469,1698,c,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app,attendance_app hadir-system lifeos moca-hr-agent
+1486,1668,c,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1831,c,0.2766,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1357,1411,c,0.2759,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1486,1810,c,0.2703,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1515,1516,c,0.2667,DIFFERENT,S1,gate|gate+strip,fifty_eco_system lifeos,hadir lifeos
+1326,1888,c,0.2647,DIFFERENT,S3,none,fifty_eco_system,
+1486,1830,c,0.2619,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,igris-ai mbrgea-ai
+1297,1830,c,0.2571,DIFFERENT,EQ,strip|gate+strip,igris-ai mbrgea-ai,igris-ai mbrgea-ai
+1430,1446,c,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1495,c,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1789,c,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1789,c,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1271,1815,c,0.2500,DIFFERENT,S3,none,,
+1377,1411,c,0.2500,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1425,1486,c,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1430,1521,c,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1430,1668,c,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1486,1798,c,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1569,1698,c,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1698,1798,c,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1291,1698,cg,0.3871,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1695,1698,cg,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir hadir-system moca-hadir-app,attendance_app hadir-system lifeos moca-hr-agent
+1341,1801,cg,0.3103,DIFFERENT,S3,none,,
+1355,1801,cg,0.2963,DIFFERENT,S3,none,fifty_eco_system,
+1446,1486,cg,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1446,1698,cg,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1469,1698,cg,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app,attendance_app hadir-system lifeos moca-hr-agent
+1357,1411,cg,0.2759,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1515,1516,cg,0.2667,DIFFERENT,S1,gate|gate+strip,fifty_eco_system lifeos,hadir lifeos
+1271,1815,cg,0.2500,DIFFERENT,S3,none,,
+1377,1411,cg,0.2500,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1425,1486,cg,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1569,1698,cg,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1486,1831,cp,0.3333,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1486,1695,cp,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1430,1495,cp,0.3030,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1430,1695,cp,0.2903,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1430,1831,cp,0.2826,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1430,1810,cp,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1486,1668,cp,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1831,cp,0.2766,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1486,1810,cp,0.2703,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1326,1888,cp,0.2647,DIFFERENT,S3,none,fifty_eco_system,
+1486,1830,cp,0.2619,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,igris-ai mbrgea-ai
+1297,1830,cp,0.2571,DIFFERENT,EQ,strip|gate+strip,igris-ai mbrgea-ai,igris-ai mbrgea-ai
+1430,1446,cp,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1495,cp,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1789,cp,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1789,cp,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1430,1521,cp,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1430,1668,cp,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1486,1798,cp,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1798,cp,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1596,1614,ac,0.5806,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1486,1614,ac,0.4063,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1513,1614,ac,0.3939,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1291,1698,ac,0.3871,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1300,1515,ac,0.3333,DIFFERENT,S2,gate|gate+strip,attendance_app fifty_eco_system hadir hadir-system lifeos,fifty_eco_system lifeos
+1325,1703,ac,0.3333,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1357,1703,ac,0.3333,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1486,1831,ac,0.3333,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1596,1831,ac,0.3333,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1816,1883,ac,0.3243,DIFFERENT,S3,none,attendance_app,
+1614,1698,ac,0.3235,DIFFERENT,S2,gate|gate+strip,attendance_app lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1486,1695,ac,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1695,1698,ac,0.3226,DIFFERENT,S1,gate|gate+strip,attendance_app hadir hadir-system moca-hadir-app,attendance_app hadir-system lifeos moca-hr-agent
+1446,1614,ac,0.3125,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app lifeos
+1270,1703,ac,0.3103,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1341,1801,ac,0.3103,DIFFERENT,S3,none,,
+1315,1358,ac,0.3043,DIFFERENT,S2,gate|gate+strip,attendance_app fifty_eco_system hadir hadir-system igris-ai lifeos,lifeos
+1430,1495,ac,0.3030,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1434,1486,ac,0.3030,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1614,1668,ac,0.3030,DIFFERENT,S2,gate|gate+strip,attendance_app lifeos,attendance_app
+1290,1703,ac,0.3000,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1377,1703,ac,0.3000,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1315,1515,ac,0.2963,DIFFERENT,S2,gate|gate+strip,attendance_app fifty_eco_system hadir hadir-system igris-ai lifeos,fifty_eco_system lifeos
+1355,1801,ac,0.2963,DIFFERENT,S3,none,fifty_eco_system,
+1430,1614,ac,0.2941,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app lifeos
+1789,1822,ac,0.2941,DIFFERENT,S3,none,attendance_app,
+1340,1703,ac,0.2903,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1392,1397,ac,0.2903,DIFFERENT,S2,gate|gate+strip,fifty_eco_system,attendance_app fifty_eco_system hadir hadir-system lifeos
+1430,1695,ac,0.2903,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1425,1883,ac,0.2895,DIFFERENT,S3,none,lifeos,
+1798,1883,ac,0.2895,DIFFERENT,S3,none,attendance_app,
+1300,1358,ac,0.2857,DIFFERENT,S2,gate|strip|gate+strip,attendance_app fifty_eco_system hadir hadir-system lifeos,lifeos
+1446,1486,ac,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1446,1698,ac,0.2857,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1596,1695,ac,0.2857,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1430,1831,ac,0.2826,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1330,1703,ac,0.2813,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system
+1495,1614,ac,0.2813,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app lifeos
+1300,1464,ac,0.2800,DIFFERENT,S3,none,attendance_app fifty_eco_system hadir hadir-system lifeos,
+1430,1810,ac,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1469,1698,ac,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app,attendance_app hadir-system lifeos moca-hr-agent
+1486,1668,ac,0.2778,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1831,ac,0.2766,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1357,1411,ac,0.2759,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1434,1596,ac,0.2703,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1486,1810,ac,0.2703,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1676,1883,ac,0.2703,DIFFERENT,S3,none,attendance_app,
+1515,1516,ac,0.2667,DIFFERENT,S1,gate|gate+strip,fifty_eco_system lifeos,hadir lifeos
+1521,1614,ac,0.2667,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app lifeos
+1596,1795,ac,0.2667,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse customerpulse-android customerpulse-flutter igris-os-eval
+1325,1570,ac,0.2647,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system moca-hadir-app
+1326,1888,ac,0.2647,DIFFERENT,S3,none,fifty_eco_system,
+1434,1698,ac,0.2647,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir hadir-system lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1614,1685,ac,0.2647,DIFFERENT,S2,gate|gate+strip,attendance_app lifeos,attendance_app
+1789,1883,ac,0.2632,DIFFERENT,S3,none,attendance_app,
+1805,1883,ac,0.2632,DIFFERENT,S3,none,attendance_app,
+1486,1830,ac,0.2619,DIFFERENT,S1,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,igris-ai mbrgea-ai
+1692,1831,ac,0.2609,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,customerpulse hadir-system igris-os-eval moca-hr-agent
+1315,1379,ac,0.2581,DIFFERENT,S2,gate|gate+strip,attendance_app fifty_eco_system hadir hadir-system igris-ai lifeos,lifeos
+1357,1570,ac,0.2581,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,fya-hadir-app hadir hadir-system moca-hadir-app
+1521,1692,ac,0.2581,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1692,1695,ac,0.2581,DIFFERENT,S1,gate|strip|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app hadir hadir-system moca-hadir-app
+1275,1883,ac,0.2571,DIFFERENT,S3,none,lifeos,
+1297,1830,ac,0.2571,DIFFERENT,EQ,strip|gate+strip,igris-ai mbrgea-ai,igris-ai mbrgea-ai
+1331,1434,ac,0.2571,DIFFERENT,S1,gate|strip|gate+strip,attendance_app fifty_eco_system hadir-system lifeos,attendance_app hadir hadir-system lifeos
+1430,1446,ac,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1495,ac,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1486,1789,ac,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1528,1883,ac,0.2571,DIFFERENT,S3,none,lifeos,
+1574,1883,ac,0.2571,DIFFERENT,S3,none,lifeos,
+1614,1810,ac,0.2571,DIFFERENT,S2,gate|strip|gate+strip,attendance_app lifeos,attendance_app
+1698,1789,ac,0.2571,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1446,1596,ac,0.2564,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1271,1815,ac,0.2500,DIFFERENT,S3,none,,
+1291,1614,ac,0.2500,DIFFERENT,S2,gate|strip|gate+strip,lifeos,attendance_app lifeos
+1299,1300,ac,0.2500,DIFFERENT,S3,none,,attendance_app fifty_eco_system hadir hadir-system lifeos
+1315,1425,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app fifty_eco_system hadir hadir-system igris-ai lifeos,lifeos
+1315,1464,ac,0.2500,DIFFERENT,S3,none,attendance_app fifty_eco_system hadir hadir-system igris-ai lifeos,
+1358,1397,ac,0.2500,DIFFERENT,S2,gate|strip|gate+strip,lifeos,attendance_app fifty_eco_system hadir hadir-system lifeos
+1377,1411,ac,0.2500,DIFFERENT,S1,gate|gate+strip,fifty_eco_system,hadir
+1397,1515,ac,0.2500,DIFFERENT,S2,gate|strip|gate+strip,attendance_app fifty_eco_system hadir hadir-system lifeos,fifty_eco_system lifeos
+1425,1486,ac,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1430,1521,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,lifeos
+1430,1668,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1474,1486,ac,0.2500,DIFFERENT,S1,gate|strip|gate+strip,hadir hadir-system igris-ai lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1485,1883,ac,0.2500,DIFFERENT,S3,none,lifeos,
+1486,1798,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1569,1698,ac,0.2500,DIFFERENT,S2,gate|gate+strip,lifeos,attendance_app hadir-system lifeos moca-hr-agent
+1596,1668,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app
+1698,1798,ac,0.2500,DIFFERENT,S2,gate|gate+strip,attendance_app hadir-system lifeos moca-hr-agent,attendance_app

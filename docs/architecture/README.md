@@ -16,6 +16,7 @@ For any specific subsystem, read its per-feature doc directly. These are the sou
 
 - **[`typed_edges.md`](./typed_edges.md)** — Foundational graph layer over briefs, learnings, errors, sessions, and goals (FR-105). Soft-delete on archive; relation catalog driven by enums.
 - **[`graph_traversal.md`](./graph_traversal.md)** — Three read-only MCP tools — `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph` — for structured navigation of the entity-edge graph (FR-113).
+- **[`whole_brain_graph.md`](./whole_brain_graph.md)** — Cross-project graph data layer behind `igris_graph_brain` (FR-237). Composite `type|project|id` node key, the ambiguous-edge resolution rule, drill-down as a depth-1 closure over the same assembled graph, and the stated scale threshold.
 - **[`goals.md`](./goals.md)** — Outcome-level goals as first-class entities distinct from briefs (FR-110). Goals own measurable outcomes; briefs own work items.
 
 ## Perception & learning

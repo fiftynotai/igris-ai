@@ -63,6 +63,8 @@ export type RunFailedReason =
   | 'non_zero_exit'      // child exited with code !== 0
   | 'timeout'            // soft 60s SIGTERM fired
   | 'parse_error'        // extractJsonArrayReply returned [] from non-empty stdout
+  | 'api_error'          // TD-447 — claude reported an API failure in its result envelope
+  | 'auth_error'         // TD-447 — same envelope, 401/403 or an authentication message
   | 'db_error'           // INSERT into learnings or learnings table missing
   | 'unknown';           // catch-all in the runner-level try/catch
 

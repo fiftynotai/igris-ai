@@ -1,9 +1,10 @@
 /**
  * Brain Engine v7.0 -- Cache Component
  *
- * Filesystem cache layer that regenerates markdown files from the brain
+ * Filesystem cache layer that projects markdown files from the brain
  * DB into ~/.igris/projects/{project}/. Listens to event bus events from
  * briefs and sessions components to auto-update the cache on writes.
+ * Brief writes are a guarded projection (TD-414).
  *
  * Provides: igris_cache_rebuild, igris_cache_clean
  *
@@ -44,8 +45,12 @@ export function createCacheComponent(): BrainComponent {
     if (!project || !brief_id) return;
 
     try {
-      cacheBrief(project as string, brief_id as string);
-      _ctx.log.info(`Cached brief ${brief_id} for project ${project}`);
+      const outcome = cacheBrief(project as string, brief_id as string);
+      if (outcome === 'refused-local-newer') {
+        _ctx.log.warn(`TD-414: kept local ${brief_id} for ${project} (${payload.event}) — newer than brain copy`);
+      } else {
+        _ctx.log.info(`Cached brief ${brief_id} for project ${project} (${outcome})`);
+      }
     } catch (err) {
       _ctx.log.error(`Failed to cache brief ${brief_id} for ${project}: ${errMsg(err)}`);
     }
@@ -105,7 +110,7 @@ export function createCacheComponent(): BrainComponent {
         // -----------------------------------------------------------------
         {
           name: 'igris_cache_rebuild',
-          description: 'Rebuild filesystem cache for a project. Regenerates markdown files from brain DB into ~/.igris/projects/{project}/.',
+          description: 'Rebuild filesystem cache for a project. Projects markdown files from brain DB into ~/.igris/projects/{project}/. Local brief files newer than the brain copy are kept unless force is true.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -118,6 +123,10 @@ export function createCacheComponent(): BrainComponent {
                 type: 'string',
                 enum: ['briefs', 'sessions', 'all'],
                 description: 'Which files to rebuild (default: all)',
+              },
+              force: {
+                type: 'boolean',
+                description: 'Overwrite local brief files even when they are newer than the brain copy',
               },
             },
             required: ['project'],
@@ -173,8 +182,8 @@ export function createCacheComponent(): BrainComponent {
           { name: 'cache.cleaned', description: 'Filesystem cache was removed for a project' },
         ],
         listens: [
-          { name: 'brief.created', description: 'Auto-cache brief when a new brief is created' },
-          { name: 'brief.synced', description: 'Auto-cache brief when a brief is synced/updated' },
+          { name: 'brief.created', description: 'Guarded projection of the brief file when a new brief is created' },
+          { name: 'brief.synced', description: 'Guarded projection of the brief file when a brief is synced/updated' },
           { name: 'session.file.updated', description: 'Auto-cache session file when updated' },
         ],
       };

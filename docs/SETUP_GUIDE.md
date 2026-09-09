@@ -13,7 +13,7 @@ Before you begin, ensure you have:
 - **Python 3** - For JSON manipulation and utilities (usually pre-installed on Mac/Linux)
 - **Bash** - Shell environment (Mac/Linux/WSL on Windows)
 - **sqlite3** - For brain database operations (usually pre-installed)
-- **Node.js 20+** - (Optional) Required only if using the MCP brain server
+- **Node.js `>=22.0.0 <23.0.0 || >=24.0.0 <27.0.0`** - REQUIRED (not optional: the `igris` CLI itself is a Node program). `better-sqlite3` publishes no prebuild outside this range, so another Node cannot install the package without a C++ toolchain. Measured 2026-09-08 in stock `node:<major>-bookworm-slim` containers on arm64 and x64; note the pass set is not contiguous — Node 23 has no prebuild.
 
 ---
 
@@ -35,9 +35,10 @@ igris install .
 
 **What this does:**
 - Bootstraps the centralized brain at `~/.igris/` (SQLite database with FTS5 search, agents, skills, prompts)
-- Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, and Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family). First-class harnesses are Claude Code, OpenCode, and Antigravity; Codex and Gemini CLI are supported bridges.
-- Notes Cursor as an onboarding target, not a shipped surface.
+- Registers the bundled `igris-brain` MCP server into the supported harness configs: Claude Code → `~/.claude.json`, OpenCode → `~/.config/opencode/opencode.json`, Codex → `~/.codex/config.toml`, Gemini CLI → `~/.gemini/settings.json`, Antigravity → `~/.gemini/config/mcp_config.json` (Antigravity rides the Gemini config family, from its own file), and Cursor → `~/.cursor/mcp.json`.
+- First-class harnesses — Igris's gates run natively there: Claude Code, OpenCode, Antigravity. Bridge harnesses — brain, skills and MCP reach them, and agents too where the harness has a static-agent surface (Cursor has none; it reads the canonical agent files in-process instead); only the gates soften to advisories: Codex, Gemini CLI, Cursor. The tier derives from `harnesses.<id>.hooks.supported` in `harness-manifest.json` — see [Harness tiers](multi-cli.md#harness-tiers) for the definition and the one-line command that re-derives the membership.
 - **Projects every surface GLOBALLY at `igris init`** (FR-212c/d): skills via the pinned `skills` CLI into the universal store (`~/.claude/skills` + `~/.agents/skills`); agents into the global harness agent dirs; the canonical Igris hooks block merged ONCE into the GLOBAL `~/.claude/settings.json`
+- **Installs the git-level gates into your project (FR-243):** `igris install` step 7b symlinks `.git/hooks/pre-commit` and `.git/hooks/commit-msg` to `~/.igris/core/git-hooks/<name>` (landed by `igris init` / `igris refresh`). These are GIT hooks — the conventional-commit summary length, the acceptance-criteria and agent-event gates on closing commits, the PI-004 phase guard, and the `gitleaks` secret scan — distinct from the HARNESS hooks above. A pre-existing hook of your own is backed up as `<hook>.pre-igris.bak.<epoch>` first; with `core.hooksPath` set (husky / lefthook) nothing is written and the command tells you to add the two files to that pipeline. Opt out with `igris install . --no-git-hooks`. **Prerequisite for the secret scan:** `gitleaks` on PATH (`brew install gitleaks`) — without it the hook still runs but prints a `SECRET SCAN DISARMED` box on every commit and `igris doctor` reports `secret-scan-disarmed` until it is installed.
 - Registers the project in the brain so it shows up in `/ops` and cross-project queries — this registration is what de-no-ops the global hooks for the project (the `_gate.sh` registration gate)
 
 > **`igris install <path>` is REGISTER-ONLY (FR-212d):** it writes NO per-project
@@ -91,18 +92,57 @@ igris init --persona professional
 
 > **Note on `igris refresh`:** a refresh re-fetches `~/.igris/core/` (where `SOUL.md` lives) but preserves your `config.json` toggles. Because the active persona is written under `core/SOUL.md`, **re-run `igris configure --persona <name>`** after a refresh if you want to keep a non-default persona.
 
+### Upgrading the brain core (`igris init --upgrade` / `igris refresh`)
+
+Both verbs stage a fresh `core/` beside the live one and promote it with ONE
+rename, keeping exactly one `core.bak.<ts>` for recovery (older backups are
+pruned). Since BR-103 they share three rules:
+
+- **The recorded source decides.** With no `--from-source` / `--channel`, the
+  source is what `~/.igris/.install-source.json` records: a from-source machine
+  re-copies from that checkout (zero network); a release-channel machine
+  re-resolves the SAME tag. Changing the source is a channel switch and asks
+  for confirmation (`--yes` accepts). Note the release pin: a `release` record
+  is pinned to its recorded tag on `igris refresh` — new core content (the
+  FR-243 git hooks, for example) reaches a released machine at the next tag,
+  only by naming it: `igris refresh --channel <new-tag>` or `igris init
+  --upgrade --channel <new-tag>` — a bare `init --upgrade` re-resolves the
+  recorded tag exactly as `refresh` does, since both share one resolver (O-3,
+  follow-up brief).
+- **A real interruption refuses, before anything is written.** `core.new.*`
+  staging residue (a run that died mid-stage) → refuse; clear it with
+  `--wipe-orphans`, which removes staging residue only and never a backup —
+  and if the wipe uncovers the next shape below, it refuses on that too. A
+  `core.bak.*` with NO `core/` (a swap that died between its two renames) →
+  refuse and print the restore command (`mv <bak> ~/.igris/core`); the verb
+  never restores or deletes a backup for you. A retained backup beside a
+  healthy `core/` is the normal state and proceeds silently.
+- **Runtime-only files survive.** `~/.igris/core/harness-manifest.json` is
+  regenerated from the source root on every swap; `docs/component-manifest.md`
+  is carried over; any other file that only the prior core had is reported
+  under `--verbose` and NOT carried (an upgrade may mean to remove it).
+
 ### Verify Installation
 
 ```bash
 # FR-212d: surfaces project GLOBALLY (not into the project repo). Confirm the
 # global skills store + the global hooks block + the brain MCP registration:
 ls -la ~/.claude/skills/        # skills via the `skills` CLI delegate (claude)
-ls -la ~/.agents/skills/        # the cross-CLI universal store (codex/gemini/opencode/antigravity)
+ls -la ~/.agents/skills/        # the cross-CLI universal store (every skills-target harness EXCEPT claude)
 cat ~/.claude/settings.json     # the ONE global Igris hooks block (FR-212c)
 igris doctor                    # registry + brain-MCP + drift health
 
-# The project repo gets NO Igris files (register-only install): no .claude/
-# symlink layer, no settings.json, no .igris_version, no CLAUDE.md.
+# FR-243: the git-level gates. Both should be symlinks into ~/.igris/core/git-hooks/
+ls -l .git/hooks/pre-commit .git/hooks/commit-msg
+# Every commit prints one layers line — read it once. A healthy consumer repo:
+#   [pre-commit] layers: phase-guard=off (no brain db) secret-scan=active (gitleaks defaults) repo-validators=n/a (not the igris-ai checkout)
+# `secret-scan=DISARMED (gitleaks not installed)` means commits are NOT being
+# scanned for credentials: `brew install gitleaks`. `igris doctor` shows the
+# same two facts as `git-hooks-missing` (per project) / `secret-scan-disarmed`.
+
+# The project repo gets NO Igris files inside the working tree (register-only
+# install): no .claude/ symlink layer, no settings.json, no .igris_version, no
+# CLAUDE.md — only the two .git/hooks/ symlinks above, which git never commits.
 
 # Brain-side state (outside the project repo) lives under:
 # ~/.igris/projects/<slug>/
@@ -137,8 +177,19 @@ python3 -c "import json; print(json.load(open('$HOME/.claude.json'))['mcpServers
 igris doctor
 ```
 
-If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
-`igris init --upgrade`) to register it, then restart Claude Code.
+If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` to
+register it, then restart Claude Code.
+
+**What `--fix` does and does not do (BR-103).** It runs every repair in
+dependency order, each isolated, and prints a per-fix outcome table
+(`| class | target | action | outcome | now |`; `now` is a live re-probe and
+drives the exit code). It records a missing `bridge-missing` harness in
+`config.json#cli_targets`, backfills the brain MCP, re-merges the global hooks,
+installs the per-project git hooks, links the antigravity skills dir and
+chmods secret files. It **never replaces `~/.igris/core/`** — the one
+exception is `brain-core-missing` (an ABSENT or empty core), which runs
+`igris refresh` from the recorded source after a live re-check. Upgrading the
+core is your call: see the subsection above.
 
 ---
 
@@ -146,16 +197,19 @@ If `igris doctor` reports `mcp-unregistered`, run `igris doctor --fix` (or
 
 The `igris-brain` MCP (Model Context Protocol) server provides the brain
 tools — persistent memory, brief management, cross-project intelligence —
-to the supported harness bridge set. Claude Code, OpenCode, and Antigravity
-are first-class; Codex and Gemini CLI are supported bridges.
+to every harness Igris supports. Claude Code, OpenCode and Antigravity are
+first-class (the gates run natively); Codex, Gemini CLI and Cursor are bridge
+harnesses (the gates soften to advisories, while brain, skills and MCP still
+reach them — as do agents, on the harnesses with a static-agent surface). See
+[Harness tiers](multi-cli.md#harness-tiers).
 
 **It ships inside the `igris-ai` npm package and registers itself
 automatically.** `npm install -g igris-ai` bundles a pre-built
 brain-mcp-server, and `igris init` adds the `igris-brain`
 entry to the supported MCP config files (`~/.claude.json`,
 `~/.config/opencode/opencode.json`, `~/.codex/config.toml`,
-`~/.gemini/settings.json`, and `~/.gemini/config/mcp_config.json` for
-Antigravity). There is no separate
+`~/.gemini/settings.json`, `~/.gemini/config/mcp_config.json` for
+Antigravity, and `~/.cursor/mcp.json`). There is no separate
 clone-build-configure step.
 
 **Restart Claude Code** after `igris init` so it picks up the new MCP
@@ -208,6 +262,61 @@ igris init --upgrade --dev --from-source /path/to/igris-ai
 `--dev` registers `<clone>/brain-mcp-server/dist/index.js` so your
 edit-rebuild-test loop is not broken by a repoint to the stale bundled
 copy. `--dev` requires `--from-source`.
+
+A per-project `igris install <path>` never re-points a registration that
+already points at an existing bundle — even when run from a scratch build or
+`npx tsx cli/src/index.ts` (TD-455). It registers only when the entry is
+absent or its bundle path no longer exists (backup at
+`~/.claude.json.igris.bak`, old → new reported); otherwise it prints
+`igris-brain MCP kept -> <existing>` and leaves the file byte-identical.
+Re-pointing is `igris init --upgrade` (`--dev` for a clone).
+
+### Sandboxing the brain — the env seams
+
+Anything that boots the brain server outside your real `~/.igris` — a test, a
+build step, a maintenance script — must point it at a throwaway tree, or it
+opens **and migrates** the live `~/.igris/memory/knowledge.db`. The server
+resolves its DB through ONE function, `brain-mcp-server/src/db.ts#resolveDbPath(explicit?)`,
+highest tier first (empty strings fall through to the next tier):
+
+1. **explicit path** — CLI verbs (`cli/src/lib/paths.ts#brainDbPath`) and
+   maintenance scripts (`--db`) pass one; env vars never move it.
+2. **`IGRIS_DB_PATH`** — full-path override for a process that passes none
+   (the standalone `dist/index.js` boot, `brain-mcp-server/scripts/*`).
+3. **`IGRIS_BRAIN_DIR`** → `<dir>/memory/knowledge.db`.
+4. **default** — `~/.igris/memory/knowledge.db`, with `os.homedir()` read at
+   call time.
+
+**A sandbox sets `IGRIS_BRAIN_DIR`.** It is the one seam that moves everything
+together: the CLI helpers' brain root, the server's DB (tier 3), its pidfile
+registry (`brain-mcp-server/src/stdio-lifecycle.ts#pidsDir`: `IGRIS_PIDS_DIR` >
+`IGRIS_BRAIN_DIR/brain-mcp-server.pids` > `~/.igris/brain-mcp-server.pids`) and,
+since TD-414, the brief/session projection root
+(`brain-mcp-server/src/engine/components/cache/handlers.ts#cacheRoot`:
+`<dir>/projects/` > `~/.igris/projects/`, read at call time) — so a sandboxed
+brain never projects brief files into your real `~/.igris/projects/`.
+Create `<dir>/memory/` first — better-sqlite3 creates the DB file, never its
+parent directory, and a missing parent crashes the boot.
+
+`IGRIS_DB_PATH` is a server/scripts override only. CLI verbs and the dashboard
+IGNORE it by design (the FR-241 poison fence:
+`cli/src/__tests__/dashboard-triage-endpoint.test.ts` asserts that a poison
+value does not move their writes); never add it to `paths.ts`.
+
+Neither seam moves `os.homedir()`: anything that reads `~/.claude.json` or
+`~/.igris/config.json` still sees your real home. A hermetic spawn sets a fake
+`HOME` as well (tier 4 follows it).
+
+The server prints the DB it opened on boot — `[brain] db: <path>` on stderr.
+`cli/scripts/smoke-bundled-mcp.sh` (run by `cd cli && npm run build` and by
+the publish workflow) sets tiers 2 and 3 to a `mktemp` sandbox, parses that
+line, and fails the build unless the path is inside the sandbox and the sandbox
+DB exists non-empty; `cli/tests/integration/build-smoke-sandbox.bats` proves it against
+a decoy brain under a fake `HOME`. Before TD-426 the build booted the bundle
+against the live brain and applied whatever migration was pending (instances
+v3 on 2026-08-26, v4 on 2026-08-27).
+
+Model-cache location for the embeddings backend after a rebuild: TD-429.
 
 ---
 
@@ -406,6 +515,40 @@ Restart Claude Code once the install completes. To confirm the fix, re-run
 the verification check from
 [Native dependencies (built at install time)](#native-dependencies-built-at-install-time).
 
+### Issue: Brain MCP stack traces name `dist/…/*.js`, not `src/…/*.ts`
+
+**Symptom:** An error thrown inside the bundled brain
+(`$(npm root -g)/igris-ai/dist/brain-mcp-server/dist/**`) reports a frame like
+`at Module.sanitizeFts5Query (…/dist/utils/fts5.js:32:27)`. With the source
+map present the same frame reads `…/src/utils/fts5.ts:33:25`.
+
+**Cause:** Since TD-444 (2026-09-06) the published tarball ships no `.js.map`
+for the bundled brain. Their `sources` named a `src/` directory the tarball
+never shipped and carried no `sourcesContent`, so no consumer could resolve
+them anyway; dropping the 139 of them recovered 155.4 KB (159,151 B) of packed size. Two
+bounds on what was lost: nothing in Igris spawns the brain with
+`--enable-source-maps`, so those frames named `dist/*.js` already unless you
+opted in; and the maps stay on disk in a repo checkout and on the VPS
+(`scripts/igris_brain_deploy.sh` builds from source) — only a tarball install
+lacks them. The CLI's own maps (`dist/index.js.map`, `dist/lib/*.js.map`)
+still ship.
+
+**Solution:** Recover the original position against the published tag. The
+bundle's version is the tag:
+
+```bash
+version="$(node -p "require('$(npm root -g)/igris-ai/dist/brain-mcp-server/package.json').version")"
+git clone https://github.com/fiftynotai/igris-ai && cd igris-ai
+git checkout "v$version"
+cd brain-mcp-server && npm ci && npm run build
+```
+
+Then read the frame against the rebuilt `dist/` and its maps — run the
+reproduction with `node --enable-source-maps`, or open the sibling
+`dist/utils/fts5.js.map` and look up the position by hand. The frame's
+`dist/…/*.js:line:col` is the same on both machines because the tag is the
+same build input.
+
 ### Issue: Global surfaces stale after moving Igris AI repo or upgrading
 
 FR-212d retired the per-project `.claude/` symlink layer — every surface
@@ -430,7 +573,7 @@ does not recreate any surfaces.
 
 After setup:
 
-1. **Restart your harness** (Claude Code, OpenCode, Antigravity, Codex, or Gemini CLI) - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
+1. **Restart your harness** (Claude Code, OpenCode, Antigravity, Codex, Gemini CLI, or Cursor) - so it picks up the bundled `igris-brain` MCP server registered by `igris init`
 2. **Generate architecture docs** - Run `/document architecture`
 3. **Analyze codebase** - Run `/migrate-analyze`
 4. **Review generated briefs** - Run `List all briefs`

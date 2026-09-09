@@ -34,20 +34,17 @@ import { bootEngine } from './engine/index.js';
 import type { Engine, EngineConfig } from './engine/index.js';
 
 // REST API helpers (used by HTTP endpoints, not MCP tools)
-import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject } from './tools/agent_events.js';
+import { handleAgentEvent, handleAgentEventList, handleAgentEventLog, handleAgentMetricsSummary, handleAgentMetricsByProject, AgentEventValidationError } from './tools/agent_events.js';
 import type { AgentEventInput } from './tools/agent_events.js';
 import { handleInstanceRemove, handleInstanceState } from './tools/instances.js';
 import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js';
 import { handleBriefVelocity } from './tools/briefs.js';
-import { handleMetricsRecord } from './tools/metrics.js';
-import type { MetricsRecordInput } from './tools/metrics.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
 import { SYNC_TABLES, processSyncPush, scheduleLearningEmbedAfterMerge } from './tools/sync.js';
 
 // Database lifecycle
-import { getDb, closeDb, DB_PATH, BRAIN_DIR } from './db.js';
-import * as os from 'node:os';
+import { getDb, closeDb, resolveDbPath, BRAIN_DIR } from './db.js';
 
 // stdio lifecycle — teardown, per-client pidfile registry, stale-instance reaper (BR-067)
 import {
@@ -140,13 +137,30 @@ function parseConfig(): ServerConfig {
 let _engine: Engine | null = null;
 
 /**
+ * The DB path the engine singleton booted with (TD-426). Resolved ONCE via
+ * `resolveDbPath()` and reused by every site that reports "the" DB — the
+ * pidfile record and the HTTP /health size probe — so they cannot disagree
+ * with what the engine actually opened.
+ */
+let _engineDbPath: string | null = null;
+
+/** The active brain DB path: the one the engine opened, or a fresh resolution before boot. */
+function activeDbPath(): string {
+  return _engineDbPath ?? resolveDbPath();
+}
+
+/**
  * Get or boot the engine singleton.
- * Lazily initializes on first call with the default DB path.
+ * Lazily initializes on first call with `resolveDbPath()` — NOT a static
+ * constant (TD-426: the static site is what let the build smoke guard open
+ * the live brain). Prints the resolved path so a spawner can verify it.
  */
 function getEngine(): Engine {
   if (!_engine) {
+    _engineDbPath = resolveDbPath();
+    console.error(`[brain] db: ${_engineDbPath}`);
     const config: EngineConfig = {
-      dbPath: DB_PATH,
+      dbPath: _engineDbPath,
       components: {
         memory: { enabled: true },
         errors: { enabled: true },
@@ -299,7 +313,7 @@ async function runStdio(): Promise<void> {
     pid: process.pid,
     ppid,
     started_at: new Date().toISOString(),
-    db_path: DB_PATH,
+    db_path: activeDbPath(), // TD-426: the path the engine opened, never a static default
   });
 
   // BR-067 Phase 2: one idempotent shutdown wired to stdin EOF/close AND
@@ -469,11 +483,6 @@ async function runHttp(config: ServerConfig): Promise<void> {
       const db = getDb();
       const includeStale = req.query.include_stale === 'true';
 
-      // Purge agent_events older than 7 days
-      db.prepare(
-        "DELETE FROM agent_events WHERE created_at < datetime('now', '-7 days')"
-      ).run();
-
       const whereClause = includeStale ? '' : "WHERE status != 'stale'";
       const rows = db.prepare(
         `SELECT * FROM instances ${whereClause} ORDER BY last_activity_at DESC`
@@ -616,7 +625,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
         'sessions',
         'instances',
         'brief_status',
-        'agent_metrics',
+        'agent_events',
         'sync_queue',
       ]);
 
@@ -630,7 +639,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
 
       let dbSizeBytes = 0;
       try {
-        dbSizeBytes = statSync(DB_PATH).size;
+        dbSizeBytes = statSync(activeDbPath()).size; // TD-426: the DB the engine opened
       } catch {
         // DB file may not be accessible; default to 0
       }
@@ -827,23 +836,32 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Agent Event endpoints — live agent lifecycle tracking for dashboard
   // -----------------------------------------------------------------------
 
-  // POST /api/agent-event — Record an agent execution event
+  // POST /api/agent-event — Record an agent execution event.
+  // This route bypasses the gateway, so the handler's own validation is the
+  // only guard: its AgentEventValidationError maps to 400 (FR-267).
   app.post('/api/agent-event', express.json(), (req: Request, res: Response) => {
     try {
-      const args = req.body as AgentEventInput;
+      const body = { ...((req.body ?? {}) as Record<string, unknown>) };
 
-      if (!args.instance_id || !args.agent || !args.event_type) {
+      if (!body.instance_id || !body.agent || !body.event_type) {
         res.status(400).json({ error: 'Missing required fields: instance_id, agent, event_type' });
         return;
       }
 
-      const result = handleAgentEvent(args);
-      const idMatch = result.content[0].text.match(/id: (\d+)/);
-      const insertedId = idMatch ? parseInt(idMatch[1], 10) : null;
+      // FR-267: duration_ms and round are brain-computed — a caller-supplied
+      // value is dropped, never stored.
+      delete body.duration_ms;
+      delete body.round;
 
-      res.status(201).json({ ok: true, id: insertedId });
+      const { event } = handleAgentEvent(body as unknown as AgentEventInput);
+
+      res.status(201).json({ ok: true, id: event.id });
     } catch (err) {
       const message = errMsg(err);
+      if (err instanceof AgentEventValidationError) {
+        res.status(400).json({ error: message });
+        return;
+      }
       console.error('[brain] POST /api/agent-event error:', message);
       res.status(500).json({ error: message });
     }
@@ -904,332 +922,6 @@ async function runHttp(config: ServerConfig): Promise<void> {
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] GET /api/agent-metrics/by-project error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // POST /api/metrics — Record an agent performance metric (used by SubagentStop hook)
-  app.post('/api/metrics', express.json(), (req: Request, res: Response) => {
-    try {
-      const args = req.body as MetricsRecordInput;
-
-      if (!args.project || !args.agent || !args.action || !args.result) {
-        res.status(400).json({ error: 'Missing required fields: project, agent, action, result' });
-        return;
-      }
-
-      const validResults = ['success', 'failure', 'partial', 'blocked'];
-      if (!validResults.includes(args.result)) {
-        res.status(400).json({ error: `Invalid result: ${args.result}. Must be one of: ${validResults.join(', ')}` });
-        return;
-      }
-
-      const result = handleMetricsRecord(args);
-      const idMatch = result.content[0].text.match(/ID: (\d+)/);
-      const insertedId = idMatch ? parseInt(idMatch[1], 10) : null;
-
-      res.status(201).json({ ok: true, id: insertedId });
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/metrics error:', message);
-      res.status(500).json({ error: message });
-    }
-  });
-
-  // -----------------------------------------------------------------------
-  // HTTP Hook Event Ingestion (FR-088)
-  // -----------------------------------------------------------------------
-
-  /**
-   * Agent name normalization map: Claude Code built-in agent names to
-   * Igris canonical agent names. Same mapping as agent_metrics.sh.
-   */
-  const AGENT_NAME_MAP: Record<string, string> = {
-    planner: 'architect',
-    coder: 'forger',
-    tester: 'sentinel',
-    reviewer: 'warden',
-    debugger: 'mender',
-    explorer: 'seeker',
-    Explore: 'seeker',
-    'claude-code-guide': 'seeker',
-    documenter: 'forger',
-    releaser: 'forger',
-    auditor: 'warden',
-    ideator: 'architect',
-  };
-
-  /**
-   * Agent-to-action mapping for metrics recording.
-   */
-  const AGENT_ACTION_MAP: Record<string, string> = {
-    architect: 'plan',
-    forger: 'implement',
-    sentinel: 'test',
-    warden: 'review',
-    mender: 'debug',
-    seeker: 'research',
-    sage: 'advise',
-  };
-
-  /**
-   * Parse the last_assistant_message to determine success or failure.
-   * Returns 'success' or 'failure'.
-   */
-  function parseAgentResult(lastMsg: string | undefined): 'success' | 'failure' {
-    if (!lastMsg) return 'success';
-    const lower = lastMsg.toLowerCase();
-
-    const failIndicators = [
-      'fail', 'failed', 'failure',
-      'reject', 'rejected',
-      'error', 'errors found',
-      'blocked',
-      'not pass', 'did not pass',
-      'tests failing',
-    ];
-    const passIndicators = [
-      'pass', 'passed', 'success',
-      'approve', 'approved',
-      'complete', 'completed',
-      'all tests pass',
-      'lgtm', 'looks good',
-    ];
-
-    const hasFail = failIndicators.some(ind => lower.includes(ind));
-    const hasPass = passIndicators.some(ind => lower.includes(ind));
-
-    if (hasFail && !hasPass) return 'failure';
-    if (hasFail && hasPass) {
-      // Ambiguous: check last occurrence position
-      const lastFailPos = Math.max(...failIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
-      const lastPassPos = Math.max(...passIndicators.map(ind => lower.lastIndexOf(ind)).filter(p => p >= 0));
-      return lastPassPos > lastFailPos ? 'success' : 'failure';
-    }
-    return 'success';
-  }
-
-  /**
-   * Read the active brief ID from a session file content string.
-   */
-  function extractBriefFromSession(sessionContent: string): string {
-    for (const line of sessionContent.split('\n')) {
-      if (line.includes('Active Brief') || line.includes('Last Active')) {
-        const match = line.match(/([A-Z]+-\d+)/);
-        if (match) return match[1];
-      }
-    }
-    return '';
-  }
-
-  /**
-   * Read the instance ID from a session file content string.
-   */
-  function extractInstanceIdFromSession(sessionContent: string): string {
-    for (const line of sessionContent.split('\n')) {
-      if (line.includes('Instance ID')) {
-        const match = line.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i);
-        if (match) return match[1];
-      }
-    }
-    return '';
-  }
-
-  // POST /api/hooks/event — Ingest raw Claude Code hook payloads (FR-088)
-  //
-  // Accepts the JSON that Claude Code sends to HTTP hooks and routes it
-  // to the appropriate brain tables based on hook_event_name.
-  //
-  // Query params:
-  //   ?project=<slug> — project slug (set statically in settings.json URL)
-  //
-  // Supported hook_event_name values:
-  //   - SubagentStart   → agent_events (start) + event_log
-  //   - SubagentStop    → agent_events (stop) + agent_metrics + event_log
-  //   - TaskCompleted   → event_log (team.task_completed) — quality gate result
-  //   - TeammateIdle    → event_log (team.teammate_idle) — work assignment result
-  //   - Stop            → event_log (session.stop)
-  app.post('/api/hooks/event', express.json(), (req: Request, res: Response) => {
-    try {
-      const body = req.body as Record<string, unknown>;
-      const hookEvent = body.hook_event_name as string | undefined;
-
-      if (!hookEvent) {
-        res.status(400).json({ error: 'Missing hook_event_name field' });
-        return;
-      }
-
-      const db = getDb();
-      const hostname = os.hostname();
-      const now = new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, '');
-      const projectSlug = (req.query.project as string) || '';
-
-      // Read session file for instance_id and brief_id if project is known
-      let instanceId = '';
-      let briefId = '';
-      if (projectSlug) {
-        try {
-          const sessionPath = path.join(BRAIN_DIR, 'cache', projectSlug, 'session', 'CURRENT_SESSION.md');
-          if (existsSync(sessionPath)) {
-            const content = readFileSync(sessionPath, 'utf-8');
-            instanceId = extractInstanceIdFromSession(content);
-            briefId = extractBriefFromSession(content);
-          }
-        } catch { /* session file read is best-effort */ }
-      }
-
-      const results: { table: string; id: number | bigint | null }[] = [];
-
-      if (hookEvent === 'SubagentStart') {
-        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
-        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
-
-        // Insert into agent_events
-        if (instanceId) {
-          const aeResult = db.prepare(`
-            INSERT INTO agent_events
-              (instance_id, agent, event_type, phase, brief_id,
-               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
-               result, error_message, metadata)
-            VALUES (?, ?, 'start', NULL, ?, 0, 0, 0, 0, 0, NULL, NULL, '{}')
-          `).run(instanceId, agentType, briefId);
-          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
-        }
-
-        // Insert into event_log
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES ('agent.start', 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          JSON.stringify({ agent: agentType, raw_type: rawAgentType, hook: 'SubagentStart' }),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, results });
-
-      } else if (hookEvent === 'SubagentStop') {
-        const rawAgentType = (body.agent_type as string) || (body.agent_id as string) || 'unknown';
-        const agentType = AGENT_NAME_MAP[rawAgentType] ?? rawAgentType;
-        const lastMsg = body.last_assistant_message as string | undefined;
-        const agentResult = parseAgentResult(lastMsg);
-        const action = AGENT_ACTION_MAP[agentType] ?? 'execute';
-
-        // Token parsing from transcript is not possible server-side (local file),
-        // so we accept zeros here. The main_agent_metrics.sh command hook handles
-        // transcript parsing separately and posts to /api/metrics.
-        // If the hook payload includes token data in the future, we'll use it.
-
-        // Insert into agent_events
-        if (instanceId) {
-          const aeResult = db.prepare(`
-            INSERT INTO agent_events
-              (instance_id, agent, event_type, phase, brief_id,
-               duration_ms, input_tokens, output_tokens, cache_read, cache_create,
-               result, error_message, metadata)
-            VALUES (?, ?, 'stop', NULL, ?, 0, 0, 0, 0, 0, ?, NULL, '{}')
-          `).run(instanceId, agentType, briefId, agentResult);
-          results.push({ table: 'agent_events', id: aeResult.lastInsertRowid });
-        }
-
-        // Insert into agent_metrics
-        if (projectSlug) {
-          try {
-            const mResult = db.prepare(`
-              INSERT INTO agent_metrics (project, agent, brief_id, action, result, duration_ms, retry_count)
-              VALUES (?, ?, ?, ?, ?, 0, 0)
-            `).run(projectSlug, agentType, briefId, action, agentResult);
-            results.push({ table: 'agent_metrics', id: mResult.lastInsertRowid });
-          } catch { /* metrics insert is best-effort */ }
-        }
-
-        // Insert into event_log
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES ('agent.stop', 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          JSON.stringify({ agent: agentType, raw_type: rawAgentType, result: agentResult, hook: 'SubagentStop' }),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({ ok: true, hook: hookEvent, agent: agentType, result: agentResult, results });
-
-      } else if (hookEvent === 'TaskCompleted') {
-        const taskId = body.task_id as string | undefined;
-        const gateResult = (body.gate_result as string) || 'unknown';
-
-        // Insert into event_log
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES ('team.task_completed', 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          JSON.stringify({ task_id: taskId, gate_result: gateResult, hook: 'TaskCompleted' }),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({ ok: true, hook: hookEvent, gate_result: gateResult, results });
-
-      } else if (hookEvent === 'TeammateIdle') {
-        const teammateId = body.teammate_id as string | undefined;
-        const assignedTaskId = body.assigned_task_id as string | undefined;
-        const assignedTaskTitle = body.assigned_task_title as string | undefined;
-
-        // Insert into event_log
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES ('team.teammate_idle', 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          JSON.stringify({
-            teammate_id: teammateId,
-            assigned_task_id: assignedTaskId,
-            assigned_task_title: assignedTaskTitle,
-            hook: 'TeammateIdle',
-          }),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({
-          ok: true,
-          hook: hookEvent,
-          assigned: !!assignedTaskId,
-          assigned_task_id: assignedTaskId || null,
-          results,
-        });
-
-      } else if (hookEvent === 'Stop') {
-        const sessionId = body.session_id as string | undefined;
-
-        // Insert into event_log
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES ('session.stop', 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          JSON.stringify({ session_id: sessionId, hook: 'Stop' }),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({ ok: true, hook: hookEvent, results });
-
-      } else {
-        // Unknown hook event — log it generically
-        const elResult = db.prepare(`
-          INSERT INTO event_log (event_name, component, payload, machine_hostname, project_slug, instance_id, created_at)
-          VALUES (?, 'hooks', ?, ?, ?, ?, ?)
-        `).run(
-          `hook.${hookEvent.toLowerCase()}`, JSON.stringify(body),
-          hostname, projectSlug || null, instanceId || null, now
-        );
-        results.push({ table: 'event_log', id: elResult.lastInsertRowid });
-
-        res.status(201).json({ ok: true, hook: hookEvent, results });
-      }
-    } catch (err) {
-      const message = errMsg(err);
-      console.error('[brain] POST /api/hooks/event error:', message);
       res.status(500).json({ error: message });
     }
   });
@@ -1483,14 +1175,17 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // table's transaction — sibling tables in the same chunk still merge.
   // The response carries `results` for successful tables and `errors` for
   // failed ones, plus a per-table `failures` array of row-level errors
-  // bubbled up from mergeRows. Status code is 207 Multi-Status when any
-  // table errored, 200 OK otherwise — both are 2xx so existing callers
-  // that check `response.ok` continue to work.
+  // bubbled up from mergeRows. Status code is 207 Multi-Status when NOT
+  // everything merged (a table errored OR is absent here), 200 OK otherwise
+  // — both are 2xx so existing callers that check `response.ok` continue to
+  // work.
   //
   // BR-064 (defense-in-depth): if a SYNC_TABLES entry's table is missing
   // from the local schema (partial migration), skip it with a stderr log
   // rather than throwing. Mirrors the activeSyncTables filter in
-  // handleBrainPush.
+  // handleBrainPush. BR-097: the skipped table is named in `skipped[]`
+  // (always present) and is NOT in `errors`, so pre-BR-097 clients do not
+  // queue it; clients hold that table's watermark instead.
   app.post('/sync/push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
     try {
       const db = getDb();
@@ -1503,12 +1198,12 @@ async function runHttp(config: ServerConfig): Promise<void> {
         return;
       }
 
-      const { results, errors, ok } = processSyncPush(db, tables);
-      // 207 Multi-Status when any table errored; still in 2xx range so
+      const { results, errors, skipped, ok } = processSyncPush(db, tables);
+      // 207 Multi-Status when anything was not merged; still in 2xx range so
       // `response.ok` is true — internal callers (handleBrainPush,
       // handleSyncQueueDrain, pushTables auto-push) inspect the body.
       const status = ok ? 200 : 207;
-      res.status(status).json({ ok, results, errors });
+      res.status(status).json({ ok, results, errors, skipped });
       // FR-220: fire the fire-and-forget post-merge embed pass AFTER the
       // response is queued. Non-blocking (setImmediate inside), so it never
       // delays the sync response; a no-op when the merge touched no learnings.

@@ -175,9 +175,10 @@ export function persistSynapseProposal(
   db.prepare(
     `INSERT INTO suggestions
        (source_module, project_slug, title, evidence, priority, status,
-        created_at, expires_at, confidence, suggested_action, type_inferred)
+        created_at, expires_at, confidence, suggested_action, type_inferred,
+        source_instance)
      VALUES ('edge_inference', NULL, ?, ?, 'low', 'pending', datetime('now'),
-             datetime('now', ?), ?, ?, 1)`,
+             datetime('now', ?), ?, ?, 1, 'synapse')`,
   ).run(
     title,
     JSON.stringify(evidence),
@@ -223,6 +224,19 @@ export function createSynapseInstance(
 
   return {
     id: 'synapse',
+
+    // TD-327 — the REQUIRED observability declaration. Own switch, own cron.
+    health: {
+      component: 'cognition.synapse',
+      event_prefix: 'cognition.synapse',
+      gate_keys: ['cognition.synapse.enabled'],
+      gate_default: false, // DEFAULT_SYNAPSE_CONFIG.enabled === false
+      driver: 'schedule',
+      driver_ref: 'synapse_engine',
+      output: "suggestions[source_module='edge_inference']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='edge_inference']",
+    },
 
     async buildContext(
       db: Database.Database,

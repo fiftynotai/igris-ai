@@ -36,6 +36,12 @@ deterministic checks from `cli/src/verbs/doctor.ts`.
   reported non-clean class is a safe deterministic repair. Never auto-delete
   rows, never auto-chmod secret-bearing files, and never resolve judgment calls
   without explicit operator direction.
+- **`--fix` never replaces `~/.igris/core/`** (BR-103). Its one wholesale action
+  is `brain-core-missing` — an ABSENT core, refreshed from the recorded source
+  after a live re-check. Every other repair is scoped to the row it names.
+  `--fix` prints a per-fix outcome table (class, target, action, outcome, now —
+  `now` is a live re-probe that also drives the exit code): read it and report
+  it row by row; a `failed` or `refused` row is the operator's next decision.
 
 ## Usage
 
@@ -81,10 +87,19 @@ Render in this order:
 
 1. **Broken:** `brain-core-missing`, `bridge-missing`, `mcp-unregistered`,
    `hooks-missing`, `hooks-stale`, `skills-pollution`,
-   `antigravity-skills-link`, `path-missing`
+   `antigravity-skills-link`, `path-missing`, `git-hooks-missing` (a
+   registered git repo whose `.git/hooks/{pre-commit,commit-msg}` are absent,
+   foreign, dangling, not executable, or bypassed by `core.hooksPath` — every
+   git-level gate is inert there; the row's text names the cause)
 2. **Degraded / needs judgment:** `secret-perms`, `brain-core-stale`,
-   `channel-mismatch`, `duplicate-path`
-3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`
+   `channel-mismatch`, `duplicate-path`, `secret-scan-disarmed` (`gitleaks` is
+   not on PATH, so every installed Igris `pre-commit` on this machine runs with
+   `secret-scan=DISARMED` — commits are NOT scanned for credentials; the fix is
+   an operator install, `brew install gitleaks`)
+3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`,
+   `machine-identity` (the machine's hostname drifted from its recorded
+   identity, or local rows carry hostnames its alias list does not cover — an
+   alias is an operator claim, so read the row's text and decide by hand)
 
 For each group, explain:
 
@@ -99,12 +114,21 @@ Keep the report short: top issues first, then a compact class count summary.
 
 The safe deterministic classes are:
 
-- `brain-core-missing`
-- `bridge-missing`
+- `brain-core-missing` — refreshes an ABSENT core from the recorded source
+  (the only repair that writes under `~/.igris/core/`; a healthy core is never
+  touched)
+- `bridge-missing` — records the named harness in `config.json#cli_targets` and
+  backfills the brain MCP; never `init`, never a core replace (BR-103)
 - `mcp-unregistered`
 - `hooks-missing`
 - `hooks-stale`
 - `antigravity-skills-link`
+- `git-hooks-missing` — EXCEPT a row whose text says `core.hooksPath=…
+  bypasses .git/hooks`: that one is reported, never fixed (the operator adds
+  the hooks to their husky/lefthook pipeline). `--fix` backs up any
+  non-symlink hook as `<hook>.pre-igris.bak.<epoch>` before replacing it, and
+  refuses (row stays) when `~/.igris/core/git-hooks/` is absent — run
+  `igris refresh` first.
 
 Treat `skills-pollution` as **mixed**, not blanket-safe. It can contain safe
 migration/stray-projection cleanup, but it can also contain unexpected target
@@ -136,6 +160,15 @@ This is especially important for:
   require manual review before any repair attempt.
 - `duplicate-path`, `slug-basename-mismatch`, `symlink-target`: these may reflect
   intentional aliases or workspace layout.
+- `machine-identity`: informational and never auto-fixed. Add to `config.json`
+  `machine.aliases` ONLY hostnames this machine has actually used; a name from
+  another machine would attribute its rows to this one. The writer keeps the
+  newest 16; a name you need to keep past that goes back in by hand (a
+  hand-edited list is never trimmed — only a fresh append evicts).
+- `secret-scan-disarmed`: informational and never auto-fixed — the fix is a
+  binary the operator installs (`brew install gitleaks`, or the gitleaks
+  releases page). Until then every commit in every hook-installed project
+  prints a DISARMED box and is NOT scanned.
 - `brain-core-stale` / `channel-mismatch`: these may require a channel or upgrade
   decision.
 

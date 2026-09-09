@@ -35,6 +35,10 @@
 import Database from 'better-sqlite3';
 import { getDb } from '../src/db.js';
 import { handleEdgeCreate } from '../src/engine/components/edges/handlers.js';
+import {
+  createProjectResolver,
+  hintedQualifier,
+} from '../src/engine/components/edges/node-project.js';
 import { extractParentBriefId } from '../src/tools/briefs.js';
 
 // ---------------------------------------------------------------------------
@@ -304,7 +308,27 @@ function dedupeSignals(signals: EdgeSignal[]): EdgeSignal[] {
  * @returns `{created: true}` for fresh inserts, `{created: false}` for
  *   pre-existing rows, or `{error: '...'}` for handler-level failures.
  */
-export function writeSignal(signal: EdgeSignal): { created?: boolean; error?: string } {
+export function writeSignal(
+  signal: EdgeSignal,
+  project?: string,
+): { created?: boolean; error?: string } {
+  // BR-083 — the SOURCE side is an assertion, the TARGET side a hint.
+  //
+  // `project` is the `brief_files.project` of the row this signal was parsed
+  // OUT of, so it names the source brief's instance exactly. The target is a
+  // brief id scraped from that brief's markdown: usually the same project, but
+  // a `**Parent Brief:**` reference across projects is legal, so the hint is
+  // forwarded only where it turns a refusal into a resolution.
+  //
+  // `project` is optional so the exported function keeps its old arity for
+  // callers (and tests) that have no project to offer; without it the ladder
+  // resolves every unambiguous endpoint exactly as before and refuses the
+  // ambiguous ones rather than minting them.
+  const resolver = createProjectResolver(getDb());
+  const toHint =
+    signal.toType === 'brief'
+      ? hintedQualifier('brief', signal.toId, project, resolver)
+      : hintedQualifier(signal.toType, signal.toId, project, resolver);
   const result = handleEdgeCreate({
     from_type: 'brief',
     from_id: signal.fromId,
@@ -317,6 +341,8 @@ export function writeSignal(signal: EdgeSignal): { created?: boolean; error?: st
       source: 'backfill',
       label: signal.label,
     },
+    ...(project ? { from_project: project } : {}),
+    ...(toHint ? { to_project: toHint } : {}),
   });
 
   if (result.isError) {
@@ -422,7 +448,7 @@ export function runBackfill(
         continue;
       }
 
-      const writeRes = writeSignal(signal);
+      const writeRes = writeSignal(signal, row.project);
       if (writeRes.error) {
         // Handler-level errors are warnings, not aborts. The most common
         // source is enum drift — surfaced verbosely so the operator can

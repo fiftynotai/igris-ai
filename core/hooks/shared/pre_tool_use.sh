@@ -20,11 +20,24 @@
 #
 # Dependencies: jq (preferred), python3 (fallback); sqlite3 (optional — brief-DB lookup)
 #
-# Brief-first resolution order (TD-146, hardened TD-150):
+# Brief-first resolution order (TD-146, hardened TD-150, TD-340):
 #   1. Brain DB (sqlite3): SELECT brief_id FROM brief_status
-#      WHERE project = <slug> AND status = 'In Progress'  -- canonical (v5+)
+#      WHERE project = <slug> AND <status folds to 'inprogress'>  -- canonical (v5+)
 #   2. Filesystem fallback: grep for '**Status:** In Progress' in
-#      ~/.igris/projects/<slug>/briefs/  -- v6 brain-directory cache
+#      ~/.igris/projects/<slug>/briefs/  -- v6 brain-directory cache.
+#      LITERAL BY DESIGN, not a site TD-340 missed. A regex here would be a
+#      FOURTH notation-matching implementation with different semantics from the
+#      SQL fold above, pinned by nothing.
+#      TD-333 HAS NOW SHIPPED normalizeStatus / CANONICAL_STATUSES, and this arm
+#      was DELIBERATELY left literal anyway. That vocabulary is TypeScript; this
+#      is a bash fallback that must run with no node process, so there is still
+#      nothing here to fold TO -- shipping TD-333 did not change that. The arm
+#      also only fires when the DB arm misses, and the brief templates write
+#      'In Progress', so the exposure is a cache file hand-edited to a variant
+#      spelling. Closing it properly requires a bash-consumable export of the
+#      canonical vocabulary (the same thing scripts/validate_brief_status_
+#      vocabulary.sh hand-mirrors today, and the TD-330 defect class). No brief
+#      owns that yet -- do not "fix" this with an ad-hoc regex in the meantime.
 #   3. Neither -> deny via JSON output.
 # Slug is resolved by walking PROJECT_DIR up its ancestors and matching
 # `projects.path` in the brain DB after pwd -P realpath normalisation
@@ -241,8 +254,21 @@ find_active_brief_in_brain() {
   local stdout stderr_file rc
   stderr_file=$(mktemp -t igris_brief_gate.XXXXXX 2>/dev/null || echo "/tmp/igris_brief_gate_stderr.$$")
   set +e
+  # TD-340 — the status filter FOLDS NOTATION instead of matching one literal.
+  # It used to read `status = 'In Progress'`, which cannot match the
+  # 'InProgress' spelling that exists in the live brain, so a genuinely-active
+  # brief looked like NO brief. This site fails CLOSED (spurious deny — a
+  # nuisance) where the pre-commit phase guard failed OPEN on the same token,
+  # but it is the same defect. Byte-aligned with scripts/git-hooks/pre-commit.
+  #
+  # Folds NOTATION ONLY (case + space + hyphen + underscore), never VOCABULARY:
+  # a different WORD ('Completed', 'Done', 'Active') is deliberately NOT
+  # matched. Vocabulary is owned by normalizeStatus / CANONICAL_STATUSES in
+  # brain-mcp-server/src/tools/brief-normalize.ts — SHIPPED by TD-333. Both
+  # mechanisms stay: this one guards NOTATION at the gate, that one guards
+  # VOCABULARY at the write boundary and at sync ingress.
   stdout=$(sqlite3 "$db" \
-    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND status = 'In Progress' ORDER BY updated_at DESC LIMIT 1;" \
+    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress' ORDER BY updated_at DESC LIMIT 1;" \
     2>"$stderr_file")
   rc=$?
   set -e

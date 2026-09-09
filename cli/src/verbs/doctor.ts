@@ -6,7 +6,8 @@
  *
  * Brain-level (synthetic slug "(brain)"):
  *   brain-core-missing      → ~/.igris/core/ absent or empty
- *   brain-core-stale        → ~/.igris/core/ content hash diverges from channel head
+ *   brain-core-stale        → a MUTABLE channel (main/branch) has moved past the
+ *                             recorded ref_commit_sha; release/tag are exempt (TD-301)
  *   bridge-missing          → CLI on PATH lacks configured bridge
  *   mcp-unregistered        → ~/.claude.json lacks the igris-brain MCP entry
  *                             (or it points at a missing file) — TD-168
@@ -33,12 +34,46 @@
  *                             layer anymore, so this is a single (brain) row.
  *   hooks-stale             → the global settings carry the Igris SessionEnd hook
  *                             but at a non-canonical command path.
+ *   machine-identity        → (informational, BR-100) hostname outside the minted
+ *                             identity's aliases, or NULL-id rows under names the
+ *                             aliases do not cover; never --fix'able (an alias is
+ *                             an operator claim); lowest brain-level precedence.
+ *   secret-scan-disarmed    → (informational, FR-243) ≥1 registered project has
+ *                             the Igris pre-commit installed AND `gitleaks` is
+ *                             not on PATH — every one of those hooks is running
+ *                             with `secret-scan=DISARMED`. Detection is PATH
+ *                             presence (no spawn). Never --fix'able (a binary
+ *                             install is the operator's); beside machine-identity.
  *
  * Per-project:
+ *   git-hooks-missing       → (FR-243) `.git` is a directory and pre-commit or
+ *                             commit-msg in `.git/hooks/` is absent, a non-symlink
+ *                             (foreign), a symlink to somewhere other than the
+ *                             canonical source (the runtime mirror
+ *                             `~/.igris/core/git-hooks/<name>`, or the repo copy
+ *                             when the row IS the igris-ai checkout), dangling,
+ *                             or resolves to a NON-EXECUTABLE file (git then
+ *                             ignores it with a `hint:` and commits anyway) —
+ *                             OR `.git/config` sets `core.hooksPath`, which
+ *                             bypasses `.git/hooks/` entirely. The reason text
+ *                             names the cause. --fix = installGitHooks()
+ *                             (backup-not-clobber; chmod +x only under
+ *                             brainDir()) — except the hooksPath case, which is
+ *                             reported, never fixed. A `.git` FILE (worktree /
+ *                             submodule) yields no row.
  *   path-missing            → orphan (registry row points at deleted dir)
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
- *   duplicate-path          → multiple slugs with the same realpath (fifty_eco_system)
+ *   duplicate-path          → multiple slugs with the same realpath (the
+ *                             fifty_eco_system triple-slug case was the live
+ *                             example until TD-402 folded it on 2026-08-17; the
+ *                             class is still live — this detector reads STATE,
+ *                             so it reports a duplicate whoever minted it, and
+ *                             other writers that can set projects.path
+ *                             still do not refuse one. The boot-sync pull merge
+ *                             refuses on INSERT since TD-404, but its lww UPDATE
+ *                             branch still can, so this class is NOT one-shot
+ *                             even after a fold)
  *   symlink-target          → row.path is itself a symlink
  *   clean                   → registered + path exists (the register-only happy path)
  *
@@ -49,31 +84,44 @@
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
  * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
- * hooks-stale → secret-perms → skills-pollution → duplicate-path →
+ * hooks-stale → secret-perms → skills-pollution → machine-identity →
+ * secret-scan-disarmed → duplicate-path → git-hooks-missing →
  * symlink-target → slug-basename-mismatch → clean.
  * (mcp-unregistered + hooks-missing/hooks-stale + secret-perms + skills-pollution
  *  sit next to bridge-missing — all brain-level, config/state-driven, and
  *  orthogonal to core state. skills-pollution is lowest brain-level precedence
  *  — TD-223.)
  *
- * --fix repairs hooks-missing / hooks-stale by re-merging the GLOBAL Igris hooks
- * (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
- * re-install), brain-core-missing by invoking runRefresh(), bridge-missing by
- * invoking partial-mode runInit({ upgrade: true }), mcp-unregistered by calling
- * registerBrainAcrossHarnesses() directly to backfill all Igris harnesses (FR-169;
- * cheap — no need to re-run init), secret-perms by chmod'ing the flagged file
- * to 600 (TD-220; both Igris-owned and harness-owned under the explicit flag —
- * a git-tracked file stays flagged since chmod can't untrack it),
- * skills-pollution by migrating each legacy whole-dir surface root into a REAL
- * dir of per-item symlinks (direct-materialize from the canonical source +
- * personal overlay — NEVER a compile, which would lose every skill + core
- * agent) and cleaning each stray projection symlink leaked into the canonical
- * source (TD-223 RE-SCOPED; backup-not-delete the old root symlink, atomic
- * rename, realpath-contained, refuse-on-unexpected-target, idempotent — a stray
- * that is not a loadout projection stays flagged for manual resolution; --fix
- * prints the before/after enumeration as the no-loss proof).
+ * --fix (BR-103, 2026-09-07) runs every arm in DEPENDENCY order, each in its
+ * own try/catch, and prints a per-fix outcome table (`| class | target |
+ * action | outcome | now |`, where `now` is a LIVE re-probe):
+ *   G1 brain-core-missing — the ONLY wholesale action: `runRefresh()` from
+ *      the RECORDED source, guarded by a live `detectBrainCoreMissing()`
+ *      re-probe immediately before the call (an absent core is the one case
+ *      where replacing core/ cannot poison anything); first because the
+ *      per-project git hooks need `~/.igris/core/git-hooks/`.
+ *   G2 git-hooks-missing (per project, FR-243) — `installGitHooks(row.path)`;
+ *      a refused install (core.hooksPath, worktree, missing mirror) keeps
+ *      the row non-clean.
+ *   G3 brain-level, config-scoped — hooks-missing/stale via
+ *      `mergeGlobalCanonicalHooks` (one global action); mcp-unregistered via
+ *      `registerBrainAcrossHarnesses()` in-process (FR-169); antigravity-
+ *      skills-link; skills-pollution (TD-223 RE-SCOPED: migrate each legacy
+ *      whole-dir root into a REAL dir of per-item symlinks, clean strays,
+ *      backup-not-delete, print the before/after enumeration); and
+ *      bridge-missing — `recordCliTarget(<id>)` into config.json plus ONE
+ *      MCP backfill. NEVER `init --upgrade`, NEVER a core/ replace: the old
+ *      arm resolved the DEFAULT channel and swapped a release tarball over a
+ *      newer from-source core, and it never wrote `cli_targets` anyway.
+ *   G4 secret-perms — chmod 600 LAST (TD-220), after every rewrite above.
+ * `--fix` never replaces `~/.igris/core/` except through G1's guarded path.
+ * The exit code re-probes every fixed class (no blind discount): a row that
+ * is still drifted after its fix keeps the verb at exit 1.
  * --remove-orphans deletes path-missing rows after per-row confirmation
- * (skip prompt with --yes).
+ * (skip prompt with --yes). A row the brain still references — a project with
+ * briefs or sessions — cannot be deleted without orphaning that history, so it
+ * is SKIPPED and reported per project and the sweep continues (BR-084); a
+ * skipped row is still drift, so the verb exits 1.
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -82,6 +130,7 @@ import { createInterface } from "node:readline";
 import {
   listProjects,
   deleteProjectRow,
+  type DeleteProjectOutcome,
 } from "../lib/registry.js";
 import {
   claudeJsonPath,
@@ -111,15 +160,23 @@ import {
 } from "../lib/mcp-register.js";
 import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
 import { runRefresh } from "./refresh.js";
-import { runInit } from "./init.js";
 import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
 import { detectBrainCoreStale } from "../lib/drift/brain-core-stale.js";
 import { detectChannelMismatch } from "../lib/drift/channel-mismatch.js";
 import { detectBridgeMissing } from "../lib/drift/bridge-missing.js";
 import { detectAntigravitySkillsLink } from "../lib/drift/antigravity-skills-link.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
+import { readMachineIdentity } from "../lib/machine-identity.js";
+import { readConfig, recordCliTarget } from "../lib/init-config.js";
+import { knownCLITargets } from "../lib/cli-detect.js";
+import { readUnattributedHostnames } from "../lib/brain-db.js";
+import {
+  gitleaksOnPath,
+  inspectGitHooks,
+  installGitHooks,
+} from "../lib/git-hooks.js";
 import { info, warn, error as logError } from "../lib/log.js";
-import type { DriftRow, RegistryRow } from "../types.js";
+import type { CLITarget, DriftRow, RegistryRow } from "../types.js";
 
 export interface DoctorOptions {
   fix: boolean;
@@ -164,259 +221,375 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
     }
   }
 
+  // BR-103: every fix arm runs inside runFixes() — dependency-ordered,
+  // isolated, tabulated. `errored` counts failed + refused outcomes.
   let errored = 0;
-  // TD-122: bridge-missing fix is invocation-bounded — a single partial
-  // init resolves all bridge-missing rows in one pass. We track this
-  // flag so subsequent bridge-missing rows skip re-invocation, but DO
-  // NOT `break` the loop: that would skip other drift classes
-  // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
-  // skills-pollution) that come after bridge-missing in `drift`.
-  let bridgeFixApplied = false;
-  // TD-223: skills-pollution emits a single brain-level row, but guard against
-  // a repeated convert pass defensively (mirrors bridgeFixApplied).
-  let skillsPollutionFixApplied = false;
-
-  // FR-212d: hooks are global now (ONE block), so the hooks-missing/hooks-stale
-  // fix — re-merging `~/.claude/settings.json` — is a single brain-level action.
-  // Guard against re-running it per (brain) row defensively (there is only one).
-  let globalHooksFixApplied = false;
-
   if (opts.fix) {
-    for (const row of drift) {
-      if (
-        row.driftClass === "hooks-missing" ||
-        row.driftClass === "hooks-stale"
-      ) {
-        // FR-212d Phase 2: the per-project hooks layer was retired — hooks live
-        // in ONE global `~/.claude/settings.json` block. The fix is GLOBAL-only:
-        // re-merge the canonical Igris hooks (idempotent + no-clobber +
-        // never-throws). There is no per-project materialization to re-run, so
-        // this is NOT a per-project re-install — the row is brain-level.
-        if (globalHooksFixApplied) {
-          continue;
-        }
-        globalHooksFixApplied = true;
-        info("fix: hooks-missing/stale — refreshing the GLOBAL Igris hooks (~/.claude/settings.json)");
-        const gh = mergeGlobalCanonicalHooks();
-        if (gh.outcome === "failed") {
-          errored++;
-          logError(`global hooks refresh failed: ${gh.error}`);
-        } else {
-          info(`  global Igris hooks ${gh.outcome} -> ${gh.path}`);
-        }
-      } else if (row.driftClass === "brain-core-missing") {
-        info(`fix: brain-core-missing — invoking 'igris refresh'`);
-        try {
-          const code = await runRefresh({});
-          if (code !== 0) {
-            errored++;
-            logError(`brain-core-missing fix: refresh returned exit ${code}`);
-          }
-        } catch (err) {
-          errored++;
-          const msg = err instanceof Error ? err.message : String(err);
-          logError(`brain-core-missing fix: ${msg}`);
-        }
-      } else if (row.driftClass === "bridge-missing") {
-        // TD-122: a single partial-init resolves all bridge-missing rows
-        // in one pass. Subsequent rows are skipped via the flag — but
-        // we MUST NOT `break` the outer loop, because other drift classes
-        // (hooks-missing / hooks-stale / brain-core-missing / secret-perms /
-        // skills-pollution) may still be waiting after the bridge-missing block.
-        if (bridgeFixApplied) {
-          continue;
-        }
-        info(`fix: bridge-missing for ${row.path} — invoking partial init (--upgrade)`);
-        try {
-          // Partial init in upgrade mode re-runs the bridge materialization
-          // pass against the current detected set, leaving core/ untouched
-          // (atomic-extract is a no-op on identical content). User state
-          // (knowledge.db, USER.md, config.json) is preserved by --upgrade.
-          const code = await runInit({ upgrade: true, yes: true });
-          if (code !== 0) {
-            errored++;
-            logError(`bridge-missing fix: init returned exit ${code}`);
-          }
-          bridgeFixApplied = true;
-        } catch (err) {
-          errored++;
-          const msg = err instanceof Error ? err.message : String(err);
-          logError(`bridge-missing fix: ${msg}`);
-          // Even on error, mark applied so subsequent bridge-missing rows
-          // don't re-attempt (init already errored once; re-running won't
-          // help and may compound state damage).
-          bridgeFixApplied = true;
-        }
-      } else if (row.driftClass === "mcp-unregistered") {
-        // FR-169: register the bundled igris-brain MCP into every descriptor
-        // harness directly (the set is descriptor-driven via harnessIds()). Cheap
-        // — no need to re-run init. registerBrainAcrossHarnesses never throws; a
-        // per-harness failed outcome counts into `errored`. (Detection is still
-        // Claude-only via inspectMcpRegistration — the trigger fires on Claude,
-        // the fix backfills all harnesses. Broadening detection to all harnesses
-        // is a tracked FR-169 follow-up.)
-        info("fix: mcp-unregistered — registering igris-brain MCP across all Igris harnesses");
-        // FR-212d: doctor backfills the brain MCP via the IN-PROCESS custom
-        // merger (deterministic, no `add-mcp` subprocess — same robust posture as
-        // `igris init`). The harness-COMPILE projection delegates; this fix does
-        // not.
-        const results = registerBrainAcrossHarnesses(undefined, {
-          engine: "custom",
-        });
-        for (const { harness, result } of results) {
-          if (result.outcome === "failed") {
-            errored++;
-            logError(`mcp-unregistered fix (${harness}): ${result.error}`);
-          } else {
-            info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
-          }
-        }
-      } else if (row.driftClass === "antigravity-skills-link") {
-        // FR-179 Phase C (R2): create-or-repoint the antigravity skills parent
-        // symlink directly (the same idempotent-repair install runs — cheap, no
-        // need to re-run init). linkAntigravitySkills never throws; a refused
-        // (real non-empty dir) or failed outcome counts into `errored` and the
-        // row stays non-clean for manual resolution.
-        info(
-          "fix: antigravity-skills-link — linking ~/.gemini/antigravity-cli/skills -> ~/.agents/skills",
-        );
-        const link = linkAntigravitySkills();
-        if (link.outcome === "refused" || link.outcome === "failed") {
-          errored++;
-          logError(`antigravity-skills-link fix: ${link.error}`);
-        } else {
-          info(`  antigravity skills link ${link.outcome} -> ${link.target}`);
-        }
-      } else if (row.driftClass === "secret-perms") {
-        // TD-220: the actual chmod runs in the FINAL re-harden pass below
-        // (after the fix loop) — NOT here. Rationale: an mcp-unregistered fix
-        // earlier or later in this same loop re-writes a harness config via
-        // tmp+renameSync, which adopts the umask-default mode (644) and
-        // re-loosens it (Risk R1). Chmod'ing in-loop would race that rewrite.
-        // Deferring to a post-loop pass makes the chmod ordering-independent
-        // WITHOUT touching the FR-162/163 mergers (R1 stays a deferred
-        // follow-up). Here we only announce intent.
-        const owner = isIgrisOwnedSecretFile(row.path)
-          ? "Igris-owned"
-          : "harness-owned";
-        info(`fix: secret-perms (${owner}) — will chmod 600 ${row.path}`);
-      } else if (row.driftClass === "skills-pollution") {
-        // TD-223 (RE-SCOPED): migrate each legacy whole-dir surface root into a
-        // REAL dir of per-item symlinks (direct-materialize — never compile),
-        // then clean the stray projection symlinks leaked into the canonical
-        // source. The migrator backs up the old root symlink (rename, never rm),
-        // realpath-contains every mutation, and refuses an unexpected target.
-        // The before/after enumeration is PRINTED as the no-loss proof. A stray
-        // that is not a loadout projection is left untouched (manual review).
-        // There is ONE skills-pollution row, so guard against a repeated pass.
-        if (skillsPollutionFixApplied) {
-          continue;
-        }
-        skillsPollutionFixApplied = true;
-        errored += fixSkillsPollution();
-      } else if (
-        row.driftClass === "slug-basename-mismatch" ||
-        row.driftClass === "duplicate-path" ||
-        row.driftClass === "channel-mismatch" ||
-        row.driftClass === "brain-core-stale"
-      ) {
-        warn(
-          `${row.slug}: ${row.driftClass} — ${row.recommendedFix}`,
-        );
-      }
-    }
-
-    // TD-220: FINAL re-harden pass — chmod 600 every flagged secret file AFTER
-    // all other fixes have run, so an install/MCP rewrite earlier in this loop
-    // (tmp+renameSync re-loosens to 644 — Risk R1) is corrected last. Pure
-    // doctor-side, never touches mcp-register.ts. chmod fixes the loose-bit
-    // dimension only — a git-tracked file stays flagged (chmod can't untrack).
-    for (const row of drift) {
-      if (row.driftClass !== "secret-perms") continue;
-      const ok = chmodSecretFile(row.path);
-      const verdict = checkSecretFilePerms(row.path);
-      // A failed chmod on a still-flagged present file is an error; a no-op on
-      // an absent/win32 file is NOT (it would already be "ok" and unflagged).
-      if (!ok && verdict !== "ok") {
-        errored++;
-        logError(`secret-perms fix: could not chmod 600 ${row.path}`);
-      } else if (verdict !== "ok") {
-        // chmod succeeded (or was a no-op) but the file is still flagged —
-        // i.e. git-tracked, which chmod cannot untrack.
-        warn(
-          `${row.path}: still flagged after --fix (git-tracked secret cannot ` +
-            `be untracked by chmod — remove it from git).`,
-        );
-      }
-    }
+    const outcomes = await runFixes(drift);
+    errored = outcomes.filter(
+      (o) => o.outcome === "failed" || o.outcome === "refused",
+    ).length;
+    printFixSummary(outcomes);
   }
+
+  // BR-084: slugs whose delete the DB REFUSED (still referenced). They are the
+  // one class of path-missing row that --remove-orphans does NOT resolve, so
+  // they must not be discounted from the exit code below.
+  const skippedOrphans = new Set<string>();
 
   if (opts.removeOrphans) {
     const orphans = drift.filter((r) => r.driftClass === "path-missing");
     if (orphans.length === 0) {
       info("No orphans to remove.");
     } else {
-      const removed = await confirmAndRemoveOrphans(orphans, opts.yes);
-      info(`Removed ${removed} orphan registry row(s).`);
+      const sweep = await confirmAndRemoveOrphans(orphans, opts.yes);
+      info(`Removed ${sweep.removed} orphan registry row(s).`);
+      if (sweep.skipped > 0) {
+        for (const r of sweep.results) {
+          if (!r.ok) skippedOrphans.add(r.slug);
+        }
+        // Names the slugs rather than saying "see above": the per-row reasons go
+        // to stderr and this line to stdout, so the two can be redirected apart.
+        info(
+          `Skipped ${sweep.skipped} orphan registry row(s) still referenced by ` +
+            `brain rows: ${[...skippedOrphans].join(", ")}. The sweep completed ` +
+            `for the rest; each skip's blocking count is in the warnings.`,
+        );
+      }
     }
   }
 
   // Exit code: 0 if all clean, 1 if any non-clean drift remains, 1 on fix errors.
   const nonCleanRemaining = drift.some((r) => {
     if (r.driftClass === "clean") return false;
-    // After --remove-orphans, path-missing is conceptually resolved.
-    if (opts.removeOrphans && r.driftClass === "path-missing") return false;
+    // After --remove-orphans, path-missing is conceptually resolved — EXCEPT
+    // for a row the DB refused to delete (BR-084). That registry row is still
+    // there and still drifted, so exiting 0 would be the silent pass-over the
+    // per-project reporting exists to prevent.
+    //
+    // THAT EXCEPTION IS NOT EXHAUSTIVE, AND THIS PREDICATE IS NOT YET HONEST.
+    // Three more cases leave a drifted row alive and still return false here,
+    // because `attempt` never ran so the slug never entered `skippedOrphans`:
+    // the operator answers `n`, the operator aborts with `a`, and piped stdin
+    // runs dry (the second `question` never resolves, so the sweep stops after
+    // one answer). All three were measured at exit 0 with the row surviving,
+    // in BOTH the pre- and post-BR-084 builds — they are pre-existing, and
+    // BR-084 narrowed the discount rather than widening it. BR-087 owns them,
+    // and its structural fix is to derive this from a RE-READ of the registry
+    // rather than from the sweep's own report — which is what the `--fix`
+    // branch below already does ("re-check rather than assume"). Until then,
+    // read this as "the DB-refusal case is honest", not "the exit code is".
+    if (opts.removeOrphans && r.driftClass === "path-missing") {
+      return skippedOrphans.has(r.slug);
+    }
     if (opts.fix) {
-      // After --fix, the auto-fixable classes are conceptually resolved (best-effort).
-      if (
-        r.driftClass === "brain-core-missing" ||
-        r.driftClass === "bridge-missing" ||
-        r.driftClass === "mcp-unregistered"
-      ) {
-        return false;
-      }
-      // FR-212d: a hooks-missing/hooks-stale row resolves ONLY if a LIVE re-probe
-      // of the GLOBAL `~/.claude/settings.json` now finds the canonical Igris
-      // hooks present. A failed global-hooks merge (malformed/unwritable target)
-      // keeps the row non-clean (exit 1) — re-check rather than assume.
-      if (r.driftClass === "hooks-missing" || r.driftClass === "hooks-stale") {
-        return detectGlobalHooksDrift() !== null;
-      }
-      // TD-220: a secret-perms row is resolved by --fix ONLY if the post-fix
-      // verdict is "ok". A git-tracked row stays flagged (chmod can't untrack)
-      // — re-check the live verdict rather than assuming chmod cleared it.
-      if (r.driftClass === "secret-perms") {
-        return checkSecretFilePerms(r.path) !== "ok";
-      }
-      // TD-223 (RE-SCOPED): a skills-pollution row resolves to clean ONLY if a
-      // LIVE re-classification finds NO surface root still in the migration
-      // condition (or an unexpected-target symlink) AND no removable stray
-      // projection symlink remains (re-probe — don't assume --fix cleared
-      // everything). An unexpected-target root or a non-projection stray is
-      // never auto-fixed, so it keeps the row non-clean (exit 1) until resolved
-      // manually.
-      if (r.driftClass === "skills-pollution") {
-        const post = classifyMigration();
-        // Any remaining migration condition, unexpected-target symlink, OR stray
-        // projection symlink in the canonical source keeps the row non-clean.
-        return (
-          post.toMigrate.length > 0 ||
-          post.unexpected.length > 0 ||
-          post.strays.length > 0
-        );
-      }
-      // FR-179 Phase C: an antigravity-skills-link row resolves ONLY if a LIVE
-      // re-probe finds the link now correct. A refused real-non-empty-dir stays
-      // flagged (--fix never clobbered it) → keeps the row non-clean (exit 1).
-      if (r.driftClass === "antigravity-skills-link") {
-        return detectAntigravitySkillsLink() !== null;
-      }
+      // BR-103: after --fix every auto-fixable class is RE-PROBED live — the
+      // same predicate the outcome table's `now` column prints. The old blind
+      // discount of brain-core-missing / bridge-missing / mcp-unregistered
+      // (O-1, BR-087's class) is gone: a bridge row that did not clear stayed
+      // invisible for as long as that discount existed (Finding 2).
+      const still = reprobe(r);
+      if (still !== null) return still;
     }
     return true;
   });
 
   if (errored > 0) return 1;
   return nonCleanRemaining ? 1 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// BR-103: the --fix engine — ordered, isolated, tabulated, re-probed.
+// ---------------------------------------------------------------------------
+
+type FixOutcomeKind = "applied" | "refused" | "failed" | "skipped";
+
+interface FixOutcome {
+  row: DriftRow;
+  /** what the row names: a slug, a harness id, a path, or "(brain)" */
+  target: string;
+  action: string;
+  outcome: FixOutcomeKind;
+  detail: string;
+}
+
+/**
+ * Run every `--fix` arm in dependency order (G1 → G4, see the header), each
+ * inside its own try/catch: an exception becomes a `failed` outcome and the
+ * loop continues, so one brain-level failure cannot poison the per-project
+ * fixes after it. Returns one outcome per fix attempted; classes that are
+ * never auto-fixed are WARNed as before and do not appear in the table.
+ */
+async function runFixes(drift: DriftRow[]): Promise<FixOutcome[]> {
+  const out: FixOutcome[] = [];
+  type Result = { outcome: FixOutcomeKind; detail: string };
+  const byClass = (c: DriftRow["driftClass"]): DriftRow[] =>
+    drift.filter((r) => r.driftClass === c);
+  const attempt = async (
+    row: DriftRow,
+    target: string,
+    action: string,
+    fn: () => Promise<Result> | Result,
+  ): Promise<void> => {
+    try {
+      const r = await fn();
+      out.push({ row, target, action, outcome: r.outcome, detail: r.detail });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logError(`${row.driftClass} fix (${target}): ${msg}`);
+      out.push({ row, target, action, outcome: "failed", detail: msg });
+    }
+  };
+
+  // --- G1: brain-core-missing — the only wholesale action, guarded --------
+  for (const row of byClass("brain-core-missing")) {
+    await attempt(row, "(brain)", "igris refresh from the recorded source", async () => {
+      if (detectBrainCoreMissing() === null) {
+        return { outcome: "skipped", detail: "core/ present at the re-probe; nothing to replace" };
+      }
+      info("fix: brain-core-missing — invoking 'igris refresh' (the recorded source; a channel switch needs --yes)");
+      const code = await runRefresh({});
+      if (code !== 0) {
+        logError(`brain-core-missing fix: refresh returned exit ${code}`);
+        return { outcome: "failed", detail: `refresh exit ${code}` };
+      }
+      return { outcome: "applied", detail: "refresh exit 0" };
+    });
+  }
+
+  // --- G2: per-project git-hooks-missing (FR-243) --------------------------
+  for (const row of byClass("git-hooks-missing")) {
+    await attempt(row, row.slug, `installGitHooks ${row.path}/.git/hooks/`, () => {
+      info(`fix: git-hooks-missing for ${row.slug} — installing the Igris git hooks into ${row.path}/.git/hooks/`);
+      const gh = installGitHooks(row.path);
+      if (gh.outcome === "refused") {
+        logError(`git-hooks-missing fix (${row.slug}): ${gh.reason}`);
+        return { outcome: "refused", detail: gh.reason };
+      }
+      const bad: string[] = [];
+      const good: string[] = [];
+      for (const h of gh.hooks) {
+        if (h.outcome === "refused" || h.outcome === "failed") {
+          logError(`git-hooks-missing fix (${row.slug}) ${h.name}: ${h.reason ?? h.outcome}`);
+          bad.push(`${h.name}: ${h.reason ?? h.outcome}`);
+        } else {
+          info(`  ${h.name}: ${h.outcome} -> ${h.source}${h.backup !== undefined ? ` (previous hook preserved at ${h.backup})` : ""}`);
+          good.push(`${h.name}: ${h.outcome}`);
+        }
+      }
+      if (bad.length > 0) return { outcome: "refused", detail: bad.join("; ") };
+      return { outcome: "applied", detail: good.join("; ") };
+    });
+  }
+
+  // --- G3: brain-level, config-scoped --------------------------------------
+  // FR-212d: hooks are global now (ONE block) — a single brain-level action.
+  const globalHooksRows = [...byClass("hooks-missing"), ...byClass("hooks-stale")];
+  if (globalHooksRows.length > 0) {
+    await attempt(globalHooksRows[0], "(brain)", "mergeGlobalCanonicalHooks ~/.claude/settings.json", () => {
+      info("fix: hooks-missing/stale — refreshing the GLOBAL Igris hooks (~/.claude/settings.json)");
+      const gh = mergeGlobalCanonicalHooks();
+      if (gh.outcome === "failed") {
+        logError(`global hooks refresh failed: ${gh.error}`);
+        return { outcome: "failed", detail: String(gh.error) };
+      }
+      info(`  global Igris hooks ${gh.outcome} -> ${gh.path}`);
+      return { outcome: "applied", detail: `${gh.outcome} -> ${gh.path}` };
+    });
+  }
+
+  // FR-169 / FR-212d: the brain MCP backfill is ONE in-process action for all
+  // harnesses (custom merger, no `add-mcp` subprocess). It runs at most once
+  // per pass — the mcp-unregistered arm and the bridge-missing arm share it.
+  let mcpBackfilled = false;
+  const backfillMcp = (): {
+    failed: number;
+    results: ReturnType<typeof registerBrainAcrossHarnesses>;
+  } => {
+    const results = registerBrainAcrossHarnesses(undefined, { engine: "custom" });
+    let failed = 0;
+    for (const { harness, result } of results) {
+      if (result.outcome === "failed") {
+        failed++;
+        logError(`igris-brain MCP backfill (${harness}): ${result.error}`);
+      } else {
+        info(`  igris-brain MCP ${result.outcome} for ${harness} -> ${result.mcpEntryPath}`);
+      }
+    }
+    mcpBackfilled = true;
+    return { failed, results };
+  };
+  for (const row of byClass("mcp-unregistered")) {
+    await attempt(row, "(brain)", "registerBrainAcrossHarnesses (in-process)", () => {
+      info("fix: mcp-unregistered — registering igris-brain MCP across all Igris harnesses");
+      const { failed, results } = backfillMcp();
+      if (failed > 0) return { outcome: "failed", detail: `${failed} of ${results.length} harness(es) failed` };
+      return { outcome: "applied", detail: `${results.length} harness(es)` };
+    });
+  }
+
+  // FR-179 Phase C (R2): create-or-repoint the antigravity skills parent
+  // symlink. A refused (real non-empty dir) outcome stays for manual resolution.
+  for (const row of byClass("antigravity-skills-link")) {
+    await attempt(row, "(brain)", "linkAntigravitySkills ~/.gemini/antigravity-cli/skills", () => {
+      info("fix: antigravity-skills-link — linking ~/.gemini/antigravity-cli/skills -> ~/.agents/skills");
+      const link = linkAntigravitySkills();
+      if (link.outcome === "refused" || link.outcome === "failed") {
+        logError(`antigravity-skills-link fix: ${link.error}`);
+        return { outcome: link.outcome, detail: String(link.error) };
+      }
+      info(`  antigravity skills link ${link.outcome} -> ${link.target}`);
+      return { outcome: "applied", detail: `${link.outcome} -> ${link.target}` };
+    });
+  }
+
+  // TD-223 (RE-SCOPED): ONE skills-pollution row; the migrator prints the
+  // before/after enumeration as the no-loss proof and returns its error count.
+  const pollution = byClass("skills-pollution");
+  if (pollution.length > 0) {
+    await attempt(pollution[0], "(brain)", "migrate surface roots + clean stray projections", () => {
+      const errs = fixSkillsPollution();
+      return errs > 0
+        ? { outcome: "failed", detail: `${errs} error(s); see the warnings above` }
+        : { outcome: "applied", detail: "migrated" };
+    });
+  }
+
+  // bridge-missing: the row names ONE harness that is installed but absent
+  // from config.json#cli_targets. The repair is that record — the only
+  // config write doctor performs — plus the MCP backfill above (once).
+  for (const row of byClass("bridge-missing")) {
+    const target = row.path;
+    await attempt(row, target, `recordCliTarget ${target} + igris-brain MCP backfill`, () => {
+      const known = knownCLITargets() as readonly string[];
+      if (!known.includes(target)) {
+        return { outcome: "refused", detail: `unknown target '${target}' (known: ${known.join(", ")})` };
+      }
+      info(`fix: bridge-missing for ${target} — recording cli_targets.${target} in config.json (never init, never a core/ replace)`);
+      const rec = recordCliTarget(target as CLITarget);
+      if (rec !== "written") {
+        logError(`bridge-missing fix (${target}): config.json ${rec}`);
+        return { outcome: "failed", detail: `config.json ${rec}` };
+      }
+      let detail = `cli_targets.${target} recorded`;
+      if (!mcpBackfilled) {
+        const { failed, results } = backfillMcp();
+        const mine = results.find((r) => String(r.harness) === target);
+        detail += `; MCP ${mine !== undefined ? mine.result.outcome : "n/a"} for ${target}`;
+        if (mine !== undefined && mine.result.outcome === "failed") {
+          return { outcome: "failed", detail };
+        }
+        if (failed > 0) detail += `; ${failed} other harness(es) failed`;
+      } else {
+        detail += "; MCP backfilled earlier in this pass";
+      }
+      return { outcome: "applied", detail };
+    });
+  }
+
+  // --- G4: secret-perms — chmod 600 LAST (TD-220) ---------------------------
+  // Every rewrite above (tmp+renameSync at the umask default) can re-loosen a
+  // harness config (Risk R1); running the chmod after all of them makes it
+  // ordering-independent. chmod fixes the loose-bit dimension only — a
+  // git-tracked file stays flagged (chmod cannot untrack).
+  for (const row of byClass("secret-perms")) {
+    const owner = isIgrisOwnedSecretFile(row.path) ? "Igris-owned" : "harness-owned";
+    await attempt(row, row.path, `chmod 600 (${owner})`, () => {
+      info(`fix: secret-perms (${owner}) — chmod 600 ${row.path}`);
+      const ok = chmodSecretFile(row.path);
+      const verdict = checkSecretFilePerms(row.path);
+      if (!ok && verdict !== "ok") {
+        logError(`secret-perms fix: could not chmod 600 ${row.path}`);
+        return { outcome: "failed", detail: "chmod failed" };
+      }
+      if (verdict !== "ok") {
+        warn(
+          `${row.path}: still flagged after --fix (git-tracked secret cannot ` +
+            `be untracked by chmod — remove it from git).`,
+        );
+        return { outcome: "applied", detail: "chmod ok; still flagged (git-tracked)" };
+      }
+      return { outcome: "applied", detail: "mode 600" };
+    });
+  }
+
+  // Classes --fix never touches: say so, per row, as before.
+  for (const row of drift) {
+    if (
+      row.driftClass === "slug-basename-mismatch" ||
+      row.driftClass === "duplicate-path" ||
+      row.driftClass === "channel-mismatch" ||
+      row.driftClass === "brain-core-stale" ||
+      row.driftClass === "machine-identity" ||
+      row.driftClass === "secret-scan-disarmed"
+    ) {
+      warn(`${row.slug}: ${row.driftClass} — ${row.recommendedFix}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * LIVE re-probe of one row's class after --fix: true = still drifted,
+ * false = clean now, null = no re-probe exists for this class (it is never
+ * auto-fixed, so it stays non-clean). Shared by the outcome table's `now`
+ * column and the exit predicate, so the two cannot disagree.
+ */
+function reprobe(row: DriftRow): boolean | null {
+  switch (row.driftClass) {
+    case "brain-core-missing":
+      return detectBrainCoreMissing() !== null;
+    case "bridge-missing":
+      return detectBridgeMissing().some((b) => b.path === row.path);
+    case "mcp-unregistered": {
+      const m = inspectMcpRegistration();
+      return !m.registered || !m.pathExists;
+    }
+    case "hooks-missing":
+    case "hooks-stale":
+      return detectGlobalHooksDrift() !== null;
+    case "secret-perms":
+      return checkSecretFilePerms(row.path) !== "ok";
+    case "skills-pollution": {
+      // TD-223 (RE-SCOPED): any remaining migration condition, unexpected-
+      // target symlink, OR stray projection symlink keeps the row non-clean.
+      const post = classifyMigration();
+      return (
+        post.toMigrate.length > 0 ||
+        post.unexpected.length > 0 ||
+        post.strays.length > 0
+      );
+    }
+    case "antigravity-skills-link":
+      return detectAntigravitySkillsLink() !== null;
+    case "git-hooks-missing":
+      return detectGitHooksMissing(row.slug, row.path) !== null;
+    default:
+      return null;
+  }
+}
+
+/** The per-fix outcome table — every fix attempted, its result, the live state. */
+function printFixSummary(outcomes: FixOutcome[]): void {
+  info("");
+  if (outcomes.length === 0) {
+    info("Fix summary: No fixes attempted (no auto-fixable row in the drift table).");
+    return;
+  }
+  const n = (k: FixOutcomeKind): number => outcomes.filter((o) => o.outcome === k).length;
+  info(
+    `Fix summary: ${outcomes.length} fix(es) attempted — ${n("applied")} applied, ` +
+      `${n("refused")} refused, ${n("failed")} failed, ${n("skipped")} skipped`,
+  );
+  info("| class | target | action | outcome | now |");
+  info("|-------|--------|--------|---------|-----|");
+  const cell = (t: string): string => t.replace(/\|/g, "/");
+  for (const o of outcomes) {
+    const still = reprobe(o.row);
+    const now = still === null ? "n/a" : still ? o.row.driftClass : "clean";
+    const action = o.detail.length > 0 ? `${o.action} (${o.detail})` : o.action;
+    info(`| ${o.row.driftClass} | ${cell(o.target)} | ${cell(action)} | ${o.outcome} | ${now} |`);
+  }
 }
 
 /**
@@ -493,6 +666,16 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   const agSkills = detectAntigravitySkillsLink();
   if (agSkills !== null) out.push(agSkills);
 
+  // machine-identity (BR-100): informational, read-only, lowest precedence.
+  const mi = detectMachineIdentity();
+  if (mi !== null) out.push(mi);
+
+  // secret-scan-disarmed (FR-243): informational, read-only, beside
+  // machine-identity. Fires when at least one registered project has the
+  // Igris pre-commit installed and `gitleaks` is not on PATH.
+  const ssd = detectSecretScanDisarmed(rows);
+  if (ssd !== null) out.push(ssd);
+
   // Per-project: channel-mismatch + the existing classifyDrift output.
   // channel-mismatch sits BEFORE the existing per-project chain in
   // precedence, so we add its rows first and skip those slugs in the
@@ -533,12 +716,15 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
  *                 dir (the one genuinely-broken state a register-only project
  *                 can still be in). Resolved via --remove-orphans.
  * - duplicate-path: any other row whose realpath(row.path) is identical.
+ * - git-hooks-missing (FR-243): `.git/` is a directory and the Igris git hooks
+ *                 are absent / foreign / dangling / not executable, or
+ *                 core.hooksPath bypasses `.git/hooks/`. Resolved via --fix.
  * - slug-basename-mismatch: row.slug !== basename(row.path) (informational).
  * - symlink-target: row.path is a symlink (informational).
  * - clean: registered + path exists (the register-only happy path).
  *
- * Precedence: path-missing > duplicate-path > slug-basename-mismatch >
- *             symlink-target > clean.
+ * Precedence: path-missing > duplicate-path > git-hooks-missing >
+ *             slug-basename-mismatch > symlink-target > clean.
  * (path-missing wins because if the path is gone, everything else is vacuous.)
  */
 export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
@@ -597,6 +783,15 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
     // only model). The old `.claude/`-presence + per-project `settings.json`
     // hooks checks were deleted — they reflected a per-project layer `igris
     // install` no longer writes. Global-hooks drift is a brain-level row.
+
+    // FR-243: the GIT-level gates are a per-project property again — a
+    // symlink chain from `.git/hooks/` to the canonical hook. Broken-tier, so
+    // it sits above the two informational classes below.
+    const gitHooks = detectGitHooksMissing(r.slug, r.path, resolvedPath);
+    if (gitHooks !== null) {
+      out.push(gitHooks);
+      continue;
+    }
 
     if (basename(r.path) !== r.slug) {
       out.push({
@@ -769,6 +964,115 @@ function detectSkillsPollution(): DriftRow | null {
     path: affectedRoot,
     driftClass: "skills-pollution",
     recommendedFix: parts.join(", "),
+  };
+}
+
+/**
+ * machine-identity (BR-100): (b) minted but the live hostname is not in the
+ * persisted aliases; (c) NULL-id local rows under names outside the aliases.
+ * An unminted identity is not drift (a fresh init stays clean). Never writes.
+ */
+function detectMachineIdentity(): DriftRow | null {
+  const me = readMachineIdentity();
+  const cfg = readConfig();
+  const raw = cfg !== null ? cfg.machine : undefined;
+  const block =
+    typeof raw === "object" && raw !== null && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : null;
+  const persisted = Array.isArray(block?.aliases)
+    ? (block!.aliases as unknown[]).filter((a): a is string => typeof a === "string")
+    : [];
+  const parts: string[] = [];
+  if (me.machine_id !== null && !persisted.includes(me.hostname)) {
+    parts.push(
+      `hostname changed since the last writer ran: now '${me.hostname}', ` +
+        `aliases [${persisted.join(", ")}] (the next writer appends it)`,
+    );
+  }
+  const seen = readUnattributedHostnames(me);
+  if (seen.length > 0) {
+    parts.push(
+      `seen locally, unattributed (machine_id NULL): ` +
+        seen.map((s) => `'${s.hostname}' (${s.rows})`).join(", ") +
+        ` — add to config.json machine.aliases ONLY names this machine has used` +
+        (me.machine_id === null ? `; identity not yet minted (the next writer mints it)` : ""),
+    );
+  }
+  if (parts.length === 0) return null;
+  return {
+    slug: "(brain)",
+    path: configJsonPath(),
+    driftClass: "machine-identity",
+    recommendedFix: `informational — ${parts.join("; ")}`,
+  };
+}
+
+/**
+ * git-hooks-missing (FR-243): per-project, read-only. Null when the path is not
+ * a git repository or `.git` is a file (worktree / submodule — no row), or when
+ * both hooks are installed and executable.
+ */
+export function detectGitHooksMissing(
+  slug: string,
+  path: string,
+  resolvedPath?: string,
+): DriftRow | null {
+  const insp = inspectGitHooks(path);
+  if (insp.kind === "not-git" || insp.kind === "worktree") return null;
+  if (insp.kind === "hooks-path-bypass") {
+    return {
+      slug,
+      path,
+      driftClass: "git-hooks-missing",
+      recommendedFix:
+        `core.hooksPath=${insp.hooksPath} bypasses .git/hooks — not auto-fixed; ` +
+        `add ~/.igris/core/git-hooks/{pre-commit,commit-msg} to that pipeline`,
+      resolvedPath,
+    };
+  }
+  const broken = insp.hooks.filter((h) => h.state !== "installed");
+  if (broken.length === 0) return null;
+  const fixable = broken.every((h) => h.state !== "source-missing");
+  return {
+    slug,
+    path,
+    driftClass: "git-hooks-missing",
+    recommendedFix:
+      broken.map((h) => h.reason).join("; ") +
+      (fixable
+        ? " — run 'igris doctor --fix' (or 'igris install <path>')"
+        : " — run 'igris refresh', then 'igris doctor --fix'"),
+    resolvedPath,
+  };
+}
+
+/**
+ * secret-scan-disarmed (FR-243): brain-level, informational. ≥1 registered
+ * project with the Igris pre-commit INSTALLED (symlink resolving to the
+ * canonical source, executable) while `gitleaks` is not resolvable on PATH.
+ * A machine with no installed hook has nothing disarmed — no row. Never
+ * --fix'able: the binary is the operator's to install.
+ */
+export function detectSecretScanDisarmed(rows: RegistryRow[]): DriftRow | null {
+  if (gitleaksOnPath()) return null;
+  const armed: string[] = [];
+  for (const r of rows) {
+    if (!existsSync(r.path)) continue;
+    const insp = inspectGitHooks(r.path);
+    if (insp.kind !== "ok") continue;
+    const pre = insp.hooks.find((h) => h.name === "pre-commit");
+    if (pre !== undefined && pre.state === "installed") armed.push(r.slug);
+  }
+  if (armed.length === 0) return null;
+  return {
+    slug: "(brain)",
+    path: "PATH",
+    driftClass: "secret-scan-disarmed",
+    recommendedFix:
+      `informational — install gitleaks (brew install gitleaks); every installed ` +
+      `Igris pre-commit is running with secret-scan=DISARMED (${armed.length} ` +
+      `project(s): ${armed.join(", ")})`,
   };
 }
 
@@ -1165,10 +1469,46 @@ function printDriftTable(drift: DriftRow[]): void {
 export type PromptFn = (question: string) => Promise<string>;
 
 /**
+ * What one `--remove-orphans` sweep did. Per-project, never per-batch (BR-084).
+ *
+ * `results` carries one entry per ATTEMPTED delete, in sweep order — a row the
+ * user declined (`n`) or one never reached (`a`) is not an attempt and does not
+ * appear. `removed + skipped === results.length` by construction.
+ */
+export interface OrphanSweepResult {
+  removed: number;
+  /** Attempts the DB refused. Each carries its reason in `results`. */
+  skipped: number;
+  results: DeleteProjectOutcome[];
+}
+
+/**
  * Interactive orphan confirmation flow. Exported for vitest stdin-fixture
  * tests (TD-111): tests inject a synthetic `prompt` function so they can
  * exercise the `[y/N/a/all]` decision tree without monkey-patching
  * `process.stdin` or fighting readline's per-question listener race.
+ *
+ * BR-084 — WHAT HAPPENS TO A PROJECT THAT STILL HAS BRIEFS, and why.
+ *
+ * Its registry row is KEPT and the project is REPORTED as skipped, with the
+ * dependent count as the reason. The two alternatives were considered and
+ * rejected:
+ *
+ *   - *delete the dependents too* (cascade, or an extra prompt). This destroys
+ *     brief history — the brain's build record — to tidy a registry row, and it
+ *     is offered by a verb whose whole contract is "diagnose and repair drift".
+ *     The blast radius is unbounded (654 briefs on the operator's own brain) and
+ *     irreversible, and a `--yes` sweep would take it WITHOUT asking. A doctor
+ *     verb must not be the loudest destructive path in the CLI.
+ *   - *re-point the briefs at another slug*. That is a data migration with no
+ *     obvious target slug, and it belongs with the brief/project coupling work
+ *     (TD-328), not inside a registry sweep.
+ *
+ * Skip-and-report is also the only option that leaves the operator's next move
+ * intact: the row is still there to delete deliberately once the briefs are
+ * dealt with. So the sweep's failure mode is "one row survives, loudly", not
+ * "history is gone, quietly" — and NOT (as before BR-084) "every other orphan
+ * survives too, because the first refusal threw".
  *
  * @param prompt  Optional async function that returns the user's answer for
  *                a given prompt string. Defaults to a `readline`-backed
@@ -1178,15 +1518,34 @@ export async function confirmAndRemoveOrphans(
   orphans: DriftRow[],
   skipPrompt: boolean,
   prompt?: PromptFn,
-): Promise<number> {
-  if (skipPrompt) {
-    let n = 0;
-    for (const o of orphans) {
-      deleteProjectRow(o.slug);
+): Promise<OrphanSweepResult> {
+  const results: DeleteProjectOutcome[] = [];
+
+  // The ONLY route to deleteProjectRow in this function — one guard rather than
+  // four. NB this closure constrains nothing outside this function, and since
+  // BR-084 made deleteProjectRow NON-THROWING, a new caller that drops the
+  // returned outcome compiles clean and fails SILENTLY (pre-BR-084 it crashed).
+  // So the "only route" is pinned by a source scan in registry.test.ts, not by
+  // this comment — a claim of the form "there is only one X" needs a mechanism,
+  // which is the FR-247 / FR-240 precedent in this repo.
+  const attempt = (o: DriftRow): void => {
+    const outcome = deleteProjectRow(o.slug);
+    results.push(outcome);
+    if (outcome.ok) {
       info(`removed: ${o.slug}`);
-      n++;
+    } else {
+      warn(`skipped: ${o.slug} — ${outcome.error ?? "unknown reason"}`);
     }
-    return n;
+  };
+  const summarize = (): OrphanSweepResult => ({
+    removed: results.filter((r) => r.ok).length,
+    skipped: results.filter((r) => !r.ok).length,
+    results,
+  });
+
+  if (skipPrompt) {
+    for (const o of orphans) attempt(o);
+    return summarize();
   }
 
   // Production prompt: spin up a readline interface against process.stdin.
@@ -1205,46 +1564,45 @@ export async function confirmAndRemoveOrphans(
     });
 
   let yesAll = false;
-  let removed = 0;
 
-  for (const o of orphans) {
-    if (yesAll) {
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-      continue;
+  // BR-084: `finally`, not a trailing statement. `attempt` no longer throws, but
+  // `ask` still can (a closed or erroring stdin), and the pre-BR-084 shape left
+  // the readline interface — and with it the process's hold on stdin — open on
+  // every throwing path. Cleanup belongs to the scope that created it.
+  try {
+    for (const o of orphans) {
+      if (yesAll) {
+        attempt(o);
+        continue;
+      }
+      // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
+      // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
+      // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
+      // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
+      // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
+      const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
+        .trim()
+        .toLowerCase();
+      if (ans === "a") {
+        info("aborted by user");
+        break;
+      }
+      if (ans === "y") {
+        attempt(o);
+      } else if (ans === "yes-all" || ans === "all") {
+        yesAll = true;
+        attempt(o);
+      } else {
+        info(`kept: ${o.slug}`);
+      }
     }
-    // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
-    // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
-    // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
-    // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
-    // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
-    const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
-      .trim()
-      .toLowerCase();
-    if (ans === "a") {
-      info("aborted by user");
-      break;
-    }
-    if (ans === "y") {
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-    } else if (ans === "yes-all" || ans === "all") {
-      yesAll = true;
-      deleteProjectRow(o.slug);
-      info(`removed: ${o.slug}`);
-      removed++;
-    } else {
-      info(`kept: ${o.slug}`);
+  } finally {
+    // Close the readline interface only if we created it (i.e. production
+    // path with no injected prompt). Tests pass their own prompt and have
+    // nothing for us to clean up.
+    if (rl !== null) {
+      (rl as ReturnType<typeof createInterface>).close();
     }
   }
-
-  // Close the readline interface only if we created it (i.e. production
-  // path with no injected prompt). Tests pass their own prompt and have
-  // nothing for us to clean up.
-  if (rl !== null) {
-    (rl as ReturnType<typeof createInterface>).close();
-  }
-  return removed;
+  return summarize();
 }

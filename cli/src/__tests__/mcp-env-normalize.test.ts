@@ -2,10 +2,13 @@
  * FR-165 — per-harness env normalizer tests.
  *
  * `normalizeEnvForHarness` is a PURE function (no fs, no env). Each case pins
- * one of the four per-harness output forms (the FR-160e locked decision):
- *   claude/gemini → `${VAR}` verbatim
- *   opencode      → `{env:VAR}`
- *   codex         → resolved literal (or { value: null, missing } when absent)
+ * one of the emit FORMS the FR-160e decision locked. There are THREE forms and
+ * they partition the whole roster — do NOT read a form count as a harness count
+ * (TD-367 round 7: this header said "four", which was neither the number of
+ * forms nor the number of harnesses):
+ *   opencode            → `{env:VAR}`
+ *   codex               → resolved literal (or { value: null, missing })
+ *   every other harness → `${VAR}` verbatim
  *
  * NO `vi.mock` (L-159) — the function takes secrets as a plain arg.
  */

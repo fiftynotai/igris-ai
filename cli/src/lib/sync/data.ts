@@ -41,7 +41,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { mcpCall, readRemoteBrainConfig, type RemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
-import { brainDir } from "../paths.js";
+import { brainDir, expandTilde } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
 import {
   acquireDrainSnapshot,
@@ -279,6 +279,15 @@ export async function drainSyncQueueOnly(
   // so a post-drain inspection would always report zero. Counts live lines in
   // the canonical queue plus any in-flight `.draining-*` temps from a prior
   // crash (those get recovered + replayed by this drain).
+  //
+  // BR-080 (D4): `drained` counts LOCAL `sync_queue.jsonl` LINES, not rows in
+  // the brain-side `sync_queue` TABLE that `callRemoteDrain` empties. The two
+  // sit next to each other in this digest and are routinely conflated — a run
+  // can legitimately report `drained: 0` while the brain-side drain moved
+  // hundreds of rows, and vice versa. Renaming the field is a four-consumer
+  // sweep (`cli/src/types.ts` BootSyncQueueDrain, `boot-sync.test.ts`,
+  // `awaken-verbs.bats`, the `/boot` skill) for a cosmetic gain, so the
+  // ambiguity is recorded here rather than fixed.
   let drained = 0;
   try {
     const depth = inspectQueueDepth(slug);
@@ -410,12 +419,25 @@ async function dispatchEntry(
   const resolved: QueueEntry = { ...entry };
   if (op === "brief_create" && typeof resolved.cache_path === "string") {
     const cachePath = resolved.cache_path;
+    // BR-096: a queued cache_path may be in the portable `~/…` form — the
+    // /register MCP-unavailable fallback minted exactly that — and
+    // readFileSync treats a leading tilde as a literal directory name, so the
+    // read ENOENTs and this entry is preserved for a retry that fails
+    // identically forever. `expandTilde` is THE expansion in this codebase
+    // (lib/paths.ts) and returns a non-tilde path unchanged, so the absolute
+    // case is byte-for-byte untouched.
+    const readPath = expandTilde(cachePath);
     try {
-      resolved.content = readFileSync(cachePath, "utf-8");
+      resolved.content = readFileSync(readPath, "utf-8");
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logError(
-        `sync data: entry ${index} (brief_create) cache_path=${cachePath} unreadable: ${msg}; preserving queue.`,
+        // Both spellings, with NO branch between them: `cache_path=` is what
+        // to fix in the queue file, `read as` is what to look for on disk.
+        // Unconditional so the attempted path is present for every input —
+        // the pre-BR-096 message printed the literal alone and sent readers
+        // to a directory named `~`.
+        `sync data: entry ${index} (brief_create) cache_path=${cachePath} (read as ${readPath}) unreadable: ${msg}; preserving queue.`,
       );
       return 1;
     }
@@ -428,14 +450,37 @@ async function dispatchEntry(
   const toolArgs = buildToolArgs(op, resolved);
 
   const result = await mcpCall(remote, tool, toolArgs);
-  if (result.statusCode === 200) {
-    info(`sync data: entry ${index} (${op}) replayed via ${tool} (HTTP 200).`);
-    return 0;
+  if (result.statusCode !== 200) {
+    logError(
+      `sync data: entry ${index} (${op}) failed via ${tool} (HTTP ${result.statusCode}): ${truncate(result.body, 500)}; preserving queue.`,
+    );
+    return 1;
   }
-  logError(
-    `sync data: entry ${index} (${op}) failed via ${tool} (HTTP ${result.statusCode}): ${truncate(result.body, 500)}; preserving queue.`,
+
+  // BR-080: `statusCode === 200` alone is NOT evidence the entry was accepted.
+  // The brain returns 200 for a THROWN tool error too, so the old check logged
+  // a rejected entry as "replayed", let the loop reach phase 2, and had
+  // `finalizeDrainSnapshot(snapshot, true)` UNLINK the queue — the entry was
+  // destroyed silently. Only a readable success envelope may authorise that
+  // deletion; the other two tiers return non-zero so `runSyncData` finalises
+  // the snapshot as a failure and the entry survives for the next drain.
+  const verdict = classifyToolCallBody(result.json);
+  if (verdict.kind === "error") {
+    logError(
+      `sync data: entry ${index} (${op}) was REJECTED by ${tool} (HTTP 200 carrying a tool error): ${truncate(verdict.summary, 500)}; preserving queue.`,
+    );
+    return 1;
+  }
+  if (verdict.kind === "indeterminate") {
+    logError(
+      `sync data: entry ${index} (${op}) returned HTTP 200 from ${tool} but the result could not be read (${verdict.reason}); replay UNCONFIRMED, preserving queue.`,
+    );
+    return 1;
+  }
+  info(
+    `sync data: entry ${index} (${op}) replayed via ${tool}: ${truncate(verdict.summary, 300)}`,
   );
-  return 1;
+  return 0;
 }
 
 function parseEntry(line: string): QueueEntry | null {
@@ -451,14 +496,151 @@ function parseEntry(line: string): QueueEntry | null {
 }
 
 /**
+ * BR-080 — three-tier verdict for a HTTP-200 MCP `tools/call` response.
+ *
+ * `ok` / `error` are the brain's own two outcomes. `indeterminate` is a THIRD
+ * state and deliberately not folded into either: a body we cannot read is not
+ * evidence of success and not evidence of failure. Collapsing it into `ok`
+ * re-creates the overclaim this fix removes.
+ *
+ * What the two call sites DO with `indeterminate` differs, and the asymmetry is
+ * deliberate. `callRemoteDrain` exits 0 — the brain-side `sync_queue` table is
+ * idempotent and re-drained on the next run, so an unreadable answer costs
+ * nothing and boot-sync's never-block-session-start contract holds.
+ * `dispatchEntry` exits 1 — there, the verdict decides whether to DELETE the
+ * only copy of a queued entry, and an entry destroyed on an unreadable
+ * response is the same class of bug as one destroyed on a rejection.
+ */
+type ToolCallVerdict =
+  | { kind: "ok"; summary: string }
+  | { kind: "error"; summary: string }
+  | { kind: "indeterminate"; reason: string };
+
+/** First non-empty line of the tool result's text content, if any. */
+function firstContentLine(result: Record<string, unknown>): string | null {
+  const content = result.content;
+  if (!Array.isArray(content) || content.length === 0) return null;
+  const first = content[0] as { text?: unknown } | undefined;
+  if (!first || typeof first.text !== "string") return null;
+  const lines = first.text.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.length > 0 ? lines[0] : null;
+}
+
+/** The `Items sent: N` line from the drain summary, if the brain emitted one. */
+function itemsSentLine(result: Record<string, unknown>): string | null {
+  const content = result.content;
+  if (!Array.isArray(content) || content.length === 0) return null;
+  const first = content[0] as { text?: unknown } | undefined;
+  if (!first || typeof first.text !== "string") return null;
+  const line = first.text
+    .split("\n")
+    .map((l) => l.trim())
+    .find((l) => /^items sent:/i.test(l));
+  return line ?? null;
+}
+
+/**
+ * Classify a parsed HTTP-200 body from the brain's `/mcp` endpoint.
+ *
+ * The brain wraps a THROWN tool error as `{content:[...], isError:true}` and
+ * returns it inside a normal JSON-RPC `result` at HTTP **200** (see the stdio
+ * `CallToolRequestSchema` handler and the HTTP direct-dispatch fallback in
+ * `brain-mcp-server/src/index.ts`). Reading the status code alone therefore
+ * reports every tool failure as a success — the BR-080 defect. BOTH HTTP call
+ * sites in this module route their 200s through here: `callRemoteDrain` for the
+ * brain-side drain and `dispatchEntry` for every queue-entry replay.
+ *
+ * Which non-envelope 200s are actually reachable: a proxy or gateway answering
+ * with an error page, a truncated body, and the plain `{"drained":0}` shape the
+ * sync-data fixtures use. All three arrive on the `application/json` arm, which
+ * hands `JSON.parse`'s output straight through without inspecting it.
+ *
+ * The SSE arm is narrower, and it is the READER that makes it so rather than
+ * anything about SSE itself. `readSseJsonRpc` (`lib/mcp-client.ts`) returns a
+ * frame only if it is a non-array object carrying `jsonrpc: "2.0"`, one of
+ * `result` / `error`, and an `id` equal to the per-call uuid this very call
+ * sent. So a `text/event-stream` 200 reaches this function as a JSON-RPC
+ * response or as `null`, and never as some other object shape — a frame that
+ * is malformed, is a notification, or answers a DIFFERENT call (a co-tenant
+ * sharing the brain's single injected session) is skipped, and a body with no
+ * qualifying frame arrives as `null` and lands in the indeterminate tier, by
+ * design. Weakening any of those three checks widens what reaches here, so this
+ * paragraph is a claim about `readSseJsonRpc` and must be re-read if it changes.
+ */
+function classifyToolCallBody(json: unknown): ToolCallVerdict {
+  if (json === null || typeof json !== "object" || Array.isArray(json)) {
+    return { kind: "indeterminate", reason: "response body is not JSON-RPC" };
+  }
+  const envelope = json as Record<string, unknown>;
+  // A JSON-RPC *error* envelope carries no `result`, so without this branch it
+  // would fall through to `indeterminate` — and "unreadable" is provably wrong
+  // for the one shape that states failure outright. Checked before `result`
+  // because the two are mutually exclusive in JSON-RPC 2.0.
+  const rpcError = envelope.error;
+  if (rpcError !== null && rpcError !== undefined) {
+    const message =
+      typeof rpcError === "object" && !Array.isArray(rpcError)
+        ? (rpcError as Record<string, unknown>).message
+        : undefined;
+    return {
+      kind: "error",
+      summary:
+        typeof message === "string" && message.length > 0
+          ? message
+          : "the brain returned a JSON-RPC error with no message",
+    };
+  }
+  const result = envelope.result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) {
+    return {
+      kind: "indeterminate",
+      reason: "response carries no JSON-RPC result object",
+    };
+  }
+  const resultObj = result as Record<string, unknown>;
+  const summary = firstContentLine(resultObj);
+  if (resultObj.isError === true) {
+    return {
+      kind: "error",
+      summary: summary ?? "the brain reported an error with no message",
+    };
+  }
+  if (summary === null) {
+    return {
+      kind: "indeterminate",
+      reason: "JSON-RPC result carries no readable text content",
+    };
+  }
+  const items = itemsSentLine(resultObj);
+  return { kind: "ok", summary: items ? `${summary} ${items}` : summary };
+}
+
+/** Host portion of the remote URL, for messages. Never includes credentials. */
+function remoteHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "the configured remote";
+  }
+}
+
+/**
  * Invoke the remote `igris_sync_queue_drain` MCP tool. Returns process
- * exit code (0 on success, 1 on HTTP failure or non-200 response).
+ * exit code (0 on success or an unreadable-but-not-failing response, 1 on
+ * HTTP failure, non-200 response, or a tool error reported at HTTP 200).
  *
  * The brain's drain schema accepts only `{remote_url, api_key}` (see
- * `brain-mcp-server/src/tools/sync.ts:1014-1017`). We do NOT pass
- * `local_entries` — the brain reads exclusively from its own
- * `sync_queue` table. Per-entry replay happens in `dispatchEntry`
- * BEFORE this call.
+ * `brain-mcp-server/src/engine/components/sync/index.ts`, which declares
+ * `required: ['remote_url','api_key']` — enforced at the gateway since BR-080).
+ * We do NOT pass `local_entries` — the brain reads exclusively from its own
+ * `sync_queue` table. Per-entry replay happens in `dispatchEntry` BEFORE this
+ * call.
+ *
+ * BR-080: the queue drained here is the BRAIN-SIDE `sync_queue` TABLE on the
+ * remote host — a different queue from the local `sync_queue.jsonl` file this
+ * module replays entry-by-entry beforehand. The messages below name it
+ * explicitly; conflating the two is what made "the drain ran but the count did
+ * not move" hard to diagnose.
  */
 async function callRemoteDrain(
   remote: RemoteBrainConfig,
@@ -469,7 +651,26 @@ async function callRemoteDrain(
   };
   const result = await mcpCall(remote, "igris_sync_queue_drain", args);
   if (result.statusCode === 200) {
-    info(`sync data: remote drain OK (HTTP 200)`);
+    const host = remoteHost(remote.url);
+    const verdict = classifyToolCallBody(result.json);
+    if (verdict.kind === "error") {
+      logError(
+        `sync data: brain-side sync_queue drain on ${host} FAILED (HTTP 200 carrying a tool error): ${truncate(verdict.summary, 500)}`,
+      );
+      return 1;
+    }
+    if (verdict.kind === "indeterminate") {
+      // Honest third tier: HTTP 200 with a body we cannot interpret. Exit 0 so
+      // boot-sync's never-block-session-start contract holds, but do NOT claim
+      // the drain succeeded.
+      info(
+        `sync data: brain-side sync_queue drain on ${host} returned HTTP 200 but the result could not be read (${verdict.reason}); drain outcome UNKNOWN.`,
+      );
+      return 0;
+    }
+    info(
+      `sync data: brain-side sync_queue drain on ${host} reported: ${truncate(verdict.summary, 500)}`,
+    );
     return 0;
   }
   logError(

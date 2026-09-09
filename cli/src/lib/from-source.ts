@@ -56,8 +56,10 @@ export interface FromSourceOptions {
 }
 
 export interface FromSourceResult {
-  /** Number of regular files copied. */
+  /** Number of regular files copied under `core/`. */
   fileCount: number;
+  /** BR-103: `<source>/harness-manifest.json` was staged beside `core/`. */
+  manifestStaged: boolean;
 }
 
 /**
@@ -91,7 +93,24 @@ export function copyFromSource(opts: FromSourceOptions): FromSourceResult {
     );
   }
 
-  return { fileCount };
+  // BR-103: the harness descriptor lives at the repo ROOT (a sibling of
+  // core/). Stage it beside the staged core/ so the swap can regenerate
+  // `~/.igris/core/harness-manifest.json` (core-runtime-extras.ts) — the same
+  // spot the GitHub extractor puts it. Verified like every other copy.
+  let manifestStaged = false;
+  const manifestSrc = join(opts.sourcePath, "harness-manifest.json");
+  if (existsSync(manifestSrc) && lstatSync(manifestSrc).isFile()) {
+    const manifestDst = join(opts.destPath, "harness-manifest.json");
+    copyFileSync(manifestSrc, manifestDst);
+    if (sha256File(manifestSrc) !== sha256File(manifestDst)) {
+      throw new FromSourceError(
+        `from-source: byte mismatch after copy for 'harness-manifest.json'`,
+      );
+    }
+    manifestStaged = true;
+  }
+
+  return { fileCount, manifestStaged };
 }
 
 /**

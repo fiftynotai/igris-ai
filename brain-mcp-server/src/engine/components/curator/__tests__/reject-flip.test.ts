@@ -14,6 +14,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { subconsciousMigrations } from '../../subconscious/schema.js';
 import Database from 'better-sqlite3';
 import { handlePerceptionReject } from '../../perception/handlers.js';
 import { surfaceReEvalRejections } from '../../janitor/hygiene.js';
@@ -45,21 +46,12 @@ function makeBrain(): Database.Database {
       created_at TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
-    CREATE TABLE suggestions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      source_module TEXT,
-      project_slug TEXT,
-      title TEXT,
-      evidence TEXT,
-      priority TEXT,
-      status TEXT NOT NULL DEFAULT 'pending',
-      created_at TEXT,
-      expires_at TEXT,
-      confidence REAL,
-      suggested_action TEXT,
-      type_inferred INTEGER
-    );
   `);
+  // TD-440 — `suggestions` comes from the OWNING component's migrations rather
+  // than a hand-rolled copy. The copy that used to live here drifted the moment
+  // v5 added a column the janitor writer stamps, and a fixture that can drift
+  // from the schema it stands in for will do it again.
+  for (const m of subconsciousMigrations) db.exec(m.sql);
   return db;
 }
 

@@ -81,6 +81,11 @@ A session file moves through exactly three states:
 
 Liveness is the **instance registry's** job — never the session file's.
 
+- **Same-machine liveness is keyed on the machine identity** (`config.json`
+  `machine.id`, with `machine.aliases` for rows that predate it), never on the
+  hostname — a hostname drifts with the network and would turn this machine's
+  own instances into `unknown_remote` (BR-100).
+
 - **Activity time is DISPLAY-ONLY.** It reports "last active at T" and
   nothing more. It MUST NOT trigger any destructive action — no auto-archive,
   no auto-adopt, no auto-release.

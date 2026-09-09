@@ -48,9 +48,11 @@
  *     the joined positional makes add-mcp write the LITERAL `{command,args}`
  *     shape (FR-212d fix — `--args` is NO LONGER used). `-a` is REPEATABLE (one
  *     flag per agent), `-g` = user-level, `-n` = server name, `-y` skips prompts.
- *   - the 6 Igris harness agent ids are EXACTLY `claude-code codex gemini-cli
+ *   - the Igris harness agent ids are EXACTLY `claude-code codex gemini-cli
  *     opencode antigravity cursor` (live `list-agents` — same ids as the skills CLI;
- *     `gemini-cli`, NOT `gemini`).
+ *     `gemini-cli`, NOT `gemini`). That list is a PROBE RECORD, not the runtime
+ *     source: `mcpAgentIds()` derives the set from the descriptor's `agent_id`
+ *     fields, so a newly onboarded harness joins it without editing this comment.
  *   - `add-mcp remove <query> -g -a <agent...> -y` is the un-registration
  *     inverse (probed: `remove [options] <query>`, `-g`/`-a`/`-y`).
  *   - `--env`/`--args` placeholders `${VAR}` prompt interactively WITHOUT `-y`;
@@ -74,8 +76,9 @@ export type McpEngine = "delegate" | "custom";
 /**
  * The active MCP placement engine. FR-212d Phase 2 (the smoke gate is green)
  * flipped the default to `"delegate"` AND deleted the custom merger placement
- * for the 4 DELEGATED harnesses (claude/codex/gemini/opencode), so `add-mcp` +
- * the Igris-owned grant is the engine for them. There is NO escape hatch: the
+ * for the DELEGATED harnesses — every harness with an `mcp` block EXCEPT
+ * antigravity, i.e. `mcpTargetTypes()` minus the carve-out below — so `add-mcp`
+ * + the Igris-owned grant is the engine for them. There is NO escape hatch: the
  * `IGRIS_MCP_ENGINE` env read is gone (operator decision — the `"custom"` branch
  * for the delegated paths is retired).
  *

@@ -34,7 +34,6 @@ import type { ToolDefinition } from '../types.js';
 import { createMemoryComponent } from '../components/memory/index.js';
 import { createErrorsComponent } from '../components/errors/index.js';
 import { createProjectsComponent } from '../components/projects/index.js';
-import { createMetricsComponent } from '../components/metrics/index.js';
 import { createSessionsComponent } from '../components/sessions/index.js';
 import { createBriefsComponent } from '../components/briefs/index.js';
 import { createEdgesComponent } from '../components/edges/index.js';
@@ -53,7 +52,6 @@ const COMPONENT_FACTORIES = [
   createErrorsComponent,
   createProjectsComponent,
   createContextComponent,
-  createMetricsComponent,
   createSessionsComponent,
   createBriefsComponent,
   createEdgesComponent,
@@ -84,7 +82,7 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 111 tools (108 baseline + FR-116 M3: +3 maintenance tools)', () => {
+  it('exposes exactly 108 tools (112 at FR-237 − 4: FR-267 retired the metrics component)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
@@ -94,7 +92,11 @@ describe('gateway tool count (TD-171 closeout)', () => {
     // composition (createJanitorComponent → createCognitionComponent), 107→108.
     // FR-116 M3 added igris_brain_maintenance_undo / _history / _config (the
     // outdated-pruning + UNDO surface) on the janitor component, 108→111.
-    expect(tools.length).toBe(111);
+    // FR-237 added igris_graph_brain (whole-brain graph data layer), 111→112.
+    // FR-267 (2026-08-26) RETIRED the metrics component — igris_metrics_record /
+    // _query / _velocity / _dashboard were all surfaces of one metrics table, and that
+    // table is now frozen history (agent_events is the record), 112→108.
+    expect(tools.length).toBe(108);
   });
 
   it('every component factory contributes at least one tool', () => {

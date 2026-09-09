@@ -31,10 +31,30 @@
  */
 
 import type Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { errMsg } from '../../../helpers.js';
 import { handleEdgeCreate } from '../../edges/handlers.js';
 import { deleteEmbedding } from '../../../../utils/vector-search.js';
 import { logUndoEntry } from '../../janitor/undo.js';
+import { candidateFromRow, findingKey } from '../finding-key.js';
+import { recordDismissPattern } from '../runner.js';
+import { LEGACY_PRODUCER_ID } from '../handlers.js';
+
+/**
+ * The `suggestions` columns `applyDismissExisting` needs to key a dismiss
+ * pattern (TD-440). Read via `SELECT *`, so a pre-v5 row simply has the three
+ * v5 fields undefined and falls back to a derived key.
+ */
+interface DismissableRow {
+  id: number;
+  status: string;
+  project_slug: string | null;
+  title: string;
+  evidence: string | null;
+  suggested_action: string | null;
+  dedupe_key?: string | null;
+  source_instance?: string | null;
+}
 
 // ---------------------------------------------------------------------------
 // Result shape
@@ -62,10 +82,16 @@ export interface ActionResult {
   acted_brief_id?: string;
   /** Kind-specific success payload (e.g. the brief DRAFT, the created edge). */
   data?: Record<string, unknown>;
+  /** Guard refusal (TD-439). */
+  refused?: string;
 }
 
 function fail(kind: string, error: string): ActionResult {
   return { ok: false, kind, message: error, error };
+}
+
+function refuse(kind: string, reason: string): ActionResult {
+  return { ...fail(kind, reason), refused: reason };
 }
 
 function ok(kind: string, message: string, extra: Partial<ActionResult> = {}): ActionResult {
@@ -235,8 +261,8 @@ export function applyDismissExisting(
   }
 
   const existing = db
-    .prepare('SELECT id, status FROM suggestions WHERE id = ?')
-    .get(id) as { id: number; status: string } | undefined;
+    .prepare('SELECT * FROM suggestions WHERE id = ?')
+    .get(id) as DismissableRow | undefined;
   if (!existing) {
     return fail('dismiss_existing', `suggestion_id ${id} does not exist`);
   }
@@ -255,6 +281,17 @@ export function applyDismissExisting(
              dismissed_reason = ?
        WHERE id = ?`,
     ).run('superseded by subconscious apply_action', id);
+    // TD-440 — the SECOND dismiss writer now records the pattern too. It never
+    // did: `handleSuggestionDismiss` recorded and this path did not, so a
+    // suggestion the model itself superseded taught the loop nothing and came
+    // straight back. Same key as the handler, so the two writers land on one row.
+    recordDismissPattern(
+      db,
+      existing.source_instance ?? LEGACY_PRODUCER_ID,
+      existing.project_slug,
+      existing.dedupe_key ?? findingKey(candidateFromRow(existing)),
+      'superseded by subconscious apply_action',
+    );
   } catch (err) {
     return fail('dismiss_existing', `failed to dismiss suggestion ${id}: ${errMsg(err)}`);
   }
@@ -417,7 +454,19 @@ export function applyAddEdge(
     return fail('add_edge', `to node ${toType}:${toId} does not exist`);
   }
 
-  // Delegate to the canonical edge creator (validates vocabulary + self-loops).
+  // Delegate to the canonical edge creator (validates vocabulary + self-loops,
+  // and since BR-083 the project-qualification ladder).
+  //
+  // BR-083 — NO QUALIFIER IS PASSED, AND THAT IS THE CORRECT CHOICE HERE, NOT
+  // AN OMISSION. A `suggested_action` carries `{type, id}` and nothing else, so
+  // this call site has no project context to assert. The ladder resolves every
+  // `|P| <= 1` endpoint for free — which is all of them today, since the
+  // suggestion pipeline proposes `learning -> learning` edges over integer PKs
+  // — and REFUSES an `|P| > 1` endpoint with the candidate list, which arrives
+  // here as a structured `fail(...)` naming the projects. Inventing a project
+  // from the suggestion's own `project_slug` would be exactly the guess this
+  // brief forbids: the suggestion's project is where the INFERENCE ran, not
+  // where the endpoint lives.
   const justification = asString(params.justification);
   const result = handleEdgeCreate({
     from_type: fromType,
@@ -687,6 +736,77 @@ interface ContradictionLearningRow {
 
 const KIND_RESOLVE = 'resolve_contradiction';
 
+/** sha256 hex of `text`. */
+export function contentHash(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
+}
+
+/** Carry cap (chars). */
+export const CARRY_CAP = 8_000;
+/** Carried-section header. */
+export const PRESERVED_MARKER = 'Preserved specifics from #';
+
+const SPECIFIC_RES: readonly RegExp[] = [
+  /`[^`\n]+`/g,
+  /\b(?:[A-Z]{2}|L)-\d{2,4}\b/g,
+  /https?:\/\/[^\s)>\]]+/g,
+  /(?:[\w.-]+\/)*[\w.-]*[A-Za-z_][\w.-]*\.\w{2,5}(?::\d+(?:-\d+)?)?/g,
+  /\/[a-z][\w-]*(?:\/[\w-]+)+/g,
+  /\b(?=[0-9a-f]*\d)[0-9a-f]{7,40}\b/g,
+  /\b\d+(?:\.\d+)?\s?(?:MB|KB|GB|MiB|KiB|ms)\b/g,
+];
+const FENCE_RE = /```[\s\S]*?```/g;
+const squash = (s: string): string => s.replace(/\s+/g, ' ').trim();
+
+/** TD-439 specifics grammar. */
+export function extractSpecifics(text: string): string[] {
+  const out: string[] = [];
+  for (const re of SPECIFIC_RES) for (const m of text.matchAll(re)) out.push(m[0]);
+  return out;
+}
+
+export interface CarrySource {
+  id: number;
+  label: string;
+  text: string;
+}
+
+/** Append what `synthesis` dropped from `sources`. */
+export function carryForward(
+  sources: readonly CarrySource[],
+  synthesis: string,
+): { text: string; carried: number; chars: number } {
+  const syn = squash(synthesis);
+  const has = (s: string): boolean => syn.includes(squash(s.replace(/^`|`$/g, '')));
+  const seen = new Set<string>();
+  const sections: string[] = [];
+  let carried = 0;
+  let chars = 0;
+  for (const src of sources) {
+    const units: Array<[string, boolean]> = [];
+    const rest = src.text.replace(FENCE_RE, (b) => {
+      units.push([b, true]);
+      return '\n';
+    });
+    for (const line of rest.split('\n')) if (line.trim()) units.push([line.trim(), false]);
+    const keep: string[] = [];
+    for (const [u, block] of units) {
+      const key = squash(u);
+      if (seen.has(key) || syn.includes(key) || u.startsWith(PRESERVED_MARKER)) continue;
+      if (!block && extractSpecifics(u).every(has)) continue;
+      seen.add(key);
+      keep.push(u);
+      carried += 1;
+      chars += u.length;
+    }
+    if (keep.length) {
+      sections.push(`${PRESERVED_MARKER}${src.id} (${src.label}; TD-439):\n${keep.join('\n')}`);
+    }
+  }
+  const text = sections.length ? `${synthesis}\n\n${sections.join('\n\n')}` : synthesis;
+  return { text, carried, chars };
+}
+
 /** Load a learning row (identity + counters) or undefined. */
 function loadContradictionRow(
   db: Database.Database,
@@ -927,6 +1047,37 @@ export function applyResolveContradiction(
     return fail(KIND_RESOLVE, 'evolved_merge requires a non-empty synthesized_content');
   }
 
+  // TD-439 guard.
+  let merged = { text: synthesized ?? '', carried: 0, chars: 0 };
+  if (resolution === 'evolved_merge') {
+    const expected = asString(params.synthesized_from_hash);
+    if (!expected) {
+      return refuse(
+        KIND_RESOLVE,
+        'no synthesis provenance (pre-TD-439 suggestion) — dismiss it; the next arbiter run regenerates the pair',
+      );
+    }
+    if (expected !== contentHash(winner.content)) {
+      return refuse(
+        KIND_RESOLVE,
+        `winner #${winnerId} changed since the synthesis was computed (content hash mismatch) — dismiss and regenerate`,
+      );
+    }
+    merged = carryForward(
+      [
+        { id: winnerId, label: 'pre-merge', text: winner.content },
+        { id: loserId, label: 'superseded', text: loser.content },
+      ],
+      synthesized!,
+    );
+    if (merged.chars > CARRY_CAP) {
+      return refuse(
+        KIND_RESOLVE,
+        `carry-forward of ${merged.chars} chars exceeds CARRY_CAP ${CARRY_CAP} — resolve with newer_wins or dismiss`,
+      );
+    }
+  }
+
   const rolledSeenAgain =
     (winner.seen_again_count ?? 0) + (loser.seen_again_count ?? 0) + 1;
 
@@ -950,7 +1101,7 @@ export function applyResolveContradiction(
              SET content = ?, seen_again_count = ?, last_seen_at = datetime('now'),
                  embedding = NULL, embedding_model = NULL, updated_at = datetime('now')
            WHERE id = ?`,
-        ).run(synthesized!.slice(0, 1_000_000), rolledSeenAgain, winnerId);
+        ).run(merged.text.slice(0, 1_000_000), rolledSeenAgain, winnerId);
         try {
           deleteEmbedding(db, winnerId);
         } catch {
@@ -975,7 +1126,7 @@ export function applyResolveContradiction(
       winner_id: winnerId,
       loser_id: loserId,
       ...(resolution === 'evolved_merge'
-        ? { seen_again_count: rolledSeenAgain, content_synthesized: true }
+        ? { seen_again_count: rolledSeenAgain, content_synthesized: true, specifics_carried: merged.carried }
         : {}),
     },
   });

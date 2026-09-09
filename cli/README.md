@@ -21,10 +21,13 @@ and hook surfaces. `igris install .` is register-only: it records the project in
 the brain so those global surfaces apply, without copying Igris files into your
 repo.
 
-First-class harnesses: Claude Code, OpenCode, and Antigravity. Codex and Gemini
-CLI are supported bridges.
-
-Cursor remains an onboarding target, not a shipped surface.
+First-class harnesses — Igris's gates run natively there: Claude Code, OpenCode,
+Antigravity. Bridge harnesses — brain, skills and MCP reach them, and agents too
+where the harness has a static-agent surface (Cursor has none; it reads the
+canonical agent files in-process instead); only the gates soften to advisories:
+Codex, Gemini CLI, Cursor. The tier is
+derived from `harnesses.<id>.hooks.supported` in the harness descriptor:
+[Harness tiers](https://github.com/fiftynotai/igris-ai/blob/main/docs/multi-cli.md#harness-tiers).
 
 ## Why Igris
 
@@ -57,8 +60,8 @@ sections below are for contributors working on the CLI source.
 | `igris install <path>` | Register a project with the brain; no repo-local surfaces are copied |
 | `igris update [--all\|--slug X\|--self] [--dry-run]` | Update materialized layer |
 | `igris register-project [path]` | Write the brain registry row only |
-| `igris add <skill\|agent\|mcp\|hook> [name]` | One-step add of a surface — materialize, project to all harnesses, verify drift-clean |
-| `igris remove <skill\|agent\|mcp\|hook> [name]` | Symmetric inverse of `add` — un-project from every harness and verify absent |
+| `igris add <skill\|agent\|mcp\|hook> [name]` | One-step add of a surface — materialize, project to every harness that exposes that surface (skills and MCP reach all of them; agents reach the ones whose descriptor declares an `agents` block; hooks reach the ones whose descriptor sets `hooks.supported: true` — block presence is NOT the hook test, every harness declares a `hooks` block), verify drift-clean |
+| `igris remove <skill\|agent\|mcp\|hook> [name]` | Symmetric inverse of `add` — un-project from every harness the surface reached and verify absent |
 | `igris harness <compile\|check>` | Regenerate or drift-check the per-harness agent-prompt projections |
 | `igris loadout <action>` | Register Layer-2 personal customizations into the overlay (superseded by `igris add`) |
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
@@ -156,7 +159,7 @@ drift class:
 | `duplicate-path` | Multiple slugs share the same realpath |
 | `symlink-target` | Registered path is itself a symlink |
 | `brain-core-missing` | `~/.igris/core/` absent or empty (M5) |
-| `brain-core-stale` | `~/.igris/core/` content hash diverges from configured channel head (M5) |
+| `brain-core-stale` | The recorded channel-head commit for a MUTABLE ref (`main`/`branch`) differs from that ref's current head; immutable `release`/`tag` installs are never flagged, and a record without `ref_commit_sha` (every pre-7.3.2 install) is never flagged (M5, TD-301) |
 | `channel-mismatch` | Per-project `cli_version` ahead of current CLI (M5) |
 | `bridge-missing` | CLI on PATH lacks configured bridge (M5) |
 | `mcp-unregistered` | `~/.claude.json` lacks the igris-brain MCP entry (TD-168) |
@@ -166,15 +169,33 @@ FR-212d retired the `not-installed` class — `igris install` is register-only
 and writes no per-project `.claude/` layer, so its absence no longer means
 "not installed"; a registered project whose path exists is clean.
 
-`--fix` repairs `hooks-missing`/`hooks-stale` by re-merging the GLOBAL Igris
-hooks (`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
-re-install); `brain-core-missing` by invoking `runRefresh()`; `bridge-missing`
-by invoking partial-mode `runInit()`; `mcp-unregistered` by re-registering the
-brain MCP; `secret-perms` by chmod 600. Other classes require manual decisions.
+`--fix` runs every repair in dependency order, each isolated (one failure
+cannot poison the rest), and prints a per-fix outcome table
+(`| class | target | action | outcome | now |` — `now` is a live re-probe that
+also drives the exit code; no class is discounted blindly). It repairs
+`brain-core-missing` by invoking `runRefresh()` from the RECORDED source
+(guarded by a live re-probe — the only wholesale action, and only for an absent
+core); `git-hooks-missing` per project by `installGitHooks()`;
+`hooks-missing`/`hooks-stale` by re-merging the GLOBAL Igris hooks
+(`mergeGlobalCanonicalHooks` — a single brain-level action, no per-project
+re-install); `mcp-unregistered` by re-registering the brain MCP;
+`bridge-missing` by recording `cli_targets.<id>` in `config.json` plus that
+same MCP backfill (BR-103 — before, it invoked `init --upgrade`, which
+replaced `~/.igris/core/` wholesale from the release channel and never wrote
+`cli_targets`); `secret-perms` by chmod 600, last. **`--fix` never replaces
+`~/.igris/core/`** except through the guarded `brain-core-missing` path. Other
+classes require manual decisions.
 
 `--remove-orphans` interactively deletes `path-missing` rows. Skip
 prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`
 (yes-all).
+
+A row the brain still references — a project that has briefs or sessions — is
+**skipped, not deleted**: the DELETE is refused by the foreign key (deleting it
+would orphan that history), so the sweep reports `skipped: <slug>` with the
+count that blocked it, keeps the registry row, and carries on with the other
+orphans. Deal with the briefs first, then re-run. A skipped row is still drift,
+so `igris doctor --remove-orphans` exits 1 when one is left behind.
 
 ## `igris sync`
 

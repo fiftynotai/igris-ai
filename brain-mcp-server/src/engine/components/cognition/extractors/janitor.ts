@@ -197,9 +197,10 @@ export function persistJanitorProposal(
   db.prepare(
     `INSERT INTO suggestions
        (source_module, project_slug, title, evidence, priority, status,
-        created_at, expires_at, confidence, suggested_action, type_inferred)
+        created_at, expires_at, confidence, suggested_action, type_inferred,
+        source_instance)
      VALUES ('janitor', NULL, ?, ?, 'low', 'pending', datetime('now'),
-             datetime('now', ?), ?, ?, 1)`,
+             datetime('now', ?), ?, ?, 1, 'janitor')`,
   ).run(
     title,
     JSON.stringify(evidence),
@@ -244,6 +245,23 @@ export function createJanitorInstance(
 
   return {
     id: 'janitor',
+
+    // TD-327 — the REQUIRED observability declaration. The janitor is the
+    // DRIVER of three other instances: `janitor/runner.ts` co-drives arbiter,
+    // curator and cartographer inside its own run, so a wedged `janitor_engine`
+    // schedule takes FOUR instances offline, not one. Those three name this
+    // instance's id in their `driver_ref`.
+    health: {
+      component: 'cognition.janitor',
+      event_prefix: 'cognition.janitor',
+      gate_keys: ['cognition.janitor.enabled'],
+      gate_default: false, // DEFAULT_JANITOR_CONFIG.enabled === false
+      driver: 'schedule',
+      driver_ref: 'janitor_engine',
+      output: "suggestions[source_module='janitor']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='janitor']",
+    },
 
     async buildContext(
       db: Database.Database,

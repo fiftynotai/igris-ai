@@ -500,6 +500,40 @@ describe('makeBackendLlmExtractor (mocked backend)', () => {
     expect(onEvent).not.toHaveBeenCalled();
   });
 
+  it('maps a backend api_error onto perception.run_failed reason api_error — not the default unknown (TD-447)', async () => {
+    const detail =
+      'API Error: 529 Overloaded. This is a server-side issue, usually temporary — try again in a moment. If it persists, check https://status.claude.com. (http 529)';
+    mockedRunBackend.mockResolvedValue({ ok: false, text: '', fail_reason: 'api_error', detail });
+    const onEvent = vi.fn();
+    const log: ExtractorLogger = { info: () => {}, warn: () => {}, onEvent };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    const out = await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    expect(out).toEqual([]);
+    // RED on HEAD: `backendFailReasonToPerception` fell through to 'unknown' —
+    // the L-232 silent-failure shape (a class indistinguishable from "nothing").
+    expect(onEvent).toHaveBeenCalledWith(
+      'perception.run_failed',
+      expect.objectContaining({ reason: 'api_error', error_message: detail }),
+    );
+  });
+
+  it('maps a backend auth_error onto perception.run_failed reason auth_error (TD-447)', async () => {
+    mockedRunBackend.mockResolvedValue({
+      ok: false,
+      text: '',
+      fail_reason: 'auth_error',
+      detail: 'Failed to authenticate: OAuth session expired and could not be refreshed',
+    });
+    const onEvent = vi.fn();
+    const log: ExtractorLogger = { info: () => {}, warn: () => {}, onEvent };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    expect(onEvent).toHaveBeenCalledWith(
+      'perception.run_failed',
+      expect.objectContaining({ reason: 'auth_error' }),
+    );
+  });
+
   it('drops invalid candidates and keeps valid ones', async () => {
     mockedRunBackend.mockResolvedValue({
       ok: true,

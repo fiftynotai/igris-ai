@@ -202,9 +202,10 @@ export function persistCartographerProposal(
   db.prepare(
     `INSERT INTO suggestions
        (source_module, project_slug, title, evidence, priority, status,
-        created_at, expires_at, confidence, suggested_action, type_inferred)
+        created_at, expires_at, confidence, suggested_action, type_inferred,
+        source_instance)
      VALUES ('cartographer', NULL, ?, ?, 'low', 'pending', datetime('now'),
-             datetime('now', ?), ?, ?, 1)`,
+             datetime('now', ?), ?, ?, 1, 'cartographer')`,
   ).run(
     title,
     JSON.stringify(evidence),
@@ -248,6 +249,32 @@ export function createCartographerInstance(
 
   return {
     id: 'cartographer',
+
+    // TD-327 — the REQUIRED observability declaration. The cartographer is the
+    // one instance with a DOUBLE gate: `resolveCartographerConfig`
+    // (`cartographer/types.ts`) sets `enabled` = `cognition.janitor.enabled`
+    // AND the `cognition.janitor.cluster.enabled` sub-toggle, which ships OFF
+    // because the Leiden community pass is expensive. Both keys are declared so
+    // the reader ANDs them without a per-id branch, and so an operator can see
+    // WHICH of the two is the one that is off. It is additionally
+    // cadence-throttled by `cognition.janitor.cluster.cadence_days` (7),
+    // so a quiet week is expected behaviour, not a stall.
+    health: {
+      component: 'cognition.cartographer',
+      event_prefix: 'cognition.cartographer',
+      gate_keys: [
+        'cognition.janitor.enabled',
+        'cognition.janitor.cluster.enabled',
+      ],
+      // Both keys ship off — the janitor's, and the cluster sub-toggle whose
+      // whole purpose is that the Leiden pass is expensive.
+      gate_default: false,
+      driver: 'co_driven',
+      driver_ref: 'janitor',
+      output: "suggestions[source_module='cartographer']",
+      // TD-423 IDENTITY predicate — see types.ts#produced.
+      produced: "suggestions[source_module='cartographer']",
+    },
 
     async buildContext(
       db: Database.Database,

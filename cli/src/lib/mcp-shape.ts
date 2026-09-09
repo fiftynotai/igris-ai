@@ -54,8 +54,13 @@ export interface HarnessMcpEntryResult {
  * Build the native per-harness MCP entry from the canonical launch spec.
  *
  * Per-harness shapes (finding #8 — pinned byte-for-byte against the bash
- * `normalize_mcp_shape` + the golden fixture):
+ * `normalize_mcp_shape` + the golden fixture). THE SWITCH BELOW IS THE
+ * AUTHORITY; this list is a reader's orientation and has ONE bullet per case
+ * arm, so a case added without a bullet is a stale bullet rather than a missing
+ * shape. It omitted `cursor` from FR-192 until TD-367 round 7:
  *   - claude   → { type:"stdio", command, args, env }            (carries `type`)
+ *   - cursor   → the claude arm, byte-for-byte (FR-192; claude lineage — only
+ *                  the config PATH differs, ~/.cursor/mcp.json)
  *   - gemini   → { command, args, env }                          (NO `type`)
  *   - antigravity → { command, args, env }                       (NO `type`;
  *                  gemini-identical bytes — only the config PATH differs)
@@ -66,18 +71,25 @@ export interface HarnessMcpEntryResult {
  *                  startup_timeout_sec? }                        (codex resolves
  *                  nothing → env values are RESOLVED LITERALS)
  *
- * Env VALUE translation is delegated to `normalizeEnvForHarness` (FR-165):
- * claude/gemini emit `${VAR}` verbatim, opencode emits `{env:VAR}`, codex emits
- * the resolved literal from `secrets` (or `{ missing }` when absent).
+ * Env VALUE translation is delegated to `normalizeEnvForHarness` (FR-165),
+ * which names its two SPECIAL cases and lets the rest fall through: opencode
+ * emits `{env:VAR}`, codex emits the resolved literal from `secrets` (or
+ * `{ missing }` when absent), and EVERY OTHER harness emits `${VAR}` verbatim
+ * because it resolves the ref itself.
  *
- * `secrets` is required ONLY for codex (the other three pass refs through). The
- * key-iteration order of `env` is preserved verbatim from the canonical input.
+ * `secrets` is therefore required ONLY for codex; EVERY OTHER harness passes
+ * refs through. This sentence read "the other <N>" until TD-367 round 7 — a
+ * roster count with the NOUN ELIDED, which no arm of
+ * scripts/validate_harness_tier_claims.sh can see (there is no numeral next to
+ * the word harness, no CLI value grammar and no display-name run), and which
+ * was off by one from birth. Do not put a number back. The key-iteration order
+ * of `env` is preserved verbatim from the canonical input.
  *
  * @param canonical  The loadout canonical launch spec.
  * @param harness    Which harness shape to build.
  * @param enabled    Per-target `enabled` flag (opencode only; defaults true).
- * @param secrets    Codex secret map (from `parseSecretsEnv`). Unused for the
- *                   other three harnesses.
+ * @param secrets    Codex secret map (from `parseSecretsEnv`). Unused for every
+ *                   other harness.
  */
 export function buildHarnessMcpEntry(
   canonical: McpShapeCanonical,

@@ -15,7 +15,7 @@
 load _helpers.bash
 
 setup() {
-  stage_brain
+  stage_brain  # HOME fenced by stage_brain (TD-456) — install step 11 writes ~/.claude.json
   export IGRIS_KEEP_BAK=0
 }
 

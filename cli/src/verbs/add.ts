@@ -4,8 +4,10 @@
  * The unified, one-step, self-verifying surface-add verb. Collapses the old
  * `loadout add-* → harness compile` two-step into ONE atomic command that
  * materializes (vendor/register for personal, write `core/` for core) AND
- * projects to all four harnesses AND verifies (drift-clean), with a LOUD
- * failure on any no-op (TD-235).
+ * projects to every harness whose descriptor declares that surface — skills and
+ * MCP to every harness with an `agent_id`, agents to every harness with an
+ * `agents` block, hooks to every harness with `hooks.supported` true — AND
+ * verifies (drift-clean), with a LOUD failure on any no-op (TD-235).
  *
  * Layering (D9 — `add` orchestrates, it does NOT re-implement the write path):
  *   - personal materialize  → `verbs/loadout.ts` (`materializeSkill`, …) —
@@ -575,8 +577,8 @@ async function runAddAgentArm(opts: AddOptions, mode: AddMode): Promise<number> 
  *
  * S1 (the flagged MCP-scoping discovery — see the FLAG in the completion
  * summary): unlike skills/agents, the MCP compile + drift passes did NOT honor
- * `--filter` by name (the MCP drift pass checks ALL mcp blocks across all 4
- * harness configs). Phase 3 WIRES `--filter` into the MCP passes (byte-identical
+ * `--filter` by name (the MCP drift pass checks ALL mcp blocks across every
+ * harness config `mcpTargetTypes()` returns). Phase 3 WIRES `--filter` into the MCP passes (byte-identical
  * across compile + check, §18.1) reusing the generic name-glob matcher; the arm
  * passes `filter: opts.name` so the verify (drift check, which has no `--surface`
  * flag) is scoped to the just-added MCP server — preventing a pre-existing

@@ -906,11 +906,28 @@ export function handlePerceptionGet(args: Record<string, unknown>): ToolResult {
  *   - `summary_only`: omits the `samples.top_extractors` block (counts
  *     are still computed).
  *
- * Reject is a hard DELETE today, so `rejected_last_n` is sourced from
- * the `perception.candidate_rejected` event_log rows rather than a
- * `learnings WHERE review_status='rejected'` query (which would always
- * return 0 in TD-086 v1). FR-116 may add soft-delete; if so, swap this
- * to read from `learnings` directly.
+ * `rejected_last_n` is sourced from `perception.candidate_rejected`
+ * event_log rows rather than from `learnings`. TWO things about that
+ * sourcing have changed since it was written, and both matter:
+ *
+ *   - The original reason ("reject is a hard DELETE today, so a
+ *     `learnings WHERE review_status='rejected'` query would always
+ *     return 0") is HALF STALE. FR-116 M3 added the soft-delete fork in
+ *     `handlePerceptionReject`: `seen_again_count > 0` now leaves the
+ *     row with `review_status='rejected'` + `deleted_at`, while
+ *     `== 0` still hard-deletes. So a `learnings` query would today
+ *     return the RECURRING rejects only — a different undercount, not a
+ *     fix. Do not "swap this to read from `learnings` directly" without
+ *     deciding which of the two populations the counter is meant to be.
+ *   - Until FR-241 phase 6b the event rows this counts were NEVER
+ *     WRITTEN: `monitoring` did not subscribe
+ *     `perception.candidate_rejected`, so the emit went nowhere and this
+ *     counter was structurally 0. FR-241 subscribed it, so the UNSCOPED
+ *     total is now real. The PROJECT-SCOPED branch below is still 0,
+ *     because the emit carries no `project`/`project_slug` key and
+ *     `monitoring` therefore logs `project_slug` as NULL. Adding
+ *     `project` to the emit in `handlePerceptionReject` is what would
+ *     make the scoped filter work — see the FR-241 MAINTAINING row.
  */
 export function handlePerceptionDashboard(args: Record<string, unknown>): ToolResult {
   const days = args.days !== undefined ? Number(args.days) : 30;
@@ -957,9 +974,12 @@ export function handlePerceptionDashboard(args: Record<string, unknown>): ToolRe
   const approvedRow = db.prepare(approvedSql).get(...approvedParams) as { n: number };
 
   // --- totals.rejected_last_n ---
-  // Reject is a hard DELETE in TD-086 v1. Source from event_log rows
-  // emitted by handlePerceptionReject. Per L-152, scope this to
-  // perception.candidate_rejected events only.
+  // Sourced from the event_log rows emitted by handlePerceptionReject and
+  // (since FR-241 phase 6b) actually written by `monitoring`. Per L-152,
+  // scope this to perception.candidate_rejected events only. See the
+  // function header for what the two branches below can and cannot see:
+  // the unscoped count is real, the project-scoped one still reads 0
+  // because the emit carries no project key.
   let rejectedCount = 0;
   try {
     const rejectedSql = projectFilter

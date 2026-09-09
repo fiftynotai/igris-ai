@@ -5,6 +5,12 @@
 
 load _helpers.bash
 
+# TD-456: nothing here writes (`install --help` exits in commander before
+# runInstall), but every file that names install/init runs fenced.
+setup() {
+  fence_home
+}
+
 @test "igris --version prints semver and exits 0" {
   run $CLI_BIN --version
   [ "$status" -eq 0 ]
