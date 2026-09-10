@@ -370,8 +370,9 @@ describe('BR-080 gateway missing-required contract', () => {
     // TypeError class BR-080 exists to eliminate.
     //
     // SCOPE (TD-321): the fixture below DECLARES `required`, so this case can
-    // only ever prove the required-declaring half of the corpus — 74 of the 108
-    // registered tools (re-measured at FR-267, 2026-08-26; 75 of 112 at TD-321).
+    // only ever prove the required-declaring half of the corpus — 75 of the 109
+    // registered tools (re-measured at TD-460, 2026-09-09; 74 of 108 at FR-267;
+    // 75 of 112 at TD-321).
     // The title said "an MCP call that omits params.arguments" and read as a
     // system-wide property; it was not one. The other 34 tools are covered by
     // the TD-321 block at the bottom of this file.
@@ -499,18 +500,23 @@ describe('BR-080 missing-required contract — every registered tool that declar
   // `listTools()` schema carries a non-empty `required` list. Re-measured at
   // TD-321: 75, out of 112 registered tools. Re-measured at FR-267 (2026-08-26,
   // metrics component retired — `igris_metrics_record` was its one
-  // required-declaring tool): 74, out of 108.
+  // required-declaring tool): 74, out of 108. Re-measured at TD-460 (2026-09-09,
+  // `igris_context_sync` added — it declares `required: ['project']`): 75,
+  // out of 109.
   //
-  // The BR-080 comment here named a different population: the 80
-  // `required: [...]` source literals across the 16 component files that carry
-  // one (79 across 15 files since FR-267). Both numbers are right in isolation,
-  // and the two do not reconcile 1:1 — 4 of the literals are `required: []`
-  // and 1 is a NESTED schema (the edge-spec array item in
-  // `components/memory/index.ts`), which is why 80 - 5 = 75 and 79 - 5 = 74.
-  // The floor clears both counts, so this was a wrong-referent sentence and
-  // never a wrong gate.
+  // The BR-080 comment here named a different population: the `required: [...]`
+  // SOURCE LITERALS across the component files that carry one — 80 across 16
+  // files at BR-080/TD-321, 79 across 15 since FR-267, 80 across those same 15
+  // since TD-460. Both numbers are right in isolation, and the two do not
+  // reconcile 1:1 — 4 of the literals are `required: []` and 1 is a NESTED
+  // schema (the edge-spec array item in `components/memory/index.ts`), so the
+  // map is always the literal count minus 5, in every era: 80 - 5 = 75
+  // (TD-321), 79 - 5 = 74 (FR-267), 80 - 5 = 75 (TD-460). The floor clears
+  // every one of those counts, so this was a wrong-referent sentence and never
+  // a wrong gate. `scripts/validate_skill_required_args.py` is the sibling
+  // that re-derives the literal side of this arithmetic on the real tree.
   //
-  // The floor sits deliberately BELOW the measured 74 so a legitimate tool
+  // The floor sits deliberately BELOW the measured 75 so a legitimate tool
   // removal does not false-fail; it is a non-vacuity check, not a pin.
   it('the swept corpus is non-empty and at least 60 tools deep', () => {
     expect(requiring.length).toBeGreaterThanOrEqual(60);
@@ -548,14 +554,15 @@ describe('BR-080 missing-required contract — every registered tool that declar
 //
 // which is the exact symptom class BR-080 exists to eliminate. TD-321
 // normalises the omitted-arguments case ONCE at the top of `dispatch()`, so an
-// absent `arguments` is exactly equivalent to `{}` for all 108 tools (FR-267).
+// absent `arguments` is exactly equivalent to `{}` for all 109 tools (TD-460;
+// 108 at FR-267).
 //
 // WHAT THIS BLOCK PROVES:
 //   - `undefined` AND `null` args normalise, on both schema shapes that produce
 //     an empty `_required` (`required: []` and no `required` field at all);
 //   - the handler receives `{}` — not `undefined`, and not a value that merely
 //     survived the gateway's own walks;
-//   - the property holds for every REAL registered schema in the 37-tool half
+//   - the property holds for every REAL registered schema in the 34-tool half
 //     of the corpus, not just a hand-written fixture (the parameterized sweep);
 //   - normalisation did not disarm the two walks it feeds: an extra key on an
 //     omitted-args-normalised call still throws TD-128, and a supplied args
@@ -564,14 +571,14 @@ describe('BR-080 missing-required contract — every registered tool that declar
 //     compare by reference).
 //
 // WHAT THIS BLOCK DOES NOT PROVE:
-//   - that any of the 37 handlers is SEMANTICALLY happy with `{}`. The sweep
+//   - that any of the 34 handlers is SEMANTICALLY happy with `{}`. The sweep
 //     registers each real schema with a STUB handler on purpose: the real
 //     handlers open the operator's live brain DB at `~/.igris/memory/`, which a
 //     unit test must never touch. What the schema says is the contract — a tool
 //     that declares no `required` key is advertising that `{}` is a legal call,
 //     and if that advertisement is wrong the defect is in the schema, which is
 //     the same residual the BR-080 ledger above already records.
-//   - anything about the 74 required-declaring tools; that half is the BR-080
+//   - anything about the 75 required-declaring tools; that half is the BR-080
 //     sweep above.
 
 describe('TD-321 omitted-arguments normalisation — fixtures', () => {
@@ -735,7 +742,10 @@ describe('TD-321 omitted-arguments normalisation — every registered tool that 
   // the 112 registered tools that `gateway-tool-count.test.ts` pins. Re-measured
   // at FR-267 (2026-08-26): 34, the complement of 74, summing to 108 — the three
   // `igris_metrics_query` / `_velocity` / `_dashboard` tools that left declared
-  // no `required`. The floor sits below 34 so a legitimate tool removal (or a
+  // no `required`. Re-measured at TD-460 (2026-09-09): STILL 34, now the
+  // complement of 75 and summing to 109 — `igris_context_sync` declares
+  // `required: ['project']`, so it joined the OTHER half and this one did not
+  // move. The floor sits below 34 so a legitimate tool removal (or a
   // tool GAINING a required key, which moves it into the other sweep) does not
   // false-fail.
   it('the swept corpus is non-empty and at least 25 tools deep', () => {

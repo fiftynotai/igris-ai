@@ -79,6 +79,7 @@ const TABLE_CATEGORY: Record<string, string> = {
   sessions: 'Session, brief & task content',
   brief_status: 'Session, brief & task content',
   brief_files: 'Session, brief & task content',
+  context_files: 'Session, brief & task content', // TD-460
   session_files: 'Session, brief & task content',
   definition_files: 'Session, brief & task content',
   agent_metrics: 'Session, brief & task content',

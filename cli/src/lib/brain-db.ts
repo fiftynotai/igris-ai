@@ -1085,7 +1085,19 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
       "lease_expires_at", "state_updated_at",
     ],
   },
-  // sync.ts:166-172
+  // sync.ts:225-241
+  // TD-460 — the pull arm of project-context-doc replication. Verbatim from
+  // SYNC_TABLES: `file_path` is EXCLUDED there (an absolute local path), so it
+  // is absent here too. Landing these rows locally is what lets `/boot`'s
+  // igris_context_sync materialise a doc authored on another machine.
+  {
+    table: "context_files",
+    syncKey: ["project_slug", "key"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: ["project_slug", "key", "content", "content_hash", "updated_at"],
+  },
+  // sync.ts:242-248
   {
     table: "session_files",
     syncKey: ["project", "filename"],
@@ -1093,7 +1105,7 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
     strategy: "lww",
     columns: ["project", "filename", "content", "content_hash", "updated_at", "instance_id", "state"],
   },
-  // sync.ts:173-179
+  // sync.ts:249-255
   {
     table: "definition_files",
     syncKey: ["type", "name"],
@@ -1587,7 +1599,7 @@ export interface ExportTableConfig extends PullTableConfig {
 }
 
 /**
- * The export-scoped subset of `SYNC_TABLES` (sync.ts:94-364). Each config is
+ * The export-scoped subset of `SYNC_TABLES` (sync.ts:120-458). Each config is
  * copied VERBATIM (syncKey / timestampCol / strategy / columns) from the cited
  * `SYNC_TABLES` entry. Distinct from `BOOT_SYNC_PULL_TABLES` (pull-scoped:
  * carries instances/session_files/definition_files, lacks brief_files/goals/
@@ -1615,7 +1627,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
     strategy: "lww",
     columns: ["project", "brief_id", "filename", "content", "content_hash", "updated_at"],
   },
-  // sync.ts:271-285 — brief↔brief subset filtered in readBriefBriefEdges; the
+  // sync.ts:332-379 — brief↔brief subset filtered in readBriefBriefEdges; the
   // concept-graph reuses this config for its concept-touching edges.
   {
     // BR-083 — VERIFIED as a verbatim mirror of `SYNC_TABLES`, not assumed:
@@ -1638,7 +1650,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "from_project", "to_project",
     ],
   },
-  // sync.ts:301-317 — project_slug-scoped.
+  // sync.ts:395-411 — project_slug-scoped.
   {
     table: "goals",
     syncKey: ["goal_id"],
@@ -1680,7 +1692,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "last_seen_at", "resolved_at",
     ],
   },
-  // sync.ts:286-300 — full tier only; the project concept-graph nodes
+  // sync.ts:380-394 — full tier only; the project concept-graph nodes
   // (node_type='concept'), scoped in readConceptNodes.
   {
     table: "graph_nodes",
@@ -1691,6 +1703,13 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "node_type", "node_external_id", "label", "properties", "created_at",
     ],
   },
+  // TD-460 — `context_files` is DELIBERATELY ABSENT from EXPORT_TABLES even
+  // though it joined SYNC_TABLES. The pack already carries these docs as FILES
+  // (`context_docs`, a disk-backed store: export.ts readContextDocs →
+  // context/<file>, import.ts writes the file back). Adding the table would put
+  // the same bytes in one bundle twice and give the doc two authorities inside
+  // a single artifact — the duplication core/os/knowledge-map.md forbids. The
+  // omission is pinned with its reason in auto-push.test.ts.
 ];
 
 /** Look up an {@link ExportTableConfig} by table name. Throws if unknown (a coding error). */

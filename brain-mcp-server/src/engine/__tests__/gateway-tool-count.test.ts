@@ -82,7 +82,7 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 108 tools (112 at FR-237 − 4: FR-267 retired the metrics component)', () => {
+  it('exposes exactly 109 tools (112 at FR-237 − 4 + 1: FR-267 retired metrics, TD-460 added igris_context_sync)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
@@ -96,7 +96,10 @@ describe('gateway tool count (TD-171 closeout)', () => {
     // FR-267 (2026-08-26) RETIRED the metrics component — igris_metrics_record /
     // _query / _velocity / _dashboard were all surfaces of one metrics table, and that
     // table is now frozen history (agent_events is the record), 112→108.
-    expect(tools.length).toBe(108);
+    // TD-460 (2026-09-09) added igris_context_sync on the context component —
+    // the bidirectional disk↔brain reconciler that makes context_files a
+    // replication layer rather than a write-only store, 108→109.
+    expect(tools.length).toBe(109);
   });
 
   it('every component factory contributes at least one tool', () => {

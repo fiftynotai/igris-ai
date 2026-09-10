@@ -221,7 +221,10 @@ the reason the write-path section below gives.
 
 **Context docs need no brain data.** `/api/context-docs` forwards the
 `igris context-docs inventory` digest; `applies_when` is evaluated by that verb
-and is deliberately **not** re-derived server-side. Path safety comes from two
+and is deliberately **not** re-derived server-side. This stayed true through
+TD-460, which made `context_files` a replication table: the doc's authority is
+still the FILE, so existence is still an `existsSync` fact and the body still
+comes off disk. The table is a transport, never a read source for this tier. Path safety comes from two
 properties rather than a filter: the slug is validated against
 `listProjectsReadonly()`,
 and the doc's filename is taken from the digest ROW — there is no code path that
@@ -502,7 +505,7 @@ different again from an empty result.
 | `/api/goals` | `title`, `description` | goals are hand-created, one per objective; `SELECT COUNT(*) FROM goals` measured **6** on the operator brain, and there is no `goals_fts` and no `goals_vec` |
 | `/api/suggestions` | `title`, `evidence` | the queue is DRAINED, not recalled over — a suggestion is triaged once |
 | `/api/learnings` | `title`, `content` | this is what the CANDIDATES tab filters on, and it is a DECISION — but no longer the one first written here. It was "`hybridSearchLearnings` structurally cannot return a `pending_review` row"; **BR-085 made that gate a parameter**, so recall can. The surviving reason is the shape of the answer: a queue must be shown exhaustively, in a stable order, with an honest `total` and continuous pages, while ranked recall returns ONE fused page with no stable offset semantics |
-| `/api/context-docs` | the doc BODIES on disk | five registered types of prose is not a retrieval problem, it is `grep` — and the payload says `body` rather than a column name, because there is no table |
+| `/api/context-docs` | the doc BODIES on disk | five registered types of prose is not a retrieval problem, it is `grep` — and the payload says `body` rather than a column name because the FILE is the authority. Since TD-460 a `context_files` table DOES exist, and this endpoint still reads disk ON PURPOSE: the row is a transport replica, and a reader that preferred it would be reading a copy in order to describe the original. |
 
 **Why a payload field and not a line of UI copy.** A hard-coded sentence is the
 claim that goes stale the day someone swaps the implementation underneath it,

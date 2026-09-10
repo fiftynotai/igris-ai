@@ -43,7 +43,7 @@ flowchart TB
 | 1 | `memory` | Learnings DB with FTS5 + 384-D vector search; auto-promotes to global scope at 2+ projects |
 | 2 | `errors` | Error catalog & root-cause analysis |
 | 3 | `projects` | Registry of installed projects (path, slug, status, config) |
-| 4 | `context` | Cache of context files (coding guidelines, architecture maps, etc.) |
+| 4 | `context` | Replication + reconciliation for project-context docs (coding guidelines, architecture maps, etc.). The FILE under `~/.igris/projects/{slug}/context/` is the authority; `context_files` is its cross-machine replica, reconciled both directions by `igris_context_sync` (TD-460) |
 | 5 | `sessions` | Session lifecycle bookkeeping |
 | 6 | `briefs` | Brief storage with status & phase tracking |
 | 7 | `edges` | Typed entity relationships (FR-105) — provenance graph |
@@ -61,7 +61,7 @@ flowchart TB
 
 _2026-08-26 UTC — Rows other than the metrics removal were not re-verified by FR-267 (the table still carries 18 names against the array's 15) — TD-430 tracks the sweep._
 
-**Tool count:** 108 brain tools across the 15 components — the figure is the pin in `brain-mcp-server/src/engine/__tests__/gateway-tool-count.test.ts` (`toBe(108)`: 112 at FR-237 − 4, FR-267 retired the metrics component) — served by the `igris-brain` MCP server as the single gateway. Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced in `brain-mcp-server/src/engine/gateway.ts`'s `dispatch` — cited by symbol because TD-321 shifted that span and a range citation drifts on every edit inside it). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
+**Tool count:** 109 brain tools across the 15 components — the figure is the pin in `brain-mcp-server/src/engine/__tests__/gateway-tool-count.test.ts` (`toBe(109)`: 112 at FR-237 − 4 + 1, FR-267 retired the metrics component and TD-460 added `igris_context_sync`) — served by the `igris-brain` MCP server as the single gateway. Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced in `brain-mcp-server/src/engine/gateway.ts`'s `dispatch` — cited by symbol because TD-321 shifted that span and a range citation drifts on every edit inside it). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
 
 **Key tables** (subset; the per-component schema files are the source of truth):
 

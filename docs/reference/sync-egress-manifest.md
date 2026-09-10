@@ -159,6 +159,14 @@ is annotated inline.
 - `content_hash`
 - `updated_at`
 
+#### `context_files` — last-write-wins
+
+- `project_slug`
+- `key`
+- `content`
+- `content_hash`
+- `updated_at`
+
 #### `session_files` — last-write-wins
 
 - `project`

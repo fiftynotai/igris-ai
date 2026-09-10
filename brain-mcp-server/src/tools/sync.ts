@@ -223,6 +223,23 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: ['project', 'brief_id', 'filename', 'content', 'content_hash', 'updated_at'],
   },
   {
+    // TD-460: project-context docs replicate so a doc authored on one machine
+    // reaches every machine on the same VPS. The FILE under
+    // ~/.igris/projects/{slug}/context/ stays the authority; this row is a
+    // content-addressed REPLICA whose only job is transport, reconciled by
+    // igris_context_sync and written to disk only by projectContextFile.
+    // `key` is by contract the doc-type `target` filename (coding_guidelines.md).
+    // `file_path` is deliberately EXCLUDED, not redacted: it is an absolute
+    // local path with no cross-machine meaning, and the receiver rebuilds the
+    // path from its own cacheRoot() + key. Excluding it discharges the TD-253
+    // absolute-path obligation by omission (pinned in auto-push.test.ts).
+    table: 'context_files',
+    syncKey: ['project_slug', 'key'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: ['project_slug', 'key', 'content', 'content_hash', 'updated_at'],
+  },
+  {
     table: 'session_files',
     syncKey: ['project', 'filename'],
     timestampCol: 'updated_at',

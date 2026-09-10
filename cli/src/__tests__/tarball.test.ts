@@ -2110,6 +2110,114 @@ interface PackReport {
  *   1_876_704 − 1_876_551 = 153; 36_274 − 33_275 = 2_999 (the cumulative
  *   moved by the bundle's 2_846 PLUS the release commit's 153).
  *
+ * TD-460 MEASURED LAST (2026-09-09), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * BR-101 / TD-444 / BR-103 / TD-456 / BR-104 method): `git archive <rev> cli
+ * brain-mcp-server harness-manifest.json` — the control taken FRESH at develop
+ * `cd58e5c` (NOT the previous row's tail: `cd58e5c` reads 1_879_615 against
+ * that row's final 1_879_550, i.e. 65 B landed between them, which is exactly
+ * why the head directive says measure against HEAD); the final arm from a
+ * `git write-tree` of the working tree through a TEMP index — `78b05b84` at
+ * round 1, RE-MEASURED at round 2 (warden REJECT on the record: a `108 -> 109`
+ * / `74 -> 75` / `21 -> 22` prose sweep that had reached the assertions and
+ * not the comments) on tree `3ba5294`, which is the arm quoted below. The
+ * three `node_modules` symlinked (root + both packages; `src/` and `core/`
+ * never symlinked), `dist` ABSENT so the copy step rebuilt the brain; the
+ * TD-426 smoke printed `(sandboxed)` on both arms; `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, byte- and sha-identical.
+ *
+ * THE CONTROL WAS RE-TAKEN FRESH AT ROUND 2 AND REPRODUCED ROUND 1 EXACTLY —
+ * 1_879_615 / 6_845_254 / 541 / `169b2663…` — which is what licenses reading
+ * the two rounds' finals as one series: the method did not move under them.
+ * The real `cli/dist` (`index.js` `Sep  9 12:55:19`) was never written by
+ * either arm and is untouched at round 2. `brain-mcp-server/dist` WAS rebuilt
+ * in place by this brief's round-1 Phase-7 `npm run build` (a package-local
+ * build; it does not re-vendor `cli/dist` and does not touch the live MCP
+ * binary) and was NOT rebuilt at round 2 — round 2 typechecked with `tsc
+ * --noEmit`, so `dist/index.js` still reads `Sep  9 20:33`. The 109 / 75 / 34
+ * tool census quoted by the sweep was therefore re-taken against the SCRATCH
+ * brain built from the round-2 source, not against that older dist.
+ * `~/.igris/memory/knowledge.db` sha unchanged across both rounds
+ * (`57e338cd…`), `~/.igris/config.json` unchanged (`07449dbf…`), the real
+ * `~/.claude.json` `mcpServers` subtree unchanged (`e1a525ef…`). npm 10.9.8,
+ * node v22.23.2, darwin/arm64.
+ *   control             1_879_615    unpacked 6_845_254, 541 entries, shasum
+ *                                    `169b266399747389b6ba08cecfcfe79a6bdf0268`
+ *                                    — taken twice, byte-identical.
+ *   packed              1_885_869    unpacked 6_866_962, 541 entries (+0),
+ *                                    shasum
+ *                                    `7d080613f64e337f11ef3bc1bdc83fac94ba6fbf`,
+ *                                    taken twice, on the round-2 final tree.
+ *                                    (Round 1 read 1_884_505 / 6_863_383 / 541
+ *                                    / `299e67d5…`; the record sweep below is
+ *                                    the whole difference.)
+ *   TD-460's own share  +6_254 B     packed. Unpacked +21_708 over 11
+ *                                    artifacts, ZERO new entries; the per-file
+ *                                    sum reconciles EXACTLY. From the per-file
+ *                                    diff (unpacked B): `context/index.js`
+ *                                    +8_756 (the reconciler tool — the single
+ *                                    biggest item; +1_457 at round 2 for the
+ *                                    exhaustive outcome arm and the per-refusal
+ *                                    warn), `cache/handlers.js` +3_065 and
+ *                                    `cache/handlers.d.ts` +2_684 (the context
+ *                                    writer + its backup helper; the `.d.ts` is
+ *                                    47 % of that pair, the
+ *                                    brain-emits-declarations tax §13 records —
+ *                                    both UNCHANGED at round 2),
+ *                                    `CHANGELOG.md` +2_687 (CHARGED verbatim;
+ *                                    +1_344 at round 2 for the corrected
+ *                                    deploy-ordering rationale and the
+ *                                    `file_path` evidence sentence),
+ *                                    `sync/index.js` +1_540 (the
+ *                                    `context.registered` case; +748 at round 2
+ *                                    for the two-producer note),
+ *                                    `lib/brain-db.js` +1_118 and its map +340
+ *                                    (the BOOT_SYNC_PULL_TABLES entry + the
+ *                                    EXPORT_TABLES non-edit comment; +1 at
+ *                                    round 2, the one character the
+ *                                    `sync.ts:94-364` -> `sync.ts:120-458`
+ *                                    citation added),
+ *                                    `tools/sync.js` +1_030 (the SYNC_TABLES
+ *                                    entry and its comment),
+ *                                    `context/index.d.ts` +397,
+ *                                    `egress-manifest.js` +62,
+ *                                    `engine/gateway.js` +29 (NEW at round 2 —
+ *                                    the 108 -> 109 comment; this is the
+ *                                    eleventh artifact).
+ *   cumulative delta    +42_593 B    (41.6 KB, 27.7 % of the grant —
+ *                                    1_885_869 − 1_843_276)
+ *   headroom remaining  111_007 B    (108.4 KB — 153_600 − 42_593)
+ *   built app chunk     NOT REMEASURED (no dashboard source change; the
+ *                                    dashboard-artifact staleness on the tree
+ *                                    predates this brief — its newest source
+ *                                    is `Sep  9 13:23:02`, the built
+ *                                    `index.html` `Sep  9 12:55:27`, and this
+ *                                    brief changed zero files under
+ *                                    `cli/dashboard/`)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT — and at
+ *   round 2 from the OPERANDS, not by adjusting round 1's totals:
+ *   1_885_869 − 1_879_615 = 6_254; 1_885_869 − 1_843_276 = 42_593;
+ *   153_600 − 42_593 = 111_007; 541 − 541 = 0;
+ *   6_866_962 − 6_845_254 = 21_708 = the per-file sum;
+ *   8_756 + 3_065 + 2_687 + 2_684 + 1_540 + 1_118 + 1_030 + 397 + 340 + 62 +
+ *   29 = 21_708; 1_879_615 − 1_879_550 = 65 (the drift between the previous
+ *   row's final tree and this brief's control); 42_593 − 36_274 = 6_319 =
+ *   this brief's 6_254 PLUS that 65. The round-over-round delta:
+ *   1_885_869 − 1_884_505 = 1_364 packed and 6_866_962 − 6_863_383 = 3_579
+ *   unpacked, which is what the record sweep cost.
+ *
+ *   The plan priced this at "well under 20 KB" against 117_326 B of headroom
+ *   and it came in at 6_254 — the estimate held, and the reason it held is
+ *   that the brief added NO new module: the reconciler is a tool inside an
+ *   existing component and the writer is a function inside an existing one, so
+ *   the ~0.54–0.73 packed-B-per-source-B module cost never applied. Every one
+ *   of the eleven moved artifacts already shipped. NOTE FOR THE NEXT PLANNER:
+ *   the round-2 sweep was 100 % comments and docs and still cost 1_364 packed
+ *   B, because `brain-mcp-server/tsconfig.json` does not set `removeComments`
+ *   — every brain comment ships. Price a record sweep; do not assume it is
+ *   free.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

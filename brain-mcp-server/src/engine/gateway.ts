@@ -153,7 +153,8 @@ export function createGateway() {
     // (or `null`) from a real client. Every read that follows — the required
     // walk, the TD-128 extras walk, and the handler call — goes through this
     // stand-in, which makes an absent argument map exactly equivalent to `{}`
-    // for all 108 registered tools (FR-267, 2026-08-26; `gateway-tool-count.test.ts` pins it).
+    // for all 109 registered tools (TD-460, 2026-09-09 — 108 at FR-267;
+    // `gateway-tool-count.test.ts` pins it).
     //
     // BR-080 introduced this stand-in for the required walk only and did not
     // forward it, which left a residual: the extras walk still ran

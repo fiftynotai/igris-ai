@@ -333,6 +333,25 @@ export function createSyncComponent(): BrainComponent {
         break;
       }
 
+      case 'context.registered': {
+        // TD-460 — a context doc replica pushes immediately, so an edit reaches
+        // the VPS without any skill having remembered to sync.
+        //
+        // TWO PRODUCERS emit this event, not one. `igris_context_sync`'s ABSORB
+        // (disk -> row) is the TD-460 half; `igris_context_register`
+        // (`components/context/index.ts`, PREDATES TD-460) emitted it already
+        // and, since this listener was wired, auto-pushes too. Both are egress
+        // doors — do not read this case as absorb-only. Neither can leak
+        // `file_path`: `queryTableRows` SELECTs `tableConfig.columns` only and
+        // TD-460 keeps that column out of the `context_files` set, so the
+        // exclusion holds for the older producer without a second guard.
+        const project = data.project as string;
+        const key = data.key as string;
+        const rows = queryTableRows('context_files', 'WHERE project_slug = ? AND key = ?', [project, key]);
+        if (rows.length > 0) tables['context_files'] = rows;
+        break;
+      }
+
       case 'brief.completed': {
         const project = data.project as string;
         const briefId = data.brief_id as string;
@@ -726,6 +745,7 @@ export function createSyncComponent(): BrainComponent {
           { name: 'brief.completed', description: 'Auto-push brief status on completion' },
           { name: 'session.synced', description: 'Auto-push latest session on sync' },
           { name: 'session.file.updated', description: 'Auto-push session file on update' },
+          { name: 'context.registered', description: 'Auto-push context doc replica — emitted by igris_context_sync absorb AND by igris_context_register (TD-460)' },
           { name: 'instance.state_updated', description: 'Auto-push instance data on state update' },
           // Batched push events (10s window)
           { name: 'memory.stored', description: 'Batch-push learnings table' },
@@ -747,6 +767,7 @@ export function createSyncComponent(): BrainComponent {
       ctx.bus.on('brief.completed', onImmediateEvent);
       ctx.bus.on('session.synced', onImmediateEvent);
       ctx.bus.on('session.file.updated', onImmediateEvent);
+      ctx.bus.on('context.registered', onImmediateEvent);
       ctx.bus.on('instance.state_updated', onImmediateEvent);
       ctx.bus.on('memory.stored', onBatchedEvent);
       ctx.bus.on('error.stored', onBatchedEvent);
@@ -772,6 +793,7 @@ export function createSyncComponent(): BrainComponent {
         _ctx.bus.off('brief.completed', onImmediateEvent);
         _ctx.bus.off('session.synced', onImmediateEvent);
         _ctx.bus.off('session.file.updated', onImmediateEvent);
+        _ctx.bus.off('context.registered', onImmediateEvent);
         _ctx.bus.off('instance.state_updated', onImmediateEvent);
         _ctx.bus.off('memory.stored', onBatchedEvent);
         _ctx.bus.off('error.stored', onBatchedEvent);

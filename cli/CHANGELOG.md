@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Project-context docs now replicate across machines (TD-460).**
+  `context_files` joins `SYNC_TABLES` and `BOOT_SYNC_PULL_TABLES`, so a doc
+  authored on one machine reaches every machine on the same VPS. The FILE under
+  `~/.igris/projects/{slug}/context/` remains the authority; the row is a
+  content-addressed replica for transport only. One new brain tool,
+  `igris_context_sync`, reconciles both directions in a single pass and is
+  called from `/boot` Mount (after `boot-sync`), `/ground` and `/document`.
+
+  A locally-newer file is ABSORBED into the row rather than refused, because
+  context docs are disk-authored; a brain-newer row is materialised to disk
+  only after the prior bytes are backed up to
+  `~/.igris/projects/{slug}/context-backups/`. `file_path` is excluded from the
+  replicated columns — an absolute local path has no cross-machine meaning, and
+  the receiver rebuilds it from its own root. What ESTABLISHES the exclusion is
+  the five-column `context_files` section of the regenerated
+  `docs/reference/sync-egress-manifest.md` and the pin in `auto-push.test.ts`
+  asserting the column is in NEITHER `columns` NOR `redactCols`. The CLI twin
+  `cli/src/lib/sync/egress-manifest.generated.ts` regenerates to identical
+  bytes because it carries no per-table column list at all — that zero diff is
+  not a missed regeneration, and it is not evidence of the exclusion either
+  (it would read the same if `file_path` were in `columns` and merely absent
+  from `redactCols`). The `.igris-pack` bundle is unchanged: it still carries
+  these docs as FILES, never as rows.
+
+  **Deploy order is a precaution here, not a constraint — and the reason
+  matters.** `GET /sync/pull` iterates THE REMOTE'S OWN `SYNC_TABLES` against
+  THE REMOTE'S OWN DB (`brain-mcp-server/src/index.ts`, the `/sync/pull`
+  handler), so no ordering lets a client push 500 it: an old remote has no
+  `context_files` entry to iterate and never reads the unknown
+  `since_context_files=` query param, and a new remote ran the context
+  component's v1 migration at its own boot. That holds precisely because this
+  change adds a TABLE and no column to an existing one; the column hazard
+  `MAINTAINING.md` states (a column the REMOTE'S config names but its DB lacks
+  500s the endpoint for every table) is a different case and is not in play.
+  Push-first also loses nothing: a remote that lacks the table names it in
+  `skipped[]` and both push clients hold that table's watermark (BR-097).
+  Deploying the VPS first is still the order to prefer — it is what makes the
+  new table's rows actually reach the other machine — but it is a preference,
+  not a precondition.
+
 ---
 
 ## [7.3.2] - 2026-09-09

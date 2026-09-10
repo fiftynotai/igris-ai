@@ -20,6 +20,7 @@ allowed-tools:
   - mcp__igris-brain__igris_session_recall
   - mcp__igris-brain__igris_project_status
   - mcp__igris-brain__igris_project_register
+  - mcp__igris-brain__igris_context_sync
 triggers:
   - "BOOT"
   - "AWAKEN"
@@ -108,6 +109,23 @@ igris boot-sync --project <detect.project_slug>
 
 **Degradation:** the verb ALWAYS exits 0 and NEVER blocks session start. When `degraded: true` (remote unconfigured) or any part fails (`ok: false`, recorded in `skipped[]`), display the one-line notice and continue — a missing/unreachable remote is a local-only run, not an error. Each part is independent: a failed pull does not abort the drain or vice-versa.
 
+**Then reconcile the project-context docs (TD-460).** Immediately AFTER boot-sync (so the rows it just pulled are the ones this materialises) and BEFORE §4.1 gather, call:
+```
+igris_context_sync { project: "<detect.project_slug>" }
+```
+This is the catch-all that makes replication independent of any skill remembering: a doc authored on another machine lands on disk here, and a doc edited on THIS machine by a plain `Edit` (the `/hunt` or `/promote` case) is absorbed into the brain and auto-pushed. Worst case a doc replicates one session late — not never.
+
+Read its JSON digest and fold the counts into the same restore one-liner as `session_files_pulled`:
+```jsonc
+{ "project": "igris-ai",
+  "absorbed":     ["coding_guidelines.md"],   // disk → brain (this machine authored/edited it)
+  "materialized": ["api_pattern.md"],          // brain → disk (another machine authored it)
+  "unchanged":    ["test_standards.md"],
+  "backed_up":    ["api_pattern.md"],          // prior disk bytes saved to context-backups/
+  "refused":      [] }                          // per-doc failures; never aborts the reconcile
+```
+**Degradation:** a missing `context/` directory is a clean no-op (`absorbed`/`materialized` empty), and a per-doc failure lands in `refused[]` rather than failing the call. Never block session start on it — surface `refused[]` as a one-line notice and continue.
+
 > **What replaced what (FR-195):** boot-sync subsumes the former §3.6 (`igris_brain_pull`), §3.6.1 (`igris_sync_queue_drain`), §3.6.1.1 (`igris sync data` local drain), §3.6.2 (`igris_session_file_pull`), and §3.6.3 (`igris_definition_pull`) — five separate MCP/CLI calls collapsed into one verb. The `_pull` (VPS→local restore) vs `_list` (state-aware local enumerate) distinction that mattered when the skill called both is now internal: this Mount step owns the `_pull` side (restore), and §4.1 gather owns the `_list` side (classification). They no longer share a call site to conflate.
 
 ### 4.1 Mount — Load Session State / Gather
@@ -147,7 +165,7 @@ All gather output is **display-only** — nothing destructive happens. The verb 
 
 **Degradation:** when the brain DB is absent the verb emits `{ "degraded": true, "fresh_start": true, "handoff": null, … }` and exits 0 — treat it as a fresh start (no resume). NEVER block session start on a degraded gather.
 
-**Ordering contract:** boot-sync MUST run before gather, and gather MUST run BEFORE §4.4 register and BEFORE §4.5 housekeeping. The verbs are separate processes and do NOT enforce cross-process order — the skill's call sequence (boot-sync → gather → register → housekeeping → assess) is the contract. H0's Lock-2 "the legacy row was provably read before it is archived" holds ONLY because this skill ran gather before housekeeping.
+**Ordering contract:** boot-sync MUST run before gather, `igris_context_sync` MUST run AFTER boot-sync and BEFORE gather (TD-460 — it materialises the rows boot-sync just pulled, so running it first would reconcile against the previous session's rows), and gather MUST run BEFORE §4.4 register and BEFORE §4.5 housekeeping. The verbs are separate processes and do NOT enforce cross-process order — the skill's call sequence (boot-sync → context-sync → gather → register → housekeeping → assess) is the contract. H0's Lock-2 "the legacy row was provably read before it is archived" holds ONLY because this skill ran gather before housekeeping.
 
 ### 4.2 Display Persona Greeting
 

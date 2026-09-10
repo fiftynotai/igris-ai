@@ -11,7 +11,14 @@
  * boot-tier modules are self-contained files (no `<!-- SECTION: -->` slicing).
  * The two roster-reading tools below are re-pointed onto the INDEX.
  *
- * Provides: igris_context_register, igris_context_get, igris_context_tree, igris_context_load
+ * TD-460: context_files is the REPLICATION layer for project-context docs.
+ * The file under ~/.igris/projects/{slug}/context/ is the authority; the row
+ * is a content-addressed replica whose only job is cross-machine transport.
+ * igris_context_sync is the bidirectional reconciler; the row reaches other
+ * machines because context_files joins SYNC_TABLES.
+ *
+ * Provides: igris_context_register, igris_context_get, igris_context_sync,
+ *           igris_context_tree, igris_context_load
  *
  * @module engine/components/context
  * @author fifty.dev
@@ -25,8 +32,13 @@ import type {
   EventDef,
 } from '../../types.js';
 import { errorResult, successResult, errMsg } from '../../helpers.js';
+import {
+  contextDocDir,
+  contextDocPath,
+  projectContextFile,
+} from '../cache/handlers.js';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 
@@ -318,6 +330,137 @@ export function createContextComponent(): BrainComponent {
               return successResult(JSON.stringify(result, null, 2));
             } catch (err) {
               return errorResult(`Failed to get context: ${errMsg(err)}`);
+            }
+          },
+        },
+
+        // -----------------------------------------------------------------
+        // igris_context_sync (TD-460)
+        // -----------------------------------------------------------------
+        {
+          name: 'igris_context_sync',
+          description:
+            'Reconcile a project\'s context docs between disk and the brain, in BOTH directions, in one pass. ' +
+            'Disk-authored docs newer than (or unknown to) the brain are absorbed into context_files and pushed ' +
+            'to the VPS; rows the brain holds for a doc that is missing or older on disk are materialised to ' +
+            '~/.igris/projects/{project}/context/, backing up the prior bytes first. The FILE is the authority; ' +
+            'the row is a replica for cross-machine transport. Call after authoring or editing a context doc, ' +
+            'and at /boot after boot-sync.',
+          inputSchema: {
+            type: 'object' as const,
+            additionalProperties: false,
+            properties: {
+              project: {
+                type: 'string',
+                description: 'Project slug (e.g., "igris-ai")',
+              },
+              force: {
+                type: 'boolean',
+                description:
+                  'Overwrite a locally-newer file from the brain row instead of absorbing it (the prior ' +
+                  'bytes are backed up to context-backups/ first). Default false.',
+              },
+            },
+            required: ['project'],
+          },
+          handler: (args) => {
+            try {
+              const project = args.project as string;
+              const force = (args.force as boolean | undefined) ?? false;
+
+              // Disk side: every *.md in the context dir — the SAME filter the
+              // bundle uses (export.ts readContextDocs), so the two transports
+              // carry the same set of docs and cannot disagree about the
+              // population. A scan rather than a per-skill write-through hook:
+              // five skills write these files and two of them use plain edits
+              // no hook can intercept, so only a scan is total by construction.
+              const dir = contextDocDir(project);
+              const diskFiles = existsSync(dir)
+                ? readdirSync(dir).filter((f) => f.endsWith('.md')).sort()
+                : [];
+
+              const rows = _ctx!.storage.prepare(
+                'SELECT key, content, updated_at FROM context_files WHERE project_slug = ?'
+              ).all(project) as Array<{ key: string; content: string; updated_at: string }>;
+              const byKey = new Map(rows.map((r) => [r.key, r]));
+
+              const absorbed: string[] = [];
+              const materialized: string[] = [];
+              const unchanged: string[] = [];
+              const backed_up: string[] = [];
+              const refused: Array<{ key: string; reason: string }> = [];
+
+              /** Disk → row. The authority direction for a disk-authored doc. */
+              const absorb = (key: string): void => {
+                const content = readFileSync(contextDocPath(project, key), 'utf-8');
+                const contentHash = createHash('sha256').update(content).digest('hex').slice(0, 16);
+                _ctx!.storage.prepare(
+                  `INSERT OR REPLACE INTO context_files (project_slug, key, file_path, content, content_hash, updated_at)
+                   VALUES (?, ?, ?, ?, ?, datetime('now'))`
+                ).run(project, key, contextDocPath(project, key), content, contentHash);
+                // The existing event; sync's onImmediateEvent pushes on it.
+                _ctx!.bus.emit('context.registered', { project, key });
+              };
+
+              for (const key of [...new Set([...diskFiles, ...byKey.keys()])].sort()) {
+                try {
+                  const row = byKey.get(key);
+                  if (!row) {
+                    // Disk-only: a doc this brain has never seen.
+                    absorb(key);
+                    absorbed.push(key);
+                    continue;
+                  }
+                  // projectContextFile is the ONE brain→disk writer and owns
+                  // the classifier call; the reconciler reads its verdict
+                  // rather than re-deriving the comparison (L-815).
+                  const outcome = projectContextFile(project, row, force);
+                  if (outcome === 'local-newer') {
+                    absorb(key);
+                    absorbed.push(key);
+                  } else if (outcome === 'skipped-same') {
+                    unchanged.push(key);
+                  } else if (
+                    outcome === 'written' ||
+                    outcome === 'backed-up-and-written'
+                  ) {
+                    materialized.push(key);
+                    if (outcome === 'backed-up-and-written') backed_up.push(key);
+                  } else {
+                    // TD-447 rule (coding_guidelines, the projection section): a
+                    // new class is NEVER swallowed by a default arm. All four
+                    // ContextProjectionOutcome members are named above, so this
+                    // arm is unreachable today; `satisfies never` turns adding a
+                    // fifth into a COMPILE error here instead of a doc silently
+                    // reported as materialized.
+                    outcome satisfies never;
+                  }
+                } catch (err) {
+                  // A traversal-guard rejection or an unreadable file is a
+                  // per-doc outcome, never a failed reconcile for the project.
+                  // WARN per refusal, not just a count in the digest: a
+                  // traversal rejection must be visible in the LOG the way
+                  // `projectBriefFile`'s refusal is (`cache/index.ts`, the
+                  // TD-414 warn that names the brief). The digest is returned to
+                  // one caller; the log is what an operator reads afterwards.
+                  const reason = errMsg(err);
+                  _ctx!.log.warn(
+                    `TD-460: refused context doc "${key}" for ${project} — ${reason}`
+                  );
+                  refused.push({ key, reason });
+                }
+              }
+
+              _ctx!.log.info(
+                `Context sync "${project}": ${absorbed.length} absorbed, ${materialized.length} materialized, ` +
+                `${unchanged.length} unchanged, ${backed_up.length} backed up, ${refused.length} refused`
+              );
+
+              return successResult(
+                JSON.stringify({ project, absorbed, materialized, unchanged, backed_up, refused }, null, 2)
+              );
+            } catch (err) {
+              return errorResult(`Failed to sync context: ${errMsg(err)}`);
             }
           },
         },

@@ -101,7 +101,7 @@ Pass A - tool -> required map. Parse `engine/components/*/index.ts`. Bound each
   declares a NESTED `required: ['to_type','to_id','edge_type']` (the
   `edges[]` item schema) BEFORE its real one, so a first-match parser builds a
   wrong map and every conclusion downstream is noise. Tools with `required: []`
-  are dropped. COUNT SENTINEL: 74 (see below).
+  are dropped. COUNT SENTINEL: 75 (see below).
 
 Pass B - site scan. Every `.md` under `core/skills/`, recursive — not only
   `SKILL.md`. That restriction is precisely how `hunt/workflow-template.md`
@@ -147,14 +147,16 @@ Pass D - ledger subtraction (above).
 
 COUNT SENTINEL
 --------------
-The tool map must have exactly 74 entries on the real tree:
-    79 `required: [` literals
+The tool map must have exactly 75 entries on the real tree:
+    80 `required: [` literals
    -  4 empty `required: []`  (memory x2, errors, briefs)
    -  1 nested item schema    (memory `edges[]`)
-   = 74
+   = 75
+Re-measured 2026-09-09 at TD-460: the context component gained
+`igris_context_sync` (`required: ['project']`), so 79 -> 80 and 74 -> 75.
 Re-measured 2026-08-26 at FR-267: the metrics component (and its single
 `igris_metrics_record` literal) left the tree, so 80 -> 79 and 75 -> 74.
-This is in-family with `gateway-tool-count.test.ts` pinning 108 registered
+This is in-family with `gateway-tool-count.test.ts` pinning 109 registered
 tools. When a tool is legitimately added the sentinel goes red on purpose: bump
 the constant AND re-read the ledger, because a new tool means new call sites.
 The sentinel is skipped when the components root is overridden for fixtures.
@@ -164,7 +166,7 @@ Discovers:
     `brain-mcp-server/src/engine/components/*/index.ts`.
   - SKILL_ARGS_SCAN_ROOT      env override -> alternate skills root (fixtures).
   - SKILL_ARGS_COMPONENTS_ROOT env override -> alternate components root; also
-    disables the 74 sentinel and the ledger (a fixture map has neither).
+    disables the 75 sentinel and the ledger (a fixture map has neither).
 
 Usage:
     python3 scripts/validate_skill_required_args.py
@@ -204,7 +206,8 @@ DEFAULT_COMPONENTS_ROOT = (
 # Count sentinel — see COUNT SENTINEL in the module docstring for the
 # arithmetic. Bumping this is a conscious act that must be paired with a ledger
 # review, because a new tool means new (unclassified) call sites.
-EXPECTED_TOOL_COUNT = 74  # FR-267 (2026-08-26): metrics component retired, 75 -> 74
+EXPECTED_TOOL_COUNT = 75  # TD-460 (2026-09-09): +igris_context_sync (required: ['project']), 74 -> 75
+#                          FR-267 (2026-08-26): metrics component retired, 75 -> 74
 
 
 # --- The disposition ledger (explicit constant — L-448) ----------------------
@@ -290,6 +293,19 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "prose", 1, "Same FR-195 note line as igris_brain_pull above."),
     ("core/skills/boot/SKILL.md", "igris_session_file_pull", ('project',)): (
         "prose", 1, "Same FR-195 note line as igris_brain_pull above."),
+    ("core/skills/boot/SKILL.md", "igris_context_sync", ('project',)): (
+        "prose", 1,
+        "The §4.1 ORDERING-CONTRACT sentence, which states where the call must "
+        "sit relative to boot-sync and gather. It is a constraint on the call "
+        "site in §4 Mount, not a second call: that site is a fenced "
+        "`igris_context_sync { project: \"<detect.project_slug>\" }` block and "
+        "names the argument."),
+    ("core/skills/ground/SKILL.md", "igris_context_sync", ('project',)): (
+        "prose", 1,
+        "The `## Output` line describing what the skill REPORTS ('one line "
+        "naming the igris_context_sync result'). No imperative — the call is "
+        "Step 4, a fenced `igris_context_sync { project: \"<slug>\" }` block "
+        "that names the argument."),
     ("core/skills/boot/SKILL.md", "igris_instance_remove", ('instance_id',)): (
         "prose", 2,
         "Two lines in the stale-instance DISPLAY section: one narrates that "
@@ -928,7 +944,7 @@ def main(argv: list[str]) -> int:
     components_root = pathlib.Path(components_override or str(DEFAULT_COMPONENTS_ROOT))
     fixture_map = components_override is not None
     if fixture_map:
-        # A fixture map has neither the real 74 tools nor the real ledger.
+        # A fixture map has neither the real 75 tools nor the real ledger.
         use_ledger = False
 
     if not components_root.is_dir():
@@ -957,11 +973,23 @@ def main(argv: list[str]) -> int:
         return 0
 
     if not fixture_map and len(tool_map) != EXPECTED_TOOL_COUNT:
+        # The arithmetic is DERIVED from EXPECTED_TOOL_COUNT rather than
+        # restated, so this message cannot again disagree with the constant it
+        # explains. It did: TD-460 bumped the constant and the docstring to 75
+        # and left this string at "expected 75 ... 79 - 4 - 1 = 74", which is
+        # self-refuting at the one moment a human reads it. The two SUBTRAHENDS
+        # stay literal because they are the structural facts a reader checks
+        # with a grep — the only `required: [` literals that do not become a map
+        # entry are the 4 empty `required: []` and the 1 nested item schema.
+        empty_literals, nested_schemas = 4, 1
+        literal_count = EXPECTED_TOOL_COUNT + empty_literals + nested_schemas
         print(
             f"Error: tool -> required map has {len(tool_map)} entries, "
             f"expected {EXPECTED_TOOL_COUNT}.\n"
-            "  Arithmetic: 79 `required: [` literals - 4 empty `required: []` "
-            "- 1 nested item schema (memory `edges[]`) = 74.\n"
+            f"  Arithmetic: {literal_count} `required: [` literals "
+            f"- {empty_literals} empty `required: []` "
+            f"- {nested_schemas} nested item schema (memory `edges[]`) "
+            f"= {EXPECTED_TOOL_COUNT}.\n"
             "  A different number means either the block-bounding / "
             "shallowest-indent rule broke, or a tool was legitimately added.\n"
             "  If a tool was added: bump EXPECTED_TOOL_COUNT *and* re-read the "

@@ -49,19 +49,41 @@ function dbTimeMs(stamp: string): number {
   return Date.parse(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(stamp) ? `${stamp.replace(' ', 'T')}Z` : stamp);
 }
 
+/**
+ * The file classes this module projects. TD-460 added the second: the
+ * classifier body below stays ONE function (TD-414's actual requirement —
+ * "the classifier is the ONE place the rule lives"), so the class picks the
+ * subdirectory rather than a second copy of the comparison picking it.
+ */
+export type ProjectionClass = 'briefs' | 'context';
+
 export function briefCachePath(project: string, filename: string): string {
   return safePath(safePath(cacheRoot(), project), 'briefs', filename);
 }
 
+/** TD-460: the context-doc directory, guarded — the reconciler scans it. */
+export function contextDocDir(project: string): string {
+  return safePath(safePath(cacheRoot(), project), 'context');
+}
+
+/** TD-460: the context-doc sibling of briefCachePath, same traversal guard. */
+export function contextDocPath(project: string, filename: string): string {
+  return safePath(contextDocDir(project), filename);
+}
+
 export type DiskEditState = 'absent' | 'same' | 'local-newer' | 'brain-newer';
 
-/** Disk copy vs brain row (TD-414); an unparseable stamp reads 'local-newer'. */
+/**
+ * Disk copy vs brain row (TD-414); an unparseable stamp reads 'local-newer'.
+ * `klass` defaults to 'briefs', so both pre-TD-460 call sites are unchanged.
+ */
 export function diskEditState(
   project: string,
   filename: string,
   row: { content: string; updated_at: string },
+  klass: ProjectionClass = 'briefs',
 ): DiskEditState {
-  const file = briefCachePath(project, filename);
+  const file = klass === 'context' ? contextDocPath(project, filename) : briefCachePath(project, filename);
   if (!existsSync(file)) return 'absent';
   if (readFileSync(file, 'utf-8') === row.content) return 'same';
   const brainMs = dbTimeMs(row.updated_at);
@@ -86,6 +108,67 @@ function projectBriefFile(project: string, row: BriefFileRow, force = false): Pr
   return 'written';
 }
 
+export type ContextProjectionOutcome =
+  | 'written'
+  | 'backed-up-and-written'
+  | 'skipped-same'
+  | 'local-newer';
+
+export interface ContextFileRow {
+  key: string;
+  content: string;
+  updated_at: string;
+}
+
+/**
+ * TD-460: copy the current disk bytes aside before a brain-newer overwrite.
+ * A SIBLING directory, deliberately not `context/.backup/` — readContextDocs
+ * (export.ts) and the dashboard glob `context/` flat, and a backup that turns
+ * up in an inventory is a bug waiting to be filed. FR-230's backupContextDoc
+ * is the same idea on the bundle path. Returns null when there is nothing to
+ * back up (the `force`-over-absent case).
+ */
+export function backupContextDocDisk(project: string, filename: string): string | null {
+  const src = contextDocPath(project, filename);
+  if (!existsSync(src)) return null;
+  const dir = safePath(safePath(cacheRoot(), project), 'context-backups');
+  mkdirSync(dir, { recursive: true });
+  const dest = safePath(dir, `${filename}.${new Date().toISOString().replace(/[:.]/g, '-')}.bak`);
+  writeFileSync(dest, readFileSync(src));
+  return dest;
+}
+
+/**
+ * The ONE brain→disk context-doc writer (TD-460) — the sibling of
+ * projectBriefFile, sharing its classifier and its traversal guard (L-815:
+ * two-copy state has one writer).
+ *
+ * ONE row of the action table is INVERTED against the brief writer, and it is
+ * the point of the design: a brief is brain-canonical, so a newer disk copy is
+ * REFUSED and frozen; a context doc is disk-AUTHORED (five skills write these
+ * files with ordinary writes, three of them through no brain tool at all), so
+ * a newer disk copy is left alone here and ABSORBED into the row by the
+ * caller. Inheriting refuse-and-freeze verbatim would make the replica rot
+ * while looking healthy — the TD-460 defect one layer up.
+ *
+ * A brain-newer overwrite is the only destructive operation in the design, and
+ * it is preceded by a backup, which is what makes LWW acceptable here: the
+ * losing prose survives on the machine that authored it, named and timestamped.
+ */
+export function projectContextFile(
+  project: string,
+  row: ContextFileRow,
+  force = false,
+): ContextProjectionOutcome {
+  const state = force ? 'brain-newer' : diskEditState(project, row.key, row, 'context');
+  if (state === 'same') return 'skipped-same';
+  if (state === 'local-newer') return 'local-newer';
+  const backup = state === 'brain-newer' ? backupContextDocDisk(project, row.key) : null;
+  ensureCacheDir(project);
+  writeFileSync(contextDocPath(project, row.key), row.content, 'utf-8');
+  return backup ? 'backed-up-and-written' : 'written';
+}
+
 // ---------------------------------------------------------------------------
 // ensureCacheDir
 // ---------------------------------------------------------------------------
@@ -93,8 +176,9 @@ function projectBriefFile(project: string, row: BriefFileRow, force = false): Pr
 /**
  * Create cache directories for a project.
  *
- * Ensures ~/.igris/projects/{project}/briefs/ and
- * ~/.igris/projects/{project}/session/ exist.
+ * Ensures ~/.igris/projects/{project}/briefs/, session/ and (TD-460) context/
+ * exist — a fresh machine materialises a replicated doc into a directory that
+ * is already there.
  *
  * @param project - Project slug
  * @returns The project cache root path
@@ -103,6 +187,7 @@ export function ensureCacheDir(project: string): string {
   const projectCacheRoot = safePath(cacheRoot(), project);
   mkdirSync(path.join(projectCacheRoot, 'briefs'), { recursive: true });
   mkdirSync(path.join(projectCacheRoot, 'session'), { recursive: true });
+  mkdirSync(path.join(projectCacheRoot, 'context'), { recursive: true });
   return projectCacheRoot;
 }
 

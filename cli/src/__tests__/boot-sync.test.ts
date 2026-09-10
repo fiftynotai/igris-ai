@@ -73,6 +73,17 @@ const DEFINITION_FILES_DDL = `
   );
 `;
 
+// TD-460 — the pull arm of context-doc replication. Verbatim v1 shape from the
+// brain's context component migration; `file_path` exists locally and is
+// deliberately NOT in the replicated column set.
+const CONTEXT_FILES_DDL = `
+  CREATE TABLE IF NOT EXISTS context_files (
+    id INTEGER PRIMARY KEY, project_slug TEXT NOT NULL, key TEXT NOT NULL,
+    file_path TEXT, content TEXT, content_hash TEXT,
+    updated_at TEXT DEFAULT (datetime('now')), UNIQUE(project_slug, key)
+  );
+`;
+
 const SYNC_STATE_DDL = `
   CREATE TABLE IF NOT EXISTS sync_state (
     id INTEGER PRIMARY KEY AUTOINCREMENT, remote_url TEXT NOT NULL,
@@ -92,6 +103,7 @@ function seedSchema(): void {
   db.exec(LEARNINGS_DDL);
   db.exec(SESSION_FILES_DDL);
   db.exec(DEFINITION_FILES_DDL);
+  db.exec(CONTEXT_FILES_DDL);
   db.exec(SYNC_STATE_DDL);
   db.close();
 }
@@ -348,6 +360,9 @@ describe("boot-sync — the VPS→local pull (#356 endpoint shape + #169 directi
       expect(url).toContain("since_learnings=");
       expect(url).toContain("since_session_files=");
       expect(url).toContain("since_definition_files=");
+      // TD-460: the pull asks for context docs too, or a doc authored on
+      // another machine never reaches this one at /boot.
+      expect(url).toContain("since_context_files=");
       // POST drain is the OTHER call — the GET is the pull, distinct endpoint.
       const postCalls = lb.calls.filter((c) => c.httpMethod === "POST");
       expect(postCalls.length).toBe(1);
@@ -381,6 +396,15 @@ describe("boot-sync — the VPS→local pull (#356 endpoint shape + #169 directi
           updated_at: "2026-06-01 00:00:00",
         },
       ],
+      // TD-460: a context doc authored on ANOTHER machine, arriving on the
+      // pull. `file_path` is absent from the wire row by design.
+      context_files: [
+        {
+          project_slug: SLUG, key: "coding_guidelines.md",
+          content: "# Guidelines\n\nAuthored elsewhere — em dash included.\n",
+          content_hash: "h3", updated_at: "2026-06-01 00:00:00",
+        },
+      ],
     });
     await listen(lb);
     const remoteUrl = `http://127.0.0.1:${lb.port()}`;
@@ -407,6 +431,17 @@ describe("boot-sync — the VPS→local pull (#356 endpoint shape + #169 directi
           "SELECT content FROM definition_files WHERE type = ? AND name = ?",
         ).get("agent", "remote-agent") as { content: string } | undefined;
         expect(a?.content).toBe("agent body");
+
+        // TD-460: the context-doc REPLICA landed in the local table. This is
+        // the hop that precedes materialisation — igris_context_sync at /boot
+        // turns this row into a file. `file_path` stays NULL: the receiver
+        // rebuilds the path from its own cacheRoot(), it never travels.
+        const c = db.prepare(
+          "SELECT content, file_path FROM context_files WHERE project_slug = ? AND key = ?",
+        ).get(SLUG, "coding_guidelines.md") as
+          { content: string; file_path: string | null } | undefined;
+        expect(c?.content).toBe("# Guidelines\n\nAuthored elsewhere — em dash included.\n");
+        expect(c?.file_path).toBeNull();
 
         // The cursor advanced for the merged table.
         const cur = db.prepare(
@@ -546,5 +581,45 @@ describe("boot-sync — independence + skip-on-fail", () => {
     const d = await bootSync();
     expect(d.brain_pull.ok).toBe(false);
     expect(d.brain_pull.summary).toContain("unreachable");
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-460 — the two CLI mirrors, pinned in OPPOSITE directions.
+  //
+  // The exclusion pin below carries its reason on purpose (the TD-440
+  // pattern): an omission with no test reads as an oversight to the next
+  // editor, and the obvious "fix" — adding context_files to EXPORT_TABLES for
+  // symmetry — is the one thing this design forbids.
+  // -------------------------------------------------------------------------
+
+  describe("TD-460 — the CLI mirrors of SYNC_TABLES", () => {
+    it("BOOT_SYNC_PULL_TABLES INCLUDES context_files, verbatim and without file_path", async () => {
+      const { BOOT_SYNC_PULL_TABLES } = await import("../lib/brain-db.js");
+      const cfg = BOOT_SYNC_PULL_TABLES.find((t) => t.table === "context_files");
+      expect(cfg, "context_files must be a boot-time pull target").toBeDefined();
+      // Verbatim from sync.ts: same key, same strategy, same five columns.
+      expect(cfg!.syncKey).toEqual(["project_slug", "key"]);
+      expect(cfg!.timestampCol).toBe("updated_at");
+      expect(cfg!.strategy).toBe("lww");
+      expect(cfg!.columns).toEqual([
+        "project_slug", "key", "content", "content_hash", "updated_at",
+      ]);
+      // `file_path` is an absolute LOCAL path — excluded, not redacted. A
+      // pulled row must never carry another machine's filesystem layout.
+      expect(cfg!.columns).not.toContain("file_path");
+    });
+
+    it("EXPORT_TABLES EXCLUDES context_files — the pack carries the FILES, not the rows", async () => {
+      const { EXPORT_TABLES } = await import("../lib/brain-db.js");
+      // The bundle already ships these docs as `context/<file>`: export.ts
+      // readContextDocs reads the FILE and hashes it into the manifest, and
+      // import.ts writes the FILE back after an ancestor-hash classify. Adding
+      // the table here would put the same bytes in one bundle TWICE and give
+      // the doc two authorities inside a single artifact — the duplication
+      // core/os/knowledge-map.md forbids. `EXPORT_TABLES` is also the INGRESS
+      // write-allowlist for `igris import`, so the entry would additionally
+      // make a foreign bundle able to write rows into this store.
+      expect(EXPORT_TABLES.map((t) => t.table)).not.toContain("context_files");
+    });
   });
 });
