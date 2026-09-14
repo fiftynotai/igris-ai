@@ -14,7 +14,9 @@
 # deliberately unmet and recorded as `- [~]`; that line is where the deferral
 # syntax comes from in the first place. Five real cases, none written for the
 # test, and nothing in TD-325 edits their stored content — the retroactive
-# ticking is TD-075's job.
+# ticking is TD-075's job. TD-468 added two more real snapshots, FR-212 and
+# FR-212a (a parent and its lettered child, both Done-but-unticked), for
+# PART 6 — seven fixtures in all.
 #
 # Test isolation
 # --------------
@@ -747,7 +749,8 @@ MD
 # a scratch copy, RED only under /bin/bash 3.x — skipped with the reason on a
 # newer interpreter). Q2 proves no over-refusal, Q3 is the clean-name control,
 # Q4 pins that BRIEF_SQL is UNREACHABLE by a quote (the footer regex admits
-# only ^[A-Z]{2,3}-[0-9]+$ — the two BRIEF_SQL escapes are uniformity, not a
+# only ^[A-Z]{2,3}-[0-9]+[a-z]?$ since TD-468 — an optional lowercase letter,
+# still no quote — so the two BRIEF_SQL escapes are uniformity, not a
 # reachable defect), Q5 is the interpreter demonstration.
 # -----------------------------------------------------------------------------
 @test "(Q1) BR-104: repo named it's-proj, TD-347 unticked under it -> the real hook under /bin/bash refuses (exit 1)" {
@@ -1079,4 +1082,297 @@ MD
   run bash -c "BRAIN_DB='$DB' PROJECT=\"$PROJECT\" /bin/bash '$VALIDATOR' 2>&1"
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"TD-602"* ]] || return 1
+}
+
+# =============================================================================
+# PART 6 — TD-468: a LETTERED sub-brief is gated as ITSELF, not as its parent
+# =============================================================================
+# The extractor at commit-msg (§"Is this a CLOSING commit?") used to stop at
+# the digits: `closes #FR-003e` -> `FR-003` -> both gates ran against the
+# PARENT (mbrgea-ai, 2026-09-09 and 2026-09-14). The two REAL fixtures are
+# igris-ai's own lettered family, byte-for-byte from brief_files: FR-212
+# (the parent, 10 open boxes) and FR-212a (the child, 5 open boxes). The
+# verdict lines differ by `total=`, which is what tells the two apart.
+#
+# Case names: the plan's S1-S8 / M1-M2 are SB1-SB9 / SBM1-SBM5 here because
+# S1-S7 (PART 5) and L1 are already taken in this file.
+#
+# What each case pins (HEAD = the defect present):
+#   SB1  `closes #FR-212a`           -> the CHILD's verdict (total=5), never the
+#                                       parent's. HEAD: total=10, the parent.
+#   SB2  `closes #FR-212, #FR-212a`  -> BOTH verdicts (the comma list — the
+#                                       grammar admits one id per verb at HEAD,
+#                                       so the suffix alone cannot satisfy it).
+#   SB2b the same list, child first.
+#   SB3  the mbrgea-ai symptom, green direction: child ticked, parent open,
+#        `closes #FR-212a` -> exit 0 SILENT. HEAD refuses on the parent.
+#   SB4  the two-line form still gates both (N3/N3b regression control).
+#   SB5  `closes #FR-212 and more`    -> FR-212 only; `and` is not a separator
+#                                       (`closes #FR-1 and TD-9 remains open`
+#                                       would otherwise gate TD-9).
+#   SB5b `closes #FR-212and`          -> glue is NOT an id: exit 0 silent.
+#        The boundary has to be enforced at STAGE 1 — stage 1's `-o` prints
+#        `closes #FR-212a` and the `n` never reaches stage 2 (measured on BSD
+#        and GNU grep, 2026-09-14; the plan had put it at stage 2 only).
+#   SB6  `closes #FR-212A`            -> NOT `FR-212` (that is the headline
+#        defect wearing a capital) and NOT `FR-212a` (a spelling the author did
+#        not write): exit 0 silent — the same posture as `fr-003`.
+#   SB7  trailing punctuation (`closes #FR-212a.`) still gates the child.
+#   SB8  SB1's world under /bin/bash (3.2 — the interpreter git uses).
+#   SB9  `fixes #FR-212a` — commit_message.md rule 3 documents `fixes #` as a
+#        closing footer; the hook never folded it, so it was an ungated close.
+#        Bare `fix` is NOT admitted: `fix: FR-1 crashes` is a subject line.
+#   SBM1-SBM5  one mutant per regex clause on a scratch copy of the hook
+#        (suffix at stage 1, `-w` at stage 2, `-w` at stage 1, the list group,
+#        the fixes verb). Each is proven LANDED, reds exactly one case above,
+#        and the real hook is the positive control in the same sandbox.
+#
+# The full grep-family matrix (29 inputs, BSD 2.6.0 vs GNU 3.8, identical)
+# is quoted in the hunt record; the hook comment carries the grammar.
+
+# seed_family — FR-212 (parent, 10 open) + FR-212a (child, 5 open), both
+# byte-for-byte from brief_files (igris-ai, 2026-09-14).
+seed_family() {
+  seed_brief_file FR-212 "$FIXTURES/FR-212.md"
+  seed_brief_file FR-212a "$FIXTURES/FR-212a.md"
+}
+
+# build_hook_mutant <dst> <old> <new> — a scratch copy of the FIXED hook with
+# exactly ONE occurrence of <old> replaced by <new>; the count is asserted on
+# both sides so an un-landed mutation cannot pass as a survival.
+build_hook_mutant() {
+  python3 - "$HOOK_SRC" "$1" "$2" "$3" <<'PY' || return 1
+import sys
+src, dst, old, new = sys.argv[1:5]
+text = open(src, encoding="utf-8").read()
+if text.count(old) != 1:
+    sys.exit("mutation anchor found %d times, expected 1: %r" % (text.count(old), old))
+out = text.replace(old, new)
+if out.count(old) != 0 or out == text:
+    sys.exit("mutation did not land")
+open(dst, "w", encoding="utf-8").write(out)
+PY
+  chmod +x "$1"
+}
+
+# run_hook_file <hook-path> — the plain `bash` form, for a scratch copy.
+run_hook_file() {
+  run bash -c "cd '$REPO' && HOME='$FAKEHOME' bash '$1' '$MSG_FILE' 2>&1"
+}
+
+@test "(SB1) TD-468 RED: closes #FR-212a -> the CHILD's verdict (total=5), not the parent's (total=10)" {
+  seed_family
+  closing_msg FR-212a
+
+  run_hook
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || { echo "child verdict missing: [$output]"; return 1; }
+  [[ "$output" != *"AC-GATE FR-212: "* ]] || { echo "the PARENT was gated: [$output]"; return 1; }
+}
+
+@test "(SB2) TD-468 RED: closes #FR-212, #FR-212a -> BOTH verdicts, distinct" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212, #FR-212a\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || { echo "parent verdict missing: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || { echo "child verdict missing: [$output]"; return 1; }
+}
+
+@test "(SB2b) TD-468: the same list child-first (closes #FR-212a, #FR-212) -> both" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212a, #FR-212\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+}
+
+@test "(SB3) TD-468 RED (the mbrgea-ai symptom): child ticked, parent open, closes #FR-212a -> exit 0 SILENT" {
+  seed_brief_file FR-212 "$FIXTURES/FR-212.md"
+  sed 's/^- \[ \]/- [x]/' "$FIXTURES/FR-212a.md" > "$SCRATCH/212a-ticked.md"
+  ! grep -q '^- \[ \]' "$SCRATCH/212a-ticked.md" || return 1
+  seed_brief_file FR-212a "$SCRATCH/212a-ticked.md"
+  closing_msg FR-212a
+
+  run_hook
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || { echo "expected silence, got: [$output]"; return 1; }
+}
+
+@test "(SB4) TD-468: the two-line form (closes #FR-212a / closes #FR-212) still gates both" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212a\ncloses #FR-212\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+}
+
+@test "(SB5) TD-468: 'closes #FR-212 and more' -> FR-212 only (a space ends the id; 'and' is not a separator)" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212 and more\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || return 1
+  [[ "$output" != *"AC-GATE FR-212a"* ]] || return 1
+}
+
+@test "(SB5b) TD-468 RED: glue 'closes #FR-212and' is not an id -> exit 0 silent; the canonical footer still refuses" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212and\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 0 ] || { echo "expected exit 0 (no id parsed), got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || { echo "expected silence, got: [$output]"; return 1; }
+
+  # Positive control in the SAME sandbox: both briefs are open, so the silence
+  # above is the parse, not an absent fixture.
+  closing_msg FR-212a
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL"* ]] || return 1
+}
+
+@test "(SB6) TD-468 RED: 'closes #FR-212A' (uppercase suffix) is not an id -> exit 0 silent, the parent is NOT gated" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212A\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || { echo "expected silence, got: [$output]"; return 1; }
+
+  closing_msg FR-212a
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL"* ]] || return 1
+}
+
+@test "(SB7) TD-468: trailing punctuation 'closes #FR-212a.' still gates the child" {
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212a.\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+  [[ "$output" != *"AC-GATE FR-212: "* ]] || return 1
+}
+
+@test "(SB8) TD-468 RED: SB1's world under /bin/bash (the interpreter git runs the hook with)" {
+  seed_family
+  closing_msg FR-212a
+
+  run_hook_bin
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+  [[ "$output" != *"AC-GATE FR-212: "* ]] || return 1
+}
+
+@test "(SB9) TD-468 RED: 'fixes #FR-212a' / 'Fixed: #FR-212a' close (the documented verb is gated); bare 'fix' is not" {
+  seed_family
+
+  printf 'fix(x): y\n\nfixes #FR-212a\n' > "$MSG_FILE"
+  run_hook
+  [ "$status" -eq 1 ] || { echo "fixes: expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+
+  printf 'fix(x): y\n\nFixed: #FR-212a\n' > "$MSG_FILE"
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL"* ]] || return 1
+
+  # `fix: FR-212a crashes on boot` is a conventional-commit SUBJECT, not a
+  # footer — bare `fix` must stay outside the grammar.
+  printf 'fix: FR-212a crashes on boot\n\nbody\n' > "$MSG_FILE"
+  run_hook
+  [ "$status" -eq 0 ] || { echo "bare fix gated a subject line: [$output]"; return 1; }
+  [ "$output" = "" ] || return 1
+}
+
+@test "(SBM1) TD-468 mutant: the suffix removed from STAGE 1 -> the child's close parses to NO id (ungated, exit 0 silent); stage 1 is load-bearing" {
+  # With stage 1 whole-word, a stage 1 that cannot spell the suffix sees
+  # `FR-212` followed by `a` — not a word — and emits NOTHING: the footer is
+  # dropped, not truncated to the parent. Either way the child is not gated.
+  build_hook_mutant "$SCRATCH/commit-msg.m1" \
+    "#?[A-Z]{2,3}-[0-9]+[a-z]?([[:space:]]" \
+    "#?[A-Z]{2,3}-[0-9]+([[:space:]]" || return 1
+  seed_family
+  closing_msg FR-212a
+
+  run_hook_file "$SCRATCH/commit-msg.m1"
+  [ "$status" -eq 0 ] || { echo "mutant: expected the ungated exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || { echo "mutant: expected silence, got: [$output]"; return 1; }
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+}
+
+@test "(SBM2) TD-468 mutant: -w removed from STAGE 2 -> 'closes #FR-212A' gates the parent (the D-2 trap re-created)" {
+  build_hook_mutant "$SCRATCH/commit-msg.m2" \
+    "| grep -owE '[A-Z]{2,3}-[0-9]+[a-z]?'" \
+    "| grep -oE '[A-Z]{2,3}-[0-9]+[a-z]?'" || return 1
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212A\n' > "$MSG_FILE"
+
+  run_hook_file "$SCRATCH/commit-msg.m2"
+  [ "$status" -eq 1 ] || { echo "mutant: expected the parent gated (exit 1), got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || return 1
+
+  run_hook
+  [ "$status" -eq 0 ] || return 1
+  [ "$output" = "" ] || return 1
+}
+
+@test "(SBM3) TD-468 mutant: -w removed from STAGE 1 -> glue 'closes #FR-212and' gates FR-212a (stage 2 cannot see the glue)" {
+  build_hook_mutant "$SCRATCH/commit-msg.m3" \
+    "| grep -iowE '(clos(e|es|ed)|fix(es|ed))" \
+    "| grep -ioE '(clos(e|es|ed)|fix(es|ed))" || return 1
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212and\n' > "$MSG_FILE"
+
+  run_hook_file "$SCRATCH/commit-msg.m3"
+  [ "$status" -eq 1 ] || { echo "mutant: expected FR-212a gated (exit 1), got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+
+  run_hook
+  [ "$status" -eq 0 ] || return 1
+  [ "$output" = "" ] || return 1
+}
+
+@test "(SBM4) TD-468 mutant: the list group removed -> 'closes #FR-212, #FR-212a' gates ONE id (the D-6 clause is load-bearing)" {
+  build_hook_mutant "$SCRATCH/commit-msg.m4" \
+    "[a-z]?([[:space:]]*,[[:space:]]*#?[A-Z]{2,3}-[0-9]+[a-z]?)*'" \
+    "[a-z]?'" || return 1
+  seed_family
+  printf 'fix(x): y\n\ncloses #FR-212, #FR-212a\n' > "$MSG_FILE"
+
+  run_hook_file "$SCRATCH/commit-msg.m4"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212: VERDICT=FAIL total=10 "* ]] || return 1
+  [[ "$output" != *"AC-GATE FR-212a"* ]] || { echo "mutant still saw the second id: [$output]"; return 1; }
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL total=5 "* ]] || return 1
+}
+
+@test "(SBM5) TD-468 mutant: the fixes verb removed -> 'fixes #FR-212a' is ungated again (exit 0 silent)" {
+  build_hook_mutant "$SCRATCH/commit-msg.m5" \
+    "(clos(e|es|ed)|fix(es|ed))" \
+    "clos(e|es|ed)" || return 1
+  seed_family
+  printf 'fix(x): y\n\nfixes #FR-212a\n' > "$MSG_FILE"
+
+  run_hook_file "$SCRATCH/commit-msg.m5"
+  [ "$status" -eq 0 ] || { echo "mutant: expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || return 1
+
+  run_hook
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"AC-GATE FR-212a: VERDICT=FAIL"* ]] || return 1
 }

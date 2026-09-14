@@ -125,7 +125,11 @@ usage() {
 }
 
 # --- Tokens that LOOK like a brief id but are not ----------------------------
-# The follow-up test matches `[A-Z]{2,3}-[0-9]+` case-sensitively. That shape is
+# The follow-up test (has_followup) is a PRESENCE test, not an extractor: it
+# matches `[A-Z][A-Z][A-Z]?-[0-9]` case-sensitively, unanchored at the end, and
+# nothing downstream reads WHICH id matched. A lettered sub-brief (`FR-003e`)
+# contains `FR-0`, so it satisfies the test by construction and needs no
+# admission here — left as-is on purpose (TD-468 D-3). That shape is
 # shared by a handful of standards/encoding names which do appear in deferral
 # prose, and a `DEFERRED ... UTF-8` naming no brief would otherwise read as
 # "follow-up named". These are SHAPE COLLISIONS, not a vocabulary: the brief-id

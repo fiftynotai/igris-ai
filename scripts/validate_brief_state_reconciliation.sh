@@ -101,7 +101,7 @@ has_closing_commit() {
   local brief_id="$1"
   local matches
   # -F fixed-string (the id is literal); -i case-insensitive for safety; the id
-  # shape ([A-Z]+-[0-9]+) is validated by the caller before this is reached.
+  # shape ([A-Z]+-[0-9]+[a-z]?) is validated by the caller before this is reached.
   matches="$(git -C "$REPO_DIR" log --grep="$brief_id" -F -i --format='%H' 2>/dev/null | head -1)"
   [ -n "$matches" ]
 }
@@ -130,9 +130,11 @@ report=""
 while IFS='|' read -r brief_id status phase; do
   [ -n "$brief_id" ] || continue
 
-  # Only evaluate well-formed brief ids ([A-Z]+-[0-9]+); skip anything else so
-  # the git grep is never fed an unexpected token. Defense-in-depth.
-  if ! [[ "$brief_id" =~ ^[A-Z]+-[0-9]+$ ]]; then
+  # Only evaluate well-formed brief ids ([A-Z]+-[0-9]+[a-z]?); skip anything
+  # else so the git grep is never fed an unexpected token. Defense-in-depth.
+  # The optional letter is TD-468: a lettered sub-brief (FR-212a) is a brief,
+  # and the digits-only shape had EXEMPTED every one of them from C1/C2/C3.
+  if ! [[ "$brief_id" =~ ^[A-Z]+-[0-9]+[a-z]?$ ]]; then
     continue
   fi
 

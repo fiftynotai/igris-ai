@@ -141,17 +141,33 @@ fi
 # commentary (or in a verbose-mode diff hunk) cannot fake a closing footer.
 #
 # The footer pattern FOLDS NOTATION, not vocabulary. Measured over the last 400
-# commits of this repo: 343 `closes #<ID>`, 1 `closes <ID>` (no hash), 1
-# `close <ID>`. So: clos(e|es|ed), an optional colon, an optional `#`. The id
-# itself is then re-extracted CASE-SENSITIVELY, so only a canonical uppercase
-# brief id is ever interpolated into SQL.
+# commits: 343 `closes #<ID>`, 1 `closes <ID>`, 1 `close <ID>` (2026-08);
+# re-measured 2026-09-14: 331/3/1, no comma or `and` lists. So: clos(e|es|ed)
+# or fix(es|ed) — `fixes #` is the footer core/templates/commit_message.md
+# documents and was ungated until TD-468; bare `fix` is NOT a verb here
+# (`fix: FR-1 crashes` is a subject line) — an optional colon, an optional
+# `#`, then ONE id or a COMMA-separated list (`closes #FR-3, #FR-3e`). `and`
+# is not a separator: `closes #FR-1 and TD-9 remains open` would gate TD-9.
 #
-# ALL ids are gated, not just the first: a commit closing two briefs must
-# satisfy both.
+# The id shape is [A-Z]{2,3}-[0-9]+[a-z]? (TD-468): a sub-brief carries ONE
+# lowercase letter and `FR-003e` is a DIFFERENT brief from `FR-003` (20 such
+# ids over 3 projects on 2026-09-14, all single-letter). Both stages are
+# whole-word (`-w`), for two different reasons:
+#   - stage 1: `-o` prints only the match, so `closes #FR-003and` would reach
+#     stage 2 as `closes #FR-003a` — stage 2 cannot see the `n`. Glue is
+#     refused HERE (BSD 2.6.0 and GNU 3.8 grep agree).
+#   - stage 2 (case-SENSITIVE): only a canonical id reaches SQL, and
+#     `closes #FR-003E` yields NOTHING — not `FR-003` (the parent: the defect
+#     wearing a capital) and not `FR-003e` (a spelling the author did not
+#     write). A non-canonical id is "not a footer", `fr-003`'s posture.
+#
+# ALL ids are gated, not just the first; `sort -u` keeps `FR-003` and
+# `FR-003e` distinct. test/brief_ac_gate.test.bash PART 6 pins every row
+# above, one mutant per clause (suffix, both `-w`s, the list, the verb).
 msg_body="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" 2>/dev/null)"
 brief_ids="$(printf '%s\n' "$msg_body" \
-  | grep -ioE 'clos(e|es|ed)[[:space:]]*:?[[:space:]]*#?[A-Z]{2,3}-[0-9]+' 2>/dev/null \
-  | grep -oE '[A-Z]{2,3}-[0-9]+' 2>/dev/null \
+  | grep -iowE '(clos(e|es|ed)|fix(es|ed))[[:space:]]*:?[[:space:]]*#?[A-Z]{2,3}-[0-9]+[a-z]?([[:space:]]*,[[:space:]]*#?[A-Z]{2,3}-[0-9]+[a-z]?)*' 2>/dev/null \
+  | grep -owE '[A-Z]{2,3}-[0-9]+[a-z]?' 2>/dev/null \
   | sort -u)"
 
 # No footer -> not a closing commit -> both gates are silent. This is why
@@ -165,8 +181,9 @@ BRAIN_DB="$HOME/.igris/memory/knowledge.db"
 [ -f "$BRAIN_DB" ] || exit 0
 command -v sqlite3 >/dev/null 2>&1 || exit 0
 
-# $PROJECT is basename(repo); an id matched ^[A-Z]{2,3}-[0-9]+$ (:153-154), so
-# BRIEF_SQL can never carry a quote (its escape is uniformity). Every escape is
+# $PROJECT is basename(repo); an id matched ^[A-Z]{2,3}-[0-9]+[a-z]?$ (the
+# extractor above — still no quote, TD-468), so BRIEF_SQL can never carry a
+# quote (its escape is uniformity; brief_ac_gate Q4 is the pin). Every escape is
 # an UNQUOTED assignment — under /bin/bash 3.2 the quoted form keeps its
 # backslashes and the read fails OPEN (TD-453; BR-104). DB opened -readonly.
 PROJECT="$(basename "$REPO_ROOT")"

@@ -204,6 +204,40 @@ describe('extractSignals', () => {
     expect(signals.map((s) => s.toId).sort()).toEqual(['GL-001', 'GL-002']);
   });
 
+  // ---------------------------------------------------------------------
+  // TD-468 — lettered sub-brief ids. ID_RE and the label regex used to stop
+  // at the digits, so `**Hard:** FR-003b` produced an edge to FR-003 (the
+  // parent) while `**Parent Brief:**` — routed through extractParentBriefId
+  // — did the same. Both widen identically: `[a-z]?` + a word boundary.
+  // ---------------------------------------------------------------------
+  it('TD-468: **Hard:** FR-003b -> depends_on FR-003b, not FR-003 (RED at HEAD)', () => {
+    const signals = extractSignals('TD-152', '**Hard:** FR-003b');
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ fromId: 'TD-152', toId: 'FR-003b', edgeType: 'depends_on' });
+  });
+
+  it('TD-468: a lettered id inside a comma list keeps its letter; the numbered sibling is distinct', () => {
+    const signals = extractSignals('FR-2', '**Hard:** FR-003, FR-003b');
+    expect(signals.map((s) => s.toId).sort()).toEqual(['FR-003', 'FR-003b']);
+  });
+
+  it('TD-468: **Parent Brief:** FR-003b -> parent_of FR-003b (the REAL mbrgea-ai TD-152 header)', () => {
+    const signals = extractSignals('TD-152', '- **Parent Brief:** FR-003b');
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ fromId: 'TD-152', toId: 'FR-003b', edgeType: 'parent_of' });
+  });
+
+  it('TD-468: **Blocked by:** FR-110c reverses onto the lettered id', () => {
+    const signals = extractSignals('FR-115', '**Blocked by:** FR-110c');
+    expect(signals).toHaveLength(1);
+    expect(signals[0]).toMatchObject({ fromId: 'FR-110c', toId: 'FR-115', edgeType: 'blocks' });
+  });
+
+  it('TD-468: a two-letter suffix is outside the shape — refused whole, never truncated', () => {
+    // `\b` after `[a-z]?`: FR-003bx yields neither FR-003b nor FR-003.
+    expect(extractSignals('FR-2', '**Hard:** FR-003bx')).toEqual([]);
+  });
+
   it('does NOT match prose mentions of "hard" or "blocks"', () => {
     const content = `
       This brief depends on hard tradeoffs, but the word hard here is prose.
@@ -503,7 +537,8 @@ describe('runBackfill', () => {
 
   it('emits a warning (not error) when target brief id is unknown', () => {
     // FR-99999 is a syntactically valid brief id (matches the canonical
-    // [A-Z]{2,3}-\d+ pattern) but is intentionally absent from
+    // [A-Z]{2,3}-\d+[a-z]? pattern — TD-468 admits one optional lowercase
+    // letter for a sub-brief) but is intentionally absent from
     // brief_status so the lookup fails.
     seedBriefFile(db, 'p1', 'FR-1', '**Hard:** FR-99999');
     // Note: NOT seeding brief_status for FR-99999.

@@ -526,3 +526,35 @@ run_validator_bin_q() {
   assert_output_contains "C1"
   assert_output_contains "FR-200"
 }
+
+# -----------------------------------------------------------------------------
+# TD-468 — a LETTERED brief id enters the population. The "well-formed id"
+# filter used to be `^[A-Z]+-[0-9]+$`, which silently EXEMPTED every lettered
+# sub-brief (igris-ai's FR-212a..d had never once been evaluated by C1/C2/C3).
+# RED at HEAD: the C1 row below is skipped and the validator reports clean.
+# -----------------------------------------------------------------------------
+@test "(TD-468) a lettered Done brief with phase=COMMITTING is flagged C1 (it is no longer skipped)" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "FR-212a" "Done" "COMMITTING"
+  make_closing_commit "FR-212a"   # commit exists, so ONLY C1 fires
+
+  run_validator
+  [ "$status" -eq 1 ] || { echo "expected exit 1 (C1), got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"C1 (Done-but-not-COMPLETE): FR-212a "* ]] || { echo "FR-212a not named: [$output]"; return 1; }
+  [[ "$output" != *"C2 (Done-but-no-commit): FR-212a"* ]] || return 1
+}
+
+@test "(TD-468 control) a lettered Done brief that is COMPLETE and committed is clean; a two-letter suffix stays outside the population" {
+  init_fixture_db
+  init_fixture_repo
+  seed_brief "FR-212a" "Done" "COMPLETE"
+  make_closing_commit "FR-212a"
+  # Outside the admitted shape (measured population: one lowercase letter):
+  # a two-letter suffix is still skipped, never evaluated.
+  seed_brief "FR-212ab" "Done" "COMMITTING"
+
+  run_validator
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"reconciliation clean"* ]] || return 1
+}

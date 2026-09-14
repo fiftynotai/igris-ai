@@ -103,7 +103,7 @@ closes #MG-003
 
 1. **Short summary:** Max 72 characters, imperative mood ("add" not "added")
 2. **Body:** Optional, wrap at 72 chars, explain *what* and *why* (not *how*)
-3. **Footer:** Use `closes #BR-XXX` or `fixes #BR-XXX` to link to brief
+3. **Footer:** Use `closes #BR-XXX` or `fixes #BR-XXX` to link to brief — both verbs are gated by the `commit-msg` hook (TD-325 AC gate, FR-267 event gate). A lettered sub-brief closes as itself: `closes #FR-003e` (one lowercase letter; `FR-003E` is not an id). Several briefs: one per line, or a comma-separated list `closes #FR-003, #FR-003e` (TD-468)
 4. **Breaking changes:** Use `BREAKING CHANGE:` in footer with description
 5. **No AI signatures:** Do not add "Generated with Claude Code" or co-author tags
 

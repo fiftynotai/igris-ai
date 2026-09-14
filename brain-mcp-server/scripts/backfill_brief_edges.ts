@@ -112,12 +112,17 @@ const LABEL_PATTERNS: LabelPattern[] = [
 
 /**
  * Brief id pattern. Matches the canonical Igris brief-id format:
- * 2-3 uppercase letters, hyphen, 1+ digits. Examples: FR-105, TD-057, BR-9.
+ * 2-3 uppercase letters, hyphen, 1+ digits, an OPTIONAL single lowercase
+ * letter for a sub-brief. Examples: FR-105, TD-057, BR-9, FR-003b. The
+ * trailing `\b` is the same boundary `extractParentBriefId` carries (TD-468):
+ * this regex and the label regex below restate one shape and must widen
+ * together, or `**Parent Brief:** FR-003b` admits a letter that
+ * `**Hard:** FR-003b` truncates.
  *
  * NOTE: This deliberately matches goal ids too (GL-NNN), so callers must
  * route on the GL- prefix to choose to_type.
  */
-const ID_RE = /[A-Z]{2,3}-\d+/g;
+const ID_RE = /[A-Z]{2,3}-\d+[a-z]?\b/g;
 
 /** A goal id always starts with GL-. Anything else is a brief id. */
 function isGoalId(id: string): boolean {
@@ -148,8 +153,9 @@ function isGoalId(id: string): boolean {
  */
 function buildLabelRegex(label: string): RegExp {
   const escaped = label.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&');
+  // `[a-z]?` + `\b` on each id: the TD-468 shape, identical to ID_RE.
   return new RegExp(
-    `\\*\\*${escaped}:\\*\\*\\s*([A-Z]{2,3}-\\d+(?:\\s*(?:,|\\band\\b)?\\s*[A-Z]{2,3}-\\d+)*)`,
+    `\\*\\*${escaped}:\\*\\*\\s*([A-Z]{2,3}-\\d+[a-z]?\\b(?:\\s*(?:,|\\band\\b)?\\s*[A-Z]{2,3}-\\d+[a-z]?\\b)*)`,
     'gi',
   );
 }

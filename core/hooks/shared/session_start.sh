@@ -187,7 +187,8 @@ find_active_briefs() {
 
   for brief_file in $active_files; do
     local brief_id
-    brief_id=$(basename "$brief_file" | sed 's/\.md$//' | grep -oE '^[A-Z]+-[0-9]+' 2>/dev/null) || continue
+    # `FR-003e.md` is the sub-brief FR-003e, not FR-003 (one letter — TD-468).
+    brief_id=$(basename "$brief_file" | sed 's/\.md$//' | grep -oE '^[A-Z]+-[0-9]+[a-z]?' 2>/dev/null) || continue
 
     local title
     title=$(grep '^# ' "$brief_file" 2>/dev/null | head -1 | sed 's/^# //') || title="Unknown"

@@ -307,12 +307,22 @@ if [ "${IGRIS_BYPASS_PHASE_GUARD:-0}" != "1" ]; then
   # extract_brief_from_file <path> -> echoes the brief ID on the **Active Brief:**
   # line, or empty. Reuses the exact grep/sed shape the legacy guard used, so the
   # `**Active Brief:** None ...` literal resolves to empty -> guard skips (correct:
-  # a planning session with no claim must not gate commits).
+  # a planning session with no claim must not gate commits). The id may carry
+  # one lowercase letter (`FR-999a`, a sub-brief — TD-468): the capture used
+  # to stop at the digits and look up the PARENT's phase instead. `igris
+  # session register` seeds the line as `None`; only `/hunt` and `/rest` ever
+  # place an id (MAINTAINING.md row 62: two producers, one updater), always as
+  # a bare id followed by a space or EOL — measured 2026-09-14 over every such
+  # line on the operator's machine (22 id-bearing lines, 0 glued) — so no word
+  # boundary is needed here. If a glued token ever did land, the capture takes
+  # the wrong id: either the phase lookup misses and the guard fails OPEN (its
+  # contract), or it lands on a sibling sub-brief and the guard REFUSES naming
+  # that id — loud either way, never a silent wrong gate.
   extract_brief_from_file() {
     local f="$1"
     [ -f "$f" ] || return 0
     grep -m1 -E '^\*\*Active Brief:\*\*' "$f" 2>/dev/null \
-      | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+).*/\1/' \
+      | sed -E 's/^\*\*Active Brief:\*\*[[:space:]]+([A-Z]+-[0-9]+[a-z]?).*/\1/' \
       | tr -d '[:space:]'
   }
 

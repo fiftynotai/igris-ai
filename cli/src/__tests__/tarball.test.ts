@@ -2242,6 +2242,66 @@ interface PackReport {
  *   — every brain comment ships. Price a record sweep; do not assume it is
  *   free.
  *
+ * TD-468 MEASURED LAST (2026-09-14), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * TD-460 method, unchanged): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json`, the three `node_modules` symlinked, `dist` ABSENT
+ * so the copy step rebuilt the brain, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. The control taken FRESH at develop `505499d`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index
+ * (`7b52cb00`). The real `cli/dist` (`index.js` `Sep 10 13:18`) was never
+ * written by either arm; `brain-mcp-server/dist` WAS rebuilt in place once by
+ * this brief's Phase-4 package-local `npm run build` (it does not re-vendor
+ * `cli/dist` and does not touch the live MCP binary — `~/.claude.json`
+ * `mcpServers.igris-brain` still names the Sep-10 bundle). `~/.igris/config.json`
+ * unchanged (`342e9329…`). `~/.igris/memory/knowledge.db` moved during the
+ * session (`3b5bc0d2…` → `190d9a85…`) by WAL checkpoints from the seven live
+ * brain processes holding it — every read this brief made was `-readonly`.
+ *   control             1_885_869    unpacked 6_866_962, 541 entries, shasum
+ *                                    `7d080613f64e337f11ef3bc1bdc83fac94ba6fbf`
+ *                                    — taken twice, byte-identical, and
+ *                                    IDENTICAL to the TD-460 row's final: no
+ *                                    packed byte landed between that tree and
+ *                                    `505499d`.
+ *   packed              1_886_667    unpacked 6_868_420, 541 entries (+0),
+ *                                    shasum
+ *                                    `9611c6a04c4d0be4347aaf33b99f409e5126add9`,
+ *                                    taken twice.
+ *   TD-468's own share  +798 B       packed. Unpacked +1_458 over 3 artifacts,
+ *                                    ZERO new entries; the per-file sum
+ *                                    reconciles EXACTLY: `tools/briefs.js`
+ *                                    +540 (the widened `extractParentBriefId`
+ *                                    capture + its docblock), `tools/briefs.d.ts`
+ *                                    +501 (the SAME docblock, shipped again —
+ *                                    the brain-emits-declarations tax; 34 % of
+ *                                    the unpacked spend is one comment twice),
+ *                                    `scripts/backfill_brief_edges.ts` +417
+ *                                    (`ID_RE` + the label regex + docblock —
+ *                                    a file that reaches the tarball BY COPY,
+ *                                    which is why the scratch build ran the
+ *                                    copy step rather than the TD-440 staging).
+ *                                    The hook, the harness hooks, the
+ *                                    validator, the tests and the docs are
+ *                                    outside `files` and cost 0.
+ *   cumulative delta    +43_391 B    (42.4 KB, 28.2 % of the grant —
+ *                                    1_886_667 − 1_843_276)
+ *   headroom remaining  110_209 B    (107.6 KB — 153_600 − 43_391)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_886_667 − 1_885_869 = 798; 1_886_667 − 1_843_276 = 43_391;
+ *   153_600 − 43_391 = 110_209; 541 − 541 = 0;
+ *   6_868_420 − 6_866_962 = 1_458 = 540 + 501 + 417; 43_391 − 42_593 = 798 =
+ *   this brief's share exactly (the control reproduced the previous final, so
+ *   the two series join with zero drift).
+ *
+ *   The plan priced this as "a small positive delta from briefs.ts" against
+ *   111_007 B of headroom; it came in at 798. NOTE FOR THE NEXT PLANNER: the
+ *   `.d.ts` half (501 of 1_041 for the pair) is a docblock on an EXPORTED
+ *   function — rationale on a brain export ships twice.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

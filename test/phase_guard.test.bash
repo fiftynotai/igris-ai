@@ -629,3 +629,24 @@ seed_h3() {
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"FR-457"* ]] || return 1
 }
+
+# -----------------------------------------------------------------------------
+# (e3) TD-468: the tier-2 `**Active Brief:**` capture admits a LETTERED id.
+#      `FR-999a (annotation)` used to resolve to `FR-999` (the sed stopped at
+#      the digits), the parent's phase was looked up instead, and with no such
+#      row the guard failed OPEN on a mid-BUILDING commit of the child.
+#      RED at HEAD: exit 0. Fixed: the child's BUILDING row is found -> exit 1.
+# -----------------------------------------------------------------------------
+@test "(e3) TD-468: per-instance file naming a lettered brief (FR-999a BUILDING, FR-999 absent) -> guard fires" {
+  seed_brief "FR-999a" "BUILDING"
+  cat > "$INSTANCES_DIR/cccccccc-1111-2222-3333-444444444444.md" <<'MD'
+## Status
+**Mode:** HUNT MODE
+**Active Brief:** FR-999a (some annotation)
+MD
+
+  run_guard
+  [ "$status" -eq 1 ] || { echo "expected exit 1 (guard fires on FR-999a), got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"active brief: FR-999a"* ]] || { echo "child id not resolved: [$output]"; return 1; }
+  [[ "$output" == *"BUILDING"* ]] || return 1
+}

@@ -23,7 +23,7 @@ Conventional Commits: `<type>(<scope>): <summary>`
 | test | Test additions/changes |
 
 - Imperative mood, 72-char summary max (≤72; enforced by the `commit-msg` hook).
-- Reference briefs in the footer: `closes #BR-XXX`.
+- Reference briefs in the footer: `closes #<PREFIX>-<NNN>[a-z]` — a sub-brief carries one lowercase letter (`closes #FR-003e`, a different brief from `FR-003`); one id per `closes`, or a comma-separated list (`closes #FR-003, #FR-003e`); `closes` and `fixes` are the verbs the `commit-msg` gates read (TD-468).
 - **No AI signatures** — no "Generated with…", no Co-Authored-By tags.
 
 ## Code Quality
