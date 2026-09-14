@@ -12,6 +12,13 @@
  *      (CRITICAL: never silently revert operator overrides).
  *   5. cognition.<instance> present but `enabled` absent → set to false.
  *   6. Other config keys preserved across the write.
+ *
+ * BR-106 triage: FENCED-BY-BRAIN-DIR (Tier B only), no change needed.
+ *   `applySubconsciousDefault` writes `<brainDir>/config.json`, and `beforeEach:45`
+ *   assigns a FRESH `process.env.IGRIS_BRAIN_DIR`, so `brainDir()` never falls back
+ *   to `join(homedir(), ".igris")`. The file reaches NO homedir()-only builder, so
+ *   Tier H does not apply. The tier-wide belt (`cli/vitest.setup.ts`) covers the
+ *   residue. Verified by `vitest-home-fence.test.ts`'s scan, 2026-09-10.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

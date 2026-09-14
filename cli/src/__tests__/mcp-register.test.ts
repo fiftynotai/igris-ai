@@ -9,6 +9,13 @@
  * The malformed-file byte-equality test is the #1 correctness AC for
  * TD-168 — `~/.claude.json` is hot machine state and must never be
  * corrupted.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — was SAFE-BY-CALL-SITE — every
+ *   registerMcpInClaudeJson passes {claudeJsonPath}, but the default is
+ *   `opts?.claudeJsonPath ?? claudeJsonPath()` (mcp-register.ts:1551) — one
+ *   added case without the key writes the real file;
+ *   registerBrainAcrossHarnesses -> harnessIds -> loadHarnessDescriptor ->
+ *   resolveManifestPath -> homedir().
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -37,6 +44,10 @@ import { bundledMcpEntryPath } from "../lib/paths.js";
 import type { McpToolResult } from "../lib/mcp-delegate.js";
 import type { GrantResult } from "../lib/mcp-grant.js";
 import type { McpHarness } from "../lib/mcp-shape.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 const { MCP_KEY, BACKUP_SUFFIX, locateTomlTableSpan, renderMcpTomlTable } =
   __testing__;
@@ -48,12 +59,14 @@ let claudeJson: string;
 const MCP_PATH = "/fake/bundled/brain-mcp-server/dist/index.js";
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-mcp-register-home-"); // BR-106: HOME moves FIRST, and ARMED
   workDir = mkdtempSync(join(tmpdir(), "igris-mcp-register-"));
   claudeJson = join(workDir, ".claude.json");
 });
 
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 function readJson(path: string): Record<string, unknown> {

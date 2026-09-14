@@ -7,6 +7,11 @@
  * a DOUBLE-QUOTED colon-bearing `description:` (§13 #587), the runtime mirror is
  * byte-identical (verify_mirror MATCH), refuse-to-clobber on an existing skill,
  * and name validation.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — addCoreMcp -> parseCoreMcpTarget ->
+ *   mcpTargetTypes -> entry -> loadHarnessDescriptor -> resolveManifestPath
+ *   -> homedir(); the descriptor resolver falls back to the operator's
+ *   ~/.igris/core/harness-manifest.json.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -16,6 +21,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { addCoreSkill, addCoreAgent, addCoreMcp, addCoreHook } from "../verbs/add-core.js";
 import { removeCoreAgent } from "../verbs/remove-core.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 
@@ -24,6 +33,7 @@ let repo: string;
 let brain: string;
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-add-core-home-"); // BR-106: HOME moves FIRST, and ARMED
   sandbox = mkdtempSync(join(tmpdir(), "igris-add-core-"));
   repo = join(sandbox, "repo");
   brain = join(sandbox, "brain");
@@ -38,6 +48,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(sandbox, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("addCoreSkill — happy path", () => {

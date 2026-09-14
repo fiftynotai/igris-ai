@@ -20,6 +20,12 @@
  *   4. removeBrainGrant is the exact inverse (revokes, idempotent-on-absent).
  *   5. Secret hygiene: NO literal secret / ${VAR} appears in any grant file (the
  *      brain is env-free — the grant carries only the wildcard token / trust).
+ *
+ * BR-106 triage: FENCED (Tier H + B) — was SAFE-BY-CALL-SITE — every
+ *   writeBrainGrant/removeBrainGrant passes {configPaths}, but harnessIds
+ *   -> loadHarnessDescriptor -> resolveManifestPath -> homedir() is reached
+ *   with no override, and a future case added to this file would re-open
+ *   the write hole.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -47,6 +53,10 @@ import type { McpHarness } from "../lib/mcp-shape.js";
 // FR-217: the grant grammar is now descriptor-derived; assert via the accessors
 // the SUT reads (harnessIds()/grantGrammar()), not the deleted GRANT_GRAMMAR const.
 import { harnessIds, grantGrammar } from "../lib/harness-descriptor.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 const { renderTrustTable } = __testing__;
 
@@ -66,11 +76,13 @@ function sandboxPaths(): Partial<Record<McpHarness, string>> {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-mcp-grant-home-"); // BR-106: HOME moves FIRST, and ARMED
   workDir = mkdtempSync(join(tmpdir(), "igris-mcp-grant-"));
 });
 
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 function readJson(path: string): Record<string, unknown> {

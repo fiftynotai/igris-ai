@@ -15,7 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { request as httpRequest } from "node:http";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { _httpsGetJsonForTest } from "../lib/http.js";
 import { ChannelResolveError } from "../lib/channel.js";
@@ -102,6 +102,18 @@ describe("brain-core-stale — error swallowing (TD-132)", () => {
     mkdirSync(join(brainRoot, "core"), { recursive: true });
     envBackup.IGRIS_BRAIN_DIR = process.env.IGRIS_BRAIN_DIR;
     envBackup.HOME = process.env.HOME;
+    // BR-106 triage: FENCED (new) — Tier B (brainDir). In scope via
+    // `writeInstallSource` -> `brainDir()`; this file is the incident's own
+    // and its fence was the missing half of TD-301's repair.
+    // BR-106: TD-301 created `brainRoot`, backed both keys up and restored
+    // them below — but never ASSIGNED either, so `writeInstallSource()` kept
+    // resolving `brainDir()` to the operator's REAL `~/.igris/`. Measured at
+    // e908493 under a stand-in launch home: this beforeEach wrote
+    // `<HOME>/.igris/.install-source.json` byte-identical to the operator's
+    // real record. These two lines are the missing half of that repair.
+    process.env.HOME = brainRoot;
+    process.env.IGRIS_BRAIN_DIR = brainRoot;
+    expect(homedir(), "BR-106 fence NOT ARMED").toBe(brainRoot);
     // A MUTABLE channel with a recorded ref commit: the only shape that
     // reaches the fetcher after TD-301.
     writeInstallSource({

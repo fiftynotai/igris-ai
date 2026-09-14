@@ -11,6 +11,11 @@
  *   core.bak.* present AND core/ absent   → interrupted-swap     (refuse, restore hint)
  *   core/ present (bak or not)            → v7 / v6, with retainedBaks listed
  *   nothing                               → absent
+ *
+ * BR-106 triage: FENCED-BY-BRAIN-DIR (Tier B only), no change needed.
+ *   `detectInstallShape` is a read-only detector over `<brainDir>/`, and
+ *   `beforeEach:27` assigns a FRESH `process.env.IGRIS_BRAIN_DIR` (`:33` is the
+ *   restore). No homedir()-only builder is reached, so Tier H does not apply.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

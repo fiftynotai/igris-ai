@@ -17,6 +17,10 @@
  *     200-any-path (#356): `GET /sync/pull?since_<table>=<ts>`;
  *   - the pull lands in the LOCAL db (a real row appears after the merge) and
  *     is last-write-wins (an OLDER remote row does NOT clobber a NEWER local).
+ *
+ * BR-106 triage: FENCED (Tier H + B) — buildBootSyncDigest -> runQueueDrain
+ *   -> drainSyncQueueOnly -> runSyncData -> dispatchEntry -> expandTilde ->
+ *   homedir().
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -32,6 +36,10 @@ import {
   type CapturedCall,
 } from "./loopback.js";
 import type { BootSyncDigest } from "../types.js";
+import { fenceHome, restoreEnv, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let tmpRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
@@ -206,6 +214,7 @@ async function close(lb: ReturnType<typeof makeLoopback>): Promise<void> {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-bootsync-home-"); // BR-106: HOME moves FIRST, and ARMED
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-boot-sync-"));
   savedEnv = { ...process.env };
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
@@ -219,7 +228,11 @@ afterEach(async () => {
   await closeBrainDb();
   vi.restoreAllMocks();
   vi.resetModules();
-  process.env = savedEnv;
+  // BR-106: restore BY KEY. `process.env = savedEnv` swaps libuv's live env
+  // for a plain object, after which the next test's `process.env.HOME = ...`
+  // never reaches os.homedir() and the fence silently reads as test 1's.
+  restoreEnv(savedEnv);
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("boot-sync — degraded (remote unconfigured)", () => {

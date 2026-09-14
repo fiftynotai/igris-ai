@@ -17,13 +17,21 @@
  *      equality assertions were re-expressed as direct value pins — coverage
  *      preserved without importing deleted symbols.
  *   3. The §4 schema↔descriptor cross-check.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — this file calls claudeJsonPath,
+ *   antigravityHooksConfigPath and claudeUserSettingsPath DIRECTLY (they are
+ *   homedir()-only builders with no env seam), and loadHarnessDescriptor ->
+ *   resolveManifestPath falls back to the operator's real
+ *   ~/.igris/core/harness-manifest.json when the repo-root copy is absent.
+ *   The fence keeps the resolver on the repo-root candidate, which is what
+ *   the "real descriptor" assertions below are actually about.
  */
 
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   __resetHarnessDescriptorCacheForTests,
@@ -51,6 +59,10 @@ import {
   claudeJsonPath,
   claudeUserSettingsPath,
 } from "../lib/paths.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 /** All 5 shape ids — a fixed list so per-id iteration does not depend on the SUT. */
 const ALL_IDS: HarnessId[] = [
@@ -72,7 +84,12 @@ const repoRootManifest = join(
 );
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-harness-desc-home-"); // BR-106: HOME moves FIRST, and ARMED
   __resetHarnessDescriptorCacheForTests();
+});
+
+afterEach(() => {
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("resolution + cache", () => {

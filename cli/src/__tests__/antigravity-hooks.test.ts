@@ -5,6 +5,10 @@
  * hook groups into antigravity's `~/.gemini/config/hooks.json`. These tests
  * exercise the merge against real `node:fs` tmp files via the `{ configPath }`
  * seam — fully hermetic, so the dev machine's real hooks.json is NEVER touched.
+ *
+ * BR-106 triage: FENCED (Tier H) — installAntigravityHooks ->
+ *   antigravityHooksConfigPath -> homedir(); a homedir()-only builder with
+ *   no env seam, and this verb WRITES.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -18,6 +22,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let workDir: string;
 let configPath: string; // ~/.gemini/config/hooks.json stand-in
@@ -26,6 +34,7 @@ const PRE_CMD = "$HOME/.igris/core/hooks/bridges/antigravity/pre_tool_use.sh";
 const POST_CMD = "$HOME/.igris/core/hooks/bridges/antigravity/post_tool_use.sh";
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-ag-hooks-home-"); // BR-106: HOME moves FIRST, and ARMED
   workDir = mkdtempSync(join(tmpdir(), "igris-ag-hooks-"));
   // The config dir does NOT exist yet — the lib must benign-create it.
   configPath = join(workDir, "gemini", "config", "hooks.json");
@@ -33,6 +42,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 function readJson(path: string): Record<string, unknown> {

@@ -12,6 +12,10 @@
  * positive arm that writes a SANDBOX settings file, because a refusal test
  * passes just as well when the verb bailed out three checks earlier for an
  * unrelated reason.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — runLoadout -> runProjectHook ->
+ *   homedir(); fenceHome seeds a .gitconfig so this file's `git ls-files`
+ *   keeps an identity.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -28,6 +32,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 /** The real igris-ai checkout, resolved from THIS FILE — never from cwd. */
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
@@ -69,6 +77,7 @@ function settingsWithPersonalGroup(name: string, event: string): string {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-hook-contain-home-"); // BR-106: HOME moves FIRST, and ARMED
   for (const k of ENV_KEYS) envBackup[k] = process.env[k];
   startCwd = process.cwd();
   workDir = mkdtempSync(join(tmpdir(), "td408-"));
@@ -89,6 +98,7 @@ afterEach(() => {
     else process.env[k] = envBackup[k];
   }
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("TD-408 — arming facts, measured rather than quoted", () => {

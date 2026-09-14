@@ -64,7 +64,19 @@ let secretsPath: string;
 const SENTINEL = "sentinel-secret-DO-NOT-LEAK";
 
 // BR-099 — the HOME fence and the real-config belt (see the docblock).
-const REAL_HOME = process.env.HOME;
+//
+// BR-106: two DIFFERENT homes, and conflating them disarms the belt. The
+// tier-wide belt (`cli/vitest.setup.ts`) repoints HOME to a throwaway dir
+// BEFORE this module loads, so `process.env.HOME` here is the belt, not the
+// operator. `IGRIS_REAL_HOME` is published by the belt (and by bats'
+// `_helpers.bash:26`, same keep-if-set semantics) and is what the belt below
+// and the "the fence IS the real home" assertion must read — otherwise
+// `REAL_CLAUDE_CONFIG` points into an empty temp dir, `realMcpShaBefore`
+// stays null, and this whole belt silently no-ops.
+/** The operator's real home — the belt's subject. */
+const REAL_HOME = process.env.IGRIS_REAL_HOME ?? process.env.HOME;
+/** Whatever HOME was when this file loaded — the `afterEach` restore target. */
+const PREV_HOME = process.env.HOME;
 const REAL_CLAUDE_CONFIG =
   REAL_HOME !== undefined ? join(REAL_HOME, ".claude.json") : undefined;
 let fenceHome: string;
@@ -113,10 +125,11 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  if (REAL_HOME === undefined) {
+  // Restore what THIS file found, not the operator's home (BR-106).
+  if (PREV_HOME === undefined) {
     delete process.env.HOME;
   } else {
-    process.env.HOME = REAL_HOME;
+    process.env.HOME = PREV_HOME;
   }
   rmSync(work, { recursive: true, force: true });
 });

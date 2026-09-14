@@ -161,9 +161,17 @@ export function armAutoPushFence(sandbox: string): AutoPushFence {
         );
       }
       // ...and the operator's real config must be out of reach, whatever it says.
-      const real = join(String(prevHome ?? ""), ".igris", "config.json");
-      if (configPath() === real) {
-        throw new Error("FR-247 fence NOT ARMED: the sandbox config IS the real one");
+      //
+      // BR-106: check BOTH homes. Under the tier-wide belt
+      // (`cli/vitest.setup.ts`) `prevHome` is a throwaway temp dir, so
+      // comparing against it alone would prove only that the sandbox differs
+      // from the belt. `IGRIS_REAL_HOME` carries the operator's home.
+      for (const candidate of [process.env.IGRIS_REAL_HOME, prevHome]) {
+        if (candidate === undefined || candidate.length === 0) continue;
+        const real = join(candidate, ".igris", "config.json");
+        if (configPath() === real) {
+          throw new Error("FR-247 fence NOT ARMED: the sandbox config IS the real one");
+        }
       }
       // L2.
       const current = (globalThis as unknown as Record<string, unknown>).fetch;

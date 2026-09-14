@@ -113,7 +113,10 @@ const CLI_ENTRY = join(CLI_ROOT, "dist", "index.js");
 const COMPARED = ["event_name", "component", "project_slug", "instance_id", "payload"] as const;
 const EXCLUDED = ["id", "created_at", "machine_hostname", "machine_id"] as const;
 
-const REAL_BRAIN = join(homedir(), ".igris", "memory", "knowledge.db");
+// BR-106: the OPERATOR's home, not the tier-wide belt's (see the endpoint
+// suite's REAL_BRAIN block).
+const REAL_HOME = process.env.IGRIS_REAL_HOME ?? homedir();
+const REAL_BRAIN = join(REAL_HOME, ".igris", "memory", "knowledge.db");
 /**
  * ACCESS witness, not a byte witness (learning 1096). The byte digest this
  * replaced was blind in the direction that matters — a triage dispatch lands

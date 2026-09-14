@@ -12,6 +12,10 @@
  * approved-only learnings, claim-state stripped, redaction/no-abs-path leak,
  * cross-project edge exclusion, content_hash correctness, --since, missing-table
  * degrade, missing-DB hard-fail, exclusions absent.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — buildExport -> redactTablesForEgress
+ *   -> relativizeEgressPath -> homedir(); see the IGRIS_REAL_HOME note on
+ *   the manifest leak assertion below.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,6 +33,10 @@ import { join } from "node:path";
 import { x as tarExtract } from "tar";
 import { runExport, buildExport } from "../verbs/export.js";
 import { closeDb } from "../lib/brain-db.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let tmpRoot: string;
 let prevBrainDir: string | undefined;
@@ -283,6 +291,7 @@ function readManifest(root: string): Record<string, unknown> {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-export-home-"); // BR-106: HOME moves FIRST, and ARMED
   prevBrainDir = process.env.IGRIS_BRAIN_DIR;
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-export-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
@@ -294,6 +303,7 @@ afterEach(() => {
   if (prevBrainDir === undefined) delete process.env.IGRIS_BRAIN_DIR;
   else process.env.IGRIS_BRAIN_DIR = prevBrainDir;
   rmSync(tmpRoot, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("igris export — standard tier round-trip", () => {
@@ -379,8 +389,19 @@ describe("igris export — redaction / no absolute-path leak", () => {
     expect((manifest.redaction as { applied: boolean }).applied).toBe(true);
 
     // No home-absolute path anywhere in the manifest text.
+    //
+    // BR-106: assert against BOTH homes. `homedir()` is now the per-test fence
+    // (and, absent that, the tier-wide belt from `cli/vitest.setup.ts`), so
+    // this line alone would only prove the manifest omits a throwaway temp
+    // path — the operator-home leak it was written to catch would go untested.
+    // `IGRIS_REAL_HOME` is the operator's home, published by the belt with the
+    // same keep-if-set semantics as bats' `_helpers.bash:26`.
     const manifestText = readFileSync(join(root, "manifest.json"), "utf-8");
     expect(manifestText).not.toContain(homedir());
+    const operatorHome = process.env.IGRIS_REAL_HOME;
+    if (operatorHome !== undefined && operatorHome.length > 0) {
+      expect(manifestText).not.toContain(operatorHome);
+    }
   });
 });
 

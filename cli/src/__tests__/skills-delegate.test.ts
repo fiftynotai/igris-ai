@@ -19,9 +19,13 @@
  *   6. projectSkillsViaTool / unprojectSkillsViaTool: spy the spawn, assert the
  *      argv[0] is the LOCAL binary (no bare npx), the verdict parser keys on the
  *      exit code, and NO inline secret pattern appears in any logged argv.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — skillAgentIds -> entry ->
+ *   loadHarnessDescriptor -> resolveManifestPath -> homedir(); same
+ *   descriptor-resolver route as mcp-delegate, and the file had no hooks.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -36,6 +40,19 @@ import {
 // FR-217: the default skills target set is now descriptor-derived; assert against
 // the accessor the SUT reads (skillAgentIds()), not the deleted hardcoded const.
 import { skillAgentIds } from "../lib/harness-descriptor.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
+
+beforeEach(() => {
+  br106Fence = fenceHome("igris-skills-delegate-home-"); // BR-106: HOME moves FIRST, and ARMED
+});
+
+afterEach(() => {
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
+});
+
 
 /** A fake absolute binary path for the injected resolver (never spawned). */
 const FAKE_BIN = "/abs/node_modules/skills/bin/cli.mjs";

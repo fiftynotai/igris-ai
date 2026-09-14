@@ -6,6 +6,10 @@
  * the same as the old install step 6; only the target path moved. We test
  * against a real tmp filesystem + a staged canonical-settings.json (no mocks of
  * the module under test).
+ *
+ * BR-106 triage: FENCED (Tier H + B) — mergeGlobalCanonicalHooks ->
+ *   claudeUserSettingsPath -> homedir(); the verb WRITES the operator's
+ *   real ~/.claude/settings.json when unfenced.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -20,6 +24,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let tmpRoot: string;
 let settingsPath: string;
@@ -60,6 +68,7 @@ function stageCanonical(): void {
 }
 
 beforeEach(async () => {
+  br106Fence = fenceHome("igris-global-hooks-home-"); // BR-106: HOME moves FIRST, and ARMED
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-global-hooks-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
   stageCanonical();
@@ -74,6 +83,7 @@ afterEach(() => {
   rmSync(tmpRoot, { recursive: true, force: true });
   delete process.env.IGRIS_BRAIN_DIR;
   delete process.env.IGRIS_KEEP_BAK;
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 describe("mergeGlobalCanonicalHooks", () => {

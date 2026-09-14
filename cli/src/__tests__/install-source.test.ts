@@ -1,5 +1,13 @@
 /**
  * install-source.ts tests — M1.3.
+ *
+ * BR-106 triage: FENCED-BY-BRAIN-DIR (Tier B only), no change needed — and this is
+ *   the INCIDENT's own file class. `writeInstallSource` -> `installSourcePath()` ->
+ *   `brainDir()`, which honours `IGRIS_BRAIN_DIR`; `beforeEach:20` assigns a FRESH
+ *   one, so the writer lands in tmp. The 2026-09-08 incident was not this file — it
+ *   was `http.test.ts` driving the SAME writer with NEITHER key set (repaired under
+ *   BR-106; see that file's beforeEach). No homedir()-only builder is reached, so
+ *   Tier H does not apply.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

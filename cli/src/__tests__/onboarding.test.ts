@@ -11,6 +11,13 @@
  *     preserve siblings, degrade on a missing config (never throw).
  *   - the verb: status JSON shape (first_run = !completed) incl. the config-absent
  *     degrade; welcomed/complete transitions + exit 0; unknown action → exit 2.
+ *
+ * BR-106 triage: FENCED-BY-BRAIN-DIR (Tier B only), no change needed.
+ *   `beforeEach:63` assigns a FRESH `process.env.IGRIS_BRAIN_DIR` (the second
+ *   assignment at `:68` is the afterEach RESTORE, which is not a fence); every
+ *   `init-config.js` writer this drives is `brainDir()`-rooted, and `runOnboarding
+ *   ("status")` is a read. No homedir()-only builder is reached, so Tier H does
+ *   not apply.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

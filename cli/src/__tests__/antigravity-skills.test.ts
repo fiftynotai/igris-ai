@@ -6,6 +6,10 @@
  * NEVER throws. These tests exercise the five cases (plan §C2) against real
  * `node:fs` tmp files using the `{ linkPath, target }` seam — fully hermetic, so
  * the dev machine's real symlink is NEVER touched.
+ *
+ * BR-106 triage: FENCED (Tier H) — linkAntigravitySkills ->
+ *   antigravitySkillsLinkPath -> homedir(); the verb creates a symlink
+ *   under the real ~/.antigravity when unfenced.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -26,12 +30,17 @@ import {
   linkAntigravitySkills,
   antigravitySkillsLinkOk,
 } from "../lib/antigravity-skills.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let workDir: string;
 let linkPath: string; // the antigravity-cli/skills location
 let target: string; // ~/.agents/skills stand-in
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-ag-skills-home-"); // BR-106: HOME moves FIRST, and ARMED
   workDir = mkdtempSync(join(tmpdir(), "igris-agskills-"));
   // link parent exists (antigravity-cli/), the link itself is created per-case.
   linkPath = join(workDir, "gemini", "antigravity-cli", "skills");
@@ -40,6 +49,7 @@ beforeEach(() => {
 
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 function isSymlinkTo(path: string, expected: string): boolean {

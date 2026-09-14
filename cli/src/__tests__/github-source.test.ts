@@ -6,6 +6,11 @@
  * (`runLoadout`) — these exercise the exported pure functions directly
  * (L-159/L-173: stub the fetch boundary, never mock the module under test;
  * here there is no fetch at all — the functions are deterministic).
+ *
+ * BR-106 triage: FENCED (Tier H + B) — readRepoManifest ->
+ *   validateOverlayShape -> validateAgentEntry -> agentTargetTypes -> entry
+ *   -> loadHarnessDescriptor -> resolveManifestPath -> homedir(); the file
+ *   had NO hooks at all, so nothing bounded it.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -33,6 +38,19 @@ import {
   isGithubSpec,
   type RepoManifest,
 } from "../lib/github-source.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
+
+beforeEach(() => {
+  br106Fence = fenceHome("igris-github-source-home-"); // BR-106: HOME moves FIRST, and ARMED
+});
+
+afterEach(() => {
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
+});
+
 
 // ---------------------------------------------------------------------------
 // parseGithubSpec — grammar

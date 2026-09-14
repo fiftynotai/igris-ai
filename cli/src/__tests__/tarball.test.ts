@@ -9,6 +9,30 @@
  * for M1; M1.1 implementation MUST pass it before any other M1 sub-step
  * lands. Run via:
  *   npx vitest run src/__tests__/tarball.test.ts
+ *
+ * BR-106 triage: OUT OF SCOPE, and fenced anyway — no change needed. The guard's
+ *   closure puts this file in NEITHER tier (it calls no exported symbol that
+ *   reaches `homedir()`), and it independently carries a real fence in the
+ *   CHILD-ENV idiom: the `HOME: fakeHome` key in the `env` object of this
+ *   file's `node` spawn (locate by NAME — a line number here has drifted
+ *   repeatedly, including on this brief's own docblock edits) is
+ *   passed into the spawned process's
+ *   `env`. That form is why BR-106's fence predicate accepts a `HOME:` key and not
+ *   only `process.env.HOME =` — the brief's own grep was blind to it and would have
+ *   made this file a permanent false positive. Fencing the PARENT process
+ *   PER-FILE here would be a behaviour change, not a fix: `npm pack --dry-run
+ *   --json` reads `$HOME/.npmrc` and `$HOME/.npm`.
+ *
+ *   BR-106 UPDATE: the tier-wide belt (`cli/vitest.setup.ts`) now repoints
+ *   `HOME` for every file including this one, so the `npm pack` this test runs
+ *   reads the BELT's temp home, never the operator's. The per-file reasoning
+ *   above still holds for why THIS file adds no fence of its own.
+ *
+ *   Deliberately NOT claimed: BR-106's end-to-end run left its stand-in home
+ *   containing a `.npm` directory, and this comment does not explain it. The
+ *   belt REDIRECTS this test's writes away from that home, so this test cannot
+ *   be the cause — and what is, was never measured. Do not attribute it here
+ *   without measuring it.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";

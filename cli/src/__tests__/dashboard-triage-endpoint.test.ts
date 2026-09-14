@@ -207,7 +207,12 @@ import {
  * Does NOT prove: that the file was unmodified — it may well have been, by
  * another process. That is not this suite's claim to make.
  */
-const REAL_BRAIN = join(homedir(), ".igris", "memory", "knowledge.db");
+// BR-106: read the OPERATOR's home, not the tier-wide belt's throwaway one.
+// `cli/vitest.setup.ts` repoints HOME before this module loads, so a bare
+// `homedir()` here would make the "never addressed the real brain" claim
+// vacuous — it would compare against a temp path nothing could ever reach.
+const REAL_HOME = process.env.IGRIS_REAL_HOME ?? homedir();
+const REAL_BRAIN = join(REAL_HOME, ".igris", "memory", "knowledge.db");
 
 /** Every path this suite's brain handle resolved to, one per test. */
 const resolvedDuringRun: string[] = [];
