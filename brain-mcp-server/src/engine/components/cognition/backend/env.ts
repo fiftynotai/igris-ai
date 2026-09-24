@@ -4,7 +4,7 @@
  * PORTED FROM FR-201 (separate repo, no published package — COPY, don't import;
  * R-PORT-DRIFT, follow-on TD to extract a shared package):
  *   - `subscriptionOnlyEnv`        ← `~/StudioProjects/igris-os-eval/b5/judge.ts:323-328`
- *                                    (extended by TD-471 — no longer verbatim)
+ *                                    (narrowed to an allowlist by TD-472)
  *   - the cached `--version` probe ← generalized from
  *                                    `subconscious/verifier.ts:184-197`
  *                                    (`isClaudeCliAvailable`) into a per-harness
@@ -42,20 +42,26 @@ export const HARNESS_BIN: Record<ExtractorHarness, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// subscriptionOnlyEnv (ported from FR-201 judge.ts:323-328; extended by TD-471)
+// subscriptionOnlyEnv (ported from FR-201 judge.ts:323-328; narrowed to an
+// allowlist by TD-471 → TD-472)
 // ---------------------------------------------------------------------------
 
-/** Env namespaces a child never INHERITS from the harness hosting the brain (TD-471). */
-const INHERITED_HARNESS_ENV_PREFIXES = ['CLAUDE', 'ANTHROPIC_'] as const;
-
-/** Metered API keys — dropped even when passed explicitly (FR-201: no metered credits). */
-const METERED_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
+/** The only names a child INHERITS (TD-472; classes in docs/COGNITION.md). */
+const CHILD_ENV_ALLOW = new Set([
+  'HOME', 'USER', 'LOGNAME', 'PATH', 'SHELL', 'TMPDIR', 'LANG', 'TZ',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'ALL_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy', 'all_proxy',
+  'NODE_EXTRA_CA_CERTS', 'NODE_USE_SYSTEM_CA', 'SSL_CERT_FILE', 'SSL_CERT_DIR',
+  'REQUESTS_CA_BUNDLE', 'CODEX_CA_CERTIFICATE', '__CF_USER_TEXT_ENCODING',
+  'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
+]);
+const CHILD_ENV_ALLOW_PREFIXES = ['LC_'] as const;
+const METERED_KEY_SUFFIX = '_API_KEY';
 
 /**
- * Build a FRESH child env (never mutates `base`): drop every inherited
- * `CLAUDE*` / `ANTHROPIC_*` name, apply `extra`, then drop the metered keys.
- * TD-471: an inherited host-auth channel breaks detached OAuth refresh — see
- * MAINTAINING.md's "extractor child-env inheritance strip" row.
+ * A FRESH child env (never mutates `base`): only allowlisted INHERITED names,
+ * then `extra`, then no `*_API_KEY` at all (FR-201: no metered credits).
+ * See docs/COGNITION.md and MAINTAINING.md's extractor child-env row.
  */
 export function subscriptionOnlyEnv(
   base: NodeJS.ProcessEnv,
@@ -63,10 +69,12 @@ export function subscriptionOnlyEnv(
 ): NodeJS.ProcessEnv {
   const inherited: NodeJS.ProcessEnv = {};
   for (const [name, value] of Object.entries(base)) {
-    if (!INHERITED_HARNESS_ENV_PREFIXES.some((p) => name.startsWith(p))) inherited[name] = value;
+    if (CHILD_ENV_ALLOW.has(name) || CHILD_ENV_ALLOW_PREFIXES.some((p) => name.startsWith(p))) {
+      inherited[name] = value;
+    }
   }
   const env: NodeJS.ProcessEnv = { ...inherited, ...extra };
-  for (const key of METERED_KEYS) delete env[key];
+  for (const key of Object.keys(env)) if (key.endsWith(METERED_KEY_SUFFIX)) delete env[key];
   return env;
 }
 

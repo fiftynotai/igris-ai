@@ -569,6 +569,112 @@ added: the render rules already print `reason`, and a new field is a five-place
 wire sweep for a string the skills already show. A row with no `reason` in its
 payload renders the sentence it always did.
 
+## what an extractor child inherits (TD-471, TD-472)
+
+Every LLM child an instance spawns, whichever of the five harnesses runs it,
+gets its env from one function, `subscriptionOnlyEnv` in
+`cognition/backend/env.ts`. The perception session-end hook's detached parent
+goes through the same function via `runBackend`. The function does three
+things, in this order:
+
+1. **Inherit only an allowlist** (TD-472). Every other inherited name is
+   dropped, including names nobody has seen yet.
+2. **Apply the builder's explicit injections.** These survive step 1. Today the
+   only injection is `HOME`, set to the per-run isolated home.
+3. **Drop every name ending `_API_KEY`**, even an injected one. FR-201: an
+   extractor never spends metered credits.
+
+| class | names kept | why |
+|---|---|---|
+| identity / filesystem | `HOME`, `USER`, `LOGNAME`, `PATH`, `SHELL`, `TMPDIR` | `HOME` is overridden by every builder. The claude Keychain entry is keyed by the account, and a token refresh WRITES it. `gemini` is `#!/usr/bin/env node`. codex exec runs shell commands. |
+| locale / time | `LANG`, `TZ`, any `LC_*` (anchored: `MY_LC_X` is dropped) | output encoding |
+| network | `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY` and their lowercase forms | without them no CLI reaches its API behind a proxy. A proxy URL can carry an operator credential; that is accepted. |
+| CA | `NODE_EXTRA_CA_CERTS`, `NODE_USE_SYSTEM_CA`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `REQUESTS_CA_BUNDLE`, `CODEX_CA_CERTIFICATE` | `NODE_USE_SYSTEM_CA` is set on every live brain measured (4 processes, 2026-09-24, one machine). `CODEX_CA_CERTIFICATE` is in the codex 0.135.0 binary (a static read of names). |
+| platform | `__CF_USER_TEXT_ENCODING` (macOS), `XDG_RUNTIME_DIR` + `DBUS_SESSION_BUS_ADDRESS` (Linux) | the Linux pair is for keyring auth through the session bus. That is code-read only; no Linux desktop has run it. |
+
+**Why an allowlist and not a longer denylist.** A denylist has to name every
+dangerous variable in advance, and it falls behind:
+
+- TD-471's prefix rule (`CLAUDE*`, `ANTHROPIC_*`) was one day old when two
+  claude-auth routing names it misses were found: `USE_LOCAL_OAUTH` and
+  `USE_STAGING_OAUTH`. The live brains carry both, and the claude 2.1.281
+  binary reads both.
+- The opencode 1.14.22 binary names 92 distinct `*_API_KEY` providers (a static
+  read of names).
+- Igris defines credential names of its own that no harness prefix would ever
+  cover: `IGRIS_BRAIN_API_KEY` and `BRAIN_API_KEY`.
+
+What the children actually need is short and does not change much: the table
+above.
+
+**What is dropped, with the reason:**
+
+- **Credential channels no CLI uses for its own auth:** `SSH_AUTH_SOCK`. It is a
+  signing channel, and codex runs commands.
+- **Claude-auth routing:** the whole `CLAUDE*` / `ANTHROPIC_*` namespace,
+  including the desktop host-auth gate (TD-471), and `USE_LOCAL_OAUTH` /
+  `USE_STAGING_OAUTH`.
+- **Igris's own names:** every `IGRIS_*` name and `BRAIN_API_KEY`.
+- **Metered credentials:** every `*_API_KEY`, plus metered or auth-routing
+  names such as `CODEX_ACCESS_TOKEN`, `GOOGLE_CLOUD_ACCESS_TOKEN`,
+  `GOOGLE_GENAI_USE_VERTEXAI`, `AWS_*` and `GITHUB_TOKEN`.
+- **Code injection:** `NODE_OPTIONS`, `DYLD_*`.
+- **Terminal bookkeeping:** `TERM`, `PWD`, `SHLVL`, `XPC_*` and
+  `SECURITYSESSIONID`.
+
+**Config pointers.** These are variables that could send a child to the
+operator's REAL harness config instead of the isolated home:
+
+| variable | harness | disposition |
+|---|---|---|
+| `HOME` | all | REPLACED with the isolated home, through the explicit injection |
+| `PATH`, `TMPDIR` | all | KEPT. `PATH` decides which binary IS the CLI, and `TMPDIR` is scratch only. |
+| `XDG_RUNTIME_DIR` | Linux keyring | KEPT. It is a socket directory, not a config directory. |
+| `CLAUDE_CONFIG_DIR` | claude | STRIPPED (since TD-471) |
+| `CODEX_HOME` | codex | STRIPPED |
+| `GEMINI_CLI_HOME`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, `GEMINI_CLI_SYSTEM_DEFAULTS_PATH`, `GEMINI_CLI_TRUSTED_FOLDERS_PATH`, `GEMINI_SYSTEM_MD` | gemini, antigravity | STRIPPED |
+| `ANTIGRAVITY_EXECUTABLE_DATA_DIR` | antigravity | STRIPPED |
+| `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG` | gemini, antigravity, opencode | STRIPPED |
+| `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_AUTH_CONTENT`, `OPENCODE_DB`, `OPENCODE_TEST_HOME` | opencode | STRIPPED. `_CONTENT` is inline config, MCP included. |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | opencode and any XDG-aware CLI | STRIPPED. An operator whose opencode auth lives under a custom `XDG_DATA_HOME` loses it in the isolated home, because only `~/.local/share/opencode` is forwarded. That was already true before TD-472. |
+| `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE` | claude (Bedrock), opencode | STRIPPED |
+| `NODE_OPTIONS` | gemini (node) | STRIPPED. `--require` loads operator code into the child. |
+
+**When a harness needs something the list drops.** For example, a gemini
+Workspace Code Assist account needs `GOOGLE_CLOUD_PROJECT`. The remedy is an
+explicit injection in that harness's builder (`backend/spawn-map.ts`), named in
+the MAINTAINING.md row. It is never a widening of what children inherit, and a
+`*_API_KEY` never passes even that way.
+
+**What the env rule cannot close.** The isolated home forwards some operator
+files whole, and an env rule cannot filter a file:
+
+- `~/.gemini/settings.json`, whose `mcpServers` can name `igris-brain`;
+- codex's `config.toml`, whose other MCP servers still boot;
+- `.env` files.
+
+Those channels are BR-108. Until it lands, the gemini and antigravity live
+calls stay blocked.
+
+**Proof, per harness (AC-3).** Each harness is proved by one live headless call
+under the allowlist. It runs beside a control call with TD-471's env on the
+same argv and the same isolated home, so env is the only variable. The runs use
+`brain-mcp-server/scripts/td472_child_env_probe.ts`, are operator-run, and
+record the result envelope, booleans and env names only:
+
+| harness | verdict | refresh witness | date / machine |
+|---|---|---|---|
+| claude | pending: runs after the TD-471 watcher's verdict | — | — |
+| codex | pending: needs the operator's `--accept-mcp`, or BR-108 | — | — |
+| gemini | pending: blocked on BR-108 (a forwarded `igris-brain`); the builder's `--print` flags are also absent from gemini-cli 0.45.0 (BR-109) | — | — |
+| antigravity | pending: blocked on BR-108 | — | — |
+| opencode | `PRE_EXISTING` (2026-09-24, opencode 1.14.22, this machine): both arms fail auth identically — the allowlist and the TD-471 env; nothing regressed; the isolated-HOME auth defect is BR-109 | — | — |
+
+The unit and stub tiers already pin the rule for all five harnesses. They cover
+metered names, pointers, the names TD-471 missed, and the real ambient env
+reduced to the allowlist. `env.test.ts` and
+`backend-child-env-allowlist.test.ts` hold these checks.
+
 ## the layer is open
 
 A new instance is a new self-describing extractor file plus one barrel line; the
