@@ -141,12 +141,14 @@ const ESCAPED = [
 
 /**
  * Names a POSIX `/bin/sh` exports to its own children whatever it was given
- * (bash-as-sh on macOS: PWD, SHLVL, `_`). The stub is a shell script, so the
+ * (bash-as-sh on macOS: PWD, SHLVL, `_`), plus the two names GNU awk (gawk,
+ * the stub's reader on Linux CI) adds to its own ENVIRON: AWKPATH and
+ * AWKLIBPATH (BSD awk adds neither). The stub is a shell script, so the
  * S5 read-back sees these even from an empty env; `SHELL_ADDED` below MEASURES
  * them per run and S5 subtracts only what was measured. The brain-side env is
  * pinned without that subtraction by B3 (and PWD/SHLVL by A0/A2).
  */
-const KNOWN_SHELL_BOOKKEEPING = ['PWD', 'SHLVL', '_', 'OLDPWD'];
+const KNOWN_SHELL_BOOKKEEPING = ['PWD', 'SHLVL', '_', 'OLDPWD', 'AWKPATH', 'AWKLIBPATH'];
 
 /** A names-writer stub: drain stdin, record NAMES only, answer `[]`. */
 function stubScript(namesOut: string): string {
