@@ -17,9 +17,9 @@
  * by the caller (`exec` pipes it on stdin for claude/codex per the perception
  * extractor, or via argv for the gemini-family `--print`).
  *
- * EVERY spawn runs in the brain-isolated HOME (empty mcpServers, auth symlinked
- * forward, --strict-mcp-config / read-only sandbox) so the extraction child can
- * NEVER reach the live brain (R-BRAIN-LEAK).
+ * EVERY spawn runs in the brain-isolated HOME (auth stores symlinked, owned
+ * MCP-free configs; see docs/COGNITION.md) plus each CLI's verified MCP switch,
+ * so the extraction child can NEVER reach the live brain (R-BRAIN-LEAK).
  *
  * @module engine/components/cognition/backend/spawn-map
  * @author fifty.dev
@@ -112,10 +112,10 @@ function buildClaudeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isol
 }
 
 /**
- * Codex (OpenAI). `codex exec` read-only with NO MCP/tools: the read-only
- * sandbox + pointing the brain MCP at `/usr/bin/false` so it cannot reach the
- * eval/live DB. The composed prompt is the argv tail. Subscription auth (no
- * OPENAI_API_KEY). Ported from `judge.ts:buildCodexSpawn:345-369`.
+ * Codex (OpenAI). `codex exec` in the read-only sandbox; the owned config.toml
+ * declares no MCP server, so no `-c mcp_servers.*` override is passed (one on an
+ * absent table CREATES a server, BR-108). The composed prompt is the argv tail.
+ * Subscription auth (no OPENAI_API_KEY). Ported from `judge.ts:buildCodexSpawn:345-369`.
  */
 function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
   const args = [
@@ -125,9 +125,6 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
     // Read-only sandbox: no filesystem writes, cannot read brain state on disk.
     '--sandbox',
     'read-only',
-    // No MCP: point the brain at a no-op so it cannot reach the live DB.
-    '-c',
-    `mcp_servers.igris-brain.command="/usr/bin/false"`,
   ];
   if (opts.model) args.push('-m', opts.model);
   return {
@@ -143,9 +140,10 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
 
 /**
  * Gemini-family (gemini / antigravity → the `gemini`/`agy` CLI). Headless
- * `--print` in the brain-isolated Gemini HOME whose `config/mcp_config.json` is
- * OWNED and EMPTY (`{"mcpServers": {}}` — written by isolation.ts), so the child
- * has ZERO brain/tool access. `--print-timeout` pins the deadline. The composed
+ * `--print` in the brain-isolated Gemini HOME (owned MCP-free settings). gemini
+ * also gets `--allowed-mcp-server-names` with one name no server has, which
+ * blocks every server from any settings layer (an EMPTY list blocks nothing);
+ * agy has no such flag. `--print-timeout` pins the deadline. The composed
  * prompt is the argv tail. Subscription auth.
  * Ported from `judge.ts:buildAgySpawn:526-545` (generalized to gemini too).
  */
@@ -156,7 +154,8 @@ function buildGeminiFamilySpawn(
   iso: IsolatedHome,
 ): ExtractorSpawn {
   const printTimeoutSec = Math.max(60, opts.printTimeoutSec ?? 120);
-  const args = ['--print-timeout', `${printTimeoutSec}s`, '--print'];
+  const noMcp = harness === 'gemini' ? ['--allowed-mcp-server-names', '__igris_extractor_no_mcp__'] : [];
+  const args = [...noMcp, '--print-timeout', `${printTimeoutSec}s`, '--print'];
   if (opts.model) args.push('--model', opts.model);
   return {
     bin: HARNESS_BIN[harness],
@@ -171,9 +170,9 @@ function buildGeminiFamilySpawn(
 
 /**
  * OpenCode. Headless `run` in the brain-isolated HOME. OpenCode reads
- * project-scoped config from the cwd (the empty isolated home) and global config
- * from `~/.config/opencode` (symlinked forward minus the OS-context files). The
- * composed prompt is the argv tail. Subscription auth.
+ * project-scoped config from the cwd (the empty isolated home); no global
+ * `~/.config/opencode` is forwarded. The composed prompt is the argv tail.
+ * Subscription auth.
  * (No FR-201 judge backend for opencode — modelled on the antigravity `--print`
  * shape + opencode's `run` headless verb; the same isolation guarantees apply.)
  */
@@ -197,7 +196,7 @@ function buildOpencodeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Is
 
 /**
  * Build the spawn for one extraction call on `harness`. Creates the
- * brain-isolated HOME (empty mcpServers, auth symlinked) and composes the
+ * brain-isolated HOME (auth symlinked, owned MCP-free configs) and composes the
  * per-harness headless invocation. The caller (`exec.ts:execHarness`) runs it,
  * then MUST call `spawn.cleanup()` to reap the isolated HOME.
  *

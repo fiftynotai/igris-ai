@@ -34,8 +34,7 @@ export {
   assertUnderRoot,
   writeEmptyGeminiMcp,
   extractorScratchRoot,
-  authPathsFor,
-  hybridDirsFor,
+  forwardPathsFor,
   FORBIDDEN_IGRIS_MARKERS,
   type IsolatedHome,
 } from './isolation.js';

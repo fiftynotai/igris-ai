@@ -2492,6 +2492,68 @@ interface PackReport {
  *   1_896_994 − 1_895_357 = 1_637); 6_895_998 − 6_890_638 = 5_360 = 82 +
  *   5_278; 53_939 − 52_036 = 1_903 = 1_682 drift + 221 this brief's share.
  *
+ * BR-108 MEASURED LAST (2026-09-25), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * TD-460 method, unchanged): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json`, the three `node_modules` symlinked, `dist` ABSENT
+ * so the copy step rebuilt the brain, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. The control taken FRESH at develop `e6f63de`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index
+ * (`9df5b429`). npm 10.9.8, node v22.23.2, darwin/arm64, one machine. The
+ * real `cli/dist` was never written by any arm (`dist/index.js` sha256
+ * `6eae77ce…`, `dist/brain-mcp-server/dist/index.js` `9d0654bc…`,
+ * `…/cognition/backend/isolation.js` `527b7119…` and `…/spawn-map.js`
+ * `33ea7cf7…` before and after — this brief's build rides TD-471's hold).
+ *   control             1_897_215    unpacked 6_896_245, 547 entries, shasum
+ *                                    `537bb5b2c050460bc1106fcfe6e0affc89a7a5a0`
+ *                                    — taken twice, byte-identical. It IS the
+ *                                    TD-472 row's final, byte for byte: no
+ *                                    drift (`e6f63de` touches no packed path).
+ *   packed              1_897_512    unpacked 6_896_335, 547 entries (+0),
+ *                                    shasum
+ *                                    `45aba253e909433c1f21b021bd6e39a4745458ff`,
+ *                                    taken twice.
+ *   BR-108's own share  +297 B       packed. Unpacked +90 over 6 artifacts,
+ *                                    ZERO new entries; the per-file sum
+ *                                    reconciles EXACTLY:
+ *                                    `cognition/backend/isolation.js` +1_641
+ *                                    (the owned-copy writers, the codex TOML
+ *                                    line filter, the JSONC strip) and
+ *                                    `isolation.d.ts` −1_607 (shorter exported
+ *                                    docblocks; `authPathsFor` + `hybridDirsFor`
+ *                                    removed, `forwardPathsFor` added; the WHY
+ *                                    moved to `docs/COGNITION.md`);
+ *                                    `spawn-map.js` +50 / `.d.ts` +30 (the
+ *                                    gemini allow-names flag, the codex
+ *                                    override removed, docblocks);
+ *                                    `backend/index.js` −12 / `.d.ts` −12
+ *                                    (two re-exports became one). Packed moves
+ *                                    more than unpacked; the likely reason (an
+ *                                    INFERENCE, not measured) is that the prose
+ *                                    that left the `.d.ts` compressed better
+ *                                    than the code that arrived in the `.js`.
+ *                                    The extended probe
+ *                                    `scripts/td472_child_env_probe.ts` was IN
+ *                                    the final arm's archive and is ABSENT from
+ *                                    its packlist: 0 `td472` entries and 0
+ *                                    `td[0-9]*_` entries (the BR-101 prune,
+ *                                    measured). The tests, the new fixture, the
+ *                                    MAINTAINING row and the docs are outside
+ *                                    `files` and cost 0 (0 test and 0 `br108`
+ *                                    entries in the final packlist).
+ *   cumulative delta    +54_236 B    (53.0 KB, 35.3 % of the grant —
+ *                                    1_897_512 − 1_843_276)
+ *   headroom remaining  99_364 B     (97.0 KB — 153_600 − 54_236)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_897_512 − 1_897_215 = 297; 1_897_512 − 1_843_276 = 54_236;
+ *   153_600 − 54_236 = 99_364; 547 − 547 = 0;
+ *   6_896_335 − 6_896_245 = 90 = 1_641 − 1_607 + 50 + 30 − 12 − 12;
+ *   54_236 − 53_939 = 297 = this brief's share (no drift).
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

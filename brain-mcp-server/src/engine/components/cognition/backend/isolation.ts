@@ -7,18 +7,16 @@
  * call runs in a CLEAN, brain-owned, per-run isolated HOME with ZERO MCP:
  *   - isolated HOME anchored under a brain-owned scratch root
  *     (`~/.igris/cache/llm-extractor/`), NEVER the operator's real HOME;
- *   - an EMPTY `mcpServers` config the isolation OWNS (`{"mcpServers": {}}`) — so
- *     no igris-brain, no tools, no reach into the live DB;
- *   - the harness's own auth files SYMLINKED forward (subscription auth still
- *     works under the redirected HOME);
+ *   - only an ALLOWLIST of auth stores is symlinked forward (`FORWARD`);
+ *   - every config file a child reads is an OWNED copy with MCP, hook and exec
+ *     keys removed, and the gemini family gets owned empty `.env` files (BR-108;
+ *     the why is in docs/COGNITION.md);
  *   - `assertUnderRoot` guards EVERY write path — a programming bug that would
  *     write under the real HOME fails fast.
  *
  * PORTED FROM FR-201 (COPY, don't import — R-PORT-DRIFT):
- *   - `makeIsolatedHome` / `assertUnderRoot` / the auth+hybrid symlink machinery
- *       ← `~/StudioProjects/igris-os-eval/b5/harness/home-isolation.ts`
- *         (whole module — the symlink-forward auth pattern, the hybrid-dir
- *         exclude lists, the measure-only `assertUnderRoot` guard).
+ *   - `makeIsolatedHome` / `assertUnderRoot` / the symlink machinery
+ *       ← `~/StudioProjects/igris-os-eval/b5/harness/home-isolation.ts`.
  *   - the empty-`mcpServers` pattern
  *       ← `b5/judge.ts:423-514` (`buildJudgeGeminiHome` / `makeJudgeGeminiHome` —
  *         the eval-owned `config/mcp_config.json` written as `{"mcpServers": {}}`).
@@ -30,18 +28,15 @@
  * @author fifty.dev
  */
 
-import {
-  resolve,
-  relative,
-  isAbsolute,
-} from 'node:path';
+import { resolve, relative, isAbsolute, dirname } from 'node:path';
 import {
   mkdirSync,
   existsSync,
   symlinkSync,
   rmSync,
   lstatSync,
-  readdirSync,
+  readFileSync,
+  realpathSync,
   writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
@@ -65,71 +60,47 @@ export function extractorScratchRoot(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 // ---------------------------------------------------------------------------
-// Auth files / hybrid dirs (ported from home-isolation.ts AUTH_FILES/HYBRID_DIRS)
+// What is forwarded, and what is owned (BR-108)
 // ---------------------------------------------------------------------------
 
-/** The macOS login keychain — HOME-scoped; bring it forward so OAuth tokens resolve. */
-const MACOS_KEYCHAIN = 'Library/Keychains';
+const KEYCHAIN = 'Library/Keychains';
+const GEMINI_AUTH = ['.gemini/oauth_creds.json', '.gemini/google_accounts.json', '.gemini/installation_id'];
 
-/**
- * Direct auth files brought forward as read-only-by-usage symlinks (the whole
- * file/dir linked at the same relative path). Missing entries are skipped.
- * Ported from `home-isolation.ts:AUTH_FILES`, extended to gemini/opencode/
- * antigravity (which all run through the `agy`/`gemini` Gemini home, handled by
- * the hybrid dirs below).
- */
-const AUTH_FILES: Record<ExtractorHarness, string[]> = {
-  // Claude: ~/.claude.json + the macOS Keychain (the OAuth token).
-  claude: ['.claude.json', MACOS_KEYCHAIN],
-  // Codex: ~/.codex/auth.json (hybrid dir below) + the macOS Keychain.
-  codex: [MACOS_KEYCHAIN],
-  // Gemini: OAuth/state live under ~/.gemini (hybrid dir below) + keychain.
-  gemini: [MACOS_KEYCHAIN],
-  // OpenCode: token under ~/.local/share/opencode + keychain.
-  opencode: ['.local/share/opencode', MACOS_KEYCHAIN],
-  // Antigravity runs through the `agy` Gemini home (hybrid dir below) + keychain.
-  antigravity: [MACOS_KEYCHAIN],
-};
-
-/**
- * Hybrid directories: an operator state dir whose CONTENTS are symlinked in
- * one-by-one EXCEPT the listed `exclude` basenames (the Igris-global files we
- * keep ABSENT so the isolated home stays clean — AND, critically here, we OWN
- * the MCP config so it stays empty). Ported from `home-isolation.ts:HYBRID_DIRS`.
- *
- * For the gemini-family harnesses we exclude `config/mcp_config.json`-adjacent
- * surfaces and write our own empty mcpServers below (the `buildJudgeGeminiHome`
- * pattern). For claude/codex/opencode we exclude their global OS-context files.
- */
-interface HybridDir {
-  /** The dir RELATIVE to the operator's real HOME (e.g. '.codex'). */
-  rel: string;
-  /** Basenames inside that dir to NOT bring forward. */
-  exclude: string[];
-}
-
-const HYBRID_DIRS: Record<ExtractorHarness, HybridDir[]> = {
-  // Claude: ~/.claude.json + keychain are sufficient for headless -p; bringing
-  // the whole ~/.claude dir forward would leak global Igris agents/skills.
-  claude: [],
-  // Codex: bring ~/.codex forward EXCEPT the global AGENTS.md (OS-context leak).
-  codex: [{ rel: '.codex', exclude: ['AGENTS.md'] }],
-  // Gemini: bring ~/.gemini forward EXCEPT config/ (we own config/mcp_config.json
-  // → empty mcpServers, written by buildEmptyGeminiMcp below).
-  gemini: [{ rel: '.gemini', exclude: ['config'] }],
-  // OpenCode: bring the config dir forward EXCEPT global AGENTS.md/CLAUDE.md/opencode.json.
-  opencode: [
-    { rel: '.config/opencode', exclude: ['AGENTS.md', 'CLAUDE.md', 'opencode.json'] },
+// Auth stores only, symlinked at the same relative path (a token refresh must
+// reach the operator's file). Never a file that can declare MCP, hooks or exec.
+const FORWARD: Record<ExtractorHarness, readonly string[]> = {
+  claude: [KEYCHAIN, '.claude/.credentials.json'],
+  codex: [KEYCHAIN, '.codex/auth.json'],
+  gemini: [KEYCHAIN, ...GEMINI_AUTH],
+  antigravity: [
+    KEYCHAIN,
+    ...GEMINI_AUTH,
+    '.gemini/antigravity-cli/antigravity-oauth-token',
+    '.gemini/antigravity-cli/installation_id',
+    '.gemini/antigravity-cli/cache/onboarding.json',
   ],
-  // Antigravity: same Gemini home as gemini (config/ owned → empty mcpServers).
-  antigravity: [{ rel: '.gemini', exclude: ['config'] }],
+  opencode: [KEYCHAIN, '.local/share/opencode'],
 };
 
-/** Harnesses that read a Gemini-style `config/mcp_config.json` we must own+empty. */
-const GEMINI_FAMILY: ReadonlySet<ExtractorHarness> = new Set<ExtractorHarness>([
-  'gemini',
-  'antigravity',
+// codex root keys carried into the owned config.toml (single-line scalars only).
+const CODEX_ROOT_KEYS: ReadonlySet<string> = new Set([
+  'model',
+  'model_reasoning_effort',
+  'cli_auth_credentials_store',
+  'forced_login_method',
+  'forced_chatgpt_workspace_id',
+  'preferred_auth_method',
 ]);
+
+// codex 0.135.0 features on by default that can bring MCP/apps (BR-108 Phase 0.2).
+const CODEX_FEATURE_DENY = [
+  'apps',
+  'in_app_browser',
+  'plugin_sharing',
+  'plugins',
+  'skill_mcp_dependency_install',
+  'tool_call_mcp_elicitation',
+];
 
 // ---------------------------------------------------------------------------
 // Public surface
@@ -143,17 +114,11 @@ export interface IsolatedHome {
 }
 
 /**
- * Build a clean, brain-owned, per-run isolated HOME for one extraction call.
+ * Build a clean, brain-owned, per-run isolated HOME for one extraction call:
+ * a fresh dir under `extractorScratchRoot()`, the harness's `FORWARD` auth
+ * stores symlinked in, then its owned configs written (no MCP, hooks or exec).
  *
- *   - Anchored under `extractorScratchRoot()` (NEVER the real HOME).
- *   - A fresh empty dir: ZERO Igris-global files, no MCP.
- *   - The harness's auth files / hybrid state are symlinked forward so headless
- *     subscription auth works (R-AUTH).
- *   - For the gemini family, an empty `config/mcp_config.json` (`{mcpServers:{}}`)
- *     is written so the brain MCP can never be wired in.
- *   - `assertUnderRoot` guards every write path (R-BRAIN-LEAK / measure-only).
- *
- * @param harness which harness (selects the auth files + hybrid dirs)
+ * @param harness which harness (selects the forwarded stores + owned configs)
  * @param env     env to read the scratch-root override from (tests inject a temp dir)
  */
 export function makeIsolatedHome(
@@ -164,20 +129,11 @@ export function makeIsolatedHome(
   // <scratchRoot>/<harness>-<uuid>/ — unique per run (concurrency-safe).
   const home = resolve(scratchRoot, `${harness}-${randomUUID().slice(0, 8)}`);
   assertUnderRoot(home, scratchRoot);
-  // A fresh, empty dir: the clean isolation floor.
   rmSync(home, { recursive: true, force: true });
   mkdirSync(home, { recursive: true });
 
-  // Bring auth/state forward as read-only-by-usage symlinks (R-AUTH) WITHOUT the
-  // Igris-global OS files NOR any MCP config.
-  symlinkAuthFiles(harness, home);
-  symlinkHybridDirs(harness, home);
-
-  // The gemini family reads config/mcp_config.json: own it, write empty mcpServers
-  // so the isolated child has ZERO brain/tool access (the FR-201 C1 fix).
-  if (GEMINI_FAMILY.has(harness)) {
-    writeEmptyGeminiMcp(home);
-  }
+  symlinkForward(harness, home);
+  writeOwnedConfigs(harness, home, homedir());
 
   return {
     home,
@@ -192,63 +148,168 @@ export function makeIsolatedHome(
 }
 
 /**
- * Write the eval-OWNED `~/.gemini/config/mcp_config.json` as `{"mcpServers": {}}`
- * inside the isolated home — ZERO MCP servers, so a gemini/antigravity child can
- * never resolve the operator's live brain. Ported from
- * `judge.ts:buildJudgeGeminiHome:450-453`. Every path is asserted under the home.
+ * Write the OWNED `~/.gemini/config/mcp_config.json` as `{"mcpServers": {}}`
+ * inside the isolated home (agy's MCP file). Ported from
+ * `judge.ts:buildJudgeGeminiHome:450-453`.
  */
 export function writeEmptyGeminiMcp(home: string): void {
-  const configDir = resolve(home, '.gemini', 'config');
-  assertUnderRoot(configDir, home);
-  mkdirSync(configDir, { recursive: true });
-  const dest = resolve(configDir, 'mcp_config.json');
+  writeOwned(home, '.gemini/config/mcp_config.json', JSON.stringify({ mcpServers: {} }, null, 2));
+}
+
+// ---------------------------------------------------------------------------
+// Owned copies
+// ---------------------------------------------------------------------------
+
+function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string): void {
+  if (harness === 'claude') ownClaudeJson(home, real);
+  if (harness === 'codex') {
+    writeOwned(home, '.codex/config.toml', ownCodexToml(readText(resolve(real, '.codex/config.toml'))));
+  }
+  if (harness === 'gemini' || harness === 'antigravity') {
+    const settings = readJsonLoose(resolve(real, '.gemini/settings.json'));
+    const kept = pickPaths(settings, [['security', 'auth'], ['selectedAuthType'], ['model']]);
+    writeOwned(home, '.gemini/settings.json', JSON.stringify(kept));
+    writeEmptyGeminiMcp(home);
+    // Empty .env files end gemini-cli's first-hit .env search at the first dir.
+    writeOwned(home, '.env', '');
+    writeOwned(home, '.gemini/.env', '');
+  }
+  if (harness === 'antigravity') {
+    const src = resolve(real, '.gemini/antigravity-cli/settings.json');
+    if (existsSync(src)) {
+      writeOwned(home, '.gemini/antigravity-cli/settings.json', JSON.stringify(pickPaths(readJsonLoose(src), [['model']])));
+    }
+  }
+}
+
+/** `.claude.json` minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey`; no source ⇒ no file. */
+function ownClaudeJson(home: string, real: string): void {
+  const src = resolve(real, '.claude.json');
+  if (!existsSync(src)) return;
+  const j = readJsonLoose(src) ?? {};
+  for (const k of ['mcpServers', 'projects', 'primaryApiKey']) delete j[k];
+  writeOwned(home, '.claude.json', JSON.stringify(j));
+}
+
+const TOML_SCALAR = /^\s*([A-Za-z0-9_-]+)\s*=\s*("(?:[^"\\\n]|\\.)*"|'[^'\n]*'|true|false|[+-]?[0-9][0-9_.eE+-]*)\s*(#.*)?$/;
+
+/**
+ * Root-section lines `<CODEX_ROOT_KEYS> = <one-line scalar>` copied verbatim,
+ * everything else dropped, then the `[features]` deny block. Lines inside a
+ * multi-line string are never copied and never end the root section.
+ */
+function ownCodexToml(src: string | null): string {
+  const kept: string[] = [];
+  let inMulti: string | null = null;
+  for (const line of (src ?? '').split(/\r?\n/)) {
+    if (inMulti) {
+      if (line.split(inMulti).length % 2 === 0) inMulti = null;
+      continue;
+    }
+    if (/^\s*\[/.test(line)) break;
+    const m = TOML_SCALAR.exec(line);
+    if (m && CODEX_ROOT_KEYS.has(m[1])) {
+      kept.push(line);
+      continue;
+    }
+    for (const q of ['"""', "'''"]) {
+      if (line.split(q).length % 2 === 0) {
+        inMulti = q;
+        break;
+      }
+    }
+  }
+  return [...kept, '', '[features]', ...CODEX_FEATURE_DENY.map((f) => `${f} = false`), ''].join('\n');
+}
+
+type Json = Record<string, unknown>;
+const isObj = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** Only the listed key paths (whole subtrees) survive. */
+function pickPaths(src: Json | null, paths: string[][]): Json {
+  const out: Json = {};
+  for (const p of paths) {
+    let v: unknown = src;
+    for (const k of p) v = isObj(v) ? v[k] : undefined;
+    if (v === undefined) continue;
+    let o = out;
+    for (const k of p.slice(0, -1)) o = (o[k] ??= {}) as Json;
+    o[p[p.length - 1]] = v;
+  }
+  return out;
+}
+
+function readText(p: string): string | null {
+  try {
+    return readFileSync(p, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+/** JSON, else JSONC with `//` and block comments stripped outside strings, else null (fail-closed). */
+function readJsonLoose(p: string): Json | null {
+  const text = readText(p);
+  if (text === null) return null;
+  for (const t of [text, stripJsonComments(text)]) {
+    try {
+      const j: unknown = JSON.parse(t);
+      return isObj(j) ? j : null;
+    } catch {
+      /* next form */
+    }
+  }
+  return null;
+}
+
+function stripJsonComments(s: string): string {
+  let out = '';
+  for (let i = 0; i < s.length; i += 1) {
+    const c = s[i];
+    if (c === '"') {
+      let j = i + 1;
+      while (j < s.length && s[j] !== '"') j += s[j] === '\\' ? 2 : 1;
+      out += s.slice(i, j + 1);
+      i = j;
+    } else if (c === '/' && s[i + 1] === '/') {
+      while (i < s.length && s[i] !== '\n') i += 1;
+      out += '\n';
+    } else if (c === '/' && s[i + 1] === '*') {
+      const end = s.indexOf('*/', i + 2);
+      i = end < 0 ? s.length : end + 1;
+    } else out += c;
+  }
+  return out;
+}
+
+/**
+ * Write an owned file (mode 0o600) at `rel`. Refuses a path outside the home
+ * or under a linked ancestor, and replaces any existing entry rather than
+ * writing through it.
+ */
+function writeOwned(home: string, rel: string, text: string): void {
+  const dest = resolve(home, rel);
   assertUnderRoot(dest, home);
-  writeFileSync(dest, JSON.stringify({ mcpServers: {} }, null, 2));
+  mkdirSync(dirname(dest), { recursive: true });
+  assertUnderRoot(realpathSync(dirname(dest)), realpathSync(home));
+  if (existsSync(dest) || isSymlink(dest)) rmSync(dest, { recursive: true, force: true });
+  writeFileSync(dest, text, { mode: 0o600, flag: 'wx' });
 }
 
 // ---------------------------------------------------------------------------
 // Symlink machinery (ported from home-isolation.ts)
 // ---------------------------------------------------------------------------
 
-/**
- * Symlink each of the harness's direct auth files into the isolated HOME at the
- * SAME relative location. A missing source is skipped. The operator file is the
- * TARGET, never written. Ported from `home-isolation.ts:symlinkAuthFiles`.
- */
-function symlinkAuthFiles(harness: ExtractorHarness, isolatedHome: string): void {
+/** Symlink each `FORWARD` entry at the same relative path; a missing source is skipped. */
+function symlinkForward(harness: ExtractorHarness, isolatedHome: string): void {
   const realHome = homedir();
-  for (const rel of AUTH_FILES[harness]) {
+  for (const rel of FORWARD[harness]) {
     const src = resolve(realHome, rel);
     if (!existsSync(src) && !isSymlink(src)) continue; // operator doesn't have it — skip
     const dest = resolve(isolatedHome, rel);
     assertUnderRoot(dest, isolatedHome);
-    mkdirSync(resolve(dest, '..'), { recursive: true });
+    mkdirSync(dirname(dest), { recursive: true });
     linkInto(src, dest);
-  }
-}
-
-/**
- * For each hybrid dir, create it inside the isolated HOME and symlink in each of
- * the operator dir's entries EXCEPT the excluded basenames. Brings auth/state
- * forward (CLI stays "logged in") while leaving the OS-identity + MCP files OUT.
- * Ported from `home-isolation.ts:symlinkHybridDirs`.
- */
-function symlinkHybridDirs(harness: ExtractorHarness, isolatedHome: string): void {
-  const realHome = homedir();
-  for (const hd of HYBRID_DIRS[harness]) {
-    const srcDir = resolve(realHome, hd.rel);
-    if (!existsSync(srcDir)) continue; // operator doesn't have this dir — skip
-    const destDir = resolve(isolatedHome, hd.rel);
-    assertUnderRoot(destDir, isolatedHome);
-    mkdirSync(destDir, { recursive: true });
-    const exclude = new Set(hd.exclude);
-    for (const entry of readdirSync(srcDir)) {
-      if (exclude.has(entry)) continue; // leave the excluded file OUT
-      const src = resolve(srcDir, entry);
-      const dest = resolve(destDir, entry);
-      assertUnderRoot(dest, isolatedHome);
-      linkInto(src, dest);
-    }
   }
 }
 
@@ -297,24 +358,20 @@ function isSymlink(p: string): boolean {
 // Test/diagnostic helpers
 // ---------------------------------------------------------------------------
 
-/**
- * The Igris-global markers an isolated HOME must NEVER contain. The unit test
- * asserts none are present. Ported from `home-isolation.ts:FORBIDDEN_IGRIS_MARKERS`.
- */
+/** Igris-global / MCP-bearing paths an isolated HOME must NEVER contain. */
 export const FORBIDDEN_IGRIS_MARKERS = [
   '.claude/CLAUDE.md',
   '.codex/AGENTS.md',
   '.igris/core',
   '.config/opencode/opencode.json',
   '.gemini/config/mcp_config.json', // present ONLY as our empty-mcpServers file (checked separately)
+  '.gemini/agents',
+  '.gemini/extensions',
+  '.config/opencode/command',
+  '.codex/plugins',
 ];
 
-/** The direct auth FILES a given harness brings forward (read-only). For the test. */
-export function authPathsFor(harness: ExtractorHarness): string[] {
-  return AUTH_FILES[harness];
-}
-
-/** The hybrid state DIRS a given harness brings forward. For the test. */
-export function hybridDirsFor(harness: ExtractorHarness): HybridDir[] {
-  return HYBRID_DIRS[harness];
+/** The operator paths a harness symlinks forward. For the test and the probe. */
+export function forwardPathsFor(harness: ExtractorHarness): readonly string[] {
+  return FORWARD[harness];
 }

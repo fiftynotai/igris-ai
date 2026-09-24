@@ -646,15 +646,8 @@ explicit injection in that harness's builder (`backend/spawn-map.ts`), named in
 the MAINTAINING.md row. It is never a widening of what children inherit, and a
 `*_API_KEY` never passes even that way.
 
-**What the env rule cannot close.** The isolated home forwards some operator
-files whole, and an env rule cannot filter a file:
-
-- `~/.gemini/settings.json`, whose `mcpServers` can name `igris-brain`;
-- codex's `config.toml`, whose other MCP servers still boot;
-- `.env` files.
-
-Those channels are BR-108. Until it lands, the gemini and antigravity live
-calls stay blocked.
+**What the env rule cannot close.** An env rule cannot filter a file. The
+files a child can read are the next section's rule (BR-108).
 
 **Proof, per harness (AC-3).** Each harness is proved by one live headless call
 under the allowlist. It runs beside a control call with TD-471's env on the
@@ -665,15 +658,160 @@ record the result envelope, booleans and env names only:
 | harness | verdict | refresh witness | date / machine |
 |---|---|---|---|
 | claude | pending: runs after the TD-471 watcher's verdict | — | — |
-| codex | pending: needs the operator's `--accept-mcp`, or BR-108 | — | — |
-| gemini | pending: blocked on BR-108 (a forwarded `igris-brain`); the builder's `--print` flags are also absent from gemini-cli 0.45.0 (BR-109) | — | — |
-| antigravity | pending: blocked on BR-108 | — | — |
+| codex | `PRE_EXISTING` under BR-108's isolation: both arms exit 1 identically — the request authenticates and the server answers 400 "the 'gpt-5.6-sol' model requires a newer version of Codex" (the operator config's model outruns codex 0.135.0; BR-109) | no | 2026-09-24, codex 0.135.0, this machine |
+| gemini | pending: `BLOCKED_ARGV` — the builder's `--print` flags are absent from gemini-cli 0.45.0 (BR-109) | — | — |
+| antigravity | `PASS` under BR-108's isolation: both arms answered (allow 12.7 s, base 10.1 s) | n/a (agy keeps no refresh witness) | 2026-09-24, agy 1.0.16, this machine |
 | opencode | `PRE_EXISTING` (2026-09-24, opencode 1.14.22, this machine): both arms fail auth identically — the allowlist and the TD-471 env; nothing regressed; the isolated-HOME auth defect is BR-109 | — | — |
 
 The unit and stub tiers already pin the rule for all five harnesses. They cover
 metered names, pointers, the names TD-471 missed, and the real ambient env
 reduced to the allowlist. `env.test.ts` and
 `backend-child-env-allowlist.test.ts` hold these checks.
+
+## what an extractor child can READ (BR-108)
+
+The isolated home is an ALLOWLIST of files, the file-side twin of the env
+allowlist above. Before BR-108 it forwarded each harness's state directory
+minus a few excluded names, so every operator file nobody had named reached the
+child: gemini's `settings.json` declaring `igris-brain`, codex's `config.toml`
+with every MCP server, its plugin `.mcp.json` files, `.gemini/.env`, and the
+operator's history and memory stores. Now `makeIsolatedHome`
+(`cognition/backend/isolation.ts`) does three things:
+
+1. **Symlinks forward only named auth stores** (`FORWARD`). A token refresh must
+   reach the operator's file, so these are links, never copies.
+2. **Writes every config file a child reads as an OWNED copy** (mode 0600) with
+   MCP, hook and exec keys removed. An owned write refuses a linked ancestor, so
+   it can never land in an operator directory.
+3. **Adds each CLI's MCP switch** wherever the installed version is verified to
+   honour it.
+
+A file nobody named is never forwarded, so a new MCP server, config file or
+plugin directory cannot reach a child. It fails closed.
+
+| harness | symlinked forward (a missing source is skipped) | owned files | argv switch |
+|---|---|---|---|
+| claude | `Library/Keychains`, `.claude/.credentials.json` | `.claude.json`: the operator's copy minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey` (a metered Console key); every other key kept | `--strict-mcp-config`, no `--mcp-config` |
+| codex | `Library/Keychains`, `.codex/auth.json` | `.codex/config.toml`: root-section lines for `model`, `model_reasoning_effort`, `cli_auth_credentials_store`, `forced_login_method`, `forced_chatgpt_workspace_id`, `preferred_auth_method` with a one-line scalar value, copied verbatim; then an owned `[features]` block setting `apps`, `in_app_browser`, `plugin_sharing`, `plugins`, `skill_mcp_dependency_install`, `tool_call_mcp_elicitation` to false | none (see the residuals) |
+| gemini | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env` | `--allowed-mcp-server-names __igris_extractor_no_mcp__` |
+| antigravity | the gemini stores + `.gemini/antigravity-cli/antigravity-oauth-token`, `installation_id`, `cache/onboarding.json` | as gemini, plus `.gemini/antigravity-cli/settings.json` with only `model` | none (agy has no such flag) |
+| opencode | `Library/Keychains`, `.local/share/opencode` (whole directory, unchanged; narrowing it is BR-109's) | none | none |
+
+**Why each owned copy is shaped the way it is:**
+
+- **gemini, antigravity and codex keep an allowlist of keys.** A new exec
+  surface in a known file is dropped without anyone naming it: gemini `hooks`,
+  `mcp.serverCommand`, `tools.discoveryCommand`, `advanced`; codex `notify`,
+  `[plugins.*]`, `[hooks.*]`, `[projects.*]`.
+- **claude keeps a key denylist.** claude is the production harness, and its
+  `.claude.json` has many keys it may read at startup. `--strict-mcp-config` is
+  the fail-closed MCP layer; the copy exists so no MCP-declaring file is linked
+  and the metered key does not travel.
+- **The codex TOML copy needs no parser dependency.** It only has to recognise
+  what it KEEPS, so anything it cannot classify is dropped: tables, dotted keys,
+  inline tables, arrays, multi-line strings. A line inside a multi-line string
+  is never copied and never ends the root section. A parser gap can only drop
+  more. A codex table header can carry arbitrary text (a project path), so no
+  instrument prints one.
+- **An unparseable source yields an owned file carrying nothing** (`{}` for
+  JSON, the `[features]` block alone for codex). Auth then fails loudly
+  (`auth_error`) instead of a partial copy passing.
+- **The codex `-c` belt was measured, not assumed.** Against a
+  fixture home that declares a server, `codex -c 'mcp_servers={}' mcp list
+  --json` still lists that server, so the override does not replace the table.
+  It is not passed. The old `-c mcp_servers.igris-brain.command=…` override is
+  removed too: against an EMPTY config it CREATES an `igris-brain` entry (codex
+  0.135.0, fixture homes, 2026-09-25).
+- **The gemini allow list needs a name.** `--allowed-mcp-server-names` REPLACES
+  the settings allow list and clears the block list, and a non-empty allow list
+  blocks every other name. An EMPTY list blocks nothing, so the flag carries one
+  name no server has (gemini-cli 0.45.0, `gemini-ORQHD633.js:8112`, `:8552-8553`;
+  `chunk-6T7N6JF2.js:365440-365450`).
+
+**No longer forwarded, by class:**
+
+- **MCP / exec declarations:** codex `config.toml` (whole) and `plugins/`;
+  gemini `settings.json`, `extensions/` and `config/hooks.json`; the whole of
+  `.config/opencode/` (`opencode.json`, any `opencode.jsonc` or `config.json`,
+  the plugin `package.json` / `node_modules`, `command/`).
+- **Igris OS context:** `.gemini/agents/`, `.config/opencode/command/`,
+  `.codex/AGENTS.md`.
+- **Metered-key files:** `.gemini/.env`, `.codex/.env`.
+- **Operator memory and history:** codex `memories_1.sqlite`, `history.jsonl`,
+  `state_5.sqlite` and sessions; gemini `tmp/` and `history/`; agy
+  `conversation_summaries.db`, `history.jsonl` and `jetski_state.pbtxt`. At HEAD
+  a gemini or codex child wrote its transcript of untrusted text into those
+  directories through the links. It now writes into the reaped scratch home.
+
+**`.env` files (gemini family).** gemini-cli 0.45.0's `findEnvFile`
+(`chunk-EUYIPFPA.js:16388-16419`) returns the FIRST hit, walking up from the
+workspace directory, which is the child's cwd (the isolated home). At each
+directory it checks `<dir>/.gemini/.env` (trusted folders only), then
+`<dir>/.env` (unless `ignoreLocalEnv`, except at `homedir()`). At `/` it falls
+back to `homedir()/.gemini/.env` (trusted), then `homedir()/.env`. In an
+untrusted folder it still loads the keys on its auth-variable whitelist, and
+folder trust is on by default (`:14057`). The scratch root sits under the real
+HOME, so every ancestor of the isolated home is the operator's.
+
+| folder trust / `ignoreLocalEnv` | first file found before BR-108 | first file found now |
+|---|---|---|
+| untrusted (the default) / off (the default) | the first ancestor `.env`, including `~/.igris/.env` and `~/.env` | `<iso>/.env` (empty) |
+| trusted / off | `<iso>/.gemini/.env`: the FORWARDED operator file | `<iso>/.gemini/.env` (empty) |
+| trusted / on | an ancestor `.gemini/.env`, the real one included | `<iso>/.gemini/.env` (empty) |
+| untrusted / on | `homedir()/.env` | `<iso>/.env` (empty) |
+
+Every row ends at an owned empty file. The owned `settings.json` does not carry
+`advanced`, and the builder never passes `--ignore-env`: that switch skips
+`<iso>/.env` whenever `homedir()` is not byte-equal to the cwd, which weakens
+the stop. codex's `$CODEX_HOME/.env` and opencode's cwd `.env` are moot, since
+neither home contains one.
+
+**Linux claude.** claude on Linux keeps its credentials in
+`~/.claude/.credentials.json`. It is forwarded as a link (skipped when absent,
+the normal macOS case), so `.claude/` in the isolated home holds that one link
+and nothing else. This is code-read only; no Linux machine has run it.
+
+**Residuals — MCP config OUTSIDE the home we own:**
+
+- gemini system settings: covered by the argv switch, which applies to every
+  settings layer.
+- codex `/etc/codex/*` and managed config: NOT covered. The replace-semantics
+  belt measured false, so no argv closes them.
+- claude managed MCP: `--strict-mcp-config`, as documented upstream.
+- agy system-level config: unknown.
+- Remote connectors (codex `apps`, claude.ai connectors) spawn no local
+  process, so a process census cannot see them. codex's are denied by the owned
+  `[features]` block. codex `computer_use`, `browser_use` and
+  `browser_use_external` stay on; they are not MCP by name, and the measured
+  `computer-use` MCP server is plugin-provided, with `plugins/` not forwarded
+  and `plugins` denied.
+- A CLI that refreshes a linked token by write-temp-then-rename replaces the
+  link in the scratch home, and the rotated token is reaped. That was already
+  true of codex and gemini before BR-108. The probe's refresh witness observes
+  it.
+
+**Versions read.** gemini-cli 0.45.0 (static read of the installed bundle),
+codex-cli 0.135.0 (offline commands against fixture homes), agy 1.0.16 (a
+`strings` read of names). A newer version re-runs those reads before this
+section moves (the MAINTAINING.md row).
+
+**Proof (BR-108 AC-2).** `isolation-file-channels.test.ts` pins the rule for
+every harness against a fixture operator home: no MCP name is reachable,
+symlinks followed (F1); the home's manifest equals a second spelling
+(`fixtures/br108-isolated-home.ts`) by exact membership (F2); the `.env` stop
+is checked against a verbatim replica of `findEnvFile` with a positive control
+(F6). The live calls use `brain-mcp-server/scripts/td472_child_env_probe.ts`,
+which adds a process census to each arm (local processes only, with a canary
+self-test that must fire), a `--preflight-only` mode and a `BLOCKED_ARGV`
+verdict:
+
+| harness | BR-108 live verdict | date / machine |
+|---|---|---|
+| claude | pending: after the TD-471 watcher's verdict, with `--mcp-inventory`; a pre-deploy gate for the owned `.claude.json` | — |
+| codex | no MCP process spawned in either arm (census `cli_seen` true, `mcp_spawned` false); `codex login status` reads logged-in inside the isolated HOME; the call itself fails on the model-version 400 above (not auth; BR-109) | 2026-09-24, codex 0.135.0, this machine |
+| gemini | DEFERRED BR-109: its `--print` flags are absent from 0.45.0, so no live call can run. Structural proof: the static reads above, F1 / F6 / P3 green | — |
+| antigravity | `PASS`: both arms answered, no MCP process spawned (census `cli_seen` true, `mcp_spawned` false) | 2026-09-24, agy 1.0.16, this machine |
+| opencode | not in BR-108's live AC. On this machine only `opencode.json` existed, and it was already excluded; an `opencode.jsonc` or `config.json` DID reach the child before BR-108 (F1 at HEAD) | — |
 
 ## the layer is open
 
