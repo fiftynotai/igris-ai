@@ -135,7 +135,7 @@ MSG_FILE="$1"
 # default template puts comment lines (starting with `#`) below the summary;
 # a leading comment block (or verbose-mode diff) must be skipped so we measure
 # the real subject line.
-summary="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -vE '^[[:space:]]*$' | head -n1)"
+summary="$(grep -vE '^[[:space:]]*#' "$MSG_FILE" | grep -vE '^[[:space:]]*$' | sed -n 1p)"
 
 # Empty / comment-only message -> pass through (git will reject an empty commit
 # on its own; the length guard has nothing to enforce).
@@ -201,7 +201,7 @@ if [ "${IGRIS_BYPASS_SIGNATURE_GATE:-0}" != "1" ]; then
     echo ""
     echo "[commit-msg] TD-470 signature gate: refusing an AI signature in the commit message"
     echo ""
-    printf '%s\n' "$sig_hits" | head -n 3 | sed 's/^/SIGNATURE-GATE: /'
+    printf '%s\n' "$sig_hits" | sed -n '1,3p' | sed 's/^/SIGNATURE-GATE: /'
     if [ "$sig_n" -gt 3 ]; then
       echo "SIGNATURE-GATE: (+$((sig_n - 3)) more)"
     fi
