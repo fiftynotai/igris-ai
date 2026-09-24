@@ -541,7 +541,7 @@ of these are still readable:
 | `response_bytes` | what the "response" actually was |
 |---|---|
 | 147 | `API Error: 529 Overloaded. …` — the upstream was overloaded; nothing to fix here |
-| 72 | `Failed to authenticate: OAuth session expired and could not be refreshed` — run `claude login` on this host |
+| 72 | `Failed to authenticate: OAuth session expired and could not be refreshed` — `claude login` on this host restores it only until the token next expires if the extractor child inherited the desktop app's host-auth variables (TD-471 strips them; the root cause is pending the TD-471 watcher's verdict) |
 | 54–64 | the brief's other recorded sizes for this class — a short CLI error message; the exact text was not captured, so read `payload` on the row |
 
 Since TD-447 the backend inspects a claude stdout for a `{type:"result",

@@ -2368,6 +2368,60 @@ interface PackReport {
  *   reports no per-file PACKED size, so their packed share inside the 8_534
  *   is not isolated here.
  *
+ * TD-471 MEASURED LAST (2026-09-24), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * TD-460 method, unchanged): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json`, the three `node_modules` symlinked, `dist` ABSENT
+ * so the copy step rebuilt the brain, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte-
+ * identical. The control taken FRESH at develop `626d56f`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index
+ * (`68c8d878`). npm 10.9.8, node v22.23.2, darwin/arm64, one machine. The
+ * real `cli/dist` was never written by either arm
+ * (`dist/brain-mcp-server/dist/index.js` sha256 `9d0654bc…` and
+ * `…/cognition/backend/env.js` sha256 `fe27db44…` before and after — this
+ * brief's build is the orchestrator's, held until the watcher verdict).
+ *   control             1_895_201    unpacked 6_890_422, 545 entries, shasum
+ *                                    `63005dc1f8f6707c642da91ba5bcd26b2de740ec`
+ *                                    — taken twice, byte-identical, and
+ *                                    IDENTICAL to the TD-361 row's final: no
+ *                                    packed byte landed between that tree and
+ *                                    `626d56f`.
+ *   packed              1_895_312    unpacked 6_890_638, 545 entries (+0),
+ *                                    shasum
+ *                                    `19f289a96c00afa9ab289ab6a28d8d3df0ee9152`,
+ *                                    taken twice.
+ *   TD-471's own share  +111 B       packed. Unpacked +216 over 2 artifacts,
+ *                                    ZERO new entries; the per-file sum
+ *                                    reconciles EXACTLY:
+ *                                    `cognition/backend/env.js` +371 (the
+ *                                    prefix strip, two module-private
+ *                                    constants and their one-line docs) and
+ *                                    `cognition/backend/env.d.ts` −155 (the
+ *                                    exported docblock got SHORTER — the long
+ *                                    WHY is owed to `docs/COGNITION.md` at the
+ *                                    brief's post-verdict commit, per
+ *                                    coding_guidelines §13). The watcher
+ *                                    `scripts/td471_host_auth_watch.ts` was IN
+ *                                    the final arm's archive and is ABSENT
+ *                                    from its packlist: 0 `td471` entries and
+ *                                    0 `td[0-9]*_` entries (the BR-101 prune,
+ *                                    measured, not assumed). The tests, the
+ *                                    MAINTAINING row and the docs are outside
+ *                                    `files` and cost 0.
+ *   cumulative delta    +52_036 B    (50.8 KB, 33.9 % of the grant —
+ *                                    1_895_312 − 1_843_276)
+ *   headroom remaining  101_564 B    (99.2 KB — 153_600 − 52_036)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_895_312 − 1_895_201 = 111; 1_895_312 − 1_843_276 = 52_036;
+ *   153_600 − 52_036 = 101_564; 545 − 545 = 0;
+ *   6_890_638 − 6_890_422 = 216 = 371 − 155; 52_036 − 51_925 = 111 = this
+ *   brief's share exactly (the control reproduced the previous final, so the
+ *   two series join with zero drift).
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

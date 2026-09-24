@@ -4,6 +4,7 @@
  * PORTED FROM FR-201 (separate repo, no published package — COPY, don't import;
  * R-PORT-DRIFT, follow-on TD to extract a shared package):
  *   - `subscriptionOnlyEnv`        ← `~/StudioProjects/igris-os-eval/b5/judge.ts:323-328`
+ *                                    (extended by TD-471 — no longer verbatim)
  *   - the cached `--version` probe ← generalized from
  *                                    `subconscious/verifier.ts:184-197`
  *                                    (`isClaudeCliAvailable`) into a per-harness
@@ -41,26 +42,31 @@ export const HARNESS_BIN: Record<ExtractorHarness, string> = {
 };
 
 // ---------------------------------------------------------------------------
-// subscriptionOnlyEnv (ported verbatim — FR-201 judge.ts:323-328)
+// subscriptionOnlyEnv (ported from FR-201 judge.ts:323-328; extended by TD-471)
 // ---------------------------------------------------------------------------
 
+/** Env namespaces a child never INHERITS from the harness hosting the brain (TD-471). */
+const INHERITED_HARNESS_ENV_PREFIXES = ['CLAUDE', 'ANTHROPIC_'] as const;
+
+/** Metered API keys — dropped even when passed explicitly (FR-201: no metered credits). */
+const METERED_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const;
+
 /**
- * Strip metered-API-key vars from a child env so the CLI MUST use
- * subscription/account login (operator directive, FR-201: no API keys, no
- * metered credits anywhere). Returns a FRESH env (never mutates `base`).
- *
- * Ported verbatim from `b5/judge.ts:323-328`. The motivation here differs from
- * FR-201's (there: keep the eval off billed credits; here: the extraction call
- * runs unattended on a schedule and must never silently bill the operator), but
- * the mechanism is identical.
+ * Build a FRESH child env (never mutates `base`): drop every inherited
+ * `CLAUDE*` / `ANTHROPIC_*` name, apply `extra`, then drop the metered keys.
+ * TD-471: an inherited host-auth channel breaks detached OAuth refresh — see
+ * MAINTAINING.md's "extractor child-env inheritance strip" row.
  */
 export function subscriptionOnlyEnv(
   base: NodeJS.ProcessEnv,
   extra: NodeJS.ProcessEnv = {},
 ): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...base, ...extra };
-  delete env.ANTHROPIC_API_KEY;
-  delete env.OPENAI_API_KEY;
+  const inherited: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(base)) {
+    if (!INHERITED_HARNESS_ENV_PREFIXES.some((p) => name.startsWith(p))) inherited[name] = value;
+  }
+  const env: NodeJS.ProcessEnv = { ...inherited, ...extra };
+  for (const key of METERED_KEYS) delete env[key];
   return env;
 }
 
