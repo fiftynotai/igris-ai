@@ -27,6 +27,7 @@ import {
 import { runInstall } from "./install.js";
 import { runSelfUpdate } from "../lib/self-update.js";
 import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import { attributionAddedNote } from "../lib/attribution-settings.js";
 import { info, warn, debug, error as logError } from "../lib/log.js";
 
 export interface UpdateOptions {
@@ -167,6 +168,9 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
     } else {
       debug(`global Igris hooks already up to date (${gh.path})`);
     }
+    // TD-470: the same write applies Claude Code's `attribution` default.
+    if (gh.attribution === "added") info(attributionAddedNote(gh.path));
+    else if (gh.attribution) debug(`attribution ${gh.attribution} -> ${gh.path}`);
   }
 
   info("");

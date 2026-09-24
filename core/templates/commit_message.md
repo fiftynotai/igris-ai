@@ -105,7 +105,7 @@ closes #MG-003
 2. **Body:** Optional, wrap at 72 chars, explain *what* and *why* (not *how*)
 3. **Footer:** Use `closes #BR-XXX` or `fixes #BR-XXX` to link to brief — both verbs are gated by the `commit-msg` hook (TD-325 AC gate, FR-267 event gate). A lettered sub-brief closes as itself: `closes #FR-003e` (one lowercase letter; `FR-003E` is not an id). Several briefs: one per line, or a comma-separated list `closes #FR-003, #FR-003e` (TD-468)
 4. **Breaking changes:** Use `BREAKING CHANGE:` in footer with description
-5. **No AI signatures:** Do not add "Generated with Claude Code" or co-author tags
+5. **No AI signatures:** Do not add "Generated with Claude Code" or co-author tags — the `commit-msg` hook refuses them (TD-470)
 
 ---
 
@@ -118,6 +118,10 @@ closes #MG-003
 
 ✅ **Clean commit messages only** - The code quality speaks for itself.
 
+**Enforced (TD-470):** the `commit-msg` hook refuses a `Co-authored-by:` line and a
+"Generated with" signature line at column 0. To quote one in a body, indent it. A
+genuine human co-author passes with the one-shot `IGRIS_BYPASS_SIGNATURE_GATE=1`.
+
 ---
 
-**Last Updated:** 2026-02-22
+**Last Updated:** 2026-09-24

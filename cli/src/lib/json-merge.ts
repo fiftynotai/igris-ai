@@ -1,5 +1,6 @@
 /**
- * Pure JSON-merge primitive for `<project>/.claude/settings.json`.
+ * Pure JSON-merge primitive for `~/.claude/settings.json` (the global target
+ * since FR-212c; its only non-test caller is `global-hooks.ts`).
  *
  * Ports the algorithm from `scripts/hook-adapters/install_claude_hooks.sh:96-220`
  * verbatim — same semantics, same idempotence guarantees, same legacy-portable
@@ -17,7 +18,8 @@
  *      this implementation matches by computing `[...igris, ...users]`).
  *   4. Replace `existing.hooks` with the merged map. NO other top-level key
  *      is touched — `permissions`, `env`, `model`, `includeGitInstructions`,
- *      etc. all preserved byte-for-byte.
+ *      etc. all preserved byte-for-byte. `attribution` is not applied here
+ *      either: `attribution-settings.ts`, composed by the writer (TD-470).
  *
  * Throws `MalformedSettingsError` when `existing` is non-null but not a
  * plain object — the verb layer catches this and refuses to clobber.

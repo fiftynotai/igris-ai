@@ -153,7 +153,7 @@ describe("mergeGlobalCanonicalHooks", () => {
     expect(readFileSync(settingsPath, "utf-8")).toBe(before);
   });
 
-  it("returns `failed` (never throws) when the canonical hooks file is absent", async () => {
+  it("returns `failed` (never throws) when the canonical hooks file is absent (TD-470: no attribution written either)", async () => {
     rmSync(join(tmpRoot, "core", "hooks", "canonical-settings.json"));
     const ch = await import("../lib/canonical-hooks.js");
     ch.clearCache();
@@ -162,5 +162,102 @@ describe("mergeGlobalCanonicalHooks", () => {
     expect(res.outcome).toBe("failed");
     // No settings file was written.
     expect(existsSync(settingsPath)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-470 — the writer also applies Claude Code's `attribution` default (object
+// form, only-if-absent). A SURVIVING CONTROL runs beside the positive case:
+// "every fixture gained the block" would not be a measurement.
+// ---------------------------------------------------------------------------
+describe("mergeGlobalCanonicalHooks — TD-470 attribution (surviving control)", () => {
+  const OFF = { commit: "", pr: "", sessionUrl: false };
+  const USER_ATTRIBUTION = {
+    commit: "Co-authored-by: Pair <pair@example.com>",
+    pr: "",
+    sessionUrl: true,
+  };
+
+  function sibling(name: string): string {
+    return join(settingsPath.slice(0, settingsPath.lastIndexOf("/")), name);
+  }
+
+  it("T5: A (no attribution) gains exactly the object; B (user-chosen) keeps its subtree byte-identical", async () => {
+    const { mergeGlobalCanonicalHooks } = await import("../lib/global-hooks.js");
+    const fixtureA = {
+      permissions: { allow: ["Bash(echo:*)"] },
+      includeGitInstructions: false,
+    };
+    const fixtureB = { model: "x", attribution: USER_ATTRIBUTION };
+    const pathA = settingsPath;
+    const pathB = sibling("settings-b.json");
+    writeFileSync(pathA, JSON.stringify(fixtureA, null, 2) + "\n");
+    writeFileSync(pathB, JSON.stringify(fixtureB, null, 2) + "\n");
+
+    const resA = mergeGlobalCanonicalHooks({ settingsPath: pathA });
+    const resB = mergeGlobalCanonicalHooks({ settingsPath: pathB });
+
+    // Assertion order is deliberate: the FILE-level control and positive case
+    // come first, so HEAD (no attribution rule) reds on the file, not on a
+    // result field it never had.
+
+    // T5-B — the surviving control: the hooks merge still ran, the user's
+    // attribution subtree did not move by a byte. Green at HEAD by design.
+    expect(resB.outcome).toBe("merged");
+    const b = JSON.parse(readFileSync(pathB, "utf-8")) as Record<string, unknown>;
+    expect(b.hooks).toBeDefined();
+    expect(JSON.stringify(b.attribution)).toBe(JSON.stringify(USER_ATTRIBUTION));
+
+    // T5-A — the positive case (RED at HEAD).
+    expect(resA.outcome).toBe("merged");
+    const a = JSON.parse(readFileSync(pathA, "utf-8")) as Record<string, unknown>;
+    expect(a.attribution).toStrictEqual(OFF);
+    expect(a.permissions).toStrictEqual(fixtureA.permissions);
+    expect(a.includeGitInstructions).toBe(false);
+    expect(Object.keys(a)).toStrictEqual([
+      "permissions",
+      "includeGitInstructions",
+      "hooks",
+      "attribution",
+    ]);
+
+    expect(resA.attribution).toBe("added");
+    expect(resB.attribution).toBe("kept-user");
+  });
+
+  it("T5c: the deprecated includeCoAuthoredBy is user-owned -> no attribution key written", async () => {
+    const { mergeGlobalCanonicalHooks } = await import("../lib/global-hooks.js");
+    writeFileSync(settingsPath, JSON.stringify({ includeCoAuthoredBy: true }) + "\n");
+    const res = mergeGlobalCanonicalHooks({ settingsPath });
+    expect(res.attribution).toBe("kept-user");
+    const s = JSON.parse(readFileSync(settingsPath, "utf-8")) as Record<string, unknown>;
+    expect(Object.prototype.hasOwnProperty.call(s, "attribution")).toBe(false);
+    expect(s.includeCoAuthoredBy).toBe(true);
+  });
+
+  it("T6: a second run on the file the writer produced is `unchanged` (present) with no second .bak", async () => {
+    const { mergeGlobalCanonicalHooks } = await import("../lib/global-hooks.js");
+    writeFileSync(settingsPath, JSON.stringify({ permissions: { allow: [] } }) + "\n");
+    const first = mergeGlobalCanonicalHooks({ settingsPath });
+    expect(first.outcome).toBe("merged");
+    expect(first.attribution).toBe("added");
+    const bytes = readFileSync(settingsPath, "utf-8");
+
+    const second = mergeGlobalCanonicalHooks({ settingsPath });
+    expect(second.outcome).toBe("unchanged");
+    expect(second.attribution).toBe("present");
+    expect(readFileSync(settingsPath, "utf-8")).toBe(bytes);
+    const dir = settingsPath.slice(0, settingsPath.lastIndexOf("/"));
+    const baks = readdirSync(dir).filter((e) => e.startsWith("settings.json.bak."));
+    expect(baks.length).toBe(1);
+  });
+
+  it("T8: a malformed file is refused before either rule runs — bytes untouched, no attribution outcome", async () => {
+    const { mergeGlobalCanonicalHooks } = await import("../lib/global-hooks.js");
+    writeFileSync(settingsPath, "{ not json");
+    const res = mergeGlobalCanonicalHooks({ settingsPath });
+    expect(res.outcome).toBe("failed");
+    expect(res.attribution).toBeUndefined();
+    expect(readFileSync(settingsPath, "utf-8")).toBe("{ not json");
   });
 });

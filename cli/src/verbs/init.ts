@@ -93,6 +93,7 @@ import { applyPersona } from "../lib/persona.js";
 import { linkAntigravitySkills } from "../lib/antigravity-skills.js";
 import { installAntigravityHooks } from "../lib/antigravity-hooks.js";
 import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import { attributionAddedNote } from "../lib/attribution-settings.js";
 import {
   antigravitySkillsLinkPath,
   antigravityHooksConfigPath,
@@ -820,7 +821,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
     // at init; install is registration-only).
     dry.wouldWriteFile(
       claudeUserSettingsPath(),
-      "merge canonical Igris hooks block (global)",
+      "merge canonical Igris hooks block + attribution default (global)",
     );
     dry.wouldWriteFile(claudeJsonPath(), "register igris-brain MCP (Claude)");
     dry.wouldWriteFile(geminiSettingsPath(), "register igris-brain MCP (Gemini)");
@@ -859,6 +860,9 @@ export async function runInit(opts: InitOptions): Promise<number> {
     } else {
       info(`Merged global Igris hooks block -> ${gh.path}`);
     }
+    // TD-470: the same write applies Claude Code's `attribution` default.
+    if (gh.attribution === "added") info(attributionAddedNote(gh.path));
+    else if (gh.attribution) debug(`attribution ${gh.attribution} -> ${gh.path}`);
 
     // FR-212d Phase 2: `igris init` wires the brain MCP via the IN-PROCESS custom
     // merger (deterministic native shapes, no `add-mcp`/`node` subprocess at

@@ -24,7 +24,7 @@ Conventional Commits: `<type>(<scope>): <summary>`
 
 - Imperative mood, 72-char summary max (≤72; enforced by the `commit-msg` hook).
 - Reference briefs in the footer: `closes #<PREFIX>-<NNN>[a-z]` — a sub-brief carries one lowercase letter (`closes #FR-003e`, a different brief from `FR-003`); one id per `closes`, or a comma-separated list (`closes #FR-003, #FR-003e`); `closes` and `fixes` are the verbs the `commit-msg` gates read (TD-468).
-- **No AI signatures** — no "Generated with…", no Co-Authored-By tags.
+- **No AI signatures** — no "Generated with…", no Co-Authored-By tags. Enforced by the `commit-msg` signature gate (TD-470; one-shot `IGRIS_BYPASS_SIGNATURE_GATE=1` for a genuine human pair) and, where a harness has an attribution setting, prevented by the default `igris init` / `igris update` write (`core/enforcement/no-ai-signatures.md`).
 
 ## Code Quality
 

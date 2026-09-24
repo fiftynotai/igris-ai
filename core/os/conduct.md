@@ -51,4 +51,5 @@ Enforcement of these belongs to the Enforcement layer — some gated, some autom
 - `IGRIS_BYPASS_PHASE_GUARD=1` — bypasses the commit-time phase guard.
 - `IGRIS_BYPASS_AC_GATE=1` — bypasses the acceptance-criteria gate in `commit-msg` for one commit (TD-325). It is not the way past an open box: the healthy path is `- [~] **DEFERRED: <why>** -> TD-XXX`, which costs the same one character as a tick.
 - `IGRIS_BYPASS_EVENT_GATE=1` — bypasses the agent-event coverage gate in `commit-msg` for one commit (FR-267). It is not the way past a missing event: the healthy path is to emit the `start`/`stop` pair the Agent Log's role is owed — that row is the hunt-cost record. Independent of `IGRIS_BYPASS_AC_GATE`; bypassing one gate never silences the other.
+- `IGRIS_BYPASS_SIGNATURE_GATE=1` — bypasses the AI-signature gate in `commit-msg` for one commit (TD-470). It is not the way past an AI trailer: the healthy path is to delete the `Co-authored-by:` or "Generated with" line. It exists for a genuine human co-author. Independent of the AC and event gates, in both directions.
 - **Never `export` any of them** — pass one-shot per command, or it leaks into subagent processes.
