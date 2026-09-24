@@ -257,8 +257,9 @@ function classify(input: ClassifierInput): {
         status: "wedged",
         reason:
           `${s.name} has an OPEN run ${s.open_run_id} ${age} days old${overdue}. ` +
-          "The daemon's overlap guard refuses to fire while any run is 'running', " +
-          "so this schedule cannot fire again until the row reaches a terminal status.",
+          "The daemon's overlap guard skips every slot while a run is 'running'. " +
+          "Since TD-361 the daemon reaps a run whose owner process is dead at its next sweep, " +
+          "so a row that stays open belongs to a live owner, or to one it cannot prove dead.",
       };
     }
   }
@@ -381,8 +382,8 @@ export function buildCognitionHealthDigest(
       if (schedule.rows > 1) {
         warnings.push(
           `duplicate schedule rows named ${schedule.name} (${schedule.rows}) — ` +
-            "the bootstrap de-duplicates by NAME while the table syncs by a " +
-            "per-machine random id, so each brain keeps its own row",
+            "schedules.name is UNIQUE since schedules migration v3 (TD-361), so " +
+            "this appears only on a brain that has not run v3 yet",
         );
       }
     }

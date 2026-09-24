@@ -488,8 +488,9 @@ describe('BR-090 T5 — the reconciliation is scoped, and the audit is recorded'
     const declared = SYNC_TABLES.filter((c) => c.legacySyncKey || c.qualifierCols);
 
     // GUARD AGAINST A VACUOUS PASS. Without this, the loop below `continue`s
-    // over all 22 tables (20 until FR-268 added `ceremony_events`, 2026-08-27;
-    // 21 until TD-460 added `context_files`, 2026-09-09)
+    // over all 20 tables (20 until FR-268 added `ceremony_events`, 2026-08-27;
+    // 21 until TD-460 added `context_files`, 2026-09-09; 22 until TD-361
+    // removed `schedules` + `schedule_runs`, 2026-09-24)
     // when nothing declares and the test asserts NOTHING
     // while reporting green — the same empty-iteration failure this session
     // found seven times elsewhere. Caught by running this file red.

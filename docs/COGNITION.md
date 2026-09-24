@@ -100,7 +100,7 @@ healthy brain). `/scan` renders the full roster table.
 |---|---|
 | `ok` | the latest terminal event on THIS machine is a success or a skip |
 | `disabled` | one of its declared gate keys is not `true` — `disabled_by` names WHICH |
-| `wedged` | its schedule cannot fire: an earlier run never reached a terminal status, and the daemon's overlap guard refuses to start a second one |
+| `wedged` | its schedule cannot fire: an earlier run is still open, and the daemon skips every slot while it is. Since TD-361 a run whose owner process is dead is reaped at the next sweep, so an open run belongs to a live owner, or to one the daemon cannot prove dead — see [how a wedge is released](#how-a-wedge-is-released-td-361) |
 | `blocked_upstream` | it runs only inside another instance's run, and that driver is wedged/disabled/failing. **Fix the driver, not this instance** |
 | `failing` | the latest terminal event on this machine is a failure with no later success |
 | `no_signal` | enabled, but no terminal event inside the retained `event_log` window |
@@ -133,9 +133,57 @@ Two more things the digest reports that a naive read would miss:
   operator-adds-alias case: `igris doctor` lists the unattributed names with
   counts under its informational `machine-identity` class; add only names this
   machine has actually used.
-- **Duplicate schedule rows** show up in `warnings[]`. The schedule bootstrap
-  de-duplicates by NAME while the table replicates by a per-machine random id,
-  so two brains can each keep their own row under one name.
+- **Duplicate schedule rows** show up in `warnings[]`. NAME is a schedule's
+  identity: the bootstraps de-duplicate by it, and since TD-361
+  `schedules.name` is UNIQUE (schedules migration v3). Before that the table
+  replicated by a per-machine random id, so two brains each kept their own
+  row under one name. The warning now only fires on a brain that has not run v3.
+
+### how a wedge is released (TD-361)
+
+The daemon used to refuse to fire while ANY run of a schedule was `running`,
+with no age bound and no owner check. A run whose process exited mid-run (a
+session closed while the handler was awaited, or a crash) never received its
+terminal update, so it blocked its schedule forever — 94 days once, 12.4 and 11.8 days on
+2026-09-24, both born on the machine that wedged. Three things changed:
+
+- **Every run row records its owner.** `schedule_runs` gained `machine_id`,
+  `machine_hostname`, `owner_pid` and `owner_started_at` (the `ps -p <pid> -o
+  lstart=` string, byte-identical to the CLI's instance-liveness reader). The
+  one writer is `run-liveness.ts#insertRunningRow`, which also registers the
+  run as in flight in its process.
+- **A sweep releases a run only when its owner provably cannot finish it** —
+  at daemon start and at every tick. The row is marked `failed` with an error
+  starting `abandoned:` and naming the reason: `owner_foreign_machine`,
+  `self_not_in_flight`, `owner_dead`, `owner_pid_reused`, or
+  `legacy_predates_live_processes`. Every state it cannot prove is ALIVE
+  (`pid_only_unverified`, `legacy_unprovable`), and a live owner is never
+  reaped however old its run — **there is no age bound**, on purpose: a
+  healthy janitor run took 74.7 minutes, and age cannot tell a suspended laptop
+  from a dead process.
+- **A live run skips the slot.** When a run is genuinely still going, the
+  daemon advances `next_run_at` to the next cron slot instead of leaving the
+  schedule due (which had re-armed a zero-delay timer: 180 to 200 re-arms per
+  250 ms, three runs of `daemon-wedge.test.ts` W10b at HEAD on one machine,
+  2026-09-24; the count is load-sensitive, the test asserts only `<= 1` after).
+
+A graceful shutdown marks the process's own in-flight runs `failed` with an
+error starting `interrupted:`; the liveness sweep is the backstop for a kill,
+a crash or power loss. If the owner later finishes a run that was wrongly
+marked, its own terminal write wins.
+
+**Rows with no owner (legacy).** Rows written before schedules v3, or by a
+session brain still running an older build, carry no owner. Such a row is
+released only if it STARTED before every brain process that could own it —
+this process and every live pidfile-registry process on the same DB file. It
+is the operator's own manual argument, mechanised: no process that could
+still own the row is alive.
+
+**Schedules are machine-local.** `schedules` and `schedule_runs` are no longer
+replicated (they left `SYNC_TABLES`). A replicated schedule was executed by
+every receiving brain, and a replicated `running` row could never be
+terminated. Cognition runs stay visible across machines through `event_log`
+(`last_run_any_host`).
 
 ## how much is any of it worth
 

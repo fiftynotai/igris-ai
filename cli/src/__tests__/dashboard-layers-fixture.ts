@@ -797,8 +797,10 @@ export function seedCognitionBrain(
 
   // --- janitor -> wedged. An OPEN run plus an OVERDUE next_run_at.
   //
-  // The daemon's overlap guard refuses to fire while any run is `'running'`, so
-  // this schedule cannot fire again until a human clears the row. `next_run_at`
+  // The daemon's overlap guard skips every slot while a run is `'running'`, so
+  // this schedule cannot fire again until the row reaches a terminal status
+  // (since TD-361 the daemon reaps it only when its owner is provably dead —
+  // this fixture is read, never run by a daemon). `next_run_at`
   // is in the PAST as well, so the reason sentence carries both halves.
   instance.run(
     "janitor", "cognition.janitor", "cognition.janitor",

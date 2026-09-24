@@ -145,6 +145,7 @@ const EXCLUDED_STORES = [
   "loadout",
   "catalog",
   "definition_files",
+  // TD-361: execution state is per-DB-file — also out of `SYNC_TABLES` since 2026-09-24.
   "schedules",
   "schedule_runs",
   "event_log",

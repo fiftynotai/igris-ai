@@ -14,7 +14,7 @@ export interface EgressRedactedColumn {
 }
 
 /** Plain-language summary of the data categories that egress on remote sync. */
-export const EGRESS_CATEGORY_SUMMARY = "project registry, learnings & errors, session, brief & task content, instance & host metadata, knowledge graph, reusable-asset catalog, schedules & runs, perception & subconscious";
+export const EGRESS_CATEGORY_SUMMARY = "project registry, learnings & errors, session, brief & task content, instance & host metadata, knowledge graph, reusable-asset catalog, perception & subconscious";
 
 /** Columns relativized (home → ~, foreign-absolute → basename) before egress. */
 export const EGRESS_REDACTED_COLUMNS: readonly EgressRedactedColumn[] = [
@@ -28,7 +28,7 @@ export const MANIFEST_DOC_PATH = "docs/reference/sync-egress-manifest.md";
 /** Pre-rendered disclosure lines printed at the VPS consent moment + sync dry-run. */
 export const EGRESS_DISCLOSURE_LINES: readonly string[] = [
   "Remote sync egresses the following to your configured VPS (over HTTPS):",
-  "  categories: project registry, learnings & errors, session, brief & task content, instance & host metadata, knowledge graph, reusable-asset catalog, schedules & runs, perception & subconscious",
+  "  categories: project registry, learnings & errors, session, brief & task content, instance & host metadata, knowledge graph, reusable-asset catalog, perception & subconscious",
   "  local filesystem paths are relativized to ~ before egress (projects.path, instances.project_path)",
   "  on arrival, these columns are normalized to the canonical vocabulary (unknown values kept + reported): brief_status.brief_type, brief_status.priority, brief_status.phase, brief_status.status",
   "  full manifest: docs/reference/sync-egress-manifest.md",

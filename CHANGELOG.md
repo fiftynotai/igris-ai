@@ -10,6 +10,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A cognition run that cannot finish no longer wedges its schedule forever
+  (TD-361).** The daemon refused to fire while ANY run of a schedule was
+  `running`, with no age bound and no owner check, so a run whose process exited
+  mid-run blocked its schedule until someone cleared the row with SQL: 94 days
+  once (TD-327), and 12.4 and 11.8 days on 2026-09-24 — both runs started on the
+  machine that wedged. Every run row now records its owner process (schedules
+  migration v3), and a sweep at daemon start and at every tick marks a row
+  `failed` (`abandoned: …`) only when that owner provably cannot finish it. A
+  live owner is never reaped however old the run is — there is no age bound. A
+  graceful shutdown marks the process's own in-flight runs `interrupted: …`. A
+  schedule blocked by a genuinely live run now skips the slot instead of
+  re-arming a zero-delay timer (measured at the old code: 180 to 200 re-arms
+  per 250 ms across three runs on one machine, 2026-09-24). Details: `docs/COGNITION.md`, "how a wedge is released".
+- **Two brains can no longer produce two `schedules` rows under one name.**
+  `schedules.name` is UNIQUE (the name the bootstraps already de-duplicate by);
+  v3 collapses existing duplicates onto one survivor, re-pointing their runs,
+  and deletes the `schedule_runs` rows whose parent schedule was deleted
+  (8 on the operator's brain, measured 2026-09-24 on the pre-unwedge snapshot).
+
+### Changed
+
+- **`schedules` and `schedule_runs` no longer sync between brains.** A replicated
+  schedule was executed by every receiving brain, and a replicated `running` row
+  could never be terminated. A schedule created on one machine now stays on that
+  machine; cognition runs stay visible across machines through `event_log`. The
+  egress manifest drops its "schedules & runs" category. The change needs no
+  deploy order: a new remote ignores an old client's schedule rows, and a new
+  client ignores them in an old remote's pull.
+
 ---
 
 ## [7.3.2] - 2026-09-09

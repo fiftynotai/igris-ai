@@ -7,8 +7,12 @@
  *
  * Features:
  * - Smart sleep: only wakes when the next schedule is due
- * - Double-fire guard: skips schedules with a 'running' run AND
- *   skips schedules whose cron slot has already been fired (BR-067)
+ * - Owner-liveness guard (TD-361): a sweep at start and at every tick fails
+ *   `running` rows whose owner process provably cannot finish them; a row
+ *   still `running` after it belongs to a live (or unprovable) owner, blocks,
+ *   and the slot is SKIPPED (next_run_at advances — no setTimeout(tick, 0) loop)
+ * - Double-fire guard: skips schedules whose cron slot has already been
+ *   fired (BR-067)
  * - Atomic claim: SELECT-due + UPDATE next_run_at run inside a single
  *   IMMEDIATE transaction so a rapid/re-entrant tick cannot observe a
  *   stale next_run_at and double-fire (BR-067)
@@ -26,6 +30,13 @@ import { getDb } from '../../../db.js';
 import { errMsg } from '../../helpers.js';
 import { nextRunAfter } from './cron.js';
 import { now, generateRunId, executeWithRetries } from './utils.js';
+import {
+  inFlightRuns,
+  insertRunningRow,
+  interruptRuns,
+  sweepAbandonedRuns,
+  type LivenessEnv,
+} from './run-liveness.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -44,6 +55,8 @@ export interface DaemonContext {
    * boundaries").
    */
   getDb?: () => Database;
+  /** TD-361 test seam: overrides for the owner-liveness probes (`run-liveness.ts#LivenessEnv`). */
+  liveness?: Partial<LivenessEnv>;
 }
 
 /** Handle returned by startDaemon for external control */
@@ -96,6 +109,27 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
   /** Resolve the active DB — the production singleton unless a test injects one. */
   const resolveDb = ctx.getDb ?? getDb;
 
+  /** Runs THIS daemon started and has not finished — interrupted by stop(). */
+  const ownRuns = new Set<string>();
+
+  /** TD-361: fail abandoned `running` rows, then emit after commit. Never throws. */
+  function sweep(): void {
+    try {
+      for (const r of sweepAbandonedRuns(resolveDb(), ctx.liveness)) {
+        ctx.bus.emit('schedule.run_complete', {
+          schedule_id: r.schedule_id,
+          run_id: r.run_id,
+          status: 'failed',
+          reaped: true,
+          reason: r.reason,
+          owner_pid: r.owner_pid,
+        });
+      }
+    } catch (err) {
+      console.error(`[schedules] Abandoned-run sweep failed: ${errMsg(err)}`);
+    }
+  }
+
   /**
    * Atomically claim a due schedule for firing (BR-067).
    *
@@ -105,25 +139,28 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
    *   2. Rejects the claim if the schedule was disabled, deleted, or its
    *      `next_run_at` already advanced past `claimTime` (a concurrent or
    *      rapid re-entrant tick already claimed this cron slot).
-   *   3. Rejects the claim if a run is already `'running'` (overlap guard).
+   *   3. If a run is still `'running'` (the sweep already failed every
+   *      abandoned one, so its owner is live or unprovable), SKIPS the slot:
+   *      advances `next_run_at` and returns null (TD-361).
    *   4. Computes the next run anchored to `fireStartIso` — a STABLE instant
    *      captured before the handler runs, never a post-handler `new Date()`
-   *      — and writes it back immediately.
+   *      — writes it back, and inserts the owner-stamped run row, all in the
+   *      same transaction.
    *
    * Because the next_run_at UPDATE commits before the transaction releases,
    * the schedule cannot be re-selected as due by a subsequent tick. The
    * async handler then runs OUTSIDE this transaction (the lock is NOT held
    * across the handler — per the BR-067 plan's risk table).
    *
-   * @returns the claimed schedule row, or null if the claim was rejected.
+   * @returns the claimed schedule row and its new run id, or null if the claim was rejected.
    */
   function claimSchedule(
     db: Database,
     scheduleId: string,
     claimTime: string,
     fireStartIso: string,
-  ): Record<string, unknown> | null {
-    const claim = db.transaction((): Record<string, unknown> | null => {
+  ): { row: Record<string, unknown>; runId: string } | null {
+    const claim = db.transaction((): { row: Record<string, unknown>; runId: string } | null => {
       // Re-read the authoritative row inside the lock.
       const row = db.prepare('SELECT * FROM schedules WHERE id = ?')
         .get(scheduleId) as Record<string, unknown> | undefined;
@@ -139,12 +176,6 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
         return null;
       }
 
-      // Overlap guard: a run is still in 'running' status.
-      const activeRun = db.prepare(
-        "SELECT 1 FROM schedule_runs WHERE schedule_id = ? AND status = 'running' LIMIT 1",
-      ).get(scheduleId) as Record<string, unknown> | undefined;
-      if (activeRun) return null;
-
       // Compute the next run anchored to the STABLE fire-start instant.
       // This is the BR-067 root-cause fix: nextRunAfter() previously used
       // an implicit post-handler `new Date()`, which under handler-duration
@@ -157,6 +188,17 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
         // re-selected as due (next_run_at IS NULL filters it out).
       }
 
+      // Owner-liveness guard (TD-361): any row still 'running' survived this
+      // tick's sweep, so its owner is live or unprovable. Skip the slot rather
+      // than leave it due — a due-but-blocked schedule re-armed setTimeout(tick, 0).
+      const activeRun = db.prepare(
+        "SELECT 1 FROM schedule_runs WHERE schedule_id = ? AND status = 'running' LIMIT 1",
+      ).get(scheduleId) as Record<string, unknown> | undefined;
+      if (activeRun) {
+        db.prepare('UPDATE schedules SET next_run_at = ? WHERE id = ?').run(nextRun, scheduleId);
+        return null;
+      }
+
       // Advance next_run_at immediately so this cron slot cannot be
       // re-claimed by a concurrent/subsequent tick. last_run_at is set
       // here too (to the fire-start instant) so post-handler completion
@@ -165,14 +207,18 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
         'UPDATE schedules SET last_run_at = ?, next_run_at = ?, updated_at = ? WHERE id = ?',
       ).run(fireStartIso, nextRun, fireStartIso, scheduleId);
 
-      return row;
+      // The run row is created INSIDE the claim, owner-stamped, so claim and
+      // run are atomic and the id is in-flight before any await.
+      const runId = generateRunId();
+      insertRunningRow(db, runId, scheduleId, fireStartIso);
+      return { row, runId };
     });
 
     return claim.immediate();
   }
 
   /**
-   * Execute a single due schedule: claim atomically, create run record,
+   * Execute a single due schedule: claim atomically (creating the run record),
    * execute handler (outside the claim lock), update the run record.
    *
    * @param schedule - the schedule row from the SELECT-due query (may be stale)
@@ -192,46 +238,49 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
     // Atomically claim the slot (re-validate + advance next_run_at).
     const claimed = claimSchedule(db, scheduleId, claimTime, fireStartIso);
     if (!claimed) {
-      // Slot already claimed / schedule disabled / overlapping run — skip.
+      // Slot already claimed / schedule disabled / live run (slot skipped).
       return;
     }
 
-    const runId = generateRunId();
+    const { runId } = claimed;
+    ownRuns.add(runId);
     const dispatchTool = ctx.getDispatch();
-
-    // Create the run record.
-    db.prepare(`
-      INSERT INTO schedule_runs (id, schedule_id, status, started_at, attempt)
-      VALUES (?, ?, 'running', ?, 1)
-    `).run(runId, scheduleId, fireStartIso);
 
     ctx.bus.emit('schedule.run_start', { schedule_id: scheduleId, run_id: runId });
 
-    // Execute handler with retry support — OUTSIDE the claim transaction.
-    // The IMMEDIATE lock is intentionally NOT held across this await
-    // (BR-067 risk mitigation: holding it would block the single-connection
-    // engine for the handler's full duration).
-    const startTime = Date.now();
-    const { outcome, attempt } = await executeWithRetries(claimed, dispatchTool);
-    const durationMs = Date.now() - startTime;
-    const finishedAt = now();
+    let outcome: { status: string; result?: string; error?: string };
+    let attempt: number;
+    let durationMs: number;
+    try {
+      // Execute handler with retry support — OUTSIDE the claim transaction.
+      // The IMMEDIATE lock is intentionally NOT held across this await
+      // (BR-067 risk mitigation: holding it would block the single-connection
+      // engine for the handler's full duration).
+      const startTime = Date.now();
+      ({ outcome, attempt } = await executeWithRetries(claimed.row, dispatchTool));
+      durationMs = Date.now() - startTime;
 
-    // Update run record with the final outcome. next_run_at / last_run_at
-    // were already written in the claim transaction — completion only
-    // updates the run row, so a slow handler cannot un-advance next_run_at.
-    db.prepare(`
-      UPDATE schedule_runs
-      SET status = ?, finished_at = ?, duration_ms = ?, result = ?, error = ?, attempt = ?
-      WHERE id = ?
-    `).run(
-      outcome.status,
-      finishedAt,
-      durationMs,
-      outcome.result ?? null,
-      outcome.error ?? null,
-      attempt,
-      runId,
-    );
+      // Update run record with the final outcome. next_run_at / last_run_at
+      // were already written in the claim transaction — completion only
+      // updates the run row, so a slow handler cannot un-advance next_run_at.
+      // Unconditional by id: the owner's truth overwrites a wrong interrupt/reap.
+      db.prepare(`
+        UPDATE schedule_runs
+        SET status = ?, finished_at = ?, duration_ms = ?, result = ?, error = ?, attempt = ?
+        WHERE id = ?
+      `).run(
+        outcome.status,
+        now(),
+        durationMs,
+        outcome.result ?? null,
+        outcome.error ?? null,
+        attempt,
+        runId,
+      );
+    } finally {
+      inFlightRuns.delete(runId);
+      ownRuns.delete(runId);
+    }
 
     ctx.bus.emit('schedule.run_complete', {
       schedule_id: scheduleId,
@@ -257,6 +306,7 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
     ticking = true;
 
     try {
+      sweep();
       const db = resolveDb();
       const currentTime = now();
 
@@ -337,7 +387,9 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
     }
   }
 
-  // Start the daemon.
+  // Start the daemon: release abandoned runs first (synchronously, so a
+  // start-then-shutdown boot still releases them), then arm the timer.
+  sweep();
   scheduleNextTick();
 
   return {
@@ -356,6 +408,15 @@ export function startDaemon(ctx: DaemonContext): DaemonHandle {
       if (timer !== null) {
         clearTimeout(timer);
         timer = null;
+      }
+      // TD-361: a run still in flight at shutdown never gets its terminal
+      // UPDATE (the process exits), so record the interruption on the ROW now.
+      if (ownRuns.size > 0) {
+        try {
+          interruptRuns(resolveDb(), ownRuns);
+        } catch (err) {
+          console.error(`[schedules] Could not mark in-flight runs interrupted: ${errMsg(err)}`);
+        }
       }
     },
 

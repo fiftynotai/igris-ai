@@ -322,38 +322,6 @@ is annotated inline.
 - `created_at`
 - `updated_at`
 
-### Schedules & runs
-
-#### `schedules` — last-write-wins
-
-- `id`
-- `name`
-- `description`
-- `cron_expr`
-- `handler_type`
-- `handler_config`
-- `enabled`
-- `project_slug`
-- `tags`
-- `max_retries`
-- `timeout_ms`
-- `next_run_at`
-- `last_run_at`
-- `created_at`
-- `updated_at`
-
-#### `schedule_runs` — append-only
-
-- `id`
-- `schedule_id`
-- `status`
-- `started_at`
-- `finished_at`
-- `duration_ms`
-- `result`
-- `error`
-- `attempt`
-
 ### Perception & subconscious
 
 #### `suggestions` — last-write-wins

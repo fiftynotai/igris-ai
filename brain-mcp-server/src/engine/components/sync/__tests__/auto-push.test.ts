@@ -3,7 +3,7 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (22 entries — TD-460 added context_files)
+ * 2. SYNC_TABLES completeness (20 entries — TD-361 removed schedules + schedule_runs)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,7 +276,7 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 22 entries', () => {
+    it('has exactly 20 entries', () => {
       // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
       // task_assignments, agent_capabilities, autonomous_decisions,
       // coordination_config) removed with the worker subsystem teardown.
@@ -285,7 +285,23 @@ describe('Sync Auto-Push', () => {
       // TD-460 (2026-09-09): +1 `context_files` — project-context docs now
       // replicate; the FILE stays the authority and the row is a replica for
       // same-owner cross-machine transport, 21→22.
-      expect(SYNC_TABLES).toHaveLength(22);
+      // TD-361 (2026-09-24): −2 schedules + schedule_runs, execution state is
+      // per-DB-file, 22→20.
+      expect(SYNC_TABLES).toHaveLength(20);
+    });
+
+    it('EXCLUDES schedules + schedule_runs — execution state is per-DB-file (TD-361)', () => {
+      // A replicated `schedules` row was EXECUTED by every receiving daemon (a
+      // `shell` schedule became cross-machine command execution), its
+      // `syncKey: ['id']` over a per-machine random id put two rows under one
+      // name, and an `append` `schedule_runs` row replicated mid-run could never
+      // receive its terminal UPDATE — the un-terminable wedge. Nothing reads a
+      // REMOTE brain's schedule state; cognition runs stay visible across
+      // machines through `event_log`. Removal is deploy-order-free: an unknown
+      // payload key is ignored by processSyncPush, and a pull reads its own list.
+      const tables = SYNC_TABLES.map((t) => t.table);
+      expect(tables).not.toContain('schedules');
+      expect(tables).not.toContain('schedule_runs');
     });
 
     it('EXCLUDES cognition_instances — the roster is per-machine derived state (TD-327)', () => {
@@ -294,7 +310,7 @@ describe('Sync Auto-Push', () => {
       // one machine's roster onto another — the same class of mistake that put
       // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
       // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
-      // wrong to merge, so it stays out and the count above stays 22 (TD-460).
+      // wrong to merge, so it stays out and the count above stays 20 (TD-361).
       expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
     });
 
@@ -366,13 +382,13 @@ describe('Sync Auto-Push', () => {
         expect(entry!.columns, table).not.toContain('machine_id');
         expect(entry!.syncKey, table).not.toContain('machine_id');
       }
-      // …and the count is unchanged: no new table joined for it either.
-      expect(SYNC_TABLES).toHaveLength(22);
+      // …and no new table joined for it either (22 at BR-100; TD-361
+      // (2026-09-24): −2 schedules + schedule_runs, execution state is
+      // per-DB-file, 22→20).
+      expect(SYNC_TABLES).toHaveLength(20);
     });
 
     const newTables = [
-      { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
-      { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },
       // FR-105: typed-edges graph layer
       {
         table: 'entity_edges',

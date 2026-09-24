@@ -2866,10 +2866,11 @@ export function readEventLogFloor(): string | null {
  * from one that never existed if its schedule row is present and overdue.
  *
  * `schedules` is queried by NAME and the result is a COUNT, not a single row.
- * The bootstrap's idempotency check is `WHERE name = ?` while the table syncs on
- * a per-machine random `id`, so two brains each keep their own row under the
- * same name — a duplicate pair was measured on this brain. Reporting the count
- * makes a recurrence visible immediately.
+ * NAME is the schedule's identity: the bootstraps check `WHERE name = ?`, and
+ * since TD-361 the column is UNIQUE (schedules v3) and neither table syncs. A
+ * duplicate pair WAS measured on this brain when `schedules` still synced on a
+ * per-machine random `id`; a count above 1 now means a brain that has not run
+ * v3, and reporting it keeps that visible.
  */
 export interface CognitionScheduleRead {
   /** How many `schedules` rows carry this name. 0 means the schedule is absent. */

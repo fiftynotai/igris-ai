@@ -2302,6 +2302,72 @@ interface PackReport {
  *   `.d.ts` half (501 of 1_041 for the pair) is a docblock on an EXPORTED
  *   function — rationale on a brain export ships twice.
  *
+ * TD-361 MEASURED LAST (2026-09-24), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * TD-460 method, unchanged): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json`, the three `node_modules` symlinked, `dist` ABSENT
+ * so the copy step rebuilt the brain, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. The control taken FRESH at develop `40ff64d`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index
+ * (`000add19`). The real `cli/dist` was never written by either arm
+ * (`dist/brain-mcp-server/dist/index.js` sha256 `9d0654bc…` before and
+ * after — this brief's build is the orchestrator's, after review, because a
+ * `cli/` build deploys the v3 migration to the live brain).
+ *   control             1_886_667    unpacked 6_868_420, 541 entries, shasum
+ *                                    `9611c6a04c4d0be4347aaf33b99f409e5126add9`
+ *                                    — taken twice, byte-identical, and
+ *                                    IDENTICAL to the TD-468 row's final: no
+ *                                    packed byte landed between that tree and
+ *                                    `40ff64d`.
+ *   packed              1_895_201    unpacked 6_890_422, 545 entries (+4),
+ *                                    shasum
+ *                                    `63005dc1f8f6707c642da91ba5bcd26b2de740ec`,
+ *                                    taken twice.
+ *   TD-361's own share  +8_534 B     packed. Unpacked +22_002 over 22
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. The four NEW entries are 14_514
+ *                                    of it: `schedules/run-liveness.js` 8_209
+ *                                    + `.d.ts` 3_856 (the classifier, sweep,
+ *                                    horizon and the one run writer), and
+ *                                    `process-liveness.js` 1_678 + `.d.ts` 771
+ *                                    (the parity-pinned start-time twin). The
+ *                                    rest: `schedules/daemon.js` +2_706 (`.d.ts`
+ *                                    +467), `schedules/schema.js` +2_374 (v3 +
+ *                                    its leg comment; `.d.ts` +76),
+ *                                    `schedules/handlers.js` +804 (`.d.ts`
+ *                                    +123), `schedules/index.js` +700,
+ *                                    `schedules/utils.{js,d.ts}` +77 each,
+ *                                    `lib/process-liveness.js` +316 (map +65),
+ *                                    `verbs/cognition.js` +115 (map +14),
+ *                                    `verbs/export.js` +94 (map +13), and
+ *                                    three NEGATIVE: `tools/sync.js` −399 (the
+ *                                    two `SYNC_TABLES` entries out, net of the
+ *                                    head comment), `tools/egress-manifest.js`
+ *                                    −98, `lib/sync/egress-manifest.generated.js`
+ *                                    −36. The brain `.d.ts` files are 5_370 of
+ *                                    the 22_002 — the declarations tax again.
+ *   cumulative delta    +51_925 B    (50.7 KB, 33.8 % of the grant —
+ *                                    1_895_201 − 1_843_276)
+ *   headroom remaining  101_675 B    (99.3 KB — 153_600 − 51_925)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_895_201 − 1_886_667 = 8_534; 1_895_201 − 1_843_276 = 51_925;
+ *   153_600 − 51_925 = 101_675; 545 − 541 = 4;
+ *   6_890_422 − 6_868_420 = 22_002 = the per-file sum; 8_209 + 3_856 +
+ *   1_678 + 771 = 14_514; 467 + 123 + 3_856 + 76 + 77 + 771 = 5_370;
+ *   51_925 − 43_391 = 8_534 = this brief's share exactly (the control
+ *   reproduced the previous final, so the two series join with zero drift).
+ *
+ *   The plan named the ceiling as a conditional fork (F5) and it did not
+ *   fire. NOTE FOR THE NEXT PLANNER: the two new brain modules are 11_285
+ *   source bytes (`run-liveness.ts` 9_681 + `process-liveness.ts` 1_604,
+ *   `wc -c`) and ship as 14_514 unpacked bytes across four entries; npm
+ *   reports no per-file PACKED size, so their packed share inside the 8_534
+ *   is not isolated here.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

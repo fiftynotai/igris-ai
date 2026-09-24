@@ -1,0 +1,79 @@
+{
+  "provenance": {
+    "brief": "TD-361",
+    "harvested_at": "2026-09-24",
+    "snapshot": "~/.igris/projects/igris-ai/plans/td361-evidence/knowledge-preunwedge-2026-09-24.db",
+    "snapshot_sha256": "0441d1fe743c019e4982770cbce7561c2b95e1dea72cb101ea26118b7b23c524",
+    "method": "sqlite3 -readonly -json <snapshot> <query>; values byte-copied, never hand-edited",
+    "queries": [
+      "SELECT * FROM schedules WHERE id IN ('sch-90302d0b','sch-ca730782') ORDER BY id",
+      "SELECT * FROM schedule_runs WHERE id IN ('run-d581ce72','run-f5f17e9c') ORDER BY id"
+    ],
+    "reaped_at": "2026-09-24T10:31:00Z",
+    "brief_age_days": {
+      "run-d581ce72": 12.4,
+      "run-f5f17e9c": 11.8
+    },
+    "note": "Both runs were LOCALLY BORN on the operator's machine (brief, Recurrence evidence). Legacy-shaped: no owner columns existed before schedules v3."
+  },
+  "schedules": [
+    {
+      "id": "sch-90302d0b",
+      "name": "synapse_engine",
+      "description": "FR-211 synapse engine: edge-inference pipeline (daily 03:00)",
+      "cron_expr": "0 3 * * *",
+      "handler_type": "mcp-tool",
+      "handler_config": "{\"tool\":\"igris_synapse_run\",\"args\":{}}",
+      "enabled": 1,
+      "project_slug": null,
+      "tags": "[\"synapse\",\"fr-211\"]",
+      "max_retries": 0,
+      "timeout_ms": 30000,
+      "next_run_at": "2026-09-12T23:00:00.000Z",
+      "last_run_at": "2026-09-11T23:53:22.291Z",
+      "created_at": "2026-07-02T06:51:56.016Z",
+      "updated_at": "2026-09-11T23:53:22.291Z"
+    },
+    {
+      "id": "sch-ca730782",
+      "name": "subconscious_engine",
+      "description": "FR-106 subconscious engine: passive detector pipeline (every 6h)",
+      "cron_expr": "0 */6 * * *",
+      "handler_type": "mcp-tool",
+      "handler_config": "{\"tool\":\"igris_subconscious_run\",\"args\":{}}",
+      "enabled": 1,
+      "project_slug": null,
+      "tags": "[\"subconscious\",\"fr-106\"]",
+      "max_retries": 0,
+      "timeout_ms": 30000,
+      "next_run_at": "2026-09-12T20:00:00.000Z",
+      "last_run_at": "2026-09-12T14:49:27.207Z",
+      "created_at": "2026-04-29T13:18:48.077Z",
+      "updated_at": "2026-09-12T14:49:27.207Z"
+    }
+  ],
+  "schedule_runs": [
+    {
+      "id": "run-d581ce72",
+      "schedule_id": "sch-90302d0b",
+      "status": "running",
+      "started_at": "2026-09-11T23:53:22.291Z",
+      "finished_at": null,
+      "duration_ms": null,
+      "result": null,
+      "error": null,
+      "attempt": 1
+    },
+    {
+      "id": "run-f5f17e9c",
+      "schedule_id": "sch-ca730782",
+      "status": "running",
+      "started_at": "2026-09-12T14:49:27.207Z",
+      "finished_at": null,
+      "duration_ms": null,
+      "result": null,
+      "error": null,
+      "attempt": 1
+    }
+  ]
+}

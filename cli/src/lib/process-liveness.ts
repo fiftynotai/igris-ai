@@ -38,6 +38,10 @@ function parsePositiveInt(value: string | undefined): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+// TD-361: the brain twin (`brain-mcp-server/src/process-liveness.ts`) stamps
+// `schedule_runs.owner_started_at` with this exact function — edit BOTH copies
+// of the marked region, or `process-liveness-parity.test.ts` reds.
+// --- TD-361 PARITY REGION (start-time format) ---
 export function getProcessStartTime(pid: number): string | null {
   try {
     const out = execFileSync("ps", ["-p", String(pid), "-o", "lstart="], {
@@ -50,6 +54,7 @@ export function getProcessStartTime(pid: number): string | null {
     return null;
   }
 }
+// --- END TD-361 PARITY REGION ---
 
 export function isProcessAlive(pid: number): boolean {
   try {

@@ -38,11 +38,15 @@ import {
 } from './handlers.js';
 import { startDaemon } from './daemon.js';
 import type { DaemonHandle } from './daemon.js';
+import { interruptRuns } from './run-liveness.js';
+import { getDb } from '../../../db.js';
 
 export function createSchedulesComponent(): BrainComponent {
   let _ctx: ComponentContext | null = null;
   let _daemon: DaemonHandle | null = null;
   let _dispatchTool: ((name: string, args: Record<string, unknown>) => Promise<unknown>) | null = null;
+  /** TD-361: fire_now runs this component started and has not finished. */
+  const _fireNowRuns = new Set<string>();
 
   /** Handler for engine.ready event — capture the gateway dispatch function */
   function onEngineReady(payload: EventPayload): void {
@@ -79,7 +83,7 @@ export function createSchedulesComponent(): BrainComponent {
             properties: {
               name: {
                 type: 'string',
-                description: 'Schedule name (human-readable)',
+                description: 'Schedule name (human-readable; unique across this brain)',
               },
               cron_expr: {
                 type: 'string',
@@ -343,6 +347,7 @@ export function createSchedulesComponent(): BrainComponent {
       setHandlerContext({
         bus: ctx.bus,
         getDispatch: () => _dispatchTool,
+        inFlight: _fireNowRuns,
       });
 
       // Start the daemon
@@ -358,6 +363,14 @@ export function createSchedulesComponent(): BrainComponent {
       if (_daemon) {
         _daemon.stop();
         _daemon = null;
+      }
+      // TD-361: a fire_now run in flight at shutdown never reaches its terminal UPDATE.
+      if (_fireNowRuns.size > 0) {
+        try {
+          interruptRuns(getDb(), _fireNowRuns);
+        } catch (err) {
+          _ctx?.log.warn(`Could not mark fire_now runs interrupted: ${err instanceof Error ? err.message : String(err)}`);
+        }
       }
       if (_ctx) {
         _ctx.bus.off('engine.ready', onEngineReady);

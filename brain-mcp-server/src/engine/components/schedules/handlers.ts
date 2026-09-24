@@ -19,10 +19,15 @@ import type { ToolResult, EventBus } from '../../types.js';
 import { errorResult, successResult, errMsg, WhereBuilder } from '../../helpers.js';
 import { parseCron, nextRunAfter } from './cron.js';
 import { now, generateScheduleId, generateRunId, executeWithRetries } from './utils.js';
+import { inFlightRuns, insertRunningRow } from './run-liveness.js';
 
 const execFileAsync = promisify(execFile);
 
-/** Default timeout for schedule handler execution (30 seconds) */
+/**
+ * Default timeout for schedule handler execution (30 seconds). Enforced for
+ * `shell` handlers ONLY (execFile `timeout`); an `mcp-tool` run has no timeout
+ * here, so the engines' stored 30000 is inert (TD-361 plan F3).
+ */
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 // ---------------------------------------------------------------------------
@@ -32,6 +37,8 @@ const DEFAULT_TIMEOUT_MS = 30_000;
 interface HandlerContext {
   bus: EventBus;
   getDispatch: () => ((name: string, args: Record<string, unknown>) => Promise<unknown>) | null;
+  /** TD-361: fire_now runs in flight, owned by the component (interrupted by destroy()). */
+  inFlight?: Set<string>;
 }
 
 /**
@@ -209,6 +216,12 @@ export function handleScheduleCreate(args: Record<string, unknown>): ToolResult 
 
     return successResult(JSON.stringify({ schedule }, null, 2));
   } catch (err) {
+    // TD-361: `schedules.name` is UNIQUE (v3) — the index, not a pre-check, is
+    // the refusal, so two racing bootstraps cannot both insert.
+    if (/UNIQUE constraint failed: schedules\.name/.test(errMsg(err))) {
+      const existing = db.prepare('SELECT id FROM schedules WHERE name = ?').get(name) as { id: string } | undefined;
+      return errorResult(`schedule named "${name}" already exists (${existing?.id ?? 'unknown id'})`);
+    }
     return errorResult(`Failed to create schedule: ${errMsg(err)}`);
   }
 }
@@ -409,39 +422,45 @@ export async function handleScheduleFireNow(args: Record<string, unknown>): Prom
   const runId = generateRunId();
   const startedAt = now();
   const dispatchTool = _handlerCtx?.getDispatch() ?? null;
+  const owned = _handlerCtx?.inFlight;
 
-  // Create run record with 'running' status
-  db.prepare(`
-    INSERT INTO schedule_runs (id, schedule_id, status, started_at, attempt)
-    VALUES (?, ?, 'running', ?, 1)
-  `).run(runId, scheduleId, startedAt);
+  // Create the owner-stamped run record with 'running' status (TD-361).
+  insertRunningRow(db, runId, scheduleId, startedAt);
+  owned?.add(runId);
 
   if (_handlerCtx) {
     _handlerCtx.bus.emit('schedule.fire_now', { schedule_id: scheduleId, run_id: runId });
   }
 
-  // Execute the handler with retry support
+  let outcome: { status: string; result?: string; error?: string };
+  let attempt: number;
   const startTime = Date.now();
-  const { outcome, attempt } = await executeWithRetries(schedule, dispatchTool);
-  const durationMs = Date.now() - startTime;
-  const finishedAt = now();
+  let finishedAt: string;
+  try {
+    // Execute the handler with retry support
+    ({ outcome, attempt } = await executeWithRetries(schedule, dispatchTool));
+    finishedAt = now();
 
-  // Update run record with result and actual attempt count
-  db.prepare(`
-    UPDATE schedule_runs
-    SET status = ?, finished_at = ?, duration_ms = ?, result = ?, error = ?, attempt = ?
-    WHERE id = ?
-  `).run(
-    outcome.status,
-    finishedAt,
-    durationMs,
-    outcome.result ?? null,
-    outcome.error ?? null,
-    attempt,
-    runId,
-  );
+    // Update run record with result and actual attempt count
+    db.prepare(`
+      UPDATE schedule_runs
+      SET status = ?, finished_at = ?, duration_ms = ?, result = ?, error = ?, attempt = ?
+      WHERE id = ?
+    `).run(
+      outcome.status,
+      finishedAt,
+      Date.now() - startTime,
+      outcome.result ?? null,
+      outcome.error ?? null,
+      attempt,
+      runId,
+    );
+  } finally {
+    inFlightRuns.delete(runId);
+    owned?.delete(runId);
+  }
 
-  // Update schedule last_run_at (aligns with daemon.ts:166 — `last_run_at`
+  // Update schedule last_run_at (aligns with daemon.ts#claimSchedule — `last_run_at`
   // is the fire-start instant, matching the daemon's claim-transaction
   // semantics. `updated_at` keeps the "row last touched" finish instant.)
   db.prepare(`

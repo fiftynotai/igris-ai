@@ -449,10 +449,10 @@ export interface CognitionScheduleSignal {
   /** The `schedules.name` the instance declared as its `driver_ref`. */
   name: string;
   /**
-   * How many `schedules` rows share that NAME. >1 is a defect: the bootstrap's
-   * idempotency check is `WHERE name = ?` while `schedules` syncs on a
-   * per-machine random `id`, so two brains each keep their own row. Surfaced as
-   * a digest warning.
+   * How many `schedules` rows share that NAME. >1 is a defect: NAME is the
+   * identity (the bootstraps check `WHERE name = ?`), and since TD-361 it is
+   * UNIQUE (schedules v3) and the table no longer syncs, so >1 means a brain
+   * that has not run v3. Surfaced as a digest warning.
    */
   rows: number;
   /** True when ANY row with this name is enabled. */

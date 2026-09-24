@@ -117,6 +117,10 @@ function tableColumns(db: Database.Database, name: string): Set<string> {
 // Sync table definitions
 // ---------------------------------------------------------------------------
 
+// `schedules` + `schedule_runs` are deliberately ABSENT (TD-361): execution
+// state is per-DB-file — a replicated schedule was EXECUTED by every receiver,
+// and an append-only replicated `running` row could never be terminated.
+// Never re-add them; see MAINTAINING's TD-361 row.
 export const SYNC_TABLES: SyncTableConfig[] = [
   {
     table: 'learnings',
@@ -280,27 +284,6 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: [
       'project', 'ceremony', 'event_type', 'machine_hostname', 'instance_id', 'brief_id',
       'duration_ms', 'metadata', 'created_at',
-    ],
-  },
-  {
-    table: 'schedules',
-    syncKey: ['id'],
-    timestampCol: 'updated_at',
-    strategy: 'lww',
-    columns: [
-      'id', 'name', 'description', 'cron_expr', 'handler_type', 'handler_config',
-      'enabled', 'project_slug', 'tags', 'max_retries', 'timeout_ms',
-      'next_run_at', 'last_run_at', 'created_at', 'updated_at',
-    ],
-  },
-  {
-    table: 'schedule_runs',
-    syncKey: ['id'],
-    timestampCol: 'started_at',
-    strategy: 'append',
-    columns: [
-      'id', 'schedule_id', 'status', 'started_at', 'finished_at',
-      'duration_ms', 'result', 'error', 'attempt',
     ],
   },
   {
