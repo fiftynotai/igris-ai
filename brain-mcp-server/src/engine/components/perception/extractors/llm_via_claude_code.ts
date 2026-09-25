@@ -411,6 +411,13 @@ function backendFailReasonToPerception(reason: string | undefined): string {
       return 'api_error';
     case 'auth_error':
       return 'auth_error';
+    // BR-109: the per-harness detectors' reasons, passed through the same way.
+    case 'model_unsupported':
+      return 'model_unsupported';
+    case 'cli_incompatible':
+      return 'cli_incompatible';
+    case 'account_unsupported':
+      return 'account_unsupported';
     default:
       return 'unknown';
   }

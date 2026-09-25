@@ -557,8 +557,8 @@ maps them onto `perception.run_failed`'s `reason` (round 1), and the runner's
 `failed:api_error` and `failed:auth_error` (round 2). Between the two rounds the
 event's `reason` was already right while the MCP tool result and the
 `perception_extract_cli.ts` summary line still printed `llm_status=failed:unknown`
-for the same run (L-1246). The other four harnesses are not inspected at all:
-their `extractText` path is the same bytes it was.
+for the same run (L-1246). BR-109 extends the inspection to every other harness,
+each on its own failure channel (next section).
 
 `igris cognition health` reads the row's `reason` and `detail` and leads the
 `failing` sentence with them — `api_error: API Error: 529 Overloaded. latest
@@ -568,6 +568,173 @@ success` — so `/boot`'s "first sentence of reason" render prints
 added: the render rules already print `reason`, and a new field is a five-place
 wire sweep for a string the skills already show. A row with no `reason` in its
 payload renders the sentence it always did.
+
+## why an extractor call failed — named reasons per harness (BR-109)
+
+Every CLI reports a failed call on a different channel, and before BR-109 only
+claude's was read. The live shapes, and what the backend made of them at HEAD:
+
+- **codex 0.135.0** (exit 1): four JSONL events on stdout — `thread.started`,
+  `turn.started`, `error`, `turn.failed` — whose `message` is itself JSON:
+  `{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The
+  'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade …"}}`.
+  The stdout was non-empty, so `extractText` lifted all four lines as the answer
+  and the run was filed `parse_error` — the TD-447 class, on codex.
+- **opencode 1.14.22** (exit 0): stdout empty, stderr `> build · <model>` then
+  `Error: Token refresh failed: 401`. It was filed `empty_response`, which
+  perception treats as "no candidates", so a perception run on opencode failed
+  silently.
+- **gemini-cli 0.45.0**: the extractor's `--print` / `--print-timeout` are not
+  options of 0.45.0 (`Unknown arguments: print-timeout, printTimeout, print`,
+  exit 1), filed `non_zero_exit` with the help text's head as its detail.
+- **gemini-cli 0.45.0, live under the BR-109 argv** (2026-09-25, this machine;
+  `br109-evidence/gemini-diagnosis.json`): exit 55, stdout empty. stderr carries
+  TWO refusals. First, the account's tier: gemini's first auth pass logs an
+  `IneligibleTierError` whose `ineligibleTiers[0]` is `reasonCode:
+  'UNSUPPORTED_CLIENT'`, `reasonMessage: 'This client is no longer supported for
+  Gemini Code Assist for individuals. To continue using Gemini, please migrate to
+  the Antigravity suite of products: https://antigravity.google'`, tier
+  `free-tier`. That pass logs the error and carries on. Second, the fatal one:
+  `Gemini CLI is not running in a trusted directory. To proceed, either use
+  --skip-trust, …` (`FatalUntrustedWorkspaceError`, exit 55). The token refreshed
+  in the allow arm, so the login is valid. Filed `non_zero_exit`.
+
+Since BR-109 `runBackend` classifies an exec result in this order, BEFORE text
+extraction (`classifyExecResult` in `cognition/backend/index.ts`; the detectors
+in `parse-output.ts`):
+
+1. `timeout`.
+2. **The harness's own failure channel**, at any exit code:
+
+   | harness | failure iff | read from |
+   |---|---|---|
+   | claude | a `{type:"result", is_error:true}` line (TD-447) | `api_error_status`, `terminal_reason`, `result` |
+   | codex | a `turn.failed` event, or an `error` event with NO `agent_message` item (a retried stream that then answers is not a failure) | the event's `message`; when it is JSON, `status` and `error.{code or type, message}` |
+   | opencode | stdout is empty AND stderr has an `Error:` line (the last one, ANSI stripped) | that line only — never the `> build · <model>` header |
+   | gemini | only when the run gave no answer (exit ≠ 0 or empty stdout); first match wins: (1) the tier refusal (`IneligibleTierError` / `ineligibleTiers:` on stderr, any exit) → `account_unsupported`; (2) exit 55 or the `not running in a trusted directory` line → `cli_incompatible`; (3) exit 41 → `auth_error`; exit 42 or 52 → `cli_incompatible` (an input or config gemini rejects) | (1) the first `reasonMessage`, else the `IneligibleTierError:` message; (2) the trust line; (3) the last non-empty stderr line |
+   | antigravity | — (no measured failure shape; step 3 still applies) | — |
+
+3. **Any harness:** a non-zero exit, empty stdout and a stderr line matching
+   `unknown argument/option`, `unexpected argument` or `unrecognized argument/option`
+   → `cli_incompatible`, detail = that line.
+4. `non_zero_exit` and `empty_response`, as before.
+
+One classifier names every detected error: **`auth_error`** on status 401/403, an
+authentication phrase (TD-447's, plus `token refresh`, `refresh token`,
+`expired token`), or a bare `401`/`403` in a one-line message with no status;
+otherwise **`model_unsupported`** when the error code names a model or the
+message says a model "requires a newer version", is "not supported",
+"unsupported", "does not exist", "not found", "not available" or "is unknown"
+(within one sentence); otherwise **`api_error`**. The false-positive rows it must
+not match are pinned beside the positive ones (`backend-harness-failures.test.ts`
+H14). `detectClaudeErrorEnvelope` keeps TD-447's two classes for the probe and
+the TD-471 watcher; `runBackend` names a claude model error `model_unsupported`.
+
+**`account_unsupported`** is gemini's own class: the vendor refuses this
+account's tier for this CLI. It is not `auth_error`, because the login is valid
+(the token refreshed) and re-authenticating changes nothing. It is not
+`api_error` either: that reads as transient, and this refusal is permanent until
+the operator switches product. When the tier refusal and the trust refusal
+appear together (the measured run), the tier refusal wins. It is the root cause
+the operator can act on. The trust refusal is an Igris invocation defect, fixed
+by `--skip-trust` below, and after that fix gemini is expected to fail on the
+tier alone. That is source-read, not measured: the second `refreshAuth`
+(`gemini-ORQHD633.js:16282`) rethrows the non-fatal error, and the top-level
+catch prints `An unexpected critical error occurred:` and exits 1. H17 pins that
+shape. An answered run is never classified, even when its stderr carries these
+words (H18).
+
+**codex answer text.** A codex run's text is now only its `agent_message` texts,
+any claude-shaped `result` text and non-JSON lines. Every other codex JSON event
+(`thread.*`, `turn.*`, reasoning items) is stream metadata and is dropped; before
+BR-109 it rode along beside the answer. The success event sequence is recalled,
+not measured, until the operator-run codex PASS records it.
+
+**What `detail` keeps, and where it goes.** The CLI's own error message only —
+codex's event message (never its ~212 KB verbose stderr), opencode's single
+`Error:` line, gemini's `reasonMessage` or fatal line — ANSI stripped, first 200 chars, with
+` (http N)` when a status is known: TD-447's format, so `igris cognition health`
+renders it unchanged. `run_failed.detail` lands in `event_log` and replicates to
+the remote brain. So `runBackend` scrubs EVERY `detail`, claude's included, of
+credential shapes — `sk-…`, JWTs (`eyJ…`), `Bearer …`, Google `ya29.…`, refresh
+`1//…` and `AIza…` keys — replacing each with its prefix + `…`. The measured
+messages are static strings plus a status or a model id; the scrubber defends
+unmeasured provider text, it does not prove it.
+
+**The gemini invocation.** gemini now runs `--allowed-mcp-server-names
+__igris_extractor_no_mcp__ --skip-trust --prompt ''` with the prompt on STDIN (agy keeps
+`--print-timeout <n>s --print` and the argv tail). A bare `--prompt` token makes
+the run headless whatever the TTY (`isHeadlessMode`, `chunk-6T7N6JF2.js:275161`),
+and its empty value leaves `input` = the stdin body (`gemini-ORQHD633.js:16235-16237`).
+The prompt never sits in argv, so no Linux 128 KB single-argument limit, no
+misparse of a body starting with `-`, and no prompt text in `ps`. Measured
+offline in an empty scratch HOME: the argv parses and the run is
+non-interactive — it exits 41 because gemini validates auth
+(`validateNonInteractiveAuth`, `:16043`) BEFORE it reads stdin, not the 42 of an
+empty input. `execHarness` owns the deadline.
+
+**Why `--skip-trust` is safe.** Headless gemini refuses an untrusted cwd with
+exit 55 (`folderTrustCheck`, `gemini-ORQHD633.js:9863-9881`). `--skip-trust`
+(a boolean, `:8064`) sets `GEMINI_CLI_TRUST_WORKSPACE=true` in gemini's own
+process (`:8218-8219`), which `checkPathTrust` honours first
+(`chunk-6T7N6JF2.js:392185`). The cwd is the isolated home, and after BR-108 that
+holds only owned sanitized files and the named auth links. The gemini-cli 0.45.0
+features trust unlocks are read below (static, installed bundle; names only):
+
+| unlocked by trust | where | what it reaches in the isolated home |
+|---|---|---|
+| workspace `settings.json` merged | `mergeSettings`, `chunk-EUYIPFPA.js:16181` | nothing: cwd = `homedir()`, so `isWorkspaceHomeDir()` skips the workspace load (`:16578`) |
+| `.env`: `<dir>/.gemini/.env` checked first, ALL keys loaded (untrusted: 4 auth keys, sanitized) | `findEnvFile` / `loadEnvironment`, `:16388-16498` | the owned EMPTY `<iso>/.gemini/.env` (the "trusted" rows of the `.env` table below; F6 pins them) |
+| MCP servers started | `startConfiguredMcpServers` / discovery, `chunk-6T7N6JF2.js:365569`, `:365647`; stdio transport `:365215` | the owned settings carry no `mcpServers`, `.gemini/extensions` is never forwarded, and `isBlockedBySettings` (`:365441`) applies `--allowed-mcp-server-names` BEFORE the trust gate, so the sentinel blocks every name. P3 pins the sentinel |
+| project `GEMINI.md` memory | `getEnvironmentMemoryPaths`, `:357559` | walks up from the cwd to the nearest `.git` ancestor, else the cwd alone. None of the scratch path's ancestors holds `.git` or `GEMINI.md` on this machine (existence check). A future `.git` above the scratch root would let an ancestor `GEMINI.md` into the prompt. That is a text channel, not MCP or credentials |
+| project agents, skills, hooks, policies, commands | `:336477`, `:374172`, `:358614-358745`, `:337524` | `<cwd>/.gemini/{agents,skills,policies,commands}` and `<cwd>/.agents/`: absent (the operator's real ones sit under the REAL home, not the isolated one). The owned settings carry no `hooks` |
+| non-default approval modes, extension registry URI | `gemini-ORQHD633.js:8383`, `:8320` | neither is requested: no argv flag, no owned settings key |
+
+So trust opens no MCP or credential channel beyond what BR-108's owned files
+already carry. The env var also reaches gemini's own children (git, seen by the
+census), which read nothing from it.
+
+**Refusing a harness at selection (the preflight).** `resolveBackend` in the
+engine walks the harnesses through `preflightHarness`
+(`cognition/backend/preflight.ts`), which makes no subscription call:
+
+| check, in order | refused as | notes |
+|---|---|---|
+| `<bin> --version` exits 0 | `cli_missing` | the existing probe |
+| every flag the REAL builder passes appears in the CLI's own help (`claude --help`, `codex exec --help`, `gemini --help`, `agy --help`, `opencode run --help`), run with the builder's env in an isolated home, 10 s | `cli_incompatible` | FAIL-OPEN: a help that exits non-zero, prints nothing or times out counts as usable, so a misread help can never refuse claude |
+| opencode only: `~/.local/share/opencode/auth.json` exists | `not_logged_in` | existence only, never opened. It is opencode's sole subscription channel; claude (Keychain), codex (can be a keyring) and the gemini family are not listed, because a missing file there does not prove logged-out |
+
+A refused harness is skipped like a missing one. A run on a fallback harness
+carries `refused: [{harness, reason, detail}]` on `run_started`; when nothing is
+usable the skip is `run_skipped reason=cli_missing` if every refusal is a missing
+CLI, else `run_skipped reason=harness_refused` with the `refused` array. Neither
+skip consumes budget. The verdict is cached per brain process, like the
+`--version` probe: **restart the brain after upgrading an extractor CLI.**
+Limits, stated: a `run_skipped` renders `ok` in `igris cognition health` (true of
+`cli_missing` before BR-109; a follow-up TD owns rendering refusals as failing),
+and perception's session-end `selectLlmExtractor` is not preflighted (no
+fallback, and a `--help` spawn at init would add boot latency) — its runtime
+failures are named by the detectors above.
+
+**What the operator does, per reason:**
+
+| harness | reason | action |
+|---|---|---|
+| opencode | `auth_error` (`Token refresh failed: 401`) or `not_logged_in` | `opencode auth login` in your own shell, then restart the brain |
+| codex | `model_unsupported` (`… requires a newer version of Codex`) | upgrade codex, OR set `model` in `~/.codex/config.toml` to one the installed CLI serves (the isolated home carries that key verbatim) |
+| gemini | `auth_error` (exit 41) | re-authenticate gemini-cli (`gemini`, then `/auth`) |
+| gemini | `account_unsupported` (`This client is no longer supported for Gemini Code Assist for individuals…`) | nothing Igris can fix: the vendor retired the gemini-cli personal tier for this account. Use the `antigravity` harness (`llm_extractor.harness`, or put it first in `fallback_order`) |
+| any | `cli_incompatible` | the installed CLI rejects the extractor's argv: check its version against the builder (`cognition/backend/spawn-map.ts`) |
+
+**Proof.** `backend-harness-failures.test.ts` replays each CLI's measured bytes
+(`fixtures/br109-cli-failures.ts`) from a stub binary through the real
+`runBackend` (H1-H18, H12 through `runExtractor` into `event_log`; H15 is gemini's
+live exit-55 stderr, H18 the false-positive rows);
+`preflight.test.ts` pins the preflight (R1-R3, R7), `env.test.ts` and
+`engine.test.ts` its wiring, and `isolation-file-channels.test.ts` P4 pins the
+gemini argv against 0.45.0's declared options. The live PASS lines are recorded
+in the proof tables below as each runs: gemini after BR-109's review; opencode
+after `opencode auth login`; codex after the CLI is upgraded.
 
 ## what an extractor child inherits (TD-471, TD-472)
 
@@ -636,7 +803,7 @@ operator's REAL harness config instead of the isolated home:
 | `ANTIGRAVITY_EXECUTABLE_DATA_DIR` | antigravity | STRIPPED |
 | `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG` | gemini, antigravity, opencode | STRIPPED |
 | `OPENCODE_CONFIG`, `OPENCODE_CONFIG_DIR`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_AUTH_CONTENT`, `OPENCODE_DB`, `OPENCODE_TEST_HOME` | opencode | STRIPPED. `_CONTENT` is inline config, MCP included. |
-| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | opencode and any XDG-aware CLI | STRIPPED. An operator whose opencode auth lives under a custom `XDG_DATA_HOME` loses it in the isolated home, because only `~/.local/share/opencode` is forwarded. That was already true before TD-472. |
+| `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME`, `XDG_CACHE_HOME` | opencode and any XDG-aware CLI | STRIPPED. An operator whose opencode auth lives under a custom `XDG_DATA_HOME` loses it in the isolated home, because only `~/.local/share/opencode/auth.json` is forwarded (BR-109; the whole directory before it). That was already true before TD-472. |
 | `AWS_CONFIG_FILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_PROFILE` | claude (Bedrock), opencode | STRIPPED |
 | `NODE_OPTIONS` | gemini (node) | STRIPPED. `--require` loads operator code into the child. |
 
@@ -659,7 +826,7 @@ record the result envelope, booleans and env names only:
 |---|---|---|---|
 | claude | pending: runs after the TD-471 watcher's verdict | — | — |
 | codex | `PRE_EXISTING` under BR-108's isolation: both arms exit 1 identically — the request authenticates and the server answers 400 "the 'gpt-5.6-sol' model requires a newer version of Codex" (the operator config's model outruns codex 0.135.0; BR-109) | no | 2026-09-24, codex 0.135.0, this machine |
-| gemini | pending: `BLOCKED_ARGV` — the builder's `--print` flags are absent from gemini-cli 0.45.0 (BR-109) | — | — |
+| gemini | `PRE_EXISTING` — vendor-side (2026-09-25, gemini-cli 0.45.0, this machine): after BR-109's argv (`--prompt ''` + stdin, `--skip-trust`) both arms exit 1 with `account_unsupported` (the vendor retired gemini-cli's Code Assist for individuals tier; the login is valid — the token refreshed on the first pair). Nothing regressed; the harness decision is TD-474 | first pair yes, re-run no | 2026-09-25, gemini-cli 0.45.0, this machine |
 | antigravity | `PASS` under BR-108's isolation: both arms answered (allow 12.7 s, base 10.1 s) | n/a (agy keeps no refresh witness) | 2026-09-24, agy 1.0.16, this machine |
 | opencode | `PRE_EXISTING` (2026-09-24, opencode 1.14.22, this machine): both arms fail auth identically — the allowlist and the TD-471 env; nothing regressed; the isolated-HOME auth defect is BR-109 | — | — |
 
@@ -693,9 +860,9 @@ plugin directory cannot reach a child. It fails closed.
 |---|---|---|---|
 | claude | `Library/Keychains`, `.claude/.credentials.json` | `.claude.json`: the operator's copy minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey` (a metered Console key); every other key kept | `--strict-mcp-config`, no `--mcp-config` |
 | codex | `Library/Keychains`, `.codex/auth.json` | `.codex/config.toml`: root-section lines for `model`, `model_reasoning_effort`, `cli_auth_credentials_store`, `forced_login_method`, `forced_chatgpt_workspace_id`, `preferred_auth_method` with a one-line scalar value, copied verbatim; then an owned `[features]` block setting `apps`, `in_app_browser`, `plugin_sharing`, `plugins`, `skill_mcp_dependency_install`, `tool_call_mcp_elicitation` to false | none (see the residuals) |
-| gemini | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env` | `--allowed-mcp-server-names __igris_extractor_no_mcp__` |
+| gemini | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env` | `--allowed-mcp-server-names __igris_extractor_no_mcp__`, then `--skip-trust` and `--prompt ''` with the prompt on stdin (BR-109) |
 | antigravity | the gemini stores + `.gemini/antigravity-cli/antigravity-oauth-token`, `installation_id`, `cache/onboarding.json` | as gemini, plus `.gemini/antigravity-cli/settings.json` with only `model` | none (agy has no such flag) |
-| opencode | `Library/Keychains`, `.local/share/opencode` (whole directory, unchanged; narrowing it is BR-109's) | none | none |
+| opencode | `Library/Keychains`, `.local/share/opencode/auth.json` (the provider store only, BR-109; the whole directory before it) | none | none |
 
 **Why each owned copy is shaped the way it is:**
 
@@ -733,15 +900,18 @@ plugin directory cannot reach a child. It fails closed.
 - **MCP / exec declarations:** codex `config.toml` (whole) and `plugins/`;
   gemini `settings.json`, `extensions/` and `config/hooks.json`; the whole of
   `.config/opencode/` (`opencode.json`, any `opencode.jsonc` or `config.json`,
-  the plugin `package.json` / `node_modules`, `command/`).
+  the plugin `package.json` / `node_modules`, `command/`); opencode's
+  `mcp-auth.json` (MCP OAuth tokens, BR-109).
 - **Igris OS context:** `.gemini/agents/`, `.config/opencode/command/`,
   `.codex/AGENTS.md`.
 - **Metered-key files:** `.gemini/.env`, `.codex/.env`.
 - **Operator memory and history:** codex `memories_1.sqlite`, `history.jsonl`,
   `state_5.sqlite` and sessions; gemini `tmp/` and `history/`; agy
-  `conversation_summaries.db`, `history.jsonl` and `jetski_state.pbtxt`. At HEAD
-  a gemini or codex child wrote its transcript of untrusted text into those
-  directories through the links. It now writes into the reaped scratch home.
+  `conversation_summaries.db`, `history.jsonl` and `jetski_state.pbtxt`; opencode
+  `opencode.db*`, `storage/`, `snapshot/` (git object stores of operator projects)
+  `log/` and `tool-output/` (BR-109). Before these fixes a gemini, codex or opencode child wrote
+  its session of untrusted text into those directories through the links. It now
+  writes into the reaped scratch home.
 
 **`.env` files (gemini family).** gemini-cli 0.45.0's `findEnvFile`
 (`chunk-EUYIPFPA.js:16388-16419`) returns the FIRST hit, walking up from the
@@ -751,7 +921,9 @@ directory it checks `<dir>/.gemini/.env` (trusted folders only), then
 back to `homedir()/.gemini/.env` (trusted), then `homedir()/.env`. In an
 untrusted folder it still loads the keys on its auth-variable whitelist, and
 folder trust is on by default (`:14057`). The scratch root sits under the real
-HOME, so every ancestor of the isolated home is the operator's.
+HOME, so every ancestor of the isolated home is the operator's. Since BR-109 the
+gemini argv passes `--skip-trust`, so a gemini child walks the "trusted / off"
+row; agy is untrusted.
 
 | folder trust / `ignoreLocalEnv` | first file found before BR-108 | first file found now |
 |---|---|---|
@@ -788,7 +960,10 @@ and nothing else. This is code-read only; no Linux machine has run it.
 - A CLI that refreshes a linked token by write-temp-then-rename replaces the
   link in the scratch home, and the rotated token is reaped. That was already
   true of codex and gemini before BR-108. The probe's refresh witness observes
-  it.
+  it, and since BR-109 each arm also records `forward_links_intact`. opencode
+  1.14.22 writes `auth.json` IN PLACE (`Auth.set` → `writeJson` → `fs.writeFile`,
+  a static read of the binary), so its file link survives a refresh; before
+  BR-109 the whole directory was linked, which was rename-safe.
 
 **Versions read.** gemini-cli 0.45.0 (static read of the installed bundle),
 codex-cli 0.135.0 (offline commands against fixture homes), agy 1.0.16 (a
@@ -809,7 +984,7 @@ verdict:
 |---|---|---|
 | claude | pending: after the TD-471 watcher's verdict, with `--mcp-inventory`; a pre-deploy gate for the owned `.claude.json` | — |
 | codex | no MCP process spawned in either arm (census `cli_seen` true, `mcp_spawned` false); `codex login status` reads logged-in inside the isolated HOME; the call itself fails on the model-version 400 above (not auth; BR-109) | 2026-09-24, codex 0.135.0, this machine |
-| gemini | DEFERRED BR-109: its `--print` flags are absent from 0.45.0, so no live call can run. Structural proof: the static reads above, F1 / F6 / P3 green | — |
+| gemini | no MCP process spawned in either arm of either live pair (census `cli_seen` true, `mcp_spawned` false; forward links intact); the call itself is refused by the vendor (`account_unsupported`, 2026-09-25 re-run) — a PASS is not reachable for this account, the harness decision is TD-474. Structural proof: F1 / F6 / P3 / P4 green | 2026-09-25, gemini-cli 0.45.0, this machine |
 | antigravity | `PASS`: both arms answered, no MCP process spawned (census `cli_seen` true, `mcp_spawned` false) | 2026-09-24, agy 1.0.16, this machine |
 | opencode | not in BR-108's live AC. On this machine only `opencode.json` existed, and it was already excluded; an `opencode.jsonc` or `config.json` DID reach the child before BR-108 (F1 at HEAD) | — |
 

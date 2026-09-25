@@ -48,7 +48,8 @@ export const EXPECTED_FORWARD: Record<ExtractorHarness, readonly string[]> = {
     '.gemini/antigravity-cli/installation_id',
     '.gemini/antigravity-cli/cache/onboarding.json',
   ],
-  opencode: [KEYCHAIN, '.local/share/opencode'],
+  // BR-109: the provider auth store only — not mcp-auth.json, the sessions DB, storage/ or snapshot/.
+  opencode: [KEYCHAIN, '.local/share/opencode/auth.json'],
 };
 
 /** Paths WRITTEN by the isolation as owned regular files (given the full fixture operator HOME). */
@@ -117,6 +118,11 @@ export const NEVER_FORWARDED: readonly string[] = [
   '.gemini/settings.json',
   '.codex/config.toml',
   '.claude.json',
+  // BR-109: opencode's data-dir siblings of auth.json (MCP OAuth, sessions, git snapshots).
+  '.local/share/opencode/mcp-auth.json',
+  '.local/share/opencode/opencode.db',
+  '.local/share/opencode/storage',
+  '.local/share/opencode/snapshot',
 ];
 
 /** The sentinel name the gemini argv allows (V4: a non-empty list whose one name no server has). */
@@ -224,6 +230,10 @@ const FILES: Record<string, string> = {
   '.config/opencode/command/fx.md': 'fx\n',
   '.config/opencode/package.json': '{}',
   '.local/share/opencode/auth.json': '{}',
+  '.local/share/opencode/mcp-auth.json': '{}',
+  '.local/share/opencode/opencode.db': 'fx',
+  '.local/share/opencode/storage/session_diff/fx.json': '{}',
+  '.local/share/opencode/snapshot/fx/HEAD': 'fx\n',
 };
 
 /** Write the fixture operator HOME under `home` (which must be a fresh temp dir). */

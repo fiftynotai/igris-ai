@@ -21,6 +21,8 @@ import { spawnSync } from 'node:child_process';
 import {
   ALL_EXTRACTOR_HARNESSES,
   type ExtractorHarness,
+  type HarnessPreflight,
+  type HarnessRefusal,
   type ResolvedBackend,
 } from '../types.js';
 
@@ -119,9 +121,17 @@ export function isHarnessCliAvailable(harness: ExtractorHarness): boolean {
   return available;
 }
 
-/** Reset the cached probes — used by tests so the cache doesn't leak across files. */
+const _probeCacheResets: Array<() => void> = [];
+
+/** Register another per-process probe cache for `resetHarnessCliProbeCache` (preflight.ts; no import cycle). */
+export function registerProbeCacheReset(reset: () => void): void {
+  _probeCacheResets.push(reset);
+}
+
+/** Reset the cached probes (the `--version` cache and every registered one, e.g. the preflight). */
 export function resetHarnessCliProbeCache(): void {
   _cliAvailable.clear();
+  for (const reset of _probeCacheResets) reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -191,8 +201,9 @@ export function resolveHarness(
  * 4-layer chain, then probes it; if absent, walks the fallback order (global
  * `fallback_order`, else all harnesses) and returns the first present one. When
  * NONE is present, returns `{ harness: null }` — the engine maps that to
- * `run_skipped reason=cli_missing` (the brief's required skip; no rule fallback,
- * they are deleted).
+ * `run_skipped` (no rule fallback, they are deleted). A probe may return a
+ * `HarnessPreflight` (BR-109): a refused harness is skipped and listed in
+ * `refused`; a boolean probe yields the pre-BR-109 object.
  *
  * The chosen harness is always tried FIRST (regardless of where it sits in the
  * fallback order) so an explicit selection is honoured before alternatives.
@@ -201,14 +212,14 @@ export function resolveHarness(
  * @param instanceId      the instance id
  * @param instanceHarness the per-instance `config.harness`
  * @param env             the env (overrides + probe availability are pure here)
- * @param isAvailable     availability probe (injectable for tests; defaults to the real CLI probe)
+ * @param isAvailable     availability probe or preflight (injectable; defaults to the `--version` probe)
  */
 export function resolveBackend(
   global: LlmExtractorGlobalConfig,
   instanceId: string,
   instanceHarness: ExtractorHarness | null,
   env: NodeJS.ProcessEnv = process.env,
-  isAvailable: (h: ExtractorHarness) => boolean = isHarnessCliAvailable,
+  isAvailable: (h: ExtractorHarness) => boolean | HarnessPreflight = isHarnessCliAvailable,
 ): ResolvedBackend {
   const chosen = resolveHarness(global, instanceId, instanceHarness, env);
 
@@ -227,12 +238,17 @@ export function resolveBackend(
     }
   }
 
+  const refused: HarnessRefusal[] = [];
+  const result = (harness: ExtractorHarness | null): ResolvedBackend =>
+    refused.length > 0 ? { harness, fallback_order: tried, refused } : { harness, fallback_order: tried };
   for (const h of tried) {
-    if (isAvailable(h)) {
-      return { harness: h, fallback_order: tried };
-    }
+    const verdict = isAvailable(h);
+    if (verdict === true) return result(h);
+    if (verdict === false) continue;
+    if (verdict.usable) return result(h);
+    refused.push({ harness: h, reason: verdict.reason, detail: verdict.detail });
   }
-  return { harness: null, fallback_order: tried };
+  return result(null);
 }
 
 /** Narrow an unknown value to a valid `ExtractorHarness`. */

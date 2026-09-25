@@ -528,6 +528,24 @@ describe('runPerception', () => {
     expect(result.llm_status).not.toBe('failed:unknown');
   });
 
+  it.each(['model_unsupported', 'cli_incompatible', 'account_unsupported'])(
+    'runPerception: %s from extractor lands as failed:<reason>, not failed:unknown (BR-109)',
+    async (reason) => {
+      const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
+      const stub: LlmExtractor = async (_evts, _ctx, log) => {
+        log?.onEvent?.('perception.run_failed', { reason, error_message: 'fx' });
+        return [];
+      };
+      const result = await runPerception(
+        db,
+        { events, project: 'p', source: 's' },
+        { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true, llm_min_transcript_bytes: 0 },
+        stub,
+      );
+      expect(result.llm_status).toBe(`failed:${reason}`);
+    },
+  );
+
   it('runPerception: unrecognised reason collapses to failed:unknown (TD-079)', async () => {
     const events: TranscriptEvent[] = [{ role: 'user', content: 'X'.repeat(2000), timestamp: '' }];
     const stub: LlmExtractor = async (_evts, _ctx, log) => {

@@ -45,6 +45,13 @@
  *   NOT_LOGGED_IN      the harness's auth store is absent
  *   METERED_MODE       the stored login is metered; arms still run, `arms_verdict` holds the rest
  *
+ * PER ARM (BR-109): `fail_reason` is the backend's own named reason for the arm's exec
+ * result (`classifyExecResult` — the production classifier, enum only, never its
+ * detail), and `forward_links_intact` says every FORWARD auth store is still a LINK in
+ * the isolated HOME after the CLI ran (a rename-style token refresh would replace it
+ * with a file and strand the rotated token there). `--help` flag reads use the
+ * backend's `HELP_ARGV` / `flagsInHelp` — the selection preflight's one spelling.
+ *
  * VALUES NEVER REACH OUTPUT (plan D6). Records carry envelope enums, booleans, byte
  * counts, stderr CLASS names from a fixed list, env NAMES and MCP server NAMES. Never
  * stdout/stderr text, never a value, never a TOML header other than as a
@@ -84,9 +91,13 @@ import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import {
   assertUnderRoot,
   buildExtractorSpawn,
+  classifyExecResult,
   execHarness,
   extractText,
+  flagsInHelp,
+  forwardPathsFor,
   HARNESS_BIN,
+  HELP_ARGV,
   type ExtractorSpawn,
 } from '../src/engine/components/cognition/backend/index.js';
 import { detectClaudeErrorEnvelope } from '../src/engine/components/cognition/backend/parse-output.js';
@@ -248,15 +259,6 @@ const WITNESS: Record<ExtractorHarness, string | null> = {
   antigravity: null,
   opencode: '.local/share/opencode/auth.json',
 };
-/** `--help` argv per harness (the subcommand whose flags the builder uses). */
-const HELP_ARGV: Record<ExtractorHarness, string[]> = {
-  claude: ['--help'],
-  codex: ['exec', '--help'],
-  gemini: ['--help'],
-  antigravity: ['--help'],
-  opencode: ['run', '--help'],
-};
-
 const enumOr = (v: unknown, re: RegExp): string | null => (typeof v === 'string' && re.test(v) ? v : v == null ? null : '<non-enum>');
 const readJson = (p: string): Record<string, unknown> | null => {
   try {
@@ -431,11 +433,20 @@ function neutralized(spawn: ExtractorSpawn, f: { file: string; name: string }): 
 }
 
 function flagsPresent(bin: string, h: ExtractorHarness, flags: string[], env: NodeJS.ProcessEnv): Record<string, boolean> {
-  const r = spawnSync(bin, HELP_ARGV[h], { env, encoding: 'utf-8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
-  const text = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-  const out: Record<string, boolean> = {};
-  for (const f of flags) out[f] = new RegExp(`(^|[\\s,\\[])${f.replace(/[-]/g, '\\-')}([\\s,=\\]]|$)`, 'm').test(text);
-  return out;
+  const r = spawnSync(bin, [...HELP_ARGV[h]], { env, encoding: 'utf-8', timeout: 20_000, stdio: ['ignore', 'pipe', 'pipe'] });
+  return flagsInHelp(`${r.stdout ?? ''}\n${r.stderr ?? ''}`, flags);
+}
+
+/** FORWARD entries present in the real HOME that are no longer a link in the isolated HOME (names only). */
+function forwardLinksReplaced(h: ExtractorHarness, iso: string): string[] {
+  return forwardPathsFor(h).filter((rel) => {
+    if (!existsSync(join(homedir(), rel))) return false;
+    try {
+      return !lstatSync(join(iso, rel)).isSymbolicLink();
+    } catch {
+      return true; // gone
+    }
+  });
 }
 
 /** codex offline checks in the isolated HOME: `mcp list` name count + the owned deny block's booleans. */
@@ -652,7 +663,14 @@ async function runArm(
     const after = mtime(witness);
     const witnessMoved = before === null || after === null ? null : after !== before;
     const ok = !res.timed_out && res.code === 0 && answerOk;
-    const outcome: Outcome = ok ? 'ok' : envelope?.kind === 'auth_error' || stderrClasses.includes('auth') ? 'auth' : 'other';
+    const classified = inventory ? null : classifyExecResult(h, res, timeoutSec * 1_000);
+    const failReason = classified && !classified.ok ? (classified.fail_reason ?? null) : null;
+    const replaced = forwardLinksReplaced(h, spawn.cwd);
+    const outcome: Outcome = ok
+      ? 'ok'
+      : envelope?.kind === 'auth_error' || failReason === 'auth_error' || stderrClasses.includes('auth')
+        ? 'auth'
+        : 'other';
     let claudeEnvelope: object | undefined;
     if (h === 'claude' && !inventory) {
       let last: Record<string, unknown> | null = null;
@@ -685,6 +703,9 @@ async function runArm(
       ...(claudeEnvelope ? { claude_envelope: claudeEnvelope } : {}),
       ...(inventory ? { inventory: claudeInventory(res.stdout) } : {}),
       stderr_classes: stderrClasses,
+      fail_reason: failReason,
+      forward_links_intact: replaced.length === 0,
+      forward_links_replaced: replaced,
       dropped_names: dropped,
       dropped_names_mentioned: mentioned,
       auth_store_mtime_changed: witnessMoved,

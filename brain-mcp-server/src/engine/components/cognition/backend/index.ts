@@ -2,8 +2,9 @@
  * Brain Engine v7.1 — Cognition backend: the composed run-the-LLM seam.
  *
  * Composes the ported FR-201 pieces into ONE call the engine uses:
- *   resolveBackend (env.ts) → buildExtractorSpawn (spawn-map.ts) →
- *   execHarness (exec.ts) → detectClaudeErrorEnvelope (claude, TD-447) →
+ *   resolveBackend (env.ts, + preflightHarness at selection, BR-109) →
+ *   buildExtractorSpawn (spawn-map.ts) → execHarness (exec.ts) →
+ *   classifyExecResult: detectHarnessFailure → the unknown-argument rule →
  *   extractText (parse-output.ts) → cleanup.
  *
  * The engine owns the GATES (cold-start, budget, timeout-as-config, lifecycle);
@@ -17,8 +18,8 @@
 
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import { buildExtractorSpawn, type SpawnOptions } from './spawn-map.js';
-import { execHarness } from './exec.js';
-import { extractText, detectClaudeErrorEnvelope } from './parse-output.js';
+import { execHarness, type ExecResult } from './exec.js';
+import { extractText, detectHarnessFailure, detectUnknownArgument, scrubSecrets } from './parse-output.js';
 
 export {
   subscriptionOnlyEnv,
@@ -46,7 +47,16 @@ export {
   type PromptDelivery,
 } from './spawn-map.js';
 export { execHarness, type ExecResult, type ExecOptions } from './exec.js';
-export { extractText } from './parse-output.js';
+export {
+  extractText,
+  classifyCliError,
+  detectHarnessFailure,
+  detectUnknownArgument,
+  scrubSecrets,
+  stripAnsi,
+  type CliFailure,
+} from './parse-output.js';
+export { preflightHarness, resetPreflightCache, HELP_ARGV, flagsInHelp } from './preflight.js';
 
 /** Why a backend run did not yield usable text. */
 export type BackendFailReason =
@@ -54,8 +64,11 @@ export type BackendFailReason =
   | 'non_zero_exit'
   | 'spawn_error'
   | 'empty_response'
-  | 'api_error' // TD-447: claude reported an API failure inside its result envelope
-  | 'auth_error'; // TD-447: same envelope, 401/403 or an authentication message
+  | 'api_error' // TD-447 claude envelope; BR-109 any detected CLI error envelope
+  | 'auth_error' // 401/403 or an authentication message
+  | 'model_unsupported' // BR-109: the CLI or its server does not serve the model
+  | 'cli_incompatible' // BR-109: the CLI rejected the invocation (unknown flag, gemini 42/52/55)
+  | 'account_unsupported'; // BR-109: the vendor refuses this account's tier for this CLI
 
 /** The result of one isolated LLM call. */
 export interface BackendRunResult {
@@ -65,8 +78,33 @@ export interface BackendRunResult {
   text: string;
   /** Set when ok===false. */
   fail_reason?: BackendFailReason;
-  /** A short diagnostic (stderr tail / exit code) for the lifecycle payload. */
+  /** A short diagnostic for the lifecycle payload, secret-shape scrubbed (BR-109 D2). */
   detail?: string;
+}
+
+const failed = (fail_reason: BackendFailReason, detail: string): BackendRunResult => ({
+  ok: false,
+  text: '',
+  fail_reason,
+  detail: scrubSecrets(detail),
+});
+
+/**
+ * Turn one exec result into a backend result: timeout → the harness's own failure
+ * channel → an unknown-argument rejection → `non_zero_exit` → text (else
+ * `empty_response`). Every `detail` is scrubbed. Shared with the TD-472 probe.
+ */
+export function classifyExecResult(harness: ExtractorHarness, res: ExecResult, timeoutMs: number): BackendRunResult {
+  if (res.timed_out) return failed('timeout', `timeout after ${timeoutMs}ms`);
+  const named = detectHarnessFailure(harness, res);
+  if (named) return failed(named.kind, named.detail);
+  const rejected = detectUnknownArgument(res);
+  if (rejected !== null) return failed('cli_incompatible', rejected);
+  if (res.code !== 0 && !res.stdout.trim()) {
+    return failed('non_zero_exit', `exit ${String(res.code)}: ${res.stderr.trim().slice(0, 200)}`);
+  }
+  const text = extractText(harness, res.stdout);
+  return text.trim() ? { ok: true, text } : failed('empty_response', 'no text in stdout');
 }
 
 /**
@@ -97,9 +135,8 @@ export async function runBackend(
 
   const spawn = buildSpawn(harness, prompt, opts);
   try {
-    // Delivery shapes the argv + stdin: 'stdin' pipes the prompt body; 'argv'
-    // appends it as the final argument (gemini/codex/opencode take the prompt
-    // as a positional arg, claude pipes it on stdin).
+    // Delivery shapes the argv + stdin: 'stdin' pipes the prompt body (claude,
+    // gemini); 'argv' appends it as the final argument (codex, opencode, agy).
     const args =
       spawn.delivery === 'argv' ? [...spawn.args, spawn.prompt] : spawn.args;
     const res = await runExec(spawn.bin, args, {
@@ -108,36 +145,9 @@ export async function runBackend(
       timeout_ms: timeoutMs,
       stdin: spawn.delivery === 'stdin' ? spawn.prompt : undefined,
     });
-
-    if (res.timed_out) {
-      return { ok: false, text: '', fail_reason: 'timeout', detail: `timeout after ${timeoutMs}ms` };
-    }
-    if (res.code !== 0 && !res.stdout.trim()) {
-      return {
-        ok: false,
-        text: '',
-        fail_reason: 'non_zero_exit',
-        detail: `exit ${String(res.code)}: ${res.stderr.trim().slice(0, 200)}`,
-      };
-    }
-    // TD-447: claude reports API/auth failures INSIDE the result envelope (exit 1
-    // with non-empty stdout), which extractText would otherwise lift as the answer.
-    if (harness === 'claude') {
-      const envelope = detectClaudeErrorEnvelope(res.stdout);
-      if (envelope) return { ok: false, text: '', fail_reason: envelope.kind, detail: envelope.detail };
-    }
-    const text = extractText(harness, res.stdout);
-    if (!text.trim()) {
-      return { ok: false, text: '', fail_reason: 'empty_response', detail: 'no text in stdout' };
-    }
-    return { ok: true, text };
+    return classifyExecResult(harness, res, timeoutMs);
   } catch (err) {
-    return {
-      ok: false,
-      text: '',
-      fail_reason: 'spawn_error',
-      detail: err instanceof Error ? err.message.slice(0, 200) : String(err),
-    };
+    return failed('spawn_error', err instanceof Error ? err.message.slice(0, 200) : String(err));
   } finally {
     spawn.cleanup();
   }

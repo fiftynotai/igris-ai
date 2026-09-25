@@ -65,6 +65,9 @@ export type RunFailedReason =
   | 'parse_error'        // extractJsonArrayReply returned [] from non-empty stdout
   | 'api_error'          // TD-447 — claude reported an API failure in its result envelope
   | 'auth_error'         // TD-447 — same envelope, 401/403 or an authentication message
+  | 'model_unsupported'  // BR-109 — the CLI or its server does not serve the model
+  | 'cli_incompatible'   // BR-109 — the CLI rejected the invocation (unknown flag)
+  | 'account_unsupported' // BR-109 — the vendor refuses this account's tier for this CLI
   | 'db_error'           // INSERT into learnings or learnings table missing
   | 'unknown';           // catch-all in the runner-level try/catch
 

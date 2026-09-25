@@ -35,13 +35,24 @@ describe('extractText', () => {
   it('keeps an unrecognised-but-valid JSON event as a raw line (faithful FR-201 port)', () => {
     // A valid JSON line that is NOT a known event shape is kept verbatim so the
     // instance parser can still find a payload in it (judge.ts:659-661 behaviour).
+    // BR-109 D1a scopes this to the non-codex harnesses (the codex case is below).
     const lines = [
       JSON.stringify({ item: { type: 'agent_message', text: 'real' } }),
       JSON.stringify({ item: { type: 'other', text: 'unknown-shape' } }),
     ].join('\n');
-    const out = extractText('codex', lines);
+    const out = extractText('antigravity', lines);
     expect(out).toContain('real');
     expect(out).toContain('unknown-shape'); // kept as the raw line, not dropped
+  });
+
+  it('codex drops every JSON event that is not an agent_message or a result — stream metadata is not answer text (BR-109 D1a)', () => {
+    const lines = [
+      JSON.stringify({ item: { type: 'agent_message', text: 'real' } }),
+      JSON.stringify({ item: { type: 'other', text: 'unknown-shape' } }),
+      JSON.stringify({ type: 'turn.completed' }),
+      'a prose line',
+    ].join('\n');
+    expect(extractText('codex', lines)).toBe('real\na prose line');
   });
 
   it('treats gemini/antigravity --print prose as raw text', () => {

@@ -79,7 +79,8 @@ const FORWARD: Record<ExtractorHarness, readonly string[]> = {
     '.gemini/antigravity-cli/installation_id',
     '.gemini/antigravity-cli/cache/onboarding.json',
   ],
-  opencode: [KEYCHAIN, '.local/share/opencode'],
+  // The provider store only: its mcp-auth.json, sessions DB and snapshots stay behind (BR-109).
+  opencode: [KEYCHAIN, '.local/share/opencode/auth.json'],
 };
 
 // codex root keys carried into the owned config.toml (single-line scalars only).

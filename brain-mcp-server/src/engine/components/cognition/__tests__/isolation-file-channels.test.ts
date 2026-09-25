@@ -18,7 +18,8 @@
  * membership; F3 the Linux claude credential link; F4 auth keys survive, exec keys
  * do not; F5 no write-through (byte witness); F5m owned files are 0o600 regular;
  * F6 `.env` sentinels + a verbatim gemini-cli `findEnvFile` replica; F7 fail-closed
- * parsing; F8 forbidden markers; F9 the fence; P1-P3 the argv pins.
+ * parsing; F8 forbidden markers; F9 the fence; P1-P3 the argv pins; P4-P5 (BR-109) the gemini
+ * argv against gemini-cli 0.45.0's declared options, and the agy argv unchanged.
  *
  * @module engine/components/cognition/__tests__/isolation-file-channels.test
  */
@@ -56,6 +57,7 @@ import {
   childVisibleMcpNames,
   seedOperatorHome,
 } from './fixtures/br108-isolated-home.js';
+import { GEMINI_045_OPTIONS } from './fixtures/br109-cli-failures.js';
 
 const PROMPT: ExtractorPrompt = { system: 'extract', user: 'ctx' };
 const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
@@ -454,6 +456,36 @@ describe('BR-108 — argv pins (P1-P3)', () => {
   it('P3: the antigravity argv carries no --allowed-mcp-server-names (agy has no such flag)', () => {
     withHome('antigravity', (_iso, spawn) => {
       expect(spawn.args).not.toContain('--allowed-mcp-server-names');
+    });
+  });
+});
+
+describe('BR-109 — the gemini argv is one gemini-cli 0.45.0 accepts (P4, P5)', () => {
+  // `--skip-trust` (BR-109 live): trusted mode reads `<cwd>/.gemini/.env` with ALL keys and turns
+  // on the MCP start path; F6's trusted rows and P3's sentinel are what keep both closed.
+  it('P4: gemini args are exactly the sentinel pair, `--skip-trust`, then `--prompt \'\'`, delivered on stdin, and every flag is a declared 0.45.0 option', () => {
+    withHome('gemini', (_iso, spawn) => {
+      expect(spawn.args).toEqual(['--allowed-mcp-server-names', GEMINI_NO_MCP_SENTINEL, '--skip-trust', '--prompt', '']);
+      expect(spawn.delivery).toBe('stdin');
+      expect(spawn.args.filter((a) => a.startsWith('-') && !GEMINI_045_OPTIONS.includes(a))).toEqual([]);
+    });
+  });
+
+  it('P4: a model pin appends a declared option, and the sentinel pair stays first', () => {
+    const spawn = buildExtractorSpawn('gemini', PROMPT, { model: 'fx', env: { IGRIS_LLM_EXTRACTOR_SCRATCH_ROOT: scratch } });
+    try {
+      expect(spawn.args.slice(0, 2)).toEqual(['--allowed-mcp-server-names', GEMINI_NO_MCP_SENTINEL]);
+      expect(spawn.args.filter((a) => a.startsWith('-') && !GEMINI_045_OPTIONS.includes(a))).toEqual([]);
+      expect(spawn.args).toContain('--model');
+    } finally {
+      spawn.cleanup();
+    }
+  });
+
+  it('P5 (control): the antigravity argv still carries --print-timeout <n>s and --print with argv delivery', () => {
+    withHome('antigravity', (_iso, spawn) => {
+      expect(spawn.args).toEqual(['--print-timeout', '120s', '--print']);
+      expect(spawn.delivery).toBe('argv');
     });
   });
 });

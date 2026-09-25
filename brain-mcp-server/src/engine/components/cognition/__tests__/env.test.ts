@@ -28,7 +28,7 @@ import {
   resolveBackend,
   type LlmExtractorGlobalConfig,
 } from '../backend/env.js';
-import type { ExtractorHarness } from '../types.js';
+import type { ExtractorHarness, HarnessPreflight } from '../types.js';
 import { EXPECTED_ALLOW } from './fixtures/td472-child-env-allow.js';
 
 describe('subscriptionOnlyEnv', () => {
@@ -390,5 +390,48 @@ describe('resolveBackend — availability + fallback_order', () => {
     // the order tried is recorded for observability
     expect(b.fallback_order.length).toBeGreaterThan(0);
     expect(b.fallback_order[0]).toBe('claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-109 — a PREFLIGHT seam: a refused harness is skipped with a named entry (AC-6)
+// ---------------------------------------------------------------------------
+
+describe('resolveBackend — a HarnessPreflight seam (BR-109, R4/R5)', () => {
+  const noEnv: NodeJS.ProcessEnv = {};
+  const refuse = (reason: 'cli_missing' | 'cli_incompatible' | 'not_logged_in', detail: string): HarnessPreflight => ({
+    usable: false,
+    reason,
+    detail,
+  });
+
+  it('R4: chosen gemini refused (cli_incompatible), claude usable → claude runs, the refusal is named', () => {
+    const b = resolveBackend({ harness: 'gemini', fallback_order: ['gemini', 'claude'] }, 'perception', null, noEnv, (h) =>
+      h === 'gemini' ? refuse('cli_incompatible', 'builder flags absent from gemini --help: --prompt') : { usable: true },
+    );
+    expect(b.harness).toBe('claude');
+    expect(b.fallback_order.slice(0, 2)).toEqual(['gemini', 'claude']);
+    expect(b.refused).toEqual([
+      { harness: 'gemini', reason: 'cli_incompatible', detail: 'builder flags absent from gemini --help: --prompt' },
+    ]);
+  });
+
+  it('R4: nothing usable → harness:null and every refusal listed in walk order', () => {
+    const b = resolveBackend({ harness: 'opencode', fallback_order: ['opencode', 'gemini'] }, 'perception', null, noEnv, (h) =>
+      h === 'opencode' ? refuse('not_logged_in', 'no auth store') : h === 'gemini' ? refuse('cli_incompatible', 'x') : refuse('cli_missing', 'y'),
+    );
+    expect(b.harness).toBeNull();
+    expect((b.refused ?? []).map((r) => `${r.harness}:${r.reason}`).slice(0, 3)).toEqual([
+      'opencode:not_logged_in',
+      'gemini:cli_incompatible',
+      'claude:cli_missing',
+    ]);
+  });
+
+  it('R5 (back-compat control): a boolean seam yields exactly the pre-BR-109 object — no refused key', () => {
+    const present = new Set<ExtractorHarness>(['claude']);
+    const b = resolveBackend({ harness: 'codex', fallback_order: ['claude'] }, 'perception', null, noEnv, (h) => present.has(h));
+    expect(b).toEqual({ harness: 'claude', fallback_order: ['codex', 'claude', 'gemini', 'opencode', 'antigravity'] });
+    expect('refused' in b).toBe(false);
   });
 });

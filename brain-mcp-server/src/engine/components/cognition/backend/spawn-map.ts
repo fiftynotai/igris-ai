@@ -13,9 +13,9 @@
  * backend a {system, user} pair. Claude takes `--system-prompt` (the perception
  * pattern — instructions on a separate channel from untrusted content); the
  * other harnesses (no system-prompt flag) get the system text prepended to the
- * user text with a clear delimiter. The `prompt` passed via argv/stdin is built
- * by the caller (`exec` pipes it on stdin for claude/codex per the perception
- * extractor, or via argv for the gemini-family `--print`).
+ * user text with a clear delimiter. The prompt goes on stdin for claude and
+ * gemini (`--prompt ''`, BR-109: gemini-cli 0.45.0 has no `--print`) and as
+ * the argv tail for codex, opencode and agy.
  *
  * EVERY spawn runs in the brain-isolated HOME (auth stores symlinked, owned
  * MCP-free configs; see docs/COGNITION.md) plus each CLI's verified MCP switch,
@@ -54,7 +54,7 @@ export interface ExtractorSpawn {
 export interface SpawnOptions {
   /** Optional model pin (a valid id for the harness). Omitted ⇒ subscription default. */
   model?: string;
-  /** Soft timeout in seconds for harnesses with their own print-timeout (gemini family). */
+  /** agy's own `--print-timeout` in seconds (min 60, default 120). */
   printTimeoutSec?: number;
   /** Env override for the isolated home scratch root (tests inject a temp dir). */
   env?: NodeJS.ProcessEnv;
@@ -139,26 +139,41 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
 }
 
 /**
- * Gemini-family (gemini / antigravity → the `gemini`/`agy` CLI). Headless
- * `--print` in the brain-isolated Gemini HOME (owned MCP-free settings). gemini
- * also gets `--allowed-mcp-server-names` with one name no server has, which
- * blocks every server from any settings layer (an EMPTY list blocks nothing);
- * agy has no such flag. `--print-timeout` pins the deadline. The composed
- * prompt is the argv tail. Subscription auth.
- * Ported from `judge.ts:buildAgySpawn:526-545` (generalized to gemini too).
+ * Gemini (`gemini` CLI) in the brain-isolated Gemini HOME (owned MCP-free
+ * settings). `--allowed-mcp-server-names` with one name no server has blocks
+ * every server from any settings layer (an EMPTY list blocks nothing). A bare
+ * `--prompt` token makes the run headless whatever the TTY, and its empty value
+ * leaves stdin as the whole prompt (BR-109). `execHarness` owns the deadline.
+ * `--skip-trust`: headless gemini exits 55 in an untrusted cwd. The cwd is the
+ * isolated home (owned files + auth links only); trust reads that home's
+ * `.gemini/.env` (owned, empty) and project dirs, and opens the MCP start path,
+ * where the sentinel still blocks every server name (docs/COGNITION.md).
  */
-function buildGeminiFamilySpawn(
-  harness: 'gemini' | 'antigravity',
-  prompt: ExtractorPrompt,
-  opts: SpawnOptions,
-  iso: IsolatedHome,
-): ExtractorSpawn {
-  const printTimeoutSec = Math.max(60, opts.printTimeoutSec ?? 120);
-  const noMcp = harness === 'gemini' ? ['--allowed-mcp-server-names', '__igris_extractor_no_mcp__'] : [];
-  const args = [...noMcp, '--print-timeout', `${printTimeoutSec}s`, '--print'];
+function buildGeminiSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
+  const args = ['--allowed-mcp-server-names', '__igris_extractor_no_mcp__', '--skip-trust', '--prompt', ''];
   if (opts.model) args.push('--model', opts.model);
   return {
-    bin: HARNESS_BIN[harness],
+    bin: HARNESS_BIN.gemini,
+    args,
+    env: subscriptionOnlyEnv(process.env, { HOME: iso.home }),
+    cwd: iso.home,
+    delivery: 'stdin',
+    prompt: composePrompt(prompt),
+    cleanup: iso.cleanup,
+  };
+}
+
+/**
+ * Antigravity (`agy`). Headless `--print` in the brain-isolated Gemini HOME;
+ * `--print-timeout` pins the deadline; the composed prompt is the argv tail.
+ * Ported from `judge.ts:buildAgySpawn:526-545`.
+ */
+function buildAgySpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
+  const printTimeoutSec = Math.max(60, opts.printTimeoutSec ?? 120);
+  const args = ['--print-timeout', `${printTimeoutSec}s`, '--print'];
+  if (opts.model) args.push('--model', opts.model);
+  return {
+    bin: HARNESS_BIN.antigravity,
     args,
     env: subscriptionOnlyEnv(process.env, { HOME: iso.home }),
     cwd: iso.home,
@@ -171,7 +186,8 @@ function buildGeminiFamilySpawn(
 /**
  * OpenCode. Headless `run` in the brain-isolated HOME. OpenCode reads
  * project-scoped config from the cwd (the empty isolated home); no global
- * `~/.config/opencode` is forwarded. The composed prompt is the argv tail.
+ * `~/.config/opencode` is forwarded, and of its data dir only `auth.json`
+ * (BR-109). The composed prompt is the argv tail.
  * Subscription auth.
  * (No FR-201 judge backend for opencode — modelled on the antigravity `--print`
  * shape + opencode's `run` headless verb; the same isolation guarantees apply.)
@@ -218,9 +234,9 @@ export function buildExtractorSpawn(
     case 'codex':
       return buildCodexSpawn(prompt, opts, iso);
     case 'gemini':
-      return buildGeminiFamilySpawn('gemini', prompt, opts, iso);
+      return buildGeminiSpawn(prompt, opts, iso);
     case 'antigravity':
-      return buildGeminiFamilySpawn('antigravity', prompt, opts, iso);
+      return buildAgySpawn(prompt, opts, iso);
     case 'opencode':
       return buildOpencodeSpawn(prompt, opts, iso);
   }

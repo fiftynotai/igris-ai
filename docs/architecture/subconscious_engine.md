@@ -79,7 +79,11 @@ lifecycle event and returns:
 3. **DAILY-BUDGET** — today's `run_started` count ≥ `llm_daily_budget` (default 8) →
    `run_skipped(reason='budget')` with `used_today` + `budget` in the payload.
 4. **BYTES** — the digest is below `min_digest_bytes` (default 10 KB), unless `force`.
-5. **BACKEND** — the resolved harness CLI is absent → `run_skipped(reason='cli_missing')`.
+5. **BACKEND** — no harness in the fallback walk is usable → `run_skipped(reason='cli_missing')`
+   when every candidate's CLI is absent, else `run_skipped(reason='harness_refused')` with a
+   `refused` array (BR-109: the call-free selection preflight, `cognition/backend/preflight.ts`,
+   refused a CLI missing a builder flag or, for opencode, its auth store). A run on a fallback
+   harness carries the same `refused` array on `run_started`.
 
 Past the gates, the engine writes `run_started` (consuming budget), runs the isolated
 LLM call, persists candidates via the instance's `persistCandidate`, and writes
@@ -90,19 +94,26 @@ nor surface as stuck-RUNNING.
 
 `run_failed.reason` is a closed vocabulary with two writers. The BACKEND
 (`cognition/backend/index.ts`, `BackendFailReason`) writes `timeout`, `non_zero_exit`,
-`spawn_error`, `empty_response`, `api_error` and `auth_error`, each with a `detail`
-string carrying the CLI's own message (first 200 chars; `(http N)` appended when the
-envelope named a status). The ENGINE (`cognition/engine/index.ts`) writes
+`spawn_error`, `empty_response`, `api_error`, `auth_error`, `model_unsupported`,
+`cli_incompatible` and `account_unsupported`, each with a `detail` string carrying the CLI's own message (first 200
+chars; `(http N)` appended when the envelope named a status), secret-shape scrubbed. The ENGINE (`cognition/engine/index.ts`) writes
 `build_context_error`, `backend_error`, `parse_error` and `db_error`; `response_bytes`
 accompanies `parse_error` ONLY. Since **TD-447** a claude `{type:"result", is_error:true}`
 envelope — the CLI reporting an API or auth failure INSIDE its JSON with exit 1 — is
 classified `api_error` (or `auth_error` on 401/403 or an authentication message) BEFORE
 text extraction, so it never reaches an instance parser and is never `parse_error`.
-Perception's legacy path carries both classes at BOTH of its scopes: the extractor
-(`perception/extractors/llm_via_claude_code.ts`) writes them as `perception.run_failed`'s
-`reason`, and the runner (`perception/runner.ts`) maps that reason onto `llm_status` as
-`failed:api_error` and `failed:auth_error` — the value the MCP tool result and the
-`perception_extract_cli.ts` summary line print — instead of `failed:unknown`.
+Since **BR-109** every harness is read on the channel its CLI actually reports failure
+on, before text extraction: codex's JSONL `turn.failed` / `error` events, opencode's stderr
+`Error:` line (it exits 0), gemini's vendor tier refusal (`account_unsupported`) and exit
+codes 41/42/52/55, and — for any harness — a
+non-zero exit whose stderr rejects an argument (`cli_incompatible`). One classifier names
+the reason (`auth_error`, `model_unsupported`, else `api_error`); the per-CLI table is in
+`docs/COGNITION.md`. Perception's legacy path carries every backend class at BOTH of its
+scopes: the extractor (`perception/extractors/llm_via_claude_code.ts`) writes them as
+`perception.run_failed`'s `reason`, and the runner (`perception/runner.ts`) maps that
+reason onto `llm_status` as `failed:api_error`, `failed:auth_error`,
+`failed:model_unsupported`, `failed:cli_incompatible` and `failed:account_unsupported` — the value the MCP tool result
+and the `perception_extract_cli.ts` summary line print — instead of `failed:unknown`.
 
 ---
 

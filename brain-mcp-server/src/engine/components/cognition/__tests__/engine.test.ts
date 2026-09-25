@@ -564,3 +564,61 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
     expect(result.backend?.harness).toBe('gemini');
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-109 — preflight refusals at selection (AC-6, R6/R7)
+// ---------------------------------------------------------------------------
+
+describe('runExtractor — harness refusals (BR-109)', () => {
+  let db: Database.Database;
+  beforeEach(() => {
+    db = makeEventLogDb();
+  });
+  afterEach(() => db.close());
+
+  const refusedGemini = { harness: 'gemini' as const, reason: 'cli_incompatible' as const, detail: 'builder flags absent from gemini --help: --prompt' };
+
+  it('R6: nothing usable, a non-missing refusal among them → ONE run_skipped {reason:harness_refused, refused}, no run_started', async () => {
+    const inst = makeDummyInstance();
+    const refused = [refusedGemini, { harness: 'claude' as const, reason: 'cli_missing' as const, detail: '`claude --version` failed' }];
+    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: null, fallback_order: ['gemini', 'claude'], refused }) });
+    const r = await runExtractor(db, inst, {}, deps);
+    expect(r.outcome).toBe('skipped');
+    expect(r.skip_reason).toBe('harness_refused');
+    expect(names(db)).toEqual([eventName('dummy', 'run_skipped')]);
+    const payload = JSON.parse(events(db)[0].payload) as { reason: string; refused: unknown; fallback_order: string[] };
+    expect(payload.reason).toBe('harness_refused');
+    expect(payload.refused).toEqual(refused);
+    expect(payload.fallback_order).toEqual(['gemini', 'claude']);
+  });
+
+  it('R6 (unchanged control): every refusal is cli_missing → run_skipped reason=cli_missing, payload {fallback_order} only', async () => {
+    const inst = makeDummyInstance();
+    const refused = [{ harness: 'claude' as const, reason: 'cli_missing' as const, detail: 'x' }];
+    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: null, fallback_order: ['claude'], refused }) });
+    const r = await runExtractor(db, inst, {}, deps);
+    expect(r.skip_reason).toBe('cli_missing');
+    const payload = JSON.parse(events(db)[0].payload) as Record<string, unknown>;
+    expect(payload.reason).toBe('cli_missing');
+    expect(payload.fallback_order).toEqual(['claude']);
+    expect('refused' in payload).toBe(false);
+  });
+
+  it('R7a: the chosen harness refused, a fallback runs → run_started carries the refusal', async () => {
+    const inst = makeDummyInstance();
+    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: 'claude', fallback_order: ['gemini', 'claude'], refused: [refusedGemini] }) });
+    const r = await runExtractor(db, inst, {}, deps);
+    expect(r.outcome).toBe('succeeded');
+    const started = events(db).find((e) => e.event_name === eventName('dummy', 'run_started'));
+    const payload = JSON.parse(started!.payload) as { harness: string; refused?: unknown };
+    expect(payload.harness).toBe('claude');
+    expect(payload.refused).toEqual([refusedGemini]);
+  });
+
+  it('R7a (control): no refusal → run_started carries no refused key (the pre-BR-109 payload)', async () => {
+    const r = await runExtractor(db, makeDummyInstance(), {}, fakeDeps(OK_RESPONSE));
+    expect(r.outcome).toBe('succeeded');
+    const started = events(db).find((e) => e.event_name === eventName('dummy', 'run_started'));
+    expect('refused' in (JSON.parse(started!.payload) as object)).toBe(false);
+  });
+});

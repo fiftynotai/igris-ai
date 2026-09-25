@@ -8,7 +8,8 @@
  *   2. the COLD-START gate    — a session booted within the grace → run_skipped
  *   3. the DAILY-BUDGET gate  — today's run_started ≥ budget → run_skipped
  *   4. the BYTES cost gate    — input below min_input_bytes (unless force) → run_skipped
- *   5. the BACKEND resolution — pick + probe the harness; absent → run_skipped(cli_missing)
+ *   5. the BACKEND resolution — pick + preflight the harness; none usable →
+ *      run_skipped(cli_missing | harness_refused, BR-109)
  *   6. the PROMPT-INJECTION WRAP — wrap the instance's user prompt in an
  *      untrusted-content envelope before the isolated LLM call
  *   7. the TIMEOUT           — config.timeout_ms, enforced by the backend exec
@@ -34,11 +35,8 @@ import type {
 } from '../types.js';
 import { makeRunEmitter } from '../lifecycle.js';
 import { evaluateBudget } from '../budget.js';
-import {
-  resolveBackend,
-  isHarnessCliAvailable,
-  type LlmExtractorGlobalConfig,
-} from '../backend/env.js';
+import { resolveBackend, type LlmExtractorGlobalConfig } from '../backend/env.js';
+import { preflightHarness } from '../backend/preflight.js';
 import { runBackend, type BackendRunResult } from '../backend/index.js';
 
 // re-export the global-config type so callers depend on `engine` not deep paths
@@ -55,7 +53,7 @@ export type { LlmExtractorGlobalConfig } from '../backend/env.js';
 export interface RunExtractorDeps {
   /** Global `llm_extractor` config (harness default + fallback order). */
   globalConfig?: LlmExtractorGlobalConfig;
-  /** Resolve which harness CLI to run (default: the real 4-layer chain + probe). */
+  /** Resolve which harness CLI to run (default: the real 4-layer chain + the BR-109 preflight). */
   resolveBackend?: (instance: CognitionInstance) => ResolvedBackend;
   /** Run the isolated LLM call (default: the real brain-isolated backend). */
   runBackend?: (
@@ -232,24 +230,28 @@ export async function runExtractor<TContext, TCandidate>(
     return skip('gate_bytes', { input_bytes: inputBytes, min_input_bytes: instance.config.min_input_bytes });
   }
 
-  // BACKEND RESOLUTION — pick + probe the harness. Absent → cli_missing skip.
+  // BACKEND RESOLUTION — pick + preflight the harness (BR-109). None usable →
+  // cli_missing when every refusal is a missing CLI, else harness_refused.
   const resolve =
     deps.resolveBackend ??
     ((inst: CognitionInstance) =>
-      resolveBackend(
-        deps.globalConfig ?? {},
-        inst.id,
-        inst.config.harness,
-        deps.env ?? process.env,
-        isHarnessCliAvailable,
+      resolveBackend(deps.globalConfig ?? {}, inst.id, inst.config.harness, deps.env ?? process.env, (h) =>
+        preflightHarness(h),
       ));
   const backend = resolve(instance);
+  const refused = backend.refused ?? [];
   if (backend.harness === null) {
-    return skip('cli_missing', { fallback_order: backend.fallback_order });
+    return refused.some((r) => r.reason !== 'cli_missing')
+      ? skip('harness_refused', { fallback_order: backend.fallback_order, refused })
+      : skip('cli_missing', { fallback_order: backend.fallback_order });
   }
 
   // From here a real run is happening — write run_started (consumes budget).
-  emitter.emit('run_started', { harness: backend.harness, input_bytes: inputBytes });
+  emitter.emit('run_started', {
+    harness: backend.harness,
+    input_bytes: inputBytes,
+    ...(refused.length > 0 ? { refused } : {}),
+  });
 
   // BUILD PROMPT (slot 3) + the engine's prompt-injection wrap.
   const rawPrompt = instance.promptBuilder(ctx);

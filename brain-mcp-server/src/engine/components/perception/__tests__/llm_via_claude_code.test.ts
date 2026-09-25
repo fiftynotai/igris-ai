@@ -534,6 +534,19 @@ describe('makeBackendLlmExtractor (mocked backend)', () => {
     );
   });
 
+  it.each([
+    ['model_unsupported', "The 'gpt-5.6-sol' model requires a newer version of Codex. Please upgrade to the latest app or CLI and try again. (http 400)"],
+    ['cli_incompatible', 'Unknown arguments: print-timeout, printTimeout, print'],
+    ['account_unsupported', 'This client is no longer supported for Gemini Code Assist for individuals. To continue using Gemini, please migrate to the Antigravity suite of products: https://antigravity.google'],
+  ])('maps a backend %s onto perception.run_failed with the same reason — not the default unknown (BR-109)', async (reason, detail) => {
+    mockedRunBackend.mockResolvedValue({ ok: false, text: '', fail_reason: reason as 'model_unsupported', detail });
+    const onEvent = vi.fn();
+    const log: ExtractorLogger = { info: () => {}, warn: () => {}, onEvent };
+    const extractor = makeBackendLlmExtractor({ timeoutMs: 5_000, log });
+    await extractor(transcriptWithSubtlePattern, { project: 'p' }, log);
+    expect(onEvent).toHaveBeenCalledWith('perception.run_failed', expect.objectContaining({ reason, error_message: detail }));
+  });
+
   it('drops invalid candidates and keeps valid ones', async () => {
     mockedRunBackend.mockResolvedValue({
       ok: true,

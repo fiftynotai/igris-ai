@@ -2554,6 +2554,98 @@ interface PackReport {
  *   6_896_335 − 6_896_245 = 90 = 1_641 − 1_607 + 50 + 30 − 12 − 12;
  *   54_236 − 53_939 = 297 = this brief's share (no drift).
  *
+ * BR-109 MEASURED LAST (2026-09-25), after its final code-touching step.
+ * MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH arms (the
+ * TD-460 method, unchanged): `git archive <rev> cli brain-mcp-server
+ * harness-manifest.json`, the three `node_modules` symlinked, `dist` ABSENT
+ * so the copy step rebuilt the brain, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. The control taken FRESH at develop `0c45dfb`; the final arm
+ * from a `git write-tree` of the working tree through a TEMP index
+ * (`41256d05`; re-taken as `aded715a` after the live-gemini follow-up;
+ * the real index untouched). npm 10.9.8, node v22.23.2,
+ * darwin/arm64, one machine. The real `cli/dist` was never written by either
+ * arm (`dist/index.js` sha256 `6eae77ce…`, `dist/brain-mcp-server/dist/
+ * index.js` `9d0654bc…`, `…/cognition/backend/parse-output.js` `82888bb0…`
+ * before and after — this brief's build rides TD-471's hold).
+ *   control             1_897_512    unpacked 6_896_335, 547 entries, shasum
+ *                                    `45aba253e909433c1f21b021bd6e39a4745458ff`
+ *                                    — taken twice, byte-identical. It IS the
+ *                                    BR-108 row's final, byte for byte: no
+ *                                    drift.
+ *   packed              1_902_839    unpacked 6_913_685, 549 entries (+2),
+ *                                    shasum
+ *                                    `d7244502541ed0b0e60a8dcf756e9dc62bb2c822`,
+ *                                    taken twice (the first final
+ *                                    `41256d05`: 1_902_481, unpacked
+ *                                    6_912_103, `48876291…`).
+ *   BR-109's own share  +5_327 B     packed = 4_969 (the first final) + 358
+ *                                    (the follow-up). First final: unpacked
+ *                                    +15_768 over 18
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. NEW: `cognition/backend/
+ *                                    preflight.js` 3_598 + `.d.ts` 1_177 (the
+ *                                    +2 entries: the selection preflight).
+ *                                    `parse-output.js` +5_383 / `.d.ts` +1_383
+ *                                    (the classifier, the four detectors, the
+ *                                    unknown-argument rule, the scrubber, the
+ *                                    codex text narrowing); `env.js` +744 /
+ *                                    `.d.ts` +354 (the preflight seam and the
+ *                                    reset hook); `backend/index.js` +200 /
+ *                                    `.d.ts` +723 (`classifyExecResult`, the
+ *                                    reason union, re-exports); `types.d.ts`
+ *                                    +752 (`HarnessPreflight`, `refused`);
+ *                                    `engine/index.js` +431 / `.d.ts` +58;
+ *                                    `spawn-map.js` +408 / `.d.ts` −42 (the
+ *                                    gemini/agy split); `isolation.js` +109;
+ *                                    perception `llm_via_claude_code.js` +230,
+ *                                    `runner.js` +160 / `.d.ts` +57,
+ *                                    `events.d.ts` +43. The plan priced a
+ *                                    "low-single-KB" share; the first reading
+ *                                    was 5_407 B, the shipped prose was cut to
+ *                                    pointers at `docs/COGNITION.md` (TD-423)
+ *                                    and re-measured at 4_969 — above the
+ *                                    priced band, said so rather than
+ *                                    re-priced: the share is CODE (a module of
+ *                                    per-CLI detectors plus a new module), not
+ *                                    prose. The extended probe
+ *                                    `scripts/td472_child_env_probe.ts` was IN
+ *                                    the final arm's archive and is ABSENT from
+ *                                    its packlist: 0 `td472` entries (the
+ *                                    BR-101 prune, measured). The tests, the
+ *                                    new fixtures, the MAINTAINING rows and the
+ *                                    docs are outside `files` and cost 0 (0
+ *                                    test and 0 `br109` entries in the final
+ *                                    packlist). Follow-up (`--skip-trust`,
+ *                                    `account_unsupported`, the gemini
+ *                                    tier/trust detector): +358 packed,
+ *                                    unpacked +1_582 over 9 artifacts,
+ *                                    reconciling EXACTLY: `parse-output.js`
+ *                                    +967 / `.d.ts` +24; `spawn-map.js` +325
+ *                                    (the flag and its trust docblock);
+ *                                    `backend/index.d.ts`, `types.d.ts`,
+ *                                    `events.d.ts` +24 each; perception
+ *                                    `llm_via_claude_code.js` +78,
+ *                                    `runner.js` +85 / `.d.ts` +31. Still 0
+ *                                    `td472`, test and `br109` entries.
+ *   cumulative delta    +59_563 B    (58.2 KB, 38.8 % of the grant —
+ *                                    1_902_839 − 1_843_276)
+ *   headroom remaining  94_037 B     (91.8 KB — 153_600 − 59_563)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_902_839 − 1_897_512 = 5_327; 1_902_839 − 1_843_276 = 59_563;
+ *   153_600 − 59_563 = 94_037; 549 − 547 = 2;
+ *   1_902_481 − 1_897_512 = 4_969 (first final); 1_902_839 − 1_902_481 =
+ *   358 (follow-up); 4_969 + 358 = 5_327;
+ *   6_912_103 − 6_896_335 = 15_768 = 3_598 + 1_177 + 5_383 + 1_383 + 744 +
+ *   354 + 200 + 723 + 752 + 431 + 58 + 408 − 42 + 109 + 230 + 160 + 57 + 43;
+ *   6_913_685 − 6_912_103 = 1_582 = 967 + 24 + 325 + 24 + 24 + 24 + 78 +
+ *   85 + 31; 6_913_685 − 6_896_335 = 17_350 = 15_768 + 1_582;
+ *   59_563 − 54_236 = 5_327 = this brief's share (no drift); 5_407 − 4_969 =
+ *   438 recovered by the prose cut.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

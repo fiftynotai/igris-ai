@@ -80,6 +80,9 @@ export type LlmStatus =
   | 'failed:non_zero_exit'
   | 'failed:api_error' // TD-447 — backend-classified claude API failure envelope
   | 'failed:auth_error' // TD-447 — same envelope, 401/403 or an authentication message
+  | 'failed:model_unsupported' // BR-109 — the CLI or its server does not serve the model
+  | 'failed:cli_incompatible' // BR-109 — the CLI rejected the invocation
+  | 'failed:account_unsupported' // BR-109 — the vendor refuses this account's tier for this CLI
   | 'failed:unknown';
 
 /**
@@ -106,6 +109,12 @@ function mapFailureReasonToLlmStatus(reason: string): LlmStatus {
       return 'failed:api_error';
     case 'auth_error':
       return 'failed:auth_error';
+    case 'model_unsupported':
+      return 'failed:model_unsupported';
+    case 'cli_incompatible':
+      return 'failed:cli_incompatible';
+    case 'account_unsupported':
+      return 'failed:account_unsupported';
     default:
       return 'failed:unknown';
   }

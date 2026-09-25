@@ -48,17 +48,32 @@ export const ALL_EXTRACTOR_HARNESSES: readonly ExtractorHarness[] = [
   'antigravity',
 ] as const;
 
+/** Why the selection preflight refused a harness (BR-109; docs/COGNITION.md). */
+export type HarnessRefusalReason = 'cli_missing' | 'cli_incompatible' | 'not_logged_in';
+
+/** A selection preflight verdict: usable, or refused with a named reason. */
+export type HarnessPreflight = { usable: true } | { usable: false; reason: HarnessRefusalReason; detail: string };
+
+/** One refused harness, as `run_started` / `run_skipped` carry it. */
+export interface HarnessRefusal {
+  harness: ExtractorHarness;
+  reason: HarnessRefusalReason;
+  detail: string;
+}
+
 /**
  * The resolved backend for one run: which harness CLI will be invoked plus the
  * order tried while resolving availability. `harness === null` means NO usable
- * CLI was found (every candidate in `fallback_order` was absent) — the engine
- * emits `run_skipped reason=cli_missing` and persists nothing.
+ * CLI was found — the engine emits `run_skipped` with reason `cli_missing`, or
+ * `harness_refused` when a preflight refused one for another reason.
  */
 export interface ResolvedBackend {
-  /** The chosen harness CLI, or null when none in the fallback order is present. */
+  /** The chosen harness CLI, or null when none in the fallback order is usable. */
   harness: ExtractorHarness | null;
   /** The harnesses tried (in order) while resolving availability — for observability. */
   fallback_order: ExtractorHarness[];
+  /** Harnesses a preflight refused during the walk (absent when none). */
+  refused?: HarnessRefusal[];
 }
 
 // ---------------------------------------------------------------------------
@@ -134,9 +149,9 @@ export interface ExtractorResult {
   outcome: ExtractorOutcome;
   /** Count of candidates the instance persisted (0 on skip/fail). */
   persisted: number;
-  /** Set when outcome==='skipped' — e.g. 'disabled' | 'budget' | 'cold_start' | 'gate_bytes' | 'cli_missing' | 'no_candidates'. */
+  /** Set when outcome==='skipped' — e.g. 'disabled' | 'budget' | 'cold_start' | 'gate_bytes' | 'cli_missing' | 'harness_refused' | 'no_candidates'. */
   skip_reason?: string;
-  /** Set when outcome==='failed' — e.g. 'timeout' | 'parse_error' | 'non_zero_exit' | 'spawn_error' | 'api_error' | 'auth_error'. */
+  /** Set when outcome==='failed' — e.g. 'timeout' | 'parse_error' | 'non_zero_exit' | 'spawn_error' | 'api_error' | 'auth_error' | 'model_unsupported' | 'cli_incompatible' | 'account_unsupported'. */
   fail_reason?: string;
   /** The resolved backend (which harness, the fallback order) — for observability. */
   backend?: ResolvedBackend;
