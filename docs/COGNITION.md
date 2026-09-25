@@ -584,20 +584,55 @@ claude's was read. The live shapes, and what the backend made of them at HEAD:
   `Error: Token refresh failed: 401`. It was filed `empty_response`, which
   perception treats as "no candidates", so a perception run on opencode failed
   silently.
-- **gemini-cli 0.45.0**: the extractor's `--print` / `--print-timeout` are not
-  options of 0.45.0 (`Unknown arguments: print-timeout, printTimeout, print`,
-  exit 1), filed `non_zero_exit` with the help text's head as its detail.
-- **gemini-cli 0.45.0, live under the BR-109 argv** (2026-09-25, this machine;
-  `br109-evidence/gemini-diagnosis.json`): exit 55, stdout empty. stderr carries
-  TWO refusals. First, the account's tier: gemini's first auth pass logs an
-  `IneligibleTierError` whose `ineligibleTiers[0]` is `reasonCode:
-  'UNSUPPORTED_CLIENT'`, `reasonMessage: 'This client is no longer supported for
-  Gemini Code Assist for individuals. To continue using Gemini, please migrate to
-  the Antigravity suite of products: https://antigravity.google'`, tier
-  `free-tier`. That pass logs the error and carries on. Second, the fatal one:
-  `Gemini CLI is not running in a trusted directory. To proceed, either use
-  --skip-trust, …` (`FatalUntrustedWorkspaceError`, exit 55). The token refreshed
-  in the allow arm, so the login is valid. Filed `non_zero_exit`.
+- **gemini-cli's live classifier is retired (TD-474).** The offline `Unknown
+  arguments` rejection and the live BR-109-argv tier/trust refusal measured
+  here are no longer current behavior — see "gemini — retired from the
+  extractor (TD-474)" immediately below.
+
+### gemini — retired from the extractor (TD-474)
+
+**The decision.** gemini is retired as a selectable extractor harness. This is
+an operator POLICY, not an account-tier workaround: it holds for every account
+class, paid tiers included, because the decision is about which harness Igris
+runs the extractor role on, not about what any one account is eligible for.
+`antigravity` is the extractor's Google option now.
+
+**The reasoning.** The vendor discontinued gemini-cli's personal Code Assist
+tier (measured 2026-09-25, gemini-cli 0.45.0, this machine —
+`br109-evidence/gemini-diagnosis.json`: an `IneligibleTierError` with
+`reasonCode: 'UNSUPPORTED_CLIENT'`). A PASS was permanently unreachable for the
+account this was measured against, and Antigravity is the vendor's own
+successor product for exactly this surface (the tier refusal's own message
+names it: "please migrate to the Antigravity suite of products"). Keeping
+gemini selectable would mean an operator could point `llm_extractor.harness`
+at a dead end with no loud signal until the first failed run.
+
+**The mechanism.** `gemini` is refused at SELECTION TIME, before any spawn:
+`resolveBackend` (`cognition/backend/env.ts`) recognizes the literal `'gemini'`
+at every layer of the 4-layer chain (global config, per-instance config, both
+env overrides) via `isExtractorHarnessSelection` — so it is never treated as
+noise — and refuses it with `reason: 'harness_retired'` (a `HarnessRefusalReason`
+value, DISTINCT from `BackendFailReason`'s `account_unsupported` — see below)
+and `detail: GEMINI_RETIRED_DETAIL`:
+
+> gemini is retired from the Igris extractor (TD-474): the vendor retired
+> gemini-cli's personal Code Assist tier and Antigravity is Google's harness
+> now. Use the antigravity harness instead (llm_extractor.harness, or list it
+> first in fallback_order).
+
+The refusal never calls `isAvailable`/`preflightHarness` — it is a STATIC,
+permanent fact, not a per-machine condition to probe — and the walk CONTINUES
+past it, so a present harness (claude, by default) still runs. `gemini` is
+never a member of `ExtractorHarness` or `ALL_EXTRACTOR_HARNESSES`, so
+auto-detection (no explicit config) never considers it, whatever is on `PATH`.
+
+**The deferred criterion is RETIRED, not evidenced.** BR-108 deferred a
+gemini-live PASS criterion; BR-109 carried it forward and recorded the vendor
+refusal as `PRE_EXISTING`/`account_unsupported` evidence (the proof tables
+below); **TD-474 closes the thread: the criterion is RETIRED.** There is
+nothing left to wait on — a PASS is not a state this account class, or the
+gemini-cli personal tier generally, can reach, and the operator has chosen not
+to run the extractor on gemini regardless.
 
 Since BR-109 `runBackend` classifies an exec result in this order, BEFORE text
 extraction (`classifyExecResult` in `cognition/backend/index.ts`; the detectors
@@ -611,8 +646,11 @@ in `parse-output.ts`):
    | claude | a `{type:"result", is_error:true}` line (TD-447) | `api_error_status`, `terminal_reason`, `result` |
    | codex | a `turn.failed` event, or an `error` event with NO `agent_message` item (a retried stream that then answers is not a failure) | the event's `message`; when it is JSON, `status` and `error.{code or type, message}` |
    | opencode | stdout is empty AND stderr has an `Error:` line (the last one, ANSI stripped) | that line only — never the `> build · <model>` header |
-   | gemini | only when the run gave no answer (exit ≠ 0 or empty stdout); first match wins: (1) the tier refusal (`IneligibleTierError` / `ineligibleTiers:` on stderr, any exit) → `account_unsupported`; (2) exit 55 or the `not running in a trusted directory` line → `cli_incompatible`; (3) exit 41 → `auth_error`; exit 42 or 52 → `cli_incompatible` (an input or config gemini rejects) | (1) the first `reasonMessage`, else the `IneligibleTierError:` message; (2) the trust line; (3) the last non-empty stderr line |
    | antigravity | — (no measured failure shape; step 3 still applies) | — |
+
+   gemini is refused BEFORE this table ever applies — a static check inside
+   `resolveBackend`, never a live probe (TD-474; see "gemini — retired from the
+   extractor" below and "Refusing a harness at selection" further down).
 
 3. **Any harness:** a non-zero exit, empty stdout and a stderr line matching
    `unknown argument/option`, `unexpected argument` or `unrecognized argument/option`
@@ -630,19 +668,15 @@ not match are pinned beside the positive ones (`backend-harness-failures.test.ts
 H14). `detectClaudeErrorEnvelope` keeps TD-447's two classes for the probe and
 the TD-471 watcher; `runBackend` names a claude model error `model_unsupported`.
 
-**`account_unsupported`** is gemini's own class: the vendor refuses this
-account's tier for this CLI. It is not `auth_error`, because the login is valid
-(the token refreshed) and re-authenticating changes nothing. It is not
-`api_error` either: that reads as transient, and this refusal is permanent until
-the operator switches product. When the tier refusal and the trust refusal
-appear together (the measured run), the tier refusal wins. It is the root cause
-the operator can act on. The trust refusal is an Igris invocation defect, fixed
-by `--skip-trust` below, and after that fix gemini is expected to fail on the
-tier alone. That is source-read, not measured: the second `refreshAuth`
-(`gemini-ORQHD633.js:16282`) rethrows the non-fatal error, and the top-level
-catch prints `An unexpected critical error occurred:` and exits 1. H17 pins that
-shape. An answered run is never classified, even when its stderr carries these
-words (H18).
+**`account_unsupported` is historical.** It was gemini's own live class — the
+vendor's tier refusal, not `auth_error` (the login was valid) and not
+`api_error` (the refusal was permanent, not transient). TD-474 retired the
+classifier that produced it (`detectGeminiFailure`); the value stays in
+`BackendFailReason` for recorded runs (see MAINTAINING.md's reason-vocabulary
+row), but no current harness detector emits it. Do not confuse it with
+`harness_retired`, the DISTINCT, selection-time `HarnessRefusalReason` TD-474
+added for the static gemini refusal — one is a fact a spawn reported, the other
+is a fact Igris knows without spawning anything.
 
 **codex answer text.** A codex run's text is now only its `agent_message` texts,
 any claude-shaped `result` text and non-JSON lines. Every other codex JSON event
@@ -661,48 +695,19 @@ credential shapes — `sk-…`, JWTs (`eyJ…`), `Bearer …`, Google `ya29.…`
 messages are static strings plus a status or a model id; the scrubber defends
 unmeasured provider text, it does not prove it.
 
-**The gemini invocation.** gemini now runs `--allowed-mcp-server-names
-__igris_extractor_no_mcp__ --skip-trust --prompt ''` with the prompt on STDIN (agy keeps
-`--print-timeout <n>s --print` and the argv tail). A bare `--prompt` token makes
-the run headless whatever the TTY (`isHeadlessMode`, `chunk-6T7N6JF2.js:275161`),
-and its empty value leaves `input` = the stdin body (`gemini-ORQHD633.js:16235-16237`).
-The prompt never sits in argv, so no Linux 128 KB single-argument limit, no
-misparse of a body starting with `-`, and no prompt text in `ps`. Measured
-offline in an empty scratch HOME: the argv parses and the run is
-non-interactive — it exits 41 because gemini validates auth
-(`validateNonInteractiveAuth`, `:16043`) BEFORE it reads stdin, not the 42 of an
-empty input. `execHarness` owns the deadline.
-
-**Why `--skip-trust` is safe.** Headless gemini refuses an untrusted cwd with
-exit 55 (`folderTrustCheck`, `gemini-ORQHD633.js:9863-9881`). `--skip-trust`
-(a boolean, `:8064`) sets `GEMINI_CLI_TRUST_WORKSPACE=true` in gemini's own
-process (`:8218-8219`), which `checkPathTrust` honours first
-(`chunk-6T7N6JF2.js:392185`). The cwd is the isolated home, and after BR-108 that
-holds only owned sanitized files and the named auth links. The gemini-cli 0.45.0
-features trust unlocks are read below (static, installed bundle; names only):
-
-| unlocked by trust | where | what it reaches in the isolated home |
-|---|---|---|
-| workspace `settings.json` merged | `mergeSettings`, `chunk-EUYIPFPA.js:16181` | nothing: cwd = `homedir()`, so `isWorkspaceHomeDir()` skips the workspace load (`:16578`) |
-| `.env`: `<dir>/.gemini/.env` checked first, ALL keys loaded (untrusted: 4 auth keys, sanitized) | `findEnvFile` / `loadEnvironment`, `:16388-16498` | the owned EMPTY `<iso>/.gemini/.env` (the "trusted" rows of the `.env` table below; F6 pins them) |
-| MCP servers started | `startConfiguredMcpServers` / discovery, `chunk-6T7N6JF2.js:365569`, `:365647`; stdio transport `:365215` | the owned settings carry no `mcpServers`, `.gemini/extensions` is never forwarded, and `isBlockedBySettings` (`:365441`) applies `--allowed-mcp-server-names` BEFORE the trust gate, so the sentinel blocks every name. P3 pins the sentinel |
-| project `GEMINI.md` memory | `getEnvironmentMemoryPaths`, `:357559` | walks up from the cwd to the nearest `.git` ancestor, else the cwd alone. None of the scratch path's ancestors holds `.git` or `GEMINI.md` on this machine (existence check). A future `.git` above the scratch root would let an ancestor `GEMINI.md` into the prompt. That is a text channel, not MCP or credentials |
-| project agents, skills, hooks, policies, commands | `:336477`, `:374172`, `:358614-358745`, `:337524` | `<cwd>/.gemini/{agents,skills,policies,commands}` and `<cwd>/.agents/`: absent (the operator's real ones sit under the REAL home, not the isolated one). The owned settings carry no `hooks` |
-| non-default approval modes, extension registry URI | `gemini-ORQHD633.js:8383`, `:8320` | neither is requested: no argv flag, no owned settings key |
-
-So trust opens no MCP or credential channel beyond what BR-108's owned files
-already carry. The env var also reaches gemini's own children (git, seen by the
-census), which read nothing from it.
-
 **Refusing a harness at selection (the preflight).** `resolveBackend` in the
 engine walks the harnesses through `preflightHarness`
-(`cognition/backend/preflight.ts`), which makes no subscription call:
+(`cognition/backend/preflight.ts`), which makes no subscription call. This is
+one of THREE live-probe rows; gemini's refusal is a FOURTH kind — a static
+check inside `resolveBackend` itself, before the walk ever calls
+`preflightHarness` (see "gemini — retired from the extractor" above) — so it
+never reaches this table at all:
 
 | check, in order | refused as | notes |
 |---|---|---|
 | `<bin> --version` exits 0 | `cli_missing` | the existing probe |
-| every flag the REAL builder passes appears in the CLI's own help (`claude --help`, `codex exec --help`, `gemini --help`, `agy --help`, `opencode run --help`), run with the builder's env in an isolated home, 10 s | `cli_incompatible` | FAIL-OPEN: a help that exits non-zero, prints nothing or times out counts as usable, so a misread help can never refuse claude |
-| opencode only: `~/.local/share/opencode/auth.json` exists | `not_logged_in` | existence only, never opened. It is opencode's sole subscription channel; claude (Keychain), codex (can be a keyring) and the gemini family are not listed, because a missing file there does not prove logged-out |
+| every flag the REAL builder passes appears in the CLI's own help (`claude --help`, `codex exec --help`, `agy --help`, `opencode run --help`), run with the builder's env in an isolated home, 10 s | `cli_incompatible` | FAIL-OPEN: a help that exits non-zero, prints nothing or times out counts as usable, so a misread help can never refuse claude |
+| opencode only: `~/.local/share/opencode/auth.json` exists | `not_logged_in` | existence only, never opened. It is opencode's sole subscription channel; claude (Keychain) and codex (can be a keyring) are not listed, because a missing file there does not prove logged-out — antigravity shares gemini's former stores but is not listed here either, for the same reason |
 
 A refused harness is skipped like a missing one. A run on a fallback harness
 carries `refused: [{harness, reason, detail}]` on `run_started`; when nothing is
@@ -711,8 +716,11 @@ CLI, else `run_skipped reason=harness_refused` with the `refused` array. Neither
 skip consumes budget. The verdict is cached per brain process, like the
 `--version` probe: **restart the brain after upgrading an extractor CLI.**
 Limits, stated: a `run_skipped` renders `ok` in `igris cognition health` (true of
-`cli_missing` before BR-109; a follow-up TD owns rendering refusals as failing),
-and perception's session-end `selectLlmExtractor` is not preflighted (no
+`cli_missing` before BR-109), and so does a run that succeeded on a fallback after a
+refusal: the health reader reads terminal events only, never `run_started.refused`. An
+operator whose config still names gemini therefore sees `ok` while every run is
+overridden to a fallback harness (TD-474's `harness_retired`). TD-475 owns rendering both.
+Perception's session-end `selectLlmExtractor` is not preflighted (no
 fallback, and a `--help` spawn at init would add boot latency) — its runtime
 failures are named by the detectors above.
 
@@ -722,23 +730,23 @@ failures are named by the detectors above.
 |---|---|---|
 | opencode | `auth_error` (`Token refresh failed: 401`) or `not_logged_in` | `opencode auth login` in your own shell, then restart the brain |
 | codex | `model_unsupported` (`… requires a newer version of Codex`) | upgrade codex, OR set `model` in `~/.codex/config.toml` to one the installed CLI serves (the isolated home carries that key verbatim) |
-| gemini | `auth_error` (exit 41) | re-authenticate gemini-cli (`gemini`, then `/auth`) |
-| gemini | `account_unsupported` (`This client is no longer supported for Gemini Code Assist for individuals…`) | nothing Igris can fix: the vendor retired the gemini-cli personal tier for this account. Use the `antigravity` harness (`llm_extractor.harness`, or put it first in `fallback_order`) |
+| any | `harness_retired` (gemini only — `GEMINI_RETIRED_DETAIL`) | nothing Igris can fix: the vendor retired the gemini-cli personal tier and this is now a permanent operator policy, not a per-account condition. Use the `antigravity` harness (`llm_extractor.harness`, or put it first in `fallback_order`) — unreachable for any other harness, since only `gemini` is ever refused this way |
 | any | `cli_incompatible` | the installed CLI rejects the extractor's argv: check its version against the builder (`cognition/backend/spawn-map.ts`) |
 
 **Proof.** `backend-harness-failures.test.ts` replays each CLI's measured bytes
 (`fixtures/br109-cli-failures.ts`) from a stub binary through the real
-`runBackend` (H1-H18, H12 through `runExtractor` into `event_log`; H15 is gemini's
-live exit-55 stderr, H18 the false-positive rows);
-`preflight.test.ts` pins the preflight (R1-R3, R7), `env.test.ts` and
-`engine.test.ts` its wiring, and `isolation-file-channels.test.ts` P4 pins the
-gemini argv against 0.45.0's declared options. The live PASS lines are recorded
-in the proof tables below as each runs: gemini after BR-109's review; opencode
-after `opencode auth login`; codex after the CLI is upgraded.
+`runBackend` (H1-H6, H11-H14, H12 through `runExtractor` into `event_log`; H10
+the antigravity argv-delivery control — TD-474 deleted H7-H9 and H15-H18, the
+gemini-only live/offline classifier cases, along with the classifier they
+pinned); `preflight.test.ts` pins the preflight (R1-R3) and the static gemini
+refusal (R7), `env.test.ts` and `engine.test.ts` its wiring. The live PASS
+lines are recorded in the proof tables below as each runs: opencode after
+`opencode auth login`; codex after the CLI is upgraded. gemini has no PASS row
+left to chase — see "gemini — retired from the extractor" above.
 
 ## what an extractor child inherits (TD-471, TD-472)
 
-Every LLM child an instance spawns, whichever of the five harnesses runs it,
+Every LLM child an instance spawns, whichever extractor harness runs it,
 gets its env from one function, `subscriptionOnlyEnv` in
 `cognition/backend/env.ts`. The perception session-end hook's detached parent
 goes through the same function via `runBackend`. The function does three
@@ -830,7 +838,7 @@ record the result envelope, booleans and env names only:
 | antigravity | `PASS` under BR-108's isolation: both arms answered (allow 12.7 s, base 10.1 s) | n/a (agy keeps no refresh witness) | 2026-09-24, agy 1.0.16, this machine |
 | opencode | `PRE_EXISTING` (2026-09-24, opencode 1.14.22, this machine): both arms fail auth identically — the allowlist and the TD-471 env; nothing regressed; the isolated-HOME auth defect is BR-109 | — | — |
 
-The unit and stub tiers already pin the rule for all five harnesses. They cover
+The unit and stub tiers already pin the rule across every extractor harness. They cover
 metered names, pointers, the names TD-471 missed, and the real ambient env
 reduced to the allowlist. `env.test.ts` and
 `backend-child-env-allowlist.test.ts` hold these checks.
@@ -860,15 +868,15 @@ plugin directory cannot reach a child. It fails closed.
 |---|---|---|---|
 | claude | `Library/Keychains`, `.claude/.credentials.json` | `.claude.json`: the operator's copy minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey` (a metered Console key); every other key kept | `--strict-mcp-config`, no `--mcp-config` |
 | codex | `Library/Keychains`, `.codex/auth.json` | `.codex/config.toml`: root-section lines for `model`, `model_reasoning_effort`, `cli_auth_credentials_store`, `forced_login_method`, `forced_chatgpt_workspace_id`, `preferred_auth_method` with a one-line scalar value, copied verbatim; then an owned `[features]` block setting `apps`, `in_app_browser`, `plugin_sharing`, `plugins`, `skill_mcp_dependency_install`, `tool_call_mcp_elicitation` to false | none (see the residuals) |
-| gemini | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env` | `--allowed-mcp-server-names __igris_extractor_no_mcp__`, then `--skip-trust` and `--prompt ''` with the prompt on stdin (BR-109) |
-| antigravity | the gemini stores + `.gemini/antigravity-cli/antigravity-oauth-token`, `installation_id`, `cache/onboarding.json` | as gemini, plus `.gemini/antigravity-cli/settings.json` with only `model` | none (agy has no such flag) |
+| antigravity | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id`, `.gemini/antigravity-cli/antigravity-oauth-token`, `installation_id`, `cache/onboarding.json` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env`; `.gemini/antigravity-cli/settings.json` with only `model` | none (agy has no MCP-allowlist flag) |
 | opencode | `Library/Keychains`, `.local/share/opencode/auth.json` (the provider store only, BR-109; the whole directory before it) | none | none |
 
 **Why each owned copy is shaped the way it is:**
 
-- **gemini, antigravity and codex keep an allowlist of keys.** A new exec
-  surface in a known file is dropped without anyone naming it: gemini `hooks`,
-  `mcp.serverCommand`, `tools.discoveryCommand`, `advanced`; codex `notify`,
+- **antigravity and codex keep an allowlist of keys.** A new exec
+  surface in a known file is dropped without anyone naming it: antigravity's
+  shared `.gemini/settings.json` copy drops `hooks`, `mcp.serverCommand`,
+  `tools.discoveryCommand`, `advanced`; codex drops `notify`,
   `[plugins.*]`, `[hooks.*]`, `[projects.*]`.
 - **claude keeps a key denylist.** claude is the production harness, and its
   `.claude.json` has many keys it may read at startup. `--strict-mcp-config` is
@@ -889,11 +897,6 @@ plugin directory cannot reach a child. It fails closed.
   It is not passed. The old `-c mcp_servers.igris-brain.command=…` override is
   removed too: against an EMPTY config it CREATES an `igris-brain` entry (codex
   0.135.0, fixture homes, 2026-09-25).
-- **The gemini allow list needs a name.** `--allowed-mcp-server-names` REPLACES
-  the settings allow list and clears the block list, and a non-empty allow list
-  blocks every other name. An EMPTY list blocks nothing, so the flag carries one
-  name no server has (gemini-cli 0.45.0, `gemini-ORQHD633.js:8112`, `:8552-8553`;
-  `chunk-6T7N6JF2.js:365440-365450`).
 
 **No longer forwarded, by class:**
 
@@ -913,7 +916,7 @@ plugin directory cannot reach a child. It fails closed.
   its session of untrusted text into those directories through the links. It now
   writes into the reaped scratch home.
 
-**`.env` files (gemini family).** gemini-cli 0.45.0's `findEnvFile`
+**`.env` files.** gemini-cli 0.45.0's `findEnvFile`
 (`chunk-EUYIPFPA.js:16388-16419`) returns the FIRST hit, walking up from the
 workspace directory, which is the child's cwd (the isolated home). At each
 directory it checks `<dir>/.gemini/.env` (trusted folders only), then
@@ -921,15 +924,16 @@ directory it checks `<dir>/.gemini/.env` (trusted folders only), then
 back to `homedir()/.gemini/.env` (trusted), then `homedir()/.env`. In an
 untrusted folder it still loads the keys on its auth-variable whitelist, and
 folder trust is on by default (`:14057`). The scratch root sits under the real
-HOME, so every ancestor of the isolated home is the operator's. Since BR-109 the
-gemini argv passes `--skip-trust`, so a gemini child walks the "trusted / off"
-row; agy is untrusted.
+HOME, so every ancestor of the isolated home is the operator's. antigravity
+(the sole extractor harness that still runs this algorithm — the `findEnvFile`
+replica is exercised through it, F6) has no `--skip-trust`-equivalent flag and
+is always untrusted, so it walks the "untrusted" rows only.
 
 | folder trust / `ignoreLocalEnv` | first file found before BR-108 | first file found now |
 |---|---|---|
 | untrusted (the default) / off (the default) | the first ancestor `.env`, including `~/.igris/.env` and `~/.env` | `<iso>/.env` (empty) |
-| trusted / off | `<iso>/.gemini/.env`: the FORWARDED operator file | `<iso>/.gemini/.env` (empty) |
-| trusted / on | an ancestor `.gemini/.env`, the real one included | `<iso>/.gemini/.env` (empty) |
+| trusted / off — HISTORICAL, unreachable by any current extractor harness (TD-474: reachable only via gemini's now-deleted `--skip-trust` argv) | `<iso>/.gemini/.env`: the FORWARDED operator file | `<iso>/.gemini/.env` (empty) |
+| trusted / on — HISTORICAL, unreachable by any current extractor harness (same reason) | an ancestor `.gemini/.env`, the real one included | `<iso>/.gemini/.env` (empty) |
 | untrusted / on | `homedir()/.env` | `<iso>/.env` (empty) |
 
 Every row ends at an owned empty file. The owned `settings.json` does not carry

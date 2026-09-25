@@ -67,8 +67,11 @@ export type BackendFailReason =
   | 'api_error' // TD-447 claude envelope; BR-109 any detected CLI error envelope
   | 'auth_error' // 401/403 or an authentication message
   | 'model_unsupported' // BR-109: the CLI or its server does not serve the model
-  | 'cli_incompatible' // BR-109: the CLI rejected the invocation (unknown flag, gemini 42/52/55)
-  | 'account_unsupported'; // BR-109: the vendor refuses this account's tier for this CLI
+  | 'cli_incompatible' // BR-109: the CLI rejected the invocation (unknown flag)
+  | 'account_unsupported'; // BR-109: the vendor refuses this account's tier for this CLI.
+  // TD-474: kept for recorded runs — gemini's classifier (its only producer) is
+  // retired, so no current harness produces this value; see `HarnessRefusalReason`
+  // in `../types.js` for the DISTINCT, selection-time `harness_retired` reason.
 
 /** The result of one isolated LLM call. */
 export interface BackendRunResult {
@@ -135,8 +138,8 @@ export async function runBackend(
 
   const spawn = buildSpawn(harness, prompt, opts);
   try {
-    // Delivery shapes the argv + stdin: 'stdin' pipes the prompt body (claude,
-    // gemini); 'argv' appends it as the final argument (codex, opencode, agy).
+    // Delivery shapes the argv + stdin: 'stdin' pipes the prompt body (claude);
+    // 'argv' appends it as the final argument (codex, opencode, agy).
     const args =
       spawn.delivery === 'argv' ? [...spawn.args, spawn.prompt] : spawn.args;
     const res = await runExec(spawn.bin, args, {

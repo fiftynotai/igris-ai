@@ -3,7 +3,8 @@
  *
  * Covers:
  *   - makeIsolatedHome anchors under the brain-owned scratch root (NEVER real HOME)
- *   - the gemini family gets an empty mcpServers config ({"mcpServers": {}})
+ *   - antigravity (the sole `.gemini/*`-owning extractor harness since TD-474)
+ *     gets an empty mcpServers config ({"mcpServers": {}})
  *   - NO Igris-global markers leak into the isolated home
  *   - assertUnderRoot REJECTS any write path escaping the scratch root
  *   - cleanup reaps the home
@@ -76,16 +77,7 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     b.cleanup();
   });
 
-  it('the gemini family gets an EMPTY mcpServers config (no brain reach)', () => {
-    const iso = makeIsolatedHome('gemini', env);
-    const mcpConfig = join(iso.home, '.gemini', 'config', 'mcp_config.json');
-    expect(existsSync(mcpConfig)).toBe(true);
-    const parsed = JSON.parse(readFileSync(mcpConfig, 'utf-8')) as { mcpServers: Record<string, unknown> };
-    expect(parsed.mcpServers).toEqual({}); // ZERO MCP servers — R-BRAIN-LEAK
-    iso.cleanup();
-  });
-
-  it('antigravity also gets the empty gemini mcpServers', () => {
+  it('antigravity gets an EMPTY mcpServers config (no brain reach)', () => {
     const iso = makeIsolatedHome('antigravity', env);
     const mcpConfig = join(iso.home, '.gemini', 'config', 'mcp_config.json');
     expect(existsSync(mcpConfig)).toBe(true);
@@ -93,7 +85,7 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     iso.cleanup();
   });
 
-  it.each(['claude', 'codex', 'gemini', 'antigravity', 'opencode'] as ExtractorHarness[])(
+  it.each(['claude', 'codex', 'antigravity', 'opencode'] as ExtractorHarness[])(
     'the %s home contains none of FORBIDDEN_IGRIS_MARKERS (clean isolation floor)',
     (h) => {
       mkdirSync(join(fenceHome, '.gemini', 'agents'), { recursive: true }); // an operator marker to NOT forward

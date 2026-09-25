@@ -9,8 +9,9 @@
  *     (`~/.igris/cache/llm-extractor/`), NEVER the operator's real HOME;
  *   - only an ALLOWLIST of auth stores is symlinked forward (`FORWARD`);
  *   - every config file a child reads is an OWNED copy with MCP, hook and exec
- *     keys removed, and the gemini family gets owned empty `.env` files (BR-108;
- *     the why is in docs/COGNITION.md);
+ *     keys removed, and antigravity (the sole `.gemini/*`-owning extractor
+ *     harness since TD-474) gets owned empty `.env` files (BR-108; the why is
+ *     in docs/COGNITION.md);
  *   - `assertUnderRoot` guards EVERY write path — a programming bug that would
  *     write under the real HOME fails fast.
  *
@@ -71,7 +72,6 @@ const GEMINI_AUTH = ['.gemini/oauth_creds.json', '.gemini/google_accounts.json',
 const FORWARD: Record<ExtractorHarness, readonly string[]> = {
   claude: [KEYCHAIN, '.claude/.credentials.json'],
   codex: [KEYCHAIN, '.codex/auth.json'],
-  gemini: [KEYCHAIN, ...GEMINI_AUTH],
   antigravity: [
     KEYCHAIN,
     ...GEMINI_AUTH,
@@ -166,7 +166,7 @@ function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string
   if (harness === 'codex') {
     writeOwned(home, '.codex/config.toml', ownCodexToml(readText(resolve(real, '.codex/config.toml'))));
   }
-  if (harness === 'gemini' || harness === 'antigravity') {
+  if (harness === 'antigravity') {
     const settings = readJsonLoose(resolve(real, '.gemini/settings.json'));
     const kept = pickPaths(settings, [['security', 'auth'], ['selectedAuthType'], ['model']]);
     writeOwned(home, '.gemini/settings.json', JSON.stringify(kept));
@@ -174,8 +174,6 @@ function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string
     // Empty .env files end gemini-cli's first-hit .env search at the first dir.
     writeOwned(home, '.env', '');
     writeOwned(home, '.gemini/.env', '');
-  }
-  if (harness === 'antigravity') {
     const src = resolve(real, '.gemini/antigravity-cli/settings.json');
     if (existsSync(src)) {
       writeOwned(home, '.gemini/antigravity-cli/settings.json', JSON.stringify(pickPaths(readJsonLoose(src), [['model']])));

@@ -33,10 +33,11 @@
 import {
   isHarnessCliAvailable,
   resolveHarness,
+  GEMINI_RETIRED_DETAIL,
   type LlmExtractorGlobalConfig,
 } from '../../cognition/backend/env.js';
 import { runBackend } from '../../cognition/backend/index.js';
-import type { ExtractorHarness, ExtractorPrompt } from '../../cognition/types.js';
+import { RETIRED_GEMINI_HARNESS, type ExtractorHarness, type ExtractorPrompt } from '../../cognition/types.js';
 import type {
   PerceptionCandidate,
   PerceptionCategory,
@@ -505,6 +506,13 @@ export function makeBackendLlmExtractor(opts: BackendExtractorOptions = {}): Llm
  * resolved via the shared 4-layer chain (`resolveHarness`) so a global
  * `llm_extractor.harness` / env override is honoured; absence of any usable CLI
  * yields the noop (the runner records the skip).
+ *
+ * TD-474: `resolveHarness` recognizes the retired `gemini` token so an operator
+ * naming it in `llm_extractor.harness` is never silently ignored. Perception has
+ * no fallback order of its own (unlike `resolveBackend`'s walk), so a chosen
+ * `gemini` is refused LOUDLY here — logged, never passed to
+ * `isHarnessCliAvailable`/`makeBackendLlmExtractor` (whose `harness` param stays
+ * the unwidened `ExtractorHarness` — the retired token can never reach a spawn).
  */
 export function selectLlmExtractor(
   config: PerceptionExtractorConfig,
@@ -518,6 +526,10 @@ export function selectLlmExtractor(
   // Resolve the harness via the shared chain (default 'claude'); perception's
   // own instance config carries no harness pin, so the global default wins.
   const harness = resolveHarness(globalConfig, 'perception', null);
+  if (harness === RETIRED_GEMINI_HARNESS) {
+    log.warn(`llm_extractor: harness_retired — ${GEMINI_RETIRED_DETAIL}`);
+    return noopLlmExtractor;
+  }
   if (!isHarnessCliAvailable(harness)) {
     log.info(`llm_extractor: ${harness} CLI not on PATH — using noop`);
     return noopLlmExtractor;

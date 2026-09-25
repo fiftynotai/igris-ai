@@ -200,7 +200,7 @@ describe('TD-471 — a claude extractor child never inherits the host auth chann
 });
 
 describe('TD-471 — every harness builder strips the inherited namespace (B1)', () => {
-  const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
+  const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 
   it.each(HARNESSES)('B1: %s child env carries no CLAUDE* / ANTHROPIC_* name', (h) => {
     stubDesktopParentEnv();

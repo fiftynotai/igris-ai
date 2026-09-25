@@ -55,7 +55,7 @@ describe('extractText', () => {
     expect(extractText('codex', lines)).toBe('real\na prose line');
   });
 
-  it('treats gemini/antigravity --print prose as raw text', () => {
+  it('treats antigravity --print prose as raw text', () => {
     const stdout = 'line one\nline two\n';
     expect(extractText('antigravity', stdout)).toBe('line one\nline two');
   });
@@ -72,7 +72,7 @@ describe('extractText', () => {
 
   it('tolerates non-JSON garbage lines mixed with prose', () => {
     const stdout = 'preamble\n{not valid json\nactual answer';
-    const out = extractText('gemini', stdout);
+    const out = extractText('opencode', stdout);
     expect(out).toContain('preamble');
     expect(out).toContain('actual answer');
   });

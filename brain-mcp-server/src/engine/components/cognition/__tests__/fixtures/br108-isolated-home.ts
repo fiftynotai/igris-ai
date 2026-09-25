@@ -40,7 +40,6 @@ const GEMINI_AUTH = ['.gemini/oauth_creds.json', '.gemini/google_accounts.json',
 export const EXPECTED_FORWARD: Record<ExtractorHarness, readonly string[]> = {
   claude: [KEYCHAIN, '.claude/.credentials.json'],
   codex: [KEYCHAIN, '.codex/auth.json'],
-  gemini: [KEYCHAIN, ...GEMINI_AUTH],
   antigravity: [
     KEYCHAIN,
     ...GEMINI_AUTH,
@@ -56,7 +55,6 @@ export const EXPECTED_FORWARD: Record<ExtractorHarness, readonly string[]> = {
 export const EXPECTED_OWNED: Record<ExtractorHarness, readonly string[]> = {
   claude: ['.claude.json'],
   codex: ['.codex/config.toml'],
-  gemini: ['.gemini/settings.json', '.gemini/config/mcp_config.json', '.env', '.gemini/.env'],
   antigravity: [
     '.gemini/settings.json',
     '.gemini/config/mcp_config.json',
@@ -124,9 +122,6 @@ export const NEVER_FORWARDED: readonly string[] = [
   '.local/share/opencode/storage',
   '.local/share/opencode/snapshot',
 ];
-
-/** The sentinel name the gemini argv allows (V4: a non-empty list whose one name no server has). */
-export const GEMINI_NO_MCP_SENTINEL = '__igris_extractor_no_mcp__';
 
 // ---------------------------------------------------------------------------
 // The fixture operator HOME

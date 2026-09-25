@@ -18,7 +18,6 @@ import { buildExtractorSpawn, type ExtractorSpawn } from './spawn-map.js';
 export const HELP_ARGV: Readonly<Record<ExtractorHarness, readonly string[]>> = {
   claude: ['--help'],
   codex: ['exec', '--help'],
-  gemini: ['--help'],
   antigravity: ['--help'],
   opencode: ['run', '--help'],
 };

@@ -30,6 +30,7 @@ import { createCognitionRegistry } from '../registry.js';
 import { eventName } from '../lifecycle.js';
 import type {
   CognitionInstance,
+  ExtractorHarness,
   ExtractorPrompt,
   ResolvedBackend,
 } from '../types.js';
@@ -534,7 +535,7 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
       promptBuilder: (ctx) => ({ system: 'watch the roadmap', user: `digest ${ctx.bytes}` }),
       parseResponse: (raw) => (JSON.parse(raw) as { title: string }[]),
       persistCandidate: async (_db, c) => { persisted.push(c.title); },
-      config: { timeout_ms: 2000, daily_budget: 4, min_input_bytes: 1024, enabled: true, harness: 'gemini' },
+      config: { timeout_ms: 2000, daily_budget: 4, min_input_bytes: 1024, enabled: true, harness: 'codex' },
       inputBytes: (ctx) => ctx.bytes,
     };
 
@@ -547,7 +548,12 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
     //    only — the engine code is untouched, it iterates the contract alone).
     const deps = fakeDeps({ ok: true, text: '[{"title":"roadmap diverged from BR-900"}]' }, {
       // honour the instance's harness choice through the resolved backend
-      resolveBackend: (inst) => ({ harness: inst.config.harness, fallback_order: [inst.config.harness!] }),
+      // (the instance pins 'codex'; the cast narrows TD-474's widened selection
+      // type, which also admits the retired 'gemini' token, back to a runnable one)
+      resolveBackend: (inst) => {
+        const harness = inst.config.harness as ExtractorHarness;
+        return { harness, fallback_order: [harness] };
+      },
     });
     const result = await runExtractor(db, discovered!, { project: 'igris-ai', trigger: 'cron' }, deps);
 
@@ -561,7 +567,7 @@ describe('EXTENSIBILITY (FR-202 proof): an OPEN registry runs a NEW instance wit
       'cognition.roadmap_drift.run_succeeded',
     ]);
     // the resolved backend reflects the instance's own harness choice
-    expect(result.backend?.harness).toBe('gemini');
+    expect(result.backend?.harness).toBe('codex');
   });
 });
 
@@ -576,12 +582,12 @@ describe('runExtractor — harness refusals (BR-109)', () => {
   });
   afterEach(() => db.close());
 
-  const refusedGemini = { harness: 'gemini' as const, reason: 'cli_incompatible' as const, detail: 'builder flags absent from gemini --help: --prompt' };
+  const refusedCodex = { harness: 'codex' as const, reason: 'cli_incompatible' as const, detail: 'builder flags absent from codex --help: --sandbox' };
 
   it('R6: nothing usable, a non-missing refusal among them → ONE run_skipped {reason:harness_refused, refused}, no run_started', async () => {
     const inst = makeDummyInstance();
-    const refused = [refusedGemini, { harness: 'claude' as const, reason: 'cli_missing' as const, detail: '`claude --version` failed' }];
-    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: null, fallback_order: ['gemini', 'claude'], refused }) });
+    const refused = [refusedCodex, { harness: 'claude' as const, reason: 'cli_missing' as const, detail: '`claude --version` failed' }];
+    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: null, fallback_order: ['codex', 'claude'], refused }) });
     const r = await runExtractor(db, inst, {}, deps);
     expect(r.outcome).toBe('skipped');
     expect(r.skip_reason).toBe('harness_refused');
@@ -589,7 +595,7 @@ describe('runExtractor — harness refusals (BR-109)', () => {
     const payload = JSON.parse(events(db)[0].payload) as { reason: string; refused: unknown; fallback_order: string[] };
     expect(payload.reason).toBe('harness_refused');
     expect(payload.refused).toEqual(refused);
-    expect(payload.fallback_order).toEqual(['gemini', 'claude']);
+    expect(payload.fallback_order).toEqual(['codex', 'claude']);
   });
 
   it('R6 (unchanged control): every refusal is cli_missing → run_skipped reason=cli_missing, payload {fallback_order} only', async () => {
@@ -606,13 +612,13 @@ describe('runExtractor — harness refusals (BR-109)', () => {
 
   it('R7a: the chosen harness refused, a fallback runs → run_started carries the refusal', async () => {
     const inst = makeDummyInstance();
-    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: 'claude', fallback_order: ['gemini', 'claude'], refused: [refusedGemini] }) });
+    const deps = fakeDeps(OK_RESPONSE, { resolveBackend: () => ({ harness: 'claude', fallback_order: ['codex', 'claude'], refused: [refusedCodex] }) });
     const r = await runExtractor(db, inst, {}, deps);
     expect(r.outcome).toBe('succeeded');
     const started = events(db).find((e) => e.event_name === eventName('dummy', 'run_started'));
     const payload = JSON.parse(started!.payload) as { harness: string; refused?: unknown };
     expect(payload.harness).toBe('claude');
-    expect(payload.refused).toEqual([refusedGemini]);
+    expect(payload.refused).toEqual([refusedCodex]);
   });
 
   it('R7a (control): no refusal → run_started carries no refused key (the pre-BR-109 payload)', async () => {

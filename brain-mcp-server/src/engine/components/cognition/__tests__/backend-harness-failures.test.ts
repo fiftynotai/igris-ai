@@ -4,8 +4,8 @@
  *
  * Each CLI fails differently: codex inside its JSONL event stream (exit 1 with a
  * non-empty stdout that `extractText` used to lift as the answer — the TD-447 class),
- * opencode on stderr with exit 0, gemini through its documented exit codes, and any
- * CLI that rejects a flag through an unknown-argument line. These cases replay each
+ * opencode on stderr with exit 0, and any CLI that rejects a flag through an
+ * unknown-argument line. These cases replay each
  * CLI's MEASURED failure bytes (`fixtures/br109-cli-failures.ts`) from a stub binary
  * and drive the REAL `runBackend` → real `buildExtractorSpawn` → real `execHarness`.
  *
@@ -16,10 +16,10 @@
  * its own file (no `echo -e`, no `awk ENVIRON`), replays its fixture and exits with the
  * fixture's code. The isolated HOMEs land under `<tmp>/scratch` and are asserted reaped.
  *
- * RED at HEAD (recorded in `br109-evidence/red-at-head.txt`): H1, H3, H4, H5, H6b, H7,
- * H8, H9, H11, H12, H13, H14; H2, H6a and H10 are controls that pass on both. The live
- * gemini follow-up (H15-H17 RED before it; the H18 rows are controls) is in
- * `br109-evidence/red-gemini-tier-trust.txt`.
+ * RED at HEAD (recorded in `br109-evidence/red-at-head.txt`): H1, H3, H4, H5, H6b,
+ * H11, H12, H13, H14; H2, H6a and H10 are controls that pass on both. TD-474 retired
+ * gemini's live/offline classifier entirely (its H7-H9, H15-H18 cases are deleted —
+ * the code they pinned no longer exists); H10 (the antigravity control) is kept.
  *
  * @module engine/components/cognition/__tests__/backend-harness-failures.test
  */
@@ -43,29 +43,17 @@ import {
   CODEX_RETRY_THEN_OK,
   CODEX_SECRET_IN_MESSAGE,
   CODEX_TURN_FAILED_401,
-  GEMINI_AUTH_41,
-  GEMINI_AUTH_41_LINE,
-  GEMINI_FP_ANSWER_MENTIONS_TRUST,
-  GEMINI_FP_ANSWER_WITH_STDERR_NOISE,
-  GEMINI_FP_OTHER_TRUST_WORDS,
-  GEMINI_OK,
-  GEMINI_TIER_AFTER_SKIP_TRUST_1,
-  GEMINI_TIER_REASON_MESSAGE,
-  GEMINI_TIER_THEN_UNTRUSTED_55,
-  GEMINI_UNTRUSTED_55,
-  GEMINI_UNTRUSTED_LINE,
-  GEMINI_UNKNOWN_ARGS,
-  GEMINI_UNKNOWN_ARGS_LINE,
   H11_JWT,
   H11_SK,
   OPENCODE_MODEL_NOT_FOUND,
   OPENCODE_OK,
   OPENCODE_TOKEN_REFRESH_401,
+  PRINT_OK,
   type CliOutcome,
 } from './fixtures/br109-cli-failures.js';
 
 const PROMPT: ExtractorPrompt = { system: 'extract', user: 'ctx' };
-const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
+const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 
 // ---------------------------------------------------------------------------
 // Fence + stubs
@@ -216,81 +204,18 @@ describe('BR-109 — codex reports failure inside its JSONL event stream (H4-H6)
 });
 
 // ---------------------------------------------------------------------------
-// gemini — exit codes, argv and delivery
+// antigravity — argv delivery (TD-474: the H7-H9/H15-H18 gemini live/offline
+// classifier tests are deleted; the code they pinned — `detectGeminiFailure` —
+// no longer exists. H10 is kept as the sole surviving control.)
 // ---------------------------------------------------------------------------
 
-describe('BR-109 — gemini fails through its exit codes, and its prompt goes on stdin (H7-H9)', () => {
-  it('H7: exit 41 (FATAL_AUTHENTICATION_ERROR) with the measured message → auth_error', async () => {
-    const res = await run('gemini', GEMINI_AUTH_41);
-    expect(res.fail_reason).toBe('auth_error');
-    expect(res.detail).toBe(GEMINI_AUTH_41_LINE.slice(0, 200));
-  });
-
-  it('H8: the measured yargs rejection (exit 1, the Unknown-arguments line then help) → cli_incompatible, detail = that line', async () => {
-    const res = await run('gemini', GEMINI_UNKNOWN_ARGS);
-    expect(res.fail_reason).toBe('cli_incompatible');
-    expect(res.detail).toBe(GEMINI_UNKNOWN_ARGS_LINE);
-  });
-
-  it('H9: a gemini answer → ok; the stub read the whole prompt on stdin and no argv token is the prompt', async () => {
-    const res = await run('gemini', GEMINI_OK);
-    expect(res.ok).toBe(true);
-    expect(res.text).toBe('OK');
-    const prompt = composePrompt(PROMPT);
-    expect(stdinBytes('gemini')).toBe(Buffer.byteLength(prompt));
-    expect(receivedArgv('gemini').filter((a) => a === prompt)).toEqual([]);
-  });
-
+describe('BR-109 — antigravity keeps argv delivery (H10)', () => {
   it('H10 (control): agy keeps argv delivery — the prompt is the LAST argv token and stdin is empty', async () => {
-    const res = await run('antigravity', GEMINI_OK);
+    const res = await run('antigravity', PRINT_OK);
     expect(res.ok).toBe(true);
     const argv = receivedArgv('antigravity');
     expect(argv[argv.length - 1]).toBe(composePrompt(PROMPT));
     expect(stdinBytes('antigravity')).toBe(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// gemini live: the vendor's tier refusal and the folder-trust refusal (H15-H18)
-// ---------------------------------------------------------------------------
-
-describe('BR-109 — gemini names the tier refusal and the untrusted-folder refusal (H15-H18)', () => {
-  it('H15: the MEASURED live stderr (tier refusal, then the trust refusal, exit 55) → account_unsupported, detail = the reasonMessage (the tier refusal wins)', async () => {
-    expect(Buffer.byteLength(GEMINI_TIER_THEN_UNTRUSTED_55.stderr)).toBe(700); // the kept tail, as measured
-    const res = await run('gemini', GEMINI_TIER_THEN_UNTRUSTED_55);
-    expect(res.ok).toBe(false);
-    expect(res.fail_reason).toBe('account_unsupported');
-    expect(res.detail).toBe(GEMINI_TIER_REASON_MESSAGE);
-  });
-
-  it('H16: the trust refusal alone (exit 55) → cli_incompatible, detail = the ANSI-stripped refusal line capped at 200', async () => {
-    const res = await run('gemini', GEMINI_UNTRUSTED_55);
-    expect(res.fail_reason).toBe('cli_incompatible');
-    expect(res.detail).toBe(GEMINI_UNTRUSTED_LINE.slice(0, 200));
-  });
-
-  it('H17: the predicted post---skip-trust shape (top-level catch, exit 1) → account_unsupported, detail = the reasonMessage', async () => {
-    const res = await run('gemini', GEMINI_TIER_AFTER_SKIP_TRUST_1);
-    expect(res.fail_reason).toBe('account_unsupported');
-    expect(res.detail).toBe(GEMINI_TIER_REASON_MESSAGE);
-  });
-
-  // False-positive matrix (test_standards): the same words where the run did NOT fail.
-  it('H18 FP: an answer that quotes the trust line and the tier words (exit 0) → ok, the text is the answer', async () => {
-    const res = await run('gemini', GEMINI_FP_ANSWER_MENTIONS_TRUST);
-    expect(res.ok).toBe(true);
-    expect(res.text).toBe(GEMINI_FP_ANSWER_MENTIONS_TRUST.stdout.trim());
-  });
-
-  it('H18 FP: an answered run (exit 0) with the tier body and trust line on stderr → ok', async () => {
-    const res = await run('gemini', GEMINI_FP_ANSWER_WITH_STDERR_NOISE);
-    expect(res.ok).toBe(true);
-    expect(res.text).toBe('OK');
-  });
-
-  it('H18 FP: other trust words on a generic failure (exit 1) → non_zero_exit, not cli_incompatible', async () => {
-    const res = await run('gemini', GEMINI_FP_OTHER_TRUST_WORDS);
-    expect(res.fail_reason).toBe('non_zero_exit');
   });
 });
 

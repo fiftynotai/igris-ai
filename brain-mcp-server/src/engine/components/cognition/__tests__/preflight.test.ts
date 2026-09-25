@@ -32,9 +32,9 @@ import { runExtractor } from '../engine/index.js';
 import { eventName } from '../lifecycle.js';
 import type { CognitionInstance, ExtractorHarness } from '../types.js';
 
-const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
+const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 
-/** A help text listing every flag the BR-109 builders pass (claude, codex, gemini, agy; opencode passes none). */
+/** A help text listing every flag the BR-109 builders pass (claude, codex, agy; opencode passes none). */
 const FULL_HELP = [
   'Usage: fx [options]',
   '  -p, --print              claude/agy headless',
@@ -45,9 +45,6 @@ const FULL_HELP = [
   '  --json',
   '  --skip-git-repo-check',
   '  --sandbox <mode>',
-  '  --allowed-mcp-server-names  Allowed MCP server names',
-  '      --skip-trust                Trust the current workspace for this session.  [boolean] [default: false]',
-  '  -p, --prompt             Run in non-interactive (headless) mode',
   '  --print-timeout <secs>',
   '',
 ].join('\n');
@@ -107,20 +104,20 @@ afterEach(() => {
 });
 
 describe('BR-109 — preflight refuses a CLI that lacks a builder flag (R1)', () => {
-  it('R1: gemini help without --prompt → cli_incompatible naming --prompt; the help ran in the isolated HOME, which is reaped', () => {
-    installStub('gemini', { text: FULL_HELP.replace(/^.*--prompt .*$/m, '') });
-    const r = preflightHarness('gemini');
+  it('R1: codex help without --sandbox → cli_incompatible naming --sandbox; the help ran in the isolated HOME, which is reaped', () => {
+    installStub('codex', { text: FULL_HELP.replace(/^.*--sandbox .*$/m, '') });
+    const r = preflightHarness('codex');
     expect(r.usable).toBe(false);
     expect(r.usable === false && r.reason).toBe('cli_incompatible');
-    expect(r.usable === false && r.detail).toContain('--prompt');
-    const help = calls('gemini').filter((l) => l.endsWith(` ${HELP_ARGV.gemini.join(' ')}`));
+    expect(r.usable === false && r.detail).toContain('--sandbox');
+    const help = calls('codex').filter((l) => l.endsWith(` ${HELP_ARGV.codex.join(' ')}`));
     expect(help).toHaveLength(1);
     expect(help[0].startsWith(`${scratch}/`)).toBe(true); // HOME = an isolated home under the scratch root
     expect(readdirSync(scratch)).toEqual([]);
   });
 
-  it('R1 (keep control): the same stub WITH --prompt listed → usable', () => {
-    expect(preflightHarness('gemini')).toEqual({ usable: true });
+  it('R1 (keep control): the same stub WITH --sandbox listed → usable', () => {
+    expect(preflightHarness('codex')).toEqual({ usable: true });
   });
 
   it('R1: every harness is usable against a stub help listing every flag its builder passes', { timeout: 30_000 }, () => {
@@ -143,39 +140,39 @@ describe('BR-109 — preflight refuses a CLI that lacks a builder flag (R1)', ()
 });
 
 describe('BR-109 — preflight is fail-OPEN on a help it cannot read (R2)', () => {
-  it('R2a: help exits 1 (and lacks --prompt) → usable', () => {
-    installStub('gemini', { text: 'Usage: fx\n', exit: 1 });
-    expect(preflightHarness('gemini')).toEqual({ usable: true });
+  it('R2a: help exits 1 (and lacks --sandbox) → usable', () => {
+    installStub('codex', { text: 'Usage: fx\n', exit: 1 });
+    expect(preflightHarness('codex')).toEqual({ usable: true });
   });
 
   it('R2b: help exits 0 but prints nothing → usable', () => {
-    installStub('gemini', { text: '' });
-    expect(preflightHarness('gemini')).toEqual({ usable: true });
+    installStub('codex', { text: '' });
+    expect(preflightHarness('codex')).toEqual({ usable: true });
   });
 
   it('R2c: help outlives the timeout → usable, and the isolated HOME is still reaped', () => {
-    installStub('gemini', { sleepSec: 5 });
-    expect(preflightHarness('gemini', { helpTimeoutMs: 300 })).toEqual({ usable: true });
+    installStub('codex', { sleepSec: 5 });
+    expect(preflightHarness('codex', { helpTimeoutMs: 300 })).toEqual({ usable: true });
     expect(readdirSync(scratch)).toEqual([]);
   });
 
   it('R2d: --version fails → cli_missing (the existing probe, first)', () => {
-    installStub('gemini', { text: FULL_HELP }, false);
-    const r = preflightHarness('gemini');
+    installStub('codex', { text: FULL_HELP }, false);
+    const r = preflightHarness('codex');
     expect(r.usable === false && r.reason).toBe('cli_missing');
-    expect(calls('gemini').filter((l) => l.endsWith(' --help'))).toEqual([]); // no help spawn after a missing CLI
+    expect(calls('codex').filter((l) => l.endsWith(' exec --help'))).toEqual([]); // no help spawn after a missing CLI
   });
 });
 
 describe('BR-109 — preflight is cached per process (R3)', () => {
   it('R3: a second call spawns nothing; resetHarnessCliProbeCache clears it', { timeout: 30_000 }, () => {
-    preflightHarness('gemini');
-    expect(calls('gemini')).toHaveLength(2); // --version + --help
-    preflightHarness('gemini');
-    expect(calls('gemini')).toHaveLength(2);
+    preflightHarness('codex');
+    expect(calls('codex')).toHaveLength(2); // --version + --help
+    preflightHarness('codex');
+    expect(calls('codex')).toHaveLength(2);
     resetHarnessCliProbeCache();
-    preflightHarness('gemini');
-    expect(calls('gemini')).toHaveLength(4);
+    preflightHarness('codex');
+    expect(calls('codex')).toHaveLength(4);
   });
 });
 
@@ -189,16 +186,15 @@ describe('BR-109 — opencode\'s sole subscription channel is its auth store (R7
     expect(preflightHarness('opencode')).toEqual({ usable: true });
   });
 
-  it('R7b (scope): claude, codex, gemini and agy are never refused for a missing auth file (keychain / keyring stores)', { timeout: 30_000 }, () => {
-    for (const h of ['claude', 'codex', 'gemini', 'antigravity'] as ExtractorHarness[]) {
+  it('R7b (scope): claude, codex and agy are never refused for a missing auth file (keychain / keyring stores)', { timeout: 30_000 }, () => {
+    for (const h of ['claude', 'codex', 'antigravity'] as ExtractorHarness[]) {
       expect(`${h}:${preflightHarness(h).usable}`).toBe(`${h}:true`);
     }
   });
 });
 
-describe('BR-109 — the engine\'s DEFAULT resolver runs the preflight (R7)', () => {
-  it('R7: chosen gemini is refused, claude runs, and run_started carries the refusal', { timeout: 30_000 }, async () => {
-    installStub('gemini', { text: FULL_HELP.replace(/^.*--prompt .*$/m, '') });
+describe('TD-474 — the engine\'s DEFAULT resolver statically refuses a chosen gemini (R7)', () => {
+  it('R7: chosen gemini is refused LOUDLY (reason harness_retired, detail names antigravity), claude runs, and run_started carries the refusal', { timeout: 30_000 }, async () => {
     const db = new Database(':memory:');
     db.exec(`CREATE TABLE event_log (id INTEGER PRIMARY KEY AUTOINCREMENT, event_name TEXT NOT NULL, component TEXT NOT NULL,
       payload TEXT NOT NULL DEFAULT '{}', machine_hostname TEXT, project_slug TEXT, instance_id TEXT,
@@ -232,9 +228,13 @@ describe('BR-109 — the engine\'s DEFAULT resolver runs the preflight (R7)', ()
       });
       expect(r.backend?.harness).toBe('claude');
       const started = db.prepare('SELECT payload FROM event_log WHERE event_name = ?').get(eventName('dummy', 'run_started')) as { payload: string };
-      const payload = JSON.parse(started.payload) as { harness: string; refused?: Array<{ harness: string; reason: string }> };
+      const payload = JSON.parse(started.payload) as {
+        harness: string;
+        refused?: Array<{ harness: string; reason: string; detail: string }>;
+      };
       expect(payload.harness).toBe('claude');
-      expect((payload.refused ?? []).map((x) => `${x.harness}:${x.reason}`)).toEqual(['gemini:cli_incompatible']);
+      expect((payload.refused ?? []).map((x) => `${x.harness}:${x.reason}`)).toEqual(['gemini:harness_retired']);
+      expect(payload.refused?.[0].detail).toContain('antigravity');
     } finally {
       db.close();
     }

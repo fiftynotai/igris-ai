@@ -28,14 +28,22 @@ import type Database from 'better-sqlite3';
 
 /**
  * The CLI harnesses the backend can run the isolated extraction call on. Open
- * to the five first-class Igris harnesses; the spawn-map (`backend/spawn-map.ts`)
- * maps each to its headless flags. Ported from FR-201's `HarnessName`, extended
- * with `gemini`/`opencode`/`antigravity` per the FR-201→cognition port table.
+ * to the four runnable Igris extractor harnesses; the spawn-map
+ * (`backend/spawn-map.ts`) maps each to its headless flags. Ported from FR-201's
+ * `HarnessName`, extended with `opencode`/`antigravity` per the FR-201→cognition
+ * port table.
+ *
+ * TD-474: `gemini` is retired from the extractor role — the vendor discontinued
+ * gemini-cli's personal Code Assist tier and Antigravity is Google's harness now
+ * (docs/COGNITION.md "gemini — retired from the extractor"). It is deliberately
+ * NOT a member of this union or of `ALL_EXTRACTOR_HARNESSES`: auto-detection can
+ * never probe it and it can never reach `buildExtractorSpawn`. See
+ * `RETIRED_GEMINI_HARNESS` below for how an explicit selection is still refused
+ * LOUDLY rather than silently dropped.
  */
 export type ExtractorHarness =
   | 'claude'
   | 'codex'
-  | 'gemini'
   | 'opencode'
   | 'antigravity';
 
@@ -43,20 +51,36 @@ export type ExtractorHarness =
 export const ALL_EXTRACTOR_HARNESSES: readonly ExtractorHarness[] = [
   'claude',
   'codex',
-  'gemini',
   'opencode',
   'antigravity',
 ] as const;
 
-/** Why the selection preflight refused a harness (BR-109; docs/COGNITION.md). */
-export type HarnessRefusalReason = 'cli_missing' | 'cli_incompatible' | 'not_logged_in';
+/**
+ * TD-474 — the retired `gemini` token, recognized ONLY so an explicit selection
+ * at any resolution layer (global config, per-instance config, env) is refused
+ * LOUDLY by `resolveBackend` — never silently dropped the way an unrecognized
+ * string is. Never a member of `ExtractorHarness` or `ALL_EXTRACTOR_HARNESSES`.
+ */
+export const RETIRED_GEMINI_HARNESS = 'gemini' as const;
+
+/** A harness `resolveHarness` may CHOOSE — a runnable harness, or the retired token. */
+export type ExtractorHarnessSelection = ExtractorHarness | typeof RETIRED_GEMINI_HARNESS;
+
+/**
+ * Why the selection preflight refused a harness (BR-109; docs/COGNITION.md).
+ * `harness_retired` (TD-474) is a STATIC, selection-time refusal — Igris knows
+ * the vendor retired the tier, so it is never a `BackendFailReason` (it never
+ * comes from a spawn); the other three are probe-time verdicts about an
+ * otherwise-still-supported CLI.
+ */
+export type HarnessRefusalReason = 'cli_missing' | 'cli_incompatible' | 'not_logged_in' | 'harness_retired';
 
 /** A selection preflight verdict: usable, or refused with a named reason. */
 export type HarnessPreflight = { usable: true } | { usable: false; reason: HarnessRefusalReason; detail: string };
 
 /** One refused harness, as `run_started` / `run_skipped` carry it. */
 export interface HarnessRefusal {
-  harness: ExtractorHarness;
+  harness: ExtractorHarnessSelection;
   reason: HarnessRefusalReason;
   detail: string;
 }
@@ -71,7 +95,7 @@ export interface ResolvedBackend {
   /** The chosen harness CLI, or null when none in the fallback order is usable. */
   harness: ExtractorHarness | null;
   /** The harnesses tried (in order) while resolving availability — for observability. */
-  fallback_order: ExtractorHarness[];
+  fallback_order: ExtractorHarnessSelection[];
   /** Harnesses a preflight refused during the walk (absent when none). */
   refused?: HarnessRefusal[];
 }
@@ -97,9 +121,11 @@ export interface CognitionInstanceConfig {
   enabled: boolean;
   /**
    * Per-instance harness override. `null` = inherit the global
-   * `llm_extractor.harness` default. Resolved by `resolveHarness`.
+   * `llm_extractor.harness` default. Resolved by `resolveHarness`. TD-474:
+   * widened to `ExtractorHarnessSelection` so an explicit `'gemini'` pin is
+   * RECOGNIZED (and refused loudly) rather than treated as an invalid value.
    */
-  harness: ExtractorHarness | null;
+  harness: ExtractorHarnessSelection | null;
 }
 
 // ---------------------------------------------------------------------------

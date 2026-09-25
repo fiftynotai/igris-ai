@@ -20,7 +20,9 @@
 import { spawnSync } from 'node:child_process';
 import {
   ALL_EXTRACTOR_HARNESSES,
+  RETIRED_GEMINI_HARNESS,
   type ExtractorHarness,
+  type ExtractorHarnessSelection,
   type HarnessPreflight,
   type HarnessRefusal,
   type ResolvedBackend,
@@ -33,15 +35,27 @@ import {
 /**
  * The CLI binary name for each harness. `antigravity` runs through the `agy`
  * binary (the FR-201/antigravity convention — the antigravity adapter shells
- * `agy --print`); the rest match their harness id.
+ * `agy --print`); the rest match their harness id. TD-474: no `gemini` entry —
+ * the retired token never reaches a spawn, so it never needs a binary name.
  */
 export const HARNESS_BIN: Record<ExtractorHarness, string> = {
   claude: 'claude',
   codex: 'codex',
-  gemini: 'gemini',
   opencode: 'opencode',
   antigravity: 'agy',
 };
+
+// ---------------------------------------------------------------------------
+// TD-474 — the retired gemini token's refusal detail
+// ---------------------------------------------------------------------------
+
+/**
+ * The exact detail text a `gemini` selection is refused with, at every
+ * resolution layer. Quoted verbatim by `docs/COGNITION.md`'s "gemini — retired
+ * from the extractor" subsection — one string, one place it is authored.
+ */
+export const GEMINI_RETIRED_DETAIL =
+  "gemini is retired from the Igris extractor (TD-474): the vendor retired gemini-cli's personal Code Assist tier and Antigravity is Google's harness now. Use the antigravity harness instead (llm_extractor.harness, or list it first in fallback_order).";
 
 // ---------------------------------------------------------------------------
 // subscriptionOnlyEnv (ported from FR-201 judge.ts:323-328; narrowed to an
@@ -98,7 +112,7 @@ const _cliAvailable = new Map<ExtractorHarness, boolean>();
  * Generalized from `subconscious/verifier.ts:isClaudeCliAvailable` — same
  * `spawnSync('<bin>', ['--version'])` with a tight 5s timeout. Runs at instance
  * init / run-resolution time (not the hot path), so a blocking sync probe is
- * acceptable. `gemini`/`opencode`/`antigravity` follow the same contract: a
+ * acceptable. `codex`/`opencode`/`antigravity` follow the same contract: a
  * `--version` that exits 0 means "present and runnable".
  *
  * @param harness the harness to probe
@@ -140,10 +154,15 @@ export function resetHarnessCliProbeCache(): void {
 
 /** The global `llm_extractor` config section (read from ~/.igris/config.json). */
 export interface LlmExtractorGlobalConfig {
-  /** Global default backend. Defaults to 'claude' when unset. */
-  harness?: ExtractorHarness | null;
-  /** Order to try when the chosen harness CLI is absent. */
-  fallback_order?: ExtractorHarness[];
+  /**
+   * Global default backend. Defaults to 'claude' when unset. TD-474: widened to
+   * `ExtractorHarnessSelection` so an operator's `"harness": "gemini"` is
+   * RECOGNIZED (and refused loudly by `resolveBackend`) rather than treated as
+   * noise.
+   */
+  harness?: ExtractorHarnessSelection | null;
+  /** Order to try when the chosen harness CLI is absent. Same TD-474 widening. */
+  fallback_order?: ExtractorHarnessSelection[];
 }
 
 /**
@@ -159,7 +178,9 @@ export interface LlmExtractorGlobalConfig {
  * Env precedence: the per-instance env var wins over the global env var (a
  * targeted override beats a blanket one). An invalid harness value at any layer
  * is ignored (the lower layer stands), so a typo never silently disables the
- * instance.
+ * instance. TD-474: the retired `gemini` token is NOT invalid at this layer —
+ * it is recognized (`isExtractorHarnessSelection`) so `resolveBackend` can
+ * refuse it LOUDLY rather than this parser silently dropping it as noise.
  *
  * This returns only the CHOSEN harness (string) — availability is resolved
  * separately by `resolveBackend` so the choice and the probe are testable apart.
@@ -172,26 +193,26 @@ export interface LlmExtractorGlobalConfig {
 export function resolveHarness(
   global: LlmExtractorGlobalConfig,
   instanceId: string,
-  instanceHarness: ExtractorHarness | null,
+  instanceHarness: ExtractorHarnessSelection | null,
   env: NodeJS.ProcessEnv = process.env,
-): ExtractorHarness {
+): ExtractorHarnessSelection {
   // Layer 1: default.
-  let chosen: ExtractorHarness = 'claude';
+  let chosen: ExtractorHarnessSelection = 'claude';
 
   // Layer 2: global config.
-  if (isValidHarness(global.harness)) chosen = global.harness;
+  if (isExtractorHarnessSelection(global.harness)) chosen = global.harness;
 
   // Layer 3: per-instance config (null = inherit).
-  if (isValidHarness(instanceHarness)) chosen = instanceHarness;
+  if (isExtractorHarnessSelection(instanceHarness)) chosen = instanceHarness;
 
   // Layer 4: env overrides. Global env first, then the per-instance env so the
   // per-instance one wins (highest precedence).
   const globalEnv = env.IGRIS_LLM_EXTRACTOR_HARNESS;
-  if (isValidHarness(globalEnv)) chosen = globalEnv;
+  if (isExtractorHarnessSelection(globalEnv)) chosen = globalEnv;
 
   const instanceEnvKey = `IGRIS_${instanceId.toUpperCase()}_HARNESS`;
   const instanceEnv = env[instanceEnvKey];
-  if (isValidHarness(instanceEnv)) chosen = instanceEnv;
+  if (isExtractorHarnessSelection(instanceEnv)) chosen = instanceEnv;
 
   return chosen;
 }
@@ -205,6 +226,14 @@ export function resolveHarness(
  * `HarnessPreflight` (BR-109): a refused harness is skipped and listed in
  * `refused`; a boolean probe yields the pre-BR-109 object.
  *
+ * TD-474: when the walk reaches the retired `gemini` token it is refused
+ * IMMEDIATELY — `reason: 'harness_retired'`, `detail: GEMINI_RETIRED_DETAIL` —
+ * WITHOUT ever calling `isAvailable`/`preflightHarness`. The retirement is a
+ * static, permanent fact (the vendor discontinued the tier), not a per-machine
+ * condition to probe. The walk then CONTINUES, so a present harness (claude, by
+ * default) still runs — gemini is never silently dropped and never becomes
+ * `ResolvedBackend.harness`.
+ *
  * The chosen harness is always tried FIRST (regardless of where it sits in the
  * fallback order) so an explicit selection is honoured before alternatives.
  *
@@ -217,7 +246,7 @@ export function resolveHarness(
 export function resolveBackend(
   global: LlmExtractorGlobalConfig,
   instanceId: string,
-  instanceHarness: ExtractorHarness | null,
+  instanceHarness: ExtractorHarnessSelection | null,
   env: NodeJS.ProcessEnv = process.env,
   isAvailable: (h: ExtractorHarness) => boolean | HarnessPreflight = isHarnessCliAvailable,
 ): ResolvedBackend {
@@ -227,10 +256,10 @@ export function resolveBackend(
   // fallback order (de-duplicated), then any remaining harnesses.
   const configuredFallback =
     Array.isArray(global.fallback_order) && global.fallback_order.length > 0
-      ? global.fallback_order.filter(isValidHarness)
+      ? global.fallback_order.filter(isExtractorHarnessSelection)
       : [...ALL_EXTRACTOR_HARNESSES];
-  const tried: ExtractorHarness[] = [];
-  const seen = new Set<ExtractorHarness>();
+  const tried: ExtractorHarnessSelection[] = [];
+  const seen = new Set<ExtractorHarnessSelection>();
   for (const h of [chosen, ...configuredFallback, ...ALL_EXTRACTOR_HARNESSES]) {
     if (!seen.has(h)) {
       seen.add(h);
@@ -242,6 +271,11 @@ export function resolveBackend(
   const result = (harness: ExtractorHarness | null): ResolvedBackend =>
     refused.length > 0 ? { harness, fallback_order: tried, refused } : { harness, fallback_order: tried };
   for (const h of tried) {
+    if (h === RETIRED_GEMINI_HARNESS) {
+      // TD-474: static, permanent refusal — never probed, walk continues.
+      refused.push({ harness: h, reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL });
+      continue;
+    }
     const verdict = isAvailable(h);
     if (verdict === true) return result(h);
     if (verdict === false) continue;
@@ -251,10 +285,21 @@ export function resolveBackend(
   return result(null);
 }
 
-/** Narrow an unknown value to a valid `ExtractorHarness`. */
+/** Narrow an unknown value to a valid `ExtractorHarness` (runnable — excludes the retired token). */
 function isValidHarness(v: unknown): v is ExtractorHarness {
   return (
     typeof v === 'string' &&
     (ALL_EXTRACTOR_HARNESSES as readonly string[]).includes(v)
   );
+}
+
+/**
+ * Narrow an unknown value to a valid `ExtractorHarnessSelection` — a runnable
+ * harness, OR the retired `gemini` token (TD-474). Used at every layer of
+ * `resolveHarness`'s chain so an explicit `gemini` selection is RECOGNIZED
+ * (never treated as an invalid/unknown string) and can reach `resolveBackend`'s
+ * loud refusal.
+ */
+export function isExtractorHarnessSelection(v: unknown): v is ExtractorHarnessSelection {
+  return isValidHarness(v) || v === RETIRED_GEMINI_HARNESS;
 }

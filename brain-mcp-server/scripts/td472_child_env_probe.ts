@@ -127,7 +127,10 @@ function td471SubscriptionOnlyEnv(
 // Args + refusals
 // ---------------------------------------------------------------------------
 
-const ALL: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
+// TD-474: gemini is retired from the extractor role; this probe covers only the
+// four runnable harnesses. An operator-run `--harness gemini` refuses via the
+// "unknown harness" check below, once `ALL` no longer names it.
+const ALL: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 const PROMPT = { system: 'Reply with exactly: OK', user: 'ping' };
 const WATCHER_MARK = 'td471_host_auth_watch';
 /** `--add-back-file` may never link a path that can declare MCP, hooks, settings or metered keys. */
@@ -247,7 +250,6 @@ function watcherFinished(dir: string): boolean {
 const AUTH_STORE: Record<ExtractorHarness, string> = {
   claude: '.claude.json',
   codex: '.codex/auth.json',
-  gemini: '.gemini/oauth_creds.json',
   antigravity: '.gemini/oauth_creds.json',
   opencode: '.local/share/opencode/auth.json',
 };
@@ -255,7 +257,6 @@ const AUTH_STORE: Record<ExtractorHarness, string> = {
 const WITNESS: Record<ExtractorHarness, string | null> = {
   claude: 'Library/Keychains/login.keychain-db',
   codex: '.codex/auth.json',
-  gemini: '.gemini/oauth_creds.json',
   antigravity: null,
   opencode: '.local/share/opencode/auth.json',
 };

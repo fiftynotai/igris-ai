@@ -3,15 +3,15 @@
  * (TD-472; AC-1 metered keys, AC-2 config pointers).
  *
  * TD-471 stripped the inherited `CLAUDE*` / `ANTHROPIC_*` namespace; everything
- * else the brain inherited still reached all five children. TD-472 replaces the
+ * else the brain inherited still reached every extractor child. TD-472 replaces the
  * strip with one allowlist (plan D1/D2) plus a `*_API_KEY` drop (D3). These
  * cases drive the REAL builders (`buildExtractorSpawn`) and the REAL
- * `runBackend` → `execHarness` path for all five harnesses.
+ * `runBackend` → `execHarness` path for every extractor harness.
  *
  * Fence (the TD-471 shape, `backend-host-auth-env.test.ts`): HOME is a temp dir
  * (asserted ARMED via `homedir()`), and PATH is `<root>/bin:/usr/bin:/bin` —
- * REPLACED, not prepended — with a names-writer stub installed under all five
- * `HARNESS_BIN` names; each name is asserted to resolve into `<root>/bin`, so no
+ * REPLACED, not prepended — with a names-writer stub installed under every
+ * `HARNESS_BIN` name; each name is asserted to resolve into `<root>/bin`, so no
  * real CLI is reachable.
  *
  * D6 (values never reach output): stubs record env NAMES via `awk ENVIRON`;
@@ -44,7 +44,7 @@ import { isExpectedAllowed } from './fixtures/td472-child-env-allow.js';
 
 const PROMPT: ExtractorPrompt = { system: 'extract', user: 'ctx' };
 
-const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'gemini', 'antigravity', 'opencode'];
+const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 
 /** AC-1: per-harness metered / auth-routing names that must never reach that child (D4 + Phase 0.2). */
 const METERED: Record<ExtractorHarness, readonly string[]> = {
@@ -65,16 +65,6 @@ const METERED: Record<ExtractorHarness, readonly string[]> = {
     'CODEX_ACCESS_TOKEN',
     'AZURE_OPENAI_API_KEY',
     'OPENAI_BASE_URL',
-  ],
-  gemini: [
-    'GEMINI_API_KEY',
-    'GOOGLE_API_KEY',
-    'GOOGLE_GENAI_USE_VERTEXAI',
-    'GOOGLE_CLOUD_PROJECT',
-    'GOOGLE_CLOUD_LOCATION',
-    'GOOGLE_CLOUD_ACCESS_TOKEN',
-    'GOOGLE_GEMINI_BASE_URL',
-    'GEMINI_DEFAULT_AUTH_TYPE',
   ],
   antigravity: [
     'GEMINI_API_KEY',

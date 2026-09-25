@@ -11,15 +11,18 @@
  * payload extraction (perception's `extractJsonArrayReply`, subconscious's JSON
  * validator) — so the backend stays instance-agnostic.
  *
- * Format-agnostic across the five harnesses:
+ * Format-agnostic across every extractor harness:
  *   - claude `--output-format json`  → the `{type:"result", result}` text (or
  *                                       stream-json assistant text blocks);
  *   - codex JSONL                    → `{item:{type:"agent_message", text}}` texts;
- *   - gemini/antigravity `--print`   → raw prose lines ARE the text;
+ *   - antigravity `--print`          → raw prose lines ARE the text;
  *   - opencode `run`                 → raw prose lines (falls through to text).
  *
  * Also exports the failure detectors `runBackend` runs BEFORE `extractText`
  * (TD-447, BR-109; docs/COGNITION.md), so a CLI error is never "model text".
+ * TD-474: gemini is retired from this classifier — `detectGeminiFailure` and its
+ * live tier/trust regexes are deleted; gemini is refused before any spawn
+ * (`backend/env.ts#resolveBackend`), so it never reaches this module.
  *
  * @module engine/components/cognition/backend/parse-output
  * @author fifty.dev
@@ -32,7 +35,7 @@ import type { ExecResult } from './exec.js';
  * Reduce a harness's stdout to ONE text blob (the model's answer text). The
  * `harness` arg is accepted for symmetry + future per-harness tuning, but the
  * line-walking parser is format-agnostic (it recognises codex/claude JSON event
- * shapes and treats everything else as prose), so the same walk handles all five.
+ * shapes and treats everything else as prose), so the same walk handles every extractor harness.
  *
  * Returns the concatenated text. An empty stdout yields `''`. When the INSTANCE
  * then parses the blob to zero candidates, the engine disambiguates via the
@@ -55,7 +58,7 @@ export function extractText(harness: ExtractorHarness, stdout: string): string {
     const t = line.trim();
     if (!t) continue;
     if (!t.startsWith('{')) {
-      // Bare prose (gemini/antigravity --print, opencode, or any non-JSON line).
+      // Bare prose (antigravity --print, opencode, or any non-JSON line).
       texts.push(t);
       continue;
     }
@@ -95,7 +98,13 @@ export function extractText(harness: ExtractorHarness, stdout: string): string {
   return texts.join('\n');
 }
 
-/** A named CLI failure (BR-109): a reason for `runBackend` and the CLI's own message. */
+/**
+ * A named CLI failure (BR-109): a reason for `runBackend` and the CLI's own
+ * message. `account_unsupported` is kept for recorded runs and the
+ * `BackendFailReason` vocabulary (`backend/index.ts`) — since TD-474 retired
+ * gemini's classifier (its only producer), no detector in this module emits it
+ * anymore.
+ */
 export interface CliFailure {
   kind: 'api_error' | 'auth_error' | 'model_unsupported' | 'cli_incompatible' | 'account_unsupported';
   /** The CLI's message, ANSI-stripped, first 200 chars, + ` (http N)` when a status is known. */
@@ -254,37 +263,6 @@ function detectOpencodeFailure(stdout: string, stderr: string): CliFailure | nul
   return message === undefined ? null : classifyCliError({ message });
 }
 
-const GEMINI_TIER = /\bIneligibleTierError\b|\bineligibleTiers:/;
-const GEMINI_TIER_MESSAGE = /reasonMessage:\s*(['"`])(.+?)\1|IneligibleTierError:\s*(.+)/;
-const GEMINI_UNTRUSTED = /not running in a trusted directory/;
-
-/**
- * gemini-cli, only when the run gave no answer, first match wins: the vendor's tier refusal
- * (any exit) → `account_unsupported`; exit 55 or the untrusted-folder line, or exit 42/52 →
- * `cli_incompatible`; exit 41 → `auth_error`.
- */
-function detectGeminiFailure(code: number | null, stdout: string, stderr: string): CliFailure | null {
-  if (code === 0 && stdout.trim()) return null;
-  const lines = stripAnsi(stderr)
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-  const text = lines.join('\n');
-  if (GEMINI_TIER.test(text)) {
-    const m = GEMINI_TIER_MESSAGE.exec(text);
-    return { kind: 'account_unsupported', detail: (m?.[2] ?? m?.[3] ?? 'gemini: account tier ineligible').slice(0, 200) };
-  }
-  const untrusted = lines.find((l) => GEMINI_UNTRUSTED.test(l));
-  if (code === 55 || (code !== 0 && untrusted !== undefined)) {
-    return { kind: 'cli_incompatible', detail: (untrusted ?? lines[lines.length - 1] ?? 'gemini exit 55').slice(0, 200) };
-  }
-  if (code !== 41 && code !== 42 && code !== 52) return null;
-  return {
-    kind: code === 41 ? 'auth_error' : 'cli_incompatible',
-    detail: (lines[lines.length - 1] ?? `gemini exit ${code}`).slice(0, 200),
-  };
-}
-
 /** The harness-specific failure in `res`, or `null` (runs regardless of exit code). */
 export function detectHarnessFailure(
   harness: ExtractorHarness,
@@ -297,8 +275,6 @@ export function detectHarnessFailure(
       return detectCodexFailure(res.stdout);
     case 'opencode':
       return detectOpencodeFailure(res.stdout, res.stderr);
-    case 'gemini':
-      return detectGeminiFailure(res.code, res.stdout, res.stderr);
     case 'antigravity':
       return null;
   }

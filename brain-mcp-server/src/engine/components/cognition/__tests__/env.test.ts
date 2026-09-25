@@ -26,10 +26,24 @@ import {
   subscriptionOnlyEnv,
   resolveHarness,
   resolveBackend,
+  isExtractorHarnessSelection,
+  GEMINI_RETIRED_DETAIL,
   type LlmExtractorGlobalConfig,
 } from '../backend/env.js';
-import type { ExtractorHarness, HarnessPreflight } from '../types.js';
+import { ALL_EXTRACTOR_HARNESSES } from '../types.js';
+import type { ExtractorHarness, ExtractorHarnessSelection, HarnessPreflight } from '../types.js';
 import { EXPECTED_ALLOW } from './fixtures/td472-child-env-allow.js';
+
+// ---------------------------------------------------------------------------
+// TD-474 — gemini retired from the extractor roster (RED-first roster pin)
+// ---------------------------------------------------------------------------
+
+describe('TD-474 — gemini retired from the extractor roster', () => {
+  it('ALL_EXTRACTOR_HARNESSES is exactly the four runnable harnesses, sorted, and never contains gemini', () => {
+    expect([...ALL_EXTRACTOR_HARNESSES].sort()).toEqual(['antigravity', 'claude', 'codex', 'opencode']);
+    expect(ALL_EXTRACTOR_HARNESSES).not.toContain('gemini');
+  });
+});
 
 describe('subscriptionOnlyEnv', () => {
   it('drops both metered API keys (inherited or passed in extra) and never mutates base', () => {
@@ -350,23 +364,23 @@ describe('resolveBackend — availability + fallback_order', () => {
   const noEnv: NodeJS.ProcessEnv = {};
 
   it('returns the chosen harness when it is available, tried first', () => {
-    const present = new Set<ExtractorHarness>(['claude', 'gemini']);
+    const present = new Set<ExtractorHarness>(['claude', 'opencode']);
     const b = resolveBackend(
-      { harness: 'gemini' },
+      { harness: 'opencode' },
       'perception',
       null,
       noEnv,
       (h) => present.has(h),
     );
-    expect(b.harness).toBe('gemini');
-    expect(b.fallback_order[0]).toBe('gemini'); // chosen first
+    expect(b.harness).toBe('opencode');
+    expect(b.fallback_order[0]).toBe('opencode'); // chosen first
   });
 
   it('walks the fallback order when the chosen harness is absent', () => {
-    // chosen = codex (absent); fallback order claude→gemini, claude present
+    // chosen = codex (absent); fallback order claude→opencode, claude present
     const present = new Set<ExtractorHarness>(['claude']);
     const b = resolveBackend(
-      { harness: 'codex', fallback_order: ['claude', 'gemini'] },
+      { harness: 'codex', fallback_order: ['claude', 'opencode'] },
       'subconscious',
       null,
       noEnv,
@@ -405,25 +419,25 @@ describe('resolveBackend — a HarnessPreflight seam (BR-109, R4/R5)', () => {
     detail,
   });
 
-  it('R4: chosen gemini refused (cli_incompatible), claude usable → claude runs, the refusal is named', () => {
-    const b = resolveBackend({ harness: 'gemini', fallback_order: ['gemini', 'claude'] }, 'perception', null, noEnv, (h) =>
-      h === 'gemini' ? refuse('cli_incompatible', 'builder flags absent from gemini --help: --prompt') : { usable: true },
+  it('R4: chosen codex refused (cli_incompatible), claude usable → claude runs, the refusal is named', () => {
+    const b = resolveBackend({ harness: 'codex', fallback_order: ['codex', 'claude'] }, 'perception', null, noEnv, (h) =>
+      h === 'codex' ? refuse('cli_incompatible', 'builder flags absent from codex --help: --sandbox') : { usable: true },
     );
     expect(b.harness).toBe('claude');
-    expect(b.fallback_order.slice(0, 2)).toEqual(['gemini', 'claude']);
+    expect(b.fallback_order.slice(0, 2)).toEqual(['codex', 'claude']);
     expect(b.refused).toEqual([
-      { harness: 'gemini', reason: 'cli_incompatible', detail: 'builder flags absent from gemini --help: --prompt' },
+      { harness: 'codex', reason: 'cli_incompatible', detail: 'builder flags absent from codex --help: --sandbox' },
     ]);
   });
 
   it('R4: nothing usable → harness:null and every refusal listed in walk order', () => {
-    const b = resolveBackend({ harness: 'opencode', fallback_order: ['opencode', 'gemini'] }, 'perception', null, noEnv, (h) =>
-      h === 'opencode' ? refuse('not_logged_in', 'no auth store') : h === 'gemini' ? refuse('cli_incompatible', 'x') : refuse('cli_missing', 'y'),
+    const b = resolveBackend({ harness: 'opencode', fallback_order: ['opencode', 'codex'] }, 'perception', null, noEnv, (h) =>
+      h === 'opencode' ? refuse('not_logged_in', 'no auth store') : h === 'codex' ? refuse('cli_incompatible', 'x') : refuse('cli_missing', 'y'),
     );
     expect(b.harness).toBeNull();
     expect((b.refused ?? []).map((r) => `${r.harness}:${r.reason}`).slice(0, 3)).toEqual([
       'opencode:not_logged_in',
-      'gemini:cli_incompatible',
+      'codex:cli_incompatible',
       'claude:cli_missing',
     ]);
   });
@@ -431,7 +445,91 @@ describe('resolveBackend — a HarnessPreflight seam (BR-109, R4/R5)', () => {
   it('R5 (back-compat control): a boolean seam yields exactly the pre-BR-109 object — no refused key', () => {
     const present = new Set<ExtractorHarness>(['claude']);
     const b = resolveBackend({ harness: 'codex', fallback_order: ['claude'] }, 'perception', null, noEnv, (h) => present.has(h));
-    expect(b).toEqual({ harness: 'claude', fallback_order: ['codex', 'claude', 'gemini', 'opencode', 'antigravity'] });
+    expect(b).toEqual({ harness: 'claude', fallback_order: ['codex', 'claude', 'opencode', 'antigravity'] });
     expect('refused' in b).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-474 — the static gemini refusal: loud, never silent, never auto-selected
+// ---------------------------------------------------------------------------
+
+describe('resolveBackend — gemini is refused LOUDLY and statically (TD-474)', () => {
+  const noEnv: NodeJS.ProcessEnv = {};
+
+  it('an explicit chosen gemini is refused with reason harness_retired, naming antigravity, WITHOUT ever calling the probe — claude runs', () => {
+    const probed: ExtractorHarness[] = [];
+    const b = resolveBackend({ harness: 'gemini', fallback_order: ['gemini', 'claude'] }, 'perception', null, noEnv, (h) => {
+      probed.push(h);
+      return true;
+    });
+    expect(b.harness).toBe('claude');
+    expect(b.fallback_order.slice(0, 2)).toEqual(['gemini', 'claude']);
+    expect(b.refused).toEqual([{ harness: 'gemini', reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL }]);
+    expect(b.refused?.[0].detail).toContain('antigravity');
+    // the static refusal never calls isAvailable/preflightHarness for gemini —
+    // it is a permanent, selection-time fact, not a per-machine condition to probe.
+    expect(probed).not.toContain('gemini');
+    expect(probed).toEqual(['claude']);
+  });
+
+  it('gemini named via fallback_order (not chosen) is refused mid-walk, and the walk continues past it', () => {
+    const b = resolveBackend(
+      { harness: 'claude', fallback_order: ['claude', 'gemini', 'codex'] },
+      'perception',
+      null,
+      noEnv,
+      (h) => h === 'codex', // claude fails, gemini would be next but is statically refused, codex succeeds
+    );
+    expect(b.harness).toBe('codex');
+    expect(b.refused).toEqual([{ harness: 'gemini', reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL }]);
+  });
+
+  it('gemini named via the global env override is refused the same way as a config pin', () => {
+    const env = { IGRIS_LLM_EXTRACTOR_HARNESS: 'gemini' } as NodeJS.ProcessEnv;
+    const b = resolveBackend({}, 'perception', null, env, (h) => (h === 'claude' ? true : false));
+    expect(b.harness).toBe('claude');
+    expect(b.refused).toEqual([{ harness: 'gemini', reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL }]);
+  });
+
+  it('gemini named via the per-instance config is refused the same way as a global pin', () => {
+    const b = resolveBackend({}, 'subconscious', 'gemini', noEnv, (h) => (h === 'claude' ? true : false));
+    expect(b.harness).toBe('claude');
+    expect(b.refused).toEqual([{ harness: 'gemini', reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL }]);
+  });
+
+  it('gemini named via the per-instance env override (highest layer) is refused the same way', () => {
+    const probed: ExtractorHarness[] = [];
+    const env = { IGRIS_SUBCONSCIOUS_HARNESS: 'gemini' } as NodeJS.ProcessEnv;
+    const b = resolveBackend({ harness: 'codex' }, 'subconscious', 'opencode', env, (h) => {
+      probed.push(h);
+      return h === 'claude';
+    });
+    expect(b.harness).toBe('claude');
+    expect(b.fallback_order[0]).toBe('gemini');
+    expect(b.refused).toEqual([{ harness: 'gemini', reason: 'harness_retired', detail: GEMINI_RETIRED_DETAIL }]);
+    expect(probed).not.toContain('gemini');
+  });
+
+  it('auto-detection NEVER tries gemini, even with the binary on PATH: no explicit config, default fallback walk', () => {
+    const probed: ExtractorHarness[] = [];
+    // A stub that would say "present" for a literal 'gemini' string if it were
+    // ever asked — proving the default walk structurally never contains it. It
+    // returns false for every REAL harness so the walk runs to completion.
+    const isAvailable = (h: ExtractorHarness): boolean => {
+      probed.push(h);
+      return (h as string) === 'gemini';
+    };
+    const b = resolveBackend({}, 'perception', null, noEnv, isAvailable);
+    expect(b.harness).toBeNull(); // nothing the stub would ever say yes to was reachable
+    expect(probed).not.toContain('gemini');
+    expect(probed).toEqual([...ALL_EXTRACTOR_HARNESSES]); // the default walk order, in full — 'claude' first
+  });
+
+  it('isExtractorHarnessSelection recognizes gemini as a selection (not noise) but isHarnessCliAvailable-style typing excludes it', () => {
+    expect(isExtractorHarnessSelection('gemini')).toBe(true);
+    expect(isExtractorHarnessSelection('claude')).toBe(true);
+    expect(isExtractorHarnessSelection('bogus')).toBe(false);
+    expect((ALL_EXTRACTOR_HARNESSES as readonly ExtractorHarnessSelection[]).includes('gemini')).toBe(false);
   });
 });

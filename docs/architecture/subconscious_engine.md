@@ -104,9 +104,11 @@ classified `api_error` (or `auth_error` on 401/403 or an authentication message)
 text extraction, so it never reaches an instance parser and is never `parse_error`.
 Since **BR-109** every harness is read on the channel its CLI actually reports failure
 on, before text extraction: codex's JSONL `turn.failed` / `error` events, opencode's stderr
-`Error:` line (it exits 0), gemini's vendor tier refusal (`account_unsupported`) and exit
-codes 41/42/52/55, and — for any harness — a
-non-zero exit whose stderr rejects an argument (`cli_incompatible`). One classifier names
+`Error:` line (it exits 0), and — for any harness — a
+non-zero exit whose stderr rejects an argument (`cli_incompatible`). (gemini's live
+classifier — the vendor tier refusal and its exit codes — is retired by **TD-474**:
+gemini is refused before any spawn, so no current harness produces `account_unsupported`;
+the value stays in the vocabulary for recorded runs.) One classifier names
 the reason (`auth_error`, `model_unsupported`, else `api_error`); the per-CLI table is in
 `docs/COGNITION.md`. Perception's legacy path carries every backend class at BOTH of its
 scopes: the extractor (`perception/extractors/llm_via_claude_code.ts`) writes them as
@@ -928,7 +930,7 @@ path wins where both set a key; the legacy `subconscious.enabled` stays grep-abl
   "subconscious": { "enabled": false },          // legacy top-level — resolver fallback + grep anchor
   "llm_extractor": {                               // the shared cognition-backend harness selector
     "harness": "claude",
-    "fallback_order": ["claude", "codex", "gemini"]
+    "fallback_order": ["claude", "codex", "antigravity"]
   },
   "cognition": {
     "perception": { "enabled": true },

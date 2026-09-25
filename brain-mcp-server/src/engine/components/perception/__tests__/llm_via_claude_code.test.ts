@@ -608,4 +608,19 @@ describe('selectLlmExtractor', () => {
       resetHarnessCliProbeCache();
     }
   });
+
+  it('a pinned gemini is refused LOUDLY (warn, harness_retired, names antigravity) and never probed (TD-474)', () => {
+    const messages: string[] = [];
+    const extractor = selectLlmExtractor(
+      { ...DEFAULT_PERCEPTION_CONFIG, extractor_llm_enabled: true },
+      { info: (m) => messages.push(`info:${m}`), warn: (m) => messages.push(`warn:${m}`) },
+      { harness: 'gemini' },
+    );
+    expect(extractor).toBe(noopLlmExtractor);
+    const refusal = messages.filter((m) => m.startsWith('warn:') && m.includes('harness_retired'));
+    expect(refusal).toHaveLength(1);
+    expect(refusal[0]).toContain('antigravity');
+    // the retired token never reaches the CLI probe
+    expect(messages.some((m) => m.includes('CLI not on PATH'))).toBe(false);
+  });
 });
