@@ -17,7 +17,7 @@
  */
 
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
-import { buildExtractorSpawn, type SpawnOptions } from './spawn-map.js';
+import { buildExtractorSpawn, type ExtractorSpawn, type SpawnOptions } from './spawn-map.js';
 import { execHarness, type ExecResult } from './exec.js';
 import { extractText, detectHarnessFailure, detectUnknownArgument, scrubSecrets } from './parse-output.js';
 
@@ -39,6 +39,13 @@ export {
   FORBIDDEN_IGRIS_MARKERS,
   type IsolatedHome,
 } from './isolation.js';
+export {
+  resolveOpencodeModel,
+  oauthProviders,
+  type OpencodeModelResolution,
+  type OpencodeModelUsable,
+  type OpencodeModelRefused,
+} from './opencode-model.js';
 export {
   buildExtractorSpawn,
   composePrompt,
@@ -136,7 +143,14 @@ export async function runBackend(
   const buildSpawn = opts.buildSpawn ?? buildExtractorSpawn;
   const runExec = opts.runExec ?? execHarness;
 
-  const spawn = buildSpawn(harness, prompt, opts);
+  // Built outside the exec `try` (its `finally` needs the spawn), but a builder that throws
+  // must still honour "never throws": buildExtractorSpawn has already reaped its HOME (BR-110).
+  let spawn: ExtractorSpawn;
+  try {
+    spawn = buildSpawn(harness, prompt, opts);
+  } catch (err) {
+    return failed('spawn_error', err instanceof Error ? err.message.slice(0, 200) : String(err));
+  }
   try {
     // Delivery shapes the argv + stdin: 'stdin' pipes the prompt body (claude);
     // 'argv' appends it as the final argument (codex, opencode, agy).

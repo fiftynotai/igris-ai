@@ -82,7 +82,10 @@ lifecycle event and returns:
 5. **BACKEND** — no harness in the fallback walk is usable → `run_skipped(reason='cli_missing')`
    when every candidate's CLI is absent, else `run_skipped(reason='harness_refused')` with a
    `refused` array (BR-109: the call-free selection preflight, `cognition/backend/preflight.ts`,
-   refused a CLI missing a builder flag or, for opencode, its auth store). A run on a fallback
+   refused a CLI missing a builder flag or, for opencode, its auth store, its local model
+   catalog (`no_model_catalog`), or an oauth-backed model to run with
+   (`no_subscription_model` — BR-110, `cognition/backend/opencode-model.ts#resolveOpencodeModel`,
+   the SAME resolver the builder uses for `--model`)). A run on a fallback
    harness carries the same `refused` array on `run_started`.
 
 Past the gates, the engine writes `run_started` (consuming budget), runs the isolated

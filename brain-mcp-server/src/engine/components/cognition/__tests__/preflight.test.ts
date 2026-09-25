@@ -26,15 +26,21 @@ import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, w
 import { homedir, tmpdir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { HARNESS_BIN, resetHarnessCliProbeCache } from '../backend/index.js';
+import { HARNESS_BIN, resetHarnessCliProbeCache, buildExtractorSpawn, resolveOpencodeModel, runBackend } from '../backend/index.js';
 import { preflightHarness, HELP_ARGV, flagsInHelp } from '../backend/preflight.js';
 import { runExtractor } from '../engine/index.js';
 import { eventName } from '../lifecycle.js';
 import type { CognitionInstance, ExtractorHarness } from '../types.js';
+import {
+  OPENCODE_METERED_PROVIDER,
+  OPENCODE_OAUTH_PROVIDER,
+  OPENCODE_RESOLVED_MODEL,
+  seedOpencodeSubscription,
+} from './fixtures/br108-isolated-home.js';
 
 const HARNESSES: ExtractorHarness[] = ['claude', 'codex', 'antigravity', 'opencode'];
 
-/** A help text listing every flag the BR-109 builders pass (claude, codex, agy; opencode passes none). */
+/** A help text listing every flag the BR-109/BR-110 builders pass (claude, codex, agy, opencode). */
 const FULL_HELP = [
   'Usage: fx [options]',
   '  -p, --print              claude/agy headless',
@@ -46,6 +52,7 @@ const FULL_HELP = [
   '  --skip-git-repo-check',
   '  --sandbox <mode>',
   '  --print-timeout <secs>',
+  '  --model <name>            opencode always passes this now (BR-110)',
   '',
 ].join('\n');
 
@@ -122,10 +129,7 @@ describe('BR-109 — preflight refuses a CLI that lacks a builder flag (R1)', ()
 
   it('R1: every harness is usable against a stub help listing every flag its builder passes', { timeout: 30_000 }, () => {
     for (const h of HARNESSES) {
-      if (h === 'opencode') {
-        mkdirSync(join(homedir(), '.local', 'share', 'opencode'), { recursive: true });
-        writeFileSync(join(homedir(), '.local', 'share', 'opencode', 'auth.json'), '{}');
-      }
+      if (h === 'opencode') seedOpencodeSubscription(homedir());
       expect(`${h}:${JSON.stringify(preflightHarness(h))}`).toBe(`${h}:${JSON.stringify({ usable: true })}`);
     }
   });
@@ -177,11 +181,10 @@ describe('BR-109 — preflight is cached per process (R3)', () => {
 });
 
 describe('BR-109 — opencode\'s sole subscription channel is its auth store (R7b)', () => {
-  it('R7b: no .local/share/opencode/auth.json in HOME → not_logged_in; with it → usable (existence only)', () => {
+  it('R7b: no .local/share/opencode/auth.json in HOME → not_logged_in; with it (+ catalog + oauth model) → usable', () => {
     const r = preflightHarness('opencode');
     expect(r.usable === false && r.reason).toBe('not_logged_in');
-    mkdirSync(join(homedir(), '.local', 'share', 'opencode'), { recursive: true });
-    writeFileSync(join(homedir(), '.local', 'share', 'opencode', 'auth.json'), '{}');
+    seedOpencodeSubscription(homedir());
     resetHarnessCliProbeCache();
     expect(preflightHarness('opencode')).toEqual({ usable: true });
   });
@@ -190,6 +193,85 @@ describe('BR-109 — opencode\'s sole subscription channel is its auth store (R7
     for (const h of ['claude', 'codex', 'antigravity'] as ExtractorHarness[]) {
       expect(`${h}:${preflightHarness(h).usable}`).toBe(`${h}:true`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-110 — opencode's model catalog + explicit model
+// ---------------------------------------------------------------------------
+
+describe('BR-110 — preflight refuses opencode with no model catalog (no_model_catalog)', () => {
+  it('auth store present with an oauth provider, but no catalog → no_model_catalog', () => {
+    mkdirSync(join(homedir(), '.local', 'share', 'opencode'), { recursive: true });
+    writeFileSync(
+      join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ [OPENCODE_OAUTH_PROVIDER]: { type: 'oauth' } }),
+    );
+    const r = preflightHarness('opencode');
+    expect(r.usable === false && r.reason).toBe('no_model_catalog');
+    expect(r.usable === false && r.detail).toContain('.cache/opencode/models.json');
+    expect(r.usable === false && r.detail).toContain('.cache/opencode/version');
+  });
+
+  it('catalog present but only ONE of the two files → still no_model_catalog (both required)', () => {
+    mkdirSync(join(homedir(), '.cache', 'opencode'), { recursive: true });
+    writeFileSync(join(homedir(), '.cache', 'opencode', 'models.json'), '{}');
+    mkdirSync(join(homedir(), '.local', 'share', 'opencode'), { recursive: true });
+    writeFileSync(
+      join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ [OPENCODE_OAUTH_PROVIDER]: { type: 'oauth' } }),
+    );
+    const r = preflightHarness('opencode');
+    expect(r.usable === false && r.reason).toBe('no_model_catalog');
+    expect(r.usable === false && r.detail).toContain('.cache/opencode/version');
+    expect(r.usable === false && r.detail).not.toContain('.cache/opencode/models.json');
+  });
+});
+
+describe('BR-110 — preflight refuses opencode with no oauth-backed model (no_subscription_model)', () => {
+  it('catalog present, auth.json api-only → no_subscription_model', () => {
+    seedOpencodeSubscription(homedir());
+    writeFileSync(
+      join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ [OPENCODE_METERED_PROVIDER]: { type: 'api' } }),
+    );
+    const r = preflightHarness('opencode');
+    expect(r.usable === false && r.reason).toBe('no_subscription_model');
+  });
+
+  it('control: catalog + oauth model → usable, and the production spawn always names --model (AC-1)', () => {
+    seedOpencodeSubscription(homedir());
+    expect(preflightHarness('opencode')).toEqual({ usable: true });
+    const spawn = buildExtractorSpawn('opencode', { system: 'x', user: 'y' }, { env: { IGRIS_LLM_EXTRACTOR_SCRATCH_ROOT: scratch } });
+    try {
+      const i = spawn.args.indexOf('--model');
+      expect(i).toBeGreaterThan(-1);
+      expect(spawn.args[i + 1]).toBe(OPENCODE_RESOLVED_MODEL);
+    } finally {
+      spawn.cleanup();
+    }
+  });
+
+  it('a builder that throws reaps its isolated HOME, and runBackend reports spawn_error instead of throwing', async () => {
+    seedOpencodeSubscription(homedir());
+    writeFileSync(
+      join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ [OPENCODE_METERED_PROVIDER]: { type: 'api' } }),
+    );
+    const env = { IGRIS_LLM_EXTRACTOR_SCRATCH_ROOT: scratch };
+    expect(() => buildExtractorSpawn('opencode', { system: 'x', user: 'y' }, { env })).toThrow(/no_subscription_model/);
+    expect(readdirSync(scratch)).toEqual([]);
+    const r = await runBackend('opencode', { system: 'x', user: 'y' }, 5_000, { env });
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.fail_reason).toBe('spawn_error');
+    expect(readdirSync(scratch)).toEqual([]);
+  });
+
+  it('a configured model naming a non-oauth provider is refused (no_subscription_model, resolver unit)', () => {
+    seedOpencodeSubscription(homedir());
+    const resolved = resolveOpencodeModel(`${OPENCODE_METERED_PROVIDER}/fx`, homedir());
+    expect(resolved.usable).toBe(false);
+    expect(resolved.usable === false && resolved.reason).toBe('no_subscription_model');
   });
 });
 

@@ -708,6 +708,8 @@ never reaches this table at all:
 | `<bin> --version` exits 0 | `cli_missing` | the existing probe |
 | every flag the REAL builder passes appears in the CLI's own help (`claude --help`, `codex exec --help`, `agy --help`, `opencode run --help`), run with the builder's env in an isolated home, 10 s | `cli_incompatible` | FAIL-OPEN: a help that exits non-zero, prints nothing or times out counts as usable, so a misread help can never refuse claude |
 | opencode only: `~/.local/share/opencode/auth.json` exists | `not_logged_in` | existence only, never opened. It is opencode's sole subscription channel; claude (Keychain) and codex (can be a keyring) are not listed, because a missing file there does not prove logged-out — antigravity shares gemini's former stores but is not listed here either, for the same reason |
+| opencode only: `~/.cache/opencode/{models.json,version}` both exist | `no_model_catalog` (BR-110) | existence only. Without a local model catalog opencode falls back to a built-in snapshot that can be missing the operator's current subscription models entirely (measured: 12 models in that snapshot vs 22 in the operator's real catalog, `gpt-5.5`/`gpt-5.6*` absent) |
+| opencode only: `resolveOpencodeModel()` (`cognition/backend/opencode-model.ts`) resolves | `no_subscription_model` (BR-110) | reads `~/.local/share/opencode/auth.json` (provider ids + `.type` only) and `~/.local/state/opencode/model.json` (`recent`, then `favorite`); refused when no candidate's provider is `oauth`. The SAME function the builder calls for `--model` — a usable preflight verdict and a resolvable spawn are the same fact by construction |
 
 A refused harness is skipped like a missing one. A run on a fallback harness
 carries `refused: [{harness, reason, detail}]` on `run_started`; when nothing is
@@ -729,6 +731,8 @@ failures are named by the detectors above.
 | harness | reason | action |
 |---|---|---|
 | opencode | `auth_error` (`Token refresh failed: 401`) or `not_logged_in` | `opencode auth login` in your own shell, then restart the brain |
+| opencode | `no_model_catalog` (BR-110) | run the opencode CLI once in your own shell (any command that talks to a provider populates `~/.cache/opencode/{models.json,version}`), then restart the brain |
+| opencode | `no_subscription_model` (BR-110) | log into an OAuth-backed provider (`opencode auth login`) — an api-key-only provider is never enough, since the extractor will never load it |
 | codex | `model_unsupported` (`… requires a newer version of Codex`) | upgrade codex, OR set `model` in `~/.codex/config.toml` to one the installed CLI serves (the isolated home carries that key verbatim) |
 | any | `harness_retired` (gemini only — `GEMINI_RETIRED_DETAIL`) | nothing Igris can fix: the vendor retired the gemini-cli personal tier and this is now a permanent operator policy, not a per-account condition. Use the `antigravity` harness (`llm_extractor.harness`, or put it first in `fallback_order`) — unreachable for any other harness, since only `gemini` is ever refused this way |
 | any | `cli_incompatible` | the installed CLI rejects the extractor's argv: check its version against the builder (`cognition/backend/spawn-map.ts`) |
@@ -738,8 +742,14 @@ failures are named by the detectors above.
 `runBackend` (H1-H6, H11-H14, H12 through `runExtractor` into `event_log`; H10
 the antigravity argv-delivery control — TD-474 deleted H7-H9 and H15-H18, the
 gemini-only live/offline classifier cases, along with the classifier they
-pinned); `preflight.test.ts` pins the preflight (R1-R3) and the static gemini
-refusal (R7), `env.test.ts` and `engine.test.ts` its wiring. The live PASS
+pinned); `preflight.test.ts` pins the preflight (R1-R3), the static gemini
+refusal (R7), and (BR-110) `no_model_catalog`/`no_subscription_model` plus a
+control asserting the resolved spawn's `--model`, `env.test.ts` and
+`engine.test.ts` its wiring. `opencode-model.test.ts` pins `resolveOpencodeModel`
+and `oauthProviders` directly (an injectable `home` param — no HOME fence
+needed); `isolation-file-channels.test.ts` (F10-F12) pins the catalog copy's
+bytes against the operator's, the owned `enabled_providers` allowlist's exact
+key set, and that `auth.json` stays a link. The live PASS
 lines are recorded in the proof tables below as each runs: opencode after
 `opencode auth login`; codex after the CLI is upgraded. gemini has no PASS row
 left to chase — see "gemini — retired from the extractor" above.
@@ -833,10 +843,10 @@ record the result envelope, booleans and env names only:
 | harness | verdict | refresh witness | date / machine |
 |---|---|---|---|
 | claude | pending: runs after the TD-471 watcher's verdict | — | — |
-| codex | `PRE_EXISTING` under BR-108's isolation: both arms exit 1 identically — the request authenticates and the server answers 400 "the 'gpt-5.6-sol' model requires a newer version of Codex" (the operator config's model outruns codex 0.135.0; BR-109) | no | 2026-09-24, codex 0.135.0, this machine |
+| codex | `PASS` on codex 0.157.0 (the operator's upgrade): both arms ok, `cli_seen: true`, `mcp_spawned: false`, forward links intact. History: `PRE_EXISTING` under BR-108's isolation on 0.135.0: both arms exit 1 identically — the request authenticates and the server answers 400 "the 'gpt-5.6-sol' model requires a newer version of Codex" (the operator config's model outruns codex 0.135.0; BR-109) | no | 2026-09-25, codex 0.157.0, this machine; `plans/br109-evidence/probe-codex-20260925T151134Z.jsonl` (earlier: 2026-09-24, codex 0.135.0) |
 | gemini | `PRE_EXISTING` — vendor-side (2026-09-25, gemini-cli 0.45.0, this machine): after BR-109's argv (`--prompt ''` + stdin, `--skip-trust`) both arms exit 1 with `account_unsupported` (the vendor retired gemini-cli's Code Assist for individuals tier; the login is valid — the token refreshed on the first pair). Nothing regressed; the harness decision is TD-474 | first pair yes, re-run no | 2026-09-25, gemini-cli 0.45.0, this machine |
 | antigravity | `PASS` under BR-108's isolation: both arms answered (allow 12.7 s, base 10.1 s) | n/a (agy keeps no refresh witness) | 2026-09-24, agy 1.0.16, this machine |
-| opencode | `PRE_EXISTING` (2026-09-24, opencode 1.14.22, this machine): both arms fail auth identically — the allowlist and the TD-471 env; nothing regressed; the isolated-HOME auth defect is BR-109 | — | — |
+| opencode | `PASS` after BR-110: both arms ok, `cli_seen: true`, `mcp_spawned: false`, forward links intact; the probe resolved `openai/gpt-5.5` (oauth) and the owned `enabled_providers` held `openai` only. History: `PRE_EXISTING` on 2026-09-24 (a stale login, BR-109), then `METERED_MODE`/`api_error` after the re-login. Neither was an env-allowlist defect: BR-110 found three isolated-HOME causes (no model catalog, no explicit `--model`, a reachable metered default through `auth.json`'s api-key entry), fixed by an owned catalog copy, an always-explicit oauth `--model` and an owned `enabled_providers` allowlist (see "what an extractor child can READ" below). The probe's census also matches a native CLI launched by its bare name now; before, every opencode arm read `cli_seen: false` | no | 2026-09-25, opencode 1.14.22, this machine; `plans/br110-evidence/probe-opencode-20260925T160943Z.jsonl`; schema read `plans/br110-evidence/phase0-opencode-provider-keys.txt` |
 
 The unit and stub tiers already pin the rule across every extractor harness. They cover
 metered names, pointers, the names TD-471 missed, and the real ambient env
@@ -869,7 +879,7 @@ plugin directory cannot reach a child. It fails closed.
 | claude | `Library/Keychains`, `.claude/.credentials.json` | `.claude.json`: the operator's copy minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey` (a metered Console key); every other key kept | `--strict-mcp-config`, no `--mcp-config` |
 | codex | `Library/Keychains`, `.codex/auth.json` | `.codex/config.toml`: root-section lines for `model`, `model_reasoning_effort`, `cli_auth_credentials_store`, `forced_login_method`, `forced_chatgpt_workspace_id`, `preferred_auth_method` with a one-line scalar value, copied verbatim; then an owned `[features]` block setting `apps`, `in_app_browser`, `plugin_sharing`, `plugins`, `skill_mcp_dependency_install`, `tool_call_mcp_elicitation` to false | none (see the residuals) |
 | antigravity | `Library/Keychains`, `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`, `.gemini/installation_id`, `.gemini/antigravity-cli/antigravity-oauth-token`, `installation_id`, `cache/onboarding.json` | `.gemini/settings.json` with only `security.auth`, `selectedAuthType`, `model`; `.gemini/config/mcp_config.json` = `{"mcpServers": {}}`; empty `.env` and `.gemini/.env`; `.gemini/antigravity-cli/settings.json` with only `model` | none (agy has no MCP-allowlist flag) |
-| opencode | `Library/Keychains`, `.local/share/opencode/auth.json` (the provider store only, BR-109; the whole directory before it) | none | none |
+| opencode | `Library/Keychains`, `.local/share/opencode/auth.json` (the provider store only, BR-109; the whole directory before it) | `.cache/opencode/models.json` + `.cache/opencode/version`: a real COPY (never a link) of the operator's model catalog, byte-identical, skipped silently if the operator has neither (BR-110); `.config/opencode/opencode.json` = `{"enabled_providers": [<oauth providers>]}`, an ALLOWLIST marshalled from `auth.json`'s `oauth`-typed provider ids only — never written empty | `--model <resolved>`, always (BR-110) |
 
 **Why each owned copy is shaped the way it is:**
 
@@ -891,6 +901,15 @@ plugin directory cannot reach a child. It fails closed.
 - **An unparseable source yields an owned file carrying nothing** (`{}` for
   JSON, the `[features]` block alone for codex). Auth then fails loudly
   (`auth_error`) instead of a partial copy passing.
+- **opencode's `opencode.json` is marshalled through an ALLOWLIST, never a
+  transform of the operator's own file** (BR-110). The operator's real
+  `.config/opencode/opencode.json` (which may declare MCP servers, plugins,
+  commands — anything) is never read for this purpose at all; the owned copy is
+  built from scratch, from `auth.json`'s provider ids alone, and carries exactly
+  one key. This is the SAME "own a copy, marshal by allowlist" discipline as
+  claude's `.claude.json` and codex's `config.toml`, applied to a file that
+  previously had no owned copy because opencode had nothing worth keeping from
+  it.
 - **The codex `-c` belt was measured, not assumed.** Against a
   fixture home that declares a server, `codex -c 'mcp_servers={}' mcp list
   --json` still lists that server, so the override does not replace the table.
@@ -902,9 +921,11 @@ plugin directory cannot reach a child. It fails closed.
 
 - **MCP / exec declarations:** codex `config.toml` (whole) and `plugins/`;
   gemini `settings.json`, `extensions/` and `config/hooks.json`; the whole of
-  `.config/opencode/` (`opencode.json`, any `opencode.jsonc` or `config.json`,
-  the plugin `package.json` / `node_modules`, `command/`); opencode's
-  `mcp-auth.json` (MCP OAuth tokens, BR-109).
+  `.config/opencode/` (the operator's OWN `opencode.json`, any `opencode.jsonc`
+  or `config.json`, the plugin `package.json` / `node_modules`, `command/`) — the
+  isolated home's own `.config/opencode/opencode.json` is a DIFFERENT, OWNED file
+  (BR-110, the `enabled_providers` allowlist, never MCP-bearing), not a forward
+  of this one; opencode's `mcp-auth.json` (MCP OAuth tokens, BR-109).
 - **Igris OS context:** `.gemini/agents/`, `.config/opencode/command/`,
   `.codex/AGENTS.md`.
 - **Metered-key files:** `.gemini/.env`, `.codex/.env`.
@@ -968,11 +989,59 @@ and nothing else. This is code-read only; no Linux machine has run it.
   1.14.22 writes `auth.json` IN PLACE (`Auth.set` → `writeJson` → `fs.writeFile`,
   a static read of the binary), so its file link survives a refresh; before
   BR-109 the whole directory was linked, which was rename-safe.
+- **`auth.json` stays a READABLE link, and that is a stated, accepted limit
+  (BR-110).** Unlike every other owned config, opencode's provider auth store is
+  never copied or stripped — it is a link to the operator's real file, on
+  purpose, so opencode's own in-place token refresh (the bullet above) keeps
+  working. The child can therefore always SEE which providers exist and their
+  `.type`, including any api-key provider's presence (never its key value — the
+  file's other fields are never opened by Igris code, but the CLI that owns the
+  file can read all of it). The `enabled_providers` allowlist is what stops that
+  visibility from becoming USABILITY: a provider the child can see but that
+  is not in the allowlist never loads, so opencode never authenticates against
+  it. No file-visibility fix closes this gap further while `auth.json` stays
+  readable — closing it would mean opencode losing its own refresh, which is
+  the worse trade.
 
 **Versions read.** gemini-cli 0.45.0 (static read of the installed bundle),
 codex-cli 0.135.0 (offline commands against fixture homes), agy 1.0.16 (a
 `strings` read of names). A newer version re-runs those reads before this
 section moves (the MAINTAINING.md row).
+
+### opencode: model choice + catalog (BR-110)
+
+opencode is the only extractor harness with no headless-safe default: with no
+`--model` it picks its own choice, which had no current-subscription model
+available (its catalog was missing) and could route through a metered
+provider. Three fixes, all in `cognition/backend/opencode-model.ts` +
+`isolation.ts` + `spawn-map.ts`:
+
+1. **The model catalog.** `~/.cache/opencode/{models.json,version}` is copied
+   (never linked — `opencode run` deletes a cache dir with no `version`
+   marker) into the isolated home on every spawn. Without it, `opencode models
+   openai` listed 12 models in isolation vs 22 in the real home, missing the
+   operator's current subscription models entirely (measured, this machine,
+   2026-09-25). Preflight refuses `no_model_catalog` when either file is
+   missing on the operator's real HOME.
+2. **The model choice.** `resolveOpencodeModel(configuredModel?, home?)` is the
+   ONE resolver the builder, the selection preflight and the TD-472 probe all
+   call. It reads the operator's real `~/.local/share/opencode/auth.json`
+   (provider ids + `.type` only) and `~/.local/state/opencode/model.json`
+   (`recent`, then `favorite`), and returns the first `provider/model` whose
+   provider's auth entry is `oauth`. `buildOpencodeSpawn` ALWAYS appends
+   `--model <resolved>` — opencode never runs with an implicit model — and
+   throws defensively if nothing resolved (preflight should already have
+   refused with `no_subscription_model` first). A `configuredModel` naming a
+   non-oauth provider is refused the same way, never silently swapped for a
+   different model.
+3. **The metered guard.** The isolated home's owned
+   `.config/opencode/opencode.json` carries exactly
+   `{"enabled_providers": [<oauth providers>]}` — an ALLOWLIST (`enabled_providers`,
+   never `disabled_providers`) so a provider the operator adds later is
+   excluded by default rather than included by default. `auth.json` stays a
+   readable link (see the residual above); this is what stops that visibility
+   from becoming usability. Never written empty — see "why each owned copy is
+   shaped the way it is" above.
 
 **Proof (BR-108 AC-2).** `isolation-file-channels.test.ts` pins the rule for
 every harness against a fixture operator home: no MCP name is reachable,
@@ -990,7 +1059,7 @@ verdict:
 | codex | no MCP process spawned in either arm (census `cli_seen` true, `mcp_spawned` false); `codex login status` reads logged-in inside the isolated HOME; the call itself fails on the model-version 400 above (not auth; BR-109) | 2026-09-24, codex 0.135.0, this machine |
 | gemini | no MCP process spawned in either arm of either live pair (census `cli_seen` true, `mcp_spawned` false; forward links intact); the call itself is refused by the vendor (`account_unsupported`, 2026-09-25 re-run) — a PASS is not reachable for this account, the harness decision is TD-474. Structural proof: F1 / F6 / P3 / P4 green | 2026-09-25, gemini-cli 0.45.0, this machine |
 | antigravity | `PASS`: both arms answered, no MCP process spawned (census `cli_seen` true, `mcp_spawned` false) | 2026-09-24, agy 1.0.16, this machine |
-| opencode | not in BR-108's live AC. On this machine only `opencode.json` existed, and it was already excluded; an `opencode.jsonc` or `config.json` DID reach the child before BR-108 (F1 at HEAD) | — |
+| opencode | not in BR-108's live AC. On this machine only `opencode.json` existed, and it was already excluded; an `opencode.jsonc` or `config.json` DID reach the child before BR-108 (F1 at HEAD). BR-110: the isolated home now OWNS `.config/opencode/opencode.json` on purpose (the `enabled_providers` allowlist, never MCP-bearing — `childVisibleMcpNames` stays `[]` against it, F1/F11) | — |
 
 ## the layer is open
 

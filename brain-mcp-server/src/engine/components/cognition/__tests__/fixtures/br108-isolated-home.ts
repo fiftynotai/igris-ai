@@ -9,6 +9,15 @@
  * (test_standards: "an allowlist is pinned by EXACT membership against a second,
  * independent spelling").
  *
+ * BR-110: the fixture operator HOME also carries opencode's model catalog
+ * (`.cache/opencode/{models.json,version}`), recent-model state
+ * (`.local/state/opencode/model.json`) and a TWO-PROVIDER `auth.json`
+ * (`OPENCODE_OAUTH_PROVIDER` type `oauth`, `OPENCODE_METERED_PROVIDER` type
+ * `api`) — placeholder ids, never realistic secrets (D6). `seedOpencodeSubscription`
+ * writes just those four files for test files that build a minimal HOME rather
+ * than the full fixture (`preflight.test.ts`, `backend-harness-failures.test.ts`,
+ * `backend-child-env-allowlist.test.ts`).
+ *
  * `seedOperatorHome(home)` writes a fake operator HOME whose every config file
  * declares MCP servers, `igris-brain` AND `igris-fixture-future` (the server
  * added later). Every value is a placeholder (`fx`, `oauth-personal`,
@@ -62,7 +71,8 @@ export const EXPECTED_OWNED: Record<ExtractorHarness, readonly string[]> = {
     '.env',
     '.gemini/.env',
   ],
-  opencode: [],
+  // BR-110: the copied model catalog + the owned enabled_providers allowlist.
+  opencode: ['.cache/opencode/models.json', '.cache/opencode/version', '.config/opencode/opencode.json'],
 };
 
 /**
@@ -111,7 +121,6 @@ export const NEVER_FORWARDED: readonly string[] = [
   '.gemini/config/hooks.json',
   '.codex/plugins',
   '.codex/memories_1.sqlite',
-  '.config/opencode',
   '.claude/CLAUDE.md',
   '.gemini/settings.json',
   '.codex/config.toml',
@@ -121,6 +130,13 @@ export const NEVER_FORWARDED: readonly string[] = [
   '.local/share/opencode/opencode.db',
   '.local/share/opencode/storage',
   '.local/share/opencode/snapshot',
+  // BR-110: the copied catalog + the owned provider allowlist must be OWNED files,
+  // never links, if present at all — supersedes the old bare `.config/opencode`
+  // entry, which could never assert anything useful once opencode owns a file
+  // under that directory (the directory itself is then legitimately present).
+  '.cache/opencode/models.json',
+  '.cache/opencode/version',
+  '.config/opencode/opencode.json',
 ];
 
 // ---------------------------------------------------------------------------
@@ -128,6 +144,51 @@ export const NEVER_FORWARDED: readonly string[] = [
 // ---------------------------------------------------------------------------
 
 const SERVER = { command: '/nonexistent/igris-fixture-mcp' };
+
+// ---------------------------------------------------------------------------
+// BR-110 — opencode's model catalog, recent-model state, and a two-provider
+// auth.json. Placeholder ids and bytes only (D6 — never realistic secrets).
+// ---------------------------------------------------------------------------
+
+/** A placeholder auth.json provider whose `.type` is `oauth`. */
+export const OPENCODE_OAUTH_PROVIDER = 'igris-fixture-oauth';
+/** A placeholder auth.json provider whose `.type` is `api` (metered — must never be enabled). */
+export const OPENCODE_METERED_PROVIDER = 'igris-fixture-metered';
+/** The placeholder recent-model id the oauth provider resolves to. */
+const OPENCODE_MODEL_ID = 'fx-model';
+/** The `provider/model` `resolveOpencodeModel` resolves to against this fixture. */
+export const OPENCODE_RESOLVED_MODEL = `${OPENCODE_OAUTH_PROVIDER}/${OPENCODE_MODEL_ID}`;
+
+const OPENCODE_MODELS_JSON = JSON.stringify({ [OPENCODE_OAUTH_PROVIDER]: { models: { [OPENCODE_MODEL_ID]: {} } } });
+const OPENCODE_VERSION = '42';
+const OPENCODE_MODEL_STATE = JSON.stringify({
+  recent: [{ providerID: OPENCODE_OAUTH_PROVIDER, modelID: OPENCODE_MODEL_ID }],
+  favorite: [],
+});
+const OPENCODE_AUTH = JSON.stringify({
+  [OPENCODE_OAUTH_PROVIDER]: { type: 'oauth' },
+  [OPENCODE_METERED_PROVIDER]: { type: 'api' },
+});
+
+/** opencode's four subscription files, relative to an operator HOME. */
+const OPENCODE_FILES: Record<string, string> = {
+  '.cache/opencode/models.json': OPENCODE_MODELS_JSON,
+  '.cache/opencode/version': OPENCODE_VERSION,
+  '.local/state/opencode/model.json': OPENCODE_MODEL_STATE,
+  '.local/share/opencode/auth.json': OPENCODE_AUTH,
+};
+
+/**
+ * Write ONLY opencode's four subscription files under `home` — for test files
+ * that build a minimal HOME rather than the full `seedOperatorHome` fixture.
+ */
+export function seedOpencodeSubscription(home: string): void {
+  for (const [rel, text] of Object.entries(OPENCODE_FILES)) {
+    const p = join(home, rel);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, text);
+  }
+}
 
 const CODEX_TOML = [
   'model = "fx"',
@@ -224,11 +285,13 @@ const FILES: Record<string, string> = {
   '.config/opencode/config.json': JSON.stringify({ mcp: { 'igris-fixture-cfg': SERVER } }),
   '.config/opencode/command/fx.md': 'fx\n',
   '.config/opencode/package.json': '{}',
-  '.local/share/opencode/auth.json': '{}',
   '.local/share/opencode/mcp-auth.json': '{}',
   '.local/share/opencode/opencode.db': 'fx',
   '.local/share/opencode/storage/session_diff/fx.json': '{}',
   '.local/share/opencode/snapshot/fx/HEAD': 'fx\n',
+  // BR-110: opencode's model catalog, recent-model state and (replacing the old
+  // bare '{}') a two-provider auth.json — see OPENCODE_FILES above.
+  ...OPENCODE_FILES,
 };
 
 /** Write the fixture operator HOME under `home` (which must be a fresh temp dir). */

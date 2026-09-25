@@ -30,7 +30,14 @@
  *
  * PRE-REGISTERED VERDICT (one `verdict` line per harness, then one `overall` line).
  * Preflight decision order: BLOCKED_BRAIN_LEAK → BLOCKED_MCP → BLOCKED_ARGV →
- * NOT_LOGGED_IN → METERED_MODE → RUN.
+ * NOT_LOGGED_IN → NO_MODEL_CATALOG → NO_SUBSCRIPTION_MODEL → METERED_MODE → RUN.
+ * NO_MODEL_CATALOG / NO_SUBSCRIPTION_MODEL apply to opencode ONLY (BR-110), via
+ * the SAME `resolveOpencodeModel` the production builder uses for `--model`.
+ * opencode's contribution to METERED_MODE is RETIRED (superseded) — a resolved
+ * opencode run is by construction oauth-backed (the `enabled_providers`
+ * allowlist + the explicit `--model` mean a stored api-key entry can never
+ * load), so opencode can no longer reach METERED_MODE; the other three
+ * harnesses' `auth.metered` logic is untouched.
  *   PASS               allow ok, auth-store witness unmoved
  *   PASS_WITH_REFRESH  allow ok, witness moved (a refresh ran under the allowlist)
  *   REGRESSION         allow not ok, base ok -> bisect with --add-back / --add-back-file
@@ -43,7 +50,10 @@
  *                      feature reads enabled
  *   BLOCKED_ARGV       a builder flag is absent from this CLI's --help (BR-109)
  *   NOT_LOGGED_IN      the harness's auth store is absent
- *   METERED_MODE       the stored login is metered; arms still run, `arms_verdict` holds the rest
+ *   NO_MODEL_CATALOG   opencode only (BR-110): no local `~/.cache/opencode/{models.json,version}`
+ *   NO_SUBSCRIPTION_MODEL opencode only (BR-110): no oauth-backed model resolves
+ *   METERED_MODE       claude/codex/antigravity only: the stored login is metered;
+ *                      arms still run, `arms_verdict` holds the rest
  *
  * PER ARM (BR-109): `fail_reason` is the backend's own named reason for the arm's exec
  * result (`classifyExecResult` — the production classifier, enum only, never its
@@ -98,6 +108,7 @@ import {
   forwardPathsFor,
   HARNESS_BIN,
   HELP_ARGV,
+  resolveOpencodeModel,
   type ExtractorSpawn,
 } from '../src/engine/components/cognition/backend/index.js';
 import { detectClaudeErrorEnvelope } from '../src/engine/components/cognition/backend/parse-output.js';
@@ -260,6 +271,9 @@ const WITNESS: Record<ExtractorHarness, string | null> = {
   antigravity: null,
   opencode: '.local/share/opencode/auth.json',
 };
+/** opencode's model catalog (BR-110) — both files must be present, or the CLI falls
+ * back to a built-in snapshot missing current subscription models. */
+const OPENCODE_CATALOG_FILES = ['.cache/opencode/models.json', '.cache/opencode/version'] as const;
 const enumOr = (v: unknown, re: RegExp): string | null => (typeof v === 'string' && re.test(v) ? v : v == null ? null : '<non-enum>');
 const readJson = (p: string): Record<string, unknown> | null => {
   try {
@@ -517,9 +531,18 @@ class Census {
   // Descendants alive before the arm (tsx's esbuild service, whose args name brain-mcp-server) are not the arm's.
   private preexisting: Set<number> | null = null;
 
+  /**
+   * @param marks      path fragments that identify the CLI in a process's args (bin, realpath,
+   *                   package root) — how a node-script CLI (codex) shows up in `ps`
+   * @param declaredNames MCP server names declared in the isolated HOME
+   * @param exeNames   argv[0] basenames that ARE the CLI — how a native binary launched by its bare
+   *                   PATH name shows up (`opencode run …` carries no path; BR-110 measured the census
+   *                   blind to it: every opencode arm read `cli_seen: false`)
+   */
   constructor(
     private readonly marks: string[],
     declaredNames: string[],
+    private readonly exeNames: string[] = [],
   ) {
     const usable = declaredNames.filter((n) => n.length >= 3);
     this.declared = usable.length > 0 ? new RegExp(`(^|[^A-Za-z0-9_-])(${usable.map(escapeRe).join('|')})([^A-Za-z0-9_-]|$)`) : null;
@@ -563,7 +586,7 @@ class Census {
       }
       if (this.preexisting?.has(p.pid)) continue;
       const classes: string[] = [];
-      if (this.marks.some((mk) => p.args.includes(mk))) classes.push('cli_self');
+      if (this.marks.some((mk) => p.args.includes(mk)) || this.exeNames.includes(exe)) classes.push('cli_self');
       if (BRAIN_ARGS.test(p.args)) classes.push('igris_brain');
       if (this.declared?.test(p.args)) classes.push('declared_server');
       if (MCP_ARGS.test(p.args)) classes.push('mcp');
@@ -814,6 +837,10 @@ async function main(): Promise<void> {
       const blocked = mcp.filter((f) => f.name !== 'igris-brain' && !args.acceptMcp.includes(f.name));
       const codexMcpLive = codex !== null && (codex.names !== 0 || Object.values(codex.features).some((v) => v !== false));
       const argvMissing = Object.entries(helpFlags).filter(([, present]) => !present).map(([f]) => f);
+      // BR-110: opencode-only, dynamic checks via the SAME resolver `--model` uses.
+      const opencodeCatalogMissing =
+        h === 'opencode' ? OPENCODE_CATALOG_FILES.filter((rel) => !existsSync(join(homedir(), rel))) : [];
+      const opencodeModel = h === 'opencode' && opencodeCatalogMissing.length === 0 ? resolveOpencodeModel() : null;
       const decision =
         leak.length > 0
           ? 'BLOCKED_BRAIN_LEAK'
@@ -823,12 +850,22 @@ async function main(): Promise<void> {
               ? 'BLOCKED_ARGV'
               : !storePresent
                 ? 'NOT_LOGGED_IN'
-                : auth.metered
-                  ? 'METERED_MODE'
-                  : 'RUN';
+                : h === 'opencode' && opencodeCatalogMissing.length > 0
+                  ? 'NO_MODEL_CATALOG'
+                  : h === 'opencode' && opencodeModel !== null && !opencodeModel.usable
+                    ? 'NO_SUBSCRIPTION_MODEL'
+                    // opencode's METERED_MODE is retired (superseded, BR-110): a resolved
+                    // opencode run is by construction oauth-backed, so `auth.metered`
+                    // (which only reflects whether ANY api-typed entry exists) no longer
+                    // gates it.
+                    : h !== 'opencode' && auth.metered
+                      ? 'METERED_MODE'
+                      : 'RUN';
       const refusals: Record<string, string> = {
         BLOCKED_BRAIN_LEAK: 'igris-brain is declared in a file inside the isolated HOME; a live call would boot the live brain — a BR-108 regression',
         BLOCKED_ARGV: `builder flags absent from this CLI's --help (${argvMissing.join(',')}) — BR-109`,
+        NO_MODEL_CATALOG: `missing ${opencodeCatalogMissing.map((rel) => `~/${rel}`).join(', ')} — BR-110`,
+        ...(opencodeModel && !opencodeModel.usable ? { NO_SUBSCRIPTION_MODEL: opencodeModel.detail } : {}),
       };
       write(args.out, {
         kind: 'preflight',
@@ -842,6 +879,9 @@ async function main(): Promise<void> {
         forwarded_mcp: mcp,
         forwarded_mcp_walk_truncated: walk.truncated,
         ...(codex ? { codex_mcp_list_names: codex.names, codex_mcp_features_enabled: codex.features } : {}),
+        ...(opencodeModel && opencodeModel.usable
+          ? { resolved_model: opencodeModel.model, resolved_model_provider: opencodeModel.model.split('/')[0] }
+          : {}),
         run_decision: decision,
         ...(refusals[decision] ? { refusal: refusals[decision] } : {}),
       });
@@ -851,19 +891,20 @@ async function main(): Promise<void> {
         continue;
       }
       const marks = cliMarks(bin);
+      const exeNames = [basename(HARNESS_BIN[h])];
       const allowSpawn = buildExtractorSpawn(h, PROMPT, opts);
       for (const n of args.addBack) if (process.env[n] !== undefined) allowSpawn.env[n] = process.env[n];
       addBackFiles(allowSpawn, args.addBackFile);
-      const allow = await runArm(args.out, h, 'allow', allowSpawn, args.timeoutSec, new Census(marks, declared));
+      const allow = await runArm(args.out, h, 'allow', allowSpawn, args.timeoutSec, new Census(marks, declared, exeNames));
       const baseSpawn = buildExtractorSpawn(h, PROMPT, opts);
       baseSpawn.env = td471SubscriptionOnlyEnv(process.env, { HOME: baseSpawn.cwd });
-      const base = await runArm(args.out, h, 'base', baseSpawn, args.timeoutSec, new Census(marks, declared));
+      const base = await runArm(args.out, h, 'base', baseSpawn, args.timeoutSec, new Census(marks, declared, exeNames));
       let inventorySpawned = false;
       if (h === 'claude' && args.mcpInventory) {
         const invSpawn = buildExtractorSpawn(h, PROMPT, opts);
         const i = invSpawn.args.indexOf('--output-format');
         invSpawn.args.splice(i, 2, '--output-format', 'stream-json', '--verbose');
-        inventorySpawned = (await runArm(args.out, h, 'inventory', invSpawn, args.timeoutSec, new Census(marks, declared))).census.mcp_spawned;
+        inventorySpawned = (await runArm(args.out, h, 'inventory', invSpawn, args.timeoutSec, new Census(marks, declared, exeNames))).census.mcp_spawned;
       }
       const armsVerdict =
         allow.outcome === 'ok'

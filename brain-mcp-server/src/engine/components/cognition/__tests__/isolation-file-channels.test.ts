@@ -20,7 +20,11 @@
  * F6 `.env` sentinels + a verbatim gemini-cli `findEnvFile` replica (exercised
  * through antigravity, the sole `.gemini/*`-owning extractor harness since
  * TD-474); F7 fail-closed parsing; F8 forbidden markers; F9 the fence; P1-P3 the
- * argv pins; P5 (BR-109 control) the agy argv unchanged.
+ * argv pins; P5 (BR-109 control) the agy argv unchanged. BR-110: F10 the opencode
+ * model catalog copy is byte-identical to the operator's; F11 the owned
+ * enabled_providers allowlist carries exactly one key and only oauth providers;
+ * P4 the production opencode spawn always names --model, and a configured
+ * non-oauth model is refused; F12 auth.json is still a link.
  *
  * @module engine/components/cognition/__tests__/isolation-file-channels.test
  */
@@ -54,6 +58,9 @@ import {
   EXPECTED_FORWARD,
   EXPECTED_OWNED,
   NEVER_FORWARDED,
+  OPENCODE_METERED_PROVIDER,
+  OPENCODE_OAUTH_PROVIDER,
+  OPENCODE_RESOLVED_MODEL,
   childVisibleMcpNames,
   seedOperatorHome,
 } from './fixtures/br108-isolated-home.js';
@@ -419,8 +426,71 @@ describe('BR-108 — no Igris-global or MCP-bearing marker (F8)', () => {
 
   it.each(HARNESSES)('F8: the %s isolated HOME contains none of the markers', (h) => {
     withHome(h, (iso) => {
-      const present = EXPECTED_FORBIDDEN_MARKERS.filter((m) => lstatOrNull(path.join(iso, m)) !== null);
+      const present = EXPECTED_FORBIDDEN_MARKERS.filter((m) => {
+        if (m === '.config/opencode/opencode.json') return false; // the owned enabled_providers allowlist (BR-110, checked below)
+        return lstatOrNull(path.join(iso, m)) !== null;
+      });
       expect(present).toEqual([]);
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-110 — opencode's model catalog + explicit model
+// ---------------------------------------------------------------------------
+
+describe('BR-110 — the model catalog is a COPY, never a link, byte-identical to the operator (F10)', () => {
+  it('F10: .cache/opencode/{models.json,version} are regular files whose bytes equal the operator\'s', () => {
+    withHome('opencode', (iso) => {
+      for (const rel of ['.cache/opencode/models.json', '.cache/opencode/version']) {
+        const isoPath = path.join(iso, rel);
+        const st = lstatSync(isoPath);
+        expect(st.isSymbolicLink()).toBe(false);
+        expect(st.isFile()).toBe(true);
+        expect(readFileSync(isoPath)).toEqual(readFileSync(path.join(fakeHome, rel)));
+      }
+    });
+  });
+});
+
+describe('BR-110 — the owned enabled_providers allowlist lists ONLY oauth providers (F11)', () => {
+  it('F11: opencode.json carries exactly {enabled_providers: [oauth provider]}, and no MCP name is visible', () => {
+    withHome('opencode', (iso) => {
+      const j = readJson(path.join(iso, '.config', 'opencode', 'opencode.json'));
+      expect(Object.keys(j)).toEqual(['enabled_providers']);
+      expect(j.enabled_providers).toEqual([OPENCODE_OAUTH_PROVIDER]);
+      expect(j.enabled_providers).not.toContain(OPENCODE_METERED_PROVIDER);
+      expect(childVisibleMcpNames(iso)).toEqual([]);
+    });
+  });
+});
+
+describe('BR-110 — the extractor spawn always names an explicit --model (P4, AC-1)', () => {
+  it('P4: the production opencode spawn carries --model <oauth-provider>/<model>', () => {
+    withHome('opencode', (_iso, spawn) => {
+      const i = spawn.args.indexOf('--model');
+      expect(i).toBeGreaterThan(-1);
+      expect(spawn.args[i + 1]).toBe(OPENCODE_RESOLVED_MODEL);
+    });
+  });
+
+  it('P4: a configured model naming a non-oauth provider is REFUSED by the builder (throws)', () => {
+    expect(() =>
+      buildExtractorSpawn(
+        'opencode',
+        PROMPT,
+        { model: `${OPENCODE_METERED_PROVIDER}/fx`, env: { IGRIS_LLM_EXTRACTOR_SCRATCH_ROOT: scratch } },
+      ),
+    ).toThrow(/no usable model/);
+  });
+});
+
+describe('BR-110 — auth.json is still a link even with the new owned catalog + allowlist (F12)', () => {
+  it('F12: .local/share/opencode/auth.json stays a symlink to the operator file', () => {
+    withHome('opencode', (iso) => {
+      const p = path.join(iso, '.local', 'share', 'opencode', 'auth.json');
+      expect(lstatSync(p).isSymbolicLink()).toBe(true);
+      expect(readlinkSync(p)).toBe(path.join(fakeHome, '.local', 'share', 'opencode', 'auth.json'));
     });
   });
 });

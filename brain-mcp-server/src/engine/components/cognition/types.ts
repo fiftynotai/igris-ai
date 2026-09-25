@@ -70,10 +70,22 @@ export type ExtractorHarnessSelection = ExtractorHarness | typeof RETIRED_GEMINI
  * Why the selection preflight refused a harness (BR-109; docs/COGNITION.md).
  * `harness_retired` (TD-474) is a STATIC, selection-time refusal — Igris knows
  * the vendor retired the tier, so it is never a `BackendFailReason` (it never
- * comes from a spawn); the other three are probe-time verdicts about an
- * otherwise-still-supported CLI.
+ * comes from a spawn); `cli_missing` / `cli_incompatible` / `not_logged_in` are
+ * probe-time verdicts about an otherwise-still-supported CLI. `no_model_catalog`
+ * and `no_subscription_model` (BR-110) are opencode-only, DYNAMIC, per-machine
+ * verdicts read by the SAME resolver the builder uses
+ * (`backend/opencode-model.ts#resolveOpencodeModel`) — a missing local model
+ * catalog, and no oauth-backed model to run with. Unlike `harness_retired` they
+ * are not permanent: the next `opencode models` / `opencode auth login` run can
+ * clear either.
  */
-export type HarnessRefusalReason = 'cli_missing' | 'cli_incompatible' | 'not_logged_in' | 'harness_retired';
+export type HarnessRefusalReason =
+  | 'cli_missing'
+  | 'cli_incompatible'
+  | 'not_logged_in'
+  | 'harness_retired'
+  | 'no_model_catalog'
+  | 'no_subscription_model';
 
 /** A selection preflight verdict: usable, or refused with a named reason. */
 export type HarnessPreflight = { usable: true } | { usable: false; reason: HarnessRefusalReason; detail: string };

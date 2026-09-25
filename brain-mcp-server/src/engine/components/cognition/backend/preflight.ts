@@ -2,6 +2,11 @@
  * Brain Engine v7.1 — Cognition backend: the call-free selection preflight
  * (BR-109; docs/COGNITION.md). Fail-open, cached per process.
  *
+ * BR-110: opencode gets two extra, call-free checks after its auth-store check
+ * — its local model catalog (`no_model_catalog`) and an oauth-backed model
+ * (`no_subscription_model`, via `resolveOpencodeModel` — the SAME resolver
+ * `spawn-map.ts#buildOpencodeSpawn` uses for `--model`).
+ *
  * @module engine/components/cognition/backend/preflight
  * @author fifty.dev
  */
@@ -13,6 +18,7 @@ import { resolve } from 'node:path';
 import type { ExtractorHarness, HarnessPreflight } from '../types.js';
 import { HARNESS_BIN, isHarnessCliAvailable, registerProbeCacheReset } from './env.js';
 import { buildExtractorSpawn, type ExtractorSpawn } from './spawn-map.js';
+import { resolveOpencodeModel } from './opencode-model.js';
 
 /** The `--help` argv per harness: the subcommand whose flags the builder uses. */
 export const HELP_ARGV: Readonly<Record<ExtractorHarness, readonly string[]>> = {
@@ -33,6 +39,10 @@ export function flagsInHelp(help: string, flags: readonly string[]): Record<stri
 const SOLE_AUTH_STORE: Partial<Record<ExtractorHarness, string>> = {
   opencode: '.local/share/opencode/auth.json',
 };
+
+/** opencode's model catalog (BR-110): both files must be present, or the CLI falls
+ * back to a built-in snapshot missing current subscription models. */
+const OPENCODE_CATALOG_FILES = ['.cache/opencode/models.json', '.cache/opencode/version'] as const;
 
 const _preflight = new Map<ExtractorHarness, HarnessPreflight>();
 
@@ -71,6 +81,20 @@ function runPreflight(harness: ExtractorHarness, opts: PreflightOptions): Harnes
   const store = SOLE_AUTH_STORE[harness];
   if (store && !existsSync(resolve(homedir(), store))) {
     return { usable: false, reason: 'not_logged_in', detail: `no ~/${store} (log in with the ${bin} CLI)` };
+  }
+  if (harness === 'opencode') {
+    const missing = OPENCODE_CATALOG_FILES.filter((rel) => !existsSync(resolve(homedir(), rel)));
+    if (missing.length > 0) {
+      return {
+        usable: false,
+        reason: 'no_model_catalog',
+        detail: `missing ${missing.map((rel) => `~/${rel}`).join(', ')} (run the opencode CLI once so it populates its model catalog)`,
+      };
+    }
+    const resolved = resolveOpencodeModel();
+    if (!resolved.usable) {
+      return { usable: false, reason: resolved.reason, detail: resolved.detail };
+    }
   }
   return { usable: true };
 }

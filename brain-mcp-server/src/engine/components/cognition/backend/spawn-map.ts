@@ -33,6 +33,7 @@
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import { subscriptionOnlyEnv, HARNESS_BIN } from './env.js';
 import { makeIsolatedHome, type IsolatedHome } from './isolation.js';
+import { resolveOpencodeModel } from './opencode-model.js';
 
 /** How the prompt body reaches the child: piped on stdin, or passed as an argv tail. */
 export type PromptDelivery = 'stdin' | 'argv';
@@ -165,16 +166,30 @@ function buildAgySpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isolate
 
 /**
  * OpenCode. Headless `run` in the brain-isolated HOME. OpenCode reads
- * project-scoped config from the cwd (the empty isolated home); no global
- * `~/.config/opencode` is forwarded, and of its data dir only `auth.json`
- * (BR-109). The composed prompt is the argv tail.
+ * project-scoped config from the cwd (the isolated home, which now owns a
+ * copied model catalog + an `enabled_providers` allowlist, BR-110); of its
+ * data dir only `auth.json` is forwarded (BR-109). The composed prompt is the
+ * argv tail.
+ *
+ * `--model` is ALWAYS explicit (BR-110) — opencode's own default (no catalog,
+ * no recent-model state) picks an unusable or METERED model. The value comes
+ * from `resolveOpencodeModel`, the SAME resolver the selection preflight uses,
+ * so a spawn this builder produces is by construction oauth-backed; this is a
+ * DEFENSIVE throw, not the primary gate — `preflightHarness` should already
+ * have refused an unresolvable harness before a spawn is ever built.
  * Subscription auth.
  * (No FR-201 judge backend for opencode — modelled on the antigravity `--print`
  * shape + opencode's `run` headless verb; the same isolation guarantees apply.)
  */
 function buildOpencodeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
-  const args = ['run'];
-  if (opts.model) args.push('--model', opts.model);
+  const resolved = resolveOpencodeModel(opts.model);
+  if (!resolved.usable) {
+    throw new Error(
+      `cognition/spawn-map: opencode has no usable model (${resolved.reason}): ${resolved.detail}. ` +
+        'preflightHarness should have refused this harness before a spawn was built.',
+    );
+  }
+  const args = ['run', '--model', resolved.model];
   return {
     bin: HARNESS_BIN.opencode,
     args,
@@ -208,14 +223,22 @@ export function buildExtractorSpawn(
   opts: SpawnOptions = {},
 ): ExtractorSpawn {
   const iso = makeIsolatedHome(harness, opts.env ?? process.env);
-  switch (harness) {
-    case 'claude':
-      return buildClaudeSpawn(prompt, opts, iso);
-    case 'codex':
-      return buildCodexSpawn(prompt, opts, iso);
-    case 'antigravity':
-      return buildAgySpawn(prompt, opts, iso);
-    case 'opencode':
-      return buildOpencodeSpawn(prompt, opts, iso);
+  // A builder may throw after the isolated HOME exists (BR-110: opencode refuses to build
+  // without a subscription model). The caller never receives a spawn to `cleanup()`, so the
+  // HOME is reaped here before the error propagates.
+  try {
+    switch (harness) {
+      case 'claude':
+        return buildClaudeSpawn(prompt, opts, iso);
+      case 'codex':
+        return buildCodexSpawn(prompt, opts, iso);
+      case 'antigravity':
+        return buildAgySpawn(prompt, opts, iso);
+      case 'opencode':
+        return buildOpencodeSpawn(prompt, opts, iso);
+    }
+  } catch (err) {
+    iso.cleanup();
+    throw err;
   }
 }

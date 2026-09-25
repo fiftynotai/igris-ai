@@ -36,6 +36,7 @@ import type { SpawnOptions } from '../backend/spawn-map.js';
 import { runExtractor, type RunExtractorDeps } from '../engine/index.js';
 import { eventName } from '../lifecycle.js';
 import type { CognitionInstance, ExtractorHarness, ExtractorPrompt } from '../types.js';
+import { seedOpencodeSubscription } from './fixtures/br108-isolated-home.js';
 import {
   CLAUDE_UNKNOWN_OPTION,
   CODEX_400_MESSAGE,
@@ -120,6 +121,10 @@ beforeEach(() => {
   for (const d of [home, bin, scratch]) mkdirSync(d, { recursive: true });
   // A placeholder stub under every name, so a case that forgets to install one still never reaches a real CLI.
   for (const h of HARNESSES) installStub(h, { stdout: '', stderr: 'unconfigured stub\n', code: 99 });
+  // BR-110: opencode's builder always resolves --model; without a catalog + oauth
+  // model these cases would throw at buildExtractorSpawn instead of exercising
+  // the stub's stderr/exit-code classification they exist to test.
+  seedOpencodeSubscription(home);
   vi.stubEnv('HOME', home);
   expect(homedir()).toBe(home); // armed, not assumed
   expect(homedir()).not.toBe(userInfo().homedir);

@@ -17,7 +17,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, lstatSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, lstatSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import {
@@ -89,9 +89,17 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     'the %s home contains none of FORBIDDEN_IGRIS_MARKERS (clean isolation floor)',
     (h) => {
       mkdirSync(join(fenceHome, '.gemini', 'agents'), { recursive: true }); // an operator marker to NOT forward
+      if (h === 'opencode') {
+        mkdirSync(join(fenceHome, '.local', 'share', 'opencode'), { recursive: true });
+        writeFileSync(
+          join(fenceHome, '.local', 'share', 'opencode', 'auth.json'),
+          JSON.stringify({ 'igris-fixture-oauth': { type: 'oauth' } }),
+        );
+      }
       const iso = makeIsolatedHome(h, env);
       const present = FORBIDDEN_IGRIS_MARKERS.filter((m) => {
         if (m === '.gemini/config/mcp_config.json') return false; // the owned empty file, checked above
+        if (m === '.config/opencode/opencode.json') return false; // the owned enabled_providers allowlist (BR-110, checked below)
         try {
           lstatSync(join(iso.home, m));
           return true;
@@ -103,6 +111,28 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
       iso.cleanup();
     },
   );
+
+  it('opencode with NO oauth provider gets no .config/opencode/opencode.json at all (never an empty list)', () => {
+    // No auth.json seeded at all: oauthProviders() is empty — writeOwnedConfigs
+    // SKIPS the file rather than writing `{"enabled_providers":[]}`.
+    const iso = makeIsolatedHome('opencode', env);
+    expect(existsSync(join(iso.home, '.config', 'opencode', 'opencode.json'))).toBe(false);
+    iso.cleanup();
+  });
+
+  it('opencode gets an owned enabled_providers allowlist naming ONLY the oauth provider (BR-110)', () => {
+    mkdirSync(join(fenceHome, '.local', 'share', 'opencode'), { recursive: true });
+    writeFileSync(
+      join(fenceHome, '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ 'igris-fixture-oauth': { type: 'oauth' }, 'igris-fixture-metered': { type: 'api' } }),
+    );
+    const iso = makeIsolatedHome('opencode', env);
+    const p = join(iso.home, '.config', 'opencode', 'opencode.json');
+    const j = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
+    expect(Object.keys(j)).toEqual(['enabled_providers']);
+    expect(j.enabled_providers).toEqual(['igris-fixture-oauth']);
+    iso.cleanup();
+  });
 });
 
 describe('writeEmptyGeminiMcp', () => {

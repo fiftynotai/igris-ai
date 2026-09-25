@@ -37,6 +37,7 @@ import { buildExtractorSpawn, runBackend, HARNESS_BIN } from '../backend/index.j
 import type { SpawnOptions } from '../backend/spawn-map.js';
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import { isExpectedAllowed } from './fixtures/td472-child-env-allow.js';
+import { seedOpencodeSubscription } from './fixtures/br108-isolated-home.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -173,6 +174,9 @@ beforeEach(() => {
     writeFileSync(p, stubScript(namesFile(h)));
     chmodSync(p, 0o755);
   }
+  // BR-110: opencode's builder always resolves --model; seed its catalog + an
+  // oauth model so these env-name cases keep exercising env, not build-time refusal.
+  seedOpencodeSubscription(home);
 
   vi.stubEnv('HOME', home);
   expect(homedir()).toBe(home); // armed, not assumed

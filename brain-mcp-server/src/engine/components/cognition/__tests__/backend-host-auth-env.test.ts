@@ -32,6 +32,7 @@ import { join } from 'node:path';
 import { buildExtractorSpawn, runBackend } from '../backend/index.js';
 import type { SpawnOptions } from '../backend/spawn-map.js';
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
+import { seedOpencodeSubscription } from './fixtures/br108-isolated-home.js';
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -101,6 +102,10 @@ beforeEach(() => {
   for (const d of [home, bin, scratch]) mkdirSync(d, { recursive: true });
   writeFileSync(join(bin, 'claude'), stubScript(namesOut, homeOut, scratch));
   chmodSync(join(bin, 'claude'), 0o755);
+  // BR-110: opencode's builder always resolves --model; B1 below drives it for
+  // every harness including opencode, so it needs a catalog + oauth model or it
+  // throws before ever exercising the env-name assertion.
+  seedOpencodeSubscription(home);
 
   vi.stubEnv('HOME', home);
   expect(homedir()).toBe(home); // armed, not assumed

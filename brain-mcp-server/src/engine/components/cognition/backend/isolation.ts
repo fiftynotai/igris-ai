@@ -12,6 +12,12 @@
  *     keys removed, and antigravity (the sole `.gemini/*`-owning extractor
  *     harness since TD-474) gets owned empty `.env` files (BR-108; the why is
  *     in docs/COGNITION.md);
+ *   - opencode gets an owned COPY (never a link) of the operator's model
+ *     catalog (`.cache/opencode/{models.json,version}`) plus an owned
+ *     `.config/opencode/opencode.json` naming ONLY `enabled_providers` — an
+ *     ALLOWLIST of oauth-backed providers, so a stored metered (api-key)
+ *     provider can never load even though `auth.json` stays a readable link
+ *     (BR-110; the why is in docs/COGNITION.md);
  *   - `assertUnderRoot` guards EVERY write path — a programming bug that would
  *     write under the real HOME fails fast.
  *
@@ -39,10 +45,13 @@ import {
   readFileSync,
   realpathSync,
   writeFileSync,
+  copyFileSync,
+  chmodSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import type { ExtractorHarness } from '../types.js';
+import { oauthProviders } from './opencode-model.js';
 
 // ---------------------------------------------------------------------------
 // Scratch root (brain-owned — NEVER the operator's real HOME)
@@ -179,6 +188,47 @@ function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string
       writeOwned(home, '.gemini/antigravity-cli/settings.json', JSON.stringify(pickPaths(readJsonLoose(src), [['model']])));
     }
   }
+  if (harness === 'opencode') {
+    // The model catalog (BR-110): a real COPY, never a link — `opencode run` deletes
+    // a cache dir that has no `version` marker, so the child must own a writable
+    // copy rather than mutate the operator's. Each file is skipped independently
+    // when the operator lacks it (mirrors `symlinkForward`'s "doesn't have it — skip");
+    // the selection preflight (`preflight.ts`, reason `no_model_catalog`) is what
+    // refuses a run before it ever reaches this path with the catalog absent.
+    copyOwnedFile(home, real, '.cache/opencode/models.json');
+    copyOwnedFile(home, real, '.cache/opencode/version');
+    // The provider allowlist (Fork 3 = GO, Phase 0 evidence): ONLY oauth providers
+    // may load, so a stored api-key entry in the operator's real auth.json can never
+    // be reached even though `auth.json` itself stays a readable link (BR-109 Phase
+    // 0.3 — opencode refreshes its OAuth token in place). An ALLOWLIST (not a
+    // denylist) default-denies a provider the operator adds later. NEVER an empty
+    // list — an empty list could read as "all providers enabled" in some versions —
+    // so an empty result is SKIPPED (no file written) rather than written empty;
+    // preflight's `no_subscription_model` refusal is what keeps a real run from ever
+    // reaching this path in that state, and the builder throws defensively too
+    // (`spawn-map.ts#buildOpencodeSpawn`).
+    const providers = oauthProviders(real);
+    if (providers.length > 0) {
+      writeOwned(home, '.config/opencode/opencode.json', JSON.stringify({ enabled_providers: providers }));
+    }
+  }
+}
+
+/**
+ * Copy an owned file (mode 0o600) at `rel` from the operator's real HOME — never a
+ * link. Skips silently when the operator has no source file (mirrors
+ * `symlinkForward`). Refuses a destination outside `home`.
+ */
+function copyOwnedFile(home: string, real: string, rel: string): void {
+  const src = resolve(real, rel);
+  if (!existsSync(src)) return; // operator doesn't have it — skip
+  const dest = resolve(home, rel);
+  assertUnderRoot(dest, home);
+  mkdirSync(dirname(dest), { recursive: true });
+  assertUnderRoot(realpathSync(dirname(dest)), realpathSync(home));
+  if (existsSync(dest) || isSymlink(dest)) rmSync(dest, { recursive: true, force: true });
+  copyFileSync(src, dest);
+  chmodSync(dest, 0o600);
 }
 
 /** `.claude.json` minus `mcpServers`, `projects` (per-project MCP) and `primaryApiKey`; no source ⇒ no file. */
@@ -362,7 +412,7 @@ export const FORBIDDEN_IGRIS_MARKERS = [
   '.claude/CLAUDE.md',
   '.codex/AGENTS.md',
   '.igris/core',
-  '.config/opencode/opencode.json',
+  '.config/opencode/opencode.json', // present ONLY as our owned enabled_providers allowlist (checked separately, BR-110)
   '.gemini/config/mcp_config.json', // present ONLY as our empty-mcpServers file (checked separately)
   '.gemini/agents',
   '.gemini/extensions',
