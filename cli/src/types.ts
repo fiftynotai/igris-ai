@@ -73,6 +73,8 @@ export interface DriftRow {
     | "not-installed"
     | "hooks-missing"
     | "hooks-stale"
+    /** TD-473: brain-level — the global settings are present/parseable but carry neither `attribution` nor `includeCoAuthoredBy`; `--fix`able via the same writer as hooks-missing/stale. */
+    | "attribution-missing"
     | "slug-basename-mismatch"
     | "duplicate-path"
     | "symlink-target"
@@ -422,8 +424,9 @@ export interface AssessDigest {
  * | `wedged` | its schedule is enabled and an OPEN `running` run exists |
  * | `blocked_upstream` | it is `co_driven` and its driver is `wedged`/`disabled`/`failing` |
  * | `failing` | the latest terminal event on THIS host is `run_failed`, no later success |
+ * | `blocked_harness` | the latest terminal event is `run_skipped` with reason `harness_refused` or `cli_missing` (TD-475) |
  * | `no_signal` | enabled, but no terminal event inside the retained `event_log` window |
- * | `ok` | the latest terminal on THIS host is `run_succeeded` or `run_skipped` |
+ * | `ok` | the latest terminal on THIS host is `run_succeeded` or a benign `run_skipped` |
  *
  * `no_signal` IS NOT "never ran". `monitoring/index.ts` purges `event_log`
  * older than 30 days on every engine init, so "stopped a while ago" and "never
@@ -431,12 +434,22 @@ export interface AssessDigest {
  * reports the retention floor alongside the status and cross-checks the
  * NON-purged `schedules` / `schedule_runs` signals before an operator draws a
  * conclusion.
+ *
+ * `blocked_harness` (TD-475) is distinct from `ok`'s benign skips (`disabled`
+ * gate, `cold_start`, `budget`, `no_candidates`, `gate_bytes`): the instance
+ * cannot run until an operator changes its harness selection, so it must not
+ * read as healthy. An `ok` run whose PAIRED `run_started.refused[]` shows a
+ * fallback harness overrode a refusal and still succeeded stays `ok`, with the
+ * reason gaining a `(fallback: …)` hint naming the override — success on a
+ * fallback is not a failure state, just one worth surfacing (TD-447's
+ * directive: enrich the reason, never add a digest field).
  */
 export type CognitionHealthStatus =
   | "disabled"
   | "wedged"
   | "blocked_upstream"
   | "failing"
+  | "blocked_harness"
   | "no_signal"
   | "ok";
 

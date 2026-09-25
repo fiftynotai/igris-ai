@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { IGRIS_ATTRIBUTION } from "../lib/attribution-settings.js";
 
 let tmpRoot: string;
 /** Sandboxed HOME so claudeJsonPath() (used by the mcp-unregistered
@@ -131,13 +132,19 @@ function stageProject(name = "proj"): string {
  * file. The sandboxed HOME starts WITHOUT it, which would make every test trip a
  * brain-level `hooks-missing` row — so the baseline stages it. Tests that
  * exercise hooks-missing/hooks-stale mutate or remove it in their own setup.
+ *
+ * TD-473: also carries the Igris `attribution` default — a real post-TD-470
+ * clean install (`mergeGlobalCanonicalHooks` composes `applyAttributionDefault`
+ * after the hooks merge) has it, and without it every test here would ALSO trip
+ * the new `attribution-missing` row. Tests that exercise attribution-missing
+ * mutate/remove it in their own setup, same convention as the hooks key.
  */
 function stageValidGlobalHooks(): void {
   const settingsDir = join(homeOverride, ".claude");
   mkdirSync(settingsDir, { recursive: true });
   writeFileSync(
     join(settingsDir, "settings.json"),
-    JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    JSON.stringify({ ...CANONICAL_HOOKS, attribution: { ...IGRIS_ATTRIBUTION } }, null, 2) + "\n",
   );
 }
 
@@ -324,6 +331,57 @@ describe("doctor — drift classification (read-only)", () => {
     const row = drift.find((r) => r.driftClass === "hooks-stale");
     expect(row).toBeDefined();
     expect(row!.slug).toBe("(brain)");
+  });
+
+  // -----------------------------------------------------------------------
+  // TD-473 — attribution-missing (E1-E4: detection; E5-E7 below: --fix)
+  // -----------------------------------------------------------------------
+
+  it("E1: attribution present (any value, incl. a non-Igris object), hooks canonical → clean, no attribution-missing row", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ ...CANONICAL_HOOKS, attribution: { commit: "always", pr: "always", sessionUrl: true } }, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E2: includeCoAuthoredBy present, no attribution key, hooks canonical → clean", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ ...CANONICAL_HOOKS, includeCoAuthoredBy: false }, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E3 (AC-1 target case): NEITHER key present, hooks canonical → attribution-missing row naming the fix command (proves independence from hooks-missing/hooks-stale)", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "hooks-missing")).toBe(false);
+    expect(drift.some((r) => r.driftClass === "hooks-stale")).toBe(false);
+    const row = drift.find((r) => r.driftClass === "attribution-missing");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.recommendedFix).toContain("igris doctor --fix");
+  });
+
+  it("E4 (self-negative control): settings.json ABSENT entirely → NO attribution-missing row (covered by hooks-missing instead)", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    rmSync(join(homeOverride, ".claude", "settings.json"), { force: true });
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "hooks-missing")).toBe(true);
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
   });
 
   it("slug-basename-mismatch: row.slug != basename(row.path)", async () => {
@@ -631,6 +689,104 @@ describe("doctor — runDoctor exit codes", () => {
     expect(sessionEnd[0].hooks[0].command).toBe(
       "$HOME/.igris/core/hooks/shared/session_end.sh",
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // TD-473 — E5-E7: the --fix disclosure line, printed ONLY on `added`
+  // -----------------------------------------------------------------------
+
+  /** Capture every `info()`/stdout line written during `fn`, via the SAME
+   * `process.stdout.write` spy idiom this file already uses to capture the
+   * drift table (see the BR-103 describe block below). */
+  async function captureStdout(fn: () => Promise<void>): Promise<string> {
+    let captured = "";
+    const logSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        captured += String(chunk);
+        return true;
+      }) as typeof process.stdout.write);
+    try {
+      await fn();
+    } finally {
+      logSpy.mockRestore();
+    }
+    return captured;
+  }
+
+  it("E5 (--fix disclosure): E3's fixture → --fix prints the same one-line disclosure init/update print, and re-probes clean", async () => {
+    const { runDoctor, classifyDriftAll } = await import("../verbs/doctor.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
+    const { attributionAddedNote } = await import("../lib/attribution-settings.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).toContain(attributionAddedNote(claudeUserSettingsPath()));
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E6 (--fix silence): attribution already the Igris object (outcome 'present') but hooks are STALE → --fix repairs hooks and prints NOTHING attribution-related", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { IGRIS_ATTRIBUTION } = await import("../lib/attribution-settings.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            { hooks: [{ type: "command", command: "$HOME/.igris/core/hooks/old/session_end.sh" }] },
+          ],
+        },
+        attribution: { ...IGRIS_ATTRIBUTION },
+      }, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).not.toContain("attribution set off");
+  });
+
+  it("E7 (--fix silence, kept-user): a user-authored non-Igris attribution value survives a hooks-stale fix untouched, outcome 'kept-user', no disclosure line", async () => {
+    // Paired with a hooks-stale row (rather than an already-clean fixture) so the
+    // SAME writer `mergeGlobalCanonicalHooks` actually runs and its attribution
+    // outcome is exercised as 'kept-user' — a fixture with nothing to fix would
+    // never invoke the writer at all and would prove nothing about its outcome.
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
+    const userAttribution = { commit: "always", pr: "never", sessionUrl: true };
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            { hooks: [{ type: "command", command: "$HOME/.igris/core/hooks/old/session_end.sh" }] },
+          ],
+        },
+        attribution: userAttribution,
+      }, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).not.toContain("attribution set off");
+    const settings = JSON.parse(readFileSync(claudeUserSettingsPath(), "utf-8")) as {
+      hooks: { SessionEnd: Array<{ hooks: Array<{ command: string }> }> };
+      attribution: unknown;
+    };
+    // The hooks-stale row IS repaired (proves the writer ran)...
+    expect(settings.hooks.SessionEnd[0].hooks[0].command).toBe(
+      "$HOME/.igris/core/hooks/shared/session_end.sh",
+    );
+    // ...while the user's own attribution value is byte-identical (kept-user).
+    expect(settings.attribution).toEqual(userAttribution);
   });
 
   it("--remove-orphans --yes deletes path-missing rows", async () => {

@@ -34,6 +34,18 @@
  *                             layer anymore, so this is a single (brain) row.
  *   hooks-stale             → the global settings carry the Igris SessionEnd hook
  *                             but at a non-canonical command path.
+ *   attribution-missing     → (TD-473) the global settings are PRESENT and
+ *                             parseable but carry NEITHER `attribution` NOR the
+ *                             deprecated `includeCoAuthoredBy` — the TD-470
+ *                             default was never applied on this machine (e.g. it
+ *                             ran `init` before TD-470 shipped and never ran
+ *                             `update` after). An absent/malformed settings file
+ *                             defers entirely to hooks-missing above — no
+ *                             duplicate row. --fix reuses the SAME
+ *                             `mergeGlobalCanonicalHooks` writer as hooks-missing/
+ *                             stale (it already composes `applyAttributionDefault`)
+ *                             and prints the same one-line disclosure `init`/
+ *                             `update` print, only when the outcome is `added`.
  *   machine-identity        → (informational, BR-100) hostname outside the minted
  *                             identity's aliases, or NULL-id rows under names the
  *                             aliases do not cover; never --fix'able (an alias is
@@ -84,13 +96,13 @@
  *
  * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
  * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
- * hooks-stale → secret-perms → skills-pollution → machine-identity →
- * secret-scan-disarmed → duplicate-path → git-hooks-missing →
+ * hooks-stale → attribution-missing → secret-perms → skills-pollution →
+ * machine-identity → secret-scan-disarmed → duplicate-path → git-hooks-missing →
  * symlink-target → slug-basename-mismatch → clean.
- * (mcp-unregistered + hooks-missing/hooks-stale + secret-perms + skills-pollution
- *  sit next to bridge-missing — all brain-level, config/state-driven, and
- *  orthogonal to core state. skills-pollution is lowest brain-level precedence
- *  — TD-223.)
+ * (mcp-unregistered + hooks-missing/hooks-stale + attribution-missing +
+ *  secret-perms + skills-pollution sit next to bridge-missing — all
+ *  brain-level, config/state-driven, and orthogonal to core state.
+ *  skills-pollution is lowest brain-level precedence — TD-223.)
  *
  * --fix (BR-103, 2026-09-07) runs every arm in DEPENDENCY order, each in its
  * own try/catch, and prints a per-fix outcome table (`| class | target |
@@ -103,8 +115,9 @@
  *   G2 git-hooks-missing (per project, FR-243) — `installGitHooks(row.path)`;
  *      a refused install (core.hooksPath, worktree, missing mirror) keeps
  *      the row non-clean.
- *   G3 brain-level, config-scoped — hooks-missing/stale via
- *      `mergeGlobalCanonicalHooks` (one global action); mcp-unregistered via
+ *   G3 brain-level, config-scoped — hooks-missing/stale/attribution-missing via
+ *      `mergeGlobalCanonicalHooks` (one global action; TD-473: attribution-missing
+ *      rides the SAME writer, never a second attempt); mcp-unregistered via
  *      `registerBrainAcrossHarnesses()` in-process (FR-169); antigravity-
  *      skills-link; skills-pollution (TD-223 RE-SCOPED: migrate each legacy
  *      whole-dir root into a REAL dir of per-item symlinks, clean strays,
@@ -159,6 +172,7 @@ import {
   registerBrainAcrossHarnesses,
 } from "../lib/mcp-register.js";
 import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import { applyAttributionDefault, attributionAddedNote } from "../lib/attribution-settings.js";
 import { runRefresh } from "./refresh.js";
 import { detectBrainCoreMissing } from "../lib/drift/brain-core-missing.js";
 import { detectBrainCoreStale } from "../lib/drift/brain-core-stale.js";
@@ -384,7 +398,11 @@ async function runFixes(drift: DriftRow[]): Promise<FixOutcome[]> {
 
   // --- G3: brain-level, config-scoped --------------------------------------
   // FR-212d: hooks are global now (ONE block) — a single brain-level action.
-  const globalHooksRows = [...byClass("hooks-missing"), ...byClass("hooks-stale")];
+  // TD-473: attribution-missing rides the SAME writer (`mergeGlobalCanonicalHooks`
+  // composes `applyAttributionDefault` after the hooks merge), so it joins this
+  // one action rather than getting a second `attempt()` — running the writer
+  // twice would double-write the same file.
+  const globalHooksRows = [...byClass("hooks-missing"), ...byClass("hooks-stale"), ...byClass("attribution-missing")];
   if (globalHooksRows.length > 0) {
     await attempt(globalHooksRows[0], "(brain)", "mergeGlobalCanonicalHooks ~/.claude/settings.json", () => {
       info("fix: hooks-missing/stale — refreshing the GLOBAL Igris hooks (~/.claude/settings.json)");
@@ -394,6 +412,9 @@ async function runFixes(drift: DriftRow[]): Promise<FixOutcome[]> {
         return { outcome: "failed", detail: String(gh.error) };
       }
       info(`  global Igris hooks ${gh.outcome} -> ${gh.path}`);
+      // TD-473: the same one-line disclosure `init`/`update` print, printed ONLY
+      // when the writer actually added the default — silent on `present`/`kept-user`.
+      if (gh.attribution === "added") info(attributionAddedNote(gh.path));
       return { outcome: "applied", detail: `${gh.outcome} -> ${gh.path}` };
     });
   }
@@ -548,6 +569,8 @@ function reprobe(row: DriftRow): boolean | null {
     case "hooks-missing":
     case "hooks-stale":
       return detectGlobalHooksDrift() !== null;
+    case "attribution-missing":
+      return detectAttributionMissing() !== null;
     case "secret-perms":
       return checkSecretFilePerms(row.path) !== "ok";
     case "skills-pollution": {
@@ -645,6 +668,14 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
   // command path (hooks-stale).
   const globalHooks = detectGlobalHooksDrift();
   if (globalHooks !== null) out.push(globalHooks);
+
+  // attribution-missing (TD-473): brain-level, config-driven, sits right after
+  // hooks-missing/hooks-stale — same target file, independent gap. A machine
+  // whose hooks are already canonical but never ran `update` post-TD-470 needs
+  // its own row; an absent/malformed settings file defers to hooks-missing
+  // above (see the detector's own docblock).
+  const attributionMissing = detectAttributionMissing();
+  if (attributionMissing !== null) out.push(attributionMissing);
 
   // secret-perms (TD-220): brain-level, config-driven, sits next to
   // mcp-unregistered. Flags Igris-owned config.json/secrets.env + the 4
@@ -1390,6 +1421,42 @@ function detectGlobalHooksDrift(opts?: {
   }
 
   return null;
+}
+
+/**
+ * TD-473: classify the GLOBAL Claude Code `attribution` default gap into a
+ * single brain-level drift row, or null when it is set/user-owned. Read-only +
+ * never throws.
+ *
+ * Absent or malformed settings defer ENTIRELY to `hooks-missing`/`malformed`
+ * (`detectGlobalHooksDrift`, above) — a settings file that does not exist or
+ * does not parse is already flagged there, and flagging it again here would be
+ * a duplicate row for the same underlying fix (`igris init`/`igris doctor
+ * --fix`, which repairs both in one write). Only a PRESENT, PARSEABLE settings
+ * file is inspected, by calling the EXISTING pure `applyAttributionDefault`
+ * read-only (its return is discarded, never written) and reading its outcome:
+ * `added` means neither `attribution` nor `includeCoAuthoredBy` was present —
+ * the exact AC-1 gap; `present`/`kept-user` mean the file already carries an
+ * attribution posture (Igris's own default, or a user-authored one) and is
+ * clean. `opts.settingsPath` overrides the target (tests sandbox HOME).
+ */
+function detectAttributionMissing(opts?: { settingsPath?: string }): DriftRow | null {
+  const target = opts?.settingsPath ?? claudeUserSettingsPath();
+  if (!existsSync(target)) return null;
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(readFileSync(target, "utf-8")) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const { outcome } = applyAttributionDefault(parsed);
+  if (outcome !== "added") return null;
+  return {
+    slug: "(brain)",
+    path: target,
+    driftClass: "attribution-missing",
+    recommendedFix: "run 'igris doctor --fix' (or 'igris update') to set the Claude Code attribution default",
+  };
 }
 
 type SettingsState = "missing" | "hooks-missing" | "hooks-present" | "malformed";

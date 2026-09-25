@@ -164,3 +164,82 @@ describe('TD-476 — Census tool classification', () => {
     }
   });
 });
+
+describe('TD-478 — claude startup helpers + the no-model-tools exited-shell rule', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('TC9: HELPER_ARGS.claude pins the shipped git + xcodebuild regex pair exactly', () => {
+    expect(HELPER_ARGS.claude?.map(String)).toEqual([
+      String(
+        /(^|\/)git -c core\.askPass= -c protocol\.ext\.allow=never -c submodule\.recurse=false -c log\.showSignature=false -c gc\.auto=0 -c maintenance\.auto=false -c core\.hooksPath=/,
+      ),
+      String(/(^|\/)xcodebuild -license check$/),
+    ]);
+  });
+
+  it('TC10: the exact captured git argv (hardened flags, any core.hooksPath= suffix) classifies cli_helper, not tool', () => {
+    const parent = process.pid;
+    const sig = HELPER_ARGS.claude ?? []; // the SHIPPED signature, not a copy
+    queuePsOutput(
+      [],
+      [
+        psLine(
+          900010,
+          parent,
+          '/usr/bin/git -c core.askPass= -c protocol.ext.allow=never -c submodule.recurse=false -c log.showSignature=false -c gc.auto=0 -c maintenance.auto=false -c core.hooksPath=/Users/x/.igris/core/git-hooks status',
+        ),
+      ],
+    );
+    const census = new Census([], [], [], sig);
+    census.start();
+    const result = census.stop();
+    expect(result.descendants).toContainEqual({ exe_basename: 'git', classes: ['cli_helper'] });
+    expect(result.tool_spawned).toBe(false);
+  });
+
+  it('TC11: the xcodebuild -license check argv classifies cli_helper, not tool', () => {
+    const parent = process.pid;
+    const sig = HELPER_ARGS.claude ?? []; // the SHIPPED signature, not a copy
+    queuePsOutput([], [psLine(900011, parent, '/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -license check')]);
+    const census = new Census([], [], [], sig);
+    census.start();
+    const result = census.stop();
+    expect(result.descendants).toContainEqual({ exe_basename: 'xcodebuild', classes: ['cli_helper'] });
+    expect(result.tool_spawned).toBe(false);
+  });
+
+  it('TC12: an exited, argv-less (sh)/(bash)/(git) under modelHasNoTools=true classifies cli_helper', () => {
+    const parent = process.pid;
+    queuePsOutput([], [psLine(900012, parent, '(sh)'), psLine(900013, parent, '(bash)'), psLine(900017, parent, '(git)')]);
+    const census = new Census([], [], [], [], true);
+    census.start();
+    const result = census.stop();
+    expect(result.descendants).toContainEqual({ exe_basename: '(sh)', classes: ['cli_helper'] });
+    expect(result.descendants).toContainEqual({ exe_basename: '(bash)', classes: ['cli_helper'] });
+    // measured: claude's second git probe was sampled only after it exited (td477-evidence egress-claude-*-1)
+    expect(result.descendants).toContainEqual({ exe_basename: '(git)', classes: ['cli_helper'] });
+    expect(result.tool_spawned).toBe(false);
+  });
+
+  it('TC13 (negative control, AC-2): a LIVE, argv-bearing sh under modelHasNoTools=true still classifies tool', () => {
+    const parent = process.pid;
+    queuePsOutput([], [psLine(900014, parent, "/bin/sh -c 'cat /etc/hosts'")]);
+    const census = new Census([], [], [], [], true);
+    census.start();
+    const result = census.stop();
+    expect(result.descendants).toContainEqual({ exe_basename: 'sh', classes: ['tool'] });
+    expect(result.tool_spawned).toBe(true);
+  });
+
+  it('TC14: the same exited (sh) under modelHasNoTools=false (opencode\'s existing construction) still classifies tool', () => {
+    const parent = process.pid;
+    queuePsOutput([], [psLine(900015, parent, '(sh)')]);
+    const census = new Census([], [], [], [], false);
+    census.start();
+    const result = census.stop();
+    expect(result.descendants).toContainEqual({ exe_basename: '(sh)', classes: ['tool'] });
+    expect(result.tool_spawned).toBe(true);
+  });
+});

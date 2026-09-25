@@ -46,6 +46,7 @@ import {
   readScheduleSignals,
   readUnclaimedDisposition,
   siblingKey,
+  type CognitionHarnessRefusal,
   type CognitionProducedDisposition,
   type CognitionRosterRow,
   type CognitionScheduleRead,
@@ -207,6 +208,11 @@ interface ClassifierInput {
   /** TD-447 — the latest terminal row's `payload.reason` / `payload.detail`, when it carries them. */
   last_terminal_reason: string | null;
   last_terminal_detail: string | null;
+  /** TD-475 — the latest `run_skipped` terminal's named refusals / fallback order. */
+  last_terminal_refused: CognitionHarnessRefusal[] | null;
+  last_terminal_fallback_order: string[] | null;
+  /** TD-475 — the PAIRED `run_started.refused[]` for a `run_succeeded`/`run_failed` terminal. */
+  last_run_started_refused: CognitionHarnessRefusal[] | null;
   /** The verdict already computed for this instance's `driver_ref`, if any. */
   upstream: { id: string; status: CognitionHealthStatus } | null;
   retentionFloor: string | null;
@@ -221,6 +227,11 @@ interface ClassifierInput {
 function firstSentence(s: string): string {
   const m = /^(.*?[.!?])(?:\s|$)/.exec(s);
   return (m ? m[1] : s).replace(/[.!?]$/, "").slice(0, 160);
+}
+
+/** TD-475 — one refusal rendered as `<harness> <reason> — <first sentence of detail>`, joined `'; '`. */
+function renderRefusals(entries: CognitionHarnessRefusal[]): string {
+  return entries.map((r) => `${r.harness} ${r.reason} — ${firstSentence(r.detail)}`).join("; ");
 }
 
 /**
@@ -294,9 +305,41 @@ function classify(input: ClassifierInput): {
         reason: `${head}latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}, with no later success`,
       };
     }
+
+    // TD-475: a run_skipped whose reason is a HARNESS refusal (BR-109's cheap preflight,
+    // TD-474's static gemini retirement) is not a benign skip — the instance can never run
+    // until an operator acts. Every OTHER skip reason (`disabled`, `cold_start`, `budget`,
+    // `no_candidates`, `gate_bytes`) falls through to the generic `ok` sentence below,
+    // unchanged.
+    if (
+      input.last_terminal_name.endsWith(".run_skipped") &&
+      (input.last_terminal_reason === "harness_refused" || input.last_terminal_reason === "cli_missing")
+    ) {
+      const harnessLabel =
+        input.last_terminal_refused !== null && input.last_terminal_refused.length > 0
+          ? renderRefusals(input.last_terminal_refused)
+          : (input.last_terminal_fallback_order ?? []).join(", ");
+      return {
+        status: "blocked_harness",
+        reason:
+          `harness refused (${input.last_terminal_reason}): ${harnessLabel}. ` +
+          `latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}`,
+      };
+    }
+
+    // TD-475 AC-2: a run_succeeded whose paired run_started carried a refusal still succeeded
+    // — status stays `ok`, but the reason gains a fallback hint naming what was overridden
+    // (TD-447's directive: enrich the rendered reason, never add a digest field). Scoped to
+    // run_succeeded only — a run_failed's reason stays exactly TD-447-shaped (D7).
+    const fallbackSuffix =
+      input.last_terminal_name.endsWith(".run_succeeded") &&
+      input.last_run_started_refused !== null &&
+      input.last_run_started_refused.length > 0
+        ? ` (fallback: ${renderRefusals(input.last_run_started_refused)})`
+        : "";
     return {
       status: "ok",
-      reason: `latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}`,
+      reason: `latest terminal event on this host is ${input.last_terminal_name} at ${input.last_terminal_at}${fallbackSuffix}`,
     };
   }
 
@@ -412,6 +455,9 @@ export function buildCognitionHealthDigest(
         last_terminal_at: p.signals.last_terminal_at,
         last_terminal_reason: p.signals.last_terminal_reason,
         last_terminal_detail: p.signals.last_terminal_detail,
+        last_terminal_refused: p.signals.last_terminal_refused,
+        last_terminal_fallback_order: p.signals.last_terminal_fallback_order,
+        last_run_started_refused: p.signals.last_run_started_refused,
         upstream: null,
         retentionFloor,
       }).status,
@@ -442,6 +488,9 @@ export function buildCognitionHealthDigest(
       last_terminal_at: p.signals.last_terminal_at,
       last_terminal_reason: p.signals.last_terminal_reason,
       last_terminal_detail: p.signals.last_terminal_detail,
+      last_terminal_refused: p.signals.last_terminal_refused,
+      last_terminal_fallback_order: p.signals.last_terminal_fallback_order,
+      last_run_started_refused: p.signals.last_run_started_refused,
       upstream:
         upstreamId !== null && upstreamStatus !== undefined
           ? { id: upstreamId, status: upstreamStatus }

@@ -2735,6 +2735,13 @@ function parseGateKeys(raw: string): string[] {
  * is reported alongside so the operator can see that the instance is alive
  * SOMEWHERE.
  */
+/** One harness refusal entry, as carried on `run_skipped.refused[]` / `run_started.refused[]` (TD-474/BR-109/TD-475). */
+export interface CognitionHarnessRefusal {
+  harness: string;
+  reason: string;
+  detail: string;
+}
+
 export interface CognitionRunSignals {
   /** Latest terminal event on this host: its ISO timestamp. */
   last_terminal_at: string | null;
@@ -2747,10 +2754,53 @@ export interface CognitionRunSignals {
    * `error_message`, the same slot under the older key — when present (TD-447).
    */
   last_terminal_detail: string | null;
+  /**
+   * Latest terminal event on this host: its `payload.refused` (TD-475) — the harnesses a
+   * `run_skipped{reason:'harness_refused'}` named, each with its OWN `reason`/`detail`. `null`
+   * when the payload carries no array (absent key, or a non-`run_skipped` terminal).
+   */
+  last_terminal_refused: CognitionHarnessRefusal[] | null;
+  /**
+   * Latest terminal event on this host: its `payload.fallback_order` (TD-475) — present on a
+   * `run_skipped{reason:'cli_missing'}` row that names harnesses without per-harness detail.
+   * `null` when the payload carries no array.
+   */
+  last_terminal_fallback_order: string[] | null;
+  /**
+   * The PAIRED `run_started.refused[]` for the latest terminal, when that terminal is a
+   * `run_succeeded` or `run_failed` (TD-475) — a fallback harness ran and won. Paired by
+   * ADJACENCY (`created_at <= thisHost.created_at`, latest first): `event_log` carries no
+   * `run_id`, and `run_started`/its terminal are written synchronously in the same
+   * `runExtractor` call with nothing else able to write a `run_started` for this instance in
+   * between, so the latest `run_started` at or before the terminal IS its pair. `null` when the
+   * terminal is not a `run_succeeded`/`run_failed`, or the paired start carried no refusal.
+   */
+  last_run_started_refused: CognitionHarnessRefusal[] | null;
   /** Latest terminal event on ANY host. */
   last_terminal_any_host_at: string | null;
   /** `run_started` rows on this host today (UTC). */
   runs_today: number;
+}
+
+/** Tolerant parse of a `refused[]` payload array — a malformed or non-object entry is dropped, never thrown. */
+function parseRefusedArray(raw: unknown): CognitionHarnessRefusal[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: CognitionHarnessRefusal[] = [];
+  for (const item of raw) {
+    if (item !== null && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      if (typeof o.harness === "string" && typeof o.reason === "string" && typeof o.detail === "string") {
+        out.push({ harness: o.harness, reason: o.reason, detail: o.detail });
+      }
+    }
+  }
+  return out;
+}
+
+/** Tolerant parse of a `fallback_order` payload array — non-string members are dropped, never thrown. */
+function parseStringArray(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((v): v is string => typeof v === "string");
 }
 
 /**
@@ -2779,6 +2829,9 @@ export function readInstanceRunSignals(
     last_terminal_name: null,
     last_terminal_reason: null,
     last_terminal_detail: null,
+    last_terminal_refused: null,
+    last_terminal_fallback_order: null,
+    last_run_started_refused: null,
     last_terminal_any_host_at: null,
     runs_today: 0,
   };
@@ -2808,6 +2861,8 @@ export function readInstanceRunSignals(
     // row would throw inside withReadonlyBrain and degrade the WHOLE signal.
     let reason: string | null = null;
     let detail: string | null = null;
+    let refused: CognitionHarnessRefusal[] | null = null;
+    let fallbackOrder: string[] | null = null;
     try {
       const p = JSON.parse(thisHost?.payload ?? "{}") as Record<string, unknown>;
       if (typeof p.reason === "string") reason = p.reason;
@@ -2815,8 +2870,42 @@ export function readInstanceRunSignals(
       // the same message under `error_message`.
       const d = typeof p.detail === "string" ? p.detail : p.error_message;
       if (typeof d === "string") detail = d;
+      // TD-475: BR-109's `refused[]` and the `cli_missing` `fallback_order` — the same
+      // JS-side parse block, never `json_extract` in SQL, for the same reason as above.
+      refused = parseRefusedArray(p.refused);
+      fallbackOrder = parseStringArray(p.fallback_order);
     } catch {
-      /* malformed payload → both null; the digest is NOT degraded */
+      /* malformed payload → all null; the digest is NOT degraded */
+    }
+
+    // TD-475: the PAIRED `run_started.refused[]`, scoped to a `run_succeeded`/`run_failed`
+    // terminal only — `run_skipped` reads its own payload directly, above. No `run_id` column
+    // exists on `event_log`; pairing is by ADJACENCY (`created_at <= thisHost.created_at`,
+    // latest first), safe here because `run_started` and its terminal are written
+    // synchronously in the same `runExtractor` call with nothing else able to write a
+    // `run_started` for this instance in between.
+    let runStartedRefused: CognitionHarnessRefusal[] | null = null;
+    if (
+      thisHost !== undefined &&
+      (thisHost.event_name.endsWith(".run_succeeded") || thisHost.event_name.endsWith(".run_failed"))
+    ) {
+      const pairedStart = handle
+        .prepare(
+          `SELECT payload FROM event_log
+            WHERE component = ? AND event_name = ?
+              AND ${mine.sql}
+              AND datetime(created_at) <= datetime(?)
+            ORDER BY datetime(created_at) DESC LIMIT 1`,
+        )
+        .get(component, `${eventPrefix}.run_started`, ...mine.params, thisHost.created_at) as
+        | { payload: string | null }
+        | undefined;
+      try {
+        const sp = JSON.parse(pairedStart?.payload ?? "{}") as Record<string, unknown>;
+        runStartedRefused = parseRefusedArray(sp.refused);
+      } catch {
+        runStartedRefused = null;
+      }
     }
 
     const anyHost = handle
@@ -2841,6 +2930,9 @@ export function readInstanceRunSignals(
       last_terminal_name: thisHost?.event_name ?? null,
       last_terminal_reason: reason,
       last_terminal_detail: detail,
+      last_terminal_refused: refused,
+      last_terminal_fallback_order: fallbackOrder,
+      last_run_started_refused: runStartedRefused,
       last_terminal_any_host_at: anyHost?.created_at ?? null,
       runs_today: today.n,
     };
