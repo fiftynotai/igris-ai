@@ -3,7 +3,8 @@
  * file, for every harness (BR-108; the FILE half of TD-472's env allowlist).
  *
  * Every case builds through the REAL `buildExtractorSpawn(h, PROMPT, opts)` and
- * reads `spawn.cwd` (the isolated HOME). No CLI is spawned anywhere.
+ * reads `spawn.env.HOME` (the isolated HOME; agy's cwd is an empty subdir of it, TD-476). No CLI
+ * is spawned anywhere.
  *
  * Fence (the TD-471/TD-472 shape): HOME is `<tmp>/home`, a FIXTURE operator HOME
  * seeded by `seedOperatorHome`; `homedir()` is asserted to be the fake AND to
@@ -20,9 +21,11 @@
  * F6 `.env` sentinels + a verbatim gemini-cli `findEnvFile` replica (exercised
  * through antigravity, the sole `.gemini/*`-owning extractor harness since
  * TD-474); F7 fail-closed parsing; F8 forbidden markers; F9 the fence; P1-P3 the
- * argv pins; P5 (BR-109 control) the agy argv unchanged. BR-110: F10 the opencode
- * model catalog copy is byte-identical to the operator's; F11 the owned
- * enabled_providers allowlist carries exactly one key and only oauth providers;
+ * argv pins; P5 (BR-109/TD-476) the agy argv carries --sandbox plus the
+ * TD-474 shape unchanged. BR-110: F10 the opencode model catalog copy is
+ * byte-identical to the operator's; F11 (widened, TD-476) the owned config
+ * carries exactly {enabled_providers, permission}, only oauth providers, and
+ * a deny-all permission block ({"*":"deny", external_directory:{"*":"deny"}});
  * P4 the production opencode spawn always names --model, and a configured
  * non-oauth model is refused; F12 auth.json is still a link.
  *
@@ -48,7 +51,7 @@ import {
 } from 'node:fs';
 import { homedir, tmpdir, userInfo } from 'node:os';
 import * as path from 'node:path';
-import { buildExtractorSpawn, FORBIDDEN_IGRIS_MARKERS, forwardPathsFor } from '../backend/index.js';
+import { AGY_WORKSPACE_DIR, buildExtractorSpawn, FORBIDDEN_IGRIS_MARKERS, forwardPathsFor } from '../backend/index.js';
 import type { ExtractorSpawn } from '../backend/spawn-map.js';
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import {
@@ -107,7 +110,7 @@ function build(h: ExtractorHarness): ExtractorSpawn {
 function withHome<T>(h: ExtractorHarness, fn: (iso: string, spawn: ExtractorSpawn) => T): T {
   const spawn = build(h);
   try {
-    return fn(spawn.cwd, spawn);
+    return fn(spawn.env.HOME as string, spawn);
   } finally {
     spawn.cleanup();
   }
@@ -338,7 +341,7 @@ describe('BR-108 — owned copies never write through to the operator (F5, F5m)'
     try {
       expect(operatorShas()).toEqual(before);
       for (const rel of EXPECTED_OWNED[h]) {
-        const p = path.join(spawn.cwd, rel);
+        const p = path.join(spawn.env.HOME as string, rel);
         const st = lstatOrNull(p);
         if (st === null || !st.isFile()) continue; // a link is F2/F5m's concern; appending to it would BE the incident
         const size = st.size;
@@ -350,7 +353,7 @@ describe('BR-108 — owned copies never write through to the operator (F5, F5m)'
       spawn.cleanup();
     }
     expect(operatorShas()).toEqual(before);
-    expect(existsSync(spawn.cwd)).toBe(false);
+    expect(existsSync(spawn.env.HOME as string)).toBe(false);
   });
 
   it.each(HARNESSES.filter((h) => EXPECTED_OWNED[h].length > 0))('F5m: every %s owned file is lstat-regular with mode 0o600', (h) => {
@@ -453,13 +456,14 @@ describe('BR-110 — the model catalog is a COPY, never a link, byte-identical t
   });
 });
 
-describe('BR-110 — the owned enabled_providers allowlist lists ONLY oauth providers (F11)', () => {
-  it('F11: opencode.json carries exactly {enabled_providers: [oauth provider]}, and no MCP name is visible', () => {
+describe('BR-110 / TD-476 — the owned enabled_providers allowlist lists ONLY oauth providers, plus a deny-all permission block (F11)', () => {
+  it('F11: opencode.json carries exactly {enabled_providers, permission}, permission is deny-all + external_directory deny, and no MCP name is visible', () => {
     withHome('opencode', (iso) => {
       const j = readJson(path.join(iso, '.config', 'opencode', 'opencode.json'));
-      expect(Object.keys(j)).toEqual(['enabled_providers']);
+      expect(Object.keys(j)).toEqual(['enabled_providers', 'permission']);
       expect(j.enabled_providers).toEqual([OPENCODE_OAUTH_PROVIDER]);
       expect(j.enabled_providers).not.toContain(OPENCODE_METERED_PROVIDER);
+      expect(j.permission).toEqual({ '*': 'deny', external_directory: { '*': 'deny' } });
       expect(childVisibleMcpNames(iso)).toEqual([]);
     });
   });
@@ -518,11 +522,33 @@ describe('BR-108 — argv pins (P1-P3)', () => {
   });
 });
 
-describe('BR-109 — the antigravity argv is unchanged by the TD-474 retirement (P5)', () => {
-  it('P5 (control): the antigravity argv still carries --print-timeout <n>s and --print with argv delivery', () => {
+describe('BR-109 / TD-476 — the antigravity argv carries --sandbox plus the unchanged TD-474 shape (P5)', () => {
+  it('P5: the antigravity argv is exactly --sandbox, --print-timeout <n>s, --print with argv delivery', () => {
     withHome('antigravity', (_iso, spawn) => {
-      expect(spawn.args).toEqual(['--print-timeout', '120s', '--print']);
+      expect(spawn.args).toEqual(['--sandbox', '--print-timeout', '120s', '--print']);
       expect(spawn.delivery).toBe('argv');
+    });
+  });
+});
+
+describe('TD-476 — antigravity runs in an EMPTY workspace; its credential links sit outside the cwd (W1)', () => {
+  it('W1: agy cwd is <HOME>/workspace, holding only an empty regular .env and no link', () => {
+    withHome('antigravity', (home, spawn) => {
+      expect(spawn.cwd).toBe(path.join(home, AGY_WORKSPACE_DIR));
+      expect(readdirSync(spawn.cwd)).toEqual(['.env']);
+      const st = lstatSync(path.join(spawn.cwd, '.env'));
+      expect(st.isFile()).toBe(true);
+      expect(st.size).toBe(0);
+      // every forwarded credential link is outside the workspace
+      for (const rel of EXPECTED_FORWARD.antigravity) {
+        expect(path.relative(spawn.cwd, path.join(home, rel)).startsWith('..')).toBe(true);
+      }
+    });
+  });
+
+  it.each(HARNESSES.filter((h) => h !== 'antigravity'))('W1: %s keeps cwd === the isolated HOME', (h) => {
+    withHome(h, (home, spawn) => {
+      expect(spawn.cwd).toBe(home);
     });
   });
 });

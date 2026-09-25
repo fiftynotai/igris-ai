@@ -32,7 +32,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { buildExtractorSpawn, runBackend, HARNESS_BIN } from '../backend/index.js';
 import type { SpawnOptions } from '../backend/spawn-map.js';
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
@@ -209,7 +209,9 @@ function stubNames(names: readonly string[], value: string): void {
 function childEnvNames(h: ExtractorHarness): { names: string[]; homeIsCwd: boolean } {
   const spawn = buildExtractorSpawn(h, PROMPT, scratchOpts());
   try {
-    return { names: Object.keys(spawn.env), homeIsCwd: spawn.env.HOME === spawn.cwd };
+    // HOME is the isolated home; the cwd is that home, or agy's empty workspace inside it (TD-476).
+    const home = spawn.env.HOME as string;
+    return { names: Object.keys(spawn.env), homeIsCwd: spawn.cwd === home || dirname(spawn.cwd) === home };
   } finally {
     spawn.cleanup();
   }

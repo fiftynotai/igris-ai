@@ -114,13 +114,15 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
 
   it('opencode with NO oauth provider gets no .config/opencode/opencode.json at all (never an empty list)', () => {
     // No auth.json seeded at all: oauthProviders() is empty — writeOwnedConfigs
-    // SKIPS the file rather than writing `{"enabled_providers":[]}`.
+    // SKIPS the file rather than writing `{"enabled_providers":[],"permission":{...}}`.
+    // Unaffected by TD-476's permission block: the whole write is still gated on
+    // `providers.length > 0`, so an unresolvable harness still produces no file.
     const iso = makeIsolatedHome('opencode', env);
     expect(existsSync(join(iso.home, '.config', 'opencode', 'opencode.json'))).toBe(false);
     iso.cleanup();
   });
 
-  it('opencode gets an owned enabled_providers allowlist naming ONLY the oauth provider (BR-110)', () => {
+  it('opencode gets an owned enabled_providers allowlist naming ONLY the oauth provider, plus a deny-all permission block (BR-110 / TD-476)', () => {
     mkdirSync(join(fenceHome, '.local', 'share', 'opencode'), { recursive: true });
     writeFileSync(
       join(fenceHome, '.local', 'share', 'opencode', 'auth.json'),
@@ -129,8 +131,9 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     const iso = makeIsolatedHome('opencode', env);
     const p = join(iso.home, '.config', 'opencode', 'opencode.json');
     const j = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
-    expect(Object.keys(j)).toEqual(['enabled_providers']);
+    expect(Object.keys(j)).toEqual(['enabled_providers', 'permission']);
     expect(j.enabled_providers).toEqual(['igris-fixture-oauth']);
+    expect(j.permission).toEqual({ '*': 'deny', external_directory: { '*': 'deny' } });
     iso.cleanup();
   });
 });

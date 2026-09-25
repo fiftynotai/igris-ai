@@ -14,10 +14,13 @@
  *     in docs/COGNITION.md);
  *   - opencode gets an owned COPY (never a link) of the operator's model
  *     catalog (`.cache/opencode/{models.json,version}`) plus an owned
- *     `.config/opencode/opencode.json` naming ONLY `enabled_providers` — an
+ *     `.config/opencode/opencode.json` naming `enabled_providers` — an
  *     ALLOWLIST of oauth-backed providers, so a stored metered (api-key)
  *     provider can never load even though `auth.json` stays a readable link
- *     (BR-110; the why is in docs/COGNITION.md);
+ *     (BR-110) — AND `permission: {"*":"deny", external_directory:{"*":"deny"}}`,
+ *     a deny-all tool block (TD-476; the config's `permission` wins the
+ *     `merge(defaults, agentSpecific, <config>)` precedence — proven, not
+ *     inferred, see `plans/td476-evidence/phase0-static.txt`);
  *   - `assertUnderRoot` guards EVERY write path — a programming bug that would
  *     write under the real HOME fails fast.
  *
@@ -110,15 +113,34 @@ const CODEX_FEATURE_DENY = [
   'plugins',
   'skill_mcp_dependency_install',
   'tool_call_mcp_elicitation',
+  // TD-476: the tools that let a codex child RUN or read. `--sandbox read-only` blocks writes, not
+  // reads. Under an adversarial prompt codex ran zsh + rg + head, and its isolated HOME links its
+  // own auth.json. `shell_tool` is its shell; `code_mode_host` is its code runner; `shell_snapshot`
+  // starts the login shell on every run to snapshot its env, for the shell tool only. `unified_exec`
+  // is NOT listed: codex 0.157.0 keeps it on whatever the config says (measured), so a deny line
+  // for it would be false.
+  'shell_tool',
+  'code_mode_host',
+  'shell_snapshot',
 ];
 
 // ---------------------------------------------------------------------------
 // Public surface
 // ---------------------------------------------------------------------------
 
+/** antigravity's working directory inside its isolated HOME (TD-476). Holds only an empty `.env`. */
+export const AGY_WORKSPACE_DIR = 'workspace';
+
 export interface IsolatedHome {
   /** Absolute path to the clean per-run isolated HOME (pass as env.HOME to the CLI). */
   home: string;
+  /**
+   * The child's working directory. It is `home` for every harness except antigravity, whose
+   * headless mode auto-allows reads INSIDE its workspace (the cwd) and auto-denies them outside it
+   * (TD-476, measured). Its cwd is therefore an EMPTY subdirectory, which puts the forwarded
+   * credential links under `.gemini/` outside the workspace.
+   */
+  workspace: string;
   /** Reap the isolated HOME dir (best-effort). MUST be called after the spawn settles. */
   cleanup: () => void;
 }
@@ -147,6 +169,7 @@ export function makeIsolatedHome(
 
   return {
     home,
+    workspace: harness === 'antigravity' ? resolve(home, AGY_WORKSPACE_DIR) : home,
     cleanup: () => {
       try {
         rmSync(home, { recursive: true, force: true });
@@ -183,6 +206,9 @@ function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string
     // Empty .env files end gemini-cli's first-hit .env search at the first dir.
     writeOwned(home, '.env', '');
     writeOwned(home, '.gemini/.env', '');
+    // The agy workspace (TD-476): an empty cwd, so the credential links above sit OUTSIDE it,
+    // where headless agy auto-denies reads. Its own empty .env ends the .env search inside it.
+    writeOwned(home, `${AGY_WORKSPACE_DIR}/.env`, '');
     const src = resolve(real, '.gemini/antigravity-cli/settings.json');
     if (existsSync(src)) {
       writeOwned(home, '.gemini/antigravity-cli/settings.json', JSON.stringify(pickPaths(readJsonLoose(src), [['model']])));
@@ -207,9 +233,28 @@ function writeOwnedConfigs(harness: ExtractorHarness, home: string, real: string
     // preflight's `no_subscription_model` refusal is what keeps a real run from ever
     // reaching this path in that state, and the builder throws defensively too
     // (`spawn-map.ts#buildOpencodeSpawn`).
+    // TD-476: a `permission` deny-all block travels in the SAME owned write.
+    // `"*":"deny"` is opencode's documented catch-all (its own shipped `explore`
+    // agent uses this exact idiom); `external_directory` is a SIBLING key of the
+    // same StructWithRest, not something the top-level `"*"` cascades into (the
+    // `explore` agent sets it separately even though it already set `"*":"deny"`
+    // at the top level) — both are shipped together, never one without the other.
+    // Precedence is RESOLVED (not inferred): opencode's `build` agent computes
+    // `permission: merge(defaults, fromConfig({question:"allow",plan_enter:"allow"}), fromConfig(config.permission))`,
+    // and the evaluator is `rules.flat().findLast(...)` — the LAST matching rule
+    // wins, so the config's `permission` (passed last) overrides `build`'s own
+    // baked-in allow rules for every tool, including `read`
+    // (`plans/td476-evidence/phase0-static.txt`, Orchestrator Phase-0 result #1).
     const providers = oauthProviders(real);
     if (providers.length > 0) {
-      writeOwned(home, '.config/opencode/opencode.json', JSON.stringify({ enabled_providers: providers }));
+      writeOwned(
+        home,
+        '.config/opencode/opencode.json',
+        JSON.stringify({
+          enabled_providers: providers,
+          permission: { '*': 'deny', external_directory: { '*': 'deny' } },
+        }),
+      );
     }
   }
 }

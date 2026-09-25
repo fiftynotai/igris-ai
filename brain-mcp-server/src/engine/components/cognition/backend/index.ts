@@ -37,6 +37,7 @@ export {
   extractorScratchRoot,
   forwardPathsFor,
   FORBIDDEN_IGRIS_MARKERS,
+  AGY_WORKSPACE_DIR,
   type IsolatedHome,
 } from './isolation.js';
 export {

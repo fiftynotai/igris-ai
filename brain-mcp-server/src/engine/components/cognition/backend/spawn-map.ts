@@ -146,18 +146,37 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
 
 /**
  * Antigravity (`agy`). Headless `--print` in the brain-isolated Gemini HOME;
- * `--print-timeout` pins the deadline; the composed prompt is the argv tail.
- * Ported from `judge.ts:buildAgySpawn:526-545`.
+ * `--sandbox` wraps terminal commands in a macOS Seatbelt profile (`deny
+ * default`, `plans/td476-evidence/phase0-static.txt`); `--print-timeout` pins
+ * the deadline; the composed prompt is the argv tail. Ported from
+ * `judge.ts:buildAgySpawn:526-545`.
+ *
+ * TD-476: `--sandbox` is best-available defense-in-depth, NOT a proven
+ * no-tools switch — its own `--help` text says "terminal restrictions
+ * enabled," which covers shell/terminal execution but is not proven to cover
+ * in-process tools (read_file, list dir, browser_*). `--mode plan` was
+ * considered and DROPPED: the binary itself prints "warning: --mode %s is
+ * not supported in print mode; continuing in the default mode" (Orchestrator
+ * Phase-0 result #2) — shipping an ignored flag would be a false sense of
+ * safety. A Phase-0b static read of the installed binary
+ * (`plans/td476-evidence/phase0b-agy-settings.txt`) found no settings.json
+ * key that clears the bar (deny-by-default or no-tools) for antigravity's
+ * OWN built-in tools, so none is added here. Per operator decision
+ * (2026-09-25), agy stays selectable; its posture is documented as an
+ * accepted limit in docs/COGNITION.md, not a refusal.
  */
 function buildAgySpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
   const printTimeoutSec = Math.max(60, opts.printTimeoutSec ?? 120);
-  const args = ['--print-timeout', `${printTimeoutSec}s`, '--print'];
+  const args = ['--sandbox', '--print-timeout', `${printTimeoutSec}s`, '--print'];
   if (opts.model) args.push('--model', opts.model);
   return {
     bin: HARNESS_BIN.antigravity,
     args,
     env: subscriptionOnlyEnv(process.env, { HOME: iso.home }),
-    cwd: iso.home,
+    // TD-476: an empty workspace, not the HOME. Headless agy reads freely inside its cwd and
+    // auto-denies reads outside it, so the forwarded `.gemini/` credential links must not sit
+    // under the cwd.
+    cwd: iso.workspace,
     delivery: 'argv',
     prompt: composePrompt(prompt),
     cleanup: iso.cleanup,

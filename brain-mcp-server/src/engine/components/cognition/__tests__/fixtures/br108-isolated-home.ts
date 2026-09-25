@@ -70,6 +70,8 @@ export const EXPECTED_OWNED: Record<ExtractorHarness, readonly string[]> = {
     '.gemini/antigravity-cli/settings.json',
     '.env',
     '.gemini/.env',
+    // TD-476: the agy workspace (its cwd) holds only this empty .env sentinel.
+    'workspace/.env',
   ],
   // BR-110: the copied model catalog + the owned enabled_providers allowlist.
   opencode: ['.cache/opencode/models.json', '.cache/opencode/version', '.config/opencode/opencode.json'],
@@ -90,6 +92,11 @@ export const EXPECTED_CODEX_FEATURE_DENY: readonly string[] = [
   'plugins',
   'skill_mcp_dependency_install',
   'tool_call_mcp_elicitation',
+  // TD-476: codex's shell (shell_tool, shell_snapshot) and code runner (code_mode_host), each
+  // `stable true` in codex-cli 0.157.0 `codex features list` (plans/td476-evidence).
+  'shell_tool',
+  'code_mode_host',
+  'shell_snapshot',
 ];
 
 /** The codex root keys the fixture sets that the owned copy must carry (4 of the 6 allowlisted). */
