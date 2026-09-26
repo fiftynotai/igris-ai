@@ -75,7 +75,8 @@ read -r -d '' STUB_CANONICAL_HOOKS <<'JSON' || true
     "PostCompact":  [{"hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/post_compact.sh"}]}],
     "PreToolUse":   [{"matcher":"Write|Edit","hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/pre_tool_use.sh"}]}],
     "PostToolUse":  [{"matcher":"Write|Edit","hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/post_tool_use.sh","timeout":20}]}]
-  }
+  },
+  "attribution": {"commit": "", "pr": "", "sessionUrl": false}
 }
 JSON
 export STUB_CANONICAL_HOOKS
@@ -127,6 +128,9 @@ stage_home() {
 EOF
   chmod 600 "$home/.claude.json"
   cp "$IGRIS_BRAIN_DIR/core/hooks/canonical-settings.json" "$home/.claude/settings.json"
+  # TD-473: a clean baseline carries the Igris attribution default (what init/update write),
+  # so `attribution-missing` fires only when a test removes it on purpose.
+  node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));j.attribution={commit:"",pr:"",sessionUrl:false};fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n");' "$home/.claude/settings.json"
   printf '{ "version": "7.0.0", "cli_targets": {} }\n' > "$IGRIS_BRAIN_DIR/config.json"
   chmod 600 "$IGRIS_BRAIN_DIR/config.json"
   echo "$home"
