@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_skill_retirement.test.bash - FR-153 retirement test for the legacy
 # skill-projection scripts (md_to_agents_md.sh + md_to_gemini_toml.sh).
 #

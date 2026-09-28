@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # doctor.bats — integration tests for `igris doctor`. End-to-end drift
 # classification + --fix + --remove-orphans confirmation flow.
 

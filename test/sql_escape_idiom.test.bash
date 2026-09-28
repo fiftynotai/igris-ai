@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # sql_escape_idiom.test.bash — BR-104. The source-scan guard for the bash-3.2
 # SQL-escape idiom across every hook-invoked bash consumer that interpolates a
 # value into a sqlite3 query.

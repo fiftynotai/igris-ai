@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # brief_ac_gate.test.bash — TD-325. Tests for the acceptance-criteria gate:
 #   the shared parser  core/scripts/brief_ac_check.sh
 #   the L2 gate        scripts/git-hooks/commit-msg
@@ -59,9 +59,9 @@ setup() {
   PROJECT="gproj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
 
   # The hook prefers $REPO_ROOT/core/scripts/brief_ac_check.sh. Placing the
   # parser there means the sandbox exercises the SAME resolution branch the real
@@ -126,9 +126,9 @@ use_quoted_repo() {
   PROJECT="it's-proj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO/core/scripts"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 }
 

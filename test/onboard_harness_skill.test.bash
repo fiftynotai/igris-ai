@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # onboard_harness_skill.test.bash - FR-172 presence + completeness guard for the
 # /onboard-harness skill.
 #

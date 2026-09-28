@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # commit_signature_gate.test.bash — TD-470. The no-AI-signature gate in
 # core/git-hooks/commit-msg (§1b, the `[[ TD-470 SIGNATURE GATE ]]` block).
 #
@@ -55,9 +55,9 @@ setup() {
   PROJECT="gproj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
 
   MSG_FILE="$SANDBOX/COMMIT_EDITMSG"
 }

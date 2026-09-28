@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # pre_tool_use_hook.test.bash — FR-212c. The REGISTRATION GATE on the shared
 # PreToolUse hook.
 #

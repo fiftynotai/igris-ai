@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_mcp_seam_guard.test.bash — TD-390: IGRIS_MCP_<HARNESS>_CONFIG is a
 # READ-ONLY drift seam; the MCP WRITER refuses under it, and HOME sandboxes it.
 #

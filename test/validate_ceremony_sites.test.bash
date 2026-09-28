@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # validate_ceremony_sites.test.bash — FR-268. Tests for the authoring control
 # scripts/validate_ceremony_sites.sh over the four ceremony skills'
 # `igris ceremony start|stop --name <n>` call sites.

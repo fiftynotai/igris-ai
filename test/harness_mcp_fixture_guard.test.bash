@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_mcp_fixture_guard.test.bash — BR-099: the `verify_mcp` mcp-fixture
 # arm of check_harness_drift.sh flags a TEST-FIXTURE MCP server registered in
 # a REAL harness config.

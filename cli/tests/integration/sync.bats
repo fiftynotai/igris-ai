@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # sync.bats — integration tests for `igris sync` (M4 of MG-014).
 #
 # Hermetic via IGRIS_BRAIN_DIR. We DO NOT exercise real SSH/rsync paths

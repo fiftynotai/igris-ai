@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # validate_hunt_agent_event_sites.test.bash — FR-267. Tests for the derivation
 # guard scripts/validate_hunt_agent_event_sites.sh over the hunt skill's
 # `igris_agent_event` call sites.

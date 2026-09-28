@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_drift_gate.test.bash - Tests for the FR-135 harness drift gate.
 #
 # FR-135 wires the TD-021 drift guard (core/scripts/cli-adapters/
@@ -1692,7 +1692,7 @@ EOF
 add_sibling_worktree() {
   local root="$1"
   local sib="$TEST_TEMP_DIR/td388_sib_${2}_$BATS_TEST_NUMBER"
-  git -C "$root" worktree add -q -b "td388-$2-$BATS_TEST_NUMBER" "$sib" >/dev/null 2>&1
+  git -C "${root:?}" worktree add -q -b "td388-$2-$BATS_TEST_NUMBER" "$sib" >/dev/null 2>&1
   if [ ! -d "$sib" ]; then
     echo "FIXTURE PRECONDITION FAILED: sibling worktree not live at $sib" >&2
     return 1
@@ -1845,7 +1845,7 @@ EOF
   [ "$status" -eq 0 ] || return 1
   [[ "$output" == *"WORKTREE NOTICE"* ]] || return 1
 
-  git -C "$root" worktree remove --force "$sib" >/dev/null 2>&1
+  git -C "${root:?}" worktree remove --force "$sib" >/dev/null 2>&1
   [ ! -d "$sib" ] || return 1
 
   run_wrapper "$root" "$cfg"
@@ -1872,7 +1872,7 @@ EOF
   rm -rf "$sib"
   # Arm check on the fixture's premise: git must STILL list it, else this test
   # would be W3a in disguise.
-  run git -C "$root" worktree list --porcelain
+  run git -C "${root:?}" worktree list --porcelain
   [[ "$output" == *"$sib"* ]] || return 1
 
   run_wrapper "$root" "$cfg"

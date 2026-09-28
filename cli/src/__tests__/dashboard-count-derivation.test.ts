@@ -475,9 +475,9 @@ function mapRow(n: number): string {
 
 function consumersCell(row: string): string {
   const cells = row.split("|");
-  // Leading empty + five columns + trailing empty. `check_contract_consumers.sh`
-  // reads the same split, so a row that fails this is a row the repo's own
-  // contract gate is silently mis-reading too.
+  // Leading empty + five columns + trailing empty. A NAIVE split: the contract
+  // gate honours the `\|` escape (TD-313), so this is STRICTER than the gate —
+  // the row must hold no in-cell pipe at all, escaped or not.
   expect(cells.length, "row " + MAP_ROW + " is not a 5-column map row").toBe(7);
   return cells[3]!;
 }

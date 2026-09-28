@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # phase_guard.test.bash — FR-186 / G-01R. Tests for the re-pointed PI-004
 # phase guard in scripts/git-hooks/pre-commit.
 #
@@ -54,9 +54,9 @@ setup() {
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO"
   # Initialise a real git repo so `git rev-parse --show-toplevel` resolves.
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   # The hook lives at .git/hooks/pre-commit normally; we invoke the SOURCE hook
   # directly with cwd = repo so REPO_ROOT resolves to $REPO.
 
@@ -622,7 +622,7 @@ seed_h3() {
   PROJECT="it's-proj"
   QREPO="$SANDBOX/$PROJECT"
   mkdir -p "$QREPO"
-  git -C "$QREPO" init -q
+  git -C "${QREPO:?}" init -q
   seed_instance "FR-457" "active" "$HOSTNAME_LOCAL" "BUILDING"
   seed_brief "FR-457" "BUILDING"
   run bash -c "cd \"$QREPO\" && HOME='$FAKEHOME' bash '$HOOK_SRC' 2>&1"

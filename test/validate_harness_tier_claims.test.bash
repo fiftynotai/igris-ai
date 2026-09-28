@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 #
 # TD-367 — the harness-count claim guard (scripts/validate_harness_tier_claims.sh).
 #

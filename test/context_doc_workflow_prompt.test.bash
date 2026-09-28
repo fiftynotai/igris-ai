@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # context_doc_workflow_prompt.test.bash — FR-213 context-doc workflow guards.
 #
 # These are prompt/protocol regression checks. The behavior is intentionally

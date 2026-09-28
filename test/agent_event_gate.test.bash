@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # agent_event_gate.test.bash — FR-267. Tests for the agent-event coverage gate:
 #   the shared parser  core/scripts/brief_agent_log_roles.sh
 #   the L2 gate        scripts/git-hooks/commit-msg  (§3)
@@ -61,9 +61,9 @@ setup() {
   PROJECT="gproj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO/core/scripts"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   cp "$ROLES" "$REPO/core/scripts/brief_agent_log_roles.sh"
   cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 
@@ -155,9 +155,9 @@ use_quoted_repo() {
   PROJECT="it's-proj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO/core/scripts"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   cp "$ROLES" "$REPO/core/scripts/brief_agent_log_roles.sh"
   cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # commit_msg_sigpipe.test.bash — BR-107. core/git-hooks/commit-msg leaks EPIPE
 # noise onto stderr on an otherwise-PASSING or otherwise-REFUSING commit, when
 # the process runs with SIGPIPE ignored (as GitHub Actions' ubuntu-latest

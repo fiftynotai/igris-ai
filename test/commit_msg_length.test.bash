@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # commit_msg_length.test.bash — TD-180. Tests for the commit-msg summary-length
 # hook at scripts/git-hooks/commit-msg.
 #

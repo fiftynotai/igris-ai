@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # antigravity_bridge.test.bash — FR-181. Tests for the Antigravity hook bridge
 # (core/hooks/bridges/antigravity/{pre,post}_tool_use.sh) + the antigravity hook
 # drift arm in check_harness_drift.sh.

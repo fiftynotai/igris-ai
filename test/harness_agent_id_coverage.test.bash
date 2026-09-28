@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_agent_id_coverage.test.bash - TD-284 descriptor↔npx agent-id coverage
 # drift check (the new verify_mcp arm in check_harness_drift.sh).
 #

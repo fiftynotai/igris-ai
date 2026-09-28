@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_mcp.test.bash - Tests for the FR-164 MCP projection surface.
 #
 # FR-164 folds MCP servers into the FR-136 manifest-driven engine as a third

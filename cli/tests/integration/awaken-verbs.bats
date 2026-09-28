@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # awaken-verbs.bats — FR-195 (M1+M2) integration tests for the awaken verbs.
 #
 # Exercises the CLI bridge end-to-end via $CLI_BIN (L-330: producer verb TS +

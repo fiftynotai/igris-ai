@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_agent_tree.test.bash — FR-156 agent TREE vendor + tree drift verify.
 #
 # FR-156 promotes agent vendoring from "file-set" (frontmatter.claude.md +

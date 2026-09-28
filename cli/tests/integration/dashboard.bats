@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # FR-238 — `igris dashboard` lifecycle + the PACK-EXTRACT PACKAGING SMOKE.
 #
 # The pack-extract test (T8) is the packaging AC's only automated proof. R1 says

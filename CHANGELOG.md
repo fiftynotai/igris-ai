@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The contract-map gate reads the whole map, the same way in every checkout,
+  and says what a clean run does not prove (TD-466, TD-313, TD-435, TD-346).**
+  `scripts/check_contract_consumers.sh` stopped reading `MAINTAINING.md` at the
+  first heading after `## The Map`, so six rows (FR-243, BR-103, BR-104,
+  BR-105, TD-460, BR-106) were never validated; the map now ends at an explicit
+  `<!-- MAP:END -->`, and a missing marker or a map row after it is a STALE
+  MAP. The row parser honours the `\|` escape, a row that does not split into
+  five columns is a STALE MAP, and a Contract token that is one bare word
+  (`nodes`, `Done`) is no longer minted as a contract. Git-ignored citations are
+  classified before anything is resolved, so a clean clone or worktree no longer
+  fails on `cli/dist` and counts the same as a built tree. A short-form citation
+  that more than one tracked path ends with is a STALE MAP naming every
+  candidate (row 131's `src/` matched four directories and had been resolving to
+  the wrong one). Measured on 2026-09-28 in a clean worktree: 577 validated
+  citations before, 629 after; the map registers 968 distinct contract tokens
+  (1047 before), 319 bare-word tokens dropped, none of them a row's only token.
+- **A bats fixture can no longer run under plain `bash` (TD-348).** Every
+  fixture in `test/` and `cli/tests/integration/` now starts by sourcing
+  `test/require_bats.bash`, which exits 2 with the command to run unless bats is
+  running it; and every `git -C` path in the fixture set (108 occurrences on 107
+  lines, 2026-09-28) is `"${V:?}"`, so an empty sandbox path fails before git
+  runs instead of falling through to the current directory. The incident it
+  closes: `bash test/check_contract_consumers.test.bash` committed 12 files of
+  in-flight work to `develop` on 2026-08-05.
 - **A cognition run that cannot finish no longer wedges its schedule forever
   (TD-361).** The daemon refused to fire while ANY run of a schedule was
   `running`, with no age bound and no owner check, so a run whose process exited

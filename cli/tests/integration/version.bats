@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # version.bats — proves the CLI binary exec'd via node prints its version
 # and exits 0. Smoke test for the bats harness itself.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # install.bats — integration tests for `igris install`, sandboxed via
 # IGRIS_BRAIN_DIR. FR-212d Phase 2: `igris install` is REGISTER-ONLY — it upserts
 # the brain `projects` row + `installed_features.json` (+ the global igris-brain

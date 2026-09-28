@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # build-smoke-sandbox.bats — TD-426 twin of cli/scripts/smoke-bundled-mcp.sh,
 # the guard `cd cli && npm run build` (copy-templates.sh) and npm-publish.yml
 # run against the vendored brain bundle.

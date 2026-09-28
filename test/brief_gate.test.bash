@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # brief_gate.test.bash — TD-150. Tests for the hardened pre_tool_use.sh
 # brief-gate (loud-on-bypass / loud-on-error / loud-on-fallback-fire,
 # cache-less, realpath-normalised, IGRIS_BYPASS_BRIEF_GATE escape hatch).

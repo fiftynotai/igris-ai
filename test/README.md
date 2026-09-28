@@ -10,6 +10,8 @@
 test/
 ├── README.md                              # This file
 ├── test_helper.bash                       # Shared test utilities
+├── require_bats.bash                      # The bats-only run guard every fixture sources (TD-348)
+├── fixture_bats_guard.test.bash           # Enforces the guard line + the git -C rule
 ├── fixtures/                              # Test data (mock projects, etc.)
 │   └── mock_project/                      # Sample project for testing
 ├── validate_brain_stewardship_enums.test.bash  # Tests for the enum-drift validator
@@ -25,6 +27,14 @@ test/
 > `bats test/*.test.bash` masked it because the combined suite is non-empty.
 > New top-level-script edge-case tests get a NEW file; never commit a
 > @test-less `.test.bash`.
+
+> **Never run a fixture with `bash` (TD-348, 2026-08-05).**
+> `bash test/check_contract_consumers.test.bash` once committed 12 files of
+> in-flight work to `develop`: under plain bash `setup()` never runs, so the
+> sandbox path was empty, and git treats an empty `-C` path as the current
+> directory. Every fixture now refuses to run outside bats (exit 2, with
+> `require_bats: refusing to run <file>` and the `bats` command to use). Run
+> fixtures with `bats <file>` only.
 
 ---
 
@@ -113,6 +123,7 @@ done
 
 ```bash
 #!/usr/bin/env bats
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 
 # Load shared utilities
 load test_helper
@@ -129,6 +140,26 @@ load test_helper
   assert_file_exists "$TEST_PROJECT_DIR/expected/file"
 }
 ```
+
+### Fixture rules (TD-348)
+
+- **The first executable line of every fixture is the bats guard.** For
+  `test/*.test.bash` it is the `source … require_bats.bash" || exit 2` line in
+  the template above, byte-for-byte. For `cli/tests/integration/*.bats` it is
+  the same line with `/../../../test/require_bats.bash` as the path. Put it on
+  line 2, directly under the shebang. `test/fixture_bats_guard.test.bash`
+  (G3) fails any fixture that does not start with its directory's line, and
+  (G4) proves each one refuses under plain bash.
+- **Write every `git -C` path as `"${VAR:?}"`**, never a bare `"$VAR"`: an
+  empty `-C` path is not an error to git, it is the current directory.
+  `${VAR:?}` makes an empty value fail before git runs. G5 scans every
+  `git -C` argument in `test/*.bash` and `cli/tests/integration/*.{bash,bats}`,
+  including those inside `bash -c` strings.
+- **A test that spawns a fixture with plain `bash`** (to prove the refusal)
+  must unset `BATS_TEST_DIRNAME` in the child — `test_helper.bash` exports it,
+  and a CLI fixture's guard line would then resolve a path that does not
+  exist. That is still fail-closed (exit 2), but without the guard's message.
+  Use `env -u BATS_TEST_DIRNAME bash <file>`, as the meta-test does.
 
 ### Test Helpers
 

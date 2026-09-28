@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # Tests for scripts/validate_brief_state_reconciliation.sh (TD-257).
 #
 # The validator reads brief_status.status/phase from a brain DB and cross-checks
@@ -60,17 +60,17 @@ seed_brief() {
 init_fixture_repo() {
   command -v git >/dev/null 2>&1 || skip "git not available"
   mkdir -p "$FIXTURE_REPO"
-  git -C "$FIXTURE_REPO" init -q
-  git -C "$FIXTURE_REPO" config user.email "t@t.dev"
-  git -C "$FIXTURE_REPO" config user.name "Test"
+  git -C "${FIXTURE_REPO:?}" init -q
+  git -C "${FIXTURE_REPO:?}" config user.email "t@t.dev"
+  git -C "${FIXTURE_REPO:?}" config user.name "Test"
 }
 
 # make_closing_commit <brief_id> — a commit whose message references the brief.
 make_closing_commit() {
   local bid="$1"
   echo "$bid" >> "$FIXTURE_REPO/log.txt"
-  git -C "$FIXTURE_REPO" add -A
-  git -C "$FIXTURE_REPO" commit -q -m "feat(x): do the thing
+  git -C "${FIXTURE_REPO:?}" add -A
+  git -C "${FIXTURE_REPO:?}" commit -q -m "feat(x): do the thing
 
 closes #$bid"
 }

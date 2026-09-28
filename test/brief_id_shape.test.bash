@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # brief_id_shape.test.bash — TD-468. The source-scan guard for the brief-id
 # SHAPE across every file that spells it: `[A-Z]{2,3}-[0-9]+[a-z]?` — a
 # 2-3 letter prefix, digits, and ONE optional lowercase letter for a

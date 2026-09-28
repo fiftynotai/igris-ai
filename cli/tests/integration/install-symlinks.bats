@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # install-symlinks.bats — FR-212d-updated.
 #
 # HISTORY: this file pinned the native TS per-project symlink layer of `igris

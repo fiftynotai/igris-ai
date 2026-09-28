@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # secrets_scan.test.bash - Tests for the TD-159 gitleaks secret-scanning gate.
 #
 # Verifies that .gitleaks.toml (the curated ruleset + Igris custom rules +

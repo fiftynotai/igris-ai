@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # install-git-hooks.bats — FR-243 step 7b of `igris install`: the git-level
 # gates as a property of a registered project.
 #
@@ -102,7 +102,7 @@ link_target() {
 }
 
 @test "I5: core.hooksPath set (husky) -> refused, .git/hooks untouched, install still exit 0" {
-  git -C "$PROJ" config core.hooksPath .husky
+  git -C "${PROJ:?}" config core.hooksPath .husky
   mkdir -p "$PROJ/.husky"
   before="$(ls -A "$PROJ/.git/hooks" | grep -v '\.sample$' || true)"
   run $CLI_BIN install "$PROJ" --slug cproj
@@ -143,7 +143,7 @@ link_target() {
   # The igris-ai and mbrgea-ai checkouts on the reference machine carry exactly
   # this (`core.hooksPath=<repo>/.git/hooks`, measured 2026-09-07): git reads
   # its default location, spelled out. Refusing here would strand them.
-  git -C "$PROJ" config core.hooksPath "$PROJ/.git/hooks"
+  git -C "${PROJ:?}" config core.hooksPath "$PROJ/.git/hooks"
   run $CLI_BIN install "$PROJ" --slug cproj
   echo "$output"
   [ "$status" -eq 0 ]
@@ -151,7 +151,7 @@ link_target() {
   [[ "$output" == *"git hook pre-commit: installed"* ]] || return 1
   [ -L "$PROJ/.git/hooks/pre-commit" ]
   # And the RELATIVE spelling of the same place.
-  git -C "$PROJ" config core.hooksPath .git/hooks
+  git -C "${PROJ:?}" config core.hooksPath .git/hooks
   run $CLI_BIN install "$PROJ" --slug cproj --verbose
   [ "$status" -eq 0 ]
   [[ "$output" == *"already-installed"* ]] || return 1

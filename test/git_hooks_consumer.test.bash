@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # git_hooks_consumer.test.bash — FR-243. The git-level gates as a CONSUMER
 # project receives them: a fresh `git init` repo with NO `.gitleaks.toml`, whose
 # `.git/hooks/<name>` is a symlink to the runtime mirror
@@ -58,18 +58,18 @@ setup() {
 
   REPO="$SANDBOX/cproj"
   mkdir -p "$REPO"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
-  git -C "$REPO" config commit.gpgsign false
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
+  git -C "${REPO:?}" config commit.gpgsign false
   # What `igris install` writes: .git/hooks/<name> -> $(brainDir())/core/git-hooks/<name>
   ln -s "$MIRROR/pre-commit" "$REPO/.git/hooks/pre-commit"
   ln -s "$MIRROR/commit-msg" "$REPO/.git/hooks/commit-msg"
 
   # A baseline commit (hooks bypassed) so every test commit is an ordinary one.
   printf 'hello\n' > "$REPO/README.md"
-  git -C "$REPO" add README.md
-  git -C "$REPO" commit -q --no-verify -m "chore: init" >/dev/null 2>&1
+  git -C "${REPO:?}" add README.md
+  git -C "${REPO:?}" commit -q --no-verify -m "chore: init" >/dev/null 2>&1
 
   # A PATH with every directory that carries a gitleaks binary removed, plus a
   # stub dir at the front that keeps the tools the hook needs resolvable
@@ -94,7 +94,7 @@ setup() {
 commit_with_hooks() {
   local msg="$1"; shift
   run env "$@" HOME="$FAKEHOME" IGRIS_BRAIN_DIR="$FAKEHOME/.igris" \
-    git -C "$REPO" commit -q -m "$msg"
+    git -C "${REPO:?}" commit -q -m "$msg"
 }
 
 stage_secret() {
@@ -102,12 +102,12 @@ stage_secret() {
   # aws-access-token rule catches it with NO config (probed 2026-09-07,
   # gitleaks 8.30.1: `detect --no-git` on this line, no --config, 1 finding).
   printf 'const awsKey = "AKIA1234567890ABCDEF";\n' > "$REPO/prod.ts"
-  git -C "$REPO" add prod.ts
+  git -C "${REPO:?}" add prod.ts
 }
 
 stage_benign() {
   printf 'export const answer = 42;\n' > "$REPO/lib.ts"
-  git -C "$REPO" add lib.ts
+  git -C "${REPO:?}" add lib.ts
 }
 
 # ---------------------------------------------------------------------------
@@ -122,7 +122,7 @@ stage_benign() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"SECRET-SHAPED CONTENT DETECTED"* ]] || return 1
   # The refusal is the HOOK's (not a git error): the file is still staged, no commit landed.
-  [ "$(git -C "$REPO" rev-list --count HEAD)" -eq 1 ]
+  [ "$(git -C "${REPO:?}" rev-list --count HEAD)" -eq 1 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -168,7 +168,7 @@ stage_benign() {
   echo "$output"
   [ "$status" -eq 0 ]
   [[ "$output" == *"secret-scan=DISARMED"* ]] || return 1
-  [ "$(git -C "$REPO" rev-list --count HEAD)" -eq 2 ]
+  [ "$(git -C "${REPO:?}" rev-list --count HEAD)" -eq 2 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -180,7 +180,7 @@ stage_benign() {
   commit_with_hooks "chore: benign"
   echo "$output"
   [ "$status" -eq 0 ]
-  [ "$(git -C "$REPO" rev-list --count HEAD)" -eq 2 ]
+  [ "$(git -C "${REPO:?}" rev-list --count HEAD)" -eq 2 ]
 }
 
 # ---------------------------------------------------------------------------
@@ -192,7 +192,7 @@ stage_benign() {
 @test "R4: a consumer staging core/skills/x/SKILL.md is not gated by the igris-ai validators" {
   mkdir -p "$REPO/core/skills/x"
   printf -- '---\nname: x\n---\nbody\n' > "$REPO/core/skills/x/SKILL.md"
-  git -C "$REPO" add core/skills/x/SKILL.md
+  git -C "${REPO:?}" add core/skills/x/SKILL.md
   commit_with_hooks "docs: add skill"
   echo "$output"
   [ "$status" -eq 0 ]

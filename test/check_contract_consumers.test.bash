@@ -1,19 +1,29 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # check_contract_consumers.test.bash — FR-186. Tests for the mechanical
 # contract→consumer impact-checker (scripts/check_contract_consumers.sh).
 #
 # The checker parses a MAINTAINING.md map, scans `git diff --cached` for
 # deletions/renames of mapped tokens, and surfaces the consumer list. Default
-# verdict is WARN (exit 0). A STALE MAP is the hard-fail (exit 1), and since
-# TD-334 it has THREE causes, not one:
-#   1. a citation naming a file that does not exist;
-#   2. a citation whose line number is out of range for its file;
-#   3. a glob (or brace member) that matches nothing.
-# A citation pointing at a blank line or a bare closing delimiter WARNS at
-# exit 0 — a proxy for "points at a construct" should not veto a commit.
-# Tests (m)/(m3) cover cause 2 and (o)/(o2) cover cause 3, so a header saying
-# "the ONE hard-fail is a missing file" would contradict this file's own tests.
+# verdict is WARN (exit 0). A STALE MAP is the hard-fail (exit 1). Its causes
+# are NOT listed here: the one list lives in the checker's header, printed by
+# `scripts/check_contract_consumers.sh --help` (TD-346). A header that counted
+# them went stale twice (TD-334 grew the set; TD-313, TD-466 and TD-346 grew
+# it again). A citation pointing at a blank line or a bare
+# closing delimiter WARNS at exit 0 — a proxy for "points at a construct"
+# should not veto a commit.
+#
+# Every fixture map ends with a `<!-- MAP:END -->` line (TD-466) and backticks
+# only distinctive Contract tokens (`thing_contract`, never a bare `thing`:
+# TD-313 no longer registers a single alphabetic word). A fixture without the
+# marker is a STALE MAP wherever the map is validated — (z4) is the one that
+# omits it on purpose.
+#
+# CCC_CHECKER_UNDER_TEST — the checker under test defaults to the repo's
+# scripts/check_contract_consumers.sh; point this variable at a scratch copy
+# to run the whole suite against a mutant or an older build without touching
+# the repo file (red-first: every TD-435/313/466/346 case was run against the
+# 085badc checker this way before its phase was implemented).
 #
 # Test isolation
 # --------------
@@ -35,7 +45,7 @@
 
 load test_helper
 
-CHECKER="$IGRIS_ROOT/scripts/check_contract_consumers.sh"
+CHECKER="${CCC_CHECKER_UNDER_TEST:-$IGRIS_ROOT/scripts/check_contract_consumers.sh}"
 
 # assert_contains <needle> — LITERAL substring assertion on $output.
 # (test_helper's assert_output_contains is a REGEX match; these needles carry
@@ -63,9 +73,9 @@ setup() {
   SANDBOX="$(mktemp -d "${BATS_TMPDIR:-/tmp}/ccc.XXXXXX")"
   REPO="$SANDBOX/repo"
   mkdir -p "$REPO"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
 }
 
 teardown() {
@@ -74,7 +84,7 @@ teardown() {
 
 # run_checker [args...] — run the checker from inside the sandbox repo.
 run_checker() {
-  run bash -c "cd '$REPO' && bash '$CHECKER' $* 2>&1"
+  run bash -c "cd '${REPO:?}' && bash '$CHECKER' $* 2>&1"
 }
 
 # write_map <body-after-The-Map-heading...> via heredoc helper. Writes a
@@ -100,12 +110,14 @@ write_map_file() {
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `foo/bar.md` | `file` | `scripts/baz.sh:1` | FR-000 | re-point baz.sh |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
 
   # Stage a deletion of the mapped path.
-  git -C "$REPO" rm -q foo/bar.md
+  git -C "${REPO:?}" rm -q foo/bar.md
 
   run_checker
   [ "$status" -eq 0 ]
@@ -126,8 +138,10 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `foo/bar.md` | `file` | `does/not/exist.sh:1` | FR-000 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add MAINTAINING.md
+  git -C "${REPO:?}" add MAINTAINING.md
 
   run_checker
   [ "$status" -eq 1 ]
@@ -150,13 +164,15 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `IGRIS_BYPASS_PHASE_GUARD` | `env-var` | `code.sh:1` | FR-000 | sweep it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
 
   # Remove the line containing the _EXTRA superstring (not the bare token).
   echo "new content with nothing" > "$REPO/code.sh"
-  git -C "$REPO" add code.sh
+  git -C "${REPO:?}" add code.sh
 
   run_checker
   [ "$status" -eq 0 ]
@@ -179,12 +195,14 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `IGRIS_BYPASS_PHASE_GUARD` | `env-var` | `code.sh:1` | FR-000 | sweep it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
 
   echo "removed the var" > "$REPO/code.sh"
-  git -C "$REPO" add code.sh
+  git -C "${REPO:?}" add code.sh
 
   run_checker
   [ "$status" -eq 0 ]
@@ -206,14 +224,16 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `foo/bar.md` | `file` | `scripts/baz.sh:1` | FR-000 | re-point baz.sh |
+
+<!-- MAP:END -->
 MD
   mkdir -p "$REPO/scripts"
   echo "x" > "$REPO/scripts/baz.sh"
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
 
   echo "new unrelated line" >> "$REPO/unrelated.txt"
-  git -C "$REPO" add unrelated.txt
+  git -C "${REPO:?}" add unrelated.txt
 
   run_checker
   [ "$status" -eq 0 ]
@@ -238,9 +258,11 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `foo-bar.md` | `file` | `scripts/baz.sh:1` | FR-000 | re-point baz.sh |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
 
   run_checker "--paths foo-bar.md"
   [ "$status" -eq 0 ]
@@ -253,10 +275,10 @@ MD
 # -----------------------------------------------------------------------------
 @test "(k2) no MAINTAINING.md -> fail-open no-op (exit 0)" {
   echo "x" > "$REPO/whatever.txt"
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
   echo "y" >> "$REPO/whatever.txt"
-  git -C "$REPO" add whatever.txt
+  git -C "${REPO:?}" add whatever.txt
 
   run_checker
   [ "$status" -eq 0 ]
@@ -297,9 +319,11 @@ seed_repo_with_map() {
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 1 ]
@@ -321,9 +345,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -345,9 +371,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `pages/Graph.tsx` (short form) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `pages/Graph.tsx` (short form) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -360,9 +388,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `pages/Graphs.tsx` (short form) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `pages/Graphs.tsx` (short form) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "pages/Graphs.tsx" || return 1
@@ -381,9 +411,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:99999` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:99999` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 1 ]
@@ -405,9 +437,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:1` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:1` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -429,9 +463,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:1-500` (a range) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:1-500` (a range) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "names line 500" || return 1
@@ -443,9 +479,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:1,500` (a list) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:1,500` (a list) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "names line 500" || return 1
@@ -458,9 +496,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:1-3` (a range) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:1-3` (a range) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -481,9 +521,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -506,9 +548,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:3` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:3` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -531,9 +575,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts:2` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -554,9 +600,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `skills/*/NOPE.md` (all skills) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `skills/*/NOPE.md` (all skills) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "skills/*/NOPE.md" || return 1
@@ -569,9 +617,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `skills/*/SKILL.md` (all skills) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `skills/*/SKILL.md` (all skills) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -590,9 +640,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `docs/{one,gone}.md` (two docs) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `docs/{one,gone}.md` (two docs) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "docs/gone.md" || return 1
@@ -604,9 +656,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `docs/{one,two}.md` (two docs) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `docs/{one,two}.md` (two docs) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -625,9 +679,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/**` (everything under it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/**` (everything under it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -639,9 +695,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/nosuchdir/**` (everything under it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/nosuchdir/**` (everything under it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "src/nosuchdir/" || return 1
@@ -661,9 +719,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts` (`buildBrainGraph(db, opts)` builds it; the schema pointer is `$defs/surface_contract`, the tool family is `igris_catalog_*`, the harness doc is `core/os/harness-specific/<harness>.md`, the runtime reader is `~/.igris/core/skills/boot/SKILL.md`, the import specifier is `../../../db.js`, the placeholder line ref is `handlers.ts:NN`, the sibling repo doc is `fifty_dev:docs/brand/dataviz.md`, and `index.ts` is shorthand) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts` (`buildBrainGraph(db, opts)` builds it; the schema pointer is `$defs/surface_contract`, the tool family is `igris_catalog_*`, the harness doc is `core/os/harness-specific/<harness>.md`, the runtime reader is `~/.igris/core/skills/boot/SKILL.md`, the import specifier is `../../../db.js`, the placeholder line ref is `handlers.ts:NN`, the sibling repo doc is `fifty_dev:docs/brand/dataviz.md`, and `index.ts` is shorthand) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -689,9 +749,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `dist/bundle/thing.js` (generated) | TD-334 | rebuild it |
+| `thing_contract` | `protocol` | `dist/bundle/thing.js` (generated) | TD-334 | rebuild it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 0 ]
   assert_not_contains "STALE MAP" || return 1
@@ -699,10 +761,681 @@ MD
   # ARM: the same path with no .gitignore rule covering it DOES fail, proving
   # the skip came from the ignore rule and not from the path shape.
   echo "unrelated/" > "$REPO/.gitignore"
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
   run_checker
   [ "$status" -eq 1 ]
   assert_contains "dist/bundle/thing.js" || return 1
+}
+
+# =============================================================================
+# TD-435 — a git-ignored citation is classified GENERATED before it is
+# resolved, so the verdict and the validated count are the same in a built
+# tree, a clean clone and a worktree.
+#
+# `git check-ignore pkg/dist` reports a bare directory as ignored by a `dist/`
+# rule ONLY when the directory exists on disk (it cannot know an absent path is
+# a directory). The checker therefore also probes `pkg/dist/`, and it asks git
+# BEFORE trying to resolve the path, because a built tree would otherwise
+# resolve the artifact and count it as validated.
+# =============================================================================
+
+# run_checker_in <dir> [args...] — like run_checker, from another checkout.
+run_checker_in() {
+  local dir="$1"
+  shift
+  run bash -c "cd '${dir:?}' && bash '$CHECKER' $* 2>&1"
+}
+
+# summary_line — the `map citations:` line of the last run.
+summary_line() {
+  printf '%s\n' "$output" | sed -n 's/^.*\(map citations: .*\)$/\1/p'
+}
+
+# -----------------------------------------------------------------------------
+# (q2) A BARE git-ignored directory (no trailing slash) that is absent on disk
+#      is generated, not a missing file. At 085badc: exit 1, STALE MAP.
+# -----------------------------------------------------------------------------
+@test "(q2) TD-435: a bare git-ignored dir absent on disk is generated, not stale" {
+  seed_repo_with_map
+  echo "dist/" > "$REPO/.gitignore"
+  mkdir -p "$REPO/pkg/src"
+  echo "a" > "$REPO/pkg/src/a.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `pkg/dist` (the build output dir) | TD-435 | rebuild it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  [ ! -e "$REPO/pkg/dist" ] || { echo "FIXTURE NOT ARMED: pkg/dist exists" >&2; return 1; }
+
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_not_contains "STALE MAP" || return 1
+  assert_contains "1 generated" || return 1
+  assert_contains "map citations: 0 validated" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (q3) Clean-clone parity: the SAME commit, checked by the same checker in a
+#      built tree (REPO, with an untracked ignored pkg/dist/bundle.js) and in a
+#      fresh clone of it (no build output). Both exit 0 and print the SAME
+#      `map citations:` line. The clone is of the SANDBOX repo, never the real
+#      one, and no `git worktree add` is used (the TD-388 hazard).
+#      At 085badc: REPO validates 3 and exits 0, the CLONE fails STALE.
+# -----------------------------------------------------------------------------
+@test "(q3) TD-435: a built tree and its clean clone print the same summary, both exit 0" {
+  echo "dist/" > "$REPO/.gitignore"
+  mkdir -p "$REPO/pkg/src"
+  echo "a" > "$REPO/pkg/src/a.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `pkg/dist` (output dir), `pkg/dist/bundle.js` (the bundle), `pkg/src/a.ts` (its source) | TD-435 | rebuild it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
+  # The "build": an untracked, ignored artifact in REPO only.
+  mkdir -p "$REPO/pkg/dist"
+  echo "built" > "$REPO/pkg/dist/bundle.js"
+  local CLONE="$SANDBOX/clone"
+  git clone -q "${REPO:?}" "${CLONE:?}"
+  [ ! -e "$CLONE/pkg/dist" ] || { echo "FIXTURE NOT ARMED: the clone has pkg/dist" >&2; return 1; }
+  [ -e "$REPO/pkg/dist/bundle.js" ] || { echo "FIXTURE NOT ARMED: REPO is not built" >&2; return 1; }
+
+  run_checker_in "$REPO" "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  local built
+  built="$(summary_line)"
+
+  run_checker_in "$CLONE" "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  local clean
+  clean="$(summary_line)"
+
+  [ -n "$built" ] || { echo "no summary line from the built tree" >&2; return 1; }
+  if [ "$built" != "$clean" ]; then
+    echo "summary differs between checkouts:" >&2
+    echo "  built: $built" >&2
+    echo "  clone: $clean" >&2
+    return 1
+  fi
+  output="$built"
+  assert_contains "map citations: 1 validated" || return 1
+  assert_contains "2 generated" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (q4) CONTROL for (q2)/(q3): a genuinely missing SOURCE citation still
+#      hard-fails in the clean clone, and is named.
+# -----------------------------------------------------------------------------
+@test "(q4) TD-435: a missing source citation still fails in the clean clone" {
+  echo "dist/" > "$REPO/.gitignore"
+  mkdir -p "$REPO/pkg/src"
+  echo "a" > "$REPO/pkg/src/a.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `pkg/dist` (output dir), `pkg/src/missing.ts` (a source that is gone) | TD-435 | rebuild it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
+  local CLONE="$SANDBOX/clone"
+  git clone -q "${REPO:?}" "${CLONE:?}"
+
+  run_checker_in "$CLONE" "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "STALE MAP" || return 1
+  assert_contains "pkg/src/missing.ts" || return 1
+  assert_not_contains "'pkg/dist'" || return 1
+}
+
+# =============================================================================
+# TD-313 — the row parser honours the GFM `\|` escape, a malformed row is a
+# hard-fail at authoring time, and a bare single-word Contract token is not
+# minted as a contract.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# (y1) An escaped `\|` in the Contract cell no longer shifts the columns: the
+#      bogus citation in the Consumers cell is read and fails. At 085badc the
+#      shift moved the Consumers cell out of column 3 and the run exited 0.
+# -----------------------------------------------------------------------------
+@test "(y1) TD-313: an escaped pipe does not shift the Consumers column" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `mode_a` \| `mode_b` | `protocol` | `src/lib/TD313_NOT_A_FILE.ts` (reads it) | TD-313 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "STALE MAP" || return 1
+  assert_contains "src/lib/TD313_NOT_A_FILE.ts" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (y2) A BARE pipe inside a code span splits the row into the wrong number of
+#      cells. That is a malformed row: exit 1, naming the map line and the cell
+#      count. At 085badc: exit 0 (the extra cell was silently ignored).
+# -----------------------------------------------------------------------------
+@test "(y2) TD-313: a bare pipe in a cell is a malformed row (exit 1, line + cell count)" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-313 | re-run `grep -E 'a|b'` |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "STALE MAP: malformed map row" || return 1
+  assert_contains "MAINTAINING.md:7" || return 1
+  assert_contains "8 cells" || return 1
+
+  # ARM: the same row with the pipe escaped is clean.
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-313 | re-run `grep -E 'a\|b'` |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_not_contains "STALE MAP" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (y3) A bare generic word in the Contract cell is not registered: removing a
+#      line that holds both `nodes` and `NODE_TABLE` warns for NODE_TABLE only.
+#      At 085badc both warned.
+# -----------------------------------------------------------------------------
+@test "(y3) TD-313: a bare single-word Contract token does not fire the sweep" {
+  echo "const NODE_TABLE = nodes;" > "$REPO/code.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `nodes` / `NODE_TABLE` | `column` | `code.ts:1` | TD-313 | sweep it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
+  echo "const other = 1;" > "$REPO/code.ts"
+  git -C "${REPO:?}" add code.ts
+
+  run_checker
+  [ "$status" -eq 0 ] || return 1
+  assert_contains "'NODE_TABLE' (column) is a mapped contract changed in this diff." || return 1
+  assert_not_contains "'nodes' (" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (y4) A row whose ONLY Contract tokens are bare words registers nothing, so it
+#      could never fire. That is a hard-fail under verdict 2.
+# -----------------------------------------------------------------------------
+@test "(y4) TD-313: a row that registers no contract token is a hard-fail" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `nodes` / `edges` | `column` | `src/lib/real.ts` (reads it) | TD-313 | sweep it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "registers no contract token" || return 1
+  assert_contains "MAINTAINING.md:7" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (y5) --list-tokens prints exactly the registered tokens, one per line, as
+#      <map line>\t<type>\t<token>, and exits 0. It is a usage error beside
+#      --paths.
+# -----------------------------------------------------------------------------
+@test "(y5) TD-313: --list-tokens prints exactly the distinctive tokens" {
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `nodes` / `NODE_TABLE` | `column` | `code.ts:1` | TD-313 | sweep it |
+| `IGRIS_TD313_FLAG` \| `Done` | `env-var` | `code.ts:1` | TD-313 | sweep it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run bash -c "cd '${REPO:?}' && bash '$CHECKER' --list-tokens 2>/dev/null"
+  [ "$status" -eq 0 ] || return 1
+  local expected
+  expected="$(printf '7\tcolumn\tNODE_TABLE\n8\tenv-var\tIGRIS_TD313_FLAG')"
+  if [ "$output" != "$expected" ]; then
+    echo "expected:" >&2; printf '%s\n' "$expected" >&2
+    echo "actual:" >&2; printf '%s\n' "$output" >&2
+    return 1
+  fi
+
+  run_checker "--list-tokens --paths MAINTAINING.md"
+  [ "$status" -eq 2 ] || return 1
+  assert_contains "--list-tokens" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (y6) The REAL map: --list-tokens exits 0, lists tokens, and none of them is a
+#      bare single word (lowercase, Capitalised or ALLCAPS).
+# -----------------------------------------------------------------------------
+@test "(y6) TD-313: the real map registers no bare single-word token" {
+  [ -f "$IGRIS_ROOT/MAINTAINING.md" ] || skip "no MAINTAINING.md in this repo"
+  run bash -c "cd '${IGRIS_ROOT:?}' && bash '$CHECKER' --list-tokens 2>&1"
+  [ "$status" -eq 0 ] || return 1
+  local n bare
+  n="$(printf '%s\n' "$output" | awk -F'\t' 'NF == 3' | wc -l | tr -d ' ')"
+  [ "$n" -gt 100 ] || { echo "only $n tokens listed: $output" >&2; return 1; }
+  bare="$(printf '%s\n' "$output" | awk -F'\t' 'NF == 3 && $3 ~ /^([a-z]+|[A-Z][a-z]*|[A-Z]+)$/')"
+  [ -z "$bare" ] || { echo "bare single-word tokens registered:" >&2; echo "$bare" >&2; return 1; }
+}
+
+# =============================================================================
+# TD-466 — the map window runs from `## The Map` to an explicit
+# `<!-- MAP:END -->` terminator. A heading inside the window no longer ends it
+# (six real rows sat below `## Citation conventions` and were never parsed); a
+# missing terminator, or a map row placed after it, is itself a STALE MAP.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# (z1) A row AFTER an H2 inside the window is parsed: its drifted citation
+#      fails. At 085badc the H2 ended the window and the run exited 0.
+# -----------------------------------------------------------------------------
+@test "(z1) TD-466: a row after an H2 inside the window is still validated" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+
+## A heading inside the map region
+
+| `later_contract` | `protocol` | `src/lib/TD466_DRIFTED.ts` (reads it) | TD-466 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "STALE MAP" || return 1
+  assert_contains "src/lib/TD466_DRIFTED.ts" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (z2) CONTROL: the same drift in a row BEFORE the H2 fails too (the new window
+#      did not narrow what was already covered).
+# -----------------------------------------------------------------------------
+@test "(z2) TD-466 control: a drift before the H2 still fails" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/TD466_DRIFTED.ts` (reads it) | TD-466 | re-point it |
+
+## A heading inside the map region
+
+| `later_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "src/lib/TD466_DRIFTED.ts" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (z3) An illustration table AFTER the terminator (the real map's Citation
+#      conventions table has two columns) is excluded: its bogus path is not
+#      validated, the validated count equals the same map without the table,
+#      and --list-tokens lists nothing at or after the marker line (9).
+# -----------------------------------------------------------------------------
+@test "(z3) TD-466: an illustration table after MAP:END is excluded" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+
+<!-- MAP:END -->
+
+## Citation conventions
+
+| You write | The checker does |
+|---|---|
+| `src/lib/TD466_ILLUSTRATION_ONLY.ts` | resolves it |
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_not_contains "TD466_ILLUSTRATION_ONLY" || return 1
+  local with_table
+  with_table="$(summary_line)"
+
+  run bash -c "cd '${REPO:?}' && bash '$CHECKER' --list-tokens 2>&1"
+  [ "$status" -eq 0 ] || return 1
+  local late
+  late="$(printf '%s\n' "$output" | awk -F'\t' 'NF == 3 && $1 >= 9')"
+  [ -z "$late" ] || { echo "tokens listed from at/after MAP:END: $late" >&2; return 1; }
+
+  # The same map without the table prints the same summary.
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  [ "$(summary_line)" = "$with_table" ] || {
+    echo "summary moved: with table [$with_table] without [$(summary_line)]" >&2; return 1; }
+}
+
+# -----------------------------------------------------------------------------
+# (z4) `## The Map` with NO terminator. Wherever verdict 2 runs it is a STALE
+#      MAP (never a silent fall-back to the old window); with the map unstaged
+#      in staged mode, a loud WARN says the token sweep did NOT run (exit 0).
+# -----------------------------------------------------------------------------
+@test "(z4) TD-466: a missing MAP:END is a STALE MAP (--paths) and a loud WARN (unstaged)" {
+  seed_repo_with_map
+  echo "const TD466_TOKEN = 1;" > "$REPO/code.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `TD466_TOKEN` | `column` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+MD
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
+
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "no <!-- MAP:END --> terminator" || return 1
+
+  # Staged mode, map committed and unstaged, a diff that removes the token.
+  echo "const other = 2;" > "$REPO/code.ts"
+  git -C "${REPO:?}" add code.ts
+  run_checker
+  [ "$status" -eq 0 ] || return 1
+  assert_contains "WARN" || return 1
+  assert_contains "the token sweep did NOT run" || return 1
+  assert_not_contains "'TD466_TOKEN' (column) is a mapped contract" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (z5) A 5-column map row placed AFTER the terminator is never parsed, so it is
+#      a STALE MAP by itself (the six-stray-rows recurrence). A two-column
+#      illustration table after the marker is not flagged.
+# -----------------------------------------------------------------------------
+@test "(z5) TD-466: a map row after MAP:END is a STALE MAP; an illustration table is not" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+
+<!-- MAP:END -->
+
+| You write | The checker does |
+|---|---|
+| `src/lib/real.ts` | resolves it |
+
+| `stray_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-466 | re-point it |
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "map row after <!-- MAP:END --> at MAINTAINING.md:15" || return 1
+  local n
+  n="$(printf '%s\n' "$output" | grep -c 'map row after <!-- MAP:END -->' || true)"
+  [ "$n" -eq 1 ] || { echo "expected ONE after-marker finding, got $n: $output" >&2; return 1; }
+}
+
+# -----------------------------------------------------------------------------
+# (z6) ARM on the REAL map: a citation unique to BR-106's row — one of the six
+#      rows that sat after `## Citation conventions` — drifted in a COPY now
+#      fails. At 085badc the identical edit was a no-op (exit 0), which is the
+#      sentinel finding TD-466 was filed from.
+# -----------------------------------------------------------------------------
+@test "(z6) TD-466 ARM: a drift in the formerly ungated BR-106 row fails on the real map" {
+  [ -f "$IGRIS_ROOT/MAINTAINING.md" ] || skip "no MAINTAINING.md in this repo"
+  local armed="$SANDBOX/armed-z6.md"
+  sed 's|auto-push-fence\.ts:169|auto-push-fence.ts:99999|' "$IGRIS_ROOT/MAINTAINING.md" > "$armed"
+  if cmp -s "$armed" "$IGRIS_ROOT/MAINTAINING.md"; then
+    echo "ARM NOT PLANTED: MAINTAINING.md no longer cites auto-push-fence.ts:169" >&2
+    return 1
+  fi
+  run bash -c "cd '${IGRIS_ROOT:?}' && bash '$CHECKER' --map '$armed' --paths MAINTAINING.md 2>&1"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "auto-push-fence.ts:99999" || return 1
+  assert_contains "names line 99999" || return 1
+
+  # Second arm, the incident's own shape on the real map: a heading placed
+  # above BR-106's row inside the window does not hide the same drift. (The
+  # real map has no heading inside its window today, so without this arm a
+  # checker that let any H2 end the window would pass z6.)
+  local armed2="$SANDBOX/armed-z6-heading.md"
+  awk 'index($0, "| The **`IGRIS_REAL_HOME` cross-tier escape hatch** (BR-106)") == 1 {
+         print "## A heading inside the map region"; print "" }
+       { print }' "$armed" > "$armed2"
+  grep -x '## A heading inside the map region' "$armed2" >/dev/null || {
+    echo "ARM NOT PLANTED: BR-106's row was not found to put a heading above" >&2; return 1; }
+  run bash -c "cd '${IGRIS_ROOT:?}' && bash '$CHECKER' --map '$armed2' --paths MAINTAINING.md 2>&1"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "auto-push-fence.ts:99999" || return 1
+  assert_not_contains "map row after" || return 1
+}
+
+# =============================================================================
+# TD-346 — a short-form citation that more than one tracked path ends with is a
+# coin flip, not a resolution: it hard-fails naming every candidate. And the
+# run says what a clean result does NOT prove, where the number is printed.
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# (l4) Two tracked files sharing a tail: planted -> red, removed -> green. At
+#      085badc the planted state exited 0 (`grep -m1` took the first match).
+# -----------------------------------------------------------------------------
+@test "(l4) TD-346: a short form two tracked files end with is ambiguous; unique again after removal" {
+  mkdir -p "$REPO/cli/pages"
+  echo "g" > "$REPO/cli/pages/Graph.tsx"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `pages/Graph.tsx` (short form, relative to cli/) | TD-346 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
+  [ ! -e "$REPO/pages" ] || { echo "FIXTURE NOT ARMED: a root pages/ exists" >&2; return 1; }
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_contains "map citations: 1 validated" || return 1
+
+  # Plant the tail twin.
+  mkdir -p "$REPO/vendor/legacy/pages"
+  echo "v" > "$REPO/vendor/legacy/pages/Graph.tsx"
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm plant
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "STALE MAP: consumer citation 'pages/Graph.tsx' is ambiguous" || return 1
+  assert_contains "cli/pages/Graph.tsx" || return 1
+  assert_contains "vendor/legacy/pages/Graph.tsx" || return 1
+
+  # Remove it: unique again.
+  git -C "${REPO:?}" rm -q vendor/legacy/pages/Graph.tsx
+  git -C "${REPO:?}" commit -qm unplant
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_not_contains "ambiguous" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (l5) The directory variant: `src/` with no root src/ and two tracked
+#      directories ending with it. At 085badc: exit 0.
+# -----------------------------------------------------------------------------
+@test "(l5) TD-346: a short directory form two tracked dirs end with is ambiguous" {
+  mkdir -p "$REPO/a/src" "$REPO/b/src"
+  echo "x" > "$REPO/a/src/x.ts"
+  echo "y" > "$REPO/b/src/y.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/` (the sources) | TD-346 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 1 ] || return 1
+  assert_contains "consumer citation 'src/' is ambiguous" || return 1
+  assert_contains "a/src/" || return 1
+  assert_contains "b/src/" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (l6) CONTROL for (l5): the full path resolves root-first and is clean — the
+#      ambiguity rule applies to the suffix fallback only.
+# -----------------------------------------------------------------------------
+@test "(l6) TD-346 control: the full path a/src/ resolves root-first (exit 0)" {
+  mkdir -p "$REPO/a/src" "$REPO/b/src"
+  echo "x" > "$REPO/a/src/x.ts"
+  echo "y" > "$REPO/b/src/y.ts"
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `a/src/` (the sources) | TD-346 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_not_contains "ambiguous" || return 1
+  assert_contains "map citations: 1 validated" || return 1
+}
+
+# -----------------------------------------------------------------------------
+# (s2) The run says what a clean result does and does NOT prove, on the line
+#      after the summary, and counts the unchecked file#symbol citations inside
+#      the skipped total; --help carries the same NOT-checked statements.
+# -----------------------------------------------------------------------------
+@test "(s2) TD-346: the coverage line and --help state what a clean run does not prove" {
+  seed_repo_with_map
+  write_map_file <<'MD'
+# MAINTAINING
+
+## The Map
+
+| Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
+|---|---|---|---|---|
+| `thing_contract` | `protocol` | `src/lib/real.ts:1` (reads it), `src/lib/real.ts#readThing` (the symbol) | TD-346 | re-point it |
+
+<!-- MAP:END -->
+MD
+  git -C "${REPO:?}" add -A
+  run_checker "--paths MAINTAINING.md"
+  [ "$status" -eq 0 ] || return 1
+  assert_contains "1 skipped (not a repo path, or external; 1 of them file#symbol, NOT checked)" || return 1
+  assert_contains "[contract-check] coverage: " || return 1
+  assert_contains "It does NOT prove that a cited line is the construct the row describes" || return 1
+
+  run bash -c "bash '$CHECKER' --help"
+  [ "$status" -eq 0 ] || return 1
+  assert_contains "does NOT prove that a cited line is the construct" || return 1
+  assert_contains "file#symbol citations are counted, NOT checked" || return 1
 }
 
 # -----------------------------------------------------------------------------
@@ -721,8 +1454,10 @@ MD
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `src/lib/NOT_A_REAL_FILE.ts` | `file` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker
   [ "$status" -eq 0 ]
@@ -743,12 +1478,14 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/NOT_A_REAL_FILE.ts` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
   echo "z" > "$REPO/unrelated.txt"
-  git -C "$REPO" add unrelated.txt
+  git -C "${REPO:?}" add unrelated.txt
 
   run_checker
   [ "$status" -eq 0 ]
@@ -773,9 +1510,11 @@ MD
 
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
-| `thing` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+| `thing_contract` | `protocol` | `src/lib/real.ts` (reads it) | TD-334 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   run_checker "--paths a.ts,b.ts"
   [ "$status" -eq 2 ]
@@ -878,13 +1617,15 @@ _td345_big_fixture() {
     for n in 01 02 03 04 05 06 07 08 09 10 11 12; do
       echo "| \`TD345_TOK_$n\` | \`column\` | \`src/consumer.ts:1\` | TD-345 | re-point it |"
     done
+    echo
+    echo "<!-- MAP:END -->"
   } > "$REPO/MAINTAINING.md"
 
-  git -C "$REPO" add -A
-  git -C "$REPO" commit -qm init
+  git -C "${REPO:?}" add -A
+  git -C "${REPO:?}" commit -qm init
   # Stage the deletion: every line of schema.ts becomes a removed line, so the
   # 12 tokens sit at the TOP of a ~1.2 MB buffer.
-  git -C "$REPO" rm -q src/schema.ts
+  git -C "${REPO:?}" rm -q src/schema.ts
 }
 
 # -----------------------------------------------------------------------------
@@ -897,7 +1638,7 @@ _td345_big_fixture() {
 
   # Guard: the fixture is only meaningful if the buffer is actually large.
   local removed_lines
-  removed_lines="$(git -C "$REPO" diff --cached -U0 | grep -c '^-')"
+  removed_lines="$(git -C "${REPO:?}" diff --cached -U0 | grep -c '^-')"
   if [ "$removed_lines" -lt 30000 ]; then
     echo "FIXTURE NOT ARMED: only $removed_lines removed lines, need >=30000" >&2
     return 1
@@ -981,13 +1722,15 @@ _td345_big_fixture() {
 | Contract | Type | Consumers (file:line) | Owner brief | Change procedure |
 |---|---|---|---|---|
 | `TD345_GATE_TOKEN` | `column` | `src/consumer.ts:1` | TD-345 | re-point it |
+
+<!-- MAP:END -->
 MD
-  git -C "$REPO" add -A
+  git -C "${REPO:?}" add -A
 
   # Guard: the trigger's producer must actually exceed the pipe buffer, or the
   # test passes for the wrong reason.
   local nameonly_bytes
-  nameonly_bytes="$(git -C "$REPO" diff --cached --name-only | wc -c | tr -d ' ')"
+  nameonly_bytes="$(git -C "${REPO:?}" diff --cached --name-only | wc -c | tr -d ' ')"
   if [ "$nameonly_bytes" -lt 65536 ]; then
     echo "FIXTURE NOT ARMED: --name-only is only $nameonly_bytes bytes, need >=65536" >&2
     return 1
@@ -999,14 +1742,14 @@ MD
   # a bats body runs with pipefail OFF (probed). It also fails LOUDLY rather than
   # silently: a spurious "no match" returns 1 with the message below. Do not read
   # it as a counter-example to the block above.
-  if ! git -C "$REPO" diff --cached --name-only | grep -qxF MAINTAINING.md; then
+  if ! git -C "${REPO:?}" diff --cached --name-only | grep -qxF MAINTAINING.md; then
     echo "FIXTURE NOT ARMED: MAINTAINING.md is not staged" >&2
     return 1
   fi
 
   # The `[ "$status" -eq 0 ]` below is LOAD-BEARING, not boilerplate:
-  # check_map_self_consistency prints the `map citations:` summary line at
-  # :536 BEFORE `return "$bad"` at :537, so a gate that RAN AND HARD-FAILED
+  # check_map_self_consistency prints the `map citations:` summary line just
+  # BEFORE its final `return "$bad"`, so a gate that RAN AND HARD-FAILED
   # still emits the exact string this test greps for. The grep proves the gate
   # RAN; only the exit code proves it ran AND PASSED — which is the
   # operator-facing half of "arming this gate does not block a commit".

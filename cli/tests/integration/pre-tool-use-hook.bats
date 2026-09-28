@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # pre-tool-use-hook.bats — TD-146. Exercises the brief-gate hook's
 # brain-DB-first brief lookup and parent-walk slug resolution.
 #

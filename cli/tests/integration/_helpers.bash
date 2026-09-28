@@ -164,7 +164,7 @@ stage_git_project() {
   local name="${1:-gproj}"
   local dir="$BATS_TEST_TMPDIR/$name"
   mkdir -p "$dir"
-  git -C "$dir" init -q
+  git -C "${dir:?}" init -q
   echo "$dir"
 }
 

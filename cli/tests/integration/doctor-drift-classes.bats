@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # doctor-drift-classes.bats — one fixture per drift class. M5 of MG-014.
 #
 # Phase 1 classes (4): path-missing, hooks-missing, hooks-stale, duplicate-path
@@ -364,7 +364,7 @@ EOF
 @test "drift class 9d: git-hooks-missing (core.hooksPath) — reported, never fixed" {
   stage_git_hooks_mirror >/dev/null
   PROJ="$(stage_git_project gh4)"
-  git -C "$PROJ" config core.hooksPath .husky
+  git -C "${PROJ:?}" config core.hooksPath .husky
   register_project_row gh4 "$PROJ"
   GL_PATH="$(path_with_stub_gitleaks)"
   PATH="$GL_PATH" run $CLI_BIN doctor
@@ -423,7 +423,7 @@ EOF
 @test "drift class 9e (negative control): core.hooksPath resolving to .git/hooks itself is not a bypass" {
   stage_git_hooks_mirror >/dev/null
   PROJ="$(stage_git_project gh7)"
-  git -C "$PROJ" config core.hooksPath "$PROJ/.git/hooks"
+  git -C "${PROJ:?}" config core.hooksPath "$PROJ/.git/hooks"
   register_project_row gh7 "$PROJ"
   GL_PATH="$(path_with_stub_gitleaks)"
   PATH="$GL_PATH" run $CLI_BIN doctor

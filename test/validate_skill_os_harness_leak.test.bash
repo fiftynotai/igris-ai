@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # validate_skill_os_harness_leak.test.bash - Tests for
 #   scripts/validate_skill_os_harness_leak.py (TD-248).
 #

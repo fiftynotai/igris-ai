@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # Tests for scripts/validate_brief_type_vocabulary.sh (TD-328).
 #
 # The validator reads brief_status.brief_type from a brain DB, prints the

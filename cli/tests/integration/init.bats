@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # init.bats — integration tests for `igris init`. Hermetic via
 # IGRIS_BRAIN_DIR + --from-source. Each test stages its own source
 # repo + fresh empty brain dir.
@@ -278,10 +278,10 @@ PY
   [ "$output" = "from-source $IGRIS_REPO_ROOT main from-source" ]
   # the mirror sweep: every tracked repo core/** file vs the fenced runtime core
   PAIRS=""
-  for f in $(git -C "$IGRIS_REPO_ROOT" ls-files core); do
+  for f in $(git -C "${IGRIS_REPO_ROOT:?}" ls-files core); do
     PAIRS="$PAIRS $IGRIS_REPO_ROOT/$f $IGRIS_BRAIN_DIR/$f"
   done
-  N_FILES="$(git -C "$IGRIS_REPO_ROOT" ls-files core | wc -l | tr -d ' ')"
+  N_FILES="$(git -C "${IGRIS_REPO_ROOT:?}" ls-files core | wc -l | tr -d ' ')"
   run bash "$IGRIS_REPO_ROOT/core/scripts/verify_mirror.sh" $PAIRS
   echo "$output" | tail -3
   [ "$status" -eq 0 ]
