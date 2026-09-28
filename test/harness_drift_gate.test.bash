@@ -93,7 +93,15 @@ EOF
 }
 
 teardown() {
-  [ -d "$PROJ" ] && rm -rf "$PROJ"
+  # TD-394: remove the WHOLE per-test root, not just $PROJ. Every other
+  # fixture under it (wrap_*, fr149_agent_*, td193_*, …) used to leak, and a
+  # leaked root plus a reused PID was the `ln: … File exists` flake. Guarded
+  # so an empty or foreign value can never widen the rm; the `if` form
+  # returns 0 when the dir is already gone (`[ -d ] && rm` returns 1 there).
+  if [ -n "${TEST_TEMP_DIR:-}" ] && [ -d "$TEST_TEMP_DIR" ] \
+     && [[ "$(basename "$TEST_TEMP_DIR")" == igris-test-* ]]; then
+    rm -rf "$TEST_TEMP_DIR"
+  fi
 }
 
 @test "in-sync compiled harness yields exit 0 and MATCH" {
@@ -154,14 +162,18 @@ teardown() {
 }
 
 # ---------------------------------------------------------------------------
-# Wrapper-level STOPGAP tests (FR-135). The wrapper resolves its repo root via
-# `git rev-parse --show-toplevel` and looks for the guard + manifest under
-# core/scripts/cli-adapters/, checking the hardcoded CORE_AGENTS list. To
-# exercise its DRIFTED/MISSING/MATCH discrimination in isolation we build a
-# synthetic git repo: copy the real cli-adapters in (so the guard + _common.sh
-# resolve), drop in a manifest that declares ONE core-agent name (`forger`)
-# with a self-contained CLAUDE target, and copy the wrapper alongside so it
-# resolves the synthetic root rather than the live repo.
+# Wrapper-level tests. The wrapper resolves its repo root via
+# `git rev-parse --show-toplevel`, runs the guard ONCE against the repo-root
+# harness-manifest.json (FR-136 retired the FR-135 CORE_AGENTS stopgap loop)
+# and classifies each verdict block by class and by its RESOLVED path (FR-138:
+# a project-relative MISSING is FATAL, a home-path one is a NOTICE; TD-396:
+# DRIFT-WARN / SCHEMA-INVALID / PARITY and any failure no verdict line explains
+# are FATAL). To exercise that in isolation we build a synthetic git repo: copy
+# the real cli-adapters in (so the guard + _common.sh resolve), drop in a
+# manifest declaring ONE agent (`forger`) with a self-contained CLAUDE target,
+# and copy the wrapper alongside so it resolves the synthetic root rather than
+# the live repo. TD388_WRAPPER_SRC is the one wrapper red-first seam (shared
+# with build_mcp_repo): point it at a frozen pre-fix copy.
 # ---------------------------------------------------------------------------
 
 # build_wrapper_repo <state>  where state is: match | drifted | missing
@@ -179,10 +191,12 @@ build_wrapper_repo() {
   [ -d "$ADAPTERS/body-exceptions" ] \
     && cp -R "$ADAPTERS/body-exceptions" "$root/core/scripts/cli-adapters/"
 
-  # The wrapper under test, copied so it resolves THIS root.
-  cp "$WRAPPER" "$root/scripts/validate_harness_drift.sh"
+  # The wrapper under test, copied so it resolves THIS root. TD388_WRAPPER_SRC
+  # is the red-first seam (the same one build_mcp_repo reads).
+  cp "${TD388_WRAPPER_SRC:-$WRAPPER}" "$root/scripts/validate_harness_drift.sh"
 
-  # Canonical prompt for `forger` (a CORE_AGENTS name the wrapper checks).
+  # Canonical prompt for `forger` (any agent name works: the wrapper has no
+  # per-agent list since FR-136; the guard reads the manifest).
   cat > "$root/canon/forger.md" <<'EOF'
 ---
 name: forger
@@ -370,8 +384,9 @@ EOF
 
   # Body-exception sidecar under the isolated brain's loadout dir. The
   # `personal` layer keys sidecar resolution to
-  # IGRIS_BRAIN_DIR/loadout/body-exceptions/<name>.json — see
-  # check_harness_drift.sh:327 + compile_harnesses.sh:286.
+  # IGRIS_BRAIN_DIR/loadout/body-exceptions/<name>.json — see the `exc_abs`
+  # resolution in verify_agents (check_harness_drift.sh) and in
+  # project_agents (compile_harnesses.sh).
   cat > "$IGRIS_BRAIN_DIR/loadout/body-exceptions/test_excerpt.json" <<'EOF'
 {
   "anchor": "## CONSTRAINTS",
@@ -1483,7 +1498,7 @@ EOF
 #   2. block is `mcp/*`           -> NO TEST, and none is possible today.
 #      NOT GUARDED, deliberately. Condition 2 is REDUNDANT with condition 4:
 #      the clause condition 4 requires is emitted at exactly one line in the
-#      whole tree (`check_harness_drift.sh:845`, inside verify_mcp_entry_drift),
+#      whole tree (the `DRIFTED:*)` arm of `verify_mcp_entry_drift`),
 #      so no non-mcp block can reach the branch anyway. Deleting condition 2
 #      alone reds NOTHING. It stays as defence-in-depth against a FUTURE
 #      surface that starts printing `differing key(s)`; it cannot be pinned
@@ -1686,8 +1701,8 @@ EOF
 # failed: W5b would quietly degrade into W2 (agent drift, NO sibling -> FATAL)
 # and still pass. That is not hypothetical — sentinel hit exactly this failure
 # mode from a concurrent bats run, because test_helper.bash uses
-# TEST_TEMP_DIR="$BATS_TMPDIR/igris-test-$$" with an rm -rf teardown, so two
-# runs delete each other's live fixtures (TD-387). Putting the check in one
+# TEST_TEMP_DIR was PID-keyed (igris-test-$$) and leaked roots, so a test on a
+# reused PID inherited a dead test's fixtures (TD-394). Putting the check in one
 # place makes it impossible for a new test to forget it.
 add_sibling_worktree() {
   local root="$1"
@@ -2214,4 +2229,619 @@ PY
   if printf '%s\n' "$output" | grep 'differing key(s)' >/dev/null; then return 1; fi
   # The premise held for the whole run: the sibling was live.
   [ -d "$sib" ] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# --- TD-394: a fresh, collision-free per-test root.
+#
+# The FR-149 flake (`ln: …/.claude/agents/demo.md: File exists`) needed two
+# ingredients: a per-test root keyed on the test process's PID
+# (test_helper.bash, `igris-test-$$`) and a teardown here that removed only
+# $PROJ, so every other fixture under the root leaked. A later test that
+# REUSED a dead test's PID inherited its fixtures. test_helper now mints the
+# root with mktemp and teardown() removes it whole; T0 pins both halves from
+# inside a running test.
+# ---------------------------------------------------------------------------
+
+@test "TD-394 T0: each test starts in a fresh, collision-free TEST_TEMP_DIR" {
+  [ -n "${TEST_TEMP_DIR:-}" ] || return 1
+  [ -d "$TEST_TEMP_DIR" ] || return 1
+  # Not the PID-keyed shape a reused PID can inherit, and still carrying the
+  # prefix that cleanup globs (and this file's teardown guard) key on.
+  [ "$(basename "$TEST_TEMP_DIR")" != "igris-test-$$" ] || return 1
+  [[ "$(basename "$TEST_TEMP_DIR")" == igris-test-* ]] || return 1
+  # Exactly setup()'s two entries: a leftover root would add foreign ones.
+  local entries expected
+  entries="$(ls -A "$TEST_TEMP_DIR" | LC_ALL=C sort)"
+  expected="$(printf '%s\n' "brain_$BATS_TEST_NUMBER" \
+    "harness_drift_$BATS_TEST_NUMBER" | LC_ALL=C sort)"
+  if [ "$entries" != "$expected" ]; then
+    printf 'unexpected entries in %s:\n%s\n' "$TEST_TEMP_DIR" "$entries" >&2
+    return 1
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# --- TD-389: the harness-drift trigger names the real projection inputs.
+#
+# core/git-hooks/pre-commit decides whether to run the drift gate with ONE
+# `grep -qE` alternation over the staged paths. At 085badc two of its three
+# branches could never match: `core/rules/` was deleted by FR-187, and the
+# descriptor moved from core/scripts/cli-adapters/ to the repo root in FR-136.
+# Staging `harness-manifest.json` therefore never ran the gate.
+#
+# Every test reads the hook from TD389_HOOK_SRC when set (the red-first seam:
+# point it at a frozen copy of the old hook) and otherwise from the real
+# core/git-hooks/pre-commit. The per-input dispositions (in / deliberately
+# out, with the reason) live in core/enforcement/harness-drift.md.
+# ---------------------------------------------------------------------------
+
+# td389_trigger_pattern <hook> — sets TD389_PATTERN to the harness-drift
+# trigger's ERE. Not echoed: a helper inside `$( )` would hide its failure.
+td389_trigger_pattern() {
+  local hook="$1" n trigger pat
+  [ -f "$hook" ] || { echo "hook not found: $hook" >&2; return 1; }
+  n="$(grep -c '^  needs_harness_check=1$' "$hook" || true)"
+  if [ "$n" != "1" ]; then
+    echo "expected ONE needs_harness_check=1 assignment in $hook, got $n" >&2
+    return 1
+  fi
+  trigger="$(awk '/^  needs_harness_check=1$/{print prev; exit}{prev=$0}' "$hook")"
+  case "$trigger" in
+    *"grep -qE '"*"'; then"*) : ;;
+    *) echo "trigger line is not the grep -qE shape: $trigger" >&2; return 1 ;;
+  esac
+  pat="$(sed "s/.*grep -qE '//; s/'; then.*//" <<< "$trigger")"
+  [ -n "$pat" ] || { echo "empty trigger pattern" >&2; return 1; }
+  [ "$pat" != "$trigger" ] || { echo "pattern extraction did nothing" >&2; return 1; }
+  TD389_PATTERN="$pat"
+  return 0
+}
+
+@test "TD-389 T389-1: the harness-drift trigger fires on every projection input and on nothing it deliberately excludes" {
+  local hook="${TD389_HOOK_SRC:-$IGRIS_ROOT/core/git-hooks/pre-commit}"
+  td389_trigger_pattern "$hook" || return 1
+  local pat="$TD389_PATTERN" p
+  echo "trigger pattern: $pat" >&2
+  # IN — the projection inputs the guard reads from a commit.
+  for p in harness-manifest.json \
+           core/agents/forger.md \
+           core/agents/architect.md \
+           core/scripts/cli-adapters/surfaces-manifest.json \
+           core/scripts/cli-adapters/manifest.schema.json; do
+    grep -qE "$pat" <<< "$p" \
+      || { echo "projection input does NOT fire the trigger: $p" >&2; return 1; }
+  done
+  # OUT — deliberately excluded (reason per path in harness-drift.md), plus
+  # the anchoring pin (cli/harness-manifest.json) and the deleted dir.
+  for p in core/skills/hunt/SKILL.md \
+           core/scripts/cli-adapters/check_harness_drift.sh \
+           core/scripts/cli-adapters/_common.sh \
+           core/scripts/cli-adapters/compile_harnesses.sh \
+           scripts/validate_harness_drift.sh \
+           core/agents/manifest.yaml \
+           .codex/agents/forger.toml \
+           harness-manifest.personal.json \
+           cli/harness-manifest.json \
+           core/rules/00-igris-universal.md; do
+    if grep -qE "$pat" <<< "$p"; then
+      echo "excluded path FIRES the trigger: $p" >&2
+      return 1
+    fi
+  done
+}
+
+@test "TD-389 T389-2: every alternative in the harness-drift trigger names a tracked path" {
+  local hook="${TD389_HOOK_SRC:-$IGRIS_ROOT/core/git-hooks/pre-commit}"
+  td389_trigger_pattern "$hook" || return 1
+  local pat="$TD389_PATTERN" body tracked alt n alts=0 dead=0
+  tracked="$(git -C "${IGRIS_ROOT:?}" ls-files)"
+  # Arm: the tracked list is real (the hook itself is in it).
+  grep -qxF 'core/git-hooks/pre-commit' <<< "$tracked" || return 1
+  # Self-negative: the check can SEE a dead branch — core/rules is gone.
+  n="$(grep -cE '^(core/rules/.*\.md)$' <<< "$tracked" || true)"
+  [ "$n" = "0" ] || { echo "core/rules/*.md is tracked again ($n)" >&2; return 1; }
+  # The trigger is one anchored group: ^(a|b|…)$.
+  body="${pat#^(}"
+  body="${body%)\$}"
+  if [ "$body" = "$pat" ] || [ -z "$body" ]; then
+    echo "trigger is not the anchored ^(…)\$ group: $pat" >&2
+    return 1
+  fi
+  while IFS= read -r alt; do
+    [ -n "$alt" ] || continue
+    alts=$((alts + 1))
+    n="$(grep -cE "^(${alt})\$" <<< "$tracked" || true)"
+    if [ "$n" -lt 1 ]; then
+      echo "dead trigger branch: $alt" >&2
+      dead=$((dead + 1))
+    fi
+  done <<< "$(tr '|' '\n' <<< "$body")"
+  echo "alternatives=$alts dead=$dead" >&2
+  [ "$alts" -ge 1 ] || return 1
+  [ "$dead" -eq 0 ] || return 1
+}
+
+# build_td389_hook_repo <hook> — an igris-ai-shaped repo (harness-manifest.json
+# + brain-mcp-server/ + scripts/git-hooks/ => IGRIS_REPO_INTERNAL=1) carrying
+# the hook under test and a STUB drift wrapper, so the only thing measured is
+# whether the TRIGGER fires. Sets TD389_REPO, TD389_HOME, TD389_PATH.
+build_td389_hook_repo() {
+  local hook="$1"
+  local repo="$TEST_TEMP_DIR/td389_repo_$BATS_TEST_NUMBER"
+  local fakehome="$TEST_TEMP_DIR/td389_home_$BATS_TEST_NUMBER"
+  local stub="$TEST_TEMP_DIR/td389_bin_$BATS_TEST_NUMBER"
+  local p d tool no_gitleaks old_ifs
+  mkdir -p "$repo/brain-mcp-server" "$repo/scripts/git-hooks" \
+           "$repo/core/agents" "$fakehome/.igris" "$stub"
+  git -C "${repo:?}" init -q
+  git -C "${repo:?}" config user.email t@t.t
+  git -C "${repo:?}" config user.name t
+  git -C "${repo:?}" config commit.gpgsign false
+  cp "$hook" "$repo/scripts/git-hooks/pre-commit"
+  cat > "$repo/scripts/validate_harness_drift.sh" <<'STUB'
+#!/bin/bash
+echo "TD389-STUB: drift wrapper invoked"
+exit 0
+STUB
+  printf '{"version":1,"agents":[]}\n' > "$repo/harness-manifest.json"
+  printf 'hello\n' > "$repo/README.md"
+  printf 'keep\n' > "$repo/brain-mcp-server/.keep"
+  git -C "${repo:?}" add -A
+  git -C "${repo:?}" commit -q --no-verify -m "chore: init" >/dev/null 2>&1 \
+    || { echo "baseline commit failed" >&2; return 1; }
+  # PATH without gitleaks (git_hooks_consumer's stub-bin idiom): the secret
+  # scan is not what this test measures.
+  for tool in git python3 sqlite3 mktemp hostname; do
+    p="$(command -v "$tool" 2>/dev/null || true)"
+    if [ -n "$p" ]; then ln -s "$p" "$stub/$tool"; fi
+  done
+  no_gitleaks="$stub"
+  old_ifs="$IFS"; IFS=':'
+  for d in $PATH; do
+    [ -x "$d/gitleaks" ] && continue
+    no_gitleaks="$no_gitleaks:$d"
+  done
+  IFS="$old_ifs"
+  TD389_REPO="$repo"
+  TD389_HOME="$fakehome"
+  TD389_PATH="$no_gitleaks"
+  return 0
+}
+
+# td389_run_hook — runs the copied hook in TD389_REPO with HOME fenced (no
+# brain db, so the phase guard reports off) and gitleaks off PATH.
+td389_run_hook() {
+  run env HOME="$TD389_HOME" IGRIS_BRAIN_DIR="$TD389_HOME/.igris" \
+    PATH="$TD389_PATH" /bin/bash -c "cd '$TD389_REPO' && /bin/bash scripts/git-hooks/pre-commit"
+}
+
+@test "TD-389 T389-3: staging harness-manifest.json runs the drift gate through the real hook" {
+  local hook="${TD389_HOOK_SRC:-$IGRIS_ROOT/core/git-hooks/pre-commit}"
+  build_td389_hook_repo "$hook" || return 1
+  local repo="$TD389_REPO"
+  local a_status a_gate=0 a_stub=0 b_status b_gate=0 b_stub=0 c_status c_gate=0
+
+  # (a) the descriptor.
+  printf '{"version":1,"agents":[],"x":1}\n' > "$repo/harness-manifest.json"
+  git -C "${repo:?}" add harness-manifest.json
+  td389_run_hook
+  a_status="$status"; echo "--- (a) harness-manifest.json: status=$status" >&2; echo "$output" >&2
+  if printf '%s\n' "$output" | grep -F '[pre-commit] Validating agent-prompt harness drift...' >/dev/null; then a_gate=1; fi
+  if printf '%s\n' "$output" | grep -F 'TD389-STUB: drift wrapper invoked' >/dev/null; then a_stub=1; fi
+  git -C "${repo:?}" reset -q
+
+  # (b) control: a canonical agent prompt fires on the OLD and the NEW hook,
+  # which proves the stub wiring — so an (a) red is the trigger's alone.
+  printf -- '---\nname: forger\n---\nbody\n' > "$repo/core/agents/forger.md"
+  git -C "${repo:?}" add core/agents/forger.md
+  td389_run_hook
+  b_status="$status"; echo "--- (b) core/agents/forger.md: status=$status" >&2; echo "$output" >&2
+  if printf '%s\n' "$output" | grep -F '[pre-commit] Validating agent-prompt harness drift...' >/dev/null; then b_gate=1; fi
+  if printf '%s\n' "$output" | grep -F 'TD389-STUB: drift wrapper invoked' >/dev/null; then b_stub=1; fi
+  git -C "${repo:?}" reset -q
+
+  # (c) self-negative: an unrelated path never runs the gate.
+  printf 'changed\n' >> "$repo/README.md"
+  git -C "${repo:?}" add README.md
+  td389_run_hook
+  c_status="$status"; echo "--- (c) README.md: status=$status" >&2; echo "$output" >&2
+  if printf '%s\n' "$output" | grep 'Validating agent-prompt harness drift' >/dev/null; then c_gate=1; fi
+  git -C "${repo:?}" reset -q
+
+  echo "SUMMARY (a) status=$a_status gate=$a_gate stub=$a_stub | (b) status=$b_status gate=$b_gate stub=$b_stub | (c) status=$c_status gate=$c_gate" >&2
+  # Control first, then the self-negative, then the case under test.
+  [ "$b_status" -eq 0 ] || return 1
+  [ "$b_gate" -eq 1 ] || return 1
+  [ "$b_stub" -eq 1 ] || return 1
+  [ "$c_status" -eq 0 ] || return 1
+  [ "$c_gate" -eq 0 ] || return 1
+  [ "$a_status" -eq 0 ] || return 1
+  [ "$a_gate" -eq 1 ] || return 1
+  [ "$a_stub" -eq 1 ] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# --- TD-396 / TD-451 / TD-188: the fail-closed floor.
+#
+# Until TD-396 scripts/validate_harness_drift.sh discarded the guard's exit
+# status and classified only `MATCH|DRIFTED|MISSING` lines, so a guard that
+# exited 1 on DRIFT-WARN, SCHEMA-INVALID, PARITY — or on a failure with no
+# verdict line at all — passed the commit gate. Every test below:
+#   * builds its repo through build_wrapper_repo / build_mcp_repo, which copy
+#     "${TD388_WRAPPER_SRC:-$WRAPPER}" (the red-first seam: point it at a
+#     frozen pre-fix wrapper and R1..R4, R1b, P1, C1, C2 go RED);
+#   * ARM-CHECKS the guard first (same fence, rc 1 + the class line), so the
+#     wrapper assertion is about the wrapper, on a MEASURED fixture shape;
+#   * runs through run_gate: HOME is ALWAYS an explicit sandbox (BR-106
+#     fence idiom), IGRIS_BRAIN_DIR is isolated, and IGRIS_CLI=false so none
+#     of the guard's three CLI-backed arms can reach the real `igris`.
+# HD_BASH=/bin/bash re-runs the wrapper itself under bash 3.2.
+# ---------------------------------------------------------------------------
+
+# run_gate <root> <sandbox_home> [ENV=VAL ...] — the wrapper, fenced.
+run_gate() {
+  local root="$1" home="$2"
+  shift 2
+  run env HOME="$home" IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI=false "$@" \
+    ${HD_BASH:-bash} -c "cd '$root' && ${HD_BASH:-bash} scripts/validate_harness_drift.sh"
+}
+
+# run_gate_guard <root> <sandbox_home> [ENV=VAL ...] — the guard alone, in the
+# SAME fence (the arm check every test makes before asserting on the wrapper).
+run_gate_guard() {
+  local root="$1" home="$2"
+  shift 2
+  run env HOME="$home" IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI=false "$@" \
+    bash "$root/core/scripts/cli-adapters/check_harness_drift.sh" --project-root "$root"
+}
+
+# gate_home — a fresh per-test sandbox HOME (echoed; mkdir cannot fail
+# silently here because the caller asserts the dir exists).
+gate_home() {
+  local home="$TEST_TEMP_DIR/gate_home_$BATS_TEST_NUMBER"
+  mkdir -p "$home"
+  echo "$home"
+}
+
+# add_home_gemini_target <root> <sandbox_home> [compile]
+# Declares forger -> gemini at the HOME-anchored ~/.gemini/agents/forger.md.
+# With `compile`, projects ONLY that target (agents surface, gemini) under the
+# sandbox HOME, so the hard link lands in the sandbox, never the real HOME.
+add_home_gemini_target() {
+  local root="$1" home="$2" mode="${3:-}"
+  python3 - "$root/harness-manifest.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    m = json.load(fh)
+m["agents"][0]["targets"].append(
+    {"type": "gemini", "path": "~/.gemini/agents/forger.md"}
+)
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(m, fh, indent=2)
+PY
+  if [ "$mode" = "compile" ]; then
+    env HOME="$home" IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI=false \
+      bash "$root/core/scripts/cli-adapters/compile_harnesses.sh" \
+        --project-root "$root" --manifest "$root/harness-manifest.json" \
+        --surface agents --target gemini >/dev/null || return 1
+    [ -f "$home/.gemini/agents/forger.md" ] || return 1
+  fi
+  return 0
+}
+
+# gemini_real_file_copy <home> — the live DRIFT-WARN shape: the hard link
+# replaced by a real-file copy of its loadout source (the TD-208 idiom).
+gemini_real_file_copy() {
+  local home="$1"
+  local target="$home/.gemini/agents/forger.md"
+  local loadout="$ISOLATED_BRAIN/loadout/agents/forger/harness.gemini.md"
+  rm "$target" || return 1
+  cp "$loadout" "$target" || return 1
+  [ "$(file_md5 "$target")" = "$(file_md5 "$loadout")" ] || return 1
+  [ "$(file_inode "$target")" != "$(file_inode "$loadout")" ] || return 1
+}
+
+@test "TD-396 R1: a home-path gemini DRIFT-WARN (real-file copy) is FATAL at the gate" {
+  local root home
+  root="$(build_wrapper_repo match)"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+  add_home_gemini_target "$root" "$home" compile || return 1
+  gemini_real_file_copy "$home" || return 1
+
+  # Arm check: the guard fails on exactly this class.
+  run_gate_guard "$root" "$home"
+  echo "guard status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[forger/gemini] DRIFT-WARN"* ]] || return 1
+  [[ "$output" == *"2 targets — 1 in sync, 1 drifted/missing"* ]] || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: 1 DRIFT-WARN"* ]] || return 1
+  printf '%s\n' "$output" | grep -F '[harness-drift]   [forger/gemini] DRIFT-WARN' >/dev/null || return 1
+  # Never downgraded: no NOTICE line of any kind.
+  if printf '%s\n' "$output" | grep 'NOTICE' >/dev/null; then return 1; fi
+}
+
+@test "TD-396 R1b: the DRIFT-WARN remedy the wrapper prints re-links that target alone" {
+  local root home remedy n
+  root="$(build_wrapper_repo match)"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+  add_home_gemini_target "$root" "$home" compile || return 1
+  gemini_real_file_copy "$home" || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  n="$(printf '%s\n' "$output" | grep -cF 'compile_harnesses.sh --project-root . --surface agents' || true)"
+  [ "$n" = "1" ] || { echo "expected ONE remedy line, got $n" >&2; return 1; }
+  remedy="$(printf '%s\n' "$output" | grep -F 'compile_harnesses.sh --project-root . --surface agents' \
+    | sed 's/^.*\(bash core\/scripts\/cli-adapters\/compile_harnesses\.sh .*\)$/\1/')"
+  echo "remedy: $remedy" >&2
+  [[ "$remedy" == "bash core/scripts/cli-adapters/compile_harnesses.sh "* ]] || return 1
+  [[ "$remedy" == *" --surface agents "* ]] || return 1
+  [[ "$remedy" == *" --target gemini "* ]] || return 1
+  [[ "$remedy" == *" --filter forger" ]] || return 1
+  # The wrapper also warns against the destructive full compile (TD-388).
+  [[ "$output" == *"Do NOT run a full \`igris harness compile\`"* ]] || return 1
+
+  # Run the printed command VERBATIM from the repo root, in the same fence.
+  run env HOME="$home" IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" IGRIS_CLI=false \
+    bash -c "cd '$root' && $remedy"
+  echo "remedy status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 0 ] || return 1
+
+  run_gate_guard "$root" "$home"
+  [ "$status" -eq 0 ] || return 1
+  [[ "$output" == *"[forger/gemini] MATCH"* ]] || return 1
+  run_gate "$root" "$home"
+  [ "$status" -eq 0 ] || return 1
+  if printf '%s\n' "$output" | grep 'FATAL' >/dev/null; then return 1; fi
+}
+
+@test "TD-396 R2: a SCHEMA-INVALID gemini agent is FATAL at the gate" {
+  local root home loadout ino
+  root="$(build_wrapper_repo match)"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+  add_home_gemini_target "$root" "$home" compile || return 1
+  loadout="$ISOLATED_BRAIN/loadout/agents/forger/harness.gemini.md"
+  ino="$(file_inode "$loadout")"
+  # In-place truncating `>` rewrite (the TD-230 idiom): the inode is kept, so
+  # the hard link and the drift verdict stay MATCH and only the schema fails.
+  cat > "$loadout" <<'GEM'
+---
+name: forger
+description: synthetic canonical for the wrapper test
+kind: local
+memory: project
+---
+
+# FORGER (synthetic)
+
+Canonical body the harness must match.
+GEM
+  [ "$(file_inode "$loadout")" = "$ino" ] || return 1
+
+  run_gate_guard "$root" "$home"
+  echo "guard status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[forger/gemini] MATCH"* ]] || return 1
+  [[ "$output" == *"[forger/gemini] SCHEMA-INVALID"* ]] || return 1
+  [[ "$output" == *"1 schema-invalid target(s)"* ]] || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: 1 SCHEMA-INVALID"* ]] || return 1
+  printf '%s\n' "$output" | grep -F '[harness-drift]   [forger/gemini] SCHEMA-INVALID' >/dev/null || return 1
+}
+
+@test "TD-396 R3: a guard failure with no verdict line (schema-invalid manifest) is FATAL" {
+  local root home
+  root="$(build_wrapper_repo match)"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+  # A target type the manifest validator rejects (measured: the guard exits 1
+  # at validate_manifest, before any verdict or summary line).
+  python3 - "$root/harness-manifest.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    m = json.load(fh)
+m["agents"][0]["targets"][0]["type"] = "bogus"
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(m, fh, indent=2)
+PY
+
+  run_gate_guard "$root" "$home"
+  echo "guard status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"Manifest validation failed"* ]] || return 1
+  if printf '%s\n' "$output" | grep 'drifted/missing' >/dev/null; then return 1; fi
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: guard exited 1"* ]] || return 1
+  [[ "$output" == *"not attributable to a verdict line"* ]] || return 1
+  [[ "$output" == *"before rendering a summary"* ]] || return 1
+}
+
+@test "TD-396 R4: an unattributed guard failure beside a downgraded NOTICE is still FATAL" {
+  local root home
+  root="$(build_wrapper_repo match)"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+  # (1) The NOTICE shape of the FR-138 scoping test: a home-anchored gemini
+  #     target never projected into the sandbox HOME -> MISSING -> NOTICE.
+  add_home_gemini_target "$root" "$home" || return 1
+  # (2) A failure with NO verdict line: the skills-delegate re-check. The
+  #     copied-adapters repo cannot reach that arm (measured: no core skills
+  #     block without surfaces-manifest.json), so the core surfaces file is
+  #     copied in. Under IGRIS_CLI=false (MANDATORY — run_gate pins it) the
+  #     re-check is `false loadout project-skills …`: exit 1, DRIFT++, a stderr
+  #     line and no block.
+  cp "$ADAPTERS/surfaces-manifest.json" "$root/core/scripts/cli-adapters/"
+
+  run_gate_guard "$root" "$home"
+  echo "guard status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[forger/gemini] MISSING"* ]] || return 1
+  [[ "$output" == *"DRIFT skills (delegate)"*"failed (exit 1)"* ]] || return 1
+  [[ "$output" == *"2 drifted/missing"* ]] || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  # The downgrade still prints its NOTICE ...
+  [[ "$output" == *"[harness-drift] NOTICE: 1 out-of-scope"* ]] || return 1
+  # ... and cannot satisfy the floor: the count it does not explain is FATAL.
+  [[ "$output" == *"[harness-drift] FATAL: guard exited 1 — 1 failure(s) not attributable to a verdict line"* ]] || return 1
+  [[ "$output" == *"DRIFT skills (delegate)' re-check failure(s)"* ]] || return 1
+}
+
+# build_parity_repo <slug> — build_mcp_repo plus a `harnesses` block (claude +
+# gemini, both mcp.projected, NO `grant` so the grant arm stays out) and a
+# second MCP block `td451-extra` targeting claude only: the FR-217 M4 parity
+# arm flags `[mcp/td451-extra/gemini] PARITY`. A non-fixture name, so BR-099's
+# fixture arm stays out of it. The fixture manifest IS the descriptor here
+# (resolve_harness_descriptor_path finds <root>/harness-manifest.json).
+# Sets TD451_ROOT, TD451_CCFG, TD451_GCFG.
+build_parity_repo() {
+  local root ccfg gcfg
+  root="$(build_mcp_repo "$1")"
+  [ -d "$root" ] || return 1
+  python3 - "$root/harness-manifest.json" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path, "r", encoding="utf-8") as fh:
+    m = json.load(fh)
+m["harnesses"] = {
+    "claude": {"mcp": {"projected": True, "config_path": "~/.claude.json",
+                       "format": "json", "map_key": "mcpServers",
+                       "entry_shape": "claude"}},
+    "gemini": {"mcp": {"projected": True, "config_path": "~/.gemini/settings.json",
+                       "format": "json", "map_key": "mcpServers",
+                       "entry_shape": "gemini"}},
+}
+servers = m["surfaces"]["mcp_servers"]
+servers[0]["targets"] = [{"type": "claude", "method": "merge"},
+                         {"type": "gemini", "method": "merge"}]
+servers.append({
+    "name": "td451-extra",
+    "canonical": {"command": "node", "args": ["/td451/extra.js"], "env": {}},
+    "targets": [{"type": "claude", "method": "merge"}],
+})
+with open(path, "w", encoding="utf-8") as fh:
+    json.dump(m, fh, indent=2)
+PY
+  ccfg="$TEST_TEMP_DIR/td451_claude_$BATS_TEST_NUMBER.json"
+  gcfg="$TEST_TEMP_DIR/td451_gemini_$BATS_TEST_NUMBER.json"
+  write_mcp_config "$ccfg" "$TD388_CANON_ARG"
+  python3 - "$ccfg" "$gcfg" "$TD388_CANON_ARG" <<'PY'
+import json
+import sys
+
+ccfg, gcfg, canon = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(ccfg, "r", encoding="utf-8") as fh:
+    c = json.load(fh)
+c["mcpServers"]["td451-extra"] = {"type": "stdio", "command": "node",
+                                  "args": ["/td451/extra.js"], "env": {}}
+with open(ccfg, "w", encoding="utf-8") as fh:
+    json.dump(c, fh)
+with open(gcfg, "w", encoding="utf-8") as fh:
+    json.dump({"mcpServers": {"igris-brain": {"command": "node",
+                                              "args": [canon], "env": {}}}}, fh)
+PY
+  TD451_ROOT="$root"
+  TD451_CCFG="$ccfg"
+  TD451_GCFG="$gcfg"
+  return 0
+}
+
+@test "TD-451 P1: an mcp PARITY violation is FATAL at the gate, named, even beside a live sibling worktree" {
+  local root home sib
+  build_parity_repo p1 || return 1
+  root="$TD451_ROOT"
+  add_sibling_worktree "$root" p1 || return 1
+  sib="$TD388_SIBLING"
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+
+  run_gate_guard "$root" "$home" \
+    IGRIS_MCP_CLAUDE_CONFIG="$TD451_CCFG" IGRIS_MCP_GEMINI_CONFIG="$TD451_GCFG"
+  echo "guard status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[mcp/igris-brain/gemini] MATCH"* ]] || return 1
+  [[ "$output" == *"[mcp/td451-extra/gemini] PARITY"* ]] || return 1
+  [[ "$output" == *"1 parity violation(s)"* ]] || return 1
+  [[ "$output" == *" 0 drifted/missing"* ]] || return 1
+
+  run_gate "$root" "$home" \
+    IGRIS_MCP_CLAUDE_CONFIG="$TD451_CCFG" IGRIS_MCP_GEMINI_CONFIG="$TD451_GCFG"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: 1 PARITY"* ]] || return 1
+  printf '%s\n' "$output" | grep -F '[harness-drift]   [mcp/td451-extra/gemini] PARITY' >/dev/null || return 1
+  # Never routed through the TD-388 exemption (line-scoped).
+  if printf '%s\n' "$output" | grep 'WORKTREE NOTICE' >/dev/null; then return 1; fi
+  # The premise held for the whole run: the sibling was live.
+  [ -d "$sib" ] || return 1
+}
+
+# td188_mutant <slug> <python-line> — a scratch copy of the wrapper under test
+# ("${TD388_WRAPPER_SRC:-$WRAPPER}", so the red-first run mutates the OLD one)
+# with <python-line> inserted right after the classifier's first statement,
+# `repo_root = os.path.realpath(sys.argv[1])` (the mutation anchor). Sets
+# TD188_MUTANT; the caller proves the mutation landed.
+td188_mutant() {
+  local src="${TD388_WRAPPER_SRC:-$WRAPPER}"
+  local out="$TEST_TEMP_DIR/td188_$1_$BATS_TEST_NUMBER.sh"
+  awk -v ins="$2" '{ print } $0 == "repo_root = os.path.realpath(sys.argv[1])" { print ins }' \
+    "$src" > "$out" || return 1
+  TD188_MUTANT="$out"
+  return 0
+}
+
+@test "TD-188 C1: a classifier crash prints a [harness-drift] FATAL line and exits 1" {
+  local root home
+  td188_mutant crash 'raise RuntimeError("td188-mutant")' || return 1
+  [ "$(grep -c 'td188-mutant' "$TD188_MUTANT")" -eq 1 ] || return 1
+  root="$(TD388_WRAPPER_SRC="$TD188_MUTANT" build_wrapper_repo match)"
+  [ "$(grep -c 'td188-mutant' "$root/scripts/validate_harness_drift.sh")" -eq 1 ] || return 1
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"td188-mutant"* ]] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: classifier failed to parse guard report (python3 exit 1)"* ]] || return 1
+}
+
+@test "TD-188 C2: malformed classifier output is FATAL, not exit 0" {
+  local root home
+  td188_mutant empty 'sys.exit(0)  # td188-mutant' || return 1
+  [ "$(grep -c 'td188-mutant' "$TD188_MUTANT")" -eq 1 ] || return 1
+  root="$(TD388_WRAPPER_SRC="$TD188_MUTANT" build_wrapper_repo match)"
+  [ "$(grep -c 'td188-mutant' "$root/scripts/validate_harness_drift.sh")" -eq 1 ] || return 1
+  home="$(gate_home)"
+  [ -d "$home" ] || return 1
+
+  run_gate "$root" "$home"
+  echo "wrapper status=$status" >&2; echo "$output" >&2
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"[harness-drift] FATAL: classifier produced malformed counts"* ]] || return 1
 }

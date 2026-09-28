@@ -54,6 +54,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   v3 collapses existing duplicates onto one survivor, re-pointing their runs,
   and deletes the `schedule_runs` rows whose parent schedule was deleted
   (8 on the operator's brain, measured 2026-09-24 on the pre-unwedge snapshot).
+- **The harness-drift commit gate fails closed (TD-396, TD-451, TD-188).** The
+  wrapper (`scripts/validate_harness_drift.sh`) discarded the drift guard's exit
+  status and classified only `MATCH`, `DRIFTED` and `MISSING` lines, so a guard
+  that exited 1 on `DRIFT-WARN`, `SCHEMA-INVALID`, `PARITY`, or on a failure
+  with no verdict line at all (a schema-invalid manifest, a failed skills
+  re-check), passed the gate. It now reconciles the guard's exit status and
+  summary counters against the blocks it classified: each of those classes is
+  a named FATAL, a failure no verdict line explains is FATAL, and the only
+  downgrades left are the two printed NOTICEs (home-path MISSING, the TD-388
+  worktree exemption). A DRIFT-WARN FATAL prints a command that re-links that
+  one target. A classifier crash or malformed classifier output now prints a
+  tagged FATAL line instead of a bare traceback or an exit 0.
+- **The harness-drift gate runs again when the harness descriptor is staged
+  (TD-389).** The pre-commit trigger still named
+  `core/scripts/cli-adapters/harness-manifest.json` (moved to the repo root by
+  FR-136) and `core/rules/` (deleted by FR-187), so staging
+  `harness-manifest.json` never ran the gate. The trigger now names the real
+  projection inputs: `core/agents/*.md`, `harness-manifest.json`,
+  `surfaces-manifest.json` and `manifest.schema.json`. A test fails if any
+  branch of it stops naming a tracked path.
+- **Root bats suites get a fresh temp root per test (TD-394).** `TEST_TEMP_DIR`
+  was keyed on the test's PID, and suites that overrode `teardown()` leaked
+  their roots, so a test that reused a dead test's PID inherited its fixtures
+  (`ln: … File exists` in `harness_drift_gate.test.bash`). The root is now
+  `mktemp -d`, and that suite's teardown removes it whole.
 
 ### Changed
 

@@ -10,8 +10,20 @@ export BATS_TEST_DIRNAME="${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}"
 export IGRIS_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 export SCRIPTS_DIR="$IGRIS_ROOT/scripts"
 
-# Test directory for temporary files
-export TEST_TEMP_DIR="${BATS_TMPDIR:-/tmp}/igris-test-$$"
+# Test directory for temporary files. TD-394: a FRESH mktemp root, not the
+# PID-keyed `igris-test-$$` that add0787 (TD-005) created this file with (no
+# reason recorded; it shipped beside the shared teardown below, which removes
+# the root). bats runs every @test in its own process, so a suite whose
+# teardown override skips that removal leaks one root per test, and a later
+# test that REUSES a dead test's PID inherits its fixtures (`ln: … File
+# exists`). mktemp is collision-free by construction; the `igris-test-` prefix
+# is kept for cleanup globs. A failed mktemp aborts the load: an EMPTY root
+# would turn every "$TEST_TEMP_DIR/…" path into "/…".
+TEST_TEMP_DIR="$(mktemp -d "${BATS_TMPDIR:-/tmp}/igris-test-XXXXXX")" \
+  || { echo "test_helper: mktemp -d failed under ${BATS_TMPDIR:-/tmp}" >&2; exit 1; }
+[ -n "$TEST_TEMP_DIR" ] \
+  || { echo "test_helper: mktemp -d returned an empty path" >&2; exit 1; }
+export TEST_TEMP_DIR
 
 # Cleanup function (called automatically by bats)
 teardown() {

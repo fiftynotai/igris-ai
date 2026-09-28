@@ -566,7 +566,8 @@ NEVER regenerates anything. Token budget: ~80 tokens.
 
 #### Query
 
-Run the drift guard wrapper read-only and capture its exit code + summary:
+Run the drift gate wrapper and capture its output AND exit status, then pick
+out the guard's summary line and the gate's own FATAL lines BY PATTERN:
 ```bash
 GUARD="$REPO_ROOT/core/scripts/cli-adapters/check_harness_drift.sh"
 MANIFEST="$REPO_ROOT/harness-manifest.json"
@@ -575,18 +576,27 @@ MANIFEST="$REPO_ROOT/harness-manifest.json"
 # manifest is absent, render NOTHING for this section. The guard's verdict is
 # only meaningful when the guard itself is present.
 if [ -f "$GUARD" ] && [ -f "$MANIFEST" ]; then
-  bash "$REPO_ROOT/scripts/validate_harness_drift.sh" 2>&1 | tail -1
+  gate_rc=0
+  gate_out="$(bash "$REPO_ROOT/scripts/validate_harness_drift.sh" 2>&1)" || gate_rc=$?
+  # grep reads to EOF (never `| head` or `grep -q` on a producer).
+  printf '%s\n' "$gate_out" | grep -E 'targets — [0-9]+ in sync' || true
+  printf '%s\n' "$gate_out" | grep -F '[harness-drift] FATAL' || true
+  echo "gate exit: $gate_rc"
 fi
 ```
 
-The wrapper checks the Igris-core agents declared in the repo-root harness manifest (content-pipeline agents are
-excluded — they have no canonical in this repo until FR-136). The guard's
-per-agent summary line reads `N targets — M in sync, K drifted/missing`.
+Not `| tail -1`: since TD-396 the gate fails closed and prints a NOTICE or a
+FATAL section after the guard's report on most failing runs, so the last line
+is rarely the summary. The wrapper checks every agent the repo-root harness
+manifest declares, merged with the personal overlay (FR-136). The guard's
+summary line reads `N targets — M in sync, K drifted/missing`; each gate FATAL
+line names its class (DRIFTED, MISSING, DRIFT-WARN, SCHEMA-INVALID, PARITY, or
+"not attributable to a verdict line").
 
 #### Render
 
 When the guard ran, render a single line under a `### Harness Drift` heading
-summing the per-agent results into one MATCH/DRIFTED count:
+from the summary line:
 
 ```
 ### Harness Drift
@@ -599,6 +609,14 @@ remedy:
 ### Harness Drift
 N agent targets — M in sync, K drifted/missing — run `compile_harnesses.sh` to resync
 ```
+
+When the gate exit is non-zero, append the classes named by its FATAL lines
+(a line with no class word reads as `unattributed`):
+```
+### Harness Drift
+N agent targets — M in sync, K drifted/missing — gate: FATAL (DRIFTED, DRIFT-WARN)
+```
+A NOTICE-only run exits 0 and adds nothing.
 
 If the guard script or the manifest is absent, omit the section entirely.
 Do NOT block /scan, do NOT print an error.

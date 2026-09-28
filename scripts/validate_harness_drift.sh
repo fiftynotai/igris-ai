@@ -4,7 +4,7 @@ set -euo pipefail
 # Description: Pre-commit / CI wrapper around the TD-021 harness drift guard
 #   (core/scripts/cli-adapters/check_harness_drift.sh). Runs the guard ONCE
 #   against igris-ai's repo-root harness manifest, which (post-FR-136) declares
-#   ONLY the agents that belong in this repo (the 7 Igris-core agents).
+#   ONLY the agents that belong in this repo (the Igris-core agents).
 #
 #   FR-136 removed the content-pipeline entries from the manifest and moved it
 #   to the repo root, so the per-agent CORE_AGENTS loop (the FR-135 content-*
@@ -15,25 +15,138 @@ set -euo pipefail
 #   No arguments. Resolves the repo root via git and invokes the guard with
 #   --project-root pointed at it.
 #
-# Dependencies: bash, git, python3 (transitively via the guard + _common.sh).
-# Exit codes:
-#   0 - All checked PROJECT-RELATIVE targets MATCH (home-path targets that are
-#       MISSING are excluded from the gate — see SCOPING block below).
-#   1 - One or more PROJECT-RELATIVE targets DRIFTED or MISSING. A drifted
-#       harness (exists but body diverged) and a missing project-relative
-#       harness (you forgot to compile) are both fatal.
-#   0 - (worktree-exempt) the ONLY fatal verdict(s) were `mcp/*` DRIFTED rows
-#       whose config lives OUTSIDE this repo and whose ONLY divergence is a
-#       build-artifact path key (`args` / `command`), WHILE >=1 live SIBLING
-#       worktree of this repository exists — see MULTI-WORKTREE below. Printed
-#       as a WORKTREE NOTICE, never silently.
-#   0 - (clean skip) the guard or manifest is absent — see fail-open note below.
+# Dependencies: bash (3.2 — the pre-commit hook invokes this), git, python3
+#   (transitively via the guard + _common.sh).
+# Exit codes (TD-396 — the FAIL-CLOSED FLOOR below is the rule these follow):
+#   0 - The guard exited 0, OR every failure it counted is a classified block
+#       this wrapper DOWNGRADED with a printed NOTICE. There are exactly two
+#       downgrades, each printed on every run it fires:
+#         * MISSING on a home/absolute-path target -> out-of-scope NOTICE
+#           (FR-138, SCOPING below);
+#         * DRIFTED on an `mcp/*` build-artifact path key while >=1 live
+#           SIBLING worktree exists -> WORKTREE NOTICE (TD-388, MULTI-WORKTREE
+#           below).
+#   0 - (clean skip) the guard or manifest FILE is absent — see fail-open below.
+#   1 - Anything else the guard failed on. Every class that applies prints its
+#       own FATAL section, then the script exits once:
+#         DRIFTED (outside the TD-388 exemption), MISSING on a project-relative
+#         target (you forgot to compile), DRIFT-WARN, SCHEMA-INVALID, PARITY,
+#         and the UNATTRIBUTED floor — a failure the guard counted (or an exit
+#         status it returned) that no verdict line explains.
+#   1 - The classifier itself crashed, or printed malformed output (TD-188).
 #
 # Environment:
 #   IGRIS_DRIFT_STRICT_WORKTREE - set to any non-empty value (conventionally 1)
 #       to DISABLE the multi-worktree exemption entirely: every DRIFTED verdict
 #       is fatal again. For CI, /release, or an operator who wants the raw
 #       verdict. Single-worktree machines are unaffected either way.
+#   IGRIS_DRIFT_GUARD_RC - NOT a caller knob. This script sets it on the
+#       classifier's command line to the guard's exit status (the floor's
+#       input); a value inherited from the caller is overwritten.
+#
+# =========================================================================
+# VERDICT VOCABULARY (TD-396): the guard's FULL output grammar, beside the
+# classifier's `verdict_re` alternation
+# -------------------------------------------------------------------------
+#   verdict_re: MATCH|DRIFTED|MISSING|DRIFT-WARN|SCHEMA-INVALID|PARITY|NOTE|SKIP
+#
+#   guard line            guard counter    this wrapper
+#   [name] MATCH          MATCH            no action
+#   [name] DRIFTED        DRIFT            FATAL; ONE downgrade (TD-388 NOTICE)
+#   [name] MISSING        DRIFT            FATAL if project-relative, else the
+#                                          FR-138 out-of-scope NOTICE
+#   [name] DRIFT-WARN     DRIFT            FATAL, never downgraded
+#   [name] SCHEMA-INVALID SCHEMA_INVALID   FATAL
+#   [name] PARITY         PARITY           FATAL (TD-451; argued below)
+#   [name] NOTE / SKIP    none             informational; ends the previous
+#                                          block's continuation scan
+#   (no verdict line)     DRIFT or exit 1  FATAL, UNNAMED ("not attributable"):
+#     - the skills-delegate re-check failure: `DRIFT skills (delegate) — …`
+#       on stderr, DRIFT++ with no block;
+#     - the early `exit 1`s before any verdict: a bad --project-root, a
+#       missing or schema-invalid manifest, a missing or invalid overlay, an
+#       overlay merge collision;
+#     - any `set -e` abort mid-run.
+# A token the guard gains that is NOT in verdict_re is FATAL but unnamed,
+# never invisible: its failure still counts toward the guard's summary and
+# exit status, and the floor refuses a count no verdict line explains.
+#
+# INTRODUCTION POINT (measured with `git log -S`, not inherited): the
+# `MATCH|DRIFTED|MISSING` alternation arrived in cdb4997 (FR-138, 2026-05-21),
+# complete for the guard of that day. The guard then gained DRIFT-WARN in
+# ef6f11d (TD-208, 2026-06-01), PARITY in 87f2b75 (FR-217, agents arm) and
+# 30658c2 (TD-281, mcp + hook arms), both 2026-06-30, and SCHEMA-INVALID in
+# 2d7302b (TD-230, 2026-07-01). The alternation never followed, and until
+# TD-396 the guard's exit status was discarded, so each of those classes
+# passed the commit gate while the guard itself exited 1.
+# =========================================================================
+#
+# =========================================================================
+# FAIL-CLOSED FLOOR (TD-396): trust the guard's exit status, reconciled
+# against the guard's own counters
+# -------------------------------------------------------------------------
+# THE RULE. The wrapper may DOWNGRADE a failure (the two NOTICEs above) but
+# never silently UPGRADE a non-zero guard exit to 0. Mechanism: the guard's
+# exit status reaches the classifier as IGRIS_DRIFT_GUARD_RC, and the
+# classifier parses the guard's summary counters —
+#     `N targets — M in sync, K drifted/missing`
+#     `P parity violation(s) …`         (only when P > 0)
+#     `S schema-invalid target(s) …`    (only when S > 0)
+# — then counts the failures NO verdict line explains:
+#     unattributed = max(0, K − #DRIFTED − #MISSING − #DRIFT-WARN)
+#                  + max(0, P − #PARITY) + max(0, S − #SCHEMA-INVALID)
+# plus: no summary line and a non-zero exit -> 1 ("exited before rendering a
+# summary"); an exit other than 0/1, or an unreadable one -> at least 1; and a
+# belt — a non-zero exit with nothing fatal and nothing downgraded -> 1.
+# A SURPLUS of blocks over counters is not unattributed: each such block is
+# already FATAL (or NOTICE'd) by its own class. With no summary and exit 0 (the
+# guard's "No … targets matched" path) the result is 0, as before.
+#
+# REJECTED: widen `verdict_re` ALONE. Its failure mode is that every guard
+# failure that is not a `[name] VERDICT` line stays invisible, and three such
+# classes exist TODAY (the no-verdict-line rows of the vocabulary table). It
+# would also reopen the hole the next time the guard gains a token — the
+# TD-289 -> TD-340 shape: the alternation was complete at cdb4997 and fell
+# behind three times. `verdict_re` IS widened here, but only so a FATAL line
+# can NAME the class; the floor is what makes the gate fail closed.
+#
+# REJECTED: a bare "non-zero exit and no NOTICE -> FATAL". It is disarmed
+# whenever ANY downgrade fires in the same run: a home-path MISSING NOTICE is
+# routine on every machine that never projected gemini, so an unclassified
+# failure beside it would still pass on exactly those machines. Reconciling
+# the COUNT is what makes a stray NOTICE unable to satisfy the floor (pinned
+# by R4 in test/harness_drift_gate.test.bash).
+#
+# COUPLING, stated: the floor reads the summary lines' wording. A change to
+# that wording must update the classifier's summary regexes in the same
+# commit; otherwise every downgrade-only run turns FATAL (loud, not silent).
+# The MAINTAINING.md verdict-protocol row records the change procedure.
+# =========================================================================
+#
+# =========================================================================
+# PARITY AT THE GATE (TD-451): FATAL, and WARN was argued and rejected
+# -------------------------------------------------------------------------
+# * The guard already exits 1 on PARITY (FR-217 M4); a WARN would be a
+#   downgrade, and every downgrade needs a reason that holds.
+# * PARITY is a property of the COMMITTED manifest (a trigger path since
+#   TD-389), not machine state: every checkout reproduces it and the committer
+#   can fix it in the same commit — the opposite of home-path MISSING, which
+#   is why MISSING is downgraded.
+# * MAINTAINING.md already states the invariant (keep the real manifest at 0
+#   PARITY); this makes the gate enforce it.
+# * The rejected WARN's failure mode: a manifest edit that drops a projected
+#   harness from one block commits with a line scrolled past in a long report,
+#   and the next compile silently projects that block to fewer harnesses —
+#   the dropped harness never gets the entry and nothing fails (TD-228).
+# * Caveat: PARITY is computed on the MERGED manifest (base + personal
+#   overlay), so a partial block in the overlay trips it too.
+# TD-388 INTERACTION: an mcp-arm PARITY block is named `mcp/<name>/<harness>`
+# (condition 2 would hold), but it prints no `config :` line (path empty,
+# condition 3 fails) and no `differing key(s):` clause (condition 4 fails).
+# More fundamentally, PARITY is classified in its OWN branch and never
+# reaches the DRIFTED branch, so the exemption is never consulted: PARITY is
+# FATAL beside a live sibling worktree (pinned by P1).
+# =========================================================================
 #
 # =========================================================================
 # SCOPING: MISSING is FATAL for project-relative targets (FR-138)
@@ -51,8 +164,8 @@ set -euo pipefail
 # wrapper flips MISSING -> FATAL — BUT only for PROJECT-RELATIVE targets.
 #
 # Why scope to project-relative:
-#   The guard always checks BOTH surfaces (agents + skills) — it has no
-#   --surface flag. The skills surface includes a HOME-PATH gemini target
+#   This wrapper runs the guard over EVERY surface (it passes no --surface
+#   flag). The skills surface includes a HOME-PATH gemini target
 #   (~/.gemini/commands, declared in surfaces-manifest.json). That target is
 #   MISSING on any machine (incl. CI) that never projected gemini TOMLs.
 #   Hard-failing the commit gate on a home-path skills target the developer
@@ -68,6 +181,14 @@ set -euo pipefail
 #   - MISSING, project-relative     -> FATAL (exit 1). You forgot to compile.
 #   - MISSING, home/absolute path   -> NON-BLOCKING NOTICE (exit 0, out of scope).
 #   - all in-scope targets MATCH    -> pass (exit 0).
+#   (DRIFT-WARN, SCHEMA-INVALID, PARITY and unattributed failures are FATAL on
+#   any path — VERDICT VOCABULARY and FAIL-CLOSED FLOOR above.)
+# RESOLUTION (TD-188): "project-relative" is decided on the RESOLVED path.
+#   is_project_relative() realpaths BOTH the candidate and REPO_ROOT before the
+#   commonpath test, so a project-relative target that is a symlink escaping
+#   REPO_ROOT classifies as OUT of scope (MISSING -> NOTICE, not FATAL), and
+#   macOS `/tmp` -> `/private/tmp` compares equal. is_out_of_repo() (TD-388)
+#   applies the same realpath rule.
 # =========================================================================
 #
 # =========================================================================
@@ -142,9 +263,9 @@ set -euo pipefail
 #     pathline_re does not match, so it classifies with path="" and
 #     is_out_of_repo("") is False;
 #   * cond 4 — no agent/skills reason carries a `differing key(s):` clause.
-#     `check_harness_drift.sh:845` is the only line in core/, scripts/ or
-#     cli/src that emits that phrase (measured), and it lives inside
-#     verify_mcp_entry_drift.
+#     The `DRIFTED:*)` arm of `verify_mcp_entry_drift` in
+#     check_harness_drift.sh is the only site in core/, scripts/ or cli/src
+#     that emits that phrase (measured).
 # It takes ALL THREE off to break it. Do not replace this with a fourth
 # exclusive attribution.
 #
@@ -175,8 +296,8 @@ set -euo pipefail
 # While >=2 live worktrees exist, an `args`/`command`-only MCP drift naming a
 # path in NEITHER worktree is also exempted at commit time. Compensating
 # surface: `igris doctor` reports it as drift class `mcp-unregistered` via
-# `inspectMcpRegistration`'s `pathExists` check. THREE SCOPE QUALIFIERS ON THAT
-# CLAIM, all measured, all easy to over-read — and the third one leaves a
+# `inspectMcpRegistration`'s `pathExists` check. TWO SCOPE QUALIFIERS ON THAT
+# CLAIM, both measured, both easy to over-read — and the second one leaves a
 # member of the exempted class covered by NEITHER surface:
 #   * CLAUDE-ONLY. `inspectMcpRegistration` performs exactly one config read —
 #     `opts?.claudeJsonPath ?? claudeJsonPath()` — and no gemini/codex/opencode/
@@ -184,23 +305,24 @@ set -euo pipefail
 #     For every OTHER harness that declares an `mcp` block in the descriptor,
 #     this case is visible in the WORKTREE NOTICE on every commit and is fatal
 #     nowhere.
-#   * DEFAULT-RUN-ONLY. The exit-1 half holds for a plain `igris doctor`.
-#     Under `--fix` (doctor.ts:410-416) `mcp-unregistered` is DISCOUNTED from
-#     the non-clean set, so `igris doctor --fix` can exit 0 with the row having
-#     been reported. "doctor exits 1" is true of the default invocation only.
+#     (retired: until BR-103, `--fix` discounted this class; `runDoctor` now
+#     re-probes it through `reprobe()` in `cli/src/verbs/doctor.ts`, so `--fix`
+#     exits 1 when the row did not clear)
 #   * PATH-ABSENT-ONLY — the qualifier that matters, because it is the one case
-#     the sentence above covers that NOTHING detects. Doctor's row fires on
-#     `!mcp.registered || !mcp.pathExists` (cli/src/verbs/doctor.ts:497) and
-#     `pathExists` is `existsSync(entryPath)` (cli/src/lib/mcp-register.ts:1630),
-#     so doctor reports the named path only when that path is ABSENT. "A path in
-#     NEITHER worktree" is a wider class than that: nothing constrains an
+#     the sentence above covers that NOTHING detects. Doctor's row is the
+#     `mcp-unregistered` push in `classifyDriftAll` (cli/src/verbs/doctor.ts),
+#     guarded by `!mcp.registered || !mcp.pathExists`, and `pathExists` is
+#     `inspectMcpRegistration`'s `existsSync(entryPath)`
+#     (cli/src/lib/mcp-register.ts), so doctor reports the named path only
+#     when that path is ABSENT. "A path in NEITHER worktree" is a wider class
+#     than that: nothing constrains an
 #     out-of-repo path to sit inside a git worktree, so the class also contains
 #     paths that EXIST (a second clone, a checkout dropped from `git worktree
 #     list` but still on disk, a ~/.igris-resident build). For those, the
 #     wrapper exempts — the config is out-of-repo, `differing key(s): args`, a
 #     live sibling exists, and this classifier never inspects the args VALUE by
-#     design (it parses key NAMES out of the reason line, and
-#     `check_harness_drift.sh:845` prints "no values shown" rather than the
+#     design (it parses key NAMES out of the reason line, and the `DRIFTED:*)`
+#     arm of `verify_mcp_entry_drift` prints "no values shown" rather than the
 #     value) — while inspectMcpRegistration returns
 #     `{registered: true, pathExists: true}` and doctor emits no row. Stated
 #     plainly: an `args`/`command`-only drift naming an EXISTING out-of-repo
@@ -213,8 +335,8 @@ set -euo pipefail
 #     -> 0 hits; the identifier DOES occur elsewhere in cli/src — tarball.ts
 #     and init.ts use it for an unrelated tar-entry path — so the scope of
 #     this claim is doctor.ts, not the tree). The field is already returned
-#     (`McpInspectResult.entryPath`, mcp-register.ts:1584), so such a check
-#     needs a comparison, not new plumbing.
+#     (`McpInspectResult.entryPath`), so such a check needs a comparison, not
+#     new plumbing.
 # Closing the gap here would require this wrapper to read the config VALUES,
 # i.e. a second copy of the per-harness MCP shape grammar that
 # `normalize_mcp_shape` owns (§18.1 / §18.4) — a worse trade than the stated
@@ -233,7 +355,8 @@ set -euo pipefail
 # only ONE of them is gated on condition 1:
 #   * The EXEMPTION cannot fire: condition 1 (>=1 live sibling) is false, so
 #     every DRIFTED takes the fatal branch exactly as before.
-#   * Teaching pathline_re the `config` label (:318-320) is gated on NOTHING.
+#   * Teaching pathline_re the `config` label (the classifier's `pathline_re`)
+#     is gated on NOTHING.
 #     It gives mcp/* blocks a non-empty `path`, and that variable's other
 #     consumer is `is_project_relative(path)` on the MISSING branch, which
 #     condition 1 does not guard. It is a no-op there for any config OUTSIDE
@@ -302,39 +425,52 @@ fi
 # ---------------------------------------------------------------------------
 # Run the guard ONCE against the repo-root manifest (FR-136). The manifest now
 # declares only the agents that belong in this repo, so no per-agent filtering
-# is needed. We capture the self-evidencing report and classify each per-target
-# verdict (the guard emits `[name/type] DRIFTED|MISSING|MATCH`) by its resolved
-# path: DRIFTED is fatal (with the ONE narrow TD-388 sibling-worktree exemption
-# documented in the MULTI-WORKTREE block above); MISSING is fatal ONLY for
-# project-relative targets (home/absolute-path targets are out of the gate's
-# scope — see the SCOPING block above). The guard has no --surface flag, so the
+# is needed. We capture the self-evidencing report AND the guard's exit status,
+# and classify each per-target verdict block (the full token set is the
+# VERDICT VOCABULARY block above) by its class and resolved path: DRIFTED is
+# fatal (with the ONE narrow TD-388 sibling-worktree exemption documented in
+# the MULTI-WORKTREE block above); MISSING is fatal ONLY for project-relative
+# targets (home/absolute-path targets are out of the gate's scope — see the
+# SCOPING block above); DRIFT-WARN, SCHEMA-INVALID and PARITY are always fatal;
+# and the FAIL-CLOSED FLOOR makes any failure the guard counted but no verdict
+# line explains fatal too. This wrapper passes no --surface, so the
 # project-relative classification is done HERE, from the resolved paths in the
 # report.
 # ---------------------------------------------------------------------------
-# set -e is intentionally relaxed for the call so a non-MATCH verdict does not
-# abort before we classify it from the report.
+# The `|| guard_rc=$?` keeps a non-zero exit from aborting under set -e before
+# the report is classified — and, since TD-396, KEEPS that exit status: it is
+# the floor's input (IGRIS_DRIFT_GUARD_RC below).
 report=""
-if ! report="$(bash "$GUARD" --project-root "$REPO_ROOT" \
-      --manifest "$MANIFEST" 2>&1)"; then
-  : # non-zero exit is expected on MISSING/DRIFTED; classify via the report.
-fi
+guard_rc=0
+report="$(bash "$GUARD" --project-root "$REPO_ROOT" \
+      --manifest "$MANIFEST" 2>&1)" || guard_rc=$?
 # Echo the guard's self-evidencing report through so the surface stays
 # auditable.
 printf '%s\n' "$report"
 
 # Classify verdicts via python3 (python3 is a guaranteed dependency). For each
-# `[name/type] VERDICT` block we resolve the target's on-disk path from the
-# block's path line (harness/artifact/artifact dir/config) and decide scope:
+# `[name] VERDICT` block we resolve the target's on-disk path from the block's
+# path line (harness/artifact/artifact dir/config) and decide:
 #   - DRIFTED, mcp/*, out-of-repo config, ONLY args|command differ,
 #     and >=1 live sibling worktree  -> WORKTREE NOTICE (not fatal).
 #   - DRIFTED (anything else)        -> always fatal.
 #   - MISSING, path under REPO_ROOT  -> fatal (you forgot to compile).
 #   - MISSING, home/absolute path    -> out-of-scope NOTICE (not fatal).
-# The script prints THREE LINES:
-#   1. four integers: <fatal_drifted> <fatal_missing> <oos_missing> <oos_worktree>
+#   - DRIFT-WARN / SCHEMA-INVALID / PARITY -> always fatal, named.
+#   - MATCH / NOTE / SKIP            -> no action (NOTE/SKIP end a block).
+#   - then the FAIL-CLOSED FLOOR reconciliation (header) -> `unattributed`.
+# OUTPUT PROTOCOL (TD-396) — the classifier prints SEVEN LINES:
+#   1. eight integers: <fatal_drifted> <fatal_missing> <fatal_driftwarn>
+#      <fatal_schema> <fatal_parity> <oos_missing> <oos_worktree> <unattributed>
 #   2. `;`-joined config path(s) of the worktree-exempted blocks (may be empty)
 #   3. `;`-joined live SIBLING worktree paths (may be empty)
+#   4. the unattributed reason, one line (empty when unattributed = 0)
+#   5. `;`-joined DRIFT-WARN block names (e.g. `forger/gemini`)
+#   6. `;`-joined SCHEMA-INVALID block names
+#   7. `;`-joined PARITY block names (e.g. `mcp/<name>/<harness>`)
 # Lines 2-3 carry PATHS ONLY — never a key list, and never a config VALUE.
+# Lines 5-7 carry block NAMES only. The bash side validates line 1 as exactly
+# eight non-negative integers; anything else is a TD-188 FATAL, never a pass.
 # The classifier is written to a temp script and run as `python3 <file>` so the
 # heredoc (which contains parens and apostrophes) is NOT nested inside a `$(...)`
 # command substitution — bash's command-substitution tokenizer mis-parses such
@@ -350,6 +486,11 @@ import sys
 repo_root = os.path.realpath(sys.argv[1])
 report = os.environ.get("IGRIS_DRIFT_REPORT", "").splitlines()
 
+# TD-396: the guard's exit status — the floor's input. An unreadable value is
+# None, which the floor treats as a failure it cannot attribute, never as 0.
+_rc_raw = os.environ.get("IGRIS_DRIFT_GUARD_RC", "")
+guard_rc = int(_rc_raw) if re.fullmatch(r"[0-9]+", _rc_raw) else None
+
 # TD-388 inputs. STRICT (any non-empty value) disables the exemption outright.
 strict_worktree = os.environ.get("IGRIS_DRIFT_STRICT_WORKTREE", "") != ""
 worktrees_raw = os.environ.get("IGRIS_DRIFT_WORKTREES", "")
@@ -361,10 +502,26 @@ worktrees_raw = os.environ.get("IGRIS_DRIFT_WORKTREES", "")
 # unlisted key — is a SHAPE divergence and stays fatal.
 PATH_KEYS = frozenset(("args", "command"))
 
+# TD-396: the guard's FULL token set (the VERDICT VOCABULARY header block). A
+# token missing here still fails closed through the floor, but unnamed.
 verdict_re = re.compile(
-    r"^\s*\[(?P<name>[^\]]+)\]\s+(?P<verdict>MATCH|DRIFTED|MISSING)\b"
+    r"^\s*\[(?P<name>[^\]]+)\]\s+"
+    r"(?P<verdict>MATCH|DRIFTED|MISSING|DRIFT-WARN|SCHEMA-INVALID|PARITY|NOTE|SKIP)\b"
     r"(?:\s+\S+\s+(?P<rest>.*))?$"
 )
+# TD-396: the guard's summary counters (printed after "  ----"). Matched on the
+# digits and the fixed words, NOT on the em-dash, so a locale that mangles the
+# dash cannot silently drop the counters. The wording is a contract: see the
+# COUPLING note in the FAIL-CLOSED FLOOR header block.
+summary_re = re.compile(
+    r"^\s*(?P<total>[0-9]+) targets \S+ (?P<match>[0-9]+) in sync, "
+    r"(?P<drift>[0-9]+) drifted/missing\s*$"
+)
+parity_count_re = re.compile(r"^\s*(?P<n>[0-9]+) parity violation\(s\)")
+schema_count_re = re.compile(r"^\s*(?P<n>[0-9]+) schema-invalid target\(s\)")
+# The one no-verdict-line failure the guard names on stderr (named in the
+# unattributed reason so the FATAL line points at it).
+delegate_fail_re = re.compile(r"^DRIFT skills \(delegate\)")
 # TD-388 added `config` (the label verify_mcp_entry_drift prints). Before that
 # every mcp/* block classified with path="" — see the W8 no-op regression test.
 # `target` is deliberately NOT here: agent blocks must keep path="" so they can
@@ -494,9 +651,35 @@ def extract_inline_path(rest):
 
 fatal_drifted = 0
 fatal_missing = 0
+fatal_driftwarn = 0
+fatal_schema = 0
+fatal_parity = 0
 oos_missing = 0
 oos_worktree = 0
 worktree_configs = []
+driftwarn_names = []
+schema_names = []
+parity_names = []
+
+# TD-396: the guard's own counters. They print after every block, so they are
+# read in a separate pass. Absent -> None (summary) / 0 (P and S only print
+# when non-zero).
+summary_drift = None
+parity_total = 0
+schema_total = 0
+delegate_failures = 0
+for line in report:
+    sm = summary_re.match(line)
+    if sm:
+        summary_drift = int(sm.group("drift"))
+    pm = parity_count_re.match(line)
+    if pm:
+        parity_total = int(pm.group("n"))
+    xm = schema_count_re.match(line)
+    if xm:
+        schema_total = int(xm.group("n"))
+    if delegate_fail_re.match(line):
+        delegate_failures += 1
 
 i = 0
 n = len(report)
@@ -511,6 +694,9 @@ while i < n:
     # Resolve this block's path: prefer an inline path in the verdict line,
     # else scan following indented path lines until the next verdict block.
     # The same scan captures the block's `reason` line (TD-388 condition 4).
+    # Since TD-396 a PARITY / NOTE / SKIP / DRIFT-WARN line also ENDS the
+    # previous block (they match verdict_re); a block keeps its FIRST reason,
+    # so no later block's key clause can move into a DRIFTED block.
     path = extract_inline_path(rest)
     reason = ""
     j = i + 1
@@ -545,36 +731,159 @@ while i < n:
             fatal_missing += 1
         else:
             oos_missing += 1
+    elif verdict == "DRIFT-WARN":
+        # A real-file copy of a hard-linked target: never downgraded.
+        fatal_driftwarn += 1
+        driftwarn_names.append(name)
+    elif verdict == "SCHEMA-INVALID":
+        fatal_schema += 1
+        schema_names.append(name)
+    elif verdict == "PARITY":
+        # TD-451: its OWN branch — it never reaches the DRIFTED branch, so the
+        # TD-388 exemption is never consulted for it.
+        fatal_parity += 1
+        parity_names.append(name)
+    # MATCH / NOTE / SKIP: no action.
     i = j
 
-print(f"{fatal_drifted} {fatal_missing} {oos_missing} {oos_worktree}")
+# ---- TD-396: the FAIL-CLOSED FLOOR (argued in the header block) ------------
+unattributed = 0
+reasons = []
+if guard_rc is None:
+    rc_text = "an unreadable status"
+else:
+    rc_text = str(guard_rc)
+if summary_drift is not None:
+    attributed = (fatal_drifted + oos_worktree) + (fatal_missing + oos_missing) \
+        + fatal_driftwarn
+    gap = max(0, summary_drift - attributed)
+    if gap:
+        unattributed += gap
+        why = f"{gap} drifted/missing count(s) with no DRIFTED, MISSING or DRIFT-WARN line"
+        if delegate_failures:
+            why += (f"; {delegate_failures} 'DRIFT skills (delegate)' re-check "
+                    "failure(s) in the guard output")
+        reasons.append(why)
+    gap = max(0, parity_total - fatal_parity)
+    if gap:
+        unattributed += gap
+        reasons.append(f"{gap} parity violation(s) with no PARITY line")
+    gap = max(0, schema_total - fatal_schema)
+    if gap:
+        unattributed += gap
+        reasons.append(f"{gap} schema-invalid target(s) with no SCHEMA-INVALID line")
+elif guard_rc != 0:
+    unattributed += 1
+    reasons.append(f"guard exited {rc_text} before rendering a summary")
+if guard_rc is None or guard_rc not in (0, 1):
+    if unattributed == 0:
+        unattributed = 1
+    reasons.append(f"guard exit {rc_text} is not a verdict exit (0 or 1)")
+# Belt: a non-zero exit with nothing fatal and nothing downgraded.
+fatal_total = fatal_drifted + fatal_missing + fatal_driftwarn + fatal_schema \
+    + fatal_parity
+if guard_rc != 0 and fatal_total == 0 and oos_missing + oos_worktree == 0 \
+        and unattributed == 0:
+    unattributed = 1
+    reasons.append(f"guard exited {rc_text} with no failing verdict line")
+
+print(f"{fatal_drifted} {fatal_missing} {fatal_driftwarn} {fatal_schema} "
+      f"{fatal_parity} {oos_missing} {oos_worktree} {unattributed}")
 print(";".join(worktree_configs))
 print(";".join(SIBLING_WORKTREES))
+print(" ".join("; ".join(reasons).split()))
+print(";".join(driftwarn_names))
+print(";".join(schema_names))
+print(";".join(parity_names))
 PY
 
 # TD-388: the worktree list goes through a dedicated ENV VAR (newline-joined),
-# never argv, so a path containing spaces survives intact.
+# never argv, so a path containing spaces survives intact. TD-396: the guard's
+# exit status rides the same way (IGRIS_DRIFT_GUARD_RC, set HERE so a value
+# inherited from the caller can never reach the floor).
+# TD-188: a classifier crash (traceback on stderr, non-zero exit) used to abort
+# under set -e with no gate-tagged line; it now names itself. The `||` keeps
+# set -e from firing first; `$?` inside the group is python3's exit status.
 classification="$(IGRIS_DRIFT_REPORT="$report" \
+  IGRIS_DRIFT_GUARD_RC="$guard_rc" \
   IGRIS_DRIFT_WORKTREES="$live_worktrees" \
   IGRIS_DRIFT_STRICT_WORKTREE="${IGRIS_DRIFT_STRICT_WORKTREE:-}" \
-  python3 "$CLASSIFIER" "$REPO_ROOT")"
+  python3 "$CLASSIFIER" "$REPO_ROOT")" || {
+  classifier_rc=$?
+  echo ""
+  echo "[harness-drift] FATAL: classifier failed to parse guard report (python3 exit $classifier_rc)"
+  exit 1
+}
 rm -f "$CLASSIFIER"
 trap - EXIT
-# Three lines out: counts, exempted config paths, live sibling worktrees.
+# Seven lines out — the OUTPUT PROTOCOL documented above the heredoc.
 # (bash 3.2 — no mapfile; a grouped read is the portable form.)
 counts_line=""
 worktree_configs=""
 worktree_siblings=""
+unattributed_reason=""
+driftwarn_names=""
+schema_names=""
+parity_names=""
 {
   IFS= read -r counts_line || true
   IFS= read -r worktree_configs || true
   IFS= read -r worktree_siblings || true
+  IFS= read -r unattributed_reason || true
+  IFS= read -r driftwarn_names || true
+  IFS= read -r schema_names || true
+  IFS= read -r parity_names || true
 } <<< "$classification"
-read -r fatal_drifted fatal_missing oos_missing oos_worktree <<< "$counts_line"
+fatal_drifted=""
+fatal_missing=""
+fatal_driftwarn=""
+fatal_schema=""
+fatal_parity=""
+oos_missing=""
+oos_worktree=""
+unattributed=""
+counts_extra=""
+read -r fatal_drifted fatal_missing fatal_driftwarn fatal_schema fatal_parity \
+  oos_missing oos_worktree unattributed counts_extra <<< "$counts_line" || true
+
+# TD-188: exactly eight non-negative integers, or FATAL. Before this, an EMPTY
+# classification (a classifier that exited 0 having printed nothing) reached
+# `[ "" -gt 0 ]`, which is false with an "integer expression expected"
+# message, so every section below was skipped and the gate exited 0.
+# bash 3.2: `case` globs, no `[[ =~ ]]` needed.
+for _count in "$fatal_drifted" "$fatal_missing" "$fatal_driftwarn" \
+    "$fatal_schema" "$fatal_parity" "$oos_missing" "$oos_worktree" \
+    "$unattributed"; do
+  case "$_count" in
+    ''|*[!0-9]*)
+      echo ""
+      echo "[harness-drift] FATAL: classifier produced malformed counts (line 1: '$counts_line')"
+      exit 1
+      ;;
+  esac
+done
+if [ -n "$counts_extra" ]; then
+  echo ""
+  echo "[harness-drift] FATAL: classifier produced malformed counts (line 1: '$counts_line')"
+  exit 1
+fi
+
+# print_named <;-joined names> <verdict> — one indented line per block name.
+# `tr` + `while read` (not an unquoted `for`), so a name is never globbed.
+print_named() {
+  local _names="$1" _verdict="$2" _nm
+  while IFS= read -r _nm; do
+    [ -n "$_nm" ] || continue
+    echo "[harness-drift]   [$_nm] $_verdict"
+  done <<< "$(printf '%s' "$_names" | tr ';' '\n')"
+}
 
 # ---------------------------------------------------------------------------
-# Verdict aggregation.
+# Verdict aggregation. NOTICEs first; then EVERY FATAL section that applies
+# (TD-396: the script used to exit after the first one), then ONE exit.
 # ---------------------------------------------------------------------------
+fatal_any=0
+
 if [ "$oos_missing" -gt 0 ]; then
   # Home/absolute-path targets (e.g. the gemini skills ~/.gemini/commands
   # surface) that are MISSING are out of the gate's scope — surface as a NOTICE
@@ -594,7 +903,7 @@ if [ "$oos_worktree" -gt 0 ]; then
   echo "[harness-drift]   this worktree   : $REPO_ROOT"
   echo "[harness-drift] These configs are HOME-anchored and SHARED by every worktree, so the MCP server is served from whichever worktree wrote this config last."
   echo "[harness-drift] DO NOT run \`igris harness compile --project-root .\` to 'fix' this: it re-points the shared config at THIS worktree and will move the MCP server away from the other session."
-  echo "[harness-drift] What this does not leave uncovered: a config naming a path that no longer exists. This gate excuses that too — \`igris doctor\` is what reports it, as \`mcp-unregistered\` (claude configs only, and only when the path is ABSENT; see the MULTI-WORKTREE block in this script for all three stated limits)."
+  echo "[harness-drift] What this does not leave uncovered: a config naming a path that no longer exists. This gate excuses that too — \`igris doctor\` is what reports it, as \`mcp-unregistered\` (claude configs only, and only when the path is ABSENT; see the MULTI-WORKTREE block in this script for both stated limits)."
   echo "[harness-drift] Set IGRIS_DRIFT_STRICT_WORKTREE=1 to make these fatal again."
 fi
 
@@ -605,7 +914,7 @@ if [ "$fatal_drifted" -gt 0 ]; then
   echo "[harness-drift] A harness body diverged from its canonical prompt. Regenerate:"
   echo "[harness-drift]   igris harness compile --project-root ."
   echo "[harness-drift]   (or bash core/scripts/cli-adapters/compile_harnesses.sh --project-root .), then re-stage."
-  exit 1
+  fatal_any=1
 fi
 
 if [ "$fatal_missing" -gt 0 ]; then
@@ -615,7 +924,57 @@ if [ "$fatal_missing" -gt 0 ]; then
   echo "[harness-drift] FATAL: $fatal_missing project-relative harness(es) MISSING — you forgot to compile. Regenerate:"
   echo "[harness-drift]   igris harness compile --project-root ."
   echo "[harness-drift]   (or bash core/scripts/cli-adapters/compile_harnesses.sh --project-root .), then re-stage."
-  exit 1
+  fatal_any=1
 fi
 
+if [ "$fatal_driftwarn" -gt 0 ]; then
+  # TD-396: a hard-linked harness target replaced by a real-file copy. The
+  # content matches the loadout TODAY, but the copy stops tracking it at the
+  # next re-vendor — never downgraded. The remedy re-links ONE target through
+  # the agents surface only; it touches no MCP, skills or hook config.
+  echo ""
+  echo "[harness-drift] FATAL: $fatal_driftwarn DRIFT-WARN — a hard-linked harness target is a real-file COPY (content matches the loadout, but it no longer tracks it)."
+  while IFS= read -r _nm; do
+    [ -n "$_nm" ] || continue
+    echo "[harness-drift]   [$_nm] DRIFT-WARN — re-link that target alone:"
+    case "$_nm" in
+      */*) echo "[harness-drift]     bash core/scripts/cli-adapters/compile_harnesses.sh --project-root . --surface agents --target ${_nm##*/} --filter ${_nm%/*}" ;;
+      *)   echo "[harness-drift]     (no <agent>/<harness> name to build a targeted command from; see the block above)" ;;
+    esac
+  done <<< "$(printf '%s' "$driftwarn_names" | tr ';' '\n')"
+  echo "[harness-drift] Do NOT run a full \`igris harness compile\` for this while a sibling worktree is live: it rewrites the SHARED home-anchored configs and moves the other session's MCP server (TD-388)."
+  fatal_any=1
+fi
+
+if [ "$fatal_schema" -gt 0 ]; then
+  # TD-396: present + drift-clean, but the target harness refuses to load it.
+  echo ""
+  echo "[harness-drift] FATAL: $fatal_schema SCHEMA-INVALID — a projected harness file its harness refuses to load:"
+  print_named "$schema_names" "SCHEMA-INVALID"
+  echo "[harness-drift] Fix what each block's reason names (its fix line gives the override), then re-stage."
+  fatal_any=1
+fi
+
+if [ "$fatal_parity" -gt 0 ]; then
+  # TD-451: a property of the committed manifest (or the personal overlay),
+  # not of this machine — FATAL, argued in the PARITY AT THE GATE block.
+  echo ""
+  echo "[harness-drift] FATAL: $fatal_parity PARITY — a descriptor block dropped a projected harness its sibling blocks declare (FR-217 M4):"
+  print_named "$parity_names" "PARITY"
+  echo "[harness-drift] Add the missing harness to that block's targets[] in harness-manifest.json (or the personal overlay), then re-stage. Every checkout reproduces this; it is not machine state."
+  fatal_any=1
+fi
+
+if [ "$unattributed" -gt 0 ]; then
+  # TD-396: the FAIL-CLOSED FLOOR. The guard counted (or exited on) a failure
+  # that no verdict line explains — never passed, even beside a NOTICE.
+  echo ""
+  echo "[harness-drift] FATAL: guard exited $guard_rc — $unattributed failure(s) not attributable to a verdict line ($unattributed_reason)."
+  echo "[harness-drift] The gate fails closed (TD-396): read the guard output above for the failure it did not render as a verdict."
+  fatal_any=1
+fi
+
+if [ "$fatal_any" -eq 1 ]; then
+  exit 1
+fi
 exit 0

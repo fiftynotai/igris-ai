@@ -39,12 +39,12 @@ set -e
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
 #                    is staged.
-#   - validate_harness_drift.sh  (FR-135, TD-021)
-#       Triggers if a CANONICAL agent-prompt SOURCE is staged:
-#                    core/agents/*.md OR core/rules/*.md OR the harness
-#                    manifest. NOT triggered on generated harness paths —
-#                    those are gitignored and never staged (OD-4); the guard
-#                    validates the ON-DISK generated copies, not the index.
+#   - validate_harness_drift.sh  (FR-135, TD-021; trigger re-pointed TD-389)
+#       Triggers if a PROJECTION INPUT is staged: core/agents/*.md OR the
+#                    root harness-manifest.json OR cli-adapters'
+#                    surfaces-manifest.json / manifest.schema.json. NOT on
+#                    generated harness paths — gitignored, never staged
+#                    (OD-4); the guard checks the ON-DISK generated copies.
 #   - check_contract_consumers.sh  (FR-186)
 #       Triggers if: MAINTAINING.md is staged, OR the staged diff
 #                    deletes/renames any path (where a mapped `file` contract
@@ -507,11 +507,11 @@ if echo "$staged" | grep -qE '^(package\.json|package-lock\.json|cli/package\.js
   needs_lockfile_check=1
 fi
 
-# OD-4: trigger on a staged CANONICAL SOURCE, never on the generated harness
-# paths. Generated harnesses are gitignored (e.g. .claude/agents/, .codex/) so
-# they never appear in the staged set — keying off them would never fire. The
-# guard then validates the on-disk generated copies against canonical.
-if echo "$staged" | grep -qE '^(core/agents/.*\.md|core/rules/.*\.md|core/scripts/cli-adapters/harness-manifest\.json)$'; then
+# OD-4: trigger on staged PROJECTION INPUTS, never on generated harness paths
+# (gitignored, never staged). TD-389 re-pointed the descriptor to the root
+# harness-manifest.json and dropped core/rules/ (deleted, FR-187). Per-input
+# dispositions: core/enforcement/harness-drift.md; pinned by T389-1/2/3.
+if echo "$staged" | grep -qE '^(core/agents/.*\.md|harness-manifest\.json|core/scripts/cli-adapters/surfaces-manifest\.json|core/scripts/cli-adapters/manifest\.schema\.json)$'; then
   needs_harness_check=1
 fi
 
@@ -743,9 +743,9 @@ if [ "$needs_harness_check" = "1" ]; then
   # so multiple validator failures are aggregated into $failed and reported
   # together at the end, rather than aborting on the first failure.
   if ! bash "$REPO_ROOT/scripts/validate_harness_drift.sh"; then
-    echo "[pre-commit] Harness drift detected (or a generated harness is missing)."
-    echo "[pre-commit]   Run: bash core/scripts/cli-adapters/compile_harnesses.sh --project-root ."
-    echo "[pre-commit]   (or 'igris harness compile' once FR-136 lands), then re-stage."
+    echo "[pre-commit] Harness drift gate FAILED — each [harness-drift] FATAL line above names its class and remedy."
+    echo "[pre-commit]   Fix each named class, then re-stage. With a sibling worktree live, never run a full"
+    echo "[pre-commit]   'igris harness compile': it rewrites SHARED home configs (TD-388); prefer a targeted compile."
     failed=1
   fi
 fi
