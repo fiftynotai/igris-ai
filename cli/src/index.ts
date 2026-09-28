@@ -10,7 +10,7 @@
  *   - register-project [path] [--slug <slug>] [--allow-missing-path]
  *   - sync <code|data|all|status> [--dry-run] [--if-changed]
  *   - context-docs inventory --project <slug> [--json]
- *   - doctor [--fix] [--remove-orphans] [--yes]
+ *   - doctor [--fix] [--remove-orphans [--yes [--include-owning]] [--empty-only] [--slug <slug>]]
  *
  * The CLI owns the install pipeline natively in TS. FR-212d Phase 2 made
  * `igris install` REGISTER-ONLY: it upserts the brain `projects` row +
@@ -1405,20 +1405,41 @@ async function main(argv: string[]): Promise<void> {
     .option("--fix", "auto-fix all fixable drift classes (see `igris doctor` output)", false)
     .option(
       "--remove-orphans",
-      "interactively delete registry rows whose path is missing",
+      "interactively delete registry rows whose path is missing (never source-reclaimed rows)",
       false,
     )
-    .option("-y, --yes", "skip per-row confirmation when --remove-orphans", false)
+    .option(
+      "-y, --yes",
+      "skip per-row confirmation when --remove-orphans; a row that owns briefs/learnings is refused unless --include-owning",
+      false,
+    )
+    .option(
+      "--empty-only",
+      "with --remove-orphans: non-interactively delete only the orphan rows that own nothing",
+      false,
+    )
+    .option("--slug <slug>", "with --remove-orphans: act on this one registry row only")
+    .option(
+      "--include-owning",
+      "with --remove-orphans --yes: also attempt rows that own briefs/learnings (the FK still refuses briefed/sessioned rows)",
+      false,
+    )
     .action(
       async (opts: {
         fix?: boolean;
         removeOrphans?: boolean;
         yes?: boolean;
+        emptyOnly?: boolean;
+        slug?: string;
+        includeOwning?: boolean;
       }): Promise<void> => {
         const code = await runDoctor({
           fix: opts.fix === true,
           removeOrphans: opts.removeOrphans === true,
           yes: opts.yes === true,
+          emptyOnly: opts.emptyOnly === true,
+          slug: opts.slug,
+          includeOwning: opts.includeOwning === true,
         });
         process.exitCode = code;
       },

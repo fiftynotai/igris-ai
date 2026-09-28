@@ -435,3 +435,91 @@ EOF
   [ "$status" -eq 0 ]
   [ -L "$PROJ/.git/hooks/pre-commit" ]
 }
+
+# ---- FR-265: source-reclaimed (exit-neutral) ----------------------------------
+#
+# A registry row whose directory is gone but whose `repo_url` is recorded is a
+# deliberate state (the operator reclaimed the disk), not drift: doctor reports
+# it as `source-reclaimed`, prints a copy-pasteable `git clone` line, never
+# offers it for deletion, and does not let it move the exit code.
+#
+# The fixture table CARRIES `repo_url` — the post-FR-265 brain shape. The CLI
+# never creates that column (L-53: registry.ts's CREATE must not name it); it
+# only reads it when present, so these tests need no brain code.
+#
+# Every `git -C` argument is "${V:?}" or "${V:?}/literal"; every path variable
+# is assigned from "${BATS_TEST_TMPDIR:?}/…".
+
+# register_reclaimed_row <slug> <path> <repo_url>
+register_reclaimed_row() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE IF NOT EXISTS projects (
+      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
+      registered_at TEXT, last_session_at TEXT, metadata TEXT, repo_url TEXT
+    );
+    INSERT INTO projects (slug, name, path, igris_version, repo_url) VALUES ('$1','$1','$2','7.0.0','$3');
+  "
+}
+
+@test "drift class 11: source-reclaimed — a missing path WITH a repo_url is exit-neutral and prints a restore line" {
+  register_reclaimed_row rec /no/such/dir/rec 'https://example.invalid/o/r.git'
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"| rec | /no/such/dir/rec | source-reclaimed |"* ]] || return 1
+  [[ "$output" == *"restore rec: git clone -- 'https://example.invalid/o/r.git' '/no/such/dir/rec'"* ]] || return 1
+  [[ "$output" != *"path-missing"* ]] || return 1
+  # An EMPTY repo_url counts as absent: that row stays path-missing (exit 1),
+  # and the reclaimed row beside it is still source-reclaimed.
+  register_reclaimed_row blank /no/such/dir/blank ''
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| blank | /no/such/dir/blank | path-missing |"* ]] || return 1
+  [[ "$output" == *"| rec | /no/such/dir/rec | source-reclaimed |"* ]] || return 1
+}
+
+@test "drift class 11b: source-reclaimed is never offered for removal" {
+  register_reclaimed_row rec /no/such/dir/rec 'https://example.invalid/o/r.git'
+  run $CLI_BIN doctor --remove-orphans --yes
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"not offered: rec (source-reclaimed)"* ]] || return 1
+  [ "$(sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM projects WHERE slug='rec';")" = "1" ]
+  run $CLI_BIN doctor --remove-orphans --slug rec --yes
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"refused: rec is source-reclaimed"* ]] || return 1
+  [ "$(sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM projects WHERE slug='rec';")" = "1" ]
+}
+
+@test "drift class 11c: the printed restore line runs verbatim and recovers the source" {
+  BARE="${BATS_TEST_TMPDIR:?}/remote.git"
+  WORK="${BATS_TEST_TMPDIR:?}/work"
+  DEST="${BATS_TEST_TMPDIR:?}/with space/proj"
+  # The initial branch is pinned: a clone of a bare whose HEAD names a branch
+  # that was never pushed checks out nothing, and `rev-parse HEAD` would fail.
+  git init -q --bare --initial-branch=main "${BARE:?}"
+  git clone -q "${BARE:?}" "${WORK:?}" 2>/dev/null
+  git -C "${WORK:?}" -c user.name=t -c user.email=t@t.invalid commit -q --allow-empty -m seed
+  git -C "${WORK:?}" push -q origin HEAD:main
+  register_reclaimed_row proj "$DEST" "$BARE"
+  [ ! -e "${DEST:?}" ]
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  line="$(printf '%s\n' "$output" | sed -n 's/^restore [^:]*: //p')"
+  echo "line: $line"
+  [[ -n "$line" ]] || return 1
+  run bash -c "$line"
+  echo "$output"
+  [ "$status" -eq 0 ]
+  git -C "${DEST:?}" rev-parse HEAD
+  # A fresh clone carries no Igris git hooks (FR-243), so the row moves from
+  # source-reclaimed to git-hooks-missing — NOT to clean.
+  run $CLI_BIN doctor
+  echo "$output"
+  [[ "$output" == *"| proj | $DEST | git-hooks-missing |"* ]] || return 1
+  [[ "$output" != *"source-reclaimed"* ]] || return 1
+}

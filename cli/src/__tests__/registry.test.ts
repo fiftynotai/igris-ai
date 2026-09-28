@@ -399,6 +399,162 @@ describe("TD-319: listProjects (write door) vs listProjectsReadonly (read door)"
 });
 
 // ---------------------------------------------------------------------------
+// TD-310 / FR-265 — what an orphan owns, what the re-point writer keeps, and
+// the `repo_url` column the shared projection reads when (and only when) the
+// brain has it.
+// ---------------------------------------------------------------------------
+
+describe("TD-310 / FR-265: ownership, the re-point writer, and the repo_url projection", () => {
+  const dbPath = (): string => join(tmpRoot, "memory", "knowledge.db");
+  const sqlite = async () => (await import("better-sqlite3")).default;
+
+  /**
+   * Run `sql` through a SEPARATE short-lived handle after releasing the
+   * registry's own (never two live RW connections to one file).
+   */
+  async function withSeedHandle(sql: string): Promise<void> {
+    const reg = await getRegistryModule();
+    reg.listProjects(); // materialise the brain + `projects` through the write door
+    reg.closeDb();
+    const Database = await sqlite();
+    const db = new Database(dbPath());
+    try {
+      db.exec(sql);
+    } finally {
+      db.close();
+    }
+  }
+
+  it("R1a: an ABSENT knowledge table counts 0 — an absent table holds zero rows", async () => {
+    const reg = await getRegistryModule();
+    reg.upsertProject({ slug: "lone", name: "lone", path: "/tmp/lone", tech_stack: "", igris_version: "7.0.0" });
+    expect(reg.projectOwnership("lone")).toEqual({ briefs: 0, learnings: 0, errors: 0, sessions: 0 });
+    expect(reg.ownsData(reg.projectOwnership("lone"))).toBe(false);
+  });
+
+  it("R1b: counts come from brief_status / learnings / errors / sessions, per slug", async () => {
+    await withSeedHandle(`
+      CREATE TABLE brief_status (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      CREATE TABLE learnings (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      CREATE TABLE errors (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      CREATE TABLE sessions (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      INSERT INTO brief_status (project) VALUES ('owner'), ('other');
+      INSERT INTO learnings (project) VALUES ('owner'), ('owner'), ('other');
+      INSERT INTO errors (project) VALUES ('owner');
+      INSERT INTO sessions (project) VALUES ('owner'), ('owner'), ('owner');
+    `);
+    const reg = await getRegistryModule();
+    expect(reg.projectOwnership("owner")).toEqual({ briefs: 1, learnings: 2, errors: 1, sessions: 3 });
+    expect(reg.projectOwnership("nobody")).toEqual({ briefs: 0, learnings: 0, errors: 0, sessions: 0 });
+    expect(reg.ownsData(reg.projectOwnership("owner"))).toBe(true);
+    expect(reg.ownsData(reg.projectOwnership("nobody"))).toBe(false);
+  });
+
+  it("R1c: a table that EXISTS but cannot be counted is UNKNOWN (null) — and unknown is treated as owning", async () => {
+    // `learnings` without a `project` column: the COUNT query throws.
+    await withSeedHandle("CREATE TABLE learnings (id INTEGER PRIMARY KEY, title TEXT);");
+    const reg = await getRegistryModule();
+    const o = reg.projectOwnership("anything");
+    expect(o.learnings).toBeNull();
+    expect(o.briefs).toBe(0);
+    // Never "nothing references it" on a count this query did not establish.
+    expect(reg.ownsData(o)).toBe(true);
+  });
+
+  it("R2: the re-point writer keeps a curated name and tech_stack, still moves path/igris_version, and fills an EMPTY tech_stack", async () => {
+    const reg = await getRegistryModule();
+    reg.upsertProject({
+      slug: "curated",
+      name: "Curated Name",
+      path: "/tmp/curated-old",
+      tech_stack: "dart,flutter",
+      igris_version: "7.0.0",
+    });
+    // What `igris register-project <new-path> --slug curated` passes.
+    reg.upsertProject({
+      slug: "curated",
+      name: "curated",
+      path: "/tmp/curated-new",
+      tech_stack: "",
+      igris_version: "7.3.2",
+    });
+    let row = reg.listProjects().find((r) => r.slug === "curated")!;
+    expect(row.name).toBe("Curated Name");
+    expect(row.tech_stack).toBe("dart,flutter");
+    expect(row.path).toBe("/tmp/curated-new");
+    expect(row.igris_version).toBe("7.3.2");
+
+    reg.upsertProject({ slug: "bare", name: "bare", path: "/tmp/bare", tech_stack: "", igris_version: "7.0.0" });
+    reg.upsertProject({ slug: "bare", name: "bare", path: "/tmp/bare", tech_stack: "go", igris_version: "7.0.0" });
+    row = reg.listProjects().find((r) => r.slug === "bare")!;
+    expect(row.tech_stack).toBe("go");
+  });
+
+  it("R3a: repo_url is projected when the column exists and NULL when it does not — identically through BOTH doors", async () => {
+    const reg = await getRegistryModule();
+    for (const slug of ["with-url", "no-url"]) {
+      reg.upsertProject({ slug, name: slug, path: `/tmp/${slug}`, tech_stack: "", igris_version: "7.0.0" });
+    }
+    // Before the brain's projects:1 migration: no column, NULL for every row.
+    expect(reg.listProjects().map((r) => r.repo_url)).toEqual([null, null]);
+    reg.closeDb();
+    expect(reg.listProjectsReadonly().map((r) => r.repo_url)).toEqual([null, null]);
+
+    await withSeedHandle(
+      "ALTER TABLE projects ADD COLUMN repo_url TEXT; UPDATE projects SET repo_url = 'https://example.invalid/o/r.git' WHERE slug = 'with-url';",
+    );
+    const written = reg.listProjects();
+    expect(written.map((r) => [r.slug, r.repo_url])).toEqual([
+      ["no-url", null],
+      ["with-url", "https://example.invalid/o/r.git"],
+    ]);
+    reg.closeDb();
+    expect(reg.listProjectsReadonly()).toEqual(written);
+  });
+
+  it("R3b: the shared projection has NO WHERE clause (FR-238 / FR-265 AC7) — with a self-negative control", async () => {
+    const src = readFileSync(join(__dirname, "..", "lib", "registry.ts"), "utf-8");
+    const body = (text: string): string | null => {
+      const m = /function projectsSelect\([\s\S]*?\n}\n/.exec(text);
+      return m === null ? null : m[0];
+    };
+    const projection = body(src);
+    expect(projection, "projectsSelect() not found in registry.ts").not.toBeNull();
+    expect(projection).toContain("FROM projects");
+    expect(projection).not.toMatch(/\bWHERE\b/i);
+    // Self-negative: the same extractor over a planted WHERE does see it.
+    const planted = body(src.replace("FROM projects", "FROM projects WHERE status = 'active'"));
+    expect(planted).toMatch(/\bWHERE\b/);
+  });
+
+  it("R3c: the read door lists a path-missing row and a repo_url row alike (FR-265 AC7)", async () => {
+    const reg = await getRegistryModule();
+    reg.upsertProject({ slug: "gone", name: "gone", path: "/no/such/dir/gone", tech_stack: "", igris_version: "7.0.0" });
+    reg.upsertProject({ slug: "reclaimed", name: "reclaimed", path: "/no/such/dir/reclaimed", tech_stack: "", igris_version: "7.0.0" });
+    await withSeedHandle(
+      "ALTER TABLE projects ADD COLUMN repo_url TEXT; UPDATE projects SET repo_url = 'https://example.invalid/o/r.git' WHERE slug = 'reclaimed';",
+    );
+    expect(reg.listProjectsReadonly().map((r) => r.slug)).toEqual(["gone", "reclaimed"]);
+  });
+
+  it("R4: danglingKnowledge names knowledge whose project row is gone, and nothing else", async () => {
+    const reg = await getRegistryModule();
+    expect(reg.danglingKnowledge()).toEqual([]); // tables absent → nothing to report
+    reg.upsertProject({ slug: "kept", name: "kept", path: "/tmp/kept", tech_stack: "", igris_version: "7.0.0" });
+    await withSeedHandle(`
+      CREATE TABLE brief_status (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      CREATE TABLE learnings (id INTEGER PRIMARY KEY, project TEXT NOT NULL);
+      INSERT INTO brief_status (project) VALUES ('kept'), ('gone-b'), ('gone-b');
+      INSERT INTO learnings (project) VALUES ('kept'), ('gone-l'), ('gone-b'), ('');
+    `);
+    expect(reg.danglingKnowledge()).toEqual([
+      { project: "gone-b", briefs: 2, learnings: 1 },
+      { project: "gone-l", briefs: 0, learnings: 1 },
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // BR-084 — the guard claim, MECHANISED rather than asserted
 // ---------------------------------------------------------------------------
 

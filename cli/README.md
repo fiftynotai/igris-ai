@@ -152,7 +152,8 @@ drift class:
 | Drift class | Meaning |
 |---|---|
 | `clean` | All checks pass (registered + path exists — the register-only happy path) |
-| `path-missing` | Registry path no longer exists (orphan) |
+| `path-missing` | Registry path no longer exists and no `repo_url` is recorded (orphan). Shown with what the row owns (briefs, learnings) and a re-point command |
+| `source-reclaimed` | Registry path no longer exists but a `repo_url` is recorded: the source was removed on purpose (FR-265). **Exit-neutral — not drift**; doctor prints a copy-pasteable `restore <slug>: git clone -- '<url>' '<path>'` line and never offers the row for deletion |
 | `hooks-missing` | The GLOBAL `~/.claude/settings.json` lacks the Igris SessionEnd hook (brain-level; the TD-100 silent-failure class). FR-212d moved hooks global — there is no per-project hooks layer. |
 | `hooks-stale` | The global settings carry the Igris hooks but at a non-canonical command path (brain-level) |
 | `slug-basename-mismatch` | Informational — slug != basename(path) |
@@ -186,16 +187,43 @@ replaced `~/.igris/core/` wholesale from the release channel and never wrote
 `~/.igris/core/`** except through the guarded `brain-core-missing` path. Other
 classes require manual decisions.
 
-`--remove-orphans` interactively deletes `path-missing` rows. Skip
-prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`
-(yes-all).
+Every `path-missing` row is shown with what it owns — `briefs N, learnings M`
+(plus errors and sessions when non-zero) — in the table and in an orphan detail
+block printed on every run, before any prompt. A row that owns data is usually
+a moved project: the detail block offers the re-point first
+(`igris register-project <new-path> --slug <slug>`, which keeps the curated
+name and tech stack — TD-310), then recording a `repo_url`
+(→ `source-reclaimed`), then removal.
+
+`--remove-orphans` deletes `path-missing` rows (never `source-reclaimed` ones —
+reported as `not offered`). Modes:
+
+| Invocation | Behaviour |
+|---|---|
+| `--remove-orphans` | One prompt per row, counts shown: `y`/`n`/`a` (abort)/`all`. `all` auto-confirms only the remaining rows that own NOTHING — a data-owning row still gets its own prompt. |
+| `--remove-orphans --empty-only` | Non-interactive: removes exactly the rows that own nothing; names the rest `kept: <slug> (owns …)`. |
+| `--remove-orphans --yes` | No prompt: removes rows that own nothing and **refuses** a row that owns briefs or learnings (`refused: <slug> — owns …`). |
+| `--remove-orphans --yes --include-owning` | Also attempts data-owning rows (the foreign key below still refuses briefed/sessioned ones). |
+| `--slug <slug>` | Narrows any of the above to one `path-missing` row; a clean, missing or `source-reclaimed` slug is refused (exit 1). |
+
+`--empty-only`, `--slug` and `--include-owning` need `--remove-orphans`;
+`--include-owning` needs `--yes` and cannot be combined with `--empty-only`.
+Any other combination is a usage error (exit 1, nothing swept).
 
 A row the brain still references — a project that has briefs or sessions — is
 **skipped, not deleted**: the DELETE is refused by the foreign key (deleting it
 would orphan that history), so the sweep reports `skipped: <slug>` with the
 count that blocked it, keeps the registry row, and carries on with the other
-orphans. Deal with the briefs first, then re-run. A skipped row is still drift,
-so `igris doctor --remove-orphans` exits 1 when one is left behind.
+orphans. After the sweep, `dangling knowledge (no registry row): <slug> — …`
+names briefs/learnings whose project row is already gone (a report — nothing is
+deleted).
+
+The exit code comes from a **re-read** of the registry, not from the sweep's
+own report (BR-087): a row that is still `path-missing` afterwards — skipped,
+refused, declined (`n`), aborted (`a`), or never answered because the input
+ended — keeps `igris doctor --remove-orphans` at exit 1. Piped answers are all
+consumed in order, and end of input is "not adjudicated", never clean. No
+answer makes a row clean; a re-point, a `repo_url` or its removal does.
 
 ## `igris sync`
 

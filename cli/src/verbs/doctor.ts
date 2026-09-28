@@ -58,6 +58,9 @@
  *                             install is the operator's); beside machine-identity.
  *
  * Per-project:
+ *   source-reclaimed        → (FR-265) path missing AND a `repo_url` recorded:
+ *                             removed on purpose. EXIT-NEUTRAL (`isNotDrift`),
+ *                             printed with a restore line, never deleted.
  *   git-hooks-missing       → (FR-243) `.git` is a directory and pre-commit or
  *                             commit-msg in `.git/hooks/` is absent, a non-symlink
  *                             (foreign), a symlink to somewhere other than the
@@ -73,7 +76,8 @@
  *                             brainDir()) — except the hooksPath case, which is
  *                             reported, never fixed. A `.git` FILE (worktree /
  *                             submodule) yields no row.
- *   path-missing            → orphan (registry row points at deleted dir)
+ *   path-missing            → orphan (deleted dir, no `repo_url`); shown with
+ *                             what it owns and a re-point offer (TD-310)
  *   channel-mismatch        → installed_features.json#cli_version newer than current CLI
  *   slug-basename-mismatch  → row.slug !== basename(row.path)  (informational)
  *   duplicate-path          → multiple slugs with the same realpath (the
@@ -94,8 +98,8 @@
  * per-project `.claude/` layer, so its absence no longer signals "not installed".
  * A registered project whose path exists is clean.
  *
- * Precedence (high → low): path-missing → brain-core-missing → brain-core-stale →
- * channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
+ * Precedence (high → low): path-missing / source-reclaimed → brain-core-missing →
+ * brain-core-stale → channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
  * hooks-stale → attribution-missing → secret-perms → skills-pollution →
  * machine-identity → secret-scan-disarmed → duplicate-path → git-hooks-missing →
  * symlink-target → slug-basename-mismatch → clean.
@@ -130,11 +134,13 @@
  * `--fix` never replaces `~/.igris/core/` except through G1's guarded path.
  * The exit code re-probes every fixed class (no blind discount): a row that
  * is still drifted after its fix keeps the verb at exit 1.
- * --remove-orphans deletes path-missing rows after per-row confirmation
- * (skip prompt with --yes). A row the brain still references — a project with
- * briefs or sessions — cannot be deleted without orphaning that history, so it
- * is SKIPPED and reported per project and the sweep continues (BR-084); a
- * skipped row is still drift, so the verb exits 1.
+ * --remove-orphans deletes path-missing rows (never source-reclaimed ones),
+ * showing what each owns first; modes (`--empty-only`, `--yes`
+ * [`--include-owning`], `--slug`) are policy in front of ONE delete — see
+ * `confirmAndRemoveOrphans`. A row the DB still references (briefs/sessions FK)
+ * is SKIPPED and reported (BR-084). The exit code comes from a RE-READ of the
+ * registry, never the sweep's report (BR-087): any row still path-missing
+ * afterwards keeps exit 1 — dispositions at the exit predicate.
  */
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
@@ -143,6 +149,9 @@ import { createInterface } from "node:readline";
 import {
   listProjects,
   deleteProjectRow,
+  danglingKnowledge,
+  ownsData,
+  projectOwnership,
   type DeleteProjectOutcome,
 } from "../lib/registry.js";
 import {
@@ -190,19 +199,78 @@ import {
   installGitHooks,
 } from "../lib/git-hooks.js";
 import { info, warn, error as logError } from "../lib/log.js";
-import type { CLITarget, DriftRow, RegistryRow } from "../types.js";
+import type { CLITarget, DriftRow, ProjectOwnership, RegistryRow } from "../types.js";
 
 export interface DoctorOptions {
   fix: boolean;
   removeOrphans: boolean;
   yes: boolean;
+  /** TD-310 `--empty-only`: non-interactive; remove only the orphans that own nothing. */
+  emptyOnly?: boolean;
+  /** TD-310 `--slug <slug>`: restrict `--remove-orphans` to one row. */
+  slug?: string;
+  /** TD-310 `--include-owning`: with `--yes` ONLY — let `--yes` attempt a data-owning row. */
+  includeOwning?: boolean;
+}
+
+/** TD-310: the usage error for an invalid flag combination, or null (checked before any read). */
+export function orphanFlagError(opts: DoctorOptions): string | null {
+  const emptyOnly = opts.emptyOnly === true;
+  const includeOwning = opts.includeOwning === true;
+  const hasSlug = opts.slug !== undefined;
+  if (!opts.removeOrphans && (emptyOnly || hasSlug || includeOwning)) {
+    return "--empty-only, --slug and --include-owning select rows for --remove-orphans; pass --remove-orphans as well.";
+  }
+  if (hasSlug && (opts.slug ?? "").trim() === "") {
+    return "--slug needs a registry slug.";
+  }
+  if (emptyOnly && includeOwning) {
+    return "--empty-only removes only rows that own nothing; it cannot be combined with --include-owning.";
+  }
+  if (includeOwning && !opts.yes) {
+    return "--include-owning only widens --yes; the interactive prompt already asks per row with the counts shown.";
+  }
+  return null;
+}
+
+/**
+ * FR-265: clean, or the one non-clean class that is not drift (`source-reclaimed`,
+ * recorded data). One predicate for the exit code, the header and the re-read.
+ */
+export function isNotDrift(cls: DriftRow["driftClass"]): boolean {
+  return cls === "clean" || cls === "source-reclaimed";
+}
+
+/** TD-310: "briefs N, learnings M" (+ errors/sessions when non-zero). */
+export function formatOwnership(o: ProjectOwnership): string {
+  const n = (v: number | null): string => (v === null ? "unknown" : String(v));
+  const parts = [`briefs ${n(o.briefs)}`, `learnings ${n(o.learnings)}`];
+  if (o.errors !== 0) parts.push(`errors ${n(o.errors)}`);
+  if (o.sessions !== 0) parts.push(`sessions ${n(o.sessions)}`);
+  return parts.join(", ");
+}
+
+/** FR-265: a paste-safe restore line — single-quoted args; `--` so a value starting with `-` is never a git option. */
+export function restoreCommand(url: string, path: string): string {
+  const q = (s: string): string => `'${s.replace(/'/g, "'\\''")}'`;
+  return `git clone -- ${q(url)} ${q(path)}`;
 }
 
 export async function runDoctor(opts: DoctorOptions): Promise<number> {
+  const usage = orphanFlagError(opts);
+  if (usage !== null) {
+    logError(`usage: ${usage}`);
+    return 1;
+  }
+
   const rows = listProjects();
   const drift = await classifyDriftAll(rows);
 
+  annotateOrphans(drift); // TD-310: counts known before anything is printed
+
   printDriftTable(drift);
+  printOrphanDetails(drift);
+  printSourceReclaimed(drift);
 
   // FR-165: read-only WARNING for MCP env refs whose VAR is resolvable nowhere
   // (neither secrets.env nor process.env). Not a fixable drift-row — the fix is
@@ -246,55 +314,37 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
     printFixSummary(outcomes);
   }
 
-  // BR-084: slugs whose delete the DB REFUSED (still referenced). They are the
-  // one class of path-missing row that --remove-orphans does NOT resolve, so
-  // they must not be discounted from the exit code below.
-  const skippedOrphans = new Set<string>();
-
+  let stillDrifted: Set<string> | null = null;
+  let targetRefused = false;
   if (opts.removeOrphans) {
-    const orphans = drift.filter((r) => r.driftClass === "path-missing");
-    if (orphans.length === 0) {
-      info("No orphans to remove.");
-    } else {
-      const sweep = await confirmAndRemoveOrphans(orphans, opts.yes);
-      info(`Removed ${sweep.removed} orphan registry row(s).`);
-      if (sweep.skipped > 0) {
-        for (const r of sweep.results) {
-          if (!r.ok) skippedOrphans.add(r.slug);
-        }
-        // Names the slugs rather than saying "see above": the per-row reasons go
-        // to stderr and this line to stdout, so the two can be redirected apart.
-        info(
-          `Skipped ${sweep.skipped} orphan registry row(s) still referenced by ` +
-            `brain rows: ${[...skippedOrphans].join(", ")}. The sweep completed ` +
-            `for the rest; each skip's blocking count is in the warnings.`,
-        );
-      }
-    }
+    targetRefused = (await sweepOrphans(drift, rows, opts)).targetRefused;
+    // BR-087: re-read, never trust the sweep's report (--fix's "re-check rather
+    // than assume"). A removed row is absent, hence resolved.
+    stillDrifted = new Set(
+      classifyDrift(listProjects())
+        .filter((r) => !isNotDrift(r.driftClass))
+        .map((r) => r.slug),
+    );
   }
 
-  // Exit code: 0 if all clean, 1 if any non-clean drift remains, 1 on fix errors.
+  // Exit code: 1 if any drift remains, on fix errors, or on a refused --slug.
   const nonCleanRemaining = drift.some((r) => {
-    if (r.driftClass === "clean") return false;
-    // After --remove-orphans, path-missing is conceptually resolved — EXCEPT
-    // for a row the DB refused to delete (BR-084). That registry row is still
-    // there and still drifted, so exiting 0 would be the silent pass-over the
-    // per-project reporting exists to prevent.
-    //
-    // THAT EXCEPTION IS NOT EXHAUSTIVE, AND THIS PREDICATE IS NOT YET HONEST.
-    // Three more cases leave a drifted row alive and still return false here,
-    // because `attempt` never ran so the slug never entered `skippedOrphans`:
-    // the operator answers `n`, the operator aborts with `a`, and piped stdin
-    // runs dry (the second `question` never resolves, so the sweep stops after
-    // one answer). All three were measured at exit 0 with the row surviving,
-    // in BOTH the pre- and post-BR-084 builds — they are pre-existing, and
-    // BR-084 narrowed the discount rather than widening it. BR-087 owns them,
-    // and its structural fix is to derive this from a RE-READ of the registry
-    // rather than from the sweep's own report — which is what the `--fix`
-    // branch below already does ("re-check rather than assume"). Until then,
-    // read this as "the DB-refusal case is honest", not "the exit code is".
-    if (opts.removeOrphans && r.driftClass === "path-missing") {
-      return skippedOrphans.has(r.slug);
+    if (isNotDrift(r.driftClass)) return false;
+    // BR-087 DISPOSITIONS. A pre-sweep path-missing row is non-clean iff the
+    // RE-READ still finds it drifted — the sweep's report is never consulted.
+    //  - removed → absent → resolved.
+    //  - DB-refused (BR-084), or refused by policy (TD-310: --yes / --empty-only
+    //    on a data-owning row) → still there → UNRESOLVED, exit 1.
+    //  - declined (`n`) → UNRESOLVED, exit 1: a prompt answer leaves no trace in
+    //    the registry, so "clean by consent" would make exit 0 mean "the
+    //    operator said so", not "the registry is clean". Keeping a row without
+    //    its directory is stated as DATA: a `repo_url` or a re-pointed path (D2).
+    //  - aborted (`a`) or input ended (EOF) → UNADJUDICATED, exit 1: nobody
+    //    claimed the rest were clean.
+    // NO CASE IS CLEAN-BY-CONSENT; the only exit-neutral non-clean state is
+    // `source-reclaimed`, which is data, not an answer.
+    if (stillDrifted !== null && r.driftClass === "path-missing") {
+      return stillDrifted.has(r.slug);
     }
     if (opts.fix) {
       // BR-103: after --fix every auto-fixable class is RE-PROBED live — the
@@ -309,7 +359,151 @@ export async function runDoctor(opts: DoctorOptions): Promise<number> {
   });
 
   if (errored > 0) return 1;
+  if (targetRefused) return 1;
   return nonCleanRemaining ? 1 : 0;
+}
+
+// --- TD-310 / FR-265: the orphan report (every run) and the --remove-orphans pass
+
+/** TD-310: attach each orphan's ownership; lead its recommended fix with the counts. */
+function annotateOrphans(drift: DriftRow[]): void {
+  for (const r of drift) {
+    if (r.driftClass !== "path-missing") continue;
+    r.ownership = projectOwnership(r.slug);
+    r.recommendedFix = ownsData(r.ownership)
+      ? `${formatOwnership(r.ownership)} — moved? re-point (see below)`
+      : "owns nothing — igris doctor --remove-orphans --empty-only";
+  }
+}
+
+/** Below the table, before any prompt: full counts and the remedies, re-point first (TD-310 AC4). */
+function printOrphanDetails(drift: DriftRow[]): void {
+  const orphans = drift.filter((r) => r.driftClass === "path-missing");
+  if (orphans.length === 0) return;
+  info("");
+  info("Orphans (path-missing) — what each row owns, and how to resolve it:");
+  for (const o of orphans) {
+    const owning = o.ownership === undefined || ownsData(o.ownership);
+    const owned = o.ownership === undefined ? "ownership unknown" : formatOwnership(o.ownership);
+    info(`- ${o.slug} (${o.path}): ${owned}`);
+    info(`    moved → igris register-project <new-path> --slug ${o.slug}`);
+    info("    source removed on purpose → record its repo URL (igris_project_update repo_url) → source-reclaimed");
+    info(`    neither → igris doctor --remove-orphans${owning ? "" : " --empty-only"}`);
+  }
+}
+
+/** FR-265 AC6: one `restore <slug>: git clone …` line per source-reclaimed row, every run. */
+function printSourceReclaimed(drift: DriftRow[]): void {
+  const reclaimed = drift.filter((r) => r.driftClass === "source-reclaimed");
+  if (reclaimed.length === 0) return;
+  info("");
+  info("Source reclaimed (not drift) — removed on purpose; restore with:");
+  for (const r of reclaimed) {
+    info(`restore ${r.slug}: ${restoreCommand(r.repoUrl ?? "", r.path)}`);
+  }
+}
+
+/** Scope the candidates (`--slug`, never source-reclaimed), run the ONE sweep, report. */
+async function sweepOrphans(
+  drift: DriftRow[],
+  rows: RegistryRow[],
+  opts: DoctorOptions,
+): Promise<{ targetRefused: boolean }> {
+  let orphans = drift.filter((r) => r.driftClass === "path-missing");
+
+  if (opts.slug !== undefined) {
+    const slug = opts.slug;
+    if (!rows.some((r) => r.slug === slug)) {
+      logError(`--slug ${slug}: no registry row has that slug.`);
+      return { targetRefused: true };
+    }
+    const mine = drift.filter((r) => r.slug === slug);
+    const reclaimed = mine.find((r) => r.driftClass === "source-reclaimed");
+    if (reclaimed !== undefined) {
+      logError(
+        `refused: ${slug} is source-reclaimed — not an orphan, never removed; ` +
+          `restore with: ${restoreCommand(reclaimed.repoUrl ?? "", reclaimed.path)}`,
+      );
+      return { targetRefused: true };
+    }
+    const orphan = mine.find((r) => r.driftClass === "path-missing");
+    if (orphan === undefined) {
+      const classes = mine.map((r) => r.driftClass).join(", ") || "clean";
+      logError(`refused: ${slug} is not an orphan (${classes}) — --remove-orphans only removes path-missing rows.`);
+      return { targetRefused: true };
+    }
+    orphans = [orphan];
+  } else {
+    for (const r of drift) {
+      if (r.driftClass === "source-reclaimed") info(`not offered: ${r.slug} (source-reclaimed)`);
+    }
+  }
+
+  if (orphans.length === 0) {
+    info("No orphans to remove.");
+  } else {
+    const sweep = await confirmAndRemoveOrphans(orphans, opts.yes, undefined, {
+      emptyOnly: opts.emptyOnly === true,
+      includeOwning: opts.includeOwning === true,
+    });
+    reportSweep(sweep);
+  }
+  reportDanglingKnowledge();
+  return { targetRefused: false };
+}
+
+/** One summary line per sweep outcome. */
+function reportSweep(sweep: OrphanSweepResult): void {
+  info(`Removed ${sweep.removed} orphan registry row(s).`);
+  if (sweep.skipped > 0) {
+    const skipped = sweep.results.filter((r) => !r.ok).map((r) => r.slug);
+    // Named here: the per-row reasons went to stderr, this line goes to stdout.
+    info(
+      `Skipped ${sweep.skipped} orphan registry row(s) still referenced by ` +
+        `brain rows: ${skipped.join(", ")}. The sweep completed ` +
+        `for the rest; each skip's blocking count is in the warnings.`,
+    );
+  }
+  if (sweep.refused.length > 0) {
+    info(
+      `Kept ${sweep.refused.length} data-owning orphan row(s), not attempted: ` +
+        `${sweep.refused.map((r) => r.slug).join(", ")}. Re-point a moved project ` +
+        `(igris register-project <new-path> --slug <slug>); to remove one anyway, ` +
+        `answer 'y' at its prompt or pass --yes --include-owning.`,
+    );
+  }
+  if (sweep.declined.length > 0) {
+    info(
+      `Kept ${sweep.declined.length} declined orphan row(s): ${sweep.declined.join(", ")} — ` +
+        `still drift until re-pointed, given a repo_url, or removed.`,
+    );
+  }
+  if (sweep.unadjudicated.length > 0) {
+    info(
+      `Not adjudicated: ${sweep.unadjudicated.length} orphan row(s): ` +
+        `${sweep.unadjudicated.join(", ")} — the sweep ended (abort, or end of input) ` +
+        `before they were answered.`,
+    );
+  }
+}
+
+/** TD-310 item 5: knowledge whose project row is gone — report only, never deletes. */
+function reportDanglingKnowledge(): void {
+  let dangling: ReturnType<typeof danglingKnowledge>;
+  try {
+    dangling = danglingKnowledge();
+  } catch (err) {
+    warn(`dangling-knowledge report unavailable: ${err instanceof Error ? err.message : String(err)}`);
+    return;
+  }
+  if (dangling.length === 0) return;
+  for (const d of dangling) {
+    info(`dangling knowledge (no registry row): ${d.project} — briefs ${d.briefs}, learnings ${d.learnings}`);
+  }
+  info(
+    "  (report only — nothing was deleted; registering the slug again " +
+      "(igris register-project <path> --slug <slug>) makes it reachable.)",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -743,9 +937,12 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
  * `classifyDriftAll` (`detectGlobalHooksDrift`), since hooks are global now.
  *
  * Detects (per-project):
- * - path-missing: !existsSync(row.path) — the registry row points at a deleted
- *                 dir (the one genuinely-broken state a register-only project
- *                 can still be in). Resolved via --remove-orphans.
+ * - source-reclaimed (FR-265): !existsSync(row.path) AND a non-empty
+ *                 `repo_url` — removed on purpose, recoverable; exit-neutral.
+ * - path-missing: !existsSync(row.path) with no `repo_url` — the registry row
+ *                 points at a deleted dir (the one genuinely-broken state a
+ *                 register-only project can still be in). Resolved by a
+ *                 re-point, a recorded `repo_url`, or --remove-orphans.
  * - duplicate-path: any other row whose realpath(row.path) is identical.
  * - git-hooks-missing (FR-243): `.git/` is a directory and the Igris git hooks
  *                 are absent / foreign / dangling / not executable, or
@@ -754,9 +951,9 @@ export async function classifyDriftAll(rows: RegistryRow[]): Promise<DriftRow[]>
  * - symlink-target: row.path is a symlink (informational).
  * - clean: registered + path exists (the register-only happy path).
  *
- * Precedence: path-missing > duplicate-path > git-hooks-missing >
- *             slug-basename-mismatch > symlink-target > clean.
- * (path-missing wins because if the path is gone, everything else is vacuous.)
+ * Precedence: path-missing / source-reclaimed > duplicate-path >
+ *             git-hooks-missing > slug-basename-mismatch > symlink-target > clean.
+ * (a missing path wins because if the path is gone, everything else is vacuous.)
  */
 export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
   // Pre-pass: build realpath -> slugs map for duplicate-path detection.
@@ -778,11 +975,24 @@ export function classifyDrift(rows: RegistryRow[]): DriftRow[] {
 
   for (const r of rows) {
     if (!existsSync(r.path)) {
+      // FR-265: a recorded repo_url turns a missing path into a deliberate,
+      // recoverable state. An empty string counts as absent.
+      const repoUrl = typeof r.repo_url === "string" ? r.repo_url.trim() : "";
+      if (repoUrl !== "") {
+        out.push({
+          slug: r.slug,
+          path: r.path,
+          driftClass: "source-reclaimed",
+          recommendedFix: "source removed on purpose — restore: see below",
+          repoUrl,
+        });
+        continue;
+      }
       out.push({
         slug: r.slug,
         path: r.path,
         driftClass: "path-missing",
-        recommendedFix: "run 'igris doctor --remove-orphans' to delete this row",
+        recommendedFix: "moved? re-point (see below), else --remove-orphans",
       });
       continue;
     }
@@ -1517,7 +1727,15 @@ function printDriftTable(drift: DriftRow[]): void {
     return;
   }
   const cleanCount = drift.filter((r) => r.driftClass === "clean").length;
-  info(`Drift report: ${drift.length} project(s), ${cleanCount} clean`);
+  // FR-265: the one exit-neutral non-clean class gets its own count (printed
+  // only when present, so a registry without one keeps its header unchanged).
+  const reclaimedCount = drift.filter(
+    (r) => isNotDrift(r.driftClass) && r.driftClass !== "clean",
+  ).length;
+  info(
+    `Drift report: ${drift.length} project(s), ${cleanCount} clean` +
+      (reclaimedCount > 0 ? `, ${reclaimedCount} source-reclaimed` : ""),
+  );
   info("");
   info("| slug | path | drift-class | recommended-fix |");
   info("|------|------|-------------|-----------------|");
@@ -1529,31 +1747,106 @@ function printDriftTable(drift: DriftRow[]): void {
 
 /**
  * Async prompt function — accepts the question string, resolves with the
- * user's answer (NOT trimmed/lowercased — caller normalizes). Used as the
- * test seam in confirmAndRemoveOrphans so vitest can inject a queue-backed
- * fake without battling Node's readline event timing (TD-111).
+ * user's answer (NOT trimmed/lowercased — caller normalizes), or `null` when
+ * the input has ENDED (EOF): there is no answer and there will be none. Used as
+ * the test seam in confirmAndRemoveOrphans so vitest can inject a scripted
+ * reader without driving real stdin (TD-111). A reader that only ever returns
+ * strings still satisfies this type.
  */
-export type PromptFn = (question: string) => Promise<string>;
+export type PromptFn = (question: string) => Promise<string | null>;
 
 /**
  * What one `--remove-orphans` sweep did. Per-project, never per-batch (BR-084).
  *
  * `results` carries one entry per ATTEMPTED delete, in sweep order — a row the
- * user declined (`n`) or one never reached (`a`) is not an attempt and does not
- * appear. `removed + skipped === results.length` by construction.
+ * user declined (`n`), one never reached (`a` / EOF), and one a mode refused on
+ * ownership are not attempts and do not appear. `removed + skipped ===
+ * results.length` by construction. Every candidate lands in exactly one of
+ * `results`, `declined`, `unadjudicated` or `refused` (BR-087 AC4: a reader
+ * can tell "the operator said no" from "nobody was asked").
  */
 export interface OrphanSweepResult {
   removed: number;
   /** Attempts the DB refused. Each carries its reason in `results`. */
   skipped: number;
   results: DeleteProjectOutcome[];
+  /** BR-087: answered `n` (or anything that is not y/a/all) — kept, still drift. */
+  declined: string[];
+  /** BR-087: never answered — the operator aborted (`a`) or the input ended (EOF) first. */
+  unadjudicated: string[];
+  /** TD-310: data-owning rows the mode refused to attempt (`--yes` without `--include-owning`, or `--empty-only`). */
+  refused: Array<{ slug: string; reason: string }>;
+}
+
+/** TD-310: which non-interactive policy governs a sweep. */
+export interface OrphanSweepOptions {
+  /** `--empty-only`: never prompt; attempt only rows that own nothing. */
+  emptyOnly?: boolean;
+  /** `--include-owning` (with `--yes`): attempt data-owning rows too. */
+  includeOwning?: boolean;
 }
 
 /**
- * Interactive orphan confirmation flow. Exported for vitest stdin-fixture
- * tests (TD-111): tests inject a synthetic `prompt` function so they can
- * exercise the `[y/N/a/all]` decision tree without monkey-patching
- * `process.stdin` or fighting readline's per-question listener race.
+ * BR-087: the production reader — every `'line'` is buffered from the moment
+ * the ONE interface exists and answers the asks in order (a per-row
+ * `rl.question` dropped lines piped in one burst and hung after EOF, draining
+ * to exit 0); `'close'` resolves the pending ask and every later one `null`.
+ */
+class LineQueue {
+  private readonly lines: string[] = [];
+  private ended = false;
+  private waiting: ((line: string | null) => void) | null = null;
+
+  push(line: string): void {
+    const w = this.waiting;
+    if (w !== null) {
+      this.waiting = null;
+      w(line);
+    } else {
+      this.lines.push(line);
+    }
+  }
+
+  end(): void {
+    this.ended = true;
+    const w = this.waiting;
+    if (w !== null) {
+      this.waiting = null;
+      w(null);
+    }
+  }
+
+  /** The input is over AND nothing is buffered: no later ask can be answered. */
+  exhausted(): boolean {
+    return this.ended && this.lines.length === 0;
+  }
+
+  isOpen(): boolean {
+    return !this.ended;
+  }
+
+  next(): Promise<string | null> {
+    const line = this.lines.shift();
+    if (line !== undefined) return Promise.resolve(line);
+    if (this.ended) return Promise.resolve(null);
+    return new Promise((res) => {
+      this.waiting = res;
+    });
+  }
+}
+
+/**
+ * Orphan confirmation flow. Exported for vitest (TD-111): tests inject a
+ * scripted `prompt` instead of driving `process.stdin`.
+ *
+ * MODES (TD-310), decided by each row's ownership:
+ *   - `emptyOnly`: never prompts; removes only rows that own nothing.
+ *   - `skipPrompt` (`--yes`): never prompts; REFUSES a data-owning row unless
+ *     `includeOwning` (`learnings`/`errors` have no FK to stop a delete).
+ *   - interactive: counts in every prompt; `y` attempts any row (per-row
+ *     consent, FR-265 AC4); `all` auto-confirms only rows that own NOTHING;
+ *     `a` or end of input leaves this row and the rest NOT ADJUDICATED (rows
+ *     an earlier `all` covers are still removed after end of input).
  *
  * BR-084 — WHAT HAPPENS TO A PROJECT THAT STILL HAS BRIEFS, and why.
  *
@@ -1569,7 +1862,8 @@ export interface OrphanSweepResult {
  *     verb must not be the loudest destructive path in the CLI.
  *   - *re-point the briefs at another slug*. That is a data migration with no
  *     obvious target slug, and it belongs with the brief/project coupling work
- *     (TD-328), not inside a registry sweep.
+ *     (TD-328), not inside a registry sweep. (TD-310 offers the opposite: re-point
+ *     the ROW's path, keeping the slug the briefs already name.)
  *
  * Skip-and-report is also the only option that leaves the operator's next move
  * intact: the row is still there to delete deliberately once the briefs are
@@ -1577,16 +1871,20 @@ export interface OrphanSweepResult {
  * "history is gone, quietly" — and NOT (as before BR-084) "every other orphan
  * survives too, because the first refusal threw".
  *
- * @param prompt  Optional async function that returns the user's answer for
- *                a given prompt string. Defaults to a `readline`-backed
- *                prompt reading `process.stdin` for the production path.
+ * @param prompt     Reader: the answer, or `null` at end of input. Defaults to
+ *                   the `LineQueue` reader over `process.stdin`.
+ * @param sweepOpts  TD-310 policy (`emptyOnly`, `includeOwning`).
  */
 export async function confirmAndRemoveOrphans(
   orphans: DriftRow[],
   skipPrompt: boolean,
   prompt?: PromptFn,
+  sweepOpts: OrphanSweepOptions = {},
 ): Promise<OrphanSweepResult> {
   const results: DeleteProjectOutcome[] = [];
+  const declined: string[] = [];
+  const unadjudicated: string[] = [];
+  const refused: Array<{ slug: string; reason: string }> = [];
 
   // The ONLY route to deleteProjectRow in this function — one guard rather than
   // four. NB this closure constrains nothing outside this function, and since
@@ -1594,7 +1892,8 @@ export async function confirmAndRemoveOrphans(
   // returned outcome compiles clean and fails SILENTLY (pre-BR-084 it crashed).
   // So the "only route" is pinned by a source scan in registry.test.ts, not by
   // this comment — a claim of the form "there is only one X" needs a mechanism,
-  // which is the FR-247 / FR-240 precedent in this repo.
+  // which is the FR-247 / FR-240 precedent in this repo. TD-310's modes are
+  // policy in front of this call, never a second one.
   const attempt = (o: DriftRow): void => {
     const outcome = deleteProjectRow(o.slug);
     results.push(outcome);
@@ -1604,54 +1903,112 @@ export async function confirmAndRemoveOrphans(
       warn(`skipped: ${o.slug} — ${outcome.error ?? "unknown reason"}`);
     }
   };
+  const ownershipOf = (o: DriftRow): ProjectOwnership => o.ownership ?? projectOwnership(o.slug);
+  const notAdjudicated = (o: DriftRow): void => {
+    unadjudicated.push(o.slug);
+    info(`not adjudicated: ${o.slug}`);
+  };
   const summarize = (): OrphanSweepResult => ({
     removed: results.filter((r) => r.ok).length,
     skipped: results.filter((r) => !r.ok).length,
     results,
+    declined,
+    unadjudicated,
+    refused,
   });
 
-  if (skipPrompt) {
-    for (const o of orphans) attempt(o);
+  // Non-interactive: the mode decides, nothing is asked.
+  if (sweepOpts.emptyOnly === true || skipPrompt) {
+    for (const o of orphans) {
+      const own = ownershipOf(o);
+      if (!ownsData(own)) {
+        attempt(o);
+        continue;
+      }
+      if (sweepOpts.emptyOnly === true) {
+        refused.push({
+          slug: o.slug,
+          reason: `owns ${formatOwnership(own)} — --empty-only removes only rows that own nothing`,
+        });
+        info(`kept: ${o.slug} (owns ${formatOwnership(own)})`);
+        continue;
+      }
+      if (sweepOpts.includeOwning === true) {
+        attempt(o);
+        continue;
+      }
+      const reason =
+        `owns ${formatOwnership(own)} — --yes does not remove a data-owning row; ` +
+        "re-point it, or pass --include-owning";
+      refused.push({ slug: o.slug, reason });
+      warn(`refused: ${o.slug} — ${reason}`);
+    }
     return summarize();
   }
 
-  // Production prompt: spin up a readline interface against process.stdin.
-  // Tests bypass this entirely by passing their own prompt function.
+  // Interactive. `rl` is assigned BEFORE its listeners are attached, so the
+  // `finally` closes it even if subscribing throws.
+  const queue = new LineQueue();
   let rl: ReturnType<typeof createInterface> | null = null;
   const ask: PromptFn =
     prompt ??
-    ((q: string): Promise<string> => {
+    ((q: string): Promise<string | null> => {
       if (rl === null) {
-        rl = createInterface({
-          input: process.stdin,
-          output: process.stdout,
+        const created = createInterface({ input: process.stdin, output: process.stdout });
+        rl = created;
+        created.on("line", (line: string) => queue.push(line));
+        created.on("close", () => queue.end());
+        // Ctrl-C at a TTY prompt ends the input: the rest are not adjudicated.
+        created.on("SIGINT", () => {
+          info("");
+          info("interrupted");
+          created.close();
         });
       }
-      return new Promise((res) => rl!.question(q, (a) => res(a)));
+      if (queue.exhausted()) return Promise.resolve(null); // no answer is coming
+      if (queue.isOpen()) {
+        const live = rl as ReturnType<typeof createInterface>;
+        live.setPrompt(q);
+        live.prompt();
+      } else {
+        process.stdout.write(q); // closed with answers buffered: readline refuses prompt()
+      }
+      return queue.next();
     });
 
   let yesAll = false;
+  let inputEnded = false;
 
   // BR-084: `finally`, not a trailing statement. `attempt` no longer throws, but
   // `ask` still can (a closed or erroring stdin), and the pre-BR-084 shape left
   // the readline interface — and with it the process's hold on stdin — open on
   // every throwing path. Cleanup belongs to the scope that created it.
   try {
-    for (const o of orphans) {
-      if (yesAll) {
+    for (let i = 0; i < orphans.length; i++) {
+      const o = orphans[i];
+      const own = ownershipOf(o);
+      if (yesAll && !ownsData(own)) { // TD-310: `all` never covers an owner
         attempt(o);
         continue;
       }
-      // TD-111: prompt label was `[y/N/a/Y/A]` but the handler always lowercases
-      // the input, so `Y`/`A` were never reachable as distinct shortcuts (they
-      // collapsed to `y`/`a` and re-prompted on the next orphan). Relabel to
-      // `[y/N/a/all]` to match the actual accepted tokens. Behavior unchanged:
-      // the handler still accepts `y`, `n`, `a`, `all`, and `yes-all`.
-      const ans = (await ask(`${o.slug} -> ${o.path}: orphan; delete? [y/N/a/all]: `))
-        .trim()
-        .toLowerCase();
+      if (inputEnded) {
+        notAdjudicated(o);
+        continue;
+      }
+      // TD-111: `[y/N/a/all]` are the accepted tokens (input is lowercased;
+      // `yes-all` also works). TD-310: the counts are IN the prompt.
+      const raw = await ask(
+        `${o.slug} -> ${o.path}: orphan (${formatOwnership(own)}); delete? [y/N/a/all]: `,
+      );
+      if (raw === null) { // BR-087: end of input is not a decision
+        inputEnded = true;
+        notAdjudicated(o);
+        continue;
+      }
+      const ans = raw.trim().toLowerCase();
       if (ans === "a") {
         info("aborted by user");
+        for (const rest of orphans.slice(i)) notAdjudicated(rest);
         break;
       }
       if (ans === "y") {
@@ -1660,7 +2017,8 @@ export async function confirmAndRemoveOrphans(
         yesAll = true;
         attempt(o);
       } else {
-        info(`kept: ${o.slug}`);
+        declined.push(o.slug);
+        info(`kept (declined): ${o.slug}`);
       }
     }
   } finally {

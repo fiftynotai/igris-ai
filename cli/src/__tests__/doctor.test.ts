@@ -1183,6 +1183,10 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(sweep.removed).toBe(0);
     // A declined row is not an ATTEMPT — it must not show up as a skip.
     expect(sweep.results).toEqual([]);
+    // BR-087 V2: ...but it IS named, as declined (unresolved drift), so a
+    // reader can tell "the operator said no" from "nobody was asked".
+    expect(sweep.declined).toEqual(["orphan-keep"]);
+    expect(sweep.unadjudicated).toEqual([]);
     expect(reg.listProjects().length).toBe(1);
   });
 
@@ -1201,6 +1205,10 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     );
     expect(sweep.removed).toBe(0);
     expect(sweep.results).toEqual([]);
+    // BR-087: an abort adjudicates NOTHING — the row it was asked about and
+    // every row after it are named as not adjudicated (never "kept").
+    expect(sweep.unadjudicated).toEqual(["orphan-x", "orphan-y", "orphan-z"]);
+    expect(sweep.declined).toEqual([]);
     expect(reg.listProjects().length).toBe(3);
   });
 
@@ -1336,7 +1344,12 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
     expect(reg.listProjects().map((r) => r.slug)).toEqual([CLEAN, BRIEFED]);
 
     // BRIEFED first — the throw used to happen here, before CLEAN was reached.
-    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true);
+    // TD-310: `--yes` alone now REFUSES a data-owning row before any delete, so
+    // this pin of the FK backstop (BR-084) passes `includeOwning` — the one
+    // route on which the DELETE is still attempted and the FK must refuse it.
+    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true, undefined, {
+      includeOwning: true,
+    });
 
     expect(sweep.removed).toBe(1);
     expect(sweep.skipped).toBe(1);
@@ -1404,13 +1417,20 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
 
     let created = 0;
     let closed = 0;
+    // BR-087: the production reader is a LINE QUEUE on one interface
+    // (`on('line')` / `on('close')` + `setPrompt`/`prompt`), not a per-row
+    // `question` — so the synthetic failure is raised where the reader
+    // subscribes. The invariant is unchanged: one interface created, and
+    // closed exactly once on the throwing path.
     vi.doMock("node:readline", () => {
       const createInterface = (): unknown => {
         created++;
         return {
-          question: (): never => {
-            throw new Error("synthetic stdin failure");
+          on: (event: string): never => {
+            throw new Error(`synthetic stdin failure (on '${event}')`);
           },
+          setPrompt: (): void => {},
+          prompt: (): void => {},
           close: (): void => {
             closed++;
           },
@@ -1436,6 +1456,179 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
       const reg = await import("../lib/registry.js");
       reg.closeDb();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-087 / TD-310 / FR-265 — the sweep is honest about what it did NOT do, and
+// knows what each orphan owns before it offers to delete it.
+//
+// Ownership comes from real tables in the sandbox brain: `learnings` is seeded
+// through a SEPARATE short-lived handle opened after `closeDb()` (never two live
+// RW connections — the BR-084 fixture rule). `learnings` has NO foreign key, so
+// a learnings-only row is exactly the one the FK backstop cannot protect.
+// ---------------------------------------------------------------------------
+describe("doctor — --remove-orphans is honest and ownership-aware (BR-087 / TD-310 / FR-265)", () => {
+  function rows(slugs: string[]): Array<{
+    slug: string;
+    path: string;
+    driftClass: "path-missing";
+    recommendedFix: string;
+  }> {
+    return slugs.map((slug) => ({
+      slug,
+      path: `/no/such/dir/${slug}`,
+      driftClass: "path-missing" as const,
+      recommendedFix: "delete row",
+    }));
+  }
+
+  async function seed(slugs: string[], learningsBy: Record<string, number> = {}): Promise<void> {
+    const reg = await import("../lib/registry.js");
+    for (const slug of slugs) {
+      reg.upsertProject({
+        slug,
+        name: slug,
+        path: `/no/such/dir/${slug}`,
+        tech_stack: "",
+        igris_version: "7.0.0",
+      });
+    }
+    reg.closeDb();
+    const { brainDbPath } = await import("../lib/paths.js");
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(brainDbPath());
+    try {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS learnings (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL)",
+      );
+      const ins = db.prepare("INSERT INTO learnings (project) VALUES (?)");
+      for (const [slug, n] of Object.entries(learningsBy)) {
+        for (let i = 0; i < n; i++) ins.run(slug);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  /** A scripted reader: `null` is EOF. Running past the script is a test bug. */
+  function script(answers: Array<string | null>): {
+    prompt: (q: string) => Promise<string | null>;
+    asked: string[];
+    left: () => number;
+  } {
+    const queue = [...answers];
+    const asked: string[] = [];
+    return {
+      asked,
+      left: () => queue.length,
+      prompt: async (q: string): Promise<string | null> => {
+        asked.push(q);
+        if (queue.length === 0) {
+          throw new Error("test bug: prompt called more times than answers were scripted");
+        }
+        return queue.shift() as string | null;
+      },
+    };
+  }
+
+  it("V1 (BR-087): EOF mid-sweep — the answered row is removed, every later row is UNADJUDICATED, and EOF is final", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["eof-1", "eof-2", "eof-3"]);
+    const s = script(["y", null]);
+    const sweep = await confirmAndRemoveOrphans(rows(["eof-1", "eof-2", "eof-3"]), false, s.prompt);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.unadjudicated).toEqual(["eof-2", "eof-3"]);
+    expect(sweep.declined).toEqual([]);
+    // EOF is not re-asked: the reader said the stream is over.
+    expect(s.asked.length).toBe(2);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["eof-2", "eof-3"]);
+  });
+
+  it("V3 (TD-310): 'all' never auto-confirms a data-owning row — it still gets its own prompt, with its counts", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["all-a", "all-b-owns", "all-c"], { "all-b-owns": 1 });
+    const s = script(["all", "n"]);
+    const sweep = await confirmAndRemoveOrphans(rows(["all-a", "all-b-owns", "all-c"]), false, s.prompt);
+    expect(s.left()).toBe(0);
+    expect(s.asked.length).toBe(2);
+    expect(s.asked[1]).toContain("all-b-owns");
+    expect(s.asked[1]).toContain("learnings 1");
+    expect(sweep.removed).toBe(2);
+    expect(sweep.declined).toEqual(["all-b-owns"]);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["all-b-owns"]);
+  });
+
+  it("V4 (TD-310): --yes refuses a data-owning row BEFORE any delete; includeOwning lets it be attempted", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["y-empty", "y-owns"], { "y-owns": 2 });
+    const sweep = await confirmAndRemoveOrphans(rows(["y-owns", "y-empty"]), true);
+    expect(sweep.refused.map((r) => r.slug)).toEqual(["y-owns"]);
+    expect(sweep.refused[0].reason).toContain("learnings 2");
+    expect(sweep.refused[0].reason).toContain("--include-owning");
+    // Never ATTEMPTED: `results` is attempts only, so the refusal is not a skip.
+    expect(sweep.results.map((r) => r.slug)).toEqual(["y-empty"]);
+    expect(sweep.removed).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["y-owns"]);
+
+    const again = await confirmAndRemoveOrphans(rows(["y-owns"]), true, undefined, {
+      includeOwning: true,
+    });
+    expect(again.refused).toEqual([]);
+    expect(again.results).toEqual([{ slug: "y-owns", ok: true, error: null }]);
+    expect(reg.listProjects()).toEqual([]);
+  });
+
+  it("V5 (TD-310 + BR-087): runDoctor --remove-orphans --yes over [empty, learnings-only] keeps the owner and exits 1 from the RE-READ", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["v5-empty", "v5-owns"], { "v5-owns": 1 });
+    const code = await runDoctor({ fix: false, removeOrphans: true, yes: true });
+    // The sibling "--remove-orphans --yes deletes path-missing rows" pins exit 0
+    // for two REMOVABLE orphans in this same baseline.
+    expect(code).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["v5-owns"]);
+  });
+
+  it("V7 (FR-265): classifyDrift — a missing path WITH a non-empty repo_url is source-reclaimed; '' and NULL stay path-missing", async () => {
+    const { classifyDrift, isNotDrift } = await import("../verbs/doctor.js");
+    const base = { name: "x", tech_stack: "", igris_version: "7.0.0" };
+    const out = classifyDrift([
+      { ...base, slug: "rec", path: "/no/such/dir/rec", repo_url: "https://example.invalid/o/r.git" },
+      { ...base, slug: "blank", path: "/no/such/dir/blank", repo_url: "" },
+      { ...base, slug: "none", path: "/no/such/dir/none", repo_url: null },
+    ]);
+    expect(out.map((r) => [r.slug, r.driftClass])).toEqual([
+      ["rec", "source-reclaimed"],
+      ["blank", "path-missing"],
+      ["none", "path-missing"],
+    ]);
+    // The one exit-neutral non-clean class — and nothing else is.
+    expect(isNotDrift("source-reclaimed")).toBe(true);
+    expect(isNotDrift("clean")).toBe(true);
+    expect(isNotDrift("path-missing")).toBe(false);
+    expect(isNotDrift("slug-basename-mismatch")).toBe(false);
+  });
+
+  it("V8 (FR-265): the restore line ends git's options, single-quotes both arguments, and survives a quote and a space in either", async () => {
+    const { restoreCommand } = await import("../verbs/doctor.js");
+    const url = "https://example.invalid/o'brien/r.git";
+    const path = "/tmp/with space/it's";
+    const cmd = restoreCommand(url, path);
+    expect(cmd).toBe(
+      "git clone -- 'https://example.invalid/o'\\''brien/r.git' '/tmp/with space/it'\\''s'",
+    );
+    // Mechanically: bash parses the two quoted words back to the original strings.
+    const { execFileSync } = await import("node:child_process");
+    // `--` ends git's option parsing: a stored value starting with `-` stays a repository.
+    const words = cmd.replace(/^git clone -- /, "");
+    const argv = execFileSync("bash", ["-c", `set -- ${words}; printf '%s\\n' "$#" "$1" "$2"`], {
+      encoding: "utf-8",
+    });
+    expect(argv).toBe(`2\n${url}\n${path}\n`);
   });
 });
 

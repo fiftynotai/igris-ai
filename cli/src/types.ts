@@ -59,6 +59,26 @@ export interface RegistryRow {
   status?: string;
   registered_at?: string;
   last_session_at?: string;
+  /**
+   * FR-265: where the source can be cloned from. Read by the shared projection
+   * when the brain's `projects:1` migration has added the column, and `null`
+   * when the column is absent (an older brain). Brain writers strip
+   * credentials before storing it; the CLI only reads and prints it.
+   */
+  repo_url?: string | null;
+}
+
+/**
+ * TD-310: what one registry row owns in the brain, per knowledge table.
+ * `0` for a table that does not exist (an absent table holds zero rows);
+ * `null` when the table exists but its count could not be taken — UNKNOWN,
+ * which every caller treats as owning (never "nothing references it").
+ */
+export interface ProjectOwnership {
+  briefs: number | null;
+  learnings: number | null;
+  errors: number | null;
+  sessions: number | null;
 }
 
 /**
@@ -70,6 +90,8 @@ export interface DriftRow {
   driftClass:
     | "clean"
     | "path-missing"
+    /** FR-265: per-project — the path is gone but a `repo_url` is recorded: the source was removed on purpose. EXIT-NEUTRAL (the one non-clean class that is not drift, see `doctor.ts#isNotDrift`); never offered for deletion. */
+    | "source-reclaimed"
     | "not-installed"
     | "hooks-missing"
     | "hooks-stale"
@@ -94,6 +116,10 @@ export interface DriftRow {
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;
+  /** TD-310: what a `path-missing` row owns, attached by `runDoctor` before any prompt. */
+  ownership?: ProjectOwnership;
+  /** FR-265: the recorded clone URL of a `source-reclaimed` row. */
+  repoUrl?: string;
 }
 
 /**

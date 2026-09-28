@@ -34,7 +34,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { openBrainReadonly } from "./brain-bridge.js";
 import { brainDbPath } from "./paths.js";
-import type { RegistryRow } from "../types.js";
+import type { ProjectOwnership, RegistryRow } from "../types.js";
 
 let db: Database.Database | null = null;
 let dbPath: string | null = null;
@@ -90,18 +90,33 @@ export function closeDb(): void {
   }
 }
 
+/** `PRAGMA table_info` is a read: legal on the read-only door too. */
+function hasColumn(handle: Database.Database, table: string, col: string): boolean {
+  const cols = handle.pragma(`table_info(${table})`) as Array<{ name: string }>;
+  return cols.some((c) => c.name === col);
+}
+
 /**
  * The `projects` projection, defined ONCE.
  *
  * Both doors run this exact statement, so the read-only path cannot drift into
  * answering a different question from the writer's path — the failure mode a
  * hand-copied second SELECT would have.
+ *
+ * FR-265: `repo_url` is PROBED (the brain's `projects:1` migration owns it;
+ * `NULL` without it). `getDb()`'s CREATE must never name it (L-53). NO `WHERE`
+ * by decision (FR-238, FR-265 AC7) — pinned by `registry.test.ts`.
  */
-const PROJECTS_SELECT =
-  "SELECT slug, name, path, COALESCE(tech_stack, '') AS tech_stack, COALESCE(igris_version, '') AS igris_version, COALESCE(status, 'active') AS status, COALESCE(registered_at, '') AS registered_at, COALESCE(last_session_at, '') AS last_session_at FROM projects ORDER BY slug";
+function projectsSelect(handle: Database.Database): string {
+  const repoUrl = hasColumn(handle, "projects", "repo_url") ? "repo_url" : "NULL";
+  return (
+    "SELECT slug, name, path, COALESCE(tech_stack, '') AS tech_stack, COALESCE(igris_version, '') AS igris_version, COALESCE(status, 'active') AS status, COALESCE(registered_at, '') AS registered_at, COALESCE(last_session_at, '') AS last_session_at, " +
+    `${repoUrl} AS repo_url FROM projects ORDER BY slug`
+  );
+}
 
 function selectProjects(handle: Database.Database): RegistryRow[] {
-  return handle.prepare(PROJECTS_SELECT).all() as RegistryRow[];
+  return handle.prepare(projectsSelect(handle)).all() as RegistryRow[];
 }
 
 /**
@@ -171,7 +186,14 @@ export function listProjectsReadonly(): RegistryRow[] {
   }
 }
 
-/** Insert or update a row. Mirrors the SQL in igris_install.sh:441-459. */
+/**
+ * Insert or update a row. Mirrors the SQL in igris_install.sh:441-459.
+ *
+ * CONFLICT ARM (TD-310, the CLI twin of TD-365): both callers pass placeholder
+ * `name`/`tech_stack` (a slug, `""` or a detected stack), so those CURATED
+ * columns are only FILLED when empty; `path` still moves — it IS the re-point
+ * `igris doctor` offers. No duplicate-path guard, deliberately (L-1707).
+ */
 export function upsertProject(input: {
   slug: string;
   name: string;
@@ -186,9 +208,9 @@ export function upsertProject(input: {
       `INSERT INTO projects (slug, name, path, tech_stack, igris_version, status, registered_at, last_session_at)
        VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
        ON CONFLICT(slug) DO UPDATE SET
-         name = excluded.name,
+         name = CASE WHEN COALESCE(projects.name, '') = '' THEN excluded.name ELSE projects.name END,
          path = excluded.path,
-         tech_stack = excluded.tech_stack,
+         tech_stack = CASE WHEN COALESCE(projects.tech_stack, '') = '' THEN excluded.tech_stack ELSE projects.tech_stack END,
          igris_version = excluded.igris_version,
          last_session_at = excluded.last_session_at`,
     )
@@ -317,4 +339,74 @@ export function deleteProjectRow(slug: string): DeleteProjectOutcome {
     // sweep must not translate a cause it does not understand.
     return { slug, ok: false, error: message };
   }
+}
+
+/** TD-310: tables owned by `project`. Only brief_status/sessions carry the FK (BR-084). */
+const OWNERSHIP_TABLES: ReadonlyArray<[keyof ProjectOwnership, string]> = [
+  ["briefs", "brief_status"],
+  ["learnings", "learnings"],
+  ["errors", "errors"],
+  ["sessions", "sessions"],
+];
+
+/** TD-310: what a row owns, per table — `0` if the table is absent, `null` if uncountable. */
+export function projectOwnership(slug: string): ProjectOwnership {
+  const handle = getDb();
+  const out: ProjectOwnership = { briefs: 0, learnings: 0, errors: 0, sessions: 0 };
+  for (const [key, table] of OWNERSHIP_TABLES) {
+    if (!tableExists(handle, table)) continue;
+    try {
+      const row = handle
+        .prepare(`SELECT COUNT(*) AS n FROM "${table}" WHERE project = ?`)
+        .get(slug) as { n?: unknown } | undefined;
+      out[key] = typeof row?.n === "number" ? row.n : null;
+    } catch {
+      out[key] = null;
+    }
+  }
+  return out;
+}
+
+/** True when a row owns anything — an unknown (`null`) count counts as owning. */
+export function ownsData(o: ProjectOwnership): boolean {
+  return Object.values(o).some((n) => n === null || n > 0);
+}
+
+/** Knowledge rows whose `project` names no registry row (TD-310 item 5). */
+export interface DanglingKnowledge {
+  project: string;
+  briefs: number;
+  learnings: number;
+}
+
+/** TD-310: brief_status/learnings grouped by a project with NO registry row. Report only (L-1707). */
+export function danglingKnowledge(): DanglingKnowledge[] {
+  const handle = getDb();
+  const byProject = new Map<string, DanglingKnowledge>();
+  const tables: ReadonlyArray<["briefs" | "learnings", string]> = [
+    ["briefs", "brief_status"],
+    ["learnings", "learnings"],
+  ];
+  for (const [key, table] of tables) {
+    if (!tableExists(handle, table)) continue;
+    try {
+      const rows = handle
+        .prepare(
+          `SELECT t.project AS project, COUNT(*) AS n
+             FROM "${table}" t
+            WHERE t.project IS NOT NULL AND t.project <> ''
+              AND NOT EXISTS (SELECT 1 FROM projects p WHERE p.slug = t.project)
+            GROUP BY t.project`,
+        )
+        .all() as Array<{ project: string; n: number }>;
+      for (const r of rows) {
+        const entry = byProject.get(r.project) ?? { project: r.project, briefs: 0, learnings: 0 };
+        entry[key] = r.n;
+        byProject.set(r.project, entry);
+      }
+    } catch {
+      // report-only: an unreadable table is left out
+    }
+  }
+  return [...byProject.values()].sort((a, b) => a.project.localeCompare(b.project));
 }

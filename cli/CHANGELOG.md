@@ -52,6 +52,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new table's rows actually reach the other machine — but it is a preference,
   not a precondition.
 
+### Fixed
+
+- **`igris doctor --remove-orphans` no longer reports clean while drift survives
+  (BR-087).** Declining a row (`n`), aborting (`a`) and running out of piped
+  input all used to exit 0 with a `path-missing` row still in the registry,
+  and a pipe with more than one answer processed only the first (readline
+  dropped every line that arrived while no question was pending). Answers are
+  now read through a line queue, so every piped answer is consumed in order,
+  and end of input means "not adjudicated". The exit code comes from a
+  re-read of the registry rather than the sweep's own report, so every one of
+  those rows keeps the verb at exit 1; the output names each row as
+  `kept (declined): <slug>` or `not adjudicated: <slug>`. **Behaviour change:**
+  a declined, aborted or unanswered sweep now exits 1.
+- **`--remove-orphans` shows what each orphan owns and has a safe subset
+  (TD-310).** Every `path-missing` row carries `briefs N, learnings M` (plus
+  errors and sessions when non-zero) in the drift table, in a detail block
+  printed on every run, and in its prompt — before anything is asked. New
+  flags: `--empty-only` (non-interactive; removes exactly the rows that own
+  nothing), `--slug <slug>` (one row), and `--include-owning` (with `--yes`
+  only). **Behaviour change:** `--yes` alone now REFUSES a row that owns briefs
+  or learnings — before, a learnings-only row (no foreign key to stop it) was
+  deleted silently; `all` at the prompt no longer auto-confirms a data-owning
+  row. A moved project is offered a re-point
+  (`igris register-project <new-path> --slug <slug>`), and that command no
+  longer resets the project's curated name or blanks its tech stack: the CLI
+  registry upsert now only FILLS an empty `name`/`tech_stack` on conflict
+  (`path` still moves). After the sweep, knowledge whose project row is already
+  gone is reported as `dangling knowledge (no registry row)` — never deleted.
+- **A deliberately reclaimed project is no longer called an orphan (FR-265,
+  CLI half).** A row whose directory is gone but which records its repository
+  URL is classified `source-reclaimed`: exit-neutral (not drift), printed with
+  a copy-pasteable `restore <slug>: git clone -- '<url>' '<path>'` line, and
+  never offered for deletion. The CLI reads that column only when the brain
+  has it, so the class is dormant until the brain's repository-URL migration
+  ships; `/boot` and `/igris-doctor` already ignore it.
+
 ---
 
 ## [7.3.2] - 2026-09-09

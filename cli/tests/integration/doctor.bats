@@ -187,3 +187,238 @@ EOF
   # hooks-missing fix.
   [[ "$output" =~ "refreshing the GLOBAL Igris hooks" ]]
 }
+
+# ---- BR-087 / TD-310: an honest sweep over an ownership-aware registry -------
+#
+# Fixture: the `_helpers.bash` `projects` shape plus a minimal `learnings` and a
+# `brief_status` that carries the live FK to `projects(slug)`, so the counts the
+# sweep shows (and the refusals it makes) come from real rows. `learnings` has
+# NO FK, which is the point of T3: before TD-310, `--yes` deleted a row that
+# owned only learnings without a word.
+#
+# Bash hygiene (test_standards conv. 7): every `[[ ]]` assertion carries
+# `|| return 1`; nothing pipes a producer into `grep -q`.
+seed_registry() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "
+    CREATE TABLE IF NOT EXISTS projects (
+      slug TEXT PRIMARY KEY, name TEXT NOT NULL, path TEXT NOT NULL,
+      tech_stack TEXT, igris_version TEXT, status TEXT DEFAULT 'active',
+      registered_at TEXT, last_session_at TEXT, metadata TEXT
+    );
+    CREATE TABLE IF NOT EXISTS learnings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS brief_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,
+      brief_id TEXT NOT NULL,
+      FOREIGN KEY (project) REFERENCES projects(slug)
+    );
+  "
+}
+
+# orphan_row <slug> [name] [tech_stack] — a row whose path does not exist.
+orphan_row() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" \
+    "INSERT INTO projects (slug, name, path, tech_stack, igris_version) VALUES ('$1','${2:-$1}','/no/such/dir/$1','${3:-}','7.0.0');"
+}
+
+# own_learnings <slug> <n> / own_briefs <slug> <n>
+own_learnings() {
+  local i
+  for ((i = 0; i < $2; i++)); do
+    sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "INSERT INTO learnings (project) VALUES ('$1');"
+  done
+}
+own_briefs() {
+  local i
+  for ((i = 0; i < $2; i++)); do
+    sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "INSERT INTO brief_status (project, brief_id) VALUES ('$1','FX-$i');"
+  done
+}
+
+project_count() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM projects;"
+}
+
+project_slugs() {
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT group_concat(slug, ',') FROM (SELECT slug FROM projects ORDER BY slug);"
+}
+
+@test "BR-087 B1: FEWER answers than rows — the unanswered row is not adjudicated and the verb exits 1" {
+  # The `printf 'y\n'` pipe above (TD-111) pipes exactly as many answers as
+  # rows, which is the count that hid this: the second prompt never resolved
+  # and the verb exited 0 with a path-missing row still present.
+  seed_registry
+  orphan_row aa-orphan
+  orphan_row bb-orphan
+  run bash -c "printf 'y\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_count)" = "1" ]
+  [[ "$output" == *"not adjudicated: bb-orphan"* ]] || return 1
+}
+
+@test "BR-087 B2: every piped answer is consumed — two rows, two 'y', both removed, exit 0" {
+  seed_registry
+  orphan_row aa-orphan
+  orphan_row bb-orphan
+  run bash -c "printf 'y\ny\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  echo "$output"
+  [ "$(project_count)" = "0" ]
+  [ "$status" -eq 0 ]
+}
+
+@test "BR-087 B3: a declined row ('n') is unresolved drift — kept, named, exit 1" {
+  seed_registry
+  orphan_row aa-orphan
+  run bash -c "printf 'n\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_count)" = "1" ]
+  [[ "$output" == *"kept (declined): aa-orphan"* ]] || return 1
+}
+
+@test "BR-087 B4: an abort ('a') leaves every remaining row unadjudicated — both named, exit 1" {
+  seed_registry
+  orphan_row aa-orphan
+  orphan_row bb-orphan
+  run bash -c "printf 'a\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_count)" = "2" ]
+  [[ "$output" == *"not adjudicated: aa-orphan"* ]] || return 1
+  [[ "$output" == *"not adjudicated: bb-orphan"* ]] || return 1
+}
+
+@test "BR-087 B5: an EMPTY stdin is not a decision — exit 1, row kept" {
+  seed_registry
+  orphan_row aa-orphan
+  run bash -c "$CLI_BIN doctor --remove-orphans </dev/null 2>&1"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_count)" = "1" ]
+  [[ "$output" == *"not adjudicated: aa-orphan"* ]] || return 1
+}
+
+@test "TD-310 T1: an orphan's brief and learning counts are shown BEFORE any prompt" {
+  seed_registry
+  orphan_row owner
+  own_briefs owner 1
+  own_learnings owner 2
+  run bash -c "printf 'n\n' | $CLI_BIN doctor --remove-orphans 2>&1"
+  echo "$output"
+  # The drift table (printed before the sweep starts) carries the counts, and
+  # it precedes the first prompt label.
+  [[ "$output" == *"| owner | /no/such/dir/owner | path-missing | briefs 1, learnings 2"*"[y/N/a/all]"* ]] || return 1
+  # ...and so does the prompt line itself.
+  [[ "$output" == *"orphan (briefs 1, learnings 2); delete? [y/N/a/all]"* ]] || return 1
+  [ "$(project_count)" = "1" ]
+}
+
+@test "TD-310 T2: --empty-only deletes exactly the rows that own nothing, never prompts" {
+  seed_registry
+  orphan_row e-empty
+  orphan_row l-learn
+  own_learnings l-learn 1
+  orphan_row b-brief
+  own_briefs b-brief 1
+  run bash -c "$CLI_BIN doctor --remove-orphans --empty-only </dev/null 2>&1"
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_slugs)" = "b-brief,l-learn" ]
+  [[ "$output" == *"removed: e-empty"* ]] || return 1
+  [[ "$output" == *"kept: l-learn (owns briefs 0, learnings 1)"* ]] || return 1
+  [[ "$output" == *"kept: b-brief (owns briefs 1, learnings 0)"* ]] || return 1
+  [[ "$output" != *"[y/N/a/all]"* ]] || return 1
+}
+
+@test "TD-310 T3: --yes alone refuses a row that owns only learnings (no FK to stop it)" {
+  seed_registry
+  orphan_row l-learn
+  own_learnings l-learn 1
+  orphan_row e-empty
+  run $CLI_BIN doctor --remove-orphans --yes
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [ "$(project_slugs)" = "l-learn" ]
+  [[ "$output" == *"refused: l-learn — owns briefs 0, learnings 1"* ]] || return 1
+  [[ "$output" == *"removed: e-empty"* ]] || return 1
+  # The learning itself is untouched either way.
+  [ "$(sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM learnings;")" = "1" ]
+}
+
+@test "TD-310 T3b (control): --yes --include-owning removes the same row — the refusal is the flag, not the FK" {
+  seed_registry
+  orphan_row l-learn
+  own_learnings l-learn 1
+  orphan_row e-empty
+  run $CLI_BIN doctor --remove-orphans --yes --include-owning
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(project_count)" = "0" ]
+  [[ "$output" == *"removed: l-learn"* ]] || return 1
+}
+
+@test "TD-310 T4: a moved project is offered a re-point, and following it keeps the curated name and tech stack" {
+  seed_registry
+  orphan_row moved-proj "Moved Project" "dart,flutter"
+  own_learnings moved-proj 1
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"moved → igris register-project <new-path> --slug moved-proj"* ]] || return 1
+  NEW_PATH="${BATS_TEST_TMPDIR:?}/moved-proj"
+  mkdir -p "${NEW_PATH:?}"
+  run $CLI_BIN register-project "$NEW_PATH" --slug moved-proj
+  echo "$output"
+  [ "$status" -eq 0 ]
+  row="$(sqlite3 -separator '|' "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT path, name, tech_stack FROM projects WHERE slug='moved-proj';")"
+  echo "row: $row"
+  [ "$row" = "$NEW_PATH|Moved Project|dart,flutter" ]
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "TD-310 T5: --slug narrows the sweep to one row" {
+  seed_registry
+  orphan_row aa
+  orphan_row bb
+  run $CLI_BIN doctor --remove-orphans --slug aa --yes
+  echo "$output"
+  [ "$(project_slugs)" = "bb" ]
+  [[ "$output" == *"removed: aa"* ]] || return 1
+}
+
+@test "TD-310 T6: knowledge whose project row is gone is REPORTED, never deleted" {
+  seed_registry
+  KEEP="$(stage_project keep)"
+  sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" \
+    "INSERT INTO projects (slug, name, path, igris_version) VALUES ('keep','keep','$KEEP','7.0.0');"
+  own_learnings keep 1
+  # Self-negative: every learning belongs to a registered row -> no dangling line.
+  run $CLI_BIN doctor --remove-orphans --yes
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"dangling knowledge"* ]] || return 1
+  own_learnings gone 1
+  run $CLI_BIN doctor --remove-orphans --yes
+  echo "$output"
+  [[ "$output" == *"dangling knowledge (no registry row): gone — briefs 0, learnings 1"* ]] || return 1
+  [ "$(sqlite3 "$IGRIS_BRAIN_DIR/memory/knowledge.db" "SELECT COUNT(*) FROM learnings WHERE project='gone';")" = "1" ]
+}
+
+@test "TD-310 T7: invalid flag combinations are usage errors — exit 1, nothing swept" {
+  seed_registry
+  orphan_row aa
+  local args
+  for args in "--empty-only" "--slug aa" "--include-owning" \
+              "--remove-orphans --include-owning" \
+              "--remove-orphans --yes --empty-only --include-owning"; do
+    run bash -c "$CLI_BIN doctor $args </dev/null 2>&1"
+    echo "[$args] $output"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"usage:"* ]] || return 1
+    [ "$(project_count)" = "1" ]
+  done
+}

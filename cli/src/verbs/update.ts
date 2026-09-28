@@ -83,7 +83,9 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
         reason: `path does not exist: ${row.path}`,
       });
       warn(
-        `${row.slug}: path missing (${row.path}); skipped — use 'igris doctor --remove-orphans' to clean.`,
+        // TD-310: a missing path is often a MOVED project — point at doctor's
+        // orphan report (what the row owns, re-point first), not at deletion.
+        `${row.slug}: path missing (${row.path}); skipped — run 'igris doctor' to see what the row owns and re-point it, record its repo_url, or remove it.`,
       );
       continue;
     }

@@ -396,7 +396,7 @@ Run the existing CLI diagnostic in read-only mode after the regular assessment, 
 timeout 5s igris doctor 2>/dev/null || true
 ```
 
-Parse only the markdown drift table rows (`| slug | path | drift-class | recommended-fix |`). Count rows whose `drift-class` is not `clean`, and count the unique non-clean drift classes.
+Parse only the markdown drift table rows (`| slug | path | drift-class | recommended-fix |`). Count rows whose `drift-class` is neither `clean` nor `source-reclaimed` (FR-265: a deliberate, exit-neutral state, not an issue), and count the unique drift classes among them.
 
 Render exactly one line when non-clean rows exist:
 

@@ -51,7 +51,7 @@ deterministic checks from `cli/src/verbs/doctor.ts`.
 - `--fix`: run `igris doctor`, decide whether `--fix` is safe, then either run it
   or ask the operator for judgment.
 - `--remove-orphans`: explain that this can delete registry rows and requires
-  explicit operator confirmation before invoking the CLI flag.
+  explicit operator confirmation before invoking the CLI flag (see §5).
 
 ## Execution
 
@@ -63,9 +63,10 @@ Run from the current project:
 igris doctor
 ```
 
-Capture stdout/stderr and the exit code. Exit code `0` means clean. Exit code
-`1` means at least one non-clean drift row or a failed repair condition; do not
-treat it as a tool failure.
+Capture stdout/stderr and the exit code. Exit code `0` means no drift: every
+row is `clean` or `source-reclaimed` (the one exit-neutral class). Exit code
+`1` means at least one drift row or a failed repair condition; do not treat it
+as a tool failure.
 
 ### 2. Parse the Drift Table
 
@@ -75,8 +76,10 @@ Parse rows from the markdown table:
 | slug | path | drift-class | recommended-fix |
 ```
 
-Ignore rows whose `drift-class` is `clean`. Group the remaining rows by
-`drift-class`, preserving representative slugs and paths for the report.
+Ignore rows whose `drift-class` is `clean` or `source-reclaimed` — neither is
+an issue (`source-reclaimed` is a deliberate, recorded state; see §3). Group the
+remaining rows by `drift-class`, preserving representative slugs and paths for
+the report.
 
 If the table shape changes, do not invent parsing. Report that the CLI output
 shape changed and show the raw summary; the CLI remains authoritative.
@@ -99,7 +102,11 @@ Render in this order:
 3. **Cosmetic / informational:** `slug-basename-mismatch`, `symlink-target`,
    `machine-identity` (the machine's hostname drifted from its recorded
    identity, or local rows carry hostnames its alias list does not cover — an
-   alias is an operator claim, so read the row's text and decide by hand)
+   alias is an operator claim, so read the row's text and decide by hand),
+   `source-reclaimed` (exit-neutral — NOT drift and not counted as an issue:
+   the project's directory was removed on purpose and its `repo_url` is
+   recorded; relay the `restore <slug>: git clone …` line doctor prints; never
+   offer deletion — `--remove-orphans` refuses these rows)
 
 For each group, explain:
 
@@ -154,8 +161,14 @@ This is especially important for:
 
 - `secret-perms`: `--fix` may chmod secret-bearing config files. Flag it; never
   auto-chmod from this skill.
-- `path-missing`: row deletion requires `igris doctor --remove-orphans` and
-  explicit confirmation.
+- `path-missing`: first relay what the row owns (doctor shows `briefs N,
+  learnings M` in the table and the orphan detail block). A row that owns data
+  is usually a MOVED project: offer the re-point doctor prints
+  (`igris register-project <new-path> --slug <slug>`), or recording its repo URL
+  (`igris_project_update` with `slug` and `repo_url`, which turns it
+  `source-reclaimed`).
+  Deletion needs `igris doctor --remove-orphans` and explicit confirmation; a
+  row that owns nothing can go with `--remove-orphans --empty-only`.
 - `skills-pollution`: mixed class; unexpected targets and non-projection strays
   require manual review before any repair attempt.
 - `duplicate-path`, `slug-basename-mismatch`, `symlink-target`: these may reflect
@@ -174,14 +187,23 @@ This is especially important for:
 
 ### 5. Orphan Removal
 
-If the operator asks for orphan cleanup, first summarize the `path-missing` rows.
-Only after explicit confirmation run:
+If the operator asks for orphan cleanup, first summarize the `path-missing` rows
+WITH their counts (briefs, learnings — doctor prints them before any prompt), and
+name which look moved (offer the re-point) and which own nothing. Only after
+explicit confirmation run one of:
 
 ```bash
-igris doctor --remove-orphans
+igris doctor --remove-orphans --empty-only   # non-interactive: only rows that own nothing
+igris doctor --remove-orphans                 # interactive: one prompt per row, counts shown
+igris doctor --remove-orphans --slug <slug>   # one row
 ```
 
-Use `--yes` only if the operator explicitly requested non-interactive deletion.
+Prefer `--empty-only` for non-interactive cleanup. `--yes` alone refuses a row
+that owns briefs or learnings; never add `--include-owning` unless the operator
+named the rows to delete. `source-reclaimed` rows are never offered. The exit
+code comes from a re-read of the registry: a declined, refused, aborted or
+unanswered row (end of input is not an answer) keeps it at `1`. The
+`dangling knowledge (no registry row)` lines after the sweep are a report only.
 
 ### 6. Output Format
 
@@ -213,7 +235,7 @@ class names are safe to show.
 
 `/boot` may run `igris doctor` as a read-only diagnostic after the regular system
 assessment. It should parse the same table and render exactly one line only when
-non-clean rows exist:
+rows other than `clean` and `source-reclaimed` exist:
 
 ```text
 Igris Doctor: N issue(s) across M drift class(es) - run /igris-doctor.
