@@ -5,10 +5,13 @@
  * Provides: igris_project_register, igris_project_list, igris_project_status,
  *           igris_project_update (TD-171 M3),
  *           igris_project_dashboard (TD-171 M3 — operator override 2026-05-15)
+ * Owns migration projects:1 — `projects.repo_url` (FR-265; see `schema()`).
  *
  * @module engine/components/projects
  * @author fifty.dev
  */
+
+import type Database from 'better-sqlite3';
 
 import type {
   BrainComponent,
@@ -41,7 +44,50 @@ export function createProjectsComponent(): BrainComponent {
     depends: [],
 
     schema(): Migration[] {
-      return [];
+      return [
+        {
+          // FR-265 — `projects.repo_url` (where to clone a project's source).
+          //  1. The ALTER is in `pre` and `sql` is a no-op: a pre-flight that
+          //     DECLINED on a present column would pin the component at v0 and
+          //     skip every later projects migration. `pre` adds the column only
+          //     when absent and returns true; `runMigrations` then records v1
+          //     (a crash between the two heals on the next boot).
+          //  2. ALTER-only (L-53): never in the `db.ts` v1 CREATE.
+          //  3. Component registry ON PURPOSE: the legacy schema_version chain
+          //     differs between develop and the live brain (GL-012 / TD-433).
+          //  4. NOT in SYNC_TABLES (FR-265 D3) — replicating it is a
+          //     remote-first deploy (MAINTAINING, the projects.repo_url row).
+          // `pre` runs outside the adapter's `trusted_schema = ON` window
+          // (BR-089) and an ALTER may re-parse the vec0 triggers, so it scopes
+          // the toggle itself.
+          version: 1,
+          description: 'projects.repo_url (FR-265) — ALTER-only, component registry, not synced',
+          pre: (raw) => {
+            const db = raw as Database.Database; // `pre` is typed unknown; sqlite.ts passes this
+            const hasTable = db
+              .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'")
+              .get();
+            if (hasTable === undefined) {
+              // Fixture-only (migrateSchema creates the table first): a retry, not a stall.
+              console.error('[engine] projects@1: no projects table yet — declining; the next boot retries');
+              return false;
+            }
+            const cols = db.pragma('table_info(projects)') as { name: string }[];
+            if (cols.some((c) => c.name === 'repo_url')) {
+              console.error('[engine] projects@1: repo_url already present — recording projects:1 without ALTER');
+              return true;
+            }
+            db.pragma('trusted_schema = ON');
+            try {
+              db.exec('ALTER TABLE projects ADD COLUMN repo_url TEXT');
+            } finally {
+              db.pragma('trusted_schema = OFF');
+            }
+            return true;
+          },
+          sql: 'SELECT 1;', // deliberate no-op (point 1): only records the version
+        },
+      ];
     },
 
     tools(): ToolDefinition[] {
@@ -72,6 +118,10 @@ export function createProjectsComponent(): BrainComponent {
               archetype: {
                 type: 'string',
                 description: 'Project archetype (e.g., "brand-website", "enterprise-mvvm-mobile", "ai-agent-system", "design-kit")',
+              },
+              repo_url: {
+                type: 'string',
+                description: 'Optional clone URL (credentials stripped). Omitted: detected from `git remote get-url origin` when `path` is a repo top level; a stored value is never blanked.',
               },
             },
             required: ['slug', 'name', 'path'],
@@ -137,6 +187,10 @@ export function createProjectsComponent(): BrainComponent {
               archetype: {
                 type: 'string',
                 description: 'New archetype label (e.g., "ai-agent-system")',
+              },
+              repo_url: {
+                type: 'string',
+                description: 'Clone URL (credentials stripped); an empty string clears it. With the directory gone, `igris doctor` reports the project as source-reclaimed, not an orphan.',
               },
               status: {
                 type: 'string',

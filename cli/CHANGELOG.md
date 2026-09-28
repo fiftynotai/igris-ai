@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Projects record where their source lives (`projects.repo_url`, FR-265), and
+  `igris_project_register` validates its input and stops blanking curated
+  columns (TD-365).** A new nullable `repo_url` column, added by the projects
+  component's migration v1 (the component registry, independent of the legacy
+  schema chain; local to each brain — not replicated). Registration fills it
+  from `git remote get-url origin` when the path is a repo's top level
+  (credentials stripped), `igris_project_update` sets or clears it, and
+  `igris_project_status` prints `Repo URL:` and a copy-pasteable `Clone:` line.
+  A project whose directory is gone but whose `repo_url` is recorded is what
+  `igris doctor` reports as `source-reclaimed`. The register handler now rejects
+  a null, empty or whitespace `slug`, `name` or `path` in-band
+  (`Validation error: Invalid <key>: must be a non-empty string.`) instead of
+  surfacing a raw `NOT NULL constraint failed`, and a call that omits
+  `tech_stack` or `repo_url` no longer overwrites the stored value (the
+  handler used to bind an omitted `tech_stack` as `''`). An explicit value,
+  including `''`, still wins.
 - **Project-context docs now replicate across machines (TD-460).**
   `context_files` joins `SYNC_TABLES` and `BOOT_SYNC_PULL_TABLES`, so a doc
   authored on one machine reaches every machine on the same VPS. The FILE under

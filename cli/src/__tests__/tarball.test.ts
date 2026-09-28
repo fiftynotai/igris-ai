@@ -2646,6 +2646,94 @@ interface PackReport {
  *   59_563 − 54_236 = 5_327 = this brief's share (no drift); 5_407 − 4_969 =
  *   438 recovered by the prose cut.
  *
+ * BR-087 / TD-310 / TD-365 / FR-265 MEASURED LAST (2026-09-28), after the
+ * bundle's final code-touching step. TWO ARMS, because the bundle commits as C1
+ * (the CLI half, merged first) and C2 (the brain half, held): (a) 085badc →
+ * C1-only is C1's own share; (b) C1-only → C1+C2 is C2's share. Re-derive (b)
+ * against C2's REBASED parent at merge time if another bundle changed a packed
+ * file. MEASURED ON SCRATCH BUILDS THAT RAN `copy-templates.sh`, all three arms
+ * (the TD-460 method, unchanged): `git archive 085badc cli brain-mcp-server
+ * harness-manifest.json`, overlaid with the arm's files copied from the working
+ * tree (the C1-only `CHANGELOG.md` = 085badc plus its `### Fixed` hunk only),
+ * the three `node_modules` symlinked, `dist` ABSENT, TD-426 smoke `(sandboxed)`
+ * on every arm, `npm pack --dry-run --json --ignore-scripts` twice per arm,
+ * byte- and sha-identical. npm 10.9.8, node v22.23.2, darwin/arm64, one
+ * machine. The worktree's own `cli/dist` was never written by an arm
+ * (`dist/index.js` sha256 `9bfb1951…`, `dist/brain-mcp-server/dist/index.js`
+ * `9d0654bc…` before and after).
+ *   control             1_915_626    unpacked 6_953_498, 551 entries, shasum
+ *                                    `07cb6e57e94d25a7fa00cd26a479ea45e884014d`
+ *                                    — taken fresh at `085badc`, twice. It is
+ *                                    NOT the BR-109 row's final (1_902_839 /
+ *                                    549): +12_787 packed / +39_813 unpacked /
+ *                                    +2 entries of DRIFT from the briefs that
+ *                                    landed between them without a row — not
+ *                                    attributed here.
+ *   C1-only             1_924_822    unpacked 6_988_795, 551 entries (+0),
+ *                                    shasum
+ *                                    `a9d8d0f0f9cc4fe670aae79bc6e67f509bfa1886`,
+ *                                    taken twice.
+ *   C1's own share      +9_196 B     packed. Unpacked +35_297 over 10
+ *                                    artifacts, ZERO new entries; the per-file
+ *                                    sum reconciles EXACTLY: `verbs/doctor.js`
+ *                                    +13_030 / map +10_553 (the line-queue
+ *                                    reader, the re-read exit predicate and its
+ *                                    dispositions, the ownership report, the
+ *                                    flag grammar, the source-reclaimed split),
+ *                                    `lib/registry.js` +3_333 / map +2_392
+ *                                    (`projectOwnership`, `danglingKnowledge`,
+ *                                    the probed projection, the fill-if-empty
+ *                                    arm), `CHANGELOG.md` +2_468, `README.md`
+ *                                    +2_347, `index.js` +668 / map +249 (three
+ *                                    options), `verbs/update.js` +231 / map
+ *                                    +26.
+ *   C1+C2               1_928_885    unpacked 7_000_944, 551 entries (+0),
+ *                                    shasum
+ *                                    `24cffaa5599c480cf7124d0042872fe1d8ca6af4`,
+ *                                    taken twice.
+ *   C2's own share      +4_063 B     packed. Unpacked +12_149 over 5
+ *                                    artifacts, ZERO new entries (the
+ *                                    migration is inline, no new module); the
+ *                                    per-file sum reconciles EXACTLY:
+ *                                    `tools/projects.js` +6_197 / `.d.ts`
+ *                                    +1_131 (validation, sanitise, detect, the
+ *                                    COALESCE arm, the status lines),
+ *                                    `components/projects/index.js` +3_583 /
+ *                                    `.d.ts` +79 (migration projects:1, two
+ *                                    inputSchema properties), `CHANGELOG.md`
+ *                                    +1_159.
+ *   bundle share        +13_259 B    packed (9_196 + 4_063). The plan priced
+ *                                    4-8 KB. The first reading was 18_890
+ *                                    (C1 12_407, C2 6_483; `projects.d.ts`
+ *                                    alone +3_985); the shipped prose was cut to
+ *                                    pointers (the per-column decision now
+ *                                    lives in MAINTAINING row 113, the
+ *                                    migration's four reasons in four lines,
+ *                                    exported docblocks as line comments that
+ *                                    the `.d.ts` does not carry) and re-measured
+ *                                    at 13_259 — still above the priced band,
+ *                                    said so rather than re-priced: what is left
+ *                                    is mostly CODE (`doctor.ts` alone gained
+ *                                    ~10.7 KB of non-comment source). The
+ *                                    tests, the bats files, MAINTAINING.md and
+ *                                    `core/skills/**` are outside `files` and
+ *                                    cost 0.
+ *   cumulative delta    +85_609 B    (83.6 KB, 55.7 % of the grant —
+ *                                    1_928_885 − 1_843_276)
+ *   headroom remaining  67_991 B     (66.4 KB — 153_600 − 85_609)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_924_822 − 1_915_626 = 9_196; 1_928_885 − 1_924_822 = 4_063;
+ *   9_196 + 4_063 = 13_259; 1_928_885 − 1_843_276 = 85_609;
+ *   153_600 − 85_609 = 67_991; 1_915_626 − 1_902_839 = 12_787;
+ *   6_953_498 − 6_913_685 = 39_813; 551 − 549 = 2;
+ *   6_988_795 − 6_953_498 = 35_297 = 13_030 + 10_553 + 3_333 + 2_392 +
+ *   2_468 + 2_347 + 668 + 249 + 231 + 26;
+ *   7_000_944 − 6_988_795 = 12_149 = 6_197 + 1_131 + 3_583 + 79 + 1_159;
+ *   18_890 − 13_259 = 5_631 recovered by the prose cut.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

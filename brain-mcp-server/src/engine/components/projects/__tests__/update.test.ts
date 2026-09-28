@@ -7,7 +7,9 @@
  *   - partial update only touches provided fields (omitted fields preserved)
  *   - rejects on missing slug (slug is required)
  *   - rejects when target project does not exist
- *   - rejects no-fields-provided (caller passed only `slug`)
+ *   - rejects no-fields-provided (caller passed only `slug`); the message
+ *     lists every updatable field, `repo_url` included (FR-265)
+ *   - FR-265 M3: `repo_url` is updatable, sanitised, and '' clears it to NULL
  *   - rejects invalid status enum value
  *   - rejects unknown args via the gateway strict-input contract (TD-128)
  *
@@ -59,7 +61,8 @@ function makeTestDb(): Database.Database {
       status TEXT DEFAULT 'active' CHECK (status IN ('active', 'archived', 'inactive')),
       registered_at TEXT NOT NULL DEFAULT (datetime('now')),
       last_session_at TEXT,
-      metadata TEXT DEFAULT '{}'
+      metadata TEXT DEFAULT '{}',
+      repo_url TEXT
     );
   `);
   return db;
@@ -159,6 +162,38 @@ describe('handleProjectUpdate (TD-171 M3)', () => {
     seed(db);
     const result = handleProjectUpdate({ slug: 'demo-project' });
     expect(result.content[0].text).toContain('no updatable fields provided');
+    // FR-265 M3: the list names the new field.
+    expect(result.content[0].text).toContain('repo_url');
+  });
+
+  it('M3 (FR-265): repo_url is updatable, sanitised on the way in, and an empty string clears it to NULL', () => {
+    seed(db);
+    const repoUrl = (): unknown =>
+      (db.prepare('SELECT repo_url FROM projects WHERE slug = ?').get('demo-project') as { repo_url: unknown }).repo_url;
+
+    const set = parseJson(handleProjectUpdate({ slug: 'demo-project', repo_url: 'https://u:tok@github.com/o/r.git' }));
+    expect(set.updated_fields).toEqual(['repo_url']);
+    expect(repoUrl()).toBe('https://github.com/o/r.git');
+
+    const cleared = parseJson(handleProjectUpdate({ slug: 'demo-project', repo_url: '' }));
+    expect(cleared.updated_fields).toEqual(['repo_url']);
+    expect(repoUrl()).toBeNull();
+
+    // Other fields are untouched by a repo_url-only update.
+    const row = db.prepare('SELECT * FROM projects WHERE slug = ?').get('demo-project') as Record<string, unknown>;
+    expect(row.tech_stack).toBe('typescript,node');
+    expect(row.name).toBe('Demo Project');
+  });
+
+  it('M3b (FR-265): repo_url passes the gateway strict-input walk (declared in the inputSchema)', async () => {
+    seed(db);
+    const gateway = createGateway();
+    gateway.register(createProjectsComponent().tools());
+    const result = (await gateway.dispatch('igris_project_update', {
+      slug: 'demo-project',
+      repo_url: 'git@github.com:o/r.git',
+    })) as { content: { text: string }[] };
+    expect(parseJson(result).updated_fields).toEqual(['repo_url']);
   });
 
   it('rejects invalid status enum value', () => {

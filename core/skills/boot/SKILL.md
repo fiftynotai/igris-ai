@@ -231,18 +231,23 @@ If the `igris-brain` MCP server is available:
     would write `(none)` into the column. When the read shows `(none)`, omit
     `tech_stack` from the call.
   - Do NOT substitute the slug for `name`, and do NOT invent `path` or
-    `tech_stack`. `igris_project_register` is an UPSERT keyed on `slug`, and its
-    conflict arm overwrites `name`, `path` AND `tech_stack` with whatever you
-    pass — **only `archetype` is `COALESCE`d**. The handler binds
-    `args.tech_stack ?? ''`, so a call that omits `tech_stack` writes an EMPTY
-    STRING over it, not a no-op.
+    `tech_stack`. `igris_project_register` is an UPSERT keyed on `slug`. Since
+    TD-365 its conflict arm keeps "explicit value wins" for `name` and `path`
+    (both required, and rejected in-band when empty) and `COALESCE`s
+    `tech_stack`, `archetype` and `repo_url` — a call that OMITS `tech_stack`
+    leaves it alone, but a `name` or `path` you pass replaces the stored one.
     The detect digest carries neither a name nor a tech stack, so registering
-    from it would overwrite the operator's curated project name with a slug and
-    blank their tech stack on EVERY session start. `tech_stack` is curated data
-    — `/harvest` writes it and `/ground` and `/scan` read it as half the project
-    profile that drives context-doc `applies_when` matching.
-    Echoing back what you just read is what makes this refresh safe.
-    TD-365 is the handler-side fix that would make this echo unnecessary.
+    from it would overwrite the operator's curated project name with a slug on
+    EVERY session start. `tech_stack` is curated data — `/harvest` writes it
+    and `/ground` and `/scan` read it as half the project profile that drives
+    context-doc `applies_when` matching.
+    The echo is RETAINED after TD-365, on purpose: this skill reaches a machine
+    through `igris refresh` (core/), while the handler reaches it through the
+    CLI package's vendored brain bundle, so a runtime core newer than its brain
+    bundle would re-open the blanking (an older handler binds `?? ''` over an
+    omitted `tech_stack`). On a fixed brain the echo is harmless — it writes
+    back the value it just read. Remove it once every supported brain bundle
+    includes TD-365.
 - Call `igris_session_recall` with days=2 to see recent cross-project activity
 - If sessions returned, display a "Cross-Project Context" section:
   ```

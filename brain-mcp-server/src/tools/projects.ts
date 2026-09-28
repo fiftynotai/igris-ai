@@ -16,17 +16,19 @@
  * @author fifty.dev
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
 
 import { getDb } from '../db.js';
 
-/** Input shape for igris_project_register */
+/** Input shape for igris_project_register (`null` optional = omitted) */
 interface ProjectRegisterInput {
   slug: string;
   name: string;
   path: string;
-  tech_stack?: string;
-  archetype?: string;
+  tech_stack?: string | null;
+  archetype?: string | null;
+  repo_url?: string | null;
 }
 
 /** Input shape for igris_project_list */
@@ -47,6 +49,7 @@ interface ProjectUpdateInput {
   tech_stack?: string;
   archetype?: string;
   status?: 'active' | 'archived' | 'inactive';
+  repo_url?: string;
 }
 
 /** Input shape for igris_project_dashboard (TD-171 M3 — operator override 2026-05-15) */
@@ -112,6 +115,96 @@ function findPathHolder(
   return others.find((r) => resolveForCompare(r.path) === incoming);
 }
 
+// TD-365: the gateway checks PRESENCE (BR-080); this checks CONTENT. The keys
+// are the NOT NULL no-default `projects` columns (pinned from the real schema
+// by repo-url-v1.test.ts, TD-365 S3).
+export const PROJECT_REGISTER_REQUIRED_KEYS = ['slug', 'name', 'path'] as const;
+
+const PROJECT_REGISTER_OPTIONAL_KEYS = ['tech_stack', 'archetype', 'repo_url'] as const;
+
+// The validateMemoryInput shape: the message, or null when valid.
+export function validateProjectRegisterInput(args: Record<string, unknown>): string | null {
+  const a = args ?? {};
+  for (const key of PROJECT_REGISTER_REQUIRED_KEYS) {
+    const v = a[key];
+    if (typeof v !== 'string' || v.trim() === '') {
+      return `Invalid ${key}: must be a non-empty string.`;
+    }
+  }
+  for (const key of PROJECT_REGISTER_OPTIONAL_KEYS) {
+    const v = a[key];
+    if (v !== undefined && v !== null && typeof v !== 'string') {
+      return `Invalid ${key}: must be a string when provided.`;
+    }
+  }
+  return null;
+}
+
+// FR-265: strip URL credentials — all userinfo (a token is often the username),
+// except an ssh user (not a secret; the clone needs it). scp-like and local
+// paths are kept. Trimmed; empty → null.
+export function sanitizeRepoUrl(raw: string): string | null {
+  const s = raw.trim();
+  if (s === '') return null;
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)@/.exec(s);
+  if (m === null) return s;
+  const scheme = m[1];
+  const rest = s.slice(m[0].length);
+  const lower = scheme.toLowerCase();
+  if (lower === 'ssh' || lower === 'git+ssh' || lower === 'ssh+git') {
+    const user = m[2].split(':')[0];
+    return `${scheme}://${user === '' ? '' : `${user}@`}${rest}`;
+  }
+  return `${scheme}://${rest}`;
+}
+
+// One `git` read: no shell, 3 s cap, no prompt; any failure is null.
+function gitRead(cwd: string, args: string[]): string | null {
+  try {
+    const out = execFileSync('git', ['-C', cwd, ...args], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    const t = out.trim();
+    return t === '' ? null : t;
+  } catch {
+    return null;
+  }
+}
+
+// FR-265 AC2: `origin` of the repo whose TOP LEVEL is `path` (a sub-directory's
+// clone would not recover it), else null — never a throw, never a spawn for an
+// absent path.
+function detectRepoUrl(path: string): string | null {
+  if (!existsSync(path)) return null;
+  const top = gitRead(path, ['rev-parse', '--show-toplevel']);
+  if (top === null) return null;
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch {
+    return null;
+  }
+  if (resolveForCompare(top) !== real) return null;
+  const url = gitRead(path, ['remote', 'get-url', 'origin']);
+  return url === null ? null : sanitizeRepoUrl(url);
+}
+
+// projects:1 adds the column; without it, register still works (no repo_url)
+// instead of throwing `no such column` at every /boot.
+function hasRepoUrlColumn(db: ReturnType<typeof getDb>): boolean {
+  const cols = db.pragma('table_info(projects)') as { name: string }[];
+  return cols.some((c) => c.name === 'repo_url');
+}
+
+// Same form as doctor's restore line (`cli/src/verbs/doctor.ts#restoreCommand`).
+function cloneCommand(url: string, path: string): string {
+  const q = (v: string): string => `'${v.replace(/'/g, "'\\''")}'`;
+  return `git clone -- ${q(url)} ${q(path)}`;
+}
+
 /**
  * Register a project in the brain.
  *
@@ -137,10 +230,27 @@ function findPathHolder(
  * takes effect at the next bundle rebuild. Until then this path can still mint
  * a duplicate, which is a second route into TD-404's hazard.
  *
+ * TD-365: input is validated FIRST (no DB access, no raw NOT NULL). CONFLICT
+ * ARM, per column (MAINTAINING row 113) — an omitted value never replaces a
+ * curated one:
+ *  - `name`, `path`: explicit wins — both required and validated (a COALESCE
+ *    would be dead code); a new `path` IS the re-point.
+ *  - `tech_stack`: `COALESCE(@tech_stack, projects.tech_stack)` with a NULL
+ *    bind — the old `?? ''` bind would defeat it (S4 reds under that
+ *    mutation); VALUES wraps the bind in `COALESCE(…, '')` for a new row, so
+ *    read `@tech_stack`, never `excluded.tech_stack`. Explicit `''` clears.
+ *  - `archetype`, `repo_url`: COALESCE (repo_url: explicit > detected > stored).
+ * `/boot` §4.3 still echoes the row first — retained (skill/bundle skew).
+ *
  * @param args - Project registration data
  * @returns MCP-formatted response with the project record
  */
 function handleProjectRegister(args: ProjectRegisterInput): { content: { type: string; text: string }[] } {
+  const invalid = validateProjectRegisterInput(args as unknown as Record<string, unknown>);
+  if (invalid !== null) {
+    return { content: [{ type: 'text', text: `Validation error: ${invalid}` }] };
+  }
+
   const db = getDb();
 
   const holder = findPathHolder(db, args.slug, args.path);
@@ -175,16 +285,30 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
 
   const pathMissing = !existsSync(args.path);
 
+  const params: Record<string, string | null> = {
+    slug: args.slug,
+    name: args.name,
+    path: args.path,
+    tech_stack: args.tech_stack ?? null,
+    archetype: args.archetype ?? null,
+  };
+  const withRepoUrl = hasRepoUrlColumn(db);
+  if (withRepoUrl) {
+    const explicit = typeof args.repo_url === 'string' ? sanitizeRepoUrl(args.repo_url) : null;
+    params.repo_url = explicit ?? (pathMissing ? null : detectRepoUrl(args.path));
+  }
   db.prepare(`
-    INSERT INTO projects (slug, name, path, tech_stack, archetype, last_session_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO projects (slug, name, path, tech_stack, archetype${withRepoUrl ? ', repo_url' : ''}, last_session_at)
+    VALUES (@slug, @name, @path, COALESCE(@tech_stack, ''), @archetype${withRepoUrl ? ', @repo_url' : ''}, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
       name = excluded.name,
       path = excluded.path,
-      tech_stack = excluded.tech_stack,
-      archetype = COALESCE(excluded.archetype, projects.archetype),
+      tech_stack = COALESCE(@tech_stack, projects.tech_stack),
+      archetype = COALESCE(excluded.archetype, projects.archetype),${
+        withRepoUrl ? '\n      repo_url = COALESCE(excluded.repo_url, projects.repo_url),' : ''
+      }
       last_session_at = excluded.last_session_at
-  `).run(args.slug, args.name, args.path, args.tech_stack ?? '', args.archetype ?? null);
+  `).run(params);
 
   const project = db.prepare(
     'SELECT * FROM projects WHERE slug = ?'
@@ -206,7 +330,9 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
         `Last Session: ${project.last_session_at}`,
         ...(pathMissing
           ? ['', `Warning: path does not exist on this machine: ${args.path}`,
-            'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as path-missing.']
+            typeof project.repo_url === 'string' && project.repo_url !== ''
+              ? 'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as source-reclaimed (its repo_url is recorded).'
+              : 'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as path-missing.']
           : []),
       ].join('\n'),
     }],
@@ -326,6 +452,11 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     `Igris Version: ${project.igris_version}`,
     `Registered: ${project.registered_at}`,
     `Last Session: ${project.last_session_at || 'Never'}`,
+    // FR-265: after the lines /boot §4.3 parses, which stay byte-identical.
+    `Repo URL: ${typeof project.repo_url === 'string' && project.repo_url !== '' ? project.repo_url : '(none)'}`,
+    ...(typeof project.repo_url === 'string' && project.repo_url !== ''
+      ? [`Clone: ${cloneCommand(project.repo_url, String(project.path))}`]
+      : []),
     '',
     '## Knowledge Base',
     `Learnings: ${learningCount.count}`,
@@ -360,6 +491,7 @@ const PROJECT_UPDATABLE_FIELDS = [
   'tech_stack',
   'archetype',
   'status',
+  'repo_url', // FR-265: sanitised; '' clears to NULL
 ] as const;
 
 const PROJECT_VALID_STATUSES = ['active', 'archived', 'inactive'] as const;
@@ -461,6 +593,20 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
         }],
       };
     }
+    if (field === 'repo_url') {
+      if (!hasRepoUrlColumn(db)) {
+        return {
+          content: [{
+            type: 'text',
+            text: 'Error: this brain has no projects.repo_url column yet (projects migration v1 has not applied); no field was written.',
+          }],
+        };
+      }
+      setClauses.push('repo_url = ?');
+      params.push(sanitizeRepoUrl(value));
+      updatedFields.push(field);
+      continue;
+    }
     setClauses.push(`${field} = ?`);
     params.push(value);
     updatedFields.push(field);
@@ -470,7 +616,7 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
     return {
       content: [{
         type: 'text',
-        text: 'Error: no updatable fields provided. Pass at least one of: name, path, tech_stack, archetype, status.',
+        text: `Error: no updatable fields provided. Pass at least one of: ${PROJECT_UPDATABLE_FIELDS.join(', ')}.`,
       }],
     };
   }
