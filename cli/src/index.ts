@@ -58,7 +58,7 @@ import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import { runCognition } from "./verbs/cognition.js";
 import { runCeremony } from "./verbs/ceremony.js";
-import { runProject } from "./verbs/project.js";
+import { runProjectCommand } from "./verbs/project.js";
 import { runKpi } from "./verbs/kpi.js";
 import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
@@ -1238,17 +1238,55 @@ async function main(argv: string[]): Promise<void> {
       },
     );
 
-  // FR-274 — the knowledge watermark writer, hidden like `ceremony`: /rest and
-  // the SessionEnd hook call it; FR-273's `relations` joins this group.
+  // Visible since FR-273: `relate` / `unrelate` / `kinds` are operator verbs.
+  // `watermark` (FR-274) is the session-end hook's action and is unchanged.
   program
-    .command("project <action>", { hidden: true })
+    .command("project <action> [args...]")
     .description(
-      "FR-274: per-project brain records. Action: watermark — record HEAD SHA + branch (NULL when detached) of the project row's path as the knowledge watermark, DB-clocked. Every failure writes nothing and is named in skipped[]. Prints a JSON digest. Exit 0 even when skipped; unknown action → exit 2.",
+      "Project relations and per-project brain records. relations (FR-273): the project's related projects (both directions, --depth chain, repo_url, on-disk flag, watermark) through the brain's relations action layer, read-only; --boot prints the one-line /boot digest. kinds list (FR-273): the relation-kind registry. Writes (FR-273): relate <from> <kind> <to> [--detail k=v]..., unrelate <from> <kind> <to>, kinds add <name> --meaning --kind-direction --forward-label --inverse-label --example [--alias]..., kinds alias <name> <alias>, kinds merge <retired> <survivor> — through the brain's own relations module; exit 0 written, 1 refused, 3 degraded (nothing written). watermark (FR-274, called by /rest and the SessionEnd hook): record HEAD SHA + branch of the project row's path as the knowledge watermark; every failure writes nothing and is named in skipped[]. Prints one JSON digest. Reads exit 0 even when degraded; unknown action or bad argument → exit 2.",
     )
     .option("--project <slug>", "project slug (default: basename of cwd)")
-    .action((action: string, opts: { project?: string }): void => {
-      process.exitCode = runProject({ action, project: opts.project });
-    });
+    .option("--depth <n>", "relations: hops to follow (default 1, max 5)")
+    .option("--direction <d>", "relations: out | in | both (default both)")
+    .option("--kind <kind>", "relations: only this relation kind")
+    .option("--no-check", "relations: skip the neighbours' watermark git checks")
+    .option("--boot", "relations: print the /boot one-line digest")
+    .option("--detail <k=v>", "relate: per-edge detail (repeatable)", collect, [])
+    .option("--meaning <text>", "kinds add: what the relation means (A/B endpoints)")
+    .option("--kind-direction <text>", "kinds add: which endpoint plays which role")
+    .option("--forward-label <text>", "kinds add: label read from the source")
+    .option("--inverse-label <text>", "kinds add: label read from the target")
+    .option("--example <text>", "kinds add: one example edge")
+    .option("--alias <name>", "kinds add: an alias (repeatable)", collect, [])
+    .action(
+      async (
+        action: string,
+        args: string[],
+        opts: {
+          project?: string; depth?: string; direction?: string; kind?: string; check?: boolean; boot?: boolean;
+          detail?: string[]; meaning?: string; kindDirection?: string; forwardLabel?: string;
+          inverseLabel?: string; example?: string; alias?: string[];
+        },
+      ): Promise<void> => {
+        process.exitCode = await runProjectCommand({
+          action,
+          args,
+          project: opts.project,
+          depth: opts.depth,
+          direction: opts.direction,
+          kind: opts.kind,
+          check: opts.check,
+          boot: opts.boot,
+          detail: opts.detail,
+          meaning: opts.meaning,
+          kindDirection: opts.kindDirection,
+          forwardLabel: opts.forwardLabel,
+          inverseLabel: opts.inverseLabel,
+          example: opts.example,
+          alias: opts.alias,
+        });
+      },
+    );
 
   // FR-268 — a REPORTING verb (markdown by default), visible: the operator
   // asks it directly; /ops renders it whole and /scan renders its --alarm line.

@@ -209,7 +209,7 @@ export interface SyncPullResult {
 /**
  * `GET <remote_brain.url>/sync/pull?<since params>` — the VPS→local row-pull
  * endpoint (`brain-mcp-server/src/index.ts:1690`). This is the CLIENT half of
- * the brain's own `handleBrainPull` (`tools/sync.ts:913`): the CLI GETs the
+ * the brain's own `handleBrainPull` (`tools/sync.ts:938`): the CLI GETs the
  * remote rows here and merges them into the LOCAL db (via
  * `brain-db.ts#mergePulledTables`), rather than `mcpCall`-ing
  * `igris_brain_pull` against the VPS — which would run the brain's pull handler
@@ -225,7 +225,7 @@ export interface SyncPullResult {
  * caller records a skip and continues (boot-sync's never-block contract).
  *
  * Auth: `Authorization: Bearer <api_key>` (matches healthCheck / the brain's
- * own pull, sync.ts:935). GET — no request body.
+ * own pull, sync.ts:960). GET — no request body.
  */
 export async function syncPull(
   remote: RemoteBrainConfig,

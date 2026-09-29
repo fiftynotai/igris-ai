@@ -395,7 +395,9 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 > the "lego" store).
 
 **Primary tools:** `igris_project_register`, `igris_project_list`,
-`igris_project_update`, `igris_project_dashboard`.
+`igris_project_update`, `igris_project_dashboard`; project relations (FR-273):
+`igris_project_relations`, `igris_project_relate`, `igris_project_relation_kinds`,
+`igris_project_relations_derive`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
 archetype, status, last session. Drives the affinity boosts in recall.
@@ -417,6 +419,14 @@ archetype, status, last session. Drives the affinity boosts in recall.
   narrowed cross-project listings (replaces the older `_list` pattern).
   `summary_only: true` for counts-only during `/scan`.
 - During the `/ops` skill flow.
+- Before changing a public API, a package's exported surface or a pinned
+  version, or porting a fix between a variant/white-label build and its base:
+  `igris_project_relations({slug})` names the related projects (both
+  directions, `depth` for the chain). Declaring an edge (`igris_project_relate`)
+  or adding a kind (`igris_project_relation_kinds`) is rare and deliberate;
+  `igris_project_relations_derive` proposes manifest-derived edges as pending
+  suggestions for the operator to apply —
+  see `core/os/memory.md` §5 "Project relations — when to call".
 
 ### Example invocation
 

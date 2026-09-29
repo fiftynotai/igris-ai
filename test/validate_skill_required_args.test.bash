@@ -27,7 +27,7 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #                         (model_requested), the fixture's scoped preamble
 #                         names it too, so the four list items stay clear and
 #                         the topic sentence is still the ONE residual.
-#   T3  count_sentinel  - the real map has exactly 75 tools (74 before TD-460).
+#   T3  count_sentinel  - the real map has exactly 79 tools (75 before FR-273).
 #   T4  nested_required - the outer list wins over the edges[] item schema.
 #   T5  empty_required  - `required: []` drops the tool from the map.
 #   T6  multiline_required - a wrapped array does not parse as empty.
@@ -113,18 +113,21 @@ setup() {
   [[ "$output" != *"igris_brief_sync"* ]] || return 1
 }
 
-@test "T3 count_sentinel: the real components tree yields exactly 75 tools" {
-  # 80 `required: [` literals - 4 empty - 1 nested item schema = 75.
+@test "T3 count_sentinel: the real components tree yields exactly 79 tools" {
+  # 84 `required: [` literals - 4 empty - 1 nested item schema = 79.
+  # FR-273 round B added igris_project_relations_derive (required: ['slug']): 83 -> 84, 78 -> 79.
+  # FR-273 (2026-09-29) added igris_project_relations, igris_project_relate and
+  # igris_project_relation_kinds on the projects component: 80 -> 83, 75 -> 78.
   # TD-460 (2026-09-09) added igris_context_sync (required: ['project']) on the
   # context component: 79 -> 80, 74 -> 75.
   # FR-267 (2026-08-26) retired the metrics component and its one literal
   # (igris_metrics_record): 80 -> 79, 75 -> 74. Moved together with
   # EXPECTED_TOOL_COUNT in the validator.
-  # In-family with gateway-tool-count.test.ts pinning 109 registered tools.
+  # In-family with gateway-tool-count.test.ts pinning 113 registered tools.
   run python3 "$VALIDATOR" --dump-tool-map
 
   [ "$status" -eq 0 ] || return 1
-  [ "$(printf '%s\n' "$output" | grep -c '^igris_')" -eq 75 ] || return 1
+  [ "$(printf '%s\n' "$output" | grep -c '^igris_')" -eq 79 ] || return 1
 }
 
 @test "T4 nested_required: the edges[] item schema does NOT shadow the real list" {

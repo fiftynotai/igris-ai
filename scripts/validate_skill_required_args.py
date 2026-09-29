@@ -101,7 +101,7 @@ Pass A - tool -> required map. Parse `engine/components/*/index.ts`. Bound each
   declares a NESTED `required: ['to_type','to_id','edge_type']` (the
   `edges[]` item schema) BEFORE its real one, so a first-match parser builds a
   wrong map and every conclusion downstream is noise. Tools with `required: []`
-  are dropped. COUNT SENTINEL: 75 (see below).
+  are dropped. COUNT SENTINEL: 79 (see below).
 
 Pass B - site scan. Every `.md` under `core/skills/`, recursive — not only
   `SKILL.md`. That restriction is precisely how `hunt/workflow-template.md`
@@ -147,16 +147,22 @@ Pass D - ledger subtraction (above).
 
 COUNT SENTINEL
 --------------
-The tool map must have exactly 75 entries on the real tree:
-    80 `required: [` literals
+The tool map must have exactly 79 entries on the real tree:
+    84 `required: [` literals
    -  4 empty `required: []`  (memory x2, errors, briefs)
    -  1 nested item schema    (memory `edges[]`)
-   = 75
+   = 79
+Re-measured 2026-09-29 at FR-273 round B: `igris_project_relations_derive`
+(`['slug']`), 83 -> 84 and 78 -> 79.
+Re-measured 2026-09-29 at FR-273: the projects component gained
+`igris_project_relations` (`['slug']`), `igris_project_relate`
+(`['action','from','kind','to']`) and `igris_project_relation_kinds`
+(`['action']`), so 80 -> 83 and 75 -> 78.
 Re-measured 2026-09-09 at TD-460: the context component gained
 `igris_context_sync` (`required: ['project']`), so 79 -> 80 and 74 -> 75.
 Re-measured 2026-08-26 at FR-267: the metrics component (and its single
 `igris_metrics_record` literal) left the tree, so 80 -> 79 and 75 -> 74.
-This is in-family with `gateway-tool-count.test.ts` pinning 109 registered
+This is in-family with `gateway-tool-count.test.ts` pinning 113 registered
 tools. When a tool is legitimately added the sentinel goes red on purpose: bump
 the constant AND re-read the ledger, because a new tool means new call sites.
 The sentinel is skipped when the components root is overridden for fixtures.
@@ -206,7 +212,9 @@ DEFAULT_COMPONENTS_ROOT = (
 # Count sentinel — see COUNT SENTINEL in the module docstring for the
 # arithmetic. Bumping this is a conscious act that must be paired with a ledger
 # review, because a new tool means new (unclassified) call sites.
-EXPECTED_TOOL_COUNT = 75  # TD-460 (2026-09-09): +igris_context_sync (required: ['project']), 74 -> 75
+EXPECTED_TOOL_COUNT = 79  # FR-273 round B (2026-09-29): +igris_project_relations_derive (required: ['slug']), 78 -> 79
+#                          FR-273 (2026-09-29): +3 project-relation tools, each with a non-empty required, 75 -> 78
+#                          TD-460 (2026-09-09): +igris_context_sync (required: ['project']), 74 -> 75
 #                          FR-267 (2026-08-26): metrics component retired, 75 -> 74
 
 
@@ -848,7 +856,7 @@ def strip_path_tokens(text: str) -> str:
     e.g. a URL query `.../sync?project=other`, which the form rule alone would
     credit as a named `project`.
 
-    Keeping the prefix is the symmetric correction. `boot/SKILL.md:629` writes
+    Keeping the prefix is the symmetric correction. `boot/SKILL.md:653` writes
     `filename=instances/<instance_id>.md` — a properly NAMED argument whose
     VALUE happens to be a path. A blind whole-token strip removed `filename=`
     along with the path and reported the site as deficient, which is the same

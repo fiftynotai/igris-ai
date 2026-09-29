@@ -350,3 +350,30 @@ is annotated inline.
 - `dismiss_count`
 - `last_dismissed_at`
 - `reasons`
+
+### Other
+
+#### `project_relation_kinds` — last-write-wins
+
+- `name`
+- `meaning`
+- `direction`
+- `forward_label`
+- `inverse_label`
+- `example`
+- `aliases`
+- `status`
+- `merged_into`
+- `created_at`
+- `updated_at`
+
+#### `project_relations` — last-write-wins
+
+- `from_slug`
+- `kind`
+- `to_slug`
+- `detail`
+- `provenance`
+- `removed_at`
+- `created_at`
+- `updated_at`

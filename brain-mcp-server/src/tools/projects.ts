@@ -94,18 +94,19 @@ function resolveForCompare(p: string): string {
  * as `path`, or `undefined` when the directory is free (the return value is
  * `Array.prototype.find`'s, so it is `undefined` and never `null`).
  *
- * ONE DEFINITION, TWO CALLERS, on purpose (TD-402 retry 1). Both writes in this
- * module that can set `projects.path` ask this same question, so the predicate
- * cannot drift between them: `handleProjectRegister` before its upsert and
- * `handleProjectUpdate` before its UPDATE. Excluding `slug` itself is what keeps
- * a same-slug re-registration an upsert and lets a row re-set its own path.
+ * ONE DEFINITION, THREE CALLERS, on purpose (TD-402 retry 1; FR-273). Both
+ * writes in this module that can set `projects.path` ask this same question, so
+ * the predicate cannot drift between them: `handleProjectRegister` before its
+ * upsert and `handleProjectUpdate` before its UPDATE; FR-273's relation endpoint
+ * check (`relations/write.ts`) is the third. Excluding `slug` itself is what
+ * keeps a same-slug re-registration an upsert and lets a row re-set its own path.
  *
  * Note the comparison is `realpathSync`-resolved on BOTH sides, so a symlink and
  * its target are one directory; `resolveForCompare` falls back to the raw string
  * for a path that does not exist, so a machine that lacks the directory still
  * compares.
  */
-function findPathHolder(
+export function findPathHolder(
   db: ReturnType<typeof getDb>,
   slug: string,
   path: string,
@@ -248,14 +249,15 @@ function cloneCommand(url: string, path: string): string {
 /** The three `projects` columns projects:2 adds (FR-274). */
 export const KNOWLEDGE_WATERMARK_COLUMNS = ['knowledge_sha', 'knowledge_branch', 'knowledge_recorded_at'] as const;
 
-// A pulled row can carry a TD-253 `~/...` path.
-function expandHome(p: string): string {
+// A pulled row can carry a TD-253 `~/...` path. Exported for FR-273's lookup.
+export function expandHome(p: string): string {
   if (p === '~') return homedir();
   return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
 }
 
 // projects:2 applied? Without it status renders "no watermark recorded".
-function hasWatermarkColumns(db: ReturnType<typeof getDb>): boolean {
+// Exported for FR-273's lookup (a pre-projects:2 DB reads `watermark: null`).
+export function hasWatermarkColumns(db: ReturnType<typeof getDb>): boolean {
   const cols = new Set((db.pragma('table_info(projects)') as { name: string }[]).map((c) => c.name));
   return KNOWLEDGE_WATERMARK_COLUMNS.every((c) => cols.has(c));
 }

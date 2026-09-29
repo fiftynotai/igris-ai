@@ -139,7 +139,7 @@ describe('FR-116 M2 resolve_contradiction round-trip (propose → apply)', () =>
       .prepare(`SELECT id FROM learnings WHERE review_status='approved' ORDER BY id`)
       .all() as Array<{ id: number }>;
     expect(approved.map((r) => r.id)).toEqual([2]);
-    // The COALESCE variant (digest.ts:248 / sync.ts:952) excludes it too.
+    // The COALESCE variant (digest.ts:248 / sync.ts:1303) excludes it too.
     const coalesced = db
       .prepare(`SELECT id FROM learnings WHERE COALESCE(review_status,'approved')='approved' ORDER BY id`)
       .all() as Array<{ id: number }>;

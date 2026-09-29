@@ -17,7 +17,7 @@
  *
  * Why per-entry dispatch (NOT a batched `local_entries` arg): the brain
  * server's `igris_sync_queue_drain` schema accepts only `{remote_url,
- * api_key}` (see `brain-mcp-server/src/tools/sync.ts:1014-1017`). Any
+ * api_key}` (see `brain-mcp-server/src/tools/sync.ts:1039-1042`). Any
  * `local_entries` argument would be silently discarded by the brain's
  * Zod parse, and the local queue would be unlinked with no replay —
  * permanent data loss. This was sentinel's Bug 2 in the M4 reject; the

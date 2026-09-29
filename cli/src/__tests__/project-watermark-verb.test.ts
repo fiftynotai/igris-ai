@@ -363,10 +363,11 @@ describe("igris project watermark — records HEAD of the row path (FR-274)", ()
   });
 
   it("V13: an unknown action exits 2 with no digest", async () => {
-    const { code, digest, stderr } = await run({ action: "relations", project: "x" });
+    // FR-273 made `relations` (this test's original unknown action) a real one.
+    const { code, digest, stderr } = await run({ action: "bogus", project: "x" });
     expect(code).toBe(2);
     expect(digest).toBeNull();
-    expect(stderr).toMatch(/unknown project action 'relations'/);
+    expect(stderr).toMatch(/unknown project action 'bogus'/);
   });
 
   it("V14: a ~/-relative row path resolves under HOME", async () => {

@@ -2797,6 +2797,199 @@ interface PackReport {
  *   unpacked = 316 (`.d.ts`) + 168 (`CHANGELOG.md`), the DOCUMENTING round;
  *   95_588 − 85_609 = 9_979 = this brief's share (no drift).
  *
+ * FR-273 ROUND A MEASURED LAST (2026-09-29), after round A's final
+ * code-touching step (checkpoint A; round B — the CLI write verbs and manifest
+ * derivation — is NOT in this reading and owes its own row). MEASURED ON
+ * SCRATCH BUILDS THAT RAN `copy-templates.sh`, BOTH arms (the TD-460 method,
+ * unchanged): `git archive d9c1db3 cli brain-mcp-server harness-manifest.json`;
+ * the final arm overlaid with every file under `cli/` and `brain-mcp-server/`
+ * that differs from `d9c1db3` or is new in the worktree; the three
+ * `node_modules` symlinked, `dist` ABSENT, TD-426 smoke `(sandboxed)` on both
+ * arms, `npm pack --dry-run --json --ignore-scripts` twice per arm, byte- and
+ * sha-identical. npm 10.9.8, node v22.23.2, darwin/arm64, one machine. The
+ * worktree's own `cli/dist` was never written by an arm (`dist/index.js` and
+ * `dist/brain-mcp-server/dist/index.js` sha256 unchanged before and after).
+ *   control             1_938_864    unpacked 7_036_786, 555 entries, shasum
+ *                                    `7bf6e4fa0a3c8f5ddc4cde698917facf0c84d549`
+ *                                    — taken fresh at `d9c1db3`, twice. It IS
+ *                                    the FR-274 row's final, byte for byte: no
+ *                                    drift.
+ *   packed              1_962_783    unpacked 7_127_435, 569 entries (+14),
+ *                                    shasum
+ *                                    `d8187ffa33f9a116f0bf6febe993dd1862653c8d`,
+ *                                    taken twice.
+ *   FR-273 A's share    +23_919 B    packed. Unpacked +90_649 over 32
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. NEW (the +14 entries): the seven
+ *                                    `components/projects/relations/*.js` —
+ *                                    `read.js` 14_094, `kinds.js` 12_104,
+ *                                    `actions.js` 8_210, `write.js` 6_785,
+ *                                    `near-dup.js` 5_018, `schema.js` 4_148,
+ *                                    `handlers.js` 1_166 — and their seven
+ *                                    `.d.ts` (3_293 + 2_232 + 1_527 + 1_374 +
+ *                                    1_240 + 1_219 + 592; the vendored `.js.map`
+ *                                    is excluded, TD-444). Changed:
+ *                                    `components/projects/index.js` +6_601 /
+ *                                    `.d.ts` +206 (migration projects:3 and the
+ *                                    three tool schemas), `verbs/project.js`
+ *                                    +5_655 / map +5_420 (the read verbs),
+ *                                    `lib/brain-bridge.js` +1_971 / map +1_313,
+ *                                    `tools/projects.d.ts` +1_301 / `.js` +213
+ *                                    (three exports), `tools/sync.js` +992,
+ *                                    `index.js` +890 / map +385,
+ *                                    `lib/brain-db.js` +849 / map +531,
+ *                                    `CHANGELOG.md` +684,
+ *                                    `components/sync/index.js` +442,
+ *                                    `verbs/export.js` +141 / map +39,
+ *                                    `lib/sync/egress-manifest.generated.js`
+ *                                    +14. No band was priced by the plan; the
+ *                                    first (non-method) reading off the
+ *                                    worktree build was +36_950 before the
+ *                                    shipped comments were cut to pointers
+ *                                    (the reasoning lives in MAINTAINING's
+ *                                    FR-273 row and the test docblocks).
+ *   cumulative delta    +119_507 B   (116.7 KB, 77.8 % of the grant —
+ *                                    1_962_783 − 1_843_276)
+ *   headroom remaining  34_093 B     (33.3 KB — 153_600 − 119_507). Round B
+ *                                    spends from THIS figure.
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_962_783 − 1_938_864 = 23_919; 1_962_783 − 1_843_276 = 119_507;
+ *   153_600 − 119_507 = 34_093; 569 − 555 = 14;
+ *   7_127_435 − 7_036_786 = 90_649 = 14_094 + 12_104 + 8_210 + 6_785 +
+ *   6_601 + 5_655 + 5_420 + 5_018 + 4_148 + 3_293 + 2_232 + 1_971 + 1_527 +
+ *   1_374 + 1_313 + 1_301 + 1_240 + 1_219 + 1_166 + 992 + 890 + 849 + 684 +
+ *   592 + 531 + 442 + 385 + 213 + 206 + 141 + 39 + 14;
+ *   119_507 − 95_588 = 23_919 = this round's share (no drift).
+ *
+ * FR-273 ROUND B MEASURED LAST (2026-09-29), after round B's final
+ * code-touching step (checkpoint B: the CLI write verbs, the write door and
+ * manifest derivation). MEASURED ON SCRATCH BUILDS THAT RAN `copy-templates.sh`,
+ * BOTH arms (the TD-460 method): `git archive d9c1db3 cli brain-mcp-server
+ * harness-manifest.json`; the CONTROL arm overlaid with the checkpoint-A tree
+ * (reconstructed from a scratch patch + tar of that state — no commit exists),
+ * the final arm with the worktree; the three `node_modules` symlinked, `dist`
+ * ABSENT, TD-426 smoke `(sandboxed)` on both arms, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, byte- and sha-identical. npm 10.9.8, node
+ * v22.23.2, darwin/arm64. The worktree's `cli/dist` was never written by an arm.
+ *   control             1_962_783    unpacked 7_127_435, 569 entries, shasum
+ *                                    `d8187ffa33f9a116f0bf6febe993dd1862653c8d`
+ *                                    — the ROUND A row's final, byte for byte,
+ *                                    which also proves the reconstruction.
+ *   packed              1_973_281    unpacked 7_161_871, 575 entries (+6),
+ *                                    shasum
+ *                                    `a177043aecaacffef5290913b4c739d100f9470d`,
+ *                                    taken twice; the worktree's own pack is
+ *                                    identical.
+ *   FR-273 B's share    +10_498 B    packed. Unpacked +34_436 over 27
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. NEW (the +6 entries):
+ *                                    `relations/manifest-parse.js` 7_991 /
+ *                                    `.d.ts` 566, `relations/derive.js` 6_593 /
+ *                                    `.d.ts` 831, `relations/url-normalise.js`
+ *                                    1_354 / `.d.ts` 178. Changed:
+ *                                    `verbs/project.js` +3_808 / map +4_300 (the
+ *                                    write verbs), `components/projects/index.js`
+ *                                    +1_207 (the derive tool), `index.js` +1_203 /
+ *                                    map +534, `subconscious/actions/kinds.js`
+ *                                    +1_118 / `.d.ts` +119, `lib/brain-db.js`
+ *                                    +961 / map +702 (the write door),
+ *                                    `relations/actions.js` +715 / `.d.ts` +107,
+ *                                    `lib/brain-bridge.js` +693 / map +488,
+ *                                    `subconscious/actions/index.js` +235 /
+ *                                    `.d.ts` +24, `CHANGELOG.md` +221,
+ *                                    `relations/handlers.js` +219 / `.d.ts` +106,
+ *                                    `subconscious/index.js` +87,
+ *                                    `subconscious/finding-key.js` +65,
+ *                                    `components/projects/index.d.ts` +11.
+ *   cumulative delta    +130_005 B   (127.0 KB, 84.6 % of the grant —
+ *                                    1_973_281 − 1_843_276)
+ *   headroom remaining  23_595 B     (23.0 KB — 153_600 − 130_005)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_973_281 − 1_962_783 = 10_498; 1_973_281 − 1_843_276 = 130_005;
+ *   153_600 − 130_005 = 23_595; 575 − 569 = 6;
+ *   7_161_871 − 7_127_435 = 34_436 = 7_991 + 6_593 + 4_300 + 3_808 + 1_354 +
+ *   1_207 + 1_203 + 1_118 + 961 + 831 + 715 + 702 + 693 + 566 + 534 + 488 +
+ *   235 + 221 + 219 + 178 + 119 + 107 + 106 + 87 + 65 + 24 + 11;
+ *   130_005 − 119_507 = 10_498 = this round's share (no drift).
+ *
+ * FR-273 SENTINEL-FIX ROUND MEASURED LAST (2026-09-29), after the fixes to
+ * sentinel round 1 (F1 no raw manifest URL in synced evidence + credentialled
+ * detail refused, F3 re-open, F6 replication null when nothing was written,
+ * F2 wording). Same method; the CONTROL is the ROUND B row's final arm
+ * (1_973_281, `a177043a…`), unchanged since; one fresh final arm, twice.
+ *   packed              1_973_699    unpacked 7_163_204, 575 entries (+0),
+ *                                    shasum
+ *                                    `9aa94b66ef0157a64cf565d260732f2107153a91`,
+ *                                    taken twice; the worktree's own pack is
+ *                                    identical.
+ *   this round's share  +418 B       packed. Unpacked +1_333 over 7 artifacts,
+ *                                    reconciling exactly: `relations/derive.js`
+ *                                    +585 / `.d.ts` +25, `verbs/project.js` +194
+ *                                    / map +171, `relations/write.js` +178,
+ *                                    `components/projects/index.js` +142,
+ *                                    `relations/url-normalise.js` +38.
+ *   cumulative delta    +130_423 B   (127.4 KB, 84.9 % of the grant —
+ *                                    1_973_699 − 1_843_276)
+ *   headroom remaining  23_177 B     (22.6 KB — 153_600 − 130_423)
+ *
+ *   RE-DERIVED: 1_973_699 − 1_973_281 = 418; 1_973_699 − 1_843_276 = 130_423;
+ *   153_600 − 130_423 = 23_177; 7_163_204 − 7_161_871 = 1_333 =
+ *   585 + 194 + 178 + 171 + 142 + 38 + 25.
+ *
+ * FR-273 R2-F1 FIX MEASURED LAST (2026-09-29): every persisted manifest string
+ * through one gate (`persistableManifestValue`). Same method; CONTROL = the
+ * SENTINEL-FIX row's final (1_973_699, `9aa94b66…`); one fresh final arm, twice.
+ *   packed              1_973_866    unpacked 7_163_711, 575 entries (+0),
+ *                                    shasum
+ *                                    `8ac24b200c31d187e316c856abf315d8da2d0e57`;
+ *                                    the worktree's own pack is identical.
+ *   this round's share  +167 B       packed. Unpacked +507 = `relations/derive.js`
+ *                                    +394 + `.d.ts` +113 (the exported gate).
+ *   cumulative delta    +130_590 B   (127.5 KB, 85.0 % — 1_973_866 − 1_843_276)
+ *   headroom remaining  23_010 B     (22.5 KB — 153_600 − 130_590)
+ *   RE-DERIVED: 1_973_866 − 1_973_699 = 167; 7_163_711 − 7_163_204 = 507 =
+ *   394 + 113; 153_600 − 130_590 = 23_010.
+ *
+ * FR-273 WARDEN-FIX ROUND MEASURED LAST (2026-09-29): the full value validated
+ * before any cap (M2), local-path shapes refused (M1), IMMEDIATE transactions and
+ * the post-embed re-check (M10), `project` un-hidden (M9). Same method; CONTROL =
+ * the R2-F1 row's final (1_973_866, `8ac24b20…`); one fresh final arm, twice.
+ *   packed              1_974_210    unpacked 7_164_782, 575 entries (+0),
+ *                                    shasum
+ *                                    `c5fbd0c12be785033c3356f8bc7dcccbc67177b5`;
+ *                                    the worktree's own pack is identical.
+ *   this round's share  +344 B       packed. Unpacked +1_071 = `relations/kinds.js`
+ *                                    +507, `relations/write.js` +488,
+ *                                    `components/projects/index.js` +77,
+ *                                    `index.js` +47 / map −30,
+ *                                    `relations/derive.js` −18.
+ *   cumulative delta    +130_934 B   (127.9 KB, 85.2 % — 1_974_210 − 1_843_276)
+ *   headroom remaining  22_666 B     (22.1 KB — 153_600 − 130_934)
+ *   RE-DERIVED: 1_974_210 − 1_973_866 = 344; 7_164_782 − 7_163_711 = 1_071 =
+ *   507 + 488 + 77 + 47 − 30 − 18; 153_600 − 130_934 = 22_666.
+ *
+ * FR-273 SENTINEL-R4 ROUND MEASURED LAST (2026-09-30): case-insensitive local-path
+ * and `file:` matching (F-R4-1); the IMMEDIATE-lock pin is a test (unshipped).
+ * Same method; CONTROL = the WARDEN-FIX row's final (1_974_210, `c5fbd0c1…`).
+ *   packed              1_974_206    unpacked 7_164_776, 575 entries (+0),
+ *                                    shasum
+ *                                    `2535bac087932fc07b51b5d58750dbb9e752fcf5`;
+ *                                    taken twice; the worktree's own pack is
+ *                                    identical.
+ *   this round's share  −4 B         packed. Unpacked −6 = `relations/url-normalise.js`
+ *                                    −4 + `relations/write.js` −2 (a regex is
+ *                                    shorter with the `i` flag).
+ *   cumulative delta    +130_930 B   (1_974_206 − 1_843_276)
+ *   headroom remaining  22_670 B     (153_600 − 130_930)
+ *   RE-DERIVED: 1_974_206 − 1_974_210 = −4; 7_164_776 − 7_164_782 = −6 =
+ *   −4 − 2; 153_600 − 130_930 = 22_670.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4289,6 +4482,20 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
         true,
       );
     }
+  }, PACK_TIMEOUT_MS);
+
+  it("ships the FR-273 relations action layer and the pure reader it re-exports", () => {
+    // `brain-bridge.ts#MODULE_RELS.relationsActions` reaches `actions.js` by
+    // path literal; `actions.js` imports `read.js` (the boot digest + lookup)
+    // and `schema.js`. `loadRelationsActions()` DEGRADES on a missing module,
+    // so only a packaging assertion catches the consumer-machine case.
+    const packed = packedPaths();
+    for (const f of ["actions.js", "read.js", "kinds.js", "write.js", "near-dup.js", "schema.js", "derive.js", "manifest-parse.js", "url-normalise.js"]) {
+      const rel = `dist/brain-mcp-server/dist/engine/components/projects/relations/${f}`;
+      expect(packed.has(rel), `${rel} is missing from the published tarball`).toBe(true);
+    }
+    // Round B: the embeddings module the write verbs load for its dispose.
+    expect(packed.has("dist/brain-mcp-server/dist/utils/embeddings.js")).toBe(true);
   }, PACK_TIMEOUT_MS);
 
   it("ships the three FR-240 pure READ modules the layer endpoints import", () => {

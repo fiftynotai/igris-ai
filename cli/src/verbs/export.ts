@@ -152,6 +152,9 @@ const EXCLUDED_STORES = [
   "skills",
   "agents",
   "hooks",
+  // FR-273: cross-project (an edge joins two projects) — synced, never exported.
+  "project_relation_kinds",
+  "project_relations",
 ];
 
 function sha256(text: string): string {

@@ -28,7 +28,7 @@
  * `definition_files` are both in the brain's `SYNC_TABLES`, so `/sync/pull`
  * already carries them. The MCP tools `igris_session_file_pull` /
  * `igris_definition_pull` are LOCAL-DB READERS (they SELECT from the process's
- * own db; brain-mcp-server/src/tools/sync.ts:1499/1601) — NOT remote
+ * own db; brain-mcp-server/src/tools/sync.ts:1524/1601) — NOT remote
  * replicators — so there is no separate remote endpoint to hit for them.
  *
  * Channel: REMOTE (HTTP). The LOCAL merge target is reached through brain-db.ts

@@ -981,7 +981,7 @@ export function upcomingGoals(slug: string, days: number): AssessGoal[] {
 // `boot-sync` (the REMOTE channel) GETs remote rows from the VPS's
 // `GET /sync/pull` endpoint and upserts them into the LOCAL brain DB here.
 // This is the CLIENT-SIDE reproduction of `handleBrainPull`
-// (brain-mcp-server/src/tools/sync.ts:913) — NOT a `mcpCall(remote,
+// (brain-mcp-server/src/tools/sync.ts:938) — NOT a `mcpCall(remote,
 // "igris_brain_pull")`, which would run the brain's pull handler on the VPS
 // against the VPS's OWN db (VPS→VPS, circular; the whole reason D-B exists,
 // learning #169). A CLI process has no stdio MCP server, so it reproduces the
@@ -1112,6 +1112,29 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
     timestampCol: "updated_at",
     strategy: "lww",
     columns: ["type", "name", "filename", "content", "content_hash", "version", "updated_at"],
+  },
+  // FR-273 — verbatim from the two SYNC_TABLES entries appended after
+  // dismissed_patterns (kinds first); a removal arrives as a tombstone.
+  {
+    table: "project_relation_kinds",
+    syncKey: ["name"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    mergeFields: { aliases: "merge_tags" },
+    columns: [
+      "name", "meaning", "direction", "forward_label", "inverse_label", "example",
+      "aliases", "status", "merged_into", "created_at", "updated_at",
+    ],
+  },
+  {
+    table: "project_relations",
+    syncKey: ["from_slug", "kind", "to_slug"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: [
+      "from_slug", "kind", "to_slug", "detail", "provenance", "removed_at",
+      "created_at", "updated_at",
+    ],
   },
 ];
 
@@ -1435,7 +1458,7 @@ function mergeRows(
  * Read the local `sync_state.last_pull_at` for `(remoteUrl, table)`, defaulting
  * to the epoch when absent. This is the `since_<table>` cursor `boot-sync` sends
  * to `GET /sync/pull` — verbatim from `handleBrainPull`'s per-table timestamp
- * loop (sync.ts:922-928). A brain DB without `sync_state` → epoch (full pull),
+ * loop (sync.ts:947-953). A brain DB without `sync_state` → epoch (full pull),
  * never a throw, never a CREATE (create-never).
  */
 export function readPullSince(remoteUrl: string, table: string): string {
@@ -1473,14 +1496,14 @@ export interface PullMergeSummary {
  * /sync/pull`) into the LOCAL brain DB, last-write-wins, then advance the local
  * `sync_state.last_pull_at` cursor for each merged table.
  *
- * VERBATIM reproduction of `handleBrainPull`'s merge half (sync.ts:954-988):
+ * VERBATIM reproduction of `handleBrainPull`'s merge half (sync.ts:979-1013):
  *   - one transaction around all tables (the brain's `db.transaction`);
  *   - iterate BOOT_SYNC_PULL_TABLES in order, `mergeRows` each table that has
  *     received rows, accumulate `inserted + updated` into totalMerged;
  *   - upsert `sync_state.last_pull_at = pulledAt` per merged table (the same
- *     INSERT … ON CONFLICT(remote_url, table_name) the brain uses, sync.ts:958).
+ *     INSERT … ON CONFLICT(remote_url, table_name) the brain uses, sync.ts:983).
  *
- * `pulledAt` uses the brain's timestamp shape (sync.ts:918:
+ * `pulledAt` uses the brain's timestamp shape (sync.ts:943:
  * `new Date().toISOString().replace('T',' ').substring(0,19)`) so the cursor
  * column format matches the brain's own writes — the next pull's `since_*`
  * comparison stays string-monotonic.
@@ -3973,4 +3996,37 @@ export function knowledgeWatermarkWrite(
     .prepare("SELECT knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?")
     .get(slug) as { knowledge_sha: string; knowledge_branch: string | null; knowledge_recorded_at: string };
   return { sha: row.knowledge_sha, branch: row.knowledge_branch, recorded_at: row.knowledge_recorded_at };
+}
+
+// FR-273 D11 — the relations WRITE door: a create-never read-write handle for
+// the vendored relations action layer (the CLI holds no relations SQL).
+
+export class BrainDbAbsentError extends Error {
+  constructor() {
+    super("brain db absent");
+    this.name = "BrainDbAbsentError";
+  }
+}
+
+// Never creates the DB file or a table. `beforeClose` (the embeddings dispose,
+// BR-060) runs BEFORE the handle closes, also when `fn` throws.
+export async function withBrainWriteDoor<T>(
+  requiredTables: readonly string[],
+  fn: (handle: Database.Database) => T | Promise<T>,
+  opts: { beforeClose?: () => void | Promise<void> } = {},
+): Promise<T> {
+  if (!existsSync(brainDbPath())) throw new BrainDbAbsentError();
+  const handle = getDb();
+  try {
+    for (const t of requiredTables) {
+      if (!tableExists(handle, t)) throw new BrainTableMissingError(t);
+    }
+    return await fn(handle);
+  } finally {
+    try {
+      await opts.beforeClose?.();
+    } finally {
+      closeDb();
+    }
+  }
 }

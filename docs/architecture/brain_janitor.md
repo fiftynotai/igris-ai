@@ -98,7 +98,7 @@ non-destructive-of-behavior. This is what activates the previously-dormant path.
 The merge does NOT add a `deleted_at IS NULL` recall gate to the ~10 read paths.
 Instead it sets the duplicate's `review_status='merged'` — and because
 recall/search/sync ALREADY filter `review_status='approved'`
-(`tools/memory.ts` ×10, `subconscious/digest.ts:248`, `tools/sync.ts:952`), the
+(`tools/memory.ts` ×10, `subconscious/digest.ts:248`, `tools/sync.ts:1303`), the
 merged row vanishes from everywhere with ZERO read-path sweep. `deleted_at` +
 `merged_into` columns are stamped for AUDIT/lineage + FR-116 forward-compat, but
 are **not** recall gates.

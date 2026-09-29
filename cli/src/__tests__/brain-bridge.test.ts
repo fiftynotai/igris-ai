@@ -452,6 +452,52 @@ describe("FR-240 bridge — the bundle-ROOT resolver (row 107)", () => {
     expect(existsSync(resolved as string)).toBe(true);
   });
 
+  it("resolves the FR-273 relations action layer (the second write-capable artifact) in a built tree", () => {
+    // Same rot guard as the WRITE door above: `MODULE_RELS.relationsActions`
+    // is a path literal into a build artifact, so a moved file degrades the
+    // `igris project relations|kinds` verbs silently unless this reds.
+    const rel = join("engine", "components", "projects", "relations", "actions.js");
+    const resolved = resolveBundleModule(rel);
+    if (!readersStaged) {
+      expect(resolved).toBeNull();
+      return;
+    }
+    expect(resolved, `${rel} did not resolve`).not.toBeNull();
+    expect(resolved as string).toContain(rel);
+    expect(existsSync(resolved as string)).toBe(true);
+  });
+
+  it("resolves the embeddings module the write verbs dispose (FR-273 round B)", async () => {
+    const { loadVendoredEmbeddings } = await import("../lib/brain-bridge.js");
+    const rel = join("utils", "embeddings.js");
+    const resolved = resolveBundleModule(rel);
+    const emb = await loadVendoredEmbeddings();
+    if (!readersStaged) {
+      expect(resolved).toBeNull();
+      expect(emb).toBeNull();
+      return;
+    }
+    expect(resolved as string).toContain(rel);
+    expect(typeof emb?.disposeEmbeddingPipeline).toBe("function");
+  });
+
+  it("loadRelationsActions() loads the four functions the verbs call (or degrades to null with a cause)", async () => {
+    const { loadRelationsActions, lastRelationsActionsFailure, resetRelationsActions } = await import("../lib/brain-bridge.js");
+    resetRelationsActions();
+    const mod = await loadRelationsActions();
+    if (!readersStaged) {
+      expect(mod).toBeNull();
+      expect(lastRelationsActionsFailure()).toMatch(/relations/);
+      return;
+    }
+    expect(mod, lastRelationsActionsFailure() ?? "").not.toBeNull();
+    for (const name of ["lookupAction", "kindsAction", "relateAction", "relationsBootDigest"] as const) {
+      expect(typeof mod![name], name).toBe("function");
+    }
+    expect(await loadRelationsActions()).toBe(mod); // memoised
+    resetRelationsActions();
+  });
+
   it("returns null for a module that is not there, without throwing", () => {
     expect(resolveBundleModule(join("tools", "no-such-module.js"))).toBeNull();
   });

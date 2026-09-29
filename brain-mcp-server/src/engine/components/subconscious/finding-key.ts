@@ -303,6 +303,7 @@ export const MODULE_VOCABULARY: readonly string[] = [
   'stalled', 'conflict', 'gap', 'pattern', // schema.ts v1 CHECK set
   'edge_inference', // cognition/extractors/synapse.ts
   'janitor', 'arbiter', 'curator', 'cartographer', // the deterministic components' extractors
+  'project_relation', // projects/relations/derive.ts (FR-273)
 ];
 
 const MODULE_VOCAB: ProjectVocabulary = new Map(

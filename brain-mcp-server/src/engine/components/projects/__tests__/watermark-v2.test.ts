@@ -4,18 +4,18 @@
  * `projects.knowledge_recorded_at`.
  *
  * What it gates (plan §4.2 B1–B8):
- *   - B1 a fresh DB gets all three columns and the component chain reads [1, 2];
- *   - B2 a second boot is idempotent (still [1, 2], one of each column);
+ *   - B1 a fresh DB gets all three columns and the component chain reads [1, 2, 3] (FR-273 owns v3);
+ *   - B2 a second boot is idempotent (still [1, 2, 3], one of each column);
  *   - B3 the migration lives in the COMPONENT registry: a DB whose legacy
  *     `schema_version` chain is already at 26, 27, 28 still takes v2;
  *   - B4 ALTER-only (L-53): the legacy chain never creates the columns and
  *     `db.ts` never names `knowledge_`;
  *   - B5 all three columns ALREADY present: no throw, v2 is RECORDED, and a
- *     later (v3 probe) migration still applies — a declining pre-flight would
+ *     later (v4 probe — FR-273 owns v3) migration still applies — a declining pre-flight would
  *     pin the component at v1 forever (mutation M10);
  *   - B6 only `knowledge_sha` present (a partial crash between two ALTERs): the
  *     other two are added and v2 is recorded;
- *   - B7 crash-idempotence: columns present, version row missing → [1, 2];
+ *   - B7 crash-idempotence: columns present, version row missing → [1, 2, 3];
  *   - B8 `integrity_check` is `ok` before and after, and `trusted_schema` is OFF
  *     again after the pre-flight's scoped toggle (BR-089).
  *
@@ -93,10 +93,10 @@ function countOf(db: Database.Database, col: string): number {
 }
 
 describe('projects migration v2 — the knowledge watermark columns (FR-274)', () => {
-  it('B1: a fresh DB has all three columns and the chain reads exactly [1, 2]', () => {
+  it('B1: a fresh DB has all three columns and the chain reads exactly [1, 2, 3]', () => {
     const db = bootProjects(tmpDbPath()).rawConnection;
     for (const c of WATERMARK_COLUMNS) expect(columnsOf(db)).toContain(c);
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     // All three are nullable TEXT with no default — a row without a watermark reads NULL.
     const info = db.pragma('table_info(projects)') as { name: string; type: string; notnull: number; dflt_value: unknown }[];
     for (const c of WATERMARK_COLUMNS) {
@@ -105,11 +105,11 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     }
   });
 
-  it('B2: a second boot is idempotent — still [1, 2] and exactly one of each column', () => {
+  it('B2: a second boot is idempotent — still [1, 2, 3] and exactly one of each column', () => {
     const path = tmpDbPath();
     bootProjects(path).close();
     const db = bootProjects(path).rawConnection;
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     for (const c of WATERMARK_COLUMNS) expect(countOf(db, c)).toBe(1);
   });
 
@@ -122,7 +122,7 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     expect((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v).toBe(28);
 
     storage.runMigrations('projects', createProjectsComponent().schema());
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     for (const c of WATERMARK_COLUMNS) expect(columnsOf(db)).toContain(c);
   });
 
@@ -139,7 +139,7 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     expect(v2!.sql).toBe('SELECT 1;');
   });
 
-  it('B5: all three columns ALREADY present — no throw, v2 RECORDED, and a later v3 probe still applies (M10)', () => {
+  it('B5: all three columns ALREADY present — no throw, v2 RECORDED, and a later v4 probe still applies (M10)', () => {
     const path = tmpDbPath();
     const pre = open(path);
     migrateSchema(pre.rawConnection);
@@ -148,13 +148,13 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
 
     const logged: string[] = [];
     vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { logged.push(a.map(String).join(' ')); });
-    const probe: Migration = { version: 3, description: 'probe', sql: 'CREATE TABLE _probe_v3(x);' };
+    const probe: Migration = { version: 4, description: 'probe', sql: 'CREATE TABLE _probe_v4(x);' };
     let storage: StorageAdapter | undefined;
     expect(() => { storage = bootProjects(path, [probe]); }).not.toThrow();
     const db = storage!.rawConnection;
-    expect(appliedVersions(db)).toEqual([1, 2, 3]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3, 4]);
     for (const c of WATERMARK_COLUMNS) expect(countOf(db, c)).toBe(1);
-    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_probe_v3'").get()).toBeDefined();
+    expect(db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_probe_v4'").get()).toBeDefined();
     expect(logged.some((l) => l.includes('projects@2') && l.includes('already present'))).toBe(true);
   });
 
@@ -167,11 +167,11 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
 
     vi.spyOn(console, 'error').mockImplementation(() => {});
     const db = bootProjects(path).rawConnection;
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     for (const c of WATERMARK_COLUMNS) expect(countOf(db, c)).toBe(1);
   });
 
-  it('B7: crash-idempotence — the pre-flight ran (columns added) but the version insert never did; the next boot records [1, 2]', () => {
+  it('B7: crash-idempotence — the pre-flight ran (columns added) but the version insert never did; the next boot records [1, 2, 3]', () => {
     const path = tmpDbPath();
     const first = open(path);
     migrateSchema(first.rawConnection);
@@ -183,7 +183,7 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     first.close();
 
     const db = bootProjects(path).rawConnection;
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     for (const c of WATERMARK_COLUMNS) expect(countOf(db, c)).toBe(1);
   });
 
@@ -195,10 +195,10 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     storage.runMigrations('projects', createProjectsComponent().schema());
     expect(integrity(db)).toBe('ok');
     expect(db.pragma('trusted_schema', { simple: true })).toBe(0);
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
   });
 
-  it('no projects table (fixture only): v1 and v2 both decline, and both apply on the next boot', () => {
+  it('no projects table (fixture only): v1 declines (so v2 and v3 are skipped), and all three apply on the next boot', () => {
     const storage = open(tmpDbPath());
     const db = storage.rawConnection;
     vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -206,7 +206,7 @@ describe('projects migration v2 — the knowledge watermark columns (FR-274)', (
     expect(appliedVersions(db)).toEqual([]);
     db.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL)');
     storage.runMigrations('projects', createProjectsComponent().schema());
-    expect(appliedVersions(db)).toEqual([1, 2]);
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
     for (const c of WATERMARK_COLUMNS) expect(columnsOf(db)).toContain(c);
   });
 });

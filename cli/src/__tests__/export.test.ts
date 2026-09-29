@@ -486,6 +486,10 @@ describe("igris export — exclusions self-described + absent from data/", () =>
     expect(excluded).toContain("instances");
     expect(excluded).toContain("session_files");
     expect(excluded).toContain("embeddings");
+    // FR-273: project relations are cross-project (an edge joins TWO
+    // projects), not a project slice — replicated by sync, never exported.
+    expect(excluded).toContain("project_relation_kinds");
+    expect(excluded).toContain("project_relations");
     for (const name of excluded) {
       expect(() => readStore(root, name)).toThrow();
       expect(manifest.stores as Record<string, unknown>).not.toHaveProperty(name);

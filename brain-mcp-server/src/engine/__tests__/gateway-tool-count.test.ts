@@ -82,7 +82,7 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 109 tools (112 at FR-237 − 4 + 1: FR-267 retired metrics, TD-460 added igris_context_sync)', () => {
+  it('exposes exactly 113 tools (112 at FR-237 − 4 + 1 + 4: FR-267 retired metrics, TD-460 added igris_context_sync, FR-273 added the four project-relation tools)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
@@ -99,7 +99,12 @@ describe('gateway tool count (TD-171 closeout)', () => {
     // TD-460 (2026-09-09) added igris_context_sync on the context component —
     // the bidirectional disk↔brain reconciler that makes context_files a
     // replication layer rather than a write-only store, 108→109.
-    expect(tools.length).toBe(109);
+    // FR-273 (2026-09-29, round A) added igris_project_relations /
+    // igris_project_relate / igris_project_relation_kinds on the projects
+    // component — the project-relation lookup, edge writes and the governed
+    // kind registry, 109→112. FR-273 round B added igris_project_relations_derive
+    // (manifest derivation → pending suggestions), 112→113.
+    expect(tools.length).toBe(113);
   });
 
   it('every component factory contributes at least one tool', () => {

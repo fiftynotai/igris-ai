@@ -31,6 +31,7 @@
  */
 
 import type Database from 'better-sqlite3';
+import { declareRelation } from '../../projects/relations/write.js';
 import { createHash } from 'node:crypto';
 import { errMsg } from '../../../helpers.js';
 import { handleEdgeCreate } from '../../edges/handlers.js';
@@ -1484,4 +1485,23 @@ export function applyProposeEdgeType(params: Record<string, unknown>): ActionRes
       },
     },
   );
+}
+
+// FR-273 D6 — a derived project relation, applied by the operator: the SAME
+// `declareRelation` core as igris_project_relate (every check applies), with
+// provenance `derived`. A refusal leaves the suggestion pending.
+export function applyAddProjectRelation(db: Database.Database, params: Record<string, unknown>): ActionResult {
+  const from = asString(params.from);
+  const kind = asString(params.relation_kind);
+  const to = asString(params.to);
+  if (!from || !kind || !to) return fail('add_project_relation', 'add_project_relation requires from, relation_kind and to');
+  const detail = asObject(params.detail) as Record<string, string> | null;
+  const r = declareRelation(db, { from, kind, to, ...(detail ? { detail } : {}) }, { provenance: 'derived' });
+  if (!r.ok) return fail('add_project_relation', r.refused.message);
+  return {
+    ok: true,
+    kind: 'add_project_relation',
+    message: `relation ${r.data.relation.from} ${r.data.relation.kind} ${r.data.relation.to} ${r.data.outcome} (derived)`,
+    data: { relation: r.data.relation, outcome: r.data.outcome },
+  };
 }

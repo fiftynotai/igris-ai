@@ -14,7 +14,7 @@ The OS's knowledge lives in distinct **stores**. Each holds one kind of knowledg
 
 | Store | Kind it holds | Authoritative medium | Sync mechanism |
 |---|---|---|---|
-| Memory | experiential structured-records (learnings, goals, errors, metrics, sessions-meta, briefs-meta, graph) — route each by kind to its table | brain DB (`knowledge.db`) | VPS push/pull (accumulated knowledge) · bundle export/import (project slice, point-in-time) |
+| Memory | experiential structured-records (learnings, goals, errors, metrics, sessions-meta, briefs-meta, graph, project relations + their kind registry) — route each by kind to its table | brain DB (`knowledge.db`) | VPS push/pull (accumulated knowledge) · bundle export/import (project slice, point-in-time) |
 | Project-context docs | curated authored-prose standards (coding_guidelines, architecture, design, brand) | **file** (`~/.igris/projects/{project}/context/`) — the authoring authority | VPS push/pull via the `context_files` **replica** (same-owner, continuous; reconciled by `igris_context_sync`) · bundle export/import (project slice, cross-owner, point-in-time) |
 | Catalog (reusable-assets "lego" store) | reusable-asset references — what · where · when-to-use · how-to-integrate (NOT the asset code) | brain DB `catalog` table (`knowledge.db`) | VPS push/pull (global — not in a project slice) |
 | Loadout (your portable personal overlay) | the operator's bring-your-own extensions — personal skills / subagents / MCPs that project to harnesses; carried machine-to-machine | files (`~/.igris/loadout/` — dir + `igris loadout` verb) | `igris loadout` + VPS (machine-to-machine, global — not in a project slice) |

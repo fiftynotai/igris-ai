@@ -1663,7 +1663,7 @@ function migrateSchemaInner(db: Database.Database): void {
   //
   // NO WRITER IS BYPASSED — verified by reading every one rather than assuming:
   // `briefs.ts:423`/`:437` (`ON CONFLICT DO UPDATE`), `:600`/`:615` (UPDATE),
-  // `sync.ts:1595` (`ON CONFLICT DO UPDATE`) and `sync.ts#mergeRows:631-668`
+  // `sync.ts:1620` (`ON CONFLICT DO UPDATE`) and `sync.ts#mergeRows:631-668`
   // (plain INSERT / UPDATE). None uses `INSERT OR REPLACE`, so the
   // REPLACE-skips-the-AFTER-UPDATE-trigger footgun is not on any live path.
   //

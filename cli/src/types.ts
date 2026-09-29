@@ -2,6 +2,8 @@
  * Shared TS interfaces for the Igris CLI.
  */
 
+import type { RelationActionResult } from "./lib/brain-bridge.js";
+
 /**
  * Shape of `~/.igris/projects/<slug>/installed_features.json`.
  *
@@ -730,7 +732,7 @@ export interface CognitionInstanceYield {
    * THE DISCRIMINATOR'S SOUNDNESS IS A CLAIM ABOUT THE WHOLE WRITER SET, so the
    * set is enumerated rather than sampled. SIX statements assign
    * `learnings.deleted_at`. Four stamp a timestamp
-   * (`perception/handlers.ts:682`; `subconscious/actions/kinds.ts:630`, `:743`,
+   * (`perception/handlers.ts:682`; `subconscious/actions/kinds.ts:631`, `:743`,
    * `:1079`) and two write it back to NULL (`janitor/undo.ts:243`, `:264`).
    * The two NULL-writers are the only ones that could mint a
    * `rejected AND deleted_at IS NULL` row without an expiry. Each restores
@@ -2319,6 +2321,57 @@ export interface ProjectWatermarkDigest {
   /** The watermark before this call; `null` when none was recorded. */
   previous: ProjectWatermark | null;
   skipped: string[];
+}
+
+/**
+ * FR-273 — `igris project relations --project <slug> [--depth] [--direction]
+ * [--kind] [--no-check]`. `relations` is the relations action layer's result
+ * VERBATIM (the MCP tool's JSON); `null` when degraded. Exit 0 always.
+ */
+export interface ProjectRelationsDigest {
+  degraded: boolean;
+  reason: string | null;
+  project: string;
+  relations: RelationActionResult | null;
+}
+
+/**
+ * FR-273 — `igris project relations --boot`: the /boot line digest (the brain's
+ * `relationsBootDigest`, or a CLI-built degraded one). `line` is null when the
+ * project has no live edges, is unregistered, or the brain is degraded.
+ */
+export interface ProjectRelationsBootDigest {
+  degraded: boolean;
+  reason: string | null;
+  project: string;
+  registered: boolean;
+  line: string | null;
+  neighbours: number;
+}
+
+/** FR-273 — `igris project kinds list`. `result` is the MCP tool's JSON verbatim. */
+export interface ProjectKindsDigest {
+  degraded: boolean;
+  reason: string | null;
+  action: "kinds.list";
+  ok: boolean;
+  result: RelationActionResult | null;
+}
+
+/**
+ * FR-273 D11 — a relations WRITE verb (`relate`, `unrelate`, `kinds add|alias|merge`).
+ * `result` is the MCP tool's JSON verbatim; exit 0 written, 1 refused, 2 usage,
+ * 3 degraded (nothing written). `replication` is "next brain push" only when a
+ * row changed (a CLI write emits no bus event); null when degraded, refused or
+ * an idempotent no-op — nothing was written, so nothing will replicate.
+ */
+export interface ProjectWriteDigest {
+  degraded: boolean;
+  reason: string | null;
+  action: "relate" | "unrelate" | "kinds.add" | "kinds.alias" | "kinds.merge";
+  ok: boolean;
+  result: RelationActionResult | null;
+  replication: "next brain push" | null;
 }
 
 /** One UTC week (Monday–Sunday) in the KPI window. */

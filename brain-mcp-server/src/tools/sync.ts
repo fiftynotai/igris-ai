@@ -438,6 +438,31 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'dismiss_count', 'last_dismissed_at', 'reasons',
     ],
   },
+  {
+    // FR-273 (projects:3) — kind registry; aliases union (merge_tags). Rules:
+    // MAINTAINING row "project relations store".
+    table: 'project_relation_kinds',
+    syncKey: ['name'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    mergeFields: { aliases: 'merge_tags' },
+    columns: [
+      'name', 'meaning', 'direction', 'forward_label', 'inverse_label', 'example',
+      'aliases', 'status', 'merged_into', 'created_at', 'updated_at',
+    ],
+  },
+  {
+    // FR-273 — relation edges on the natural key. `removed_at` is the tombstone
+    // (sync is upsert-only, #1067): it MUST stay in `columns`.
+    table: 'project_relations',
+    syncKey: ['from_slug', 'kind', 'to_slug'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'from_slug', 'kind', 'to_slug', 'detail', 'provenance', 'removed_at',
+      'created_at', 'updated_at',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------

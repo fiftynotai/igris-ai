@@ -713,9 +713,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
         const pushText = pushResult.content?.[0]?.text ?? '(no push response)';
         // handleBrainPush contract (verified TD-097 audit): isError=true means
         // queueFailedRows was attempted before returning (catch block at
-        // sync.ts:864 always runs queueFailedRows ahead of isError return).
+        // sync.ts:889 always runs queueFailedRows ahead of isError return).
         // Hard-fail-without-attempting-queue is impossible by construction;
-        // a queue-write itself can still fail (inner try/catch at sync.ts:869).
+        // a queue-write itself can still fail (inner try/catch at sync.ts:894).
         pushSummary = pushResult.isError ? 'queued' : 'pushed';
         // Log the first line of the push text so operators tailing
         // perception_extract.log see the row counts and chunk count from

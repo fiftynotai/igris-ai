@@ -393,6 +393,30 @@ If the list is empty, unknown-only, the command is unavailable, or the JSON is
 unparseable, render nothing. NEVER block boot, never author docs automatically,
 and do not re-implement the `applies_when` logic here.
 
+### 4.7.1 Mount — Project Relations (FR-273)
+
+One line naming the projects this one is connected to (a package it uses, a
+service it calls, its white-label or variant builds). The CLI verb reads the
+brain and renders the line; `/boot` only prints it.
+
+Run:
+
+```bash
+igris project relations --project <detect.project_slug> --boot 2>/dev/null || true
+```
+
+Read only these fields from the JSON digest:
+
+```jsonc
+{ "degraded": false,
+  "line": "Connected: uses moca-agent-flutter-client (v2.0.0) → calls moca-ai-agent · more: igris project relations" }
+```
+
+If `degraded` is false and `line` is a non-empty string, print it verbatim as
+exactly one line. Otherwise (no relations, an unregistered project, a degraded
+brain, the command unavailable, or unparseable JSON) render nothing. NEVER
+block boot, and do not compose the line here.
+
 ### 4.8 Ready Check — Igris Doctor Drift Summary (FR-175)
 
 Run the existing CLI diagnostic in read-only mode after the regular assessment, with a short timeout so boot cannot hang:

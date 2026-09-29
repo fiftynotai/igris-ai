@@ -12,6 +12,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project relations (FR-273, round A).** Registered projects can now be
+  related, and every agent can see it. Two synced brain tables (projects
+  component migration v3): `project_relation_kinds`, a governed registry seeded
+  with `uses_package`, `calls_service`, `white_label_of`, `variant_of` and
+  `supersedes` (each with meaning, direction, labels, an example and aliases),
+  and `project_relations`, the edges with per-edge detail and provenance. Three
+  MCP tools over ONE action layer that the CLI also imports:
+  `igris_project_relations` (neighbours in both directions with kind, labels,
+  detail, `repo_url`, on-disk flag and the FR-274 watermark — at most 4 local
+  git checks — plus `depth` for the chain and the derived "system"),
+  `igris_project_relate` (declare/remove; only a registered kind, an alias is
+  stored canonical; both endpoints must be registered and not duplicate-path;
+  removal is a tombstone) and `igris_project_relation_kinds`
+  (list/add/alias/merge; a near-duplicate kind is refused by a lexical gate, and
+  a semantic gate reports the nearest kind without refusing — calibrated, no
+  threshold separated synonyms on this model; `IGRIS_RELATIONS_SEMANTIC=off`
+  disables it). `igris project relations` and `igris project kinds list` read
+  the same data from the CLI, and `/boot` prints one `Connected: …` line
+  (§4.7.1). Both tables replicate (LWW, tombstones; concurrent alias adds
+  union on the replica that receives the newer row and converge on the next
+  write of the kind); a new table is deploy-order safe. `core/os/memory.md` says when to call it.
+- **Project relations, round B (FR-273): CLI writes and manifest derivation.**
+  `igris project relate|unrelate` and `igris project kinds add|alias|merge` run
+  the brain's own relations action layer on a create-never write handle (exit 0
+  written, 1 refused, 2 usage, 3 degraded; a CLI write replicates on the next
+  brain push). `igris_project_relations_derive` reads a project's
+  `pubspec.yaml` / `package.json` / `pyproject.toml` git and path dependencies
+  and turns a match with another registered project (normalised `repo_url`, or
+  realpath) into a pending `add_project_relation` suggestion — never an edge
+  until `igris_suggestion_apply_action` applies it (provenance `derived`). It
+  reads the working tree only.
+
 - **Knowledge watermark (FR-274).** The brain now records, per project, the
   commit its knowledge reflects: `projects.knowledge_sha`, `knowledge_branch`
   and `knowledge_recorded_at` (projects component migration v2, ALTER-only, not

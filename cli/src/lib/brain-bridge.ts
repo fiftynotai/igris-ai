@@ -243,6 +243,13 @@ const MODULE_RELS = {
    * ONE table of bundle-relative paths for the MAINTAINING sweep to re-point.
    */
   engine: join("engine", "index.js"),
+  // FR-273 — the relations action layer: the SECOND write-capable artifact in
+  // this map (after `engine/index.js`); the CLI calls its reads on a query_only
+  // handle, and its loss degrades `igris project relations|kinds` (exit 0).
+  relationsActions: join("engine", "components", "projects", "relations", "actions.js"),
+  // FR-273 round B — the same embeddings module `actions.js` imports, loaded for
+  // its `disposeEmbeddingPipeline` (the write verbs dispose before closing, BR-060).
+  embeddings: join("utils", "embeddings.js"),
 } as const;
 
 /** The bundle-relative path of the write engine, for `brain-write-bridge.ts`. */
@@ -1160,4 +1167,135 @@ export function resetLayerReaders(): void {
   cachedReadersFailure = null;
   cachedVecModule = null;
   cachedVecFailure = null;
+}
+
+// ---------------------------------------------------------------------------
+// FR-273 — the relations action layer (`relations/actions.ts`), one module for
+// the MCP tools and the `igris project relations|kinds` verbs. Structural
+// facade; each block cites its `read.ts:NN` / `actions.ts:NN` source.
+// ---------------------------------------------------------------------------
+
+/** actions.ts:37 — `RelationActionResult`: byte-for-byte the MCP tool's JSON text. */
+export interface RelationActionResult {
+  ok: boolean;
+  action: string;
+  refused?: { code: string; message: string; closest?: string[]; existing?: string; score?: number; gate?: string };
+  data?: unknown;
+  semantic_check?: string;
+}
+
+/** read.ts:150 — `RelationNeighbour`. */
+export interface RelationNeighbour {
+  slug: string;
+  depth: number;
+  side: "out" | "in";
+  kind: string;
+  forward_label: string | null;
+  inverse_label: string | null;
+  label: string | null;
+  detail: Record<string, string>;
+  provenance: string;
+  registered: boolean;
+  repo_url: string | null;
+  path: string | null;
+  on_disk: boolean;
+  /** read.ts:139 — `lines` only when the check RAN. */
+  watermark: { sha: string; branch: string | null; recorded_at: string | null; check: string; lines?: string[] } | null;
+  via: { from: string; kind: string; to: string };
+}
+
+/** read.ts:179 — `RelationsLookup` (the `data` of a `lookup` result). */
+export interface RelationsLookup {
+  project: string;
+  registered: boolean;
+  depth: number;
+  direction: "out" | "in" | "both";
+  kind: string | null;
+  neighbours: RelationNeighbour[];
+  edges: { from: string; kind: string; to: string; detail: Record<string, string>; provenance: string }[];
+  truncated: boolean;
+  system?: { members: string[]; size: number; truncated: boolean };
+}
+
+/** read.ts:424 — `RelationsBootDigest`. */
+export interface RelationsBootDigest {
+  degraded: boolean;
+  reason: string | null;
+  project: string;
+  registered: boolean;
+  line: string | null;
+  neighbours: number;
+}
+
+/** The functions the CLI calls from `actions.js`. */
+export interface RelationsActionsModule {
+  /** actions.ts:145 */
+  lookupAction(db: Database.Database, args: Record<string, unknown>): Promise<RelationActionResult>;
+  /** actions.ts:196 */
+  kindsAction(db: Database.Database, args: Record<string, unknown>): Promise<RelationActionResult>;
+  /** actions.ts:180 */
+  relateAction(db: Database.Database, args: Record<string, unknown>): Promise<RelationActionResult>;
+  /** read.ts:449, re-exported by actions.ts */
+  relationsBootDigest(db: Database.Database, slug: string): RelationsBootDigest;
+}
+
+let cachedRelations: RelationsActionsModule | null = null;
+let cachedRelationsFailure: string | null = null;
+
+/** The memoised relations-load failure cause. */
+export function lastRelationsActionsFailure(): string | null {
+  return cachedRelationsFailure;
+}
+
+/** Reset the memo (tests re-sandbox between cases). */
+export function resetRelationsActions(): void {
+  cachedRelations = null;
+  cachedRelationsFailure = null;
+}
+
+/**
+ * Load the relations action layer from the vendored bundle. Returns `null` on
+ * ANY failure (module absent, export missing, evaluation throw) with the cause
+ * in {@link lastRelationsActionsFailure}. Never rejects.
+ */
+export async function loadRelationsActions(): Promise<RelationsActionsModule | null> {
+  if (cachedRelations !== null) return cachedRelations;
+  if (cachedRelationsFailure !== null) return null;
+  const modulePath = resolveBundleModule(MODULE_RELS.relationsActions);
+  if (modulePath === null) {
+    cachedRelationsFailure = `brain relations module not found: ${MODULE_RELS.relationsActions} (looked in: ${brainBundleCandidates().join(", ")})`;
+    return null;
+  }
+  let mod: Record<string, unknown>;
+  try {
+    mod = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>;
+  } catch (err) {
+    cachedRelationsFailure = `import failed for ${MODULE_RELS.relationsActions}: ${err instanceof Error ? err.message : String(err)}`;
+    return null;
+  }
+  for (const name of ["lookupAction", "kindsAction", "relateAction", "relationsBootDigest"]) {
+    if (typeof mod[name] !== "function") {
+      cachedRelationsFailure = `module at ${modulePath} does not export ${name}`;
+      return null;
+    }
+  }
+  cachedRelations = mod as unknown as RelationsActionsModule;
+  return cachedRelations;
+}
+
+/** The vendored embeddings module's teardown (utils/embeddings.ts). */
+export interface VendoredEmbeddings {
+  disposeEmbeddingPipeline(): Promise<void>;
+}
+
+/** Load the vendored embeddings module for its dispose; `null` on any failure. */
+export async function loadVendoredEmbeddings(): Promise<VendoredEmbeddings | null> {
+  const modulePath = resolveBundleModule(MODULE_RELS.embeddings);
+  if (modulePath === null) return null;
+  try {
+    const mod = (await import(pathToFileURL(modulePath).href)) as Record<string, unknown>;
+    return typeof mod.disposeEmbeddingPipeline === "function" ? (mod as unknown as VendoredEmbeddings) : null;
+  } catch {
+    return null;
+  }
 }

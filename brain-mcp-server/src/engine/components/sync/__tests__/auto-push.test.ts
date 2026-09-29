@@ -3,7 +3,8 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (20 entries — TD-361 removed schedules + schedule_runs)
+ * 2. SYNC_TABLES completeness (22 entries — TD-361 removed schedules + schedule_runs;
+ *    FR-273 appended project_relation_kinds + project_relations)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
@@ -276,7 +277,7 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 20 entries', () => {
+    it('has exactly 22 entries', () => {
       // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
       // task_assignments, agent_capabilities, autonomous_decisions,
       // coordination_config) removed with the worker subsystem teardown.
@@ -287,7 +288,10 @@ describe('Sync Auto-Push', () => {
       // same-owner cross-machine transport, 21→22.
       // TD-361 (2026-09-24): −2 schedules + schedule_runs, execution state is
       // per-DB-file, 22→20.
-      expect(SYNC_TABLES).toHaveLength(20);
+      // FR-273 (2026-09-29): +2 `project_relation_kinds` + `project_relations`
+      // (projects:3) — relations replicate, LWW on updated_at, removal is a
+      // tombstone; APPENDED after dismissed_patterns, 20→22.
+      expect(SYNC_TABLES).toHaveLength(22);
     });
 
     it('EXCLUDES schedules + schedule_runs — execution state is per-DB-file (TD-361)', () => {
@@ -310,7 +314,7 @@ describe('Sync Auto-Push', () => {
       // one machine's roster onto another — the same class of mistake that put
       // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
       // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
-      // wrong to merge, so it stays out and the count above stays 20 (TD-361).
+      // wrong to merge, so it stays out (the count above is 22 since FR-273).
       expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
     });
 
@@ -384,8 +388,9 @@ describe('Sync Auto-Push', () => {
       }
       // …and no new table joined for it either (22 at BR-100; TD-361
       // (2026-09-24): −2 schedules + schedule_runs, execution state is
-      // per-DB-file, 22→20).
-      expect(SYNC_TABLES).toHaveLength(20);
+      // per-DB-file, 22→20; FR-273 (2026-09-29): +2 project-relation tables,
+      // 20→22 — neither carries a machine_id).
+      expect(SYNC_TABLES).toHaveLength(22);
     });
 
     const newTables = [
@@ -668,6 +673,25 @@ describe('Sync Auto-Push', () => {
       comp.destroy();
     });
 
+    it('project.relation_changed (FR-273) batch-pushes BOTH relation tables', async () => {
+      mockDb._stmt.get.mockReturnValue(undefined);
+      mockDb._stmt.all.mockReturnValue([{ name: 'uses_package', from_slug: 'a', kind: 'uses_package', to_slug: 'b' }]);
+
+      const comp = createSyncComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('project.relation_changed', { action: 'relate.declare' });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(fetchWithRetry).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(
+        (vi.mocked(fetchWithRetry).mock.calls[0][1] as RequestInit).body as string
+      );
+      expect(Object.keys(body.tables).sort()).toEqual(['project_relation_kinds', 'project_relations']);
+
+      comp.destroy();
+    });
+
     it('pending set is cleared after flush', async () => {
       mockDb._stmt.get.mockReturnValue(undefined);
       mockDb._stmt.all.mockReturnValue([{ id: 1 }]);
@@ -804,13 +828,13 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('events declaration', () => {
-    it('declares 11 listened events', () => {
+    it('declares 12 listened events', () => {
       vi.mocked(readFileSync).mockReturnValue(VALID_CONFIG);
 
       const comp = createSyncComponent();
       const { listens } = comp.events();
 
-      expect(listens).toHaveLength(11);
+      expect(listens).toHaveLength(12);
     });
 
     it('declares 0 emitted events', () => {
@@ -822,7 +846,7 @@ describe('Sync Auto-Push', () => {
       expect(emits).toHaveLength(0);
     });
 
-    it('all 11 event names match expected names', () => {
+    it('all 12 event names match expected names', () => {
       vi.mocked(readFileSync).mockReturnValue(VALID_CONFIG);
 
       const comp = createSyncComponent();
@@ -840,6 +864,7 @@ describe('Sync Auto-Push', () => {
         'error.stored',
         'project.registered',
         'agent_event.recorded',
+        'project.relation_changed',
       ];
 
       const listenNames = listens.map((e) => e.name);

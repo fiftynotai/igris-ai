@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Project relations (FR-273).** `igris project relations [--project <slug>]
+  [--depth <n>] [--direction out|in|both] [--kind <k>] [--no-check]` prints a
+  project's related projects from the brain (kind, detail, `repo_url`, on-disk
+  flag, watermark); `--boot` prints the one-line `/boot` digest, and
+  `igris project kinds list` the relation-kind registry. Read-only, through the
+  brain's own relations module in the bundled engine (no second copy of the
+  logic); a missing brain, module or migration degrades with the reason named,
+  exit 0. The brain adds `igris_project_relations`, `igris_project_relate` and
+  `igris_project_relation_kinds`, and both relation tables sync. Writes:
+  `igris project relate|unrelate` and `igris project kinds add|alias|merge`
+  (exit 0 written, 1 refused, 3 degraded). The brain adds
+  `igris_project_relations_derive` (manifest matches → pending suggestions).
+
 - **The brain records which commit its knowledge of a project reflects (FR-274).**
   Three nullable `projects` columns — `knowledge_sha`, `knowledge_branch` (NULL
   on a detached HEAD) and `knowledge_recorded_at` (the DB clock) — added by the

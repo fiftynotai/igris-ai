@@ -114,6 +114,8 @@ const BATCH_EVENT_TABLE_MAP: Record<string, string[]> = {
   'error.stored': ['errors'],
   'project.registered': ['projects'],
   'agent_event.recorded': ['agent_events'],
+  // FR-273: one event marks BOTH relation tables dirty (a merge touches both).
+  'project.relation_changed': ['project_relation_kinds', 'project_relations'],
 };
 
 // ---------------------------------------------------------------------------
@@ -752,6 +754,7 @@ export function createSyncComponent(): BrainComponent {
           { name: 'error.stored', description: 'Batch-push errors table' },
           { name: 'project.registered', description: 'Batch-push projects table' },
           { name: 'agent_event.recorded', description: 'Batch-push agent_events table (FR-267)' },
+          { name: 'project.relation_changed', description: 'Batch-push project_relation_kinds + project_relations (FR-273)' },
         ],
       };
     },
@@ -773,6 +776,7 @@ export function createSyncComponent(): BrainComponent {
       ctx.bus.on('error.stored', onBatchedEvent);
       ctx.bus.on('project.registered', onBatchedEvent);
       ctx.bus.on('agent_event.recorded', onBatchedEvent);
+      ctx.bus.on('project.relation_changed', onBatchedEvent);
 
       const status = _autoPushConfig
         ? `enabled, remote: ${_autoPushConfig.remoteUrl}`
@@ -799,6 +803,7 @@ export function createSyncComponent(): BrainComponent {
         _ctx.bus.off('error.stored', onBatchedEvent);
         _ctx.bus.off('project.registered', onBatchedEvent);
         _ctx.bus.off('agent_event.recorded', onBatchedEvent);
+        _ctx.bus.off('project.relation_changed', onBatchedEvent);
       }
 
       _ctx = null;
