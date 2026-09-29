@@ -18,6 +18,8 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import { getDb } from '../db.js';
 
@@ -158,6 +160,19 @@ export function sanitizeRepoUrl(raw: string): string | null {
   return `${scheme}://${rest}`;
 }
 
+// FR-274: an inherited GIT_DIR / GIT_WORK_TREE (a git hook, a harness) would
+// point git at ANOTHER repo than `-C <cwd>`; the child env drops them.
+const GIT_ENV_STRIP = [
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_PREFIX',
+] as const;
+
+function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  for (const k of GIT_ENV_STRIP) delete env[k];
+  return env;
+}
+
 // One `git` read: no shell, 3 s cap, no prompt; any failure is null.
 function gitRead(cwd: string, args: string[]): string | null {
   try {
@@ -165,7 +180,7 @@ function gitRead(cwd: string, args: string[]): string | null {
       encoding: 'utf-8',
       timeout: 3000,
       stdio: ['ignore', 'pipe', 'ignore'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: gitEnv(),
     });
     const t = out.trim();
     return t === '' ? null : t;
@@ -174,20 +189,36 @@ function gitRead(cwd: string, args: string[]): string | null {
   }
 }
 
-// FR-265 AC2: `origin` of the repo whose TOP LEVEL is `path` (a sub-directory's
-// clone would not recover it), else null — never a throw, never a spawn for an
-// absent path.
-function detectRepoUrl(path: string): string | null {
-  if (!existsSync(path)) return null;
+// gitRead's boolean twin: `cat-file -e` and `merge-base --is-ancestor` print
+// nothing, so their answer is the exit status. Any failure is false.
+function gitOk(cwd: string, args: string[]): boolean {
+  try {
+    execFileSync('git', ['-C', cwd, ...args], { timeout: 3000, stdio: 'ignore', env: gitEnv() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// FR-265 / FR-274: `path` exists AND is a git TOP level (a sub-directory, or a
+// directory nested inside another repo, is not) — never a spawn for an absent path.
+function isRepoTopLevel(path: string): boolean {
+  if (!existsSync(path)) return false;
   const top = gitRead(path, ['rev-parse', '--show-toplevel']);
-  if (top === null) return null;
+  if (top === null) return false;
   let real: string;
   try {
     real = realpathSync(path);
   } catch {
-    return null;
+    return false;
   }
-  if (resolveForCompare(top) !== real) return null;
+  return resolveForCompare(top) === real;
+}
+
+// FR-265 AC2: `origin` of the repo whose TOP LEVEL is `path` (a sub-directory's
+// clone would not recover it), else null — never a throw.
+function detectRepoUrl(path: string): string | null {
+  if (!isRepoTopLevel(path)) return null;
   const url = gitRead(path, ['remote', 'get-url', 'origin']);
   return url === null ? null : sanitizeRepoUrl(url);
 }
@@ -199,10 +230,149 @@ function hasRepoUrlColumn(db: ReturnType<typeof getDb>): boolean {
   return cols.some((c) => c.name === 'repo_url');
 }
 
+// POSIX single-quote: safe to paste into any sh, whatever the value holds.
+function shellQuote(v: string): string {
+  return `'${v.replace(/'/g, "'\\''")}'`;
+}
+
 // Same form as doctor's restore line (`cli/src/verbs/doctor.ts#restoreCommand`).
 function cloneCommand(url: string, path: string): string {
-  const q = (v: string): string => `'${v.replace(/'/g, "'\\''")}'`;
-  return `git clone -- ${q(url)} ${q(path)}`;
+  return `git clone -- ${shellQuote(url)} ${shellQuote(path)}`;
+}
+
+// ---------------------------------------------------------------------------
+// FR-274 — the knowledge watermark (read side). The writer is the CLI's
+// `igris project watermark`; these render and check it. Exported for FR-273.
+// ---------------------------------------------------------------------------
+
+/** The three `projects` columns projects:2 adds (FR-274). */
+export const KNOWLEDGE_WATERMARK_COLUMNS = ['knowledge_sha', 'knowledge_branch', 'knowledge_recorded_at'] as const;
+
+// A pulled row can carry a TD-253 `~/...` path.
+function expandHome(p: string): string {
+  if (p === '~') return homedir();
+  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
+}
+
+// projects:2 applied? Without it status renders "no watermark recorded".
+function hasWatermarkColumns(db: ReturnType<typeof getDb>): boolean {
+  const cols = new Set((db.pragma('table_info(projects)') as { name: string }[]).map((c) => c.name));
+  return KNOWLEDGE_WATERMARK_COLUMNS.every((c) => cols.has(c));
+}
+
+/** The watermark fields of a `projects` row; all NULL when none is recorded. */
+export interface KnowledgeWatermarkRow {
+  path: string;
+  knowledge_sha: string | null;
+  knowledge_branch: string | null;
+  knowledge_recorded_at: string | null;
+}
+
+/**
+ * A LOCAL reachability verdict for a watermark (FR-274 D5): at most five local
+ * git spawns, each capped at 3 s, no fetch, no network. FR-273's lookup tool is
+ * the intended reuser. `invalid`: the stored value is not a full hex SHA (or the
+ * branch starts with `-`), checked before any spawn; `absent`: no git working
+ * copy at the path; `unreachable`: the SHA is not in that clone; `diverged`: a
+ * genuine fork — neither the SHA nor `origin/<branch>` contains the other;
+ * `reachable`: otherwise. `aheadOfRemote` marks a SHA that descends from
+ * `origin/<branch>` (committed, not pushed); `remoteRefPresent` is false when
+ * the clone lacks `origin/<branch>` (or `origin/HEAD` when detached).
+ */
+export interface KnowledgeWatermarkCheck {
+  state: 'invalid' | 'absent' | 'unreachable' | 'diverged' | 'reachable';
+  /** The checked path, `~/` expanded. */
+  path: string;
+  remoteRefPresent: boolean | null;
+  /** `reachable` only: the SHA descends from `origin/<branch>` (committed, not pushed). */
+  aheadOfRemote: boolean;
+}
+
+// The CLI writer's rule (`cli/src/lib/brain-db.ts#KNOWLEDGE_SHA_RE`, reproduced):
+// once FR-271 replicates the column a stored value is INGRESS, and one starting
+// with `-` would reach git (and a printed command) as an option.
+const KNOWLEDGE_SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+function isValidWatermark(sha: string, branch: string | null): boolean {
+  return KNOWLEDGE_SHA_RE.test(sha) && (branch === null || (branch !== '' && !branch.startsWith('-')));
+}
+
+/**
+ * Check a watermark against the git working copy at `path` (a leading `~/` is
+ * expanded). At most FIVE local git spawns, each capped at 3 s, no fetch; none
+ * at all for an absent path or an invalid stored value (`invalid`: not a full
+ * hex SHA, or a branch starting with `-`). Not an ancestor of `origin/<branch>`
+ * splits two ways: the reverse ancestry holds → `reachable` + `aheadOfRemote`
+ * (unpushed commits, the normal state at session end); neither holds →
+ * `diverged` (a fork). Never throws.
+ *
+ * @param path - The project row's path (the clone the operator re-clones to).
+ * @param sha - The full watermark SHA.
+ * @param branch - The watermark branch; `null` for a detached HEAD.
+ */
+export function checkKnowledgeWatermark(path: string, sha: string, branch: string | null): KnowledgeWatermarkCheck {
+  const p = expandHome(path);
+  const none = { remoteRefPresent: null, aheadOfRemote: false };
+  if (!isValidWatermark(sha, branch)) return { state: 'invalid', path: p, ...none };
+  if (!isRepoTopLevel(p)) return { state: 'absent', path: p, ...none };
+  if (!gitOk(p, ['cat-file', '-e', `${sha}^{commit}`])) return { state: 'unreachable', path: p, ...none };
+  const ref = `refs/remotes/origin/${branch ?? 'HEAD'}`;
+  const remoteRefPresent = gitOk(p, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+  if (branch !== null && remoteRefPresent && !gitOk(p, ['merge-base', '--is-ancestor', sha, ref])) {
+    if (gitOk(p, ['merge-base', '--is-ancestor', ref, sha])) {
+      return { state: 'reachable', path: p, remoteRefPresent, aheadOfRemote: true };
+    }
+    return { state: 'diverged', path: p, remoteRefPresent, aheadOfRemote: false };
+  }
+  return { state: 'reachable', path: p, remoteRefPresent, aheadOfRemote: false };
+}
+
+/**
+ * The `igris_project_status` watermark lines (FR-274), appended after `Clone:`.
+ * A row with no watermark renders ONE line, `Knowledge as of: no watermark
+ * recorded`, and `check` is then ignored (pass `null`). Otherwise:
+ * `Knowledge as of:`, `Since:` (a copy-pasteable `git log` over the FULL SHA),
+ * `Knowledge check:`, and `Verify:` only when no working copy was found. An
+ * invalid stored value renders two lines and is never echoed.
+ *
+ * @param row - The watermark fields of the project row.
+ * @param check - {@link checkKnowledgeWatermark}'s verdict for that row.
+ */
+export function renderKnowledgeWatermark(row: KnowledgeWatermarkRow, check: KnowledgeWatermarkCheck | null): string[] {
+  const sha = row.knowledge_sha;
+  if (typeof sha !== 'string' || sha === '' || check === null) return ['Knowledge as of: no watermark recorded'];
+  const branch = row.knowledge_branch ?? null;
+  if (check.state === 'invalid' || !isValidWatermark(sha, branch)) {
+    // Never echo the value: it would print a command line with an option in it.
+    return [
+      `Knowledge as of: invalid watermark recorded (not a full commit SHA), ${row.knowledge_recorded_at ?? '(unknown time)'} UTC`,
+      'Knowledge check: not verified: the recorded watermark is not a full commit SHA',
+    ];
+  }
+  const short = sha.slice(0, 12);
+  const remote = `origin/${branch ?? 'HEAD'}`;
+  const on = branch === null ? '(detached HEAD, no branch recorded)' : `on ${branch}`;
+  let verdict: string;
+  if (check.state === 'absent') {
+    verdict = `not verified: no git working copy at ${check.path}`;
+  } else if (check.state === 'unreachable') {
+    verdict = `UNREACHABLE: ${short} is not in the clone at ${check.path} (history rewritten, a shallow clone, or the commit was never pushed); knowledge unverified`;
+  } else if (check.state === 'diverged') {
+    verdict = `DIVERGED: ${short} and ${remote} have forked: neither contains the other (history rewritten, or the branch moved on a different line); knowledge unverified`;
+  } else {
+    verdict = `reachable in ${check.path}`;
+    if (check.aheadOfRemote) {
+      verdict += ` (ahead of ${remote}: not pushed; a fresh clone will not contain ${short} until it is pushed)`;
+    } else if (check.remoteRefPresent === false) {
+      verdict += ` (${remote} is not in this clone: run git fetch origin${branch === null ? '' : ` ${shellQuote(branch)}`} first)`;
+    }
+  }
+  return [
+    `Knowledge as of: ${short} ${on}, ${row.knowledge_recorded_at ?? '(unknown time)'} UTC`,
+    `Since: git log --oneline ${shellQuote(`${sha}..${remote}`)}`,
+    `Knowledge check: ${verdict}`,
+    ...(check.state === 'absent' ? [`Verify: git cat-file -e ${shellQuote(`${sha}^{commit}`)}`] : []),
+  ];
 }
 
 /**
@@ -441,6 +611,21 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     ).join('\n');
   }
 
+  const watermark: KnowledgeWatermarkRow = {
+    path: String(project.path),
+    knowledge_sha: null,
+    knowledge_branch: null,
+    knowledge_recorded_at: null,
+  };
+  if (hasWatermarkColumns(db)) {
+    watermark.knowledge_sha = (project.knowledge_sha as string | null) ?? null;
+    watermark.knowledge_branch = (project.knowledge_branch as string | null) ?? null;
+    watermark.knowledge_recorded_at = (project.knowledge_recorded_at as string | null) ?? null;
+  }
+  const watermarkCheck = typeof watermark.knowledge_sha === 'string' && watermark.knowledge_sha !== ''
+    ? checkKnowledgeWatermark(watermark.path, watermark.knowledge_sha, watermark.knowledge_branch)
+    : null;
+
   const dashboard = [
     `# Project Status: ${args.slug}`,
     '',
@@ -457,6 +642,8 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     ...(typeof project.repo_url === 'string' && project.repo_url !== ''
       ? [`Clone: ${cloneCommand(project.repo_url, String(project.path))}`]
       : []),
+    // FR-274: after `Clone:`; everything above stays byte-identical.
+    ...renderKnowledgeWatermark(watermark, watermarkCheck),
     '',
     '## Knowledge Base',
     `Learnings: ${learningCount.count}`,

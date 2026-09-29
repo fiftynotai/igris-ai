@@ -12,6 +12,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The brain records which commit its knowledge of a project reflects (FR-274).**
+  Three nullable `projects` columns — `knowledge_sha`, `knowledge_branch` (NULL
+  on a detached HEAD) and `knowledge_recorded_at` (the DB clock) — added by the
+  projects component's migration v2. The new hidden verb
+  `igris project watermark [--project <slug>]` records the HEAD of the project
+  row's path, only when that path is a repo top level; `/rest` and the
+  SessionEnd hook call it. Every failure (path gone, not a git top level, git
+  missing or failing, unborn HEAD, unregistered slug, a brain without
+  projects:2) writes nothing and is named in the digest's `skipped[]`, so a
+  known watermark is never blanked. `igris_project_status` prints
+  `Knowledge as of:`, a copy-pasteable `Since: git log --oneline '<sha>..origin/<branch>'`
+  line and a local `Knowledge check:` after `Clone:` — reachable (noting
+  commits ahead of origin that were never pushed), UNREACHABLE, DIVERGED (only
+  for a real fork), not verified, or invalid (a stored value that is not a full
+  commit SHA, refused before any git call); no fetch. A project without one reads
+  `Knowledge as of: no watermark recorded`. Local to each brain — not
+  replicated (FR-271 owns that).
+
 - **Projects record where their source lives (`projects.repo_url`, FR-265), and
   `igris_project_register` validates its input and stops blanking curated
   columns (TD-365).** A new nullable `repo_url` column, added by the projects

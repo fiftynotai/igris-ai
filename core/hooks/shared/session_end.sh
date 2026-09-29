@@ -1,8 +1,9 @@
 #!/bin/bash
 
 # Description: Portable SessionEnd hook for multi-CLI lifecycle integration.
-#              Updates CURRENT_SESSION.md to REST MODE and deregisters the Igris
-#              instance from the brain (if registered).
+#              Updates CURRENT_SESSION.md to REST MODE, deregisters the Igris
+#              instance from the brain (if registered), and records the project's
+#              knowledge watermark (FR-274) via `igris project watermark`.
 # Usage: Invoked by a per-CLI bridge. Reads JSON from stdin.
 #
 # Input contract:
@@ -15,7 +16,8 @@
 #   env fallback:
 #     IGRIS_HOOK_SOURCE, IGRIS_HOOK_EVENT, IGRIS_PROJECT_DIR
 #
-# Dependencies: python3
+# Dependencies: python3; `igris` on PATH for the watermark (optional — absent
+#               means that step silently records nothing; /rest records too)
 # Exit codes:
 #   0 - Always (hooks must never fail)
 
@@ -237,6 +239,20 @@ PYEOF2
 }
 
 # ---------------------------------------------------------------------------
+# FR-274: record the knowledge watermark (HEAD SHA + branch of the project ROW's
+# path) through the CLI verb — no sqlite3 here, so no SQL interpolation (the
+# bash-3.2 escape idiom does not apply). The slug is the gate's resolved slug,
+# never basename(cwd): a session in a subdirectory still names its project.
+# Synchronous and LAST in main (after the detached perception spawn); the
+# verb's git reads are 3 s-capped; every failure is silent.
+# ---------------------------------------------------------------------------
+record_watermark() {
+  [ -n "${_GATE_RESOLVED_SLUG:-}" ] || return 0
+  command -v igris >/dev/null 2>&1 || return 0
+  igris project watermark --project "$_GATE_RESOLVED_SLUG" >/dev/null 2>&1 || true
+}
+
+# ---------------------------------------------------------------------------
 # Main execution
 # ---------------------------------------------------------------------------
 main() {
@@ -251,6 +267,9 @@ main() {
     slug=$(basename "$PROJECT_DIR")
     printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$slug" "session_end" >/dev/null 2>&1 & disown
   fi
+  # FR-274: LAST, after the detached spawn — a slow or killed watermark call
+  # must never cost the perception extraction (the spawn has already happened).
+  record_watermark 2>/dev/null || true
   exit 0
 }
 

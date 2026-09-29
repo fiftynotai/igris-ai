@@ -5,7 +5,8 @@
  * Provides: igris_project_register, igris_project_list, igris_project_status,
  *           igris_project_update (TD-171 M3),
  *           igris_project_dashboard (TD-171 M3 — operator override 2026-05-15)
- * Owns migration projects:1 — `projects.repo_url` (FR-265; see `schema()`).
+ * Owns migration projects:1, projects:2 — `projects.repo_url` (FR-265) and the
+ * knowledge watermark columns (FR-274); see `schema()`.
  *
  * @module engine/components/projects
  * @author fifty.dev
@@ -26,6 +27,7 @@ import {
   handleProjectStatus,
   handleProjectUpdate,
   handleProjectDashboard,
+  KNOWLEDGE_WATERMARK_COLUMNS,
 } from '../../../tools/projects.js';
 import type {
   ProjectRegisterInput,
@@ -86,6 +88,39 @@ export function createProjectsComponent(): BrainComponent {
             return true;
           },
           sql: 'SELECT 1;', // deliberate no-op (point 1): only records the version
+        },
+        {
+          // FR-274 — the knowledge watermark (HEAD SHA, branch — NULL when
+          // detached — and the DB-clock time it was recorded). v1's four
+          // reasons hold. Each ABSENT column is ALTERed on its own, so a crash
+          // between two ALTERs heals on the next boot. One writer: the CLI
+          // `igris project watermark` (brain-db.ts#knowledgeWatermarkWrite).
+          version: 2,
+          description: 'projects.knowledge_sha/knowledge_branch/knowledge_recorded_at (FR-274) — ALTER-only, component registry, not synced',
+          pre: (raw) => {
+            const db = raw as Database.Database;
+            const hasTable = db
+              .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'projects'")
+              .get();
+            if (hasTable === undefined) {
+              console.error('[engine] projects@2: no projects table yet — declining; the next boot retries');
+              return false;
+            }
+            const present = new Set((db.pragma('table_info(projects)') as { name: string }[]).map((c) => c.name));
+            const missing = KNOWLEDGE_WATERMARK_COLUMNS.filter((c) => !present.has(c));
+            if (missing.length === 0) {
+              console.error('[engine] projects@2: watermark columns already present — recording projects:2 without ALTER');
+              return true;
+            }
+            db.pragma('trusted_schema = ON');
+            try {
+              for (const col of missing) db.exec(`ALTER TABLE projects ADD COLUMN ${col} TEXT`);
+            } finally {
+              db.pragma('trusted_schema = OFF');
+            }
+            return true;
+          },
+          sql: 'SELECT 1;', // deliberate no-op: only records the version
         },
       ];
     },
@@ -150,7 +185,7 @@ export function createProjectsComponent(): BrainComponent {
         },
         {
           name: 'igris_project_status',
-          description: 'Get a detailed status dashboard for a specific project, including learning count, error count, and recent agent metrics.',
+          description: 'Get a detailed status dashboard for a specific project, including learning count, error count, and recent agent metrics. Also the knowledge watermark (FR-274): the commit the brain\'s knowledge reflects, a copy-pasteable `git log <sha>..origin/<branch>` line, and a local reachability check against the project path (no fetch).',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,

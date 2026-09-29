@@ -67,6 +67,16 @@ Ordering rationale: the ownership-clear runs first so that even if `igris instan
 
 If brain MCP is NOT available or no Instance ID is stored, skip gracefully. Do NOT block session end.
 
+### 2.5.5. Record Knowledge Watermark (FR-274)
+
+Run `igris project watermark --project {project} 2>/dev/null || true`. It records the HEAD SHA and branch of the project's registered path as the commit the brain's knowledge reflects (the session-end hook records it too; a second write is harmless). It prints one JSON digest line. Display ONE line from it:
+
+- `recorded: true` → "Knowledge watermark: {first 12 characters of watermark.sha} on {watermark.branch, or `detached HEAD` when it is null}"
+- otherwise → "Knowledge watermark skipped ({skipped[0]})"
+- no output (the verb is unavailable) → skip silently.
+
+A skip never changes a stored watermark. Do NOT block session end.
+
 ### 2.6. Sync to Brain (Optional)
 
 If the `igris-brain` MCP server is available:

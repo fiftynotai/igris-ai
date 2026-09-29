@@ -2734,6 +2734,69 @@ interface PackReport {
  *   7_000_944 − 6_988_795 = 12_149 = 6_197 + 1_131 + 3_583 + 79 + 1_159;
  *   18_890 − 13_259 = 5_631 recovered by the prose cut.
  *
+ * FR-274 MEASURED LAST (2026-09-29), after its final code-touching step
+ * (warden rounds 1 and 2 included; re-taken after the DOCUMENTING round's
+ * shipped doc edits — `tools/projects.d.ts` and `CHANGELOG.md` — moved it). MEASURED ON SCRATCH BUILDS THAT RAN
+ * `copy-templates.sh`, BOTH arms (the TD-460 method, unchanged): `git archive
+ * ecdd8fb cli brain-mcp-server harness-manifest.json`; the final arm overlaid
+ * with every file under `cli/` and `brain-mcp-server/` that differs from
+ * `ecdd8fb` or is new in the worktree; the `node_modules` symlinked (root and
+ * brain; the worktree has no `cli/node_modules`), `dist` ABSENT, TD-426 smoke
+ * `(sandboxed)` on both arms, `npm pack --dry-run --json --ignore-scripts`
+ * twice per arm, byte- and sha-identical. npm 10.9.8, node v22.23.2,
+ * darwin/arm64, one machine. The worktree's own `cli/dist` was never written
+ * by an arm (`dist/index.js` sha256 `7e3d3d5f…`, `dist/brain-mcp-server/dist/
+ * index.js` `9d0654bc…` before and after).
+ *   control             1_928_885    unpacked 7_000_944, 551 entries, shasum
+ *                                    `24cffaa5599c480cf7124d0042872fe1d8ca6af4`
+ *                                    — taken fresh at `ecdd8fb`, twice. It IS
+ *                                    the FR-265 bundle row's C1+C2 final, byte
+ *                                    for byte: no drift.
+ *   packed              1_938_864    unpacked 7_036_786, 555 entries (+4),
+ *                                    shasum
+ *                                    `7bf6e4fa0a3c8f5ddc4cde698917facf0c84d549`,
+ *                                    taken twice (the pre-DOCUMENTING final:
+ *                                    1_938_599, unpacked 7_036_302,
+ *                                    `9e3ad6eb…`).
+ *   FR-274's own share  +9_979 B     packed. Unpacked +35_842 over 13
+ *                                    artifacts; the per-file sum reconciles
+ *                                    EXACTLY. NEW (the +4 entries):
+ *                                    `verbs/project.js` 4_290 / map 2_918 (the
+ *                                    `igris project watermark` verb),
+ *                                    `lib/git-head.js` 3_783 / map 2_786 (the
+ *                                    HEAD read and the top-level twin).
+ *                                    `tools/projects.js` +7_885 / `.d.ts`
+ *                                    +3_044 (the check with the ahead/fork
+ *                                    split, the invalid-value refusal, the
+ *                                    render, the GIT_* strip, the extracted
+ *                                    `isRepoTopLevel` / `shellQuote`),
+ *                                    `lib/brain-db.js` +4_385 / map +1_815
+ *                                    (the EOF write door),
+ *                                    `components/projects/index.js` +2_460 /
+ *                                    `.d.ts` +60 (migration projects:2 and the
+ *                                    status description), `CHANGELOG.md`
+ *                                    +1_257, `index.js` +796 / map +363 (the
+ *                                    hidden command). The tests, the bats
+ *                                    files, MAINTAINING.md, `core/skills/**`
+ *                                    and `core/hooks/**` are outside `files`
+ *                                    and cost 0. No band was priced by the
+ *                                    plan; the share is mostly CODE (two new
+ *                                    modules and the verdict logic).
+ *   cumulative delta    +95_588 B    (93.3 KB, 62.2 % of the grant —
+ *                                    1_938_864 − 1_843_276)
+ *   headroom remaining  58_012 B     (56.7 KB — 153_600 − 95_588)
+ *   built app chunk     NOT REMEASURED (zero files under `cli/dashboard/`
+ *                                    changed)
+ *
+ *   EVERY SUBTRACTION IS RE-DERIVED FROM THE TWO OPERANDS BESIDE IT:
+ *   1_938_864 − 1_928_885 = 9_979; 1_938_864 − 1_843_276 = 95_588;
+ *   153_600 − 95_588 = 58_012; 555 − 551 = 4;
+ *   7_036_786 − 7_000_944 = 35_842 = 7_885 + 4_385 + 4_290 + 3_783 + 2_918 +
+ *   2_786 + 3_044 + 2_460 + 1_815 + 1_257 + 796 + 363 + 60;
+ *   1_938_864 − 1_938_599 = 265 packed / 7_036_786 − 7_036_302 = 484
+ *   unpacked = 316 (`.d.ts`) + 168 (`CHANGELOG.md`), the DOCUMENTING round;
+ *   95_588 − 85_609 = 9_979 = this brief's share (no drift).
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

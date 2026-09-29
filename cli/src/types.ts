@@ -2292,6 +2292,35 @@ export interface CeremonyDigest {
   skipped: string[];
 }
 
+/** FR-274: a knowledge watermark as stored on the `projects` row. */
+export interface ProjectWatermark {
+  /** Full HEAD SHA (40 or 64 hex). */
+  sha: string;
+  /** Checked-out branch; `null` for a detached HEAD. */
+  branch: string | null;
+  /** The DB clock (`datetime('now')`, UTC); `null` only on a hand-edited row. */
+  recorded_at: string | null;
+}
+
+/**
+ * FR-274: the `igris project watermark` digest. `recorded` is true only when
+ * the row was written (and `watermark` is then the row READ BACK). `degraded`
+ * means the brain DB or its schema prevented the attempt; a project-side skip
+ * (not registered, no working copy, git failed) is `degraded: false` with the
+ * reason in `skipped[]`. A skip never writes: `previous` stays the stored value.
+ */
+export interface ProjectWatermarkDigest {
+  degraded: boolean;
+  project: string;
+  /** The row's `path` as stored (a `~/` path is expanded only for the read). */
+  path: string | null;
+  recorded: boolean;
+  watermark: ProjectWatermark | null;
+  /** The watermark before this call; `null` when none was recorded. */
+  previous: ProjectWatermark | null;
+  skipped: string[];
+}
+
 /** One UTC week (Monday–Sunday) in the KPI window. */
 export interface KpiWeek {
   week_start: string;

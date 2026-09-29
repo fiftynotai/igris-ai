@@ -25,6 +25,8 @@
  *     for a path that is a repo's TOP level, with credentials stripped; an
  *     absent path is never spawned for; an omitted `repo_url` never blanks a
  *     stored one (AC8)
+ *   - FR-274 M4: a register upsert leaves the knowledge watermark triple
+ *     (`knowledge_sha` / `knowledge_branch` / `knowledge_recorded_at`) unchanged
  *
  * The migration (projects:1) and TD-365 S3 (every NOT NULL no-default column is
  * validated) boot the REAL legacy chain, so they live in `repo-url-v1.test.ts`,
@@ -454,5 +456,53 @@ describe('handleProjectRegister repo_url (FR-265)', () => {
     expect(sanitizeRepoUrl('  https://host/o/r.git \n')).toBe('https://host/o/r.git');
     expect(sanitizeRepoUrl('   ')).toBeNull();
     expect(sanitizeRepoUrl('')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-274 M4 — a register upsert never touches the knowledge watermark triple.
+// Its own DB carries the three projects:2 columns; the register conflict arm
+// must leave a recorded watermark exactly as it was.
+// ---------------------------------------------------------------------------
+describe('handleProjectRegister leaves the knowledge watermark alone (FR-274 M4)', () => {
+  let db: Database.Database;
+  const dirs: string[] = [];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = makeTestDb();
+    db.exec(`
+      ALTER TABLE projects ADD COLUMN knowledge_sha TEXT;
+      ALTER TABLE projects ADD COLUMN knowledge_branch TEXT;
+      ALTER TABLE projects ADD COLUMN knowledge_recorded_at TEXT;
+    `);
+    mockedGetDb.mockReturnValue(db as unknown as ReturnType<typeof getDb>);
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+    while (dirs.length) {
+      try { rmSync(dirs.pop()!, { recursive: true, force: true }); } catch { /* best effort */ }
+    }
+  });
+
+  function triple(slug: string): unknown {
+    return db.prepare('SELECT knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?').get(slug);
+  }
+
+  it('a same-slug re-register (the /boot refresh) leaves all three watermark columns unchanged', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'igris-register-wm-'));
+    dirs.push(dir);
+    handleProjectRegister({ slug: 'wm', name: 'WM', path: dir });
+    db.prepare("UPDATE projects SET knowledge_sha = ?, knowledge_branch = 'main', knowledge_recorded_at = '2026-09-29 10:00:00' WHERE slug = 'wm'")
+      .run('b'.repeat(40));
+    const before = triple('wm');
+    expect(before).toEqual({ knowledge_sha: 'b'.repeat(40), knowledge_branch: 'main', knowledge_recorded_at: '2026-09-29 10:00:00' });
+
+    expect(text(handleProjectRegister({ slug: 'wm', name: 'WM Renamed', path: dir, tech_stack: 'ts' }))).toContain('Project registered successfully.');
+    expect(triple('wm')).toEqual(before);
+    // The upsert DID apply — the pin is not vacuous.
+    expect((db.prepare("SELECT name FROM projects WHERE slug = 'wm'").get() as { name: string }).name).toBe('WM Renamed');
   });
 });

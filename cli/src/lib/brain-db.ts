@@ -3863,3 +3863,114 @@ export function readUnattributedHostnames(me: MachineIdentity, days = 30): Unatt
       .sort((a, b) => b.rows - a.rows || a.hostname.localeCompare(b.hostname));
   });
 }
+
+// ---------------------------------------------------------------------------
+// FR-274 — the knowledge watermark: the LOCAL WRITE DOOR (create-never)
+// ---------------------------------------------------------------------------
+//
+// `projects.knowledge_sha` / `knowledge_branch` / `knowledge_recorded_at` are
+// added by the brain's projects COMPONENT migration v2 (FR-274). This is their
+// ONE writer (`igris project watermark`, called by `/rest` and the SessionEnd
+// hook) — the `ceremonyEventWrite` shape: probe, never CREATE or ALTER, and
+// surface an absent column as a typed error the verb degrades on.
+//
+// The columns are NOT in `BOOT_SYNC_PULL_TABLES` / `EXPORT_TABLES` (nor the
+// brain's `SYNC_TABLES`) by decision: replicating them is FR-271's single
+// remote-first deploy with a NULL-preserving merge rule
+// (`boot-sync-watermark-local.test.ts` is the pin it must flip deliberately).
+
+/** The three `projects` columns projects:2 adds (FR-274). */
+const KNOWLEDGE_WATERMARK_COLUMNS = ["knowledge_sha", "knowledge_branch", "knowledge_recorded_at"] as const;
+
+/**
+ * Full hex object name (SHA-1 40 / SHA-256 64) — the ONE definition in `cli/`:
+ * the writer re-validates with it and `git-head.ts` imports it (it lives here,
+ * not there, because this file's lines above are cited by line number and must
+ * not move for an import). The brain reproduces it (`tools/projects.ts`).
+ */
+export const KNOWLEDGE_SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/**
+ * Raised when the brain DB has the table but not the columns a writer needs —
+ * a brain whose component migration has not applied yet (create-never: the
+ * writer never ALTERs; the verb degrades with the cause named).
+ */
+export class BrainColumnMissingError extends Error {
+  constructor(table: string, columns: readonly string[]) {
+    super(`brain-db: ${table} lacks ${columns.join(", ")} — refusing to write (create-never; the brain owns this schema)`);
+    this.name = "BrainColumnMissingError";
+  }
+}
+
+/** A project row's path and its stored knowledge watermark (all NULL when none). */
+export interface WatermarkTarget {
+  path: string;
+  knowledge_sha: string | null;
+  knowledge_branch: string | null;
+  knowledge_recorded_at: string | null;
+}
+
+function assertWatermarkColumns(handle: Database.Database): void {
+  if (!tableExists(handle, "projects")) throw new BrainTableMissingError("projects");
+  const cols = tableColumns(handle, "projects");
+  const missing = KNOWLEDGE_WATERMARK_COLUMNS.filter((c) => !cols.has(c));
+  if (missing.length > 0) throw new BrainColumnMissingError("projects", missing);
+}
+
+/**
+ * Read the row path and stored watermark for `slug`, or `undefined` when the
+ * slug is not registered.
+ *
+ * @throws BrainTableMissingError when `projects` is absent.
+ * @throws BrainColumnMissingError when projects:2 has not applied.
+ */
+export function readWatermarkTarget(slug: string): WatermarkTarget | undefined {
+  const handle = getDb();
+  assertWatermarkColumns(handle);
+  return handle
+    .prepare("SELECT path, knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?")
+    .get(slug) as WatermarkTarget | undefined;
+}
+
+/** The watermark as stored, read back after the write. */
+export interface KnowledgeWatermark {
+  sha: string;
+  branch: string | null;
+  recorded_at: string;
+}
+
+/**
+ * Record a knowledge watermark: ONE `UPDATE` of all three columns together.
+ *
+ * `branch` is bound EXPLICITLY — `null` for a detached HEAD — and never
+ * COALESCEd, which would pair a new SHA with a stale branch. `recorded_at` is
+ * the DB clock (`datetime('now')`); the caller never passes a time. The
+ * UPDATE never touches `last_session_at` (FR-271 owns which clock carries a
+ * projects-column change). Returns the row READ BACK, or `undefined` when no
+ * row matched `slug`.
+ *
+ * @throws BrainTableMissingError / BrainColumnMissingError on an older brain.
+ * @throws Error when `sha` is not a full hex object name or `branch` is empty.
+ */
+export function knowledgeWatermarkWrite(
+  slug: string,
+  sha: string,
+  branch: string | null,
+): KnowledgeWatermark | undefined {
+  if (!KNOWLEDGE_SHA_RE.test(sha)) throw new Error(`knowledgeWatermarkWrite: invalid sha ${JSON.stringify(sha)}`);
+  if (branch === "") throw new Error("knowledgeWatermarkWrite: empty branch (use null for detached)");
+  const handle = getDb();
+  assertWatermarkColumns(handle);
+  const info = handle
+    .prepare(
+      `UPDATE projects
+          SET knowledge_sha = ?, knowledge_branch = ?, knowledge_recorded_at = datetime('now')
+        WHERE slug = ?`,
+    )
+    .run(sha, branch, slug);
+  if (info.changes === 0) return undefined;
+  const row = handle
+    .prepare("SELECT knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?")
+    .get(slug) as { knowledge_sha: string; knowledge_branch: string | null; knowledge_recorded_at: string };
+  return { sha: row.knowledge_sha, branch: row.knowledge_branch, recorded_at: row.knowledge_recorded_at };
+}

@@ -58,6 +58,7 @@ import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import { runCognition } from "./verbs/cognition.js";
 import { runCeremony } from "./verbs/ceremony.js";
+import { runProject } from "./verbs/project.js";
 import { runKpi } from "./verbs/kpi.js";
 import { runDashboard } from "./verbs/dashboard.js";
 import { runExport } from "./verbs/export.js";
@@ -1236,6 +1237,18 @@ async function main(argv: string[]): Promise<void> {
         });
       },
     );
+
+  // FR-274 — the knowledge watermark writer, hidden like `ceremony`: /rest and
+  // the SessionEnd hook call it; FR-273's `relations` joins this group.
+  program
+    .command("project <action>", { hidden: true })
+    .description(
+      "FR-274: per-project brain records. Action: watermark — record HEAD SHA + branch (NULL when detached) of the project row's path as the knowledge watermark, DB-clocked. Every failure writes nothing and is named in skipped[]. Prints a JSON digest. Exit 0 even when skipped; unknown action → exit 2.",
+    )
+    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .action((action: string, opts: { project?: string }): void => {
+      process.exitCode = runProject({ action, project: opts.project });
+    });
 
   // FR-268 — a REPORTING verb (markdown by default), visible: the operator
   // asks it directly; /ops renders it whole and /scan renders its --alarm line.

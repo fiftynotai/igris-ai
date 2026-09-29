@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Knowledge watermark (FR-274).** The brain now records, per project, the
+  commit its knowledge reflects: `projects.knowledge_sha`, `knowledge_branch`
+  and `knowledge_recorded_at` (projects component migration v2, ALTER-only, not
+  synced — FR-271 owns replication). `igris project watermark` writes it at
+  session end from both `/rest` (§2.5.5) and `core/hooks/shared/session_end.sh`,
+  reading HEAD of the project row's path (repo top level only; a failure writes
+  nothing). `igris_project_status` renders it with a `git log <sha>..origin/<branch>`
+  line and a local reachability verdict: `reachable` notes commits ahead of
+  origin that were never pushed, `DIVERGED` is reported only for a real fork,
+  and an `invalid` stored value is refused before any git call.
+  `renderKnowledgeWatermark` and `checkKnowledgeWatermark` are exported for
+  FR-273's lookup tool.
+
 ### Fixed
 
 - **The contract-map gate reads the whole map, the same way in every checkout,

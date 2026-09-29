@@ -3,7 +3,9 @@
  * TD-365 S3 — every NOT NULL, no-default `projects` column is validated.
  *
  * What it gates (FR-265 AC1, the code half — the live half is runtime R2/R4):
- *   - a fresh DB gets the column and the component chain reads exactly [1];
+ *   - a fresh DB gets the column and the component chain reads exactly [1, 2]
+ *     (FR-274 added projects:2, the knowledge watermark columns — every chain
+ *     assertion below reads [1, 2] for that reason; the v1 intent is unchanged);
  *   - a second boot is idempotent;
  *   - the migration lives in the COMPONENT registry on purpose: a DB whose
  *     legacy `schema_version` chain is already at 26, 27, 28 (the live brain;
@@ -13,7 +15,7 @@
  *   - a DB whose `projects` ALREADY has `repo_url` boots without throwing and
  *     still RECORDS v1 — a declining pre-flight would pin the component at v0
  *     and silently skip every later `projects` migration, forever;
- *   - so a later migration (a v2 probe) still applies on that DB;
+ *   - so a later migration (a v3 probe, since FR-274 owns v2) still applies on that DB;
  *   - a DB with no `projects` table declines, stays at [], and applies v1 on
  *     the next boot once the table exists (a retry, not a stall);
  *   - a crash between the ALTER and the version insert heals on the next boot;
@@ -89,17 +91,17 @@ function integrity(db: Database.Database): string {
 }
 
 describe('projects migration v1 — projects.repo_url (FR-265)', () => {
-  it('a fresh DB: the column is present and the chain reads exactly [1]', () => {
+  it('a fresh DB: the column is present and the chain reads exactly [1, 2] (v2 = FR-274)', () => {
     const db = bootProjects(tmpDbPath()).rawConnection;
     expect(columnsOf(db, 'projects')).toContain('repo_url');
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
   });
 
-  it('is idempotent: a second boot leaves [1] and exactly one repo_url column', () => {
+  it('is idempotent: a second boot leaves [1, 2] and exactly one repo_url column', () => {
     const path = tmpDbPath();
     bootProjects(path).close();
     const db = bootProjects(path).rawConnection;
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
     expect(columnsOf(db, 'projects').filter((c) => c === 'repo_url')).toHaveLength(1);
   });
 
@@ -114,7 +116,7 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
     expect((db.prepare('SELECT MAX(version) AS v FROM schema_version').get() as { v: number }).v).toBe(28);
 
     storage.runMigrations('projects', createProjectsComponent().schema());
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
     expect(columnsOf(db, 'projects')).toContain('repo_url');
   });
 
@@ -138,10 +140,10 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
     storage.runMigrations('projects', createProjectsComponent().schema());
     expect(integrity(db)).toBe('ok');
     expect(db.pragma('trusted_schema', { simple: true })).toBe(0);
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
   });
 
-  it('a DB whose projects ALREADY has repo_url: no throw, v1 is RECORDED ([1], not []), one column, and the log says so', () => {
+  it('a DB whose projects ALREADY has repo_url: no throw, v1 is RECORDED ([1, 2], not []), one column, and the log says so', () => {
     const path = tmpDbPath();
     const pre = open(path);
     migrateSchema(pre.rawConnection);
@@ -153,7 +155,7 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
     let storage: StorageAdapter | undefined;
     expect(() => { storage = bootProjects(path); }).not.toThrow();
     const db = storage!.rawConnection;
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
     expect(columnsOf(db, 'projects').filter((c) => c === 'repo_url')).toHaveLength(1);
     expect(logged.some((l) => l.includes('already present'))).toBe(true);
   });
@@ -165,10 +167,11 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
     pre.rawConnection.exec('ALTER TABLE projects ADD COLUMN repo_url TEXT');
     pre.close();
 
-    const probe: Migration = { version: 2, description: 'probe', sql: 'CREATE TABLE _probe_v2(x);' };
+    // FR-274 owns v2 now, so the "later migration" probe is v3.
+    const probe: Migration = { version: 3, description: 'probe', sql: 'CREATE TABLE _probe_v3(x);' };
     const db = bootProjects(path, [probe]).rawConnection;
-    expect(appliedVersions(db)).toEqual([1, 2]);
-    const probeTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_probe_v2'").get();
+    expect(appliedVersions(db)).toEqual([1, 2, 3]);
+    const probeTable = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='_probe_v3'").get();
     expect(probeTable).toBeDefined();
   });
 
@@ -182,11 +185,11 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
 
     db.exec('CREATE TABLE projects (id INTEGER PRIMARY KEY, slug TEXT UNIQUE NOT NULL, name TEXT NOT NULL, path TEXT NOT NULL)');
     storage.runMigrations('projects', createProjectsComponent().schema());
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
     expect(columnsOf(db, 'projects')).toContain('repo_url');
   });
 
-  it('crash-idempotence: the pre-flight ran (column added) but the version insert never did — the next boot records [1] without throwing', () => {
+  it('crash-idempotence: the pre-flight ran (column added) but the version insert never did — the next boot records [1, 2] without throwing', () => {
     const path = tmpDbPath();
     const first = open(path);
     migrateSchema(first.rawConnection);
@@ -197,7 +200,7 @@ describe('projects migration v1 — projects.repo_url (FR-265)', () => {
     first.close();
 
     const db = bootProjects(path).rawConnection;
-    expect(appliedVersions(db)).toEqual([1]);
+    expect(appliedVersions(db)).toEqual([1, 2]); // FR-274: v2 follows v1
     expect(columnsOf(db, 'projects').filter((c) => c === 'repo_url')).toHaveLength(1);
   });
 });
