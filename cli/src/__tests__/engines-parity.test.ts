@@ -26,6 +26,7 @@ import {
   nodeMajorSupported,
   PreflightError,
 } from "../lib/preflight.js";
+import { classifyVpsNode } from "../lib/sync/vps-deploy.js";
 
 const REPO_ROOT = join(__dirname, "..", "..", "..");
 const readJson = (rel: string) =>
@@ -170,5 +171,22 @@ describe("BR-105 — the supported Node range has exactly one source of truth", 
   // E-7 — the sentence a new user reads.
   it("E-7: docs/SETUP_GUIDE.md states the range verbatim", () => {
     expect(readText("docs/SETUP_GUIDE.md")).toContain(SUPPORTED_NODE_RANGE);
+  });
+
+  // E-8 — BR-116: the VPS Node verdict (`sync status`, the `sync code`
+  // preflight) is a consumer of the range, never a second copy of it.
+  it("E-8: classifyVpsNode agrees with nodeMajorSupported for majors 18..30, quotes the range, and holds no literal of it", () => {
+    for (let major = 18; major <= 30; major += 1) {
+      const v = classifyVpsNode(`v${major}.4.1\n`);
+      expect(v.verdict, `classifyVpsNode(${major}) disagrees with nodeMajorSupported`).toBe(
+        nodeMajorSupported(major) ? "within" : "outside",
+      );
+      expect(v.message).toContain(SUPPORTED_NODE_RANGE);
+    }
+    expect(classifyVpsNode("v23.0.0").message).toContain("OUTSIDE");
+    expect(classifyVpsNode("command not found").verdict).toBe("unknown");
+    const src = readText("cli/src/lib/sync/vps-deploy.ts");
+    expect(src).not.toContain(SUPPORTED_NODE_RANGE);
+    expect(src).not.toMatch(/>=\s*2\d\b|\b2\d\.0\.0\b|major\s*[<>]=?\s*\d/);
   });
 });

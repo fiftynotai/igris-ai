@@ -231,9 +231,9 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 
 | Sub-verb | Action |
 |---|---|
-| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp |
+| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp; with a `vps` block, one read-only `node --version` ssh probe prints `vps node:` against the engines range (never changes the exit code) |
 | `data`   | Atomically drains local `~/.igris/projects/<slug>/sync_queue.jsonl` (rename-then-process; concurrency-safe under multi-harness use — see FR-128) via remote `igris_sync_queue_drain` MCP call. Recovers any stale `sync_queue.jsonl.draining-*` files from a prior crashed drain before processing. |
-| `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, IDE files, etc.), run `npm ci` + `npm run build` (brain-mcp-server) on VPS, smoke-check `require("better-sqlite3")`, ssh-restart `igris-brain` via PM2, then verify `/health` |
+| `code`   | Preflight (VPS Node vs engines range; refuses if another deploy runs, a swap was interrupted, or disk is short), rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, `.igris-deploy/`, IDE files, etc.), then a DETACHED runner in `<repo_path>/.igris-deploy/` runs `npm ci` + `npm run build` in a stage copy, smoke-loads `new Database(require("better-sqlite3"))`, swaps `node_modules` + `dist` in and re-smokes (auto-rollback). The client polls (30-min bound, reported — never kills the run), then restarts `igris-brain` via PM2 and exits 0 only when pm2 is `online` (restart count past its pre-restart value) and `/health` says `ok` twice in a row (one restart retry) |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
 
 `--dry-run` previews the rsync/ssh/MCP calls without performing them.
@@ -245,15 +245,13 @@ push when local HEAD matches `origin/<branch>`. Useful for cron jobs:
 */5 * * * * /usr/local/bin/igris sync code --if-changed >> sync.log 2>&1
 ```
 
-### Manual code-sync verification (NOT covered by CI)
+### Code-sync verification
 
-Code-sync is intentionally NOT exercised in the
-`tests/integration/sync.bats` suite — the `code` sub-verb invokes real
-rsync + ssh against a configured VPS, which can't be hermetically
-reproduced in CI. The unit tests at `cli/src/__tests__/sync-code.test.ts`
-cover command-shape and exit-code contracts via mocked `child_process`;
-the manual runbook below verifies the wire-level integration before
-each `npm publish`:
+`src/__tests__/sync-code-remote.test.ts` (BR-116) runs the real runner
+under a fake `ssh` that executes locally (real bash, node, rsync; stub
+`npm`/`pm2`): detach, stage/swap/rollback, the post-restart gate and the
+secret filter. What stays manual (not CI): a real sshd, pm2, nginx and
+disk sizing — the runbook below, before each `npm publish`:
 
 1. **Pre-flight:** verify `~/.igris/config.json` has both `vps` (host,
    user, repo_path) and `remote_brain` (url, api_key) blocks populated,
@@ -261,21 +259,30 @@ each `npm publish`:
    prompting (key-based auth required; the verb passes `BatchMode=yes`).
 2. **Dry-run:** `igris sync code --dry-run` and confirm the printed plan
    names the expected `<src>` and `<dst>` paths.
-3. **Live:** `igris sync code` and watch the output:
-   - `sync code: rsync <src> -> <dst>` then any rsync transfer summary
-   - `sync code: npm ci complete on VPS` (Linux-native dep rebuild, ~30s)
-   - `sync code: brain-mcp-server build complete on VPS`
-   - `sync code: native-module smoke check passed` (TD-141 pre-restart
-     load-bearing gate; old brain stays serving on smoke fail —
-     `require("better-sqlite3")` on VPS)
-   - `sync code: pm2 restart issued`
-   - `sync code: health OK — {"status":"ok",...}` (or a WARN if the
-     service is still starting; re-run `igris sync status` to confirm)
+3. **Live:** `igris sync code` (from a terminal — a slow install can outlive
+   an agent's command timeout; the remote run finishes regardless) and watch:
+   - `sync code: VPS Node vX — within|OUTSIDE engines range …`
+   - `sync code: rsync <src> -> <dst>`, then `run <id> launched on the VPS`
+   - `sync code: [<id>] install` / `build` / `swap` … phase transitions
+   - `sync code: deployed run <id> — install Xs, build Ys; pm2 online (node vZ); health ok`
+   - on failure: the phase + npm's real exit code/error lines (EBADENGINE
+     warnings are counted, not quoted) and `full log: <user>@<host>:<repo>/.igris-deploy/runs/<id>/log`
 4. **Cron parity:** `igris sync code --if-changed` from a clean tree
    should print "local HEAD matches origin; nothing to push" and exit
    0 in <1s.
 5. **Failure modes:** drop the `vps` block from config.json and confirm
    `igris sync code` exits 1 with an actionable error (config gate).
+
+**Recovery** (`<repo_path>/.igris-deploy/`):
+- *Another deploy is running* — inspect `runs/<id>/phase` and `runs/<id>/log`;
+  a lock whose runner is dead is replaced automatically (a lock with no pid
+  yet counts as held for ~1-2 min).
+- *Interrupted swap* (`swap.inprogress` present) — never auto-restored; the
+  refusal prints the journal and a one-line restore command to run on the VPS.
+- *Unhealthy after restart* — `pm2 logs igris-brain --lines 50`; the error
+  prints the same restore command. It moves the new tree to `failed/`, puts
+  `prev/` back and restarts pm2; re-running it is harmless. Run it BEFORE
+  re-running `igris sync code`: the next run deletes `prev/`.
 
 ## Project handoff — `igris export` / `igris import`
 
@@ -363,7 +370,7 @@ enforces vitest).
   `cache.test.ts`, `channel.test.ts`, `install-source.test.ts`,
   `cli-detect.test.ts`, `bridges.test.ts`, `from-source.test.ts`,
   `atomic-extract.test.ts`, `preflight.test.ts` — M1 building blocks
-- `src/__tests__/sync-{status,data,code}.test.ts` — sync sub-verbs
+- `src/__tests__/sync-{status,data,code,code-remote}.test.ts`, `vps-deploy.test.ts` — sync sub-verbs (code-remote = the BR-116 fake-ssh tier)
 - `src/__tests__/self-update.test.ts`, `register-project.test.ts` — M3
 - `tests/integration/version.bats` — CLI invocation smoke
 - `tests/integration/install.bats` — install end-to-end

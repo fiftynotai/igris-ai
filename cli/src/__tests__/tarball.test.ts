@@ -2990,6 +2990,35 @@ interface PackReport {
  *   RE-DERIVED: 1_974_206 − 1_974_210 = −4; 7_164_776 − 7_164_782 = −6 =
  *   −4 − 2; 153_600 − 130_930 = 22_670.
  *
+ * BR-116 MEASURED LAST (2026-09-30), after the warden round-1 fixes: the
+ * detached VPS deploy runner, the staging swap, the post-restart health gate
+ * with its restart-count baseline, and the shared idempotent restore text
+ * (`lib/sync/vps-deploy.ts` new; `sync/code.ts`, `sync/status.ts`, `ssh.ts`,
+ * `README.md`, `CHANGELOG.md`). Same method (`git archive` scratch builds,
+ * `copy-templates.sh` run in both arms, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json --ignore-scripts`
+ * twice per arm). CONTROL = HEAD `6ec900e`: 1_974_206 / 7_164_776 / 575 /
+ * `2535bac0…` — byte-identical to the SENTINEL-R4 row. FINAL = a `git
+ * write-tree` of the working tree through a TEMP index (`5fed0ec7`, no
+ * commit), twice.
+ *   packed              1_986_982    unpacked 7_210_414, 577 entries (+2:
+ *                                    `vps-deploy.js` + `.js.map`; `.d.ts` is not
+ *                                    emitted — `declaration: false`), shasum
+ *                                    `c9ecc7f11d8579874bc61602689c1489a872929f`.
+ *   this round's share  +12_776 B    packed — OVER the plan's ~10 KB estimate
+ *                                    (+11_960 before the round-1 fixes).
+ *                                    Unpacked +45_638 over 10 artifacts,
+ *                                    reconciling exactly: `vps-deploy.js`
+ *                                    +16_795 / map +10_551, `code.js` map +8_120
+ *                                    / +6_146, `README.md` +1_273,
+ *                                    `CHANGELOG.md` +954, `status.js` +819 / map
+ *                                    +637, `ssh.js` +198 / map +145.
+ *   cumulative delta    +143_706 B   (1_986_982 − 1_843_276)
+ *   headroom remaining  9_894 B      (153_600 − 143_706)
+ *   RE-DERIVED: 1_986_982 − 1_974_206 = 12_776; 7_210_414 − 7_164_776 =
+ *   45_638 = 16_795 + 10_551 + 8_120 + 6_146 + 1_273 + 954 + 819 + 637 + 198 +
+ *   145; 130_930 + 12_776 = 143_706; 153_600 − 143_706 = 9_894.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

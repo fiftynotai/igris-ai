@@ -59,6 +59,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **VPS code deploys are detached, staged and health-gated (BR-116).**
+  `igris sync code` ran the VPS `npm ci` in the foreground under a 5-minute
+  ssh timeout; on 2026-09-29 an install that needed longer (its debug log shows
+  it still extracting; why it was slow was not measured) was killed and left
+  `node_modules` partial under a live brain. A detached runner in
+  `<repo_path>/.igris-deploy/` now installs + builds into a stage copy, swaps
+  `node_modules` + `dist` only after a native smoke passes, re-smokes live and
+  auto-rolls back; the client's 30-min wait is reported, never enforced by
+  killing. The restart is gated on pm2 `online` + `/health` `ok` twice in a
+  row with the pm2 restart count past its pre-restart value, one retry, exit 1
+  naming the state (`pm2 jlist` is filtered on the VPS, so its env never
+  leaves it). Errors headline npm's real failure, not EBADENGINE warnings;
+  `sync status` shows the VPS Node vs the engines range. The TD-141 smoke
+  never loaded the binding and now does. New contract row "VPS deploy
+  workspace protocol" in `MAINTAINING.md`; update the CLI on every deploying
+  workstation (an older CLI's `rsync --delete` removes `.igris-deploy/`).
+
 - **The contract-map gate reads the whole map, the same way in every checkout,
   and says what a clean run does not prove (TD-466, TD-313, TD-435, TD-346).**
   `scripts/check_contract_consumers.sh` stopped reading `MAINTAINING.md` at the

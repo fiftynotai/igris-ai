@@ -101,6 +101,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`igris sync code` can no longer leave the VPS on a wiped dependency tree
+  or report success on an unhealthy brain (BR-116).** A slow `npm ci` was
+  killed by the 5-minute ssh timeout with `node_modules` already deleted. A
+  DETACHED runner in `<repo_path>/.igris-deploy/` now installs + builds into a
+  stage copy and swaps `node_modules` + `dist` in only after a native smoke
+  (which now instantiates `better-sqlite3` — TD-141's `require` never loaded
+  it), with live re-smoke + rollback; the 30-min wait is reported, never
+  enforced by killing. Exit 0 needs pm2 `online` + `/health` `ok` twice (one
+  restart retry), so `sync all` skips `data` on an unhealthy brain. Refuses
+  when a deploy runs, a swap was interrupted or disk is short. Errors name
+  npm's real exit code, not EBADENGINE warnings; `sync status` shows
+  `vps node:`. Update the CLI on EVERY deploying workstation: an older CLI's
+  `rsync --delete` removes `.igris-deploy/`.
+
 - **`igris doctor --remove-orphans` no longer reports clean while drift survives
   (BR-087).** Declining a row (`n`), aborting (`a`) and running out of piped
   input all used to exit 0 with a `path-missing` row still in the registry,

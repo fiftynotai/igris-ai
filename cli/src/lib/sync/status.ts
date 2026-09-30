@@ -10,10 +10,12 @@
  *   - Last-push timestamp (mtime of sync_queue.jsonl, OR newest
  *     `.draining-*` mtime when no canonical file, OR "never")
  *   - Brain version (from /health response body when available)
+ *   - VPS Node version vs the engines range (BR-116) — ONE read-only
+ *     `node --version` ssh probe, only when a `vps` block is configured
  *
- * No SSH, no MCP tool calls — just an HTTP GET + a couple of fs.stat calls.
- * This makes `sync status` safe to run anywhere (no SSH key required, no
- * VPS config required beyond `remote_brain.url`).
+ * No MCP tool calls. Without a `vps` block there is no SSH at all, so
+ * `sync status` stays safe to run anywhere (no SSH key required). The probe
+ * never affects the exit code.
  *
  * `--dry-run` describes what would be checked without making the network
  * call. Useful for hermetic tests and for confirming the config wiring.
@@ -24,7 +26,13 @@
 
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { healthCheck, readRemoteBrainConfig } from "../mcp-client.js";
+import {
+  healthCheck,
+  readRemoteBrainConfig,
+  readVpsConfig,
+} from "../mcp-client.js";
+import { sshExec } from "../ssh.js";
+import { buildNodeVersionCommand, formatVpsNodeLine } from "./vps-deploy.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
@@ -84,9 +92,17 @@ export async function runSyncStatus(
 
   const slug = opts.projectSlug ?? basenameOfCwd();
   const queuePath = join(brainDir(), "projects", slug, "sync_queue.jsonl");
+  const vps = readVpsConfig();
 
   if (dry !== null) {
     dry.wouldFetchUrl(`${remote.url.replace(/\/$/, "")}/health`);
+    if (vps !== null) {
+      dry.wouldInvokeCommand(
+        "ssh",
+        ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", `${vps.user}@${vps.host}`, "--", buildNodeVersionCommand()],
+        "read-only: VPS Node version vs the engines range (never affects the exit code)",
+      );
+    }
     dry.print();
     info("");
     info("sync status (dry-run):");
@@ -148,6 +164,13 @@ export async function runSyncStatus(
     `  reachable:       ${vpsReachable ? "yes" : "no"} (HTTP ${health.statusCode ?? "unreachable"})`,
   );
   info(`  brain version:   ${brainVersion ?? "unknown"}`);
+  if (vps !== null) {
+    const probe = await sshExec(vps.user, vps.host, buildNodeVersionCommand(), {
+      connectTimeoutSeconds: 5,
+      timeoutMs: 15_000,
+    });
+    info(`  vps node:        ${formatVpsNodeLine(probe)}`);
+  }
   info(`  queue depth:     ${queueDepth} entries`);
   if (depth.drainingFiles.length > 0) {
     info(

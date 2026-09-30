@@ -13,8 +13,11 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
   utimesSync,
@@ -23,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import { SUPPORTED_NODE_RANGE } from "../lib/preflight.js";
 
 let tmpBrain: string;
 const envBackup: Record<string, string | undefined> = {};
@@ -371,5 +375,103 @@ describe("sync status — runSyncStatus", () => {
       spy.mockRestore();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe("BR-116 AC-5 — `sync status` shows the VPS Node version vs the engines range", () => {
+  // A PATH-stub `ssh` logs its argv and prints $BR116_SSH_OUT / exits $BR116_SSH_EXIT.
+  let bin: string;
+  const saved: Record<string, string | undefined> = {};
+
+  beforeEach(() => {
+    bin = mkdtempSync(join(tmpdir(), "br116-status-bin-"));
+    writeFileSync(
+      join(bin, "ssh"),
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$BR116_SSH_LOG"\nprintf \'%s\\n\' "$BR116_SSH_OUT"\nexit "${BR116_SSH_EXIT:-0}"\n',
+    );
+    chmodSync(join(bin, "ssh"), 0o755);
+    for (const k of ["PATH", "BR116_SSH_LOG", "BR116_SSH_OUT", "BR116_SSH_EXIT"]) saved[k] = process.env[k];
+    process.env.PATH = `${bin}:${saved.PATH}`;
+    process.env.BR116_SSH_LOG = join(bin, "calls.log");
+  });
+
+  afterEach(() => {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    rmSync(bin, { recursive: true, force: true });
+  });
+
+  async function status(vps: boolean): Promise<{ code: number; out: string }> {
+    writeConfig({
+      remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
+      ...(vps ? { vps: { host: "vps.example.com", user: "deploy", repo_path: "/srv/igris" } } : {}),
+    });
+    const buf: string[] = [];
+    const push = (chunk: unknown) => (buf.push(String(chunk)), true);
+    const o = vi.spyOn(process.stdout, "write").mockImplementation(push);
+    const e = vi.spyOn(process.stderr, "write").mockImplementation(push);
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      const code = await runSyncStatus({ projectSlug: "demo" });
+      return { code, out: buf.join("") };
+    } finally {
+      o.mockRestore();
+      e.mockRestore();
+    }
+  }
+
+  it("S5a: VPS on v20.20.0 → OUTSIDE the exact range; exit 0", async () => {
+    process.env.BR116_SSH_OUT = "v20.20.0";
+    const { code, out } = await status(true);
+    expect(code).toBe(0);
+    const line = out.split("\n").find((l) => l.includes("vps node:")) ?? "";
+    expect(line).toContain("v20.20.0");
+    expect(line).toContain("OUTSIDE");
+    expect(line).toContain(SUPPORTED_NODE_RANGE);
+    const calls = readFileSync(join(bin, "calls.log"), "utf-8");
+    expect(calls).toContain("deploy@vps.example.com -- node --version");
+    expect(calls).toContain("ConnectTimeout=5");
+  }, 20_000);
+
+  it("S5b: v22.12.0 → within", async () => {
+    process.env.BR116_SSH_OUT = "v22.12.0";
+    const { code, out } = await status(true);
+    expect(code).toBe(0);
+    expect(out).toContain(`vps node:        v22.12.0 — within engines range ${SUPPORTED_NODE_RANGE}`);
+  }, 20_000);
+
+  it("S5c: the probe fails (ssh exit 255) → 'unknown (ssh probe failed: exit 255)', still exit 0", async () => {
+    process.env.BR116_SSH_OUT = "";
+    process.env.BR116_SSH_EXIT = "255";
+    const { code, out } = await status(true);
+    expect(code).toBe(0);
+    expect(out).toContain("vps node:        unknown (ssh probe failed: exit 255)");
+  }, 20_000);
+
+  it("S5d: no `vps` block → no ssh at all and no vps node line", async () => {
+    process.env.BR116_SSH_OUT = "v20.20.0";
+    const { code, out } = await status(false);
+    expect(code).toBe(0);
+    expect(existsSync(join(bin, "calls.log"))).toBe(false);
+    expect(out).not.toContain("vps node:");
+  }, 20_000);
+
+  it("--dry-run names the read-only `node --version` probe only when `vps` is configured", async () => {
+    writeConfig({
+      remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
+      vps: { host: "vps.example.com", user: "deploy", repo_path: "/srv/igris" },
+    });
+    const buf: string[] = [];
+    const o = vi.spyOn(process.stdout, "write").mockImplementation((c: unknown) => (buf.push(String(c)), true));
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      expect(await runSyncStatus({ dryRun: true, projectSlug: "demo" })).toBe(0);
+    } finally {
+      o.mockRestore();
+    }
+    expect(buf.join("")).toContain("node --version");
+    expect(existsSync(join(bin, "calls.log"))).toBe(false);
   });
 });
