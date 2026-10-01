@@ -115,6 +115,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `vps node:`. Update the CLI on EVERY deploying workstation: an older CLI's
   `rsync --delete` removes `.igris-deploy/`.
 
+- **`igris sync code` no longer exits 0 right after "launched" (BR-117).** The
+  poll wait was an unref'd timer, so a standalone CLI emptied its event loop
+  and abandoned the deploy before the restart and health check. The wait now
+  holds the process, and an `igris sync` that ends before its result is known
+  exits 1. Rebuild the CLI on every deploying workstation.
+
 - **`igris doctor --remove-orphans` no longer reports clean while drift survives
   (BR-087).** Declining a row (`n`), aborting (`a`) and running out of piped
   input all used to exit 0 with a `path-missing` row still in the registry,

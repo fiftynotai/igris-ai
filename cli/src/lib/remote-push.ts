@@ -168,6 +168,7 @@ export async function pushProjectToRemote(
     const maxTimer = setTimeout(() => {
       settle("network_error");
     }, 10_000);
+    // A cap, not a wait (BR-117 audit): the ref'd socket holds the process.
     maxTimer.unref();
     req.on("close", () => {
       clearTimeout(maxTimer);

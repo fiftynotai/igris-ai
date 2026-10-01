@@ -28,7 +28,7 @@
  */
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   chmodSync,
@@ -619,4 +619,154 @@ describe("BR-116 AC-3 — the post-restart state gates the exit code; one retry"
     expect(out).toContain("health ok");
     noCanary(out);
   }, 30_000);
+});
+
+/*
+ * BR-117 — the BUILT CLI as a real process. vitest's worker keeps the event
+ * loop alive, so every in-process case above passes even when the poll wait is
+ * an unref'd timer — the defect that made a standalone `igris sync code` drain
+ * its loop right after "launched" and exit 0 with the deploy abandoned
+ * (L-1826). These cases spawn `cli/dist/index.js` with no vitest in the child:
+ *   - ASYNC `spawn`, never `execFileSync`: the loopback /health server lives in
+ *     THIS process's loop, and a sync spawn would starve it.
+ *   - The child env drops the keys the CLI's test-runner detection reads (`VITEST`,
+ *     `NODE_ENV`) plus `VITEST_*`, `TEST`, `NODE_OPTIONS` (unless a case sets it) and
+ *     `IGRIS_REAL_HOME`; vitest's DEV/PROD/MODE/BASE_URL/SSR stay (no cli/src reader,
+ *     grep 2026-10-01). HOME, IGRIS_BRAIN_DIR, PATH (stubs first), BR116_CTL: re-asserted.
+ *   - `cli/dist` older than the sources it is built from FAILS (never skips).
+ *   - `br117-unref-all-timers.cjs` (`--require`) unrefs every user-land timer,
+ *     so a FIXED binary reproduces the incident's drained loop (AC-2).
+ */
+const CLI_DIR = decodeURIComponent(new URL("../../", import.meta.url).pathname);
+const CLI_ENTRY = join(CLI_DIR, "dist", "index.js");
+const DIST_FROM_SRC = ["index", "verbs/sync", "lib/sync/code", "lib/sync/vps-deploy", "lib/ssh", "lib/mcp-client"];
+const PRELOAD_NAME = "br117-unref-all-timers.cjs";
+const PRELOAD_ARMED = "br117-preload: every user-land timer is unref'd";
+const STRIP_FROM_CHILD = /^(VITEST(_.*)?|TEST|NODE_ENV|NODE_OPTIONS|IGRIS_REAL_HOME)$/;
+
+const PRELOAD_SRC = `"use strict";
+// BR-117 test preload: unref every user-land timer, so a standalone CLI
+// whose only pending work is a wait drains its loop exactly as the incident did.
+const timers = require("node:timers");
+const timersP = require("node:timers/promises");
+const unref = (t) => { if (t && typeof t.unref === "function") t.unref(); return t; };
+for (const [o, k] of [[globalThis, "setTimeout"], [globalThis, "setInterval"], [timers, "setTimeout"], [timers, "setInterval"]]) {
+  const orig = o[k];
+  o[k] = function (...a) { return unref(orig.apply(this, a)); };
+}
+const pst = timersP.setTimeout;
+timersP.setTimeout = (ms, v, opts) => pst(ms, v, { ...opts, ref: false });
+require("node:module").syncBuiltinESMExports();
+process.stderr.write(${JSON.stringify(PRELOAD_ARMED + "\n")});
+`;
+
+interface CliRun {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  out: string;
+}
+
+/** Fail (never skip) when `cli/dist` predates a source the cases exercise. */
+function assertDistFresh(): void {
+  expect(
+    existsSync(CLI_ENTRY),
+    "cli/dist/index.js is absent — run `npm run build` in cli/ (the BR-117 cases spawn the BUILT CLI)",
+  ).toBe(true);
+  for (const m of DIST_FROM_SRC) {
+    const src = lstatSync(join(CLI_DIR, "src", `${m}.ts`)).mtimeMs;
+    const dist = lstatSync(join(CLI_DIR, "dist", `${m}.js`)).mtimeMs;
+    expect(
+      dist >= src,
+      `cli/dist is older than src/${m}.ts — run \`npm run build\` in cli/ (the BR-117 cases spawn the BUILT CLI)`,
+    ).toBe(true);
+  }
+}
+
+/** Spawn the BUILT CLI as a real child (async; TD-336 timeout). stdout + stderr in one string. */
+function runBuiltCli(args: string[], extraEnv: Record<string, string>, timeoutMs: number): Promise<CliRun> {
+  assertDistFresh();
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (v !== undefined && !STRIP_FROM_CHILD.test(k)) env[k] = v;
+  }
+  Object.assign(env, extraEnv);
+  // The fence, re-asserted for the CHILD: it reads $HOME/.igris/config.json, and
+  // the stub PATH is what keeps its ssh/rsync/pm2 local.
+  expect(env.HOME).toBe(homedir());
+  expect(env.HOME.startsWith(T)).toBe(true);
+  expect(env.IGRIS_BRAIN_DIR).toBe(join(env.HOME, ".igris"));
+  expect(env.PATH.startsWith(`${BIN}:`)).toBe(true);
+  expect(JSON.parse(readFileSync(join(env.HOME, ".igris", "config.json"), "utf-8")).vps.host).toBe("vps.test");
+  expect(Object.keys(env).filter((k) => /^VITEST|^TEST$|^NODE_ENV$/.test(k))).toEqual([]);
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI_ENTRY, ...args], {
+      cwd: LOCAL,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+    let out = "";
+    child.stdout.on("data", (c: Buffer) => (out += c.toString()));
+    child.stderr.on("data", (c: Buffer) => (out += c.toString()));
+    child.on("error", reject);
+    child.on("close", (status, signal) => resolve({ status, signal, out }));
+  });
+}
+
+const launchedId = (out: string): string | undefined => /run (\S+) launched on the VPS/.exec(out)?.[1];
+
+describe("BR-117 — the BUILT CLI as a real process (no vitest event loop in the child)", () => {
+  beforeAll(() => {
+    writeFileSync(join(BIN, PRELOAD_NAME), PRELOAD_SRC);
+  });
+
+  it("AC-1: a real `igris sync code` polls through restart + verify and exits with the verified result", async () => {
+    // The restart-RETRY path: the only one through all four sleep sites (poll,
+    // post-restart settle ×2, retry delay, the healthy-streak poll).
+    writeFileSync(join(CTL, "pm2-script"), "errored\nonline\n");
+    const { status, signal, out } = await runBuiltCli(["sync", "code"], {}, 80_000);
+    const why = `child status=${status} signal=${signal}\n${out}`;
+    const id = launchedId(out);
+    expect(id, why).toBeDefined();
+    expect(out, why).toContain(`deployed run ${id}`);
+    expect(status, why).toBe(0);
+    expect(signal).toBeNull();
+    expect(out).toContain("recovered on retry 1/1");
+    expect(out).toContain("health ok");
+    expect(restarts()).toBe(2);
+    expect(readFileSync(liveBs3(), "utf-8")).toContain("NEW-STUB"); // the swap happened
+    expect(out).not.toContain(PRELOAD_ARMED);
+    expect(out).not.toContain(CANARY);
+    expect(readFileSync(join(CTL, "wire.log"), "utf-8")).not.toContain(CANARY);
+  }, 90_000);
+
+  it.each(["code", "all"])(
+    "AC-2: a client whose event loop drains mid-run exits 1, never 0 — sync %s",
+    async (sub) => {
+      npmEnv({ SLEEP: 30 });
+      const { status, signal, out } = await runBuiltCli(
+        ["sync", sub],
+        { NODE_OPTIONS: `--require "${join(BIN, PRELOAD_NAME)}"` },
+        45_000,
+      );
+      const id = launchedId(out);
+      // Read FIRST, right after the child closed: an absent rc proves the remote
+      // run had not finished, i.e. the loop really drained mid-wait.
+      const rcAtExit = id === undefined ? null : existsSync(join(VPS, ".igris-deploy", "runs", id, "rc"));
+      const why = `child status=${status} signal=${signal}\n${out}`;
+      expect(status, why).toBe(1);
+      expect(signal).toBeNull();
+      expect(out).toContain(PRELOAD_ARMED); // the harness is armed
+      expect(id, why).toBeDefined();
+      expect(rcAtExit, "the remote run had already finished — the loop never drained").toBe(false);
+      expect(out).not.toContain("deployed run");
+      expect(restarts()).toBe(0);
+      if (sub === "all") {
+        expect(out).not.toContain("sync data");
+        expect(out).not.toContain("sync all:");
+      }
+    },
+    60_000,
+  );
 });

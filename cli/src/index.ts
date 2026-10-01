@@ -401,6 +401,9 @@ async function main(argv: string[]): Promise<void> {
         subVerb: string,
         opts: { dryRun?: boolean; ifChanged?: boolean },
       ): Promise<void> => {
+        // BR-117: a run that ends before runSync returns (a drained event
+        // loop) exits 1; only the verified result below clears it.
+        process.exitCode = 1;
         const code = await runSync({
           subVerb: subVerb as SyncSubVerb,
           dryRun: opts.dryRun === true,

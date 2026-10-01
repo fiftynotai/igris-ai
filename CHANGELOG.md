@@ -76,6 +76,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workspace protocol" in `MAINTAINING.md`; update the CLI on every deploying
   workstation (an older CLI's `rsync --delete` removes `.igris-deploy/`).
 
+- **`igris sync code` no longer exits 0 right after launching the VPS run
+  (BR-117).** The first live runs after BR-116 printed `… launched on the VPS`
+  and ended: the wait between polls was an unref'd timer, so a standalone CLI
+  emptied its event loop and abandoned the deploy before the pm2 restart and
+  health verification. The wait is now ref'd, and the `sync` action pre-sets
+  exit code 1, so an `igris sync code|all` that ends before its result is known
+  exits 1, never 0. Measured on the BUILT CLI as a real child process against
+  the fake-ssh tier (`sync-code-remote.test.ts`, red on 2a9eae4); not yet re-run
+  against the real VPS. `unref-audit.test.ts` allowlists the two remaining
+  `unref()`s in `cli/src` with their reasons. Rebuild the CLI on every
+  deploying workstation.
+
 - **The contract-map gate reads the whole map, the same way in every checkout,
   and says what a clean run does not prove (TD-466, TD-313, TD-435, TD-346).**
   `scripts/check_contract_consumers.sh` stopped reading `MAINTAINING.md` at the

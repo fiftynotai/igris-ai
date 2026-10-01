@@ -720,9 +720,8 @@ function truncate(s: string, max: number): string {
   return s.slice(0, max) + "... [truncated]";
 }
 
+// Ref'd on purpose (BR-117): between polls this timer is all that keeps a
+// standalone `igris` alive; unref'd, the CLI exited 0 mid-deploy.
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref();
-  });
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

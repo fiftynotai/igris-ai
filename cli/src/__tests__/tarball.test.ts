@@ -3019,6 +3019,33 @@ interface PackReport {
  *   45_638 = 16_795 + 10_551 + 8_120 + 6_146 + 1_273 + 954 + 819 + 637 + 198 +
  *   145; 130_930 + 12_776 = 143_706; 153_600 − 143_706 = 9_894.
  *
+ * BR-117 MEASURED LAST (2026-10-01), after its final code-touching step: the
+ * ref'd poll wait in `sync/code.ts`, the `sync` action's `process.exitCode = 1`
+ * pre-set in `index.ts`, a reason comment at `remote-push.ts`'s `unref()`, and
+ * a `CHANGELOG.md` bullet (the new real-process cases and `unref-audit.test.ts`
+ * are test files — excluded by `tsconfig.json` and outside `files`). Same
+ * method as BR-116 (`git archive` scratch builds, `copy-templates.sh` run in
+ * both arms, brain `dist` absent so the copy step rebuilt it, smoke
+ * `(sandboxed)`, `npm pack --dry-run --json --ignore-scripts` twice per arm).
+ * CONTROL = HEAD `2a9eae4`: 1_986_982 / 7_210_414 / 577 / `c9ecc7f1…` —
+ * byte-identical to the BR-116 row, re-taken. FINAL = a `git write-tree` of
+ * the working tree through a TEMP index (`ef5582f5`, no commit), twice; the
+ * live `cli/dist` mtime and `~/.igris/config.json` sha unchanged by both arms.
+ *   packed              1_987_213    unpacked 7_211_166, 577 entries (+0),
+ *                                    shasum
+ *                                    `905b569e077542acb090f8b8f9a21785435f7f2e`.
+ *   this round's share  +231 B       packed (under the plan's +300–700
+ *                                    estimate). Unpacked +752 over 7
+ *                                    artifacts, reconciling exactly:
+ *                                    `CHANGELOG.md` +371, `index.js` +173 /
+ *                                    map +62, `code.js` +88 / map −36,
+ *                                    `remote-push.js` +81 / map +13.
+ *   cumulative delta    +143_937 B   (1_987_213 − 1_843_276)
+ *   headroom remaining  9_663 B      (153_600 − 143_937)
+ *   RE-DERIVED: 1_987_213 − 1_986_982 = 231; 7_211_166 − 7_210_414 = 752 =
+ *   371 + 173 + 88 + 81 + 62 − 36 + 13; 143_706 + 231 = 143_937;
+ *   153_600 − 143_937 = 9_663.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
