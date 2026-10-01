@@ -8,7 +8,7 @@
  *   - install <path> [--slug <slug>] [--no-hooks] [--dry-run]
  *   - update [--all] [--slug <slug>] [--self] [--dry-run]
  *   - register-project [path] [--slug <slug>] [--allow-missing-path]
- *   - sync <code|data|all|status> [--dry-run] [--if-changed]
+ *   - sync <code|data|all|status|push> [--dry-run] [--if-changed]
  *   - context-docs inventory --project <slug> [--json]
  *   - doctor [--fix] [--remove-orphans [--yes [--include-owning]] [--empty-only] [--slug <slug>]]
  *
@@ -384,7 +384,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("sync <sub-verb>")
     .description(
-      "Push code/data to the VPS brain. Sub-verbs: code, data, all, status.",
+      "Push code/data to the VPS brain. Sub-verbs: code, data, all, status, push.",
     )
     .option(
       "--dry-run",

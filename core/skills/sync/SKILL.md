@@ -1,7 +1,7 @@
 ---
 name: sync
 tier: essential
-description: "Deploy code and/or data to VPS brain - usage: /sync [code|data|all|status]"
+description: "Deploy code and/or data to VPS brain - usage: /sync [code|data|all|status|push]"
 disable-model-invocation: false
 allowed-tools:
   - Bash
@@ -15,7 +15,9 @@ triggers:
 
 # SYNC
 
-Run `igris sync $1` for the requested sub-verb (code/data/all/status).
+Run `igris sync $1` for the requested sub-verb (code/data/all/status/push).
+`push` sends this machine's brain delta to `remote_brain`; it reads the key
+from config itself (never pass one) and is not part of `all`.
 
 If `$ARGUMENTS` is empty, default to `all` (matches the legacy /sync skill
 behavior). Pass `--if-changed` for cron-parity with the retired

@@ -76,6 +76,7 @@ EOF
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
   [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
+  cleanup_test_temp_dir
 }
 
 # write_manifest_for <target-path>

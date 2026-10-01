@@ -32,6 +32,7 @@ setup() {
 
 teardown() {
   [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 @test "(G) the real skill tree passes with 4 skills and 8 sites" {

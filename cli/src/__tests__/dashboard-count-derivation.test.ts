@@ -174,6 +174,28 @@ import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+/**
+ * TD-344 — the per-test budget for "the contract corpus carries no unmarked
+ * count", a synchronous scan of the tracked corpus (vitest cannot pre-empt it,
+ * so this is post-hoc detection, not a hang stop). MEASURED 2026-10-01 across
+ * 17 full cli runs with archived per-test durations, 1-min load peaks 30-277
+ * (forger's 13, one — `final-cli` — unsampled; sentinel's L1-L4; 8 cores):
+ * worst 24_220 ms (peak 206); 18_856 ms (sentinel run L2, peak 127); 11_168
+ * ms at peak 277; 3.6-5.2 s at peaks 30-48 — the duration does not track the
+ * sampled peak. 2x the worst observed, rounded up to the next 5 s = 50_000
+ * (40_000 from the earlier worst sat at 61% in the peak-206 run). The suite's
+ * 15 s default crossed in run L2.
+ */
+const CORPUS_SCAN_TIMEOUT_MS = 50_000;
+
+/**
+ * TD-344 — the spawn half of `git ls-files` below. MEASURED 318 ms at a 1-min
+ * peak of 277 (K=6 burners). A multiple of a sub-second process start would
+ * make scheduler noise a red, so this is a hang stop, not a budget: 10 s is
+ * over 30x the measurement.
+ */
+const GIT_LS_FILES_TIMEOUT_MS = 10_000;
+
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const MAINTAINING = join(REPO_ROOT, "MAINTAINING.md");
 
@@ -485,7 +507,7 @@ function consumersCell(row: string): string {
 let trackedCache: string[] | null = null;
 function tracked(): string[] {
   if (trackedCache === null) {
-    trackedCache = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf-8" })
+    trackedCache = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf-8", timeout: GIT_LS_FILES_TIMEOUT_MS })
       .split("\n")
       .filter((l) => l.length > 0);
   }
@@ -863,7 +885,7 @@ describe("TD-420 part 1 — the independent enumerations of the local surface ag
 // ===========================================================================
 
 describe("TD-420 part 2 — no quoted count for these sets survives in the corpus", () => {
-  it("the contract corpus carries no unmarked count", () => {
+  it("the contract corpus carries no unmarked count", { timeout: CORPUS_SCAN_TIMEOUT_MS }, () => {
     const findings = scanCorpus();
     expect(
       findings.length === 0,

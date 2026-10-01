@@ -1474,6 +1474,27 @@ export function readPullSince(remoteUrl: string, table: string): string {
   return row?.last_pull_at ?? "1970-01-01T00:00:00";
 }
 
+/**
+ * TD-350: newest `sync_state.last_push_at` for `remoteUrl` (trailing `/`
+ * stripped, as both push clients stamp it; `file:%` rows excluded), or null.
+ * The ONE reader for `sync status` and `boot-sync`. Read-only door; never throws.
+ */
+export function readLastPushAt(remoteUrl: string): string | null {
+  try {
+    return withReadonlyBrain<string | null>(null, (handle) => {
+      if (!tableExists(handle, "sync_state")) return null;
+      const row = handle
+        .prepare(
+          "SELECT MAX(last_push_at) AS t FROM sync_state WHERE remote_url = ? AND table_name NOT LIKE 'file:%'",
+        )
+        .get(remoteUrl.replace(/\/+$/, "")) as { t: string | null } | undefined;
+      return row?.t ?? null;
+    });
+  } catch {
+    return null;
+  }
+}
+
 /** Per-table merge summary returned by {@link mergePulledTables}. */
 export interface PullMergeSummary {
   /** Total rows inserted + updated across all tables (the brain's "totalMerged"). */

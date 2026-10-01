@@ -151,6 +151,7 @@ EOF
 teardown() {
   unset IGRIS_CLI
   if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
+  cleanup_test_temp_dir
 }
 
 # --- fixtures ---------------------------------------------------------------

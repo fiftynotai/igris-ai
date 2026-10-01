@@ -85,6 +85,7 @@ setup() {
 teardown() {
   rm -f /tmp/igris_brief_gate_cache
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # run_hook <project_dir> <file_path> [extra env...]

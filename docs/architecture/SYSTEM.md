@@ -213,7 +213,7 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 **Principle:** the local brain DB is always authoritative. The VPS is the **always-on peer** that local brains sync to and offload long-running work to — not a backup, not the source of truth. If the VPS is unavailable, the engineer's work continues uninterrupted; on the next connectivity, `/boot` pulls any VPS changes and merges them locally.
 
 **VPS roles (5, one retired):**
-1. Cross-machine sync hub — machine A's push is visible to machine B on next `/boot` pull. Local CLIs push deltas via `brain_push_async.sh` on session end.
+1. Cross-machine sync hub — machine A's push is visible to machine B on next `/boot` pull. Local brains push deltas three ways: inline at session end (the perception extractor calls `handleBrainPush`, FR-120), on bus events when `auto_push` is on (the sync component's `pushTables`), and on demand via `igris sync push`, which `/rest` §2.7 runs (TD-350).
 2. Dashboard backend — serves the web UI at `/dashboard`.
 3. Scheduler — owns cron-style routines (`igris_schedule_*`) that fire without local presence.
 4. Hook event sink — **RETIRED** (FR-267, 2026-08-26): the `/api/hooks/event` receiver and the five HTTP hooks that fed it are deleted; agent cost now rides the `agent_events` sync table (role 1) via `igris_agent_event` — see [`docs/HOOK_EVENT_SCHEMA.md`](../HOOK_EVENT_SCHEMA.md) (stub).
@@ -225,7 +225,7 @@ Adapters under `core/hooks/bridges/` let non-Claude CLIs (OpenCode, Codex, Gemin
 
 **Egress disclosure + path redaction (TD-253):** what egresses to the VPS is disclosed in a generated manifest — [`docs/reference/sync-egress-manifest.md`](../reference/sync-egress-manifest.md) — derived from `SYNC_TABLES` (`brain-mcp-server/src/tools/sync.ts`), the single source of truth, and drift-guarded by a parity test. Before egress, absolute local filesystem paths (`projects.path`, `instances.project_path`) are relativized (home → `~`, foreign-absolute → basename) at all three push choke points via `redactTablesForEgress`, applied BEFORE chunking and the failure-retry queue so retries never leak. The disclosure is surfaced at the `igris init` / `igris configure` VPS consent prompt and in `igris sync data --dry-run`.
 
-**Auto-push pattern (TD-080):** background actors (perception extractor today, FR-118 subconscious tomorrow) invoke `core/hooks/shared/brain_push_async.sh` synchronously; callers detach via `nohup ... & disown`. The helper reads remote config from `~/.igris/config.json`, always exits 0, logs to `~/.igris/projects/{slug}/session/brain_push.log` with 1 MB rotation, and is silent when the remote is unconfigured.
+**Push paths (FR-120, TD-350):** the TD-080 helper `brain_push_async.sh` is gone. The detached perception extractor (`brain-mcp-server/scripts/perception_extract_cli.ts`) runs `handleBrainPush` inline as its final phase, reading `remote_brain` from `~/.igris/config.json` itself, and tags the outcome on its summary line in `~/.igris/projects/{slug}/session/perception_extract.log`. `igris sync push` is the on-demand door: it reads the same config, takes no key argument, and dispatches the same handler in process. Both advance `sync_state.last_push_at` only for tables the remote acknowledged (BR-097), and `igris sync status` and the `/boot` digest read that watermark as "last push".
 
 ---
 

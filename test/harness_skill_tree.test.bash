@@ -72,7 +72,7 @@ setup() {
 teardown() {
   [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
   [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
-  return 0
+  cleanup_test_temp_dir
 }
 
 # ---------- helpers ----------------------------------------------------------

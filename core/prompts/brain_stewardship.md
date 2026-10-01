@@ -23,8 +23,11 @@ the local file directly.
 Cross-instance sync to the VPS (URL from `~/.igris/config.json` → `remote_brain.url`) is **explicit**
 and happens via two paths:
 
-1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
-   or `igris_brain_pull` to pull remote rows. `/sync data` wraps both.
+1. **Operator-initiated.** Run `igris sync push` to push the local delta (it
+   reads the remote and key from config and dispatches `igris_brain_push` in
+   process — never call that tool with a literal key yourself), or call
+   `igris_brain_pull` to pull remote rows. `/sync data` only drains the two
+   sync queues; it neither pushes nor pulls (`/boot` pulls via `igris boot-sync`).
    Use when you want this Mac's recent work to show up on another instance
    immediately, or when you suspect the local DB is missing rows another
    machine wrote.
@@ -43,11 +46,11 @@ applies migrations on first use.
 ### Decision triggers — when to reach for which tool
 
 - **Stale recall result?** The local DB does not yet have the row. Either
-  pull from the VPS now (`igris_brain_pull` / `/sync data`) or wait for the
+  pull from the VPS now (`igris_brain_pull` / `igris boot-sync`) or wait for the
   next session_end push from the machine that wrote it.
-- **About to /rest after work another machine needs?** `/sync data` (push)
-  before `/rest` if you can't wait the ~1-3s for the inline auto-push to
-  land.
+- **About to /rest after work another machine needs?** `/rest` §2.7 runs
+  `igris sync push`; run it yourself first if you can't wait the ~1-3s for the
+  inline auto-push to land.
 - **`access_count` not incrementing?** That used to mean "two-DB drift"
   (FR-120 fixed it). Post-FR-120 the local DB IS the operating store —
   `sqlite3 ~/.igris/memory/knowledge.db "SELECT access_count..."` is the

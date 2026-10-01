@@ -80,6 +80,7 @@ setup() {
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # run_checker [args...] — run the checker from inside the sandbox repo.

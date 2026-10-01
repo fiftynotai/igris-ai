@@ -36,6 +36,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Minimal brief_status table mirroring the columns the validator SELECTs.

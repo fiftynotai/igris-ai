@@ -31,6 +31,7 @@ setup() {
 
 teardown() {
   [ -d "$SCAN_DIR" ] && rm -rf "$SCAN_DIR"
+  cleanup_test_temp_dir
 }
 
 # scan_dir — runs gitleaks against $SCAN_DIR with the repo config.

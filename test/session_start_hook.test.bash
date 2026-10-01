@@ -53,6 +53,7 @@ EOF
 
 teardown() {
   [ -d "$SANDBOX" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # register_proj <home> <projpath> [slug] — seed a brain DB row so the FR-212c

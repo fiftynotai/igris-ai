@@ -89,7 +89,7 @@ setup() {
 }
 
 teardown() {
-  [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"; cleanup_test_temp_dir
 }
 
 # --- helpers -----------------------------------------------------------------

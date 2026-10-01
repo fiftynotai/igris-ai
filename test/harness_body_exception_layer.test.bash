@@ -72,6 +72,7 @@ EOF
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # write_personal_manifest <body_exception-name>

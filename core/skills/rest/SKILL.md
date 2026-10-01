@@ -129,17 +129,17 @@ If brain MCP is NOT available, skip silently. If the MCP server IS available but
 
 ### 2.7. Push to Remote Brain (Mandatory)
 
-You MUST call `igris_brain_push` when remote brain is configured. This is NOT optional — the VPS brain depends on receiving data.
+You MUST push when remote brain is configured. This is NOT optional — the VPS brain depends on receiving data. Run the CLI verb, which reads `remote_brain.url` and `remote_brain.api_key` from `~/.igris/config.json` itself and takes no key argument — so never read, pass or print the key in this step (TD-350):
 
-If the `igris-brain` MCP server is available AND a remote brain URL is configured:
-- Read `~/.igris/config.json` to check for `remote_brain.url` and `remote_brain.api_key`
-- If both are present, call `igris_brain_push` with:
-  - remote_url = the configured URL
-  - api_key = the configured API key
-- Display sync result summary (e.g., "Pushed 3 learnings, 1 error, 2 sessions to remote brain")
-- If the output names SKIPPED, ERROR or UNACKNOWLEDGED tables, surface those lines verbatim — the rows are retained locally and travel on the next push once the remote is deployed (BR-097).
+```bash
+igris sync push
+```
 
-If remote brain is not configured or push fails, skip with one-line notice: "Brain push skipped ([reason])." Do NOT block session end.
+- Display its first line ("Brain push completed successfully." / "No changes to push.") and the `Total rows pushed` line when present.
+- If the output names SKIPPED, ERROR or UNACKNOWLEDGED tables, surface those lines verbatim — the rows are retained locally and travel on the next push once the remote is deployed (BR-097). Exit 1 with a "not merged" headline is that partial push.
+- Exit 2 means the installed CLI predates `sync push`: display "Brain push skipped (CLI predates `sync push`; the session-end hook still pushes)."
+
+If remote brain is not configured ("remote_brain config not found") or the push fails, skip with one-line notice: "Brain push skipped ([first error line])." Do NOT block session end.
 
 ### 3. Update Session File
 

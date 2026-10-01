@@ -127,3 +127,12 @@ JSON
   [ "$status" -eq 0 ]
   [[ "$output" == *"node --version"* ]] || return 1
 }
+
+@test "sync push --dry-run: prints the plan and the /sync/push URL, never the key (TD-350)" {
+  run $CLI_BIN sync push --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dry-run plan:"* ]] || return 1
+  [[ "$output" == *"http://127.0.0.1:1/sync/push"* ]] || return 1
+  [[ "$output" == *"sync_state.last_push_at"* ]] || return 1
+  [[ "$output" != *"test-key"* ]] || return 1
+}

@@ -7,8 +7,8 @@
  *     any `.draining-*` temps from a mid-flight or crashed drain
  *     — FR-128: under-counting during a drain misled operators)
  *   - Stale drains in-progress count (when any `.draining-*` exists)
- *   - Last-push timestamp (mtime of sync_queue.jsonl, OR newest
- *     `.draining-*` mtime when no canonical file, OR "never")
+ *   - Last push: newest `sync_state.last_push_at` for this remote (TD-350;
+ *     it was the queue file's mtime, which only exists when pushes FAIL)
  *   - Brain version (from /health response body when available)
  *   - VPS Node version vs the engines range (BR-116) — ONE read-only
  *     `node --version` ssh probe, only when a `vps` block is configured
@@ -24,7 +24,6 @@
  * TD-098: never `vi.mock` the module under test).
  */
 
-import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   healthCheck,
@@ -37,6 +36,7 @@ import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
 import { basenameOfCwd } from "./util.js";
 import { inspectQueueDepth } from "./queue.js";
+import { readLastPushAt } from "../brain-db.js";
 import { classifySyncTransport } from "../sync-transport.js";
 import { info, warn, error as logError } from "../log.js";
 
@@ -117,33 +117,11 @@ export async function runSyncStatus(
   const vpsReachable = health.statusCode !== null;
   const brainVersion = extractBrainVersion(health.body);
 
-  // Local queue depth + last-push. FR-128: depth = live lines + lines
-  // in any `.draining-*` temp files (mid-drain status must not
-  // under-report).
+  // Local queue depth. FR-128: depth = live lines + lines in any
+  // `.draining-*` temp files (mid-drain status must not under-report).
   const depth = inspectQueueDepth(slug);
   const queueDepth = depth.liveLines + depth.drainingLines;
-  let lastPushAt: string | null = null;
-  if (existsSync(queuePath)) {
-    try {
-      const stat = statSync(queuePath);
-      lastPushAt = stat.mtime.toISOString();
-    } catch {
-      // Queue file unreadable — leave timestamp null.
-    }
-  } else if (depth.drainingFiles.length > 0) {
-    // Canonical queue absent (mid-drain) — fall back to the newest
-    // `.draining-*` mtime so the operator still has a timestamp.
-    let newest = 0;
-    for (const dp of depth.drainingFiles) {
-      try {
-        const m = statSync(dp).mtime.getTime();
-        if (m > newest) newest = m;
-      } catch {
-        // skip
-      }
-    }
-    if (newest > 0) lastPushAt = new Date(newest).toISOString();
-  }
+  const lastPushAt = readLastPushAt(remote.url);
 
   // TD-252: surface the transport-security state. An insecure-http URL means
   // the api_key travels in cleartext; flag it whether or not the override is
@@ -178,7 +156,7 @@ export async function runSyncStatus(
     );
   }
   info(`  queue path:      ${queuePath}`);
-  info(`  last push:       ${lastPushAt ?? "never"}`);
+  info(`  last push:       ${lastPushAt === null ? "never" : `${lastPushAt} UTC`}`);
   info("");
 
   if (transport === "insecure-http") {

@@ -83,6 +83,7 @@ teardown() {
   # `not ok … # skip` (this file was the macOS suite-killer on run
   # 26973181843, 2026-06-04, before the PyYAML step masked it).
   if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
+  cleanup_test_temp_dir
 }
 
 # Write a project-OWNED base manifest declaring one MCP block, 4 targets.

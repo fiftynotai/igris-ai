@@ -87,6 +87,7 @@ EOF
 teardown() {
   unset IGRIS_CLI STUB_LIST_RC
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 run_drift() {

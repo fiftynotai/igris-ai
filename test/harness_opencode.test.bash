@@ -54,6 +54,7 @@ setup() {
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # Synthesize a vendored personal agent tree + manifest declaring an opencode

@@ -58,6 +58,7 @@ setup() {
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # ---------- hash_agent_tree primitive ----------------------------------------

@@ -77,6 +77,7 @@ EOF
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # --- validate_manifest: accept a valid manifest -----------------------------

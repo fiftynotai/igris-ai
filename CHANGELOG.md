@@ -12,6 +12,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`igris sync push` — a push with no key in any argument (TD-350).** The
+  verb reads `remote_brain.url` and `remote_brain.api_key` from
+  `~/.igris/config.json` itself, accepts no key argument, and dispatches the
+  bundled `igris_brain_push` handler in process, so the delta and the BR-097
+  stamp rule are unchanged; exit 1 on a partial push. `/rest` §2.7 now runs it
+  — its MUST used to require pasting the key into the transcript, so sessions
+  skipped it. `/boot` surfaces a never-made or 7-day-stale push from a new
+  boot-sync digest field (`push`). The VPS was already receiving pushes (the
+  session-end extractor and auto-push): a read-only snapshot at 14:54 UTC on
+  2026-10-01 found 31 per-table `sync_state` stamps for `brain.fifty.dev`, 8
+  of them dated that day, the newest 14:53:55. What was missing was a key-free
+  door.
+
 - **Project relations (FR-273, round A).** Registered projects can now be
   related, and every agent can see it. Two synced brain tables (projects
   component migration v3): `project_relation_kinds`, a governed registry seeded
@@ -58,6 +71,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FR-273's lookup tool.
 
 ### Fixed
+
+- **`igris sync status` printed `last push: never` while pushes succeeded
+  (TD-350).** It printed the mtime of `sync_queue.jsonl`, a file that exists
+  only while FAILED operations are queued. It now prints the newest
+  `sync_state.last_push_at` for the configured remote (`<ts> UTC`).
+
+- **The brain test tier could open and migrate the live brain (TS-002).**
+  `brain-mcp-server/vitest.setup.ts` gives every brain test file its own
+  `HOME`, publishes `IGRIS_REAL_HOME` first and unsets `IGRIS_DB_PATH`,
+  `IGRIS_BRAIN_DIR` and `IGRIS_PIDS_DIR`, so a test that reaches `getDb()`
+  with no path lands in a throwaway DB. Measured 2026-10-01: the full brain
+  suite with no per-invocation fence, 214 files / 3689 passed / 1 skipped,
+  left the live brain's `engine_migrations`, `user_version` and schema version
+  identical.
+
+- **Root bats suites leaked their per-test temp roots (TD-481).** 36 of the
+  38 `test/*.test.bash` files that override `teardown()` never removed
+  `TEST_TEMP_DIR`. A guarded `cleanup_test_temp_dir` in `test/test_helper.bash`
+  is now the last statement of every override, enforced by
+  `test/teardown_temp_dir.test.bash`. One full root run left 156 non-empty
+  `igris-test-*` roots before and 0 after.
 
 - **VPS code deploys are detached, staged and health-gated (BR-116).**
   `igris sync code` ran the VPS `npm ci` in the foreground under a 5-minute
@@ -157,6 +191,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mktemp -d`, and that suite's teardown removes it whole.
 
 ### Changed
+
+- **The CLI test tier's timeouts are measured, and proximity is reported
+  (TD-344).** `cli/vitest.config.ts` sets `testTimeout: 15_000` (twice the worst
+  loaded duration of an unbudgeted test at 1-min load peaks 30-48) and adds
+  `vitest-proximity-reporter.ts`, which prints each test's `duration / timeout`
+  after the run (NEAR BUDGET at 80%, CROSSED at 100%). The default is not
+  load-proof: it held at peaks up to 48, and of the runs with archived
+  per-test data plus sentinel's six on report, every run peaking at 63 or
+  more crossed it (sentinel's 3 of 6, and a K=6 run at 277; worst 24,802 ms),
+  always in the same synchronous scans. Those scans
+  (five in `vitest-home-fence`, one in `dashboard-count-derivation`) and
+  `harness-registry`'s FR-218 case now carry their own budgets, twice their
+  worst observed duration, the shared `npm pack` budget in `tarball.test.ts`
+  rises from 30 s to 40 s by the same rule, and `hookTimeout` rises to 20_000 (a file's first
+  test measured 8.6 s at peak 191, nearly all of it a cold engine import in
+  `beforeEach`). With them, three full runs at peaks 151-223 passed
+  3387/3387, worst ratio 57%. The missing spawn halves landed: every
+  `execFileSync`/`spawnSync` in `harness-registry.test.ts` (13 s, from a 6336 ms
+  worst call), the TD-168 `npm pack` pair and a fixture `tar` in
+  `tarball.test.ts` — the TD-378 note said those were done, and they were not —
+  and `git ls-files` in `dashboard-count-derivation.test.ts`. The
+  `dashboard-server` curl probe's two async tests get a test half (25 s) above
+  its 20 s spawn half.
 
 - **VPS code deploys skip `npm ci` when the install inputs are unchanged
   (TD-487).** The detached runner hashes node + npm (with the native ABI,

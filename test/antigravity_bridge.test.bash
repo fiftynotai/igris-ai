@@ -71,6 +71,7 @@ setup() {
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # run_pre <tool_name> <target_file> [extra env...]

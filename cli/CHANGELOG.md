@@ -12,6 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`igris sync push` (TD-350).** Pushes the local brain delta to `remote_brain`
+  with the url and key read from config (no key argument), via the bundled
+  `igris_brain_push` handler; exit 1 on a partial push. `sync status`'s `last
+  push` now reads `sync_state` (it read the queue file's mtime, so it printed
+  `never` while pushes succeeded), and `boot-sync` adds a `push` freshness field.
+
 - **Project relations (FR-273).** `igris project relations [--project <slug>]
   [--depth <n>] [--direction out|in|both] [--kind <k>] [--no-check]` prints a
   project's related projects from the brain (kind, detail, `repo_url`, on-disk

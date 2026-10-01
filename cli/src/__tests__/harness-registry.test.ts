@@ -34,6 +34,37 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/**
+ * TD-344 — the SPAWN half of every subprocess bound in this file (TD-336's two
+ * halves). These bodies are synchronous, so vitest cannot pre-empt them: only
+ * `options.timeout` SIGTERMs a hung child; the per-test timeout is post-hoc.
+ * Before TD-344 none of the 11 `execFileSync` / `spawnSync` sites carried one.
+ *
+ * MEASURED 2026-10-01 (darwin arm64, 8 cores), every site timed by a
+ * throwaway `--require` wrapper during full-suite runs. At a 1-min load peak
+ * of 36 (K=2 burners): worst single call 2304 ms (the add-skill overlay's
+ * `compile --surface skills`), then 1587 ms (the FR-218 compile). At a peak
+ * of 277 (K=6 burners): worst 5661 ms (the FR-218 compile), 3199 ms (the
+ * add-skill compile), 2004 ms (the FR-218 drift check), 1334 / 1247 / 1151 ms
+ * (the other compiles), 315 ms or less for every `validate_manifest` and the
+ * `command -v python3` probe. Three more runs at peaks 151 / 223 / 191 put the
+ * worst single call at 6336 ms (the FR-218 drift check, peak 223) and every
+ * other call at or under 4794 ms. A 7_000 bound sat at 91% of that, so the
+ * spawn half comes from the worst call measured at any load: 2x 6336, rounded
+ * up to the next second = 13_000.
+ */
+const HR_SPAWN_TIMEOUT_MS = 13_000;
+
+/**
+ * TD-344 — the FR-218 test's own budget. It runs two of the heaviest spawns
+ * (compile + drift check), so its worst observed duration was 12_651 ms in
+ * sentinel's run at a 1-min peak of 127 — 84% of the suite's 15 s default
+ * (3.5 s at peaks 30-48). 2x that, rounded up to the next 5 s = 30_000, which
+ * also covers both spawn halves (2 x 13_000). Every other test here measured
+ * at most 7_222 ms (48%) at any load, so none carries its own budget.
+ */
+const HR_FR218_TEST_TIMEOUT_MS = 30_000;
 import {
   runLoadout,
   scopesOverlap,
@@ -1355,7 +1386,7 @@ describe("loadout add — FR-171 assembleOpencodeHarness", () => {
     execFileSync(
       "bash",
       [COMPILE_SH, "--project-root", bashProj, "--manifest", join(bashProj, "harness-manifest.json"), "--target", "opencode"],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     const bashHarness = readFileSync(join(bashRegAgent, "harness.opencode.md"), "utf-8");
 
@@ -4380,7 +4411,7 @@ describe("loadout update — github origin (stubbed fetch + releases)", () => {
 
 function toolingAvailable(): boolean {
   try {
-    execFileSync("bash", ["-c", "command -v python3"], { stdio: "ignore" });
+    execFileSync("bash", ["-c", "command -v python3"], { timeout: HR_SPAWN_TIMEOUT_MS, stdio: "ignore" });
     return existsSync(COMPILE_SH) && existsSync(COMMON_SH) && existsSync(SCHEMA);
   } catch {
     return false;
@@ -4489,7 +4520,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         "-c",
         `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
       ],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     expect(typeof validate).toBe("string");
 
@@ -4500,7 +4531,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
     execFileSync(
       "bash",
       [COMPILE_SH, "--project-root", fixtureRoot, "--filter", "mycustom"],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     expect(
       existsSync(join(fixtureRoot, ".codex", "agents", "mycustom.toml")),
@@ -4537,7 +4568,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
     execFileSync(
       "bash",
       [COMPILE_SH, "--project-root", fixtureRoot, "--filter", "mycustom"],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     const produced = readFileSync(
       join(fixtureRoot, ".codex", "agents", "mycustom.toml"),
@@ -4654,7 +4685,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
           "-c",
           `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
         ],
-        { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+        { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
       );
       expect(typeof validate).toBe("string");
 
@@ -4672,7 +4703,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         "bash",
         [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
         {
-          encoding: "utf-8",
+          timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8",
           env: {
             ...process.env,
             IGRIS_BRAIN_DIR: brainDir,
@@ -4708,7 +4739,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
     }
   });
 
-  it("FR-218: NON-OWNER consumer compile --surface skills (re)projects GLOBAL core skills (core declared ONLY in surfaces-manifest.json) — the 2026-06-30 prune regression", async () => {
+  it("FR-218: NON-OWNER consumer compile --surface skills (re)projects GLOBAL core skills (core declared ONLY in surfaces-manifest.json) — the 2026-06-30 prune regression", { timeout: HR_FR218_TEST_TIMEOUT_MS }, async () => {
     if (!toolingAvailable()) {
       return;
     }
@@ -4782,7 +4813,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         "bash",
         [COMPILE_SH, "--project-root", fixtureRoot, "--surface", "skills"],
         {
-          encoding: "utf-8",
+          timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8",
           env: {
             ...process.env,
             IGRIS_BRAIN_DIR: brainDir,
@@ -4847,7 +4878,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         "bash",
         [CHECK_SH, "--project-root", fixtureRoot, "--surface", "skills"],
         {
-          encoding: "utf-8",
+          timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8",
           env: {
             ...process.env,
             IGRIS_BRAIN_DIR: brainDir,
@@ -4938,7 +4969,7 @@ describe("loadout integration (real compile_harnesses.sh + validate_manifest)", 
         "-c",
         `source "${COMMON_SH}" && validate_manifest "${writtenOverlay}" "${SCHEMA}"`,
       ],
-      { encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir } },
     );
     expect(typeof validate).toBe("string");
   });
@@ -4993,7 +5024,7 @@ describe("loadout integration — FR-161 mcp_servers (real validate_manifest)", 
         writeFileSync(p, JSON.stringify(manifest));
         return `source "${COMMON_SH}" && validate_manifest "${p}" "${SCHEMA}"`;
       })()],
-      { encoding: "utf-8", env: { ...process.env } },
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env } },
     );
 
   // 12. Accepts the well-formed mcp_servers manifest (jsonschema + fallback).

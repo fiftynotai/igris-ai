@@ -956,6 +956,20 @@ export interface BootSyncDigest {
   definitions_updated: { agents: number; skills: number; rules: number; prompts: number };
   /** One-line reasons any part was skipped (e.g. "remote unconfigured"). */
   skipped: string[];
+  /** TD-350: push freshness for the configured remote; null when unconfigured (degraded). */
+  push: BootSyncPush | null;
+}
+
+/**
+ * TD-350 — the newest `sync_state.last_push_at` this machine stamped for the
+ * configured remote (`null` = never pushed), whether it is older than
+ * `PUSH_STALE_DAYS` (`verbs/boot-sync.ts`), and its age in whole days.
+ * `/boot` §4 renders a never/stale push as a one-line nudge to `igris sync push`.
+ */
+export interface BootSyncPush {
+  last_push_at: string | null;
+  stale: boolean;
+  age_days: number | null;
 }
 
 /**

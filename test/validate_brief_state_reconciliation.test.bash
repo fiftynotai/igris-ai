@@ -28,6 +28,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Create a minimal brief_status table in the fixture DB. Mirrors the canonical

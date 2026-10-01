@@ -64,6 +64,7 @@ setup() {
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # run_hook <project_dir> <file_path> [extra env...] — native-Claude payload.

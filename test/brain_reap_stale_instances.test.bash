@@ -33,7 +33,7 @@ teardown() {
   for pid in "${SPAWNED_PIDS[@]:-}"; do
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
   done
-  [ -d "$TEST_TEMP_DIR" ] && rm -rf "$TEST_TEMP_DIR"
+  cleanup_test_temp_dir
 }
 
 # Write a pidfile (keyed by parent PID) into the sandboxed registry.

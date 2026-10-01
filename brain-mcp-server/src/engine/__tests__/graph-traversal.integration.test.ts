@@ -660,7 +660,7 @@ describe('FR-113 graph traversal — performance', () => {
 // ---------------------------------------------------------------------------
 
 describe('FR-113 graph traversal — real DB smoke', () => {
-  const REAL_DB_PATH = join(homedir(), '.igris', 'memory', 'knowledge.db');
+  const REAL_DB_PATH = join(process.env.IGRIS_REAL_HOME ?? homedir(), '.igris', 'memory', 'knowledge.db');
   const haveDb = existsSync(REAL_DB_PATH);
 
   /**

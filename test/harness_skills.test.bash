@@ -119,7 +119,7 @@ EOF
 
 teardown() {
   [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
-  return 0
+  cleanup_test_temp_dir
 }
 
 # --- Schema validation -------------------------------------------------------

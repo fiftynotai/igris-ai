@@ -58,6 +58,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # population — one path per line, walked by glob from $IGRIS_ROOT. Every file

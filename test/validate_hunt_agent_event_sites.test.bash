@@ -28,6 +28,7 @@ setup() {
 
 teardown() {
   [ -n "${SCRATCH:-}" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 @test "(G) the real hunt skill passes with at least 13 sites" {

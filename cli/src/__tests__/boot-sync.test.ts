@@ -636,3 +636,79 @@ describe("boot-sync — independence + skip-on-fail", () => {
     });
   });
 });
+
+/**
+ * TD-350 AC4 — a never-pushed or long-stale remote is surfaced at `/boot`.
+ * The digest carries `push: { last_push_at, stale, age_days }` (null when the
+ * remote is unconfigured), read from the SAME `sync_state` watermark
+ * `igris sync status` prints, through ONE reader (`brain-db.ts#readLastPushAt`).
+ * `PUSH_STALE_DAYS = 7` (operator decision D-4, 2026-10-01). RED on HEAD: the
+ * module exported neither `pushFreshness` nor `PUSH_STALE_DAYS`, and the digest
+ * carried no `push` key.
+ */
+describe("TD-350 — boot-sync push freshness", () => {
+  const DAY = 86_400_000;
+  const NOW = Date.parse("2026-10-01T12:00:00Z");
+
+  it("P1: pushFreshness(null) → never pushed: stale, no age", async () => {
+    const { pushFreshness } = await import("../verbs/boot-sync.js");
+    expect(pushFreshness(null, NOW)).toEqual({ last_push_at: null, stale: true, age_days: null });
+  });
+
+  it("P2: exactly PUSH_STALE_DAYS old is NOT stale; one second more IS (the boundary)", async () => {
+    const { pushFreshness, PUSH_STALE_DAYS } = await import("../verbs/boot-sync.js");
+    expect(PUSH_STALE_DAYS).toBe(7);
+    // The stamp format both push clients write: `YYYY-MM-DD HH:MM:SS`, UTC.
+    const atBoundary = "2026-09-24 12:00:00"; // exactly 7 d before NOW
+    expect(pushFreshness(atBoundary, NOW)).toEqual({ last_push_at: atBoundary, stale: false, age_days: 7 });
+    expect(pushFreshness(atBoundary, NOW + 1_000)).toEqual({ last_push_at: atBoundary, stale: true, age_days: 7 });
+    // Fresh: a push two hours ago.
+    expect(pushFreshness("2026-10-01 10:00:00", NOW)).toEqual({
+      last_push_at: "2026-10-01 10:00:00",
+      stale: false,
+      age_days: 0,
+    });
+    // Ages are whole days, floored: 8 d 23 h is 8.
+    expect(pushFreshness("2026-09-22 13:00:00", NOW).age_days).toBe(Math.floor((8 * DAY + 23 * 3_600_000) / DAY));
+  });
+
+  it("P3: a configured digest carries `push` with the seeded stamp for THIS remote", async () => {
+    seedSchema();
+    const lb = makePullLoopback({});
+    await listen(lb);
+    const remoteUrl = `http://127.0.0.1:${lb.port()}`;
+    const fresh = new Date(Date.now() - 3_600_000).toISOString().replace("T", " ").slice(0, 19);
+    withDb((db) => {
+      const ins = db.prepare("INSERT INTO sync_state (remote_url, table_name, last_push_at) VALUES (?, ?, ?)");
+      ins.run(remoteUrl, "learnings", "2026-01-01 00:00:00");
+      ins.run(remoteUrl, "sessions", fresh);
+      ins.run("https://other.example", "learnings", "2099-01-01 00:00:00"); // another remote: ignored
+    });
+    try {
+      const d = await bootSync(remoteUrl);
+      expect(d.degraded).toBe(false);
+      expect(d.push).toEqual({ last_push_at: fresh, stale: false, age_days: 0 });
+    } finally {
+      await close(lb);
+    }
+  });
+
+  it("P3b: a configured remote this machine never pushed to → last_push_at null, stale", async () => {
+    seedSchema();
+    const lb = makePullLoopback({});
+    await listen(lb);
+    try {
+      const d = await bootSync(`http://127.0.0.1:${lb.port()}`);
+      expect(d.push).toEqual({ last_push_at: null, stale: true, age_days: null });
+    } finally {
+      await close(lb);
+    }
+  });
+
+  it("P4: the degraded digest (remote unconfigured) carries push: null", async () => {
+    seedSchema();
+    const d = await bootSync();
+    expect(d.degraded).toBe(true);
+    expect(d.push).toBeNull();
+  });
+});

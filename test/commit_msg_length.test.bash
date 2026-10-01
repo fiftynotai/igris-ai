@@ -25,6 +25,7 @@ setup() {
 
 teardown() {
   [ -n "${MSG_FILE:-}" ] && rm -f "$MSG_FILE"
+  cleanup_test_temp_dir
 }
 
 # run_hook — invoke the source hook with the current $MSG_FILE as $1, capturing

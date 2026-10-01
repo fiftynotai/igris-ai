@@ -100,6 +100,7 @@ teardown() {
   [ -d "$PROJ_A" ] && rm -rf "$PROJ_A"
   [ -d "$PROJ_B" ] && rm -rf "$PROJ_B"
   [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
+  cleanup_test_temp_dir
 }
 
 # ---------------------------------------------------------------------------

@@ -25,11 +25,26 @@ TEST_TEMP_DIR="$(mktemp -d "${BATS_TMPDIR:-/tmp}/igris-test-XXXXXX")" \
   || { echo "test_helper: mktemp -d returned an empty path" >&2; exit 1; }
 export TEST_TEMP_DIR
 
-# Cleanup function (called automatically by bats)
-teardown() {
-  if [ -d "$TEST_TEMP_DIR" ]; then
+# cleanup_test_temp_dir — remove THIS test's TEST_TEMP_DIR (TD-481). bats calls
+# the teardown() below after every @test, but a suite that defines its own
+# teardown() after `load test_helper` REPLACES it, so every override must call
+# this as its LAST line (test/teardown_temp_dir.test.bash enforces that).
+# Guarded so an empty, missing or foreign value can never widen the rm: the
+# root must exist AND its basename must carry the mktemp prefix above. The
+# `if` form plus `return 0` keep it from failing a teardown when the root is
+# already gone (`[ -d ] && rm` returns 1 there, and a failing teardown turns
+# a skip into `not ok … # skip` — TD-434).
+cleanup_test_temp_dir() {
+  if [ -n "${TEST_TEMP_DIR:-}" ] && [ -d "$TEST_TEMP_DIR" ] \
+     && [[ "$(basename "$TEST_TEMP_DIR")" == igris-test-* ]]; then
     rm -rf "$TEST_TEMP_DIR"
   fi
+  return 0
+}
+
+# Cleanup function (called automatically by bats)
+teardown() {
+  cleanup_test_temp_dir
 }
 
 # =============================================================================
@@ -207,6 +222,7 @@ show_tree() {
 mkdir -p "$TEST_TEMP_DIR"
 
 # Export helper functions
+export -f cleanup_test_temp_dir
 export -f setup_test_project
 export -f assert_file_exists
 export -f assert_dir_exists

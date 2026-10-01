@@ -26,6 +26,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
+import Database from "better-sqlite3";
 import { SUPPORTED_NODE_RANGE } from "../lib/preflight.js";
 
 let tmpBrain: string;
@@ -149,7 +150,12 @@ describe("sync status — runSyncStatus", () => {
     }
   });
 
-  it("queue depth + lastPushAt: reads local sync_queue.jsonl correctly", async () => {
+  // TD-350 (2026-10-01): this case used to pin `last push: <queue mtime>`. That
+  // was the defect — the queue file exists only while FAILED ops are queued, so
+  // its mtime is the last time something was QUEUED, the opposite of a push.
+  // The depth half stays; the last-push half now pins T5 (queue present, no
+  // `sync_state` stamp → still `never`). The real source is in the TD-350 block.
+  it("queue depth reads local sync_queue.jsonl; last push no longer reads its mtime (TD-350 T5)", async () => {
     const server = createServer(
       (_req: IncomingMessage, res: ServerResponse) => {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -186,7 +192,8 @@ describe("sync status — runSyncStatus", () => {
       expect(code).toBe(0);
       const out = stdoutBuf.join("");
       expect(out).toContain("queue depth:     3 entries");
-      expect(out).toContain("last push:       2026-05-08T00:00:00.000Z");
+      expect(out).toContain("last push:       never");
+      expect(out).not.toContain("2026-05-08T00:00:00.000Z");
       expect(out).toContain(queuePath);
     } finally {
       spy.mockRestore();
@@ -194,7 +201,9 @@ describe("sync status — runSyncStatus", () => {
     }
   });
 
-  it("queue missing: prints depth=0 and lastPush=never", async () => {
+  // TD-350 (2026-10-01): `never` here now means "no `sync_state` stamp for this
+  // remote" (no brain DB at all in this sandbox), not "no queue file" — T2.
+  it("queue missing and no brain DB: prints depth=0 and lastPush=never (TD-350 T2)", async () => {
     const server = createServer(
       (_req: IncomingMessage, res: ServerResponse) => {
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -473,5 +482,102 @@ describe("BR-116 AC-5 — `sync status` shows the VPS Node version vs the engine
     }
     expect(buf.join("")).toContain("node --version");
     expect(existsSync(join(bin, "calls.log"))).toBe(false);
+  });
+});
+
+/**
+ * TD-350 — `last push` reads `sync_state`, the watermark BOTH stamping clients
+ * write (`handleBrainPush` and the bus auto-push, MAINTAINING's BR-097 row), not
+ * the queue file's mtime. Measured 2026-10-01 14:54 UTC on the operator's
+ * machine, read-only: 31 per-table `https://brain.fifty.dev` stamps (8 dated
+ * that day, the newest 14:53:55, the same minute), while
+ * `igris sync status` printed `last push: never` — the queue file is absent
+ * whenever nothing has FAILED, so the old reader printed `never` exactly when
+ * pushes were succeeding. RED on HEAD: T1 and T4 print `never`.
+ */
+describe("TD-350 — last push = newest sync_state.last_push_at for the configured remote", () => {
+  const SYNC_STATE_DDL = `CREATE TABLE IF NOT EXISTS sync_state (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    remote_url TEXT NOT NULL,
+    table_name TEXT NOT NULL,
+    last_push_at TEXT,
+    last_pull_at TEXT,
+    UNIQUE(remote_url, table_name)
+  );`;
+
+  /** Seed `<tmpBrain>/memory/knowledge.db` with the brain's `sync_state` DDL (db.ts). */
+  function seedStamps(rows: Array<[string, string, string | null]>): void {
+    mkdirSync(join(tmpBrain, "memory"), { recursive: true });
+    const db = new Database(join(tmpBrain, "memory", "knowledge.db"));
+    try {
+      db.exec(SYNC_STATE_DDL);
+      const ins = db.prepare(
+        "INSERT INTO sync_state (remote_url, table_name, last_push_at) VALUES (?, ?, ?)",
+      );
+      for (const r of rows) ins.run(...r);
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Run `sync status` against a loopback /health. `arrange(url)` runs once the
+   * port is known (seed stamps for that URL) and returns the URL to configure.
+   */
+  async function statusOut(arrange: (url: string) => string): Promise<string> {
+    const server = createServer((_req: IncomingMessage, res: ServerResponse) => {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ status: "ok", version: "7.0.0" }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    writeConfig({ remote_brain: { url: arrange(`http://127.0.0.1:${port}`), api_key: "k" } });
+    const buf: string[] = [];
+    const spy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      buf.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    try {
+      const { runSyncStatus } = await import("../lib/sync/status.js");
+      expect(await runSyncStatus({ projectSlug: "no-queue-here" })).toBe(0);
+      return buf.join("");
+    } finally {
+      spy.mockRestore();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  }
+
+  it("T1: a seeded stamp prints `<ts> UTC` while NO queue file exists (the max across tables)", async () => {
+    const out = await statusOut((url) => {
+      seedStamps([
+        [url, "learnings", "2026-09-30 08:00:00"],
+        [url, "agent_events", "2026-10-01 14:53:55"],
+        [url, "brief_status", null],
+      ]);
+      return url;
+    });
+    expect(existsSync(join(tmpBrain, "projects", "no-queue-here", "sync_queue.jsonl"))).toBe(false);
+    expect(out).toContain("last push:       2026-10-01 14:53:55 UTC");
+  });
+
+  it("T3: only ANOTHER remote's stamps and `file:*` rows → `never` (url-scoped, file:% excluded)", async () => {
+    const out = await statusOut((url) => {
+      seedStamps([
+        ["https://other.example", "learnings", "2026-10-01 10:00:00"],
+        [url, "file:events", "2026-10-01 11:00:00"],
+      ]);
+      return url;
+    });
+    expect(out).toContain("last push:       never");
+    expect(out).not.toContain("2026-10-01 1");
+  });
+
+  it("T4: a config url with a trailing `/` matches stamps written without it", async () => {
+    const out = await statusOut((url) => {
+      // Both stamping clients strip trailing slashes before they write.
+      seedStamps([[url, "sessions", "2026-09-29 22:25:28"]]);
+      return `${url}/`;
+    });
+    expect(out).toContain("last push:       2026-09-29 22:25:28 UTC");
   });
 });

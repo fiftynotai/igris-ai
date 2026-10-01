@@ -35,6 +35,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Helper: write a SKILL.md fixture under $SCRATCH/<name>/SKILL.md whose

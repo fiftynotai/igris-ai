@@ -77,6 +77,26 @@ import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * TD-344 — the per-test budget for this file's five CPU-bound CORPUS SCANS
+ * (the vacuity, self-negative and TRIAGED_EXEMPT controls below). Their bodies
+ * are synchronous tree walks, so vitest cannot pre-empt them: this budget is
+ * post-hoc detection, never a hang stop, and nothing here spawns a child.
+ * MEASURED 2026-10-01 across the 13 full cli runs with archived per-test
+ * durations, 1-min load peaks 30-277 (forger's nine, one of them — `final-cli`
+ * — unsampled; sentinel's L1-L4; 8 cores): worst 24_802 ms (the POSITIVE CONTROL, sentinel
+ * run L3, peak 63); 21_462 ms at peak 127; 17_004 ms at peak 277 (K=6
+ * burners); 3.5-6.6 s at peaks 30-48. The duration does not track the sampled
+ * peak (the worst came at 63, not 277), so the margin sits on the worst
+ * OBSERVED duration rather than an extrapolation from load: 2x, rounded up to
+ * the next 5 s (the suite default's own formula) = 50_000. The suite's 15 s
+ * default held these only up to peak ~48; of the archived runs plus
+ * sentinel's six on report, every run peaking at 63 or more crossed (sentinel
+ * 3 of 6, forger's K=6 run). Four later runs at peaks 151-223 stayed at or
+ * under 17_866 ms.
+ */
+const HOME_FENCE_SCAN_TIMEOUT_MS = 50_000;
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const SRC = resolve(HERE, "..");
 const TESTS = HERE;
@@ -633,7 +653,7 @@ describe("BR-106 VACUITY CONTROLS — a mention of the fence is not a fence", ()
     expect(fencesHome(strip("const r = a / b / c;\nprocess.env.HOME = f;"))).toBe(true);
   });
 
-  it("a planted file whose only HOME mention is a comment is reported unfenced", () => {
+  it("a planted file whose only HOME mention is a comment is reported unfenced", { timeout: HOME_FENCE_SCAN_TIMEOUT_MS }, () => {
     const tmp = mkdtempSync(join(tmpdir(), "br106-vacuity-comment-"));
     try {
       writeFileSync(
@@ -655,7 +675,7 @@ describe("BR-106 VACUITY CONTROLS — a mention of the fence is not a fence", ()
     }
   });
 
-  it("a planted file whose only HOME mention is a string or a comparison is reported unfenced", () => {
+  it("a planted file whose only HOME mention is a string or a comparison is reported unfenced", { timeout: HOME_FENCE_SCAN_TIMEOUT_MS }, () => {
     const tmp = mkdtempSync(join(tmpdir(), "br106-vacuity-string-"));
     try {
       writeFileSync(
@@ -684,7 +704,7 @@ describe("BR-106 VACUITY CONTROLS — a mention of the fence is not a fence", ()
 // ===========================================================================
 
 describe("BR-106 SELF-NEGATIVE CONTROL — a real file with its fence deleted is reported", () => {
-  it("install-mcp-keep.test.ts passes; the same file with its HOME fence removed does not", () => {
+  it("install-mcp-keep.test.ts passes; the same file with its HOME fence removed does not", { timeout: HOME_FENCE_SCAN_TIMEOUT_MS }, () => {
     const real = readFileSync(join(TESTS, "install-mcp-keep.test.ts"), "utf-8");
     // The real file satisfies the rule...
     expect(fencesHome(strip(real))).toBe(true);
@@ -708,7 +728,7 @@ describe("BR-106 SELF-NEGATIVE CONTROL — a real file with its fence deleted is
     }
   });
 
-  it("POSITIVE CONTROL: restoring the fence on the same copy clears the report", () => {
+  it("POSITIVE CONTROL: restoring the fence on the same copy clears the report", { timeout: HOME_FENCE_SCAN_TIMEOUT_MS }, () => {
     const real = readFileSync(join(TESTS, "install-mcp-keep.test.ts"), "utf-8");
     const tmp = mkdtempSync(join(tmpdir(), "br106-positive-"));
     try {
@@ -748,7 +768,7 @@ describe("BR-106 — TRIAGED_EXEMPT cannot rot into an allowlist", () => {
     expect(Object.keys(TRIAGED_EXEMPT).length).toBeLessThanOrEqual(EXEMPT_CAP);
   });
 
-  it("the exemption MECHANISM works — proved on a planted entry, since the real table is empty", () => {
+  it("the exemption MECHANISM works — proved on a planted entry, since the real table is empty", { timeout: HOME_FENCE_SCAN_TIMEOUT_MS }, () => {
     // An empty table makes the three checks above vacuous. This proves the
     // filter actually consults the table rather than being dead code.
     const tmp = mkdtempSync(join(tmpdir(), "br106-exempt-"));

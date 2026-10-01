@@ -438,12 +438,6 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "and the BR-080 rule statement itself ('requires BOTH arguments'). "
         "The call spec is the sub-list in the same section, which names "
         "remote_url and api_key and is NOT flagged."),
-    ("core/skills/rest/SKILL.md", "igris_brain_push",
-     ('api_key', 'remote_url')): (
-        "prose", 1,
-        "A mandate sentence ('You MUST call ... when remote brain is "
-        "configured'). The call spec is the sub-list four lines below, which "
-        "names remote_url and api_key and is NOT flagged."),
 
     # --- reuse ---------------------------------------------------------------
     ("core/skills/reuse/SKILL.md", "igris_catalog_get", ('id',)): (
@@ -856,7 +850,7 @@ def strip_path_tokens(text: str) -> str:
     e.g. a URL query `.../sync?project=other`, which the form rule alone would
     credit as a named `project`.
 
-    Keeping the prefix is the symmetric correction. `boot/SKILL.md:653` writes
+    Keeping the prefix is the symmetric correction. `boot/SKILL.md` §7 writes
     `filename=instances/<instance_id>.md` — a properly NAMED argument whose
     VALUE happens to be a path. A blind whole-token strip removed `filename=`
     along with the path and reported the site as deficient, which is the same

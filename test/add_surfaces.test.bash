@@ -119,6 +119,7 @@ teardown() {
   # `not ok … # skip`, killing the whole CI matrix suite on this file
   # (first file alphabetically; red 2026-06-04 → 2026-08-31).
   if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
+  cleanup_test_temp_dir
 }
 
 @test "add skill (personal): vendors + projects the symlink + verifies, exit 0" {

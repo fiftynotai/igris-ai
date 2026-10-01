@@ -299,12 +299,13 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   // measured it. These two TD-168 tests each spawn their OWN un-memoised
   // `npm pack` and carry 15_000; under the sustained 8-way load that motivated
   // TD-336 they measured 9464 ms and 7256 ms — 63% and 48% of that budget, for
-  // the SAME operation that now carries PACK_TIMEOUT_MS = 30_000 seven hundred
+  // the SAME operation that now carries PACK_TIMEOUT_MS = 30_000 (now 40_000, TD-344) seven hundred
   // lines below. They are not reconciled here deliberately: they pass no
   // `timeout` in their own options objects, so swapping the constant in would
   // give them one half of a two-half contract whose docblock insists on both.
   // TD-344 owns doing it properly. Do not "harmonize" these to
-  // PACK_TIMEOUT_MS without also adding options.timeout at :276 and :362.
+  // PACK_TIMEOUT_MS without also adding options.timeout to both
+  // `execFileSync` options objects (the two TD-168 tests below).
   //
   // TD-378 UPDATE — DONE, both halves, because the prediction came true and
   // stopped being a flake. `npm pack --dry-run` was TIMED three times back to
@@ -317,9 +318,20 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
   //
   // So both halves of the contract land together, as the paragraph above
   // demands: `PACK_TIMEOUT_MS` replaces the two literals AND each `it` gains
-  // the matching `options.timeout`. Harmonising one without the other is what
+  // the matching `options.timeout` [it did not — TD-344 correction below].
+  // Harmonising one without the other is what
   // that sentence exists to prevent, and it is still the right warning — it is
   // just no longer a reason to wait.
+  //
+  // TD-344 CORRECTION (2026-10-01) — only the TEST half landed at TD-378. The
+  // `it`s carried PACK_TIMEOUT_MS, but neither `execFileSync` options object
+  // carried `timeout:`, so a hung `npm pack` was stopped by nothing: these
+  // bodies block in a synchronous call, which vitest cannot pre-empt (see the
+  // PACK_TIMEOUT_MS docblock). TD-344 added `timeout: PACK_TIMEOUT_MS` to both.
+  // Measured in four full-suite runs under K=2 burners (1-min load 30-48, 8
+  // cores): 3296 / 2795 / 2565 / 3013 ms (this test) and 4423 / 3436 / 3359 /
+  // 3551 ms (the BR-068 twin) — at most 15% of the 30_000 PACK_TIMEOUT_MS then
+  // was (its docblock carries the later load envelope).
   it("npm pack --dry-run includes dist/brain-mcp-server/dist/index.js", async () => {
     if (!bundleBuilt()) return;
     const cp = await import("node:child_process");
@@ -327,7 +339,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     const out = cp.execFileSync(
       "npm",
       ["pack", "--dry-run", "--json"],
-      { cwd: cliRoot, encoding: "utf-8" },
+      { cwd: cliRoot, encoding: "utf-8", timeout: PACK_TIMEOUT_MS },
     );
     const parsed = JSON.parse(out) as Array<{
       files: Array<{ path: string }>;
@@ -465,7 +477,7 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     const out = cp.execFileSync(
       "npm",
       ["pack", "--dry-run", "--json"],
-      { cwd: cliRoot, encoding: "utf-8" },
+      { cwd: cliRoot, encoding: "utf-8", timeout: PACK_TIMEOUT_MS },
     );
     const parsed = JSON.parse(out) as Array<{
       files: Array<{ path: string }>;
@@ -508,7 +520,11 @@ async function buildSyntheticTarballWithExtras(work: string): Promise<string> {
   fs.writeFileSync(path.join(root, "cli", "src", "index.ts"), "// cli\n");
 
   const out = path.join(work, "extras.tar.gz");
-  cp.execFileSync("tar", ["-czf", out, "-C", stage, prefix]);
+  // TD-344: the spawn half. MEASURED 2026-10-01 at 30.6 ms worst over two
+  // full-suite runs under K=2 burners (1-min load ~37); a multiple of a
+  // 30 ms process start would make scheduler noise a red, so this is a
+  // hang stop, not a budget — 10 s is over 300x the measurement.
+  cp.execFileSync("tar", ["-czf", out, "-C", stage, prefix], { timeout: 10_000 });
   return out;
 }
 
@@ -3078,6 +3094,52 @@ interface PackReport {
  *   7_287 = 3_479 + 962 + 923 + 603 + 704 + 616; 143_937 + 2_773 = 146_710;
  *   153_600 − 146_710 = 6_890.
  *
+ * BUNDLE TD-344/TS-002/TD-481/TD-350 MEASURED LAST (2026-10-01), after its
+ * final code-touching step (the post-warden round: `push.ts` redacts the key
+ * from every printed line and names the no-stamp case in its dry-run line,
+ * and `README.md` gains the no-stamp and live-engine-boot clauses; the
+ * post-sentinel round before it added the TD-350 risk-R2 disclosure): the new
+ * `igris sync push` module (`lib/sync/push.ts`), `readLastPushAt` in
+ * `lib/brain-db.ts`, the `push` freshness field in `verbs/boot-sync.ts`, the
+ * sub-verb in `verbs/sync.ts`, the help line in `index.ts`, the queue-mtime
+ * reader REMOVED from `lib/sync/status.ts`, one sentence on the brain's
+ * `igris_brain_push` description (D-3), a `README.md` table row and a
+ * `CHANGELOG.md` bullet. TS-002 (the brain vitest belt), TD-481 (root bats)
+ * and TD-344 (cli test budgets, `vitest.config.ts`, the proximity reporter at
+ * the cli root) are test-only and pack 0 bytes: no test artifact appears in
+ * the packed file list. Same method as TD-487 (`git archive` scratch builds,
+ * `copy-templates.sh` run in both arms, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm). CONTROL = HEAD `b88bfaf`: 1_989_986 /
+ * 7_218_453 / 577 / `77d12b20…` — byte-identical to the TD-487 row, re-taken.
+ * FINAL = a `git write-tree` of the working tree through a TEMP index
+ * (`66c23e0e`, no commit), twice; the live `cli/dist` mtime and
+ * `~/.igris/config.json` sha unchanged by both arms. (Earlier final arms:
+ * `2398bbd4` 1_992_260, then `b710768c` 1_992_392 after the R2 docblock; this
+ * round added +161 packed — `push.js` +199 / map +159, `README.md` +155.)
+ *   packed              1_992_553    unpacked 7_226_210, 579 entries (+2),
+ *                                    shasum
+ *                                    `66b88d547e3f7f405895f9510c795174f90ce114`.
+ *   this round's share  +2_567 B     packed — inside the plan's +2.5–3.5 KB
+ *                                    estimate and UNDER its 4_000 B hard
+ *                                    stop, so no cut was taken.
+ *                                    Unpacked +7_757 over 14 artifacts,
+ *                                    reconciling exactly: `push.js` +2_876
+ *                                    (NEW) / map +2_209 (NEW), `boot-sync.js`
+ *                                    +744 / map +710, `brain-db.js` +737 /
+ *                                    map +429, `README.md` +564,
+ *                                    `CHANGELOG.md` +395, `sync.js` +207 /
+ *                                    map +180, the vendored
+ *                                    `engine/components/sync/index.js` +69,
+ *                                    `index.js` +11, `status.js` −761 / map
+ *                                    −613.
+ *   cumulative delta    +149_277 B   (1_992_553 − 1_843_276)
+ *   headroom remaining  4_323 B      (153_600 − 149_277)
+ *   RE-DERIVED: 1_992_553 − 1_989_986 = 2_567; 7_226_210 − 7_218_453 =
+ *   7_757 = 2_876 + 2_209 + 744 + 710 + 737 + 429 + 564 + 395 + 207 + 180
+ *   + 69 + 11 − 761 − 613; 146_710 + 2_567 = 149_277; 153_600 − 149_277 =
+ *   4_323.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4471,8 +4533,17 @@ const PACK_HARD_CEILING_DELTA = 150 * 1024; // TD-374, operator, 2026-08-10
  * that is *about* paying it, which is tempting, but a hook failure is far less
  * legible than a test failure — it fails the whole describe with no assertion
  * to read. Per-test timeouts keep the failure attached to the thing that failed.
+ *
+ * TD-344 UPDATE (2026-10-01) — THE LOAD ENVELOPE MOVED THE NUMBER. The figures
+ * above were taken at loads the suite no longer sees. Across full-suite runs
+ * at 1-min load peaks 30-277 (8 cores; forger and sentinel, an Android
+ * emulator running for some), the worst pack-dependent TEST was 19_020 ms
+ * (FR-238's `index.html` case, peak 206) and the worst `npm pack` CALL 19_005
+ * ms (the memoised `packedPaths` spawn, same run) — 63% of 30_000, past the
+ * ~61% line TD-344 budgets at. 2x the worst observed, rounded up to the next
+ * 5 s = 40_000, still used for BOTH halves.
  */
-const PACK_TIMEOUT_MS = 30_000;
+const PACK_TIMEOUT_MS = 40_000;
 
 /**
  * Memoised. `npm pack --dry-run` walks the whole package and takes a couple of

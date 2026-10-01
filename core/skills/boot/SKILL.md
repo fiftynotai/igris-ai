@@ -98,7 +98,8 @@ igris boot-sync --project <detect.project_slug>
   "queue_drain": { "ok": true, "drained": 3 },
   "session_files_pulled": 2,                       // session_files rows merged from the pull
   "definitions_updated": { "agents": 1, "skills": 0, "rules": 2, "prompts": 0 },
-  "skipped": [] }                                  // one-line reasons any part was skipped
+  "skipped": [],                                   // one-line reasons any part was skipped
+  "push": { "last_push_at": "2026-10-01 14:53:55", "stale": false, "age_days": 0 } }  // null when degraded; absent on an older CLI
 ```
 
 **Display from the digest:**
@@ -106,6 +107,7 @@ igris boot-sync --project <detect.project_slug>
 - `queue_drain.drained` → "Drained {n} queued sync op(s)" (when `> 0`).
 - `session_files_pulled` / `definitions_updated` → optional one-line restore/refresh summary.
 - `skipped[]` → surface each as a one-line notice (e.g. "Brain pull skipped (remote unconfigured)").
+- `push` (TD-350 — this machine's newest push stamp for the configured remote; render nothing when the key is absent or `null`, or when `stale` is false): `last_push_at == null` → "Remote brain has never received a push from this machine; run `igris sync push`". `stale` (older than 7 days) → "Last push {age_days} d ago ({last_push_at} UTC); run `igris sync push`".
 
 **Degradation:** the verb ALWAYS exits 0 and NEVER blocks session start. When `degraded: true` (remote unconfigured) or any part fails (`ok: false`, recorded in `skipped[]`), display the one-line notice and continue — a missing/unreachable remote is a local-only run, not an error. Each part is independent: a failed pull does not abort the drain or vice-versa.
 

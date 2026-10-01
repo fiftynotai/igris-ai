@@ -95,13 +95,9 @@ EOF
 teardown() {
   # TD-394: remove the WHOLE per-test root, not just $PROJ. Every other
   # fixture under it (wrap_*, fr149_agent_*, td193_*, …) used to leak, and a
-  # leaked root plus a reused PID was the `ln: … File exists` flake. Guarded
-  # so an empty or foreign value can never widen the rm; the `if` form
-  # returns 0 when the dir is already gone (`[ -d ] && rm` returns 1 there).
-  if [ -n "${TEST_TEMP_DIR:-}" ] && [ -d "$TEST_TEMP_DIR" ] \
-     && [[ "$(basename "$TEST_TEMP_DIR")" == igris-test-* ]]; then
-    rm -rf "$TEST_TEMP_DIR"
-  fi
+  # leaked root plus a reused PID was the `ln: … File exists` flake. TD-481
+  # moved the guarded removal into test_helper (one rule for every suite).
+  cleanup_test_temp_dir
 }
 
 @test "in-sync compiled harness yields exit 0 and MATCH" {

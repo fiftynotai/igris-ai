@@ -29,6 +29,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Helper: build a minimal brain_stewardship fixture that backticks every

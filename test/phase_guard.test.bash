@@ -90,6 +90,7 @@ setup() {
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # run_guard [extra env...] — invoke the source hook with cwd=$REPO and a fake

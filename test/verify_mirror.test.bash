@@ -33,6 +33,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 @test "test_all_pairs_match: two MATCH pairs yield exit 0" {

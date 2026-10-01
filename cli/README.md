@@ -231,10 +231,11 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 
 | Sub-verb | Action |
 |---|---|
-| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp; with a `vps` block, one read-only `node --version` ssh probe prints `vps node:` against the engines range (never changes the exit code) |
+| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last push (the newest `sync_state.last_push_at` this machine stamped for the configured remote, or `never`); with a `vps` block, one read-only `node --version` ssh probe prints `vps node:` against the engines range (never changes the exit code) |
 | `data`   | Atomically drains local `~/.igris/projects/<slug>/sync_queue.jsonl` (rename-then-process; concurrency-safe under multi-harness use — see FR-128) via remote `igris_sync_queue_drain` MCP call. Recovers any stale `sync_queue.jsonl.draining-*` files from a prior crashed drain before processing. |
 | `code`   | Preflight (VPS Node vs engines range; refuses if another deploy runs, a swap was interrupted, or disk is short), rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, `.igris-deploy/`, IDE files, etc.), then a DETACHED runner in `<repo_path>/.igris-deploy/` runs `npm ci` (or copies the live `node_modules` when the install fingerprint matches) + `npm run build` in a stage copy, smoke-loads `new Database(require("better-sqlite3"))`, swaps `node_modules` + `dist` in and re-smokes (auto-rollback). The client polls (30-min bound, reported — never kills the run), then restarts `igris-brain` via PM2 and exits 0 only when pm2 is `online` (restart count past its pre-restart value) and `/health` says `ok` twice in a row (one restart retry) |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
+| `push`   | Pushes this machine's brain delta (rows newer than `sync_state.last_push_at`; every row for a table with no stamp) to `remote_brain` by running the `igris_brain_push` handler in process. Reads the url and api_key from `~/.igris/config.json` and takes no key argument. It boots the bundled brain engine on the live local brain, so any migration that bundle carries applies on that boot. Exits 1 if any table is held (BR-097) or the push fails. Not part of `all` |
 
 `--dry-run` previews the rsync/ssh/MCP calls without performing them.
 

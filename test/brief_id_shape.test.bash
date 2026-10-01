@@ -101,6 +101,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # population — every in-scope file with at least one predicate hit, as a
