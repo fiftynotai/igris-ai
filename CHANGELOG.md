@@ -158,6 +158,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **VPS code deploys skip `npm ci` when the install inputs are unchanged
+  (TD-487).** The detached runner hashes node + npm (with the native ABI,
+  platform and arch), `package-lock.json`, the root and every workspace
+  `package.json` and the root `.npmrc`. When the hash equals the marker
+  `node_modules/.igris-install-fp` inside the LIVE tree, a new `reuse` phase
+  copies the live `node_modules` into the stage (without the transformers model
+  cache), refuses an absolute symlink, smokes the copy, and falls back to
+  `npm ci` in the same run on any failure; the build, stage smoke, swap and live
+  smoke are unchanged. The marker is written only after the live smoke passes,
+  so it travels with its tree through every swap, rollback and printed restore.
+  `rc` gains `install` and `install_why`; a skipped deploy prints the command
+  that deletes the marker to force a clean install. Measured on the brain VPS
+  (Ubuntu 24.04, Node 22.23.3, 2026-10-01, one A/B pair): run A
+  (`20261001T121849Z-372e`, `npm ci: first`) installed in 408 s, built in 204 s,
+  client wall 762 s; run B (`20261001T123130Z-81d3`) skipped `npm ci` and reused
+  `node_modules` in 107 s, built in 209 s, client wall 467 s; both pm2 online,
+  health ok, exit 0. Saving: install −301 s (−74%), client wall −295 s (−39%).
+  B's tree does not carry the transformers model cache, so it is re-downloaded
+  on first use, as after `npm ci` today. On a macOS arm64 workstation (node
+  v22.23.2, npm 10.9.8, local SSD, warm npm cache; 556 MB, 9,908 files) the copy
+  took 6.4–10.9 s against `npm ci` 5.8–6.6 s (9.1 s with an empty cache), so it
+  saved nothing at that scope.
+
 - **`schedules` and `schedule_runs` no longer sync between brains.** A replicated
   schedule was executed by every receiving brain, and a replicated `running` row
   could never be terminated. A schedule created on one machine now stays on that

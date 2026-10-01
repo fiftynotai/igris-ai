@@ -33,6 +33,27 @@ export const STAGE_EXCLUDES = [
 /** Instantiates the addon: `require` alone never loads the binding (it is lazy). */
 export const SMOKE_JS = 'const D=require("better-sqlite3");new D(":memory:").close()';
 
+// TD-487: the install fingerprint lives INSIDE the tree it describes, so every
+// swap, rollback and restore carries it (MAINTAINING "VPS deploy workspace protocol").
+export const INSTALL_FP_FILE = "node_modules/.igris-install-fp";
+
+/** Never reused: transformers' runtime model cache (`src/env.js` DEFAULT_CACHE_DIR), and the marker. */
+export const REUSE_EXCLUDES = ["@huggingface/transformers/.cache/", "/.igris-install-fp"] as const;
+
+const NM_RELS = SWAP_SET.filter((r) => r.endsWith("node_modules"));
+
+// sha256 of node/npm (argv), ABI, platform, arch, the lockfile, root + workspace
+// package.json and .npmrc. Prints nothing and exits 1 on any doubt (→ npm ci).
+// Not hashed: libc/kernel — the reuse smoke loads better-sqlite3 only, on the tree this host already runs.
+export const FP_JS =
+  'try{const[n,v]=process.argv.slice(1);if(!n||!v)throw 0;const f=require("fs"),h=require("crypto").createHash("sha256");' +
+  'const w=JSON.parse(f.readFileSync("package.json","utf8")).workspaces||[];' +
+  'if(!Array.isArray(w)||!w.every(x=>typeof x=="string"&&/^[\\w-][\\w.-]*(\\/[\\w-][\\w.-]*)*$/.test(x)))throw 0;' +
+  'h.update(["igris-install-fp/1",n,v,process.versions.modules,process.platform,process.arch].join("\\0"));' +
+  'for(const x of["package-lock.json","package.json",...w.map(d=>d+"/package.json"),".npmrc"]){let b;' +
+  'try{b=f.readFileSync(x)}catch(e){if(x==".npmrc"&&e.code=="ENOENT"){h.update("\\0.npmrc\\0-");continue}throw e}' +
+  'h.update("\\0"+x+"\\0"+b.length+"\\0");h.update(b)}console.log("v1-"+h.digest("hex"))}catch(e){process.exit(1)}';
+
 const RUN_ID_RE = /^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{4}$/;
 const APP_RE = /^[A-Za-z0-9._-]+$/;
 
@@ -91,26 +112,34 @@ function checkApp(app: string): void {
 export function buildRunnerScript(repoPath: string, runId: string): string {
   checkRunId(runId);
   const excl = STAGE_EXCLUDES.map((p) => `--exclude=${p}`).join(" ");
+  const rexcl = REUSE_EXCLUDES.map((p) => `--exclude=${p}`).join(" ");
   return [
     "set -u",
-    `R=${shellQuote(repoPath)}; ID=${runId}; SMOKE=${shellQuote(SMOKE_JS)}`,
-    `D="$R/${DEPLOY_DIR_NAME}"; RUN="$D/runs/$ID"; PHASE=prepare; IS=; BS=; RB=0; RBS=`,
-    `SWAP='${SWAP_SET.join(" ")}'`,
-    'fin() { { echo "code=$1"; echo "phase=$PHASE"; echo "rolled_back=$RB"; echo "rollback_smoke=$RBS"; echo "node=$(node --version 2>/dev/null)"; echo "install_s=$IS"; echo "build_s=$BS"; } > "$RUN/rc.tmp" && mv -f "$RUN/rc.tmp" "$RUN/rc"; }',
+    `R=${shellQuote(repoPath)}; ID=${runId}; SMOKE=${shellQuote(SMOKE_JS)}; FPJS=${shellQuote(FP_JS)}`,
+    `D="$R/${DEPLOY_DIR_NAME}"; RUN="$D/runs/$ID"; PHASE=prepare; IS=; BS=; RB=0; RBS=; FP=; INST=; WHY=`,
+    `SWAP='${SWAP_SET.join(" ")}'; NM='${NM_RELS.join(" ")}'; FPF=${INSTALL_FP_FILE}`,
+    'fin() { { echo "code=$1"; echo "phase=$PHASE"; echo "rolled_back=$RB"; echo "rollback_smoke=$RBS"; echo "node=$(node --version 2>/dev/null)"; echo "install_s=$IS"; echo "build_s=$BS"; echo "install=$INST"; echo "install_why=$WHY"; } > "$RUN/rc.tmp" && mv -f "$RUN/rc.tmp" "$RUN/rc"; }',
     'ex() { c=$?; [ -f "$RUN/rc" ] || fin "$c"; [ "$(cat "$D/lock/run_id" 2>/dev/null)" = "$ID" ] && rm -rf "$D/lock"; }',
     "trap ex EXIT",
     'ph() { PHASE=$1; echo "$1" > "$RUN/phase.tmp" && mv -f "$RUN/phase.tmp" "$RUN/phase"; echo "=== igris-deploy phase=$1 start $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="; }',
     'die() { fin "$1"; exit "$1"; }',
     'has() { [ -e "$1" ] || [ -L "$1" ]; }',
     'smoke() { (cd "$1/brain-mcp-server" && node -e "$SMOKE"); }',
+    // Copy the live NM rels into stage $1; refuse absolute links (they would
+    // resolve into the live tree); then smoke the copy. Any failure → npm ci.
+    `reuse() { for rel in $NM; do has "$R/$rel" || continue; mkdir -p "$1/$rel" && rsync -a ${rexcl} "$R/$rel/" "$1/$rel/" || return 1; AL=$(find "$1/$rel" -type l -lname '/*') || return 1; if [ -n "$AL" ]; then echo "reuse: absolute symlink under $rel"; return 1; fi; done; smoke "$1"; }`,
     "ph prepare",
     'echo $$ > "$RUN/pid"',
     'ls -1 "$D/runs" | sort -r | tail -n +6 | while read -r o; do [ "$o" = "$ID" ] || rm -rf "$D/runs/$o"; done',
     'rm -rf "$D/stage" "$D/prev" "$D/failed" "$D/journal"',
     "ph stage",
     `mkdir -p "$D/stage" && rsync -a --delete ${excl} "$R/" "$D/stage/" || die $?`,
-    "ph install",
-    'T=$(date +%s); (cd "$D/stage" && npm ci --no-audit --no-fund); c=$?; IS=$(( $(date +%s) - T )); [ $c -eq 0 ] || die $c',
+    'FP=$(cd "$D/stage" && node -e "$FPJS" "$(node --version 2>/dev/null)" "$(npm --version 2>/dev/null)" 2>/dev/null); OLD=$(cat "$R/$FPF" 2>/dev/null); INST=ran',
+    'if [ -z "$FP" ]; then WHY=unfingerprinted; elif [ -z "$OLD" ]; then WHY=first; elif [ "$FP" != "$OLD" ]; then WHY=changed; else INST=skipped; fi',
+    'echo "install=$INST why=$WHY fp=$FP recorded=$OLD"; T=$(date +%s)',
+    'if [ "$INST" = skipped ]; then ph reuse; reuse "$D/stage" || { echo "reuse failed, falling back to npm ci"; INST=ran; WHY=reuse-failed; }; fi',
+    'if [ "$INST" = ran ]; then ph install; for rel in $NM; do rm -rf "$D/stage/$rel"; done; (cd "$D/stage" && npm ci --no-audit --no-fund); c=$?; IS=$(( $(date +%s) - T )); [ $c -eq 0 ] || die $c; fi',
+    'IS=$(( $(date +%s) - T ))',
     "ph build",
     'T=$(date +%s); (cd "$D/stage/brain-mcp-server" && npm run build); c=$?; BS=$(( $(date +%s) - T )); [ $c -eq 0 ] || die $c',
     "ph smoke-stage",
@@ -129,6 +158,8 @@ export function buildRunnerScript(repoPath: string, runId: string): string {
     `  if (cd "$D" && ${RESTORE_SH}); then rm -f "$D/swap.inprogress"; RB=1; if smoke "$R"; then RBS=ok; else RBS=fail; fi; fi`,
     "  die $c",
     "fi",
+    // Acknowledged only now: a run that fails before this line writes no new marker.
+    '[ -z "$FP" ] || { echo "$FP" > "$R/$FPF.tmp" && mv -f "$R/$FPF.tmp" "$R/$FPF"; }',
     "ph done",
     'rm -rf "$D/stage"',
     "die 0",
@@ -214,6 +245,11 @@ export function buildNodeVersionCommand(): string {
   return "node --version";
 }
 
+/** Printed (never run): deletes the marker, so the next deploy runs `npm ci` (TD-487). */
+export function buildForceInstallCommand(repoPath: string): string {
+  return `rm -f ${shellQuote(`${repoPath}/${INSTALL_FP_FILE}`)}`;
+}
+
 /** Manual restore-from-prev, printed (never run) after an interrupted swap or a failed restart. */
 export function buildRestoreCommand(repoPath: string, app: string): string {
   checkApp(app);
@@ -241,6 +277,8 @@ export type RunnerState =
       node: string;
       installS: string;
       buildS: string;
+      install: string;
+      installWhy: string;
     }
   | { kind: "died"; phase: string }
   | { kind: "unknown" };
@@ -259,6 +297,8 @@ export function parseRunnerState(out: string): RunnerState {
       node: kv["rc.node"] ?? "",
       installS: kv["rc.install_s"] ?? "",
       buildS: kv["rc.build_s"] ?? "",
+      install: kv["rc.install"] ?? "",
+      installWhy: kv["rc.install_why"] ?? "",
     };
   }
   const phase = kv.phase ?? "";
@@ -341,6 +381,7 @@ export function classifyVpsNode(versionOutput: string): VpsNodeVerdict {
   };
 }
 
+// No `reuse` entry: a reuse failure falls back to npm ci, so only a death ends there.
 const PHASE_CMD: Record<string, string> = {
   stage: "the stage copy (rsync)",
   install: "npm ci",

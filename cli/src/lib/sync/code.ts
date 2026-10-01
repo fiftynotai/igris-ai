@@ -14,10 +14,11 @@
  *      the projected free disk after staging is under 512 MiB.
  *   4. rsync `-az --delete` + RSYNC_EXCLUDES (TD-135: workstation-native
  *      `node_modules/` never ships; `.igris-deploy/` is never deleted).
- *   5. Launch a DETACHED runner (`vps-deploy.ts`) that installs + builds into a
- *      stage copy, smoke-loads the native binding, swaps `node_modules` + `dist`
- *      in, smokes the live tree and auto-rolls back on failure. The live tree is
- *      only touched after the stage smoke passes.
+ *   5. Launch a DETACHED runner (`vps-deploy.ts`) that installs (`npm ci`, or a
+ *      copy of the live tree when its install fingerprint matches — TD-487) +
+ *      builds into a stage copy, smoke-loads the native binding, swaps
+ *      `node_modules` + `dist` in, smokes the live tree and auto-rolls back on
+ *      failure. The live tree is only touched after the stage smoke passes.
  *   6. Poll its `rc` file. The 30-min wait bound is REPORTED — the runner is
  *      never killed. A failure prints npm's real error, not its warnings.
  *   7. `pm2 restart`, then gate on pm2 `online` + `/health` 200 `status: ok`
@@ -54,6 +55,7 @@ import {
   buildPm2StatusCommand,
   buildPollCommand,
   buildPreflightCommand,
+  buildForceInstallCommand,
   buildRestartCommand,
   buildRestoreCommand,
   buildTailCommand,
@@ -64,6 +66,7 @@ import {
   parseKv,
   parsePm2Status,
   parseRunnerState,
+  shellQuote,
   summarizeRemoteFailure,
   type RunnerState,
 } from "./vps-deploy.js";
@@ -74,7 +77,8 @@ import {
  * The load-bearing exclusion is `node_modules/` (TD-135): workstation-built
  * native bindings (e.g. macOS-arm64 `better-sqlite3`) crash on Linux x86_64
  * the moment `require()` tries to load the binary. The VPS runs `npm ci`
- * post-rsync to materialize a Linux-native dep tree.
+ * post-rsync to materialize a Linux-native dep tree, or reuses its live
+ * `node_modules` when the install fingerprint matches (TD-487).
  *
  * The rest mirrors `.gitignore` essentials — secrets, IDE config, OS
  * detritus, build outputs, log/temp files. rsync's `--exclude` is glob-
@@ -248,7 +252,7 @@ const MAX_RESTART_ATTEMPTS = 2;
 /** Healthy observations needed in a row, restart count unchanged between them. */
 const HEALTHY_STREAK = 2;
 
-const PRE_SWAP_PHASES = new Set(["prepare", "stage", "install", "build", "smoke-stage", ""]);
+const PRE_SWAP_PHASES = new Set(["prepare", "stage", "reuse", "install", "build", "smoke-stage", ""]);
 
 /**
  * Run `igris sync code`. Returns process exit code.
@@ -339,7 +343,7 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     dry.wouldInvokeCommand(
       "ssh",
       sshArgs(`: igris-deploy:launch (setsid/nohup bash ${ws}/runs/${runId}/run.sh, detached)`),
-      "detached runner: stage copy → npm ci → npm run build → smoke new Database(require(\"better-sqlite3\")) → " +
+      "detached runner: stage copy → npm ci (or reuse of the live node_modules when the install fingerprint matches) → npm run build → smoke new Database(require(\"better-sqlite3\")) → " +
         "swap node_modules+dist → live smoke (auto-rollback)",
     );
     dry.wouldInvokeCommand(
@@ -438,7 +442,7 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     logError(`sync code: VPS refused the launch (state=${lkv.state}) — nothing was deployed. Re-run to see the preflight detail.`);
     return 1;
   }
-  info(`sync code: run ${runId} launched on the VPS (stage → npm ci → build → smoke → swap → live smoke)`);
+  info(`sync code: run ${runId} launched on the VPS (stage → npm ci or reuse → build → smoke → swap → live smoke)`);
 
   // 6. Poll until the runner writes rc (or dies, or the bound passes).
   const t0 = Date.now();
@@ -482,6 +486,12 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     }
   }
 
+  if (done.kind === "finished" && done.installWhy === "reuse-failed") {
+    warn(`sync code: node_modules reuse failed (see ${runRef}/log) — fell back to npm ci`);
+  }
+  if (done.kind === "finished" && done.install === "skipped") {
+    info(`sync code: force a clean npm ci on the next deploy: ssh ${target} ${shellQuote(buildForceInstallCommand(vps.repoPath))}`);
+  }
   if (done.kind === "died" || done.code !== 0 || done.phase !== "done") {
     const tail = await ssh(buildTailCommand(vps.repoPath, runId), 30_000);
     const summary = summarizeRemoteFailure(tail.stdout, done, {
@@ -538,8 +548,13 @@ export async function runSyncCode(opts: SyncCodeOptions = {}): Promise<number> {
     logError(restoreHint);
     return 1;
   }
+  const why = done.installWhy !== "" ? ` (npm ci: ${done.installWhy})` : "";
+  const inst =
+    done.install === "skipped"
+      ? `install skipped (node_modules reused in ${done.installS || "?"}s)`
+      : `install ${done.installS || "?"}s${why}`;
   info(
-    `sync code: deployed run ${runId} — install ${done.installS || "?"}s, build ${done.buildS || "?"}s; ` +
+    `sync code: deployed run ${runId} — ${inst}, build ${done.buildS || "?"}s; ` +
       `pm2 online (node ${v.node ?? "?"}); health ok`,
   );
   return 0;

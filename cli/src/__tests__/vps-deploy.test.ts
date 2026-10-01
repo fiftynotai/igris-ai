@@ -4,9 +4,9 @@
  * scripts' syntax, bash-3.2 portability and quoting.
  */
 
-import { describe, expect, it } from "vitest";
-import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { afterAll, describe, expect, it } from "vitest";
+import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,16 +17,20 @@ import {
   buildLaunchCommand,
   buildPm2StatusCommand,
   buildPollCommand,
+  buildForceInstallCommand,
   buildPreflightCommand,
   buildRestartCommand,
   buildRestoreCommand,
   buildRunnerScript,
   buildTailCommand,
+  FP_JS,
+  INSTALL_FP_FILE,
   isValidAppName,
   isValidRunId,
   newRunId,
   parsePm2Status,
   parseRunnerState,
+  REUSE_EXCLUDES,
   shellQuote,
   signalName,
   SMOKE_JS,
@@ -227,4 +231,170 @@ describe("BR-116 remote scripts — syntax, bash 3.2, quoting", () => {
     expect(at("ph swap")).toBeLessThan(at("ph smoke-live"));
     expect(s).toContain("--exclude=.igris-deploy/");
   });
+});
+
+/*
+ * TD-487 — the install fingerprint (FP_JS) and the runner's reuse branch.
+ * FP_JS runs as `node -e FP_JS <node --version> <npm --version>` in the stage.
+ */
+describe("TD-487 install fingerprint", () => {
+  const FILES: Record<string, string> = {
+    "package.json": '{"name":"igris-ai","workspaces":["brain-mcp-server","cli"]}\n',
+    "package-lock.json": '{"lockfileVersion":3}\n',
+    "brain-mcp-server/package.json": '{"name":"igris-brain-mcp-server"}\n',
+    "cli/package.json": '{"name":"igris-ai"}\n',
+    "README.md": "# r\n",
+    "brain-mcp-server/src/x.ts": "export const x = 1;\n",
+    "cli/src/y.ts": "export const y = 1;\n",
+  };
+  const dirs: string[] = [];
+  /** A fresh fixture; `edit` overrides (string) or deletes (null) files. */
+  const fixture = (edit: Record<string, string | null> = {}): string => {
+    const dir = mkdtempSync(join(tmpdir(), "td487-fp-"));
+    dirs.push(dir);
+    for (const [rel, body] of Object.entries({ ...FILES, ...edit })) {
+      if (body === null) continue;
+      mkdirSync(join(dir, rel, ".."), { recursive: true });
+      writeFileSync(join(dir, rel), body);
+    }
+    return dir;
+  };
+  const fp = (dir: string, node = "v22.23.3", npm = "10.9.8"): { status: number | null; out: string } => {
+    const r = spawnSync(process.execPath, ["-e", FP_JS, node, npm], { cwd: dir, encoding: "utf-8", timeout: 10_000 });
+    return { status: r.status, out: r.stdout };
+  };
+  const base = (): string => fp(fixture()).out.trim();
+
+  afterAll(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+
+  it("F1: `v1-<sha256>`, stable across runs and fixtures", () => {
+    const a = fp(fixture());
+    expect(a.status).toBe(0);
+    expect(a.out.trim()).toMatch(/^v1-[0-9a-f]{64}$/);
+    expect(fp(fixture()).out).toBe(a.out);
+  }, 20_000);
+
+  it("F2: every install input moves the hash — lockfile, root + each workspace manifest, node, npm, .npmrc", () => {
+    const b = base();
+    const moved: Record<string, string> = {
+      "package-lock.json": fp(fixture({ "package-lock.json": FILES["package-lock.json"] + " " })).out.trim(),
+      "package.json": fp(fixture({ "package.json": FILES["package.json"] + " " })).out.trim(),
+      "brain-mcp-server/package.json": fp(fixture({ "brain-mcp-server/package.json": FILES["brain-mcp-server/package.json"] + " " })).out.trim(),
+      "cli/package.json (L-965)": fp(fixture({ "cli/package.json": '{"name":"igris-ai","dependencies":{"left-pad":"1.3.0"}}\n' })).out.trim(),
+      "node version": fp(fixture(), "v22.23.4").out.trim(),
+      "npm version": fp(fixture(), "v22.23.3", "10.9.9").out.trim(),
+      ".npmrc created": fp(fixture({ ".npmrc": "legacy-peer-deps=true\n" })).out.trim(),
+    };
+    for (const [input, h] of Object.entries(moved)) {
+      expect(h, input).toMatch(/^v1-[0-9a-f]{64}$/);
+      expect(h, `${input} did not move the fingerprint`).not.toBe(b);
+    }
+    expect(new Set(Object.values(moved)).size).toBe(Object.keys(moved).length);
+  }, 30_000);
+
+  it("F3: non-inputs keep the hash — README, brain src, cli src (a deploy that changes only code reuses)", () => {
+    const b = base();
+    expect(fp(fixture({ "README.md": "# changed\n" })).out.trim(), "README.md").toBe(b);
+    expect(fp(fixture({ "brain-mcp-server/src/x.ts": "export const x = 2;\n" })).out.trim(), "brain src").toBe(b);
+    expect(fp(fixture({ "cli/src/y.ts": "export const y = 2;\n" })).out.trim(), "cli src").toBe(b);
+  }, 20_000);
+
+  it("F4: fails CLOSED (empty stdout, non-zero) on any doubt — the runner then runs npm ci", () => {
+    const cases: Array<[string, { status: number | null; out: string }]> = [
+      ["missing lockfile", fp(fixture({ "package-lock.json": null }))],
+      ["missing workspace manifest", fp(fixture({ "cli/package.json": null }))],
+      ["glob workspace", fp(fixture({ "package.json": '{"workspaces":["packages/*"]}' }))],
+      ["`..` workspace", fp(fixture({ "package.json": '{"workspaces":["../x"]}' }))],
+      ["object-form workspaces", fp(fixture({ "package.json": '{"workspaces":{"packages":["cli"]}}' }))],
+      ["unparseable package.json", fp(fixture({ "package.json": "{not json" }))],
+      ["empty npm version", fp(fixture(), "v22.23.3", "")],
+      ["empty node version", fp(fixture(), "", "10.9.8")],
+    ];
+    for (const [name, r] of cases) {
+      expect(r.out, name).toBe("");
+      expect(r.status, name).not.toBe(0);
+    }
+  }, 30_000);
+
+  it("F5: runner order — fingerprint after the stage copy, reuse/install before the build, the marker written only after smoke-live; restore text unchanged", () => {
+    const s = buildRunnerScript("/srv/igris", ID);
+    const at = (needle: string, from = 0): number => {
+      const i = s.indexOf(needle, from);
+      expect(i, needle).toBeGreaterThanOrEqual(0);
+      return i;
+    };
+    const order = [
+      "ph stage",
+      'node -e "$FPJS"',
+      "ph reuse",
+      'reuse "$D/stage"',
+      "ph install",
+      "ph build",
+      "ph smoke-stage",
+      "ph swap",
+      "ph smoke-live",
+      'mv -f "$R/$FPF.tmp" "$R/$FPF"',
+      "ph done",
+    ];
+    for (let i = 1; i < order.length; i += 1) {
+      expect(at(order[i - 1]), `${order[i - 1]} < ${order[i]}`).toBeLessThan(at(order[i]));
+    }
+    // The marker write sits AFTER the rollback branch closes (only a passing live smoke reaches it).
+    expect(at('mv -f "$R/$FPF.tmp"')).toBeGreaterThan(at("  die $c\nfi"));
+    const fin = s.slice(at("fin() {"), at("}\n", at("fin() {")));
+    expect(fin.indexOf("install=$INST")).toBeGreaterThan(-1);
+    expect(fin.indexOf('echo "install_why=$WHY"')).toBeLessThan(fin.indexOf("mv -f"));
+    expect(s).toContain(`FPF=${INSTALL_FP_FILE}`);
+    expect(INSTALL_FP_FILE).toBe("node_modules/.igris-install-fp");
+    for (const x of REUSE_EXCLUDES) expect(s).toContain(`--exclude=${x}`);
+    expect(s).toContain("-type l -lname '/*'");
+    // RESTORE_SH is untouched by TD-487: the printed text is byte-identical to HEAD d6f8ef3's.
+    expect(buildRestoreCommand("/srv/igris", "igris-brain")).toBe(
+      "cd '/srv/igris'/.igris-deploy && { h() { [ -e \"$1\" ] || [ -L \"$1\" ]; }; ok=1; for rel in node_modules brain-mcp-server/node_modules cli/node_modules brain-mcp-server/dist; do if h \"prev/$rel\" || { grep -Fqx \"stage->live $rel\" journal 2>/dev/null && ! h \"failed/$rel\"; }; then if h \"../$rel\"; then mkdir -p \"$(dirname \"failed/$rel\")\" && mv \"../$rel\" \"failed/$rel\" || { ok=0; continue; }; fi; if h \"prev/$rel\"; then mv \"prev/$rel\" \"../$rel\" || ok=0; fi; fi; done; [ $ok -eq 1 ]; } && rm -f swap.inprogress && pm2 restart igris-brain",
+    );
+  });
+
+  it("F6: parseRunnerState reads rc.install / rc.install_why; an older runner's rc gives \"\"", () => {
+    expect(parseRunnerState("alive=0\nrc.code=0\nrc.phase=done\nrc.install=skipped\nrc.install_why=\n")).toMatchObject({
+      kind: "finished",
+      install: "skipped",
+      installWhy: "",
+    });
+    expect(parseRunnerState("rc.code=0\nrc.phase=done\nrc.install=ran\nrc.install_why=changed\n")).toMatchObject({
+      install: "ran",
+      installWhy: "changed",
+    });
+    expect(parseRunnerState("rc.code=0\nrc.phase=done\n")).toMatchObject({ install: "", installWhy: "" });
+  });
+
+  it("F7: buildForceInstallCommand parses, passes the bash-3.2 lint, deletes exactly the marker, and runs nothing an injected repo_path names", () => {
+    const HOSTILE = "/srv/my app'; rm -rf ~";
+    const forbidden = [/\bmapfile\b/, /declare -A/, /\|&/, /&>>/, /readlink -f/, /stat -c/, /(^|[;\s])timeout\s/];
+    for (const repo of ["/srv/igris", HOSTILE]) {
+      const c = buildForceInstallCommand(repo);
+      execFileSync("bash", ["-n", "-c", c], { timeout: 10_000 });
+      for (const re of forbidden) expect(c).not.toMatch(re);
+    }
+    expect(buildForceInstallCommand(HOSTILE).split("rm -rf ~").length - 1).toBe(1);
+    const dir = mkdtempSync(join(tmpdir(), "td487-force-"));
+    try {
+      const repo = join(dir, "my repo");
+      mkdirSync(join(repo, "node_modules", "x"), { recursive: true });
+      writeFileSync(join(repo, INSTALL_FP_FILE), "v1-old\n");
+      execFileSync("bash", ["-c", buildForceInstallCommand(repo)], { timeout: 10_000 });
+      expect(existsSync(join(repo, INSTALL_FP_FILE))).toBe(false);
+      expect(existsSync(join(repo, "node_modules", "x"))).toBe(true); // only the marker
+      const pwned = join(dir, "PWNED");
+      try {
+        execFileSync("bash", ["-c", buildForceInstallCommand(`${dir}/my app'; touch '${pwned}'; '`)], { stdio: "ignore", timeout: 10_000 });
+      } catch {
+        // only the payload matters
+      }
+      expect(existsSync(pwned)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 20_000);
 });

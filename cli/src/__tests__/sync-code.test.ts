@@ -547,3 +547,66 @@ describe("TD-139: .claude/* non-symlink advisory", () => {
     expect(out).not.toContain("real directory");
   });
 });
+
+describe("TD-487 — install fingerprint: the client's summary, hint and phase handling", () => {
+  const rcPoll = (extra: string): ExecFileBehavior =>
+    ok(`alive=0\nphase=done\nrc.code=0\nrc.phase=done\nrc.rolled_back=0\nrc.node=v22.12.0\nrc.install_s=12\nrc.build_s=30\n${extra}`);
+  const HINT = "sync code: force a clean npm ci on the next deploy: ";
+
+  it("O1: install=skipped → 'install skipped (node_modules reused in 12s)' + the force hint (ONE quoted remote argument from the owner's builder)", async () => {
+    await config();
+    sshRoutes.poll = rcPoll("rc.install=skipped\nrc.install_why=\n");
+    const { code, out } = await run();
+    expect(code, out).toBe(0);
+    expect(out).toContain("deployed run 20260930T120000Z-b116 — install skipped (node_modules reused in 12s), build 30s;");
+    const { buildForceInstallCommand, shellQuote } = await import("../lib/sync/vps-deploy.js");
+    const line = out.split("\n").find((l) => l.includes(HINT));
+    expect(line, out).toBeDefined();
+    expect(line!.slice(line!.indexOf(HINT) + HINT.length)).toBe(
+      `ssh deploy@vps.example.com ${shellQuote(buildForceInstallCommand("/srv/igris"))}`,
+    );
+    expect(buildForceInstallCommand("/srv/igris")).toBe("rm -f '/srv/igris/node_modules/.igris-install-fp'");
+    expect(out).not.toContain("reuse failed");
+  });
+
+  it("O2: a runner that died during `reuse` is PRE-swap — 'live tree untouched', no restore hint", async () => {
+    await config();
+    sshRoutes.poll = ok("alive=0\nphase=reuse\n");
+    const { code, out } = await run();
+    expect(code).toBe(1);
+    expect(out).toContain("runner died during reuse");
+    expect(out).toContain("live tree untouched; brain not restarted.");
+    expect(out).not.toContain("mid-swap");
+    expect(out).not.toContain("restore the previous tree by hand");
+    expect(steps()).not.toContain("restart");
+  });
+
+  it("O3: install=ran names its reason; reuse-failed also warns; no hint when npm ci ran", async () => {
+    await config();
+    sshRoutes.poll = rcPoll("rc.install=ran\nrc.install_why=changed\n");
+    const changed = await run();
+    expect(changed.code, changed.out).toBe(0);
+    expect(changed.out).toContain("— install 12s (npm ci: changed), build 30s;");
+    expect(changed.out).not.toContain(HINT);
+    expect(changed.out).not.toContain("reuse failed");
+    sshRoutes.poll = rcPoll("rc.install=ran\nrc.install_why=reuse-failed\n");
+    const fell = await run();
+    expect(fell.code, fell.out).toBe(0);
+    expect(fell.out).toContain(
+      "warn: sync code: node_modules reuse failed (see deploy@vps.example.com:/srv/igris/.igris-deploy/runs/20260930T120000Z-b116/log) — fell back to npm ci",
+    );
+    expect(fell.out).toContain("— install 12s (npm ci: reuse-failed), build 30s;");
+    expect(fell.out).not.toContain(HINT);
+  });
+
+  it("O4: --dry-run still names npm ci, and now the reuse path", async () => {
+    writeConfig({
+      vps: { host: "vps.example.com", user: "deploy", repo_path: "/srv/igris" },
+      remote_brain: { url: "http://127.0.0.1:1", api_key: "k" },
+    });
+    const { code, out } = await run({ dryRun: true });
+    expect(code).toBe(0);
+    expect(out).toContain("npm ci (or reuse of the live node_modules when the install fingerprint matches)");
+    expect(execFileCalls.length).toBe(0);
+  });
+});

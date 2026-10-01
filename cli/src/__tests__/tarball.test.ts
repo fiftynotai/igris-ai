@@ -3046,6 +3046,38 @@ interface PackReport {
  *   371 + 173 + 88 + 81 + 62 − 36 + 13; 143_706 + 231 = 143_937;
  *   153_600 − 143_937 = 9_663.
  *
+ * TD-487 MEASURED LAST (2026-10-01), after its final code-touching step (the
+ * post-warden round: the libc/kernel comment, the "writes no new marker" and
+ * RSYNC_EXCLUDES wording, the README fingerprint inputs and the scoped VPS A/B
+ * in `CHANGELOG.md`): the install fingerprint and the `reuse` phase in
+ * `lib/sync/vps-deploy.ts`, the install summary + force hint in
+ * `sync/code.ts`, a `README.md` runbook entry and a `CHANGELOG.md` bullet (the
+ * F/O/T cases are test files — excluded by `tsconfig.json` and outside
+ * `files`). Same method as BR-117 (`git archive` scratch builds,
+ * `copy-templates.sh` run in both arms, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm). CONTROL = HEAD `d6f8ef3`: 1_987_213 /
+ * 7_211_166 / 577 / `905b569e…` — byte-identical to the BR-117 row, re-taken.
+ * FINAL = a `git write-tree` of the working tree through a TEMP index
+ * (`928ef2f7`, no commit), twice; the live `cli/dist` mtime and
+ * `~/.igris/config.json` sha unchanged by both arms.
+ *   packed              1_989_986    unpacked 7_218_453, 577 entries (+0),
+ *                                    shasum
+ *                                    `77d12b2008ec46cc0fd3b78037c12a49539da068`.
+ *   this round's share  +2_773 B     packed — OVER the plan's +1.5–2.5 KB
+ *                                    estimate by 273 B, UNDER its 4_000 B hard
+ *                                    stop, so no cut was taken.
+ *                                    Unpacked +7_287 over 6 artifacts,
+ *                                    reconciling exactly: `vps-deploy.js`
+ *                                    +3_479 / map +962, `code.js` +923 / map
+ *                                    +603, `CHANGELOG.md` +704, `README.md`
+ *                                    +616.
+ *   cumulative delta    +146_710 B   (1_989_986 − 1_843_276)
+ *   headroom remaining  6_890 B      (153_600 − 146_710)
+ *   RE-DERIVED: 1_989_986 − 1_987_213 = 2_773; 7_218_453 − 7_211_166 =
+ *   7_287 = 3_479 + 962 + 923 + 603 + 704 + 616; 143_937 + 2_773 = 146_710;
+ *   153_600 − 146_710 = 6_890.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

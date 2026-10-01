@@ -770,3 +770,284 @@ describe("BR-117 — the BUILT CLI as a real process (no vitest event loop in th
     60_000,
   );
 });
+
+/*
+ * TD-487 — the runner skips `npm ci` when the install fingerprint (lockfile,
+ * root + workspace manifests, .npmrc, node/npm versions, ABI, platform, arch)
+ * equals the marker inside the LIVE `node_modules`, copying the live tree into
+ * the stage instead. Oracle for "skipped": `npm ci` is POISONED (EXIT 97), and
+ * `done-<pid>` markers count every natural `ci` finish — a missing log line is
+ * not proof. Appended after BR-117 so the `:479`/`:501`/`:603` cites hold.
+ */
+describe("TD-487 — install fingerprint: reuse the live node_modules when nothing install-relevant changed", () => {
+  const D = (): string => join(VPS, ".igris-deploy");
+  const rcOf = (id: string): Record<string, string> =>
+    Object.fromEntries(
+      readFileSync(join(D(), "runs", id, "rc"), "utf-8")
+        .split("\n")
+        .filter((l) => l.includes("="))
+        .map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]),
+    );
+  const logOf = (id: string): string => readFileSync(join(D(), "runs", id, "log"), "utf-8");
+  const FP_FILE = (root: string): string => join(root, "node_modules", ".igris-install-fp");
+  const fpLive = (): string | undefined =>
+    existsSync(FP_FILE(VPS)) ? readFileSync(FP_FILE(VPS), "utf-8").trim() : undefined;
+  const FP_RE = /^v1-[0-9a-f]{64}$/;
+  const ids = ["20261001T120000Z-4870", "20261001T120100Z-4871", "20261001T120200Z-4872"];
+  const at = (log: string, phase: string): number => log.indexOf(`=== igris-deploy phase=${phase} start`);
+  const RECORDER =
+    'module.exports=class D{constructor(){require("fs").appendFileSync(process.env.BR116_CTL+"/smoke.log",__dirname+"\\n")}close(){}};// RECORDER\n';
+
+  it("T1 (AC-1): unchanged inputs → npm ci NEVER runs (poisoned), the reused copy passes the stage smoke BEFORE the swap and goes live", async () => {
+    npmEnv({ NEW_ONLY: 1 });
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    // Mark the LIVE tree so "the copy went live" is observable.
+    writeFileSync(liveBs3(), RECORDER);
+    mkdirSync(join(VPS, "node_modules", ".bin"), { recursive: true });
+    execFileSync("ln", ["-s", "../better-sqlite3/index.js", join(VPS, "node_modules", ".bin", "rel")], { timeout: 10_000 });
+    writeFileSync(join(VPS, "brain-mcp-server", "dist", "index.js"), "// LIVE-DIST-2\n");
+    npmEnv({ EXIT: 97 }); // a poisoned npm ci: if it runs, the deploy fails
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect(doneMarkers(), "npm ci ran on the unchanged-input deploy").toHaveLength(1);
+    const rc1 = rcOf(ids[0]);
+    expect([rc1.install, rc1.install_why]).toEqual(["ran", "first"]);
+    const rc2 = rcOf(ids[1]);
+    expect(rc2.install).toBe("skipped");
+    expect(fpLive()).toMatch(FP_RE);
+    const log = logOf(ids[1]);
+    expect(at(log, "install"), "a skipped deploy entered the install phase").toBe(-1);
+    for (const [a, b] of [["reuse", "build"], ["build", "smoke-stage"], ["smoke-stage", "swap"], ["swap", "smoke-live"]]) {
+      expect(at(log, a), `${a} before ${b}`).toBeGreaterThanOrEqual(0);
+      expect(at(log, a), `${a} before ${b}`).toBeLessThan(at(log, b));
+    }
+    const smokes = readFileSync(join(CTL, "smoke.log"), "utf-8").trim().split("\n");
+    const firstLive = smokes.findIndex((l) => !l.includes("/.igris-deploy/"));
+    expect(smokes.slice(0, firstLive).filter((l) => l.includes("/.igris-deploy/stage/")).length, smokes.join("\n")).toBeGreaterThanOrEqual(2);
+    expect(firstLive, "the stage smoke ran on the reused copy before any live smoke").toBeGreaterThan(0);
+    expect(readFileSync(liveBs3(), "utf-8")).toContain("RECORDER"); // the copied tree went live
+    expect(readFileSync(join(VPS, "brain-mcp-server", "dist", "index.js"), "utf-8")).toContain("NEW-DIST"); // the build ran
+    expect(readFileSync(join(VPS, "cli", "node_modules", "new-only", "x"), "utf-8"), "every NM rel copied").toBe("NEW\n");
+    expect(readlinkSync(join(VPS, "node_modules", ".bin", "rel"))).toBe("../better-sqlite3/index.js");
+    expect(readFileSync(FP_FILE(join(D(), "prev")), "utf-8").trim(), "prev/ holds deploy#1's tree").toBe(fpLive());
+    expect(second.out).toContain("install skipped (node_modules reused in");
+    expect(restarts()).toBe(2);
+  }, 60_000);
+
+  it("T1b (AC-1 fidelity): the transformers model cache is NOT carried into the reused tree (npm ci never makes it); prev/ keeps it", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const cache = join("node_modules", "@huggingface", "transformers", ".cache");
+    mkdirSync(join(VPS, cache), { recursive: true });
+    writeFileSync(join(VPS, cache, "m.onnx"), "partial-model");
+    writeFileSync(join(VPS, "node_modules", "@huggingface", "transformers", "index.js"), "// pkg\n");
+    npmEnv({ EXIT: 97 });
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect(rcOf(ids[1]).install).toBe("skipped");
+    expect(existsSync(join(VPS, "node_modules", "@huggingface", "transformers", "index.js")), "the package itself is copied").toBe(true);
+    expect(existsSync(join(VPS, cache, "m.onnx")), "the runtime model cache was copied forward").toBe(false);
+    expect(readFileSync(join(D(), "prev", cache, "m.onnx"), "utf-8")).toBe("partial-model");
+  }, 60_000);
+
+  it("T2 (AC-2 lockfile): one changed lockfile byte → npm ci runs as today (changed)", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const f1 = fpLive();
+    writeFileSync(join(LOCAL, "package-lock.json"), '{"lockfileVersion":3} \n');
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect(doneMarkers(), "npm ci did not run on a changed lockfile").toHaveLength(2);
+    expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why]).toEqual(["ran", "changed"]);
+    expect(second.out).toContain("(npm ci: changed)");
+    expect(fpLive()).toMatch(FP_RE);
+    expect(fpLive()).not.toBe(f1);
+  }, 60_000);
+
+  it("T3 (AC-2 Node): a changed `node --version` → npm ci runs (changed); rc.node names it", async () => {
+    const node = join(BIN, "node");
+    sh(
+      node,
+      `#!/bin/bash
+if [ "$1" = --version ] && [ -f "$BR116_CTL/node-version" ]; then cat "$BR116_CTL/node-version"; exit 0; fi
+exec ${JSON.stringify(process.execPath)} "$@"
+`,
+    );
+    try {
+      execFileSync(node, ["--version"], { env: process.env, stdio: "ignore", timeout: 15_000 }); // warm
+      const first = await deploy({ runId: ids[0] });
+      expect(first.code, first.out).toBe(0);
+      writeFileSync(join(CTL, "node-version"), "v22.99.0\n");
+      const second = await deploy({ runId: ids[1] });
+      expect(second.code, second.out).toBe(0);
+      expect(rcOf(ids[1]).node).toBe("v22.99.0");
+      expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why], "a Node bump reused the old tree").toEqual(["ran", "changed"]);
+      expect(doneMarkers()).toHaveLength(2);
+    } finally {
+      rmSync(node, { force: true });
+    }
+  }, 60_000);
+
+  it("T4 (AC-2, L-965): a dependency added to a WORKSPACE manifest with the lockfile untouched → npm ci runs (changed)", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    writeFileSync(join(LOCAL, "cli", "package.json"), '{"name":"igris-ai-cli","dependencies":{"left-pad":"1.3.0"}}\n');
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why], "a workspace manifest change reused the old tree").toEqual(["ran", "changed"]);
+    expect(doneMarkers()).toHaveLength(2);
+  }, 60_000);
+
+  it("T5 (control — not over-broad): a docs + brain-source change still reuses (npm ci poisoned)", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    writeFileSync(join(LOCAL, "README.md"), "# changed\n");
+    mkdirSync(join(LOCAL, "brain-mcp-server", "src"), { recursive: true });
+    writeFileSync(join(LOCAL, "brain-mcp-server", "src", "x.ts"), "export const x = 1;\n");
+    npmEnv({ EXIT: 97 });
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect(rcOf(ids[1]).install).toBe("skipped");
+    expect(doneMarkers()).toHaveLength(1);
+  }, 60_000);
+
+  it("T6 (fallback): a reused copy that fails the EARLY smoke falls back to npm ci in the same run; the bad copy never goes live", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    // Throws only when loaded from the stage — so only the reuse smoke can see it.
+    writeFileSync(
+      liveBs3(),
+      'module.exports=class D{constructor(){if(__dirname.includes("/.igris-deploy/"))throw new Error("stale copy")}close(){}};// STAGE-THROW\n',
+    );
+    npmEnv({});
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why]).toEqual(["ran", "reuse-failed"]);
+    const log = logOf(ids[1]);
+    expect(at(log, "reuse")).toBeGreaterThanOrEqual(0);
+    expect(at(log, "reuse")).toBeLessThan(at(log, "install"));
+    expect(at(log, "install")).toBeLessThan(at(log, "build"));
+    expect(doneMarkers()).toHaveLength(2);
+    expect(readFileSync(liveBs3(), "utf-8")).toContain("NEW-STUB");
+    expect(second.out).toContain("node_modules reuse failed (see ");
+    expect(second.out).toContain("(npm ci: reuse-failed)");
+  }, 60_000);
+
+  it("T7 (absolute-link guard): an absolute symlink in the live tree refuses the reuse → npm ci", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    execFileSync("ln", ["-s", T, join(VPS, "node_modules", "abs")], { timeout: 10_000 });
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why]).toEqual(["ran", "reuse-failed"]);
+    expect(logOf(ids[1])).toContain("reuse: absolute symlink under node_modules");
+    expect(existsSync(join(VPS, "node_modules", "abs"))).toBe(false);
+  }, 60_000);
+
+  it("T7b (guard fails CLOSED): a `find` that cannot run `-lname` (BusyBox-like) refuses the reuse → npm ci", async () => {
+    const find = join(BIN, "find");
+    const real = execFileSync("/bin/sh", ["-c", "command -v find"], { encoding: "utf-8", timeout: 10_000 }).trim();
+    sh(find, `#!/bin/bash\nfor a in "$@"; do [ "$a" = -lname ] && { echo "find: unknown primary -lname" >&2; exit 1; }; done\nexec ${real} "$@"\n`);
+    try {
+      execFileSync(find, ["/dev/null", "-maxdepth", "0"], { stdio: "ignore", timeout: 15_000 }); // warm
+      const first = await deploy({ runId: ids[0] });
+      expect(first.code, first.out).toBe(0);
+      const second = await deploy({ runId: ids[1] });
+      expect(second.code, second.out).toBe(0);
+      expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why], "an unrunnable guard let the copy through").toEqual(["ran", "reuse-failed"]);
+    } finally {
+      rmSync(find, { force: true });
+    }
+  }, 60_000);
+
+  it("T8 (rollback keeps tree↔marker): a rolled-back npm ci tree goes to failed/ WITHOUT a marker; the restored tree keeps its own, and is reused next", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const f1 = fpLive();
+    expect(f1).toMatch(FP_RE);
+    const lock = readFileSync(join(LOCAL, "package-lock.json"), "utf-8");
+    writeFileSync(join(LOCAL, "package-lock.json"), lock + " ");
+    npmEnv({ LIVE_THROW: 1 });
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code).toBe(1);
+    expect(second.out).toContain("auto-rolled back to the previous tree (rollback smoke: ok)");
+    expect(fpLive(), "the marker came back WITH its tree").toBe(f1);
+    expect(existsSync(FP_FILE(join(D(), "failed"))), "an unacknowledged tree carries a marker").toBe(false);
+    writeFileSync(join(LOCAL, "package-lock.json"), lock);
+    npmEnv({ EXIT: 97 });
+    const third = await deploy({ runId: ids[2] });
+    expect(third.code, third.out).toBe(0);
+    expect(rcOf(ids[2]).install).toBe("skipped");
+  }, 90_000);
+
+  it("T8b (rollback of a REUSED tree): the copy carries no marker into failed/ — the marker is never copied, only acknowledged", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const f1 = fpLive();
+    // Loads in the stage, throws live: the reused copy passes both stage smokes, fails smoke-live.
+    writeFileSync(
+      liveBs3(),
+      'module.exports=class D{constructor(){if(!__dirname.includes("/.igris-deploy/"))throw new Error("live")}close(){}};// LIVE-ONLY-THROW\n',
+    );
+    npmEnv({ EXIT: 97 });
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code).toBe(1);
+    expect(rcOf(ids[1]).install).toBe("skipped");
+    expect(second.out).toContain("auto-rolled back to the previous tree");
+    expect(existsSync(join(D(), "failed", "node_modules", "better-sqlite3", "index.js"))).toBe(true);
+    expect(existsSync(FP_FILE(join(D(), "failed"))), "the reused copy carried a marker").toBe(false);
+    expect(fpLive()).toBe(f1);
+  }, 60_000);
+
+  it("T9 (printed restore keeps tree↔marker): after a failed restart + the restore RUN verbatim, the live marker is the restored tree's; the next changed-input deploy reinstalls", async () => {
+    writeFileSync(join(CTL, "pm2-script"), "online\nerrored\nerrored\nonline\nonline\n");
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const f1 = fpLive();
+    writeFileSync(join(LOCAL, "package-lock.json"), '{"lockfileVersion":3,"t9":1}\n');
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code).toBe(1); // the runner succeeded (F2 written); the restart did not
+    const f2 = fpLive();
+    expect(f2).toMatch(FP_RE);
+    expect(f2).not.toBe(f1);
+    runPrintedRestore(second.out);
+    expect(fpLive(), "the restored tree is described by its own marker").toBe(f1);
+    expect(readFileSync(FP_FILE(join(D(), "failed")), "utf-8").trim()).toBe(f2);
+    // The live tree is F1's, the inputs are F2's: a false skip here would put F1's deps live.
+    const third = await deploy({ runId: ids[2] });
+    expect(third.code, third.out).toBe(0);
+    expect([rcOf(ids[2]).install, rcOf(ids[2]).install_why]).toEqual(["ran", "changed"]);
+    expect(doneMarkers()).toHaveLength(3);
+  }, 90_000);
+
+  it("T10 (force, run verbatim): the printed hint deletes the marker; the next deploy runs npm ci (first)", async () => {
+    const HINT = "sync code: force a clean npm ci on the next deploy: ";
+    expect((await deploy({ runId: ids[0] })).code).toBe(0);
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    const line = second.out.split("\n").find((l) => l.includes(HINT));
+    expect(line, "no force hint printed on a skipped deploy").toBeDefined();
+    expect(fpLive()).toMatch(FP_RE);
+    execFileSync("bash", ["-c", line!.slice(line!.indexOf(HINT) + HINT.length)], { env: process.env, stdio: "ignore", timeout: 15_000 });
+    expect(existsSync(FP_FILE(VPS)), "the printed command left the marker").toBe(false);
+    const third = await deploy({ runId: ids[2] });
+    expect(third.code, third.out).toBe(0);
+    expect([rcOf(ids[2]).install, rcOf(ids[2]).install_why]).toEqual(["ran", "first"]);
+    expect(doneMarkers()).toHaveLength(2);
+  }, 90_000);
+
+  it("T11 (unfingerprinted): a stage the fingerprint cannot read runs npm ci and writes NO marker", async () => {
+    const first = await deploy({ runId: ids[0] });
+    expect(first.code, first.out).toBe(0);
+    const f1 = fpLive();
+    expect(f1).toMatch(FP_RE);
+    rmSync(join(LOCAL, "package-lock.json")); // the client's rsync --delete removes it on the VPS too
+    const second = await deploy({ runId: ids[1] });
+    expect(second.code, second.out).toBe(0);
+    expect([rcOf(ids[1]).install, rcOf(ids[1]).install_why]).toEqual(["ran", "unfingerprinted"]);
+    expect(doneMarkers()).toHaveLength(2);
+    expect(fpLive(), "an unfingerprinted install was given a marker").toBeUndefined();
+    expect(readFileSync(FP_FILE(join(D(), "prev")), "utf-8").trim(), "the old tree keeps its own").toBe(f1);
+  }, 60_000);
+});

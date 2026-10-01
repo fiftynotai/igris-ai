@@ -233,7 +233,7 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 |---|---|
 | `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp; with a `vps` block, one read-only `node --version` ssh probe prints `vps node:` against the engines range (never changes the exit code) |
 | `data`   | Atomically drains local `~/.igris/projects/<slug>/sync_queue.jsonl` (rename-then-process; concurrency-safe under multi-harness use — see FR-128) via remote `igris_sync_queue_drain` MCP call. Recovers any stale `sync_queue.jsonl.draining-*` files from a prior crashed drain before processing. |
-| `code`   | Preflight (VPS Node vs engines range; refuses if another deploy runs, a swap was interrupted, or disk is short), rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, `.igris-deploy/`, IDE files, etc.), then a DETACHED runner in `<repo_path>/.igris-deploy/` runs `npm ci` + `npm run build` in a stage copy, smoke-loads `new Database(require("better-sqlite3"))`, swaps `node_modules` + `dist` in and re-smokes (auto-rollback). The client polls (30-min bound, reported — never kills the run), then restarts `igris-brain` via PM2 and exits 0 only when pm2 is `online` (restart count past its pre-restart value) and `/health` says `ok` twice in a row (one restart retry) |
+| `code`   | Preflight (VPS Node vs engines range; refuses if another deploy runs, a swap was interrupted, or disk is short), rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, `.igris-deploy/`, IDE files, etc.), then a DETACHED runner in `<repo_path>/.igris-deploy/` runs `npm ci` (or copies the live `node_modules` when the install fingerprint matches) + `npm run build` in a stage copy, smoke-loads `new Database(require("better-sqlite3"))`, swaps `node_modules` + `dist` in and re-smokes (auto-rollback). The client polls (30-min bound, reported — never kills the run), then restarts `igris-brain` via PM2 and exits 0 only when pm2 is `online` (restart count past its pre-restart value) and `/health` says `ok` twice in a row (one restart retry) |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
 
 `--dry-run` previews the rsync/ssh/MCP calls without performing them.
@@ -263,8 +263,11 @@ disk sizing — the runbook below, before each `npm publish`:
    an agent's command timeout; the remote run finishes regardless) and watch:
    - `sync code: VPS Node vX — within|OUTSIDE engines range …`
    - `sync code: rsync <src> -> <dst>`, then `run <id> launched on the VPS`
-   - `sync code: [<id>] install` / `build` / `swap` … phase transitions
-   - `sync code: deployed run <id> — install Xs, build Ys; pm2 online (node vZ); health ok`
+   - `sync code: [<id>] install` (or `reuse`) / `build` / `swap` … phase transitions
+   - `sync code: deployed run <id> — install Xs (npm ci: first|changed|…), build Ys; pm2 online (node vZ); health ok`,
+     or `install skipped (node_modules reused in Xs)` when the install fingerprint matches (inputs: node + npm
+     versions, native ABI, platform, arch, `package-lock.json`, root and workspace `package.json`, root `.npmrc`);
+     a reuse failure still runs `npm ci`
    - on failure: the phase + npm's real exit code/error lines (EBADENGINE
      warnings are counted, not quoted) and `full log: <user>@<host>:<repo>/.igris-deploy/runs/<id>/log`
 4. **Cron parity:** `igris sync code --if-changed` from a clean tree
@@ -283,6 +286,10 @@ disk sizing — the runbook below, before each `npm publish`:
   prints the same restore command. It moves the new tree to `failed/`, puts
   `prev/` back and restarts pm2; re-running it is harmless. Run it BEFORE
   re-running `igris sync code`: the next run deletes `prev/`.
+- *Force a clean `npm ci`* — delete the install marker:
+  `ssh <user>@<host> "rm -f '<repo_path>/node_modules/.igris-install-fp'"`;
+  a skipped deploy prints this line. Never hand-edit the live `node_modules`
+  without deleting it.
 
 ## Project handoff — `igris export` / `igris import`
 

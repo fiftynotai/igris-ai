@@ -99,6 +99,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new table's rows actually reach the other machine — but it is a preference,
   not a precondition.
 
+### Changed
+
+- **`igris sync code` reuses the VPS `node_modules` when nothing install-relevant
+  changed (TD-487).** The runner fingerprints node + npm, the lockfile, the root
+  and workspace `package.json` files and the root `.npmrc`; on a match with the
+  marker inside the live tree it copies that tree into the stage instead of
+  running `npm ci`, smokes the copy, and runs `npm ci` if anything fails. A
+  skipped deploy prints the command that forces a clean install. On the brain
+  VPS (Ubuntu 24.04, Node 22.23.3, 2026-10-01, one A/B pair) install fell from
+  408 s to 107 s (−74%) and client wall from 762 s to 467 s (−39%); on a macOS
+  workstation (warm npm cache) the copy saved nothing.
+
 ### Fixed
 
 - **`igris sync code` can no longer leave the VPS on a wiped dependency tree
