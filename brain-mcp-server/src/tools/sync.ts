@@ -576,7 +576,7 @@ export async function fetchWithRetry(
       clearTimeout(timeout);
       if (response.ok) return response;
       if (response.status >= 400 && response.status < 500) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        throw new Error(redactSecret(`HTTP ${response.status}: ${await response.text()}`, bearerOf(options)));
       }
       lastError = new Error(`HTTP ${response.status}`);
     } catch (err) {
@@ -1359,14 +1359,14 @@ async function handleBrainPush(
       // so they surface in /scan and operator logs. Treat truly broken
       // responses (missing `results` entirely) as fatal.
       if (!result.results) {
-        console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
+        console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, redactSecret(JSON.stringify(result), args.api_key));
         throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
       for (const t of Object.keys(result.results as Record<string, unknown>)) acked.add(t);
       const remoteErrors = (result.errors ?? {}) as Record<string, string>;
       for (const [tableName, errMessage] of Object.entries(remoteErrors)) {
-        console.error(`[brain] Remote sync table=${tableName} error: ${errMessage}`);
-        if (!failed.has(tableName)) failed.set(tableName, errMessage);
+        console.error(`[brain] Remote sync table=${tableName} error: ${redactSecret(errMessage, args.api_key)}`);
+        if (!failed.has(tableName)) failed.set(tableName, redactSecret(errMessage, args.api_key));
       }
       if (Array.isArray(result.skipped)) {
         for (const t of result.skipped) skippedByRemote.add(String(t));
@@ -1908,7 +1908,7 @@ async function handleSyncQueueDrain(
         for (const t of chunk) {
           if (failedTables[t.table]) {
             const tableErr = failedTables[t.table];
-            updateRetry.run(now, `HTTP 207 — table=${t.table}: ${tableErr}`, t.id);
+            updateRetry.run(now, `HTTP 207 — table=${t.table}: ${redactSecret(tableErr, args.api_key)}`, t.id);
             totalFailed++;
           } else {
             markSent.run(now, t.id);
@@ -2362,6 +2362,15 @@ async function handleFilePull(
       isError: true,
     } as { content: { type: string; text: string }[]; isError: boolean };
   }
+}
+
+/** BR-118: replace every occurrence of `secret` in remote-authored text; '' is a no-op. */
+export function redactSecret(text: string, secret: string): string {
+  return secret ? String(text).split(secret).join('[redacted]') : text;
+}
+
+function bearerOf(init: RequestInit): string {
+  return (new Headers(init.headers).get('authorization') ?? '').replace(/^Bearer\s*/, '');
 }
 
 export {

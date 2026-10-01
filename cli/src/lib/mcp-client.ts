@@ -30,6 +30,11 @@ export interface RemoteBrainConfig {
   apiKey: string;
 }
 
+/** BR-118: the brain's `redactSecret` twin (same token, no cross-import); '' is a no-op. */
+export function redactKey(text: string, key: string): string {
+  return key ? text.split(key).join("[redacted]") : text;
+}
+
 export interface McpToolCallResult {
   /** HTTP status code from the response. */
   statusCode: number;
@@ -293,7 +298,7 @@ export async function syncPull(
               tables = {};
             }
           }
-          settle({ statusCode: res.statusCode ?? 0, tables, body: respBody });
+          settle({ statusCode: res.statusCode ?? 0, tables, body: redactKey(respBody, remote.apiKey) });
         });
         res.on("error", (err) =>
           settle({ statusCode: 0, tables: {}, body: err.message }),
@@ -600,7 +605,7 @@ export async function mcpCall(
         });
         res.on("end", () => {
           if (overflowed) return;
-          const respBody = Buffer.concat(chunks).toString("utf-8");
+          const respBody = redactKey(Buffer.concat(chunks).toString("utf-8"), remote.apiKey);
           let parsedJson: unknown = null;
           if (res.statusCode === 200) {
             const ct = res.headers["content-type"];

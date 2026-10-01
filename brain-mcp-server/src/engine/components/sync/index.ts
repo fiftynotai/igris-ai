@@ -41,7 +41,7 @@ import {
   handleFilePush,
   handleFilePull,
   fetchWithRetry,
-  queueFailedRows,
+  queueFailedRows, redactSecret,
   chunkTablesForPush,
   redactTablesForEgress,
   SYNC_TABLES,
@@ -210,7 +210,7 @@ async function pushTables(
           // First failure wins; subsequent chunks for the same table do
           // not overwrite — keeps the queue's error_message stable.
           if (!(tableName in failedTables)) {
-            failedTables[tableName] = errMessage;
+            failedTables[tableName] = redactSecret(errMessage, config.apiKey);
           }
         }
       }
@@ -546,7 +546,7 @@ export function createSyncComponent(): BrainComponent {
         },
         {
           name: 'igris_sync_queue_drain',
-          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
+          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking. Agents: run `igris sync drain` instead; it reads the key from config.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,

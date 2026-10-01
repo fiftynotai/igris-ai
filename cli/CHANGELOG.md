@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`igris sync drain` (TD-489).** Retries this machine's brain retry queue
+  (the `sync_queue` table failed pushes fill) with the key read from config,
+  via the bundled `igris_sync_queue_drain` handler. `/rest` §2.6.5 runs it.
+
 - **`igris sync push` (TD-350).** Pushes the local brain delta to `remote_brain`
   with the url and key read from config (no key argument), via the bundled
   `igris_brain_push` handler; exit 1 on a partial push. `sync status`'s `last
@@ -118,6 +122,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   workstation (warm npm cache) the copy saved nothing.
 
 ### Fixed
+
+- **A remote that echoes the API key no longer gets it stored or printed
+  (BR-118).** Brain sync redacts the key from remote error text before
+  queueing, returning or logging it; `sync data` redacts it too.
 
 - **`igris sync code` can no longer leave the VPS on a wiped dependency tree
   or report success on an unhealthy brain (BR-116).** A slow `npm ci` was

@@ -431,13 +431,12 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "not credit an unmarked word as a named argument, by design."),
     ("core/skills/rest/SKILL.md", "igris_sync_queue_drain",
      ('api_key', 'remote_url')): (
-        "prose", 4,
-        "Four sentences ABOUT the tool, none of them the call: what the CLI "
-        "drains for you (and that it reads both values from config itself), a "
-        "negative instruction, the CONDITION under which to call it directly, "
-        "and the BR-080 rule statement itself ('requires BOTH arguments'). "
-        "The call spec is the sub-list in the same section, which names "
-        "remote_url and api_key and is NOT flagged."),
+        "prose", 2,
+        "Two sentences ABOUT the tool, neither of them a call: what `igris "
+        "sync data` asks the remote to drain (reading both values from config "
+        "itself), and §2.6.5's negative instruction never to call it directly. "
+        "Since TD-489 no /rest step calls it — §2.6.5 runs the config-reading "
+        "`igris sync drain`, so no site names either key as an argument."),
 
     # --- reuse ---------------------------------------------------------------
     ("core/skills/reuse/SKILL.md", "igris_catalog_get", ('id',)): (

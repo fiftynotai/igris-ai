@@ -12,6 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`igris sync drain` — this machine's brain retry queue, with no key in any
+  argument (TD-489).** Failed pushes queue their rows in the local brain's
+  `sync_queue` table, and nothing drains it any more: `igris sync data` asks the
+  REMOTE host to drain its own table, and `/rest` §2.6.5 called
+  `igris_sync_queue_drain` only when that failed, passing the key as a tool
+  argument. The new verb reads `remote_brain` from config and dispatches the
+  bundled handler in process; §2.6.5 now runs it on every `/rest` (no MCP
+  call, no key in the transcript). A read-only count on 2026-10-02 found 1,051
+  pending rows in this machine's queue, none ever retried; its newest `sent_at`
+  was 2026-08-12.
+
 - **`igris sync push` — a push with no key in any argument (TD-350).** The
   verb reads `remote_brain.url` and `remote_brain.api_key` from
   `~/.igris/config.json` itself, accepts no key argument, and dispatches the
@@ -71,6 +82,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FR-273's lookup tool.
 
 ### Fixed
+
+- **A remote that echoes the API key no longer leaves it in the local brain
+  (BR-118).** `fetchWithRetry` redacts the request's own bearer key from a 4xx
+  body before it is thrown, so the queued `sync_queue.error_message` rows, the
+  handler texts and the logs no longer carry it; the 207 per-table error text
+  is redacted where it is read, and the CLI's `mcpCall` redacts the key from a
+  remote body before `igris sync data` prints it. Exact matches only, with the
+  token `[redacted]`.
 
 - **`igris sync status` printed `last push: never` while pushes succeeded
   (TD-350).** It printed the mtime of `sync_queue.jsonl`, a file that exists

@@ -3140,6 +3140,45 @@ interface PackReport {
  *   + 69 + 11 − 761 − 613; 146_710 + 2_567 = 149_277; 153_600 − 149_277 =
  *   4_323.
  *
+ * BUNDLE BR-118/TD-489 MEASURED LAST (2026-10-02), after its final
+ * code-touching step: `redactSecret` and the 4xx redaction in the brain's
+ * `fetchWithRetry` plus the three 207 readers and the malformed-response dump
+ * (`tools/sync.ts`, `engine/components/sync/index.ts`), one sentence on the
+ * brain's `igris_sync_queue_drain` description (D-3), `redactKey` in
+ * `lib/mcp-client.ts` (`mcpCall` and `syncPull`), the `igris sync drain` door
+ * in `lib/sync/push.ts` (one `runDoor`, two entries), the sub-verb in
+ * `verbs/sync.ts`, the help line in `index.ts`, a `README.md` row and two
+ * `CHANGELOG.md` bullets (the B/C/D/E/R2/S3b cases are test files — excluded
+ * by `tsconfig.json` and outside `files`). Same method as the BUNDLE
+ * TD-344/TS-002/TD-481/TD-350 row (`git archive` scratch builds,
+ * `copy-templates.sh` run in both arms, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm). CONTROL = HEAD `d4e6a97`: 1_992_553 /
+ * 7_226_210 / 579 / `66b88d54…` — byte-identical to that row, re-taken.
+ * FINAL = a `git write-tree` of the working tree through a TEMP index
+ * (`509c08ed`, no commit), twice; the live `cli/dist` mtime and
+ * `~/.igris/config.json` sha unchanged by both arms.
+ *   packed              1_993_761    unpacked 7_229_751, 579 entries (+0),
+ *                                    shasum
+ *                                    `aec2ba5f8a92856f2d4ecf40a295e249b6798c66`.
+ *   this round's share  +1_208 B     packed — inside the plan's +1.1–1.8 KB
+ *                                    estimate and UNDER its 2_500 B hard
+ *                                    stop, so no cut was taken.
+ *                                    Unpacked +3_541 over 12 artifacts,
+ *                                    reconciling exactly: `push.js` +635 /
+ *                                    map +523, the vendored `tools/sync.js`
+ *                                    +479 / `sync.d.ts` +168,
+ *                                    `CHANGELOG.md` +441, `README.md` +358,
+ *                                    `mcp-client.js` +246 / map +245,
+ *                                    `verbs/sync.js` +173 / map +147, the
+ *                                    vendored `engine/components/sync/index.js`
+ *                                    +113, `index.js` +13.
+ *   cumulative delta    +150_485 B   (1_993_761 − 1_843_276)
+ *   headroom remaining  3_115 B      (153_600 − 150_485)
+ *   RE-DERIVED: 1_993_761 − 1_992_553 = 1_208; 7_229_751 − 7_226_210 =
+ *   3_541 = 635 + 523 + 479 + 168 + 441 + 358 + 246 + 245 + 173 + 147 + 113
+ *   + 13; 149_277 + 1_208 = 150_485; 153_600 − 150_485 = 3_115.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

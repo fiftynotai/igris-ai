@@ -93,6 +93,9 @@ import { getDb } from '../../db.js';
 import {
   handleBrainPush,
   handleBrainPull,
+  handleSyncQueueDrain,
+  handleFilePush,
+  handleFilePull,
   handleSessionFilePull,
   processSyncPush,
   mergeRows,
@@ -100,6 +103,7 @@ import {
   runPostMergeEmbedPass,
   relativizeEgressPath,
   redactTablesForEgress,
+  redactSecret,
   SYNC_TABLES,
   type SyncPushResult,
 } from '../sync.js';
@@ -1454,5 +1458,230 @@ describe('BR-100 — machine_id is not replicated (push payload, inbound INSERT,
     expect(merged.updated).toBe(1);
     const row = db.prepare("SELECT current_phase, last_activity_at, machine_id FROM instances WHERE id = 'i-mine'").get() as Record<string, unknown>;
     expect(row).toEqual({ current_phase: 'TESTING', last_activity_at: '2026-09-06 10:00:00', machine_id: 'my-machine-id' });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-118 — a remote that ECHOES the configured key leaves it in no sync_queue
+// row and in no handler text.
+//
+// THE DEFECT: `fetchWithRetry` re-threw a 4xx as `HTTP <status>: <body>`, and
+// every caller persisted or returned that text verbatim — `handleBrainPush`'s
+// catch into `queueFailedRows` + its returned text, the drain's `updateRetry`,
+// the pull and file handlers' returned text. The TD-350 S11 probe found the
+// echoed key in 6 `sync_queue.error_message` rows of a sandbox brain.
+//
+// THE FIXTURE reflects the REQUEST's OWN `Authorization` header (never a
+// constant), plus a bare `token=<key>`, so the key appears twice in one body:
+// a fix that redacted only the `Bearer <key>` form, or only the first
+// occurrence, leaves the second (mutations M3/M4). Responses are real undici
+// `Response` objects. Every case is a 4xx or 2xx — a 5xx would add
+// `fetchWithRetry`'s 1 s + 2 s backoff and none is needed (TD-336: these run
+// in milliseconds under the default budget).
+//
+// C1/C2 are controls (no over-redaction; an empty key is a no-op, never an
+// interleaving of the token). C4 is a TRIPWIRE, green before and after: a
+// non-JSON 2xx reaches the catch as V8's SyntaxError, whose snippet is bounded
+// (`"unauthoriz"...`), so no FULL key lands — it reds if a runtime ever prints
+// whole bodies. The 207 per-table `errors` cases (B5) are D-4 of the plan.
+// ---------------------------------------------------------------------------
+
+describe('BR-118 — a remote that echoes the key leaves it in no queue row and no handler text', () => {
+  const REMOTE = 'http://test-remote.local';
+  const KEY = 'sk-br118-canary-brain';
+  const ECHOED = 'unauthorized: got Bearer [redacted]; token=[redacted]';
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+  let calls: number;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    // The drain's columns (db.ts v5 `sync_queue`), absent from the push-only stub.
+    db.exec(`
+      ALTER TABLE sync_queue ADD COLUMN retry_count INTEGER DEFAULT 0;
+      ALTER TABLE sync_queue ADD COLUMN max_retries INTEGER DEFAULT 5;
+      ALTER TABLE sync_queue ADD COLUMN last_retry_at TEXT;
+      ALTER TABLE sync_queue ADD COLUMN sent_at TEXT;
+    `);
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    calls = 0;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    errSpy.mockRestore();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  /** The credential THIS request carried, read from its own headers. */
+  function bearerOf(init?: RequestInit): string {
+    return (new Headers(init?.headers).get('authorization') ?? '').replace(/^Bearer\s*/, '');
+  }
+
+  /** A remote answering every call with `status` and a body built from the request. */
+  function remote(status: number, body: (key: string) => string, type = 'text/plain'): void {
+    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+      calls++;
+      return new Response(body(bearerOf(init)), { status, headers: { 'Content-Type': type } });
+    }) as typeof globalThis.fetch;
+  }
+
+  const echo401 = (): void => remote(401, (k) => `unauthorized: got Bearer ${k}; token=${k}`);
+
+  function seedLearnings(n: number): void {
+    const ins = db.prepare(
+      `INSERT INTO learnings (project, category, title, content, review_status,
+         provenance, source_extractor, created_at)
+       VALUES ('p', 'pattern', ?, 'body', 'approved', 'observed', 'manual', '2026-10-01 10:00:00')`,
+    );
+    for (let i = 0; i < n; i++) ins.run(`br118 learning ${i}`);
+  }
+
+  function seedQueue(n: number): void {
+    const ins = db.prepare(
+      `INSERT INTO sync_queue (table_name, row_data, operation, status) VALUES ('learnings', ?, 'push', 'pending')`,
+    );
+    for (let i = 0; i < n; i++) {
+      ins.run(JSON.stringify({ project: 'p', category: 'pattern', title: `queued ${i}`, content: 'b' }));
+    }
+  }
+
+  function queueRows(): { status: string; error_message: string | null }[] {
+    return db.prepare('SELECT status, error_message FROM sync_queue ORDER BY id').all() as {
+      status: string;
+      error_message: string | null;
+    }[];
+  }
+
+  function textOf(res: { content: { text: string }[] }): string {
+    return res.content?.[0]?.text ?? '';
+  }
+
+  function stderrLines(): string {
+    return errSpy.mock.calls.map((c) => c.map(String).join(' ')).join('\n');
+  }
+
+  it('B1: handleBrainPush vs an echo-401 — every queued error_message and the returned text exclude the key', async () => {
+    seedLearnings(2);
+    echo401();
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: KEY }));
+
+    expect(calls).toBe(1); // a 4xx is not retried
+    const rows = queueRows();
+    expect(rows).toHaveLength(2); // = seeded rows
+    for (const r of rows) {
+      expect(r.error_message).not.toContain(KEY);
+      // Both occurrences replaced — the bare `token=` form included (M3, M4).
+      expect(r.error_message).toBe(`HTTP 401: ${ECHOED}`);
+    }
+    expect(text).not.toContain(KEY);
+    expect(text).toContain(`Brain push failed: HTTP 401: ${ECHOED}`);
+    expect(stderrLines()).not.toContain(KEY);
+  });
+
+  it('B2: handleSyncQueueDrain vs an echo-401 — the updateRetry rows and the returned text exclude the key', async () => {
+    seedQueue(2);
+    echo401();
+    const text = textOf(await handleSyncQueueDrain({ remote_url: REMOTE, api_key: KEY }));
+
+    const rows = queueRows();
+    expect(rows).toHaveLength(2);
+    for (const r of rows) {
+      expect(r.status).toBe('retrying');
+      expect(r.error_message).not.toContain(KEY);
+      expect(r.error_message).toContain(`HTTP 401: ${ECHOED}`);
+    }
+    expect(text).toContain('Items failed: 2');
+    expect(text).not.toContain(KEY);
+  });
+
+  it('B3: handleBrainPull vs an echo-401 — the returned text excludes the key', async () => {
+    echo401();
+    const text = textOf(await handleBrainPull({ remote_url: REMOTE, api_key: KEY }));
+    expect(text).not.toContain(KEY);
+    expect(text).toContain(`Brain pull failed: HTTP 401: ${ECHOED}`);
+  });
+
+  it('B4: handleFilePush and handleFilePull vs an echo-401 — neither returned text holds the key', async () => {
+    echo401();
+    const pushed = textOf(await handleFilePush({ file_type: 'budget', content: '{}', remote_url: REMOTE, api_key: KEY }));
+    const pulled = textOf(await handleFilePull({ file_type: 'budget', remote_url: REMOTE, api_key: KEY }));
+    expect(calls).toBe(2);
+    expect(pushed).not.toContain(KEY);
+    expect(pushed).toContain(`File push failed: HTTP 401: ${ECHOED}`);
+    expect(pulled).not.toContain(KEY);
+    expect(pulled).toContain(`File pull failed: HTTP 401: ${ECHOED}`);
+  });
+
+  it('B5-push: a 207 whose per-table error echoes the key — the ERROR line and every stderr line exclude it', async () => {
+    seedLearnings(1);
+    remote(207, (k) => JSON.stringify({ ok: false, results: {}, errors: { learnings: `merge refused for ${k}` } }), 'application/json');
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: KEY }));
+
+    expect(text).toContain('learnings: ERROR — merge refused for [redacted]');
+    expect(text).not.toContain(KEY);
+    expect(stderrLines()).toContain('merge refused for [redacted]');
+    expect(stderrLines()).not.toContain(KEY);
+  });
+
+  it("B5-dump: a 2xx with no `results` that echoes the key — the logged response dump excludes it", async () => {
+    seedLearnings(1);
+    remote(200, (k) => JSON.stringify({ echo: k }), 'application/json');
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: KEY }));
+
+    expect(text).toContain('Remote returned invalid response');
+    expect(stderrLines()).toContain('[redacted]');
+    expect(stderrLines()).not.toContain(KEY);
+    for (const r of queueRows()) expect(r.error_message).not.toContain(KEY);
+  });
+
+  it('B5-drain: a 207 whose per-table error echoes the key — the retrying row excludes it', async () => {
+    seedQueue(1);
+    remote(207, (k) => JSON.stringify({ ok: false, results: {}, errors: { learnings: `merge refused for ${k}` } }), 'application/json');
+    await handleSyncQueueDrain({ remote_url: REMOTE, api_key: KEY });
+
+    const [row] = queueRows();
+    expect(row.status).toBe('retrying');
+    expect(row.error_message).toBe('HTTP 207 — table=learnings: merge refused for [redacted]');
+  });
+
+  it('C1 (control): a non-echo 4xx survives VERBATIM in the queue and the text — nothing over-redacted', async () => {
+    seedLearnings(1);
+    remote(400, () => 'bad request');
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: KEY }));
+    expect(queueRows().map((r) => r.error_message)).toEqual(['HTTP 400: bad request']);
+    expect(text).toContain('Brain push failed: HTTP 400: bad request');
+  });
+
+  it('C2 (control): an EMPTY api_key leaves the body byte-identical — no token interleaving', async () => {
+    seedLearnings(1);
+    remote(401, () => 'denied: no credential');
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: '' }));
+    expect(queueRows().map((r) => r.error_message)).toEqual(['HTTP 401: denied: no credential']);
+    expect(text).not.toContain('[redacted]');
+  });
+
+  it("C4 (tripwire): a non-JSON 2xx echoing a 64-char key leaves no FULL key — V8's JSON-error snippet is bounded", async () => {
+    const LONG = `sk-br118-${'c'.repeat(55)}`;
+    expect(LONG).toHaveLength(64);
+    seedLearnings(1);
+    remote(200, (k) => `unauthorized: got Bearer ${k}`);
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: LONG }));
+    expect(text).toContain('Brain push failed');
+    expect(text).not.toContain(LONG);
+    for (const r of queueRows()) expect(r.error_message).not.toContain(LONG);
+    expect(stderrLines()).not.toContain(LONG);
+  });
+
+  it('C3 (helper unit): every occurrence, a regex-metacharacter key matched LITERALLY, a near-miss untouched', () => {
+    expect(redactSecret('a K b K c', 'K')).toBe('a [redacted] b [redacted] c');
+    expect(redactSecret('x a.b+c? y', 'a.b+c?')).toBe('x [redacted] y');
+    expect(redactSecret('x aXb+c? y', 'a.b+c?')).toBe('x aXb+c? y');
+    expect(redactSecret('sk-br118-canar', KEY)).toBe('sk-br118-canar');
+    expect(redactSecret('unchanged', '')).toBe('unchanged');
   });
 });

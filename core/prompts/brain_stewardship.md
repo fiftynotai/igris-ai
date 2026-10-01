@@ -26,8 +26,8 @@ and happens via two paths:
 1. **Operator-initiated.** Run `igris sync push` to push the local delta (it
    reads the remote and key from config and dispatches `igris_brain_push` in
    process — never call that tool with a literal key yourself), or call
-   `igris_brain_pull` to pull remote rows. `/sync data` only drains the two
-   sync queues; it neither pushes nor pulls (`/boot` pulls via `igris boot-sync`).
+   `igris_brain_pull` to pull remote rows. `/sync data` drains the local queue file and asks the remote to drain
+   its own table, `igris sync drain` retries this machine's brain queue; neither pushes the delta nor pulls (`/boot` pulls via `igris boot-sync`).
    Use when you want this Mac's recent work to show up on another instance
    immediately, or when you suspect the local DB is missing rows another
    machine wrote.

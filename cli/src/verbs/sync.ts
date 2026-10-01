@@ -1,5 +1,5 @@
 /**
- * `igris sync <code|data|all|status|push> [--dry-run] [--if-changed]` — verb dispatcher.
+ * `igris sync <code|data|all|status|push|drain> [--dry-run] [--if-changed]` — verb dispatcher.
  *
  * Single entry point that routes the sub-verb argument to the appropriate
  * lib/sync/* implementation. The dispatch is intentionally thin so the
@@ -10,17 +10,17 @@
  * to both sub-verbs so the user gets a complete preview.
  *
  * `--if-changed` only applies to `code` (and `all` when it invokes code).
- * It's silently ignored for `data`, `status` and `push`. `push` (TD-350) is
- * explicit only — `all` stays `code` then `data`.
+ * It's silently ignored for `data`, `status`, `push` and `drain`. `push` (TD-350)
+ * and `drain` (TD-489) are explicit only — `all` stays `code` then `data`.
  */
 
 import { runSyncCode } from "../lib/sync/code.js";
 import { runSyncData } from "../lib/sync/data.js";
 import { runSyncStatus } from "../lib/sync/status.js";
-import { runSyncPush } from "../lib/sync/push.js";
+import { runSyncDrain, runSyncPush } from "../lib/sync/push.js";
 import { error as logError, info } from "../lib/log.js";
 
-export type SyncSubVerb = "code" | "data" | "all" | "status" | "push";
+export type SyncSubVerb = "code" | "data" | "all" | "status" | "push" | "drain";
 
 export interface SyncOptions {
   /** Sub-verb selector. */
@@ -40,12 +40,13 @@ const VALID_SUB_VERBS: ReadonlySet<string> = new Set([
   "all",
   "status",
   "push",
+  "drain",
 ]);
 
 export async function runSync(opts: SyncOptions): Promise<number> {
   if (!VALID_SUB_VERBS.has(opts.subVerb)) {
     logError(
-      `unknown sub-verb '${opts.subVerb}'. Valid: code, data, all, status, push.`,
+      `unknown sub-verb '${opts.subVerb}'. Valid: code, data, all, status, push, drain.`,
     );
     return 2;
   }
@@ -55,6 +56,9 @@ export async function runSync(opts: SyncOptions): Promise<number> {
   }
   if (opts.subVerb === "push") {
     return await runSyncPush({ dryRun: opts.dryRun });
+  }
+  if (opts.subVerb === "drain") {
+    return await runSyncDrain({ dryRun: opts.dryRun });
   }
   if (opts.subVerb === "code") {
     return await runSyncCode({

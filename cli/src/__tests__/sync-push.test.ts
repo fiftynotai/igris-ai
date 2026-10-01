@@ -60,7 +60,7 @@ const WITNESS = {
   created_at: "2026-10-01 10:00:00",
 };
 
-type Mode = "ok" | "skip-learnings" | "fail-500" | "real" | "echo-401";
+type Mode = "ok" | "skip-learnings" | "fail-500" | "real" | "echo-401" | "err-learnings";
 
 interface Remote {
   server: Server;
@@ -130,9 +130,15 @@ async function startRemote(mode: Mode): Promise<Remote> {
       for (const n of names) {
         if (!skipped.includes(n)) results[n] = { inserted: parsed.tables[n].length, updated: 0 };
       }
-      const ok = skipped.length === 0;
+      // TD-489 D7: a 207 that ERRORS one table (the drain marks its rows retrying).
+      const errors: Record<string, string> = {};
+      if (r.mode === "err-learnings" && results.learnings !== undefined) {
+        delete results.learnings;
+        errors.learnings = "fixture merge failure";
+      }
+      const ok = skipped.length === 0 && Object.keys(errors).length === 0;
       res.writeHead(ok ? 200 : 207, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok, results, errors: {}, skipped }));
+      res.end(JSON.stringify({ ok, results, errors, skipped }));
     });
   });
   await new Promise<void>((resolve) => r.server.listen(0, "127.0.0.1", resolve));
@@ -210,6 +216,18 @@ function filesHolding(dir: string, needle: string): string[] {
  * full-stream witness; this keeps the in-process cases honest too.
  */
 async function runPush(opts: { dryRun?: boolean } = {}): Promise<{ code: number; out: string }> {
+  return runDoor("runSyncPush", opts);
+}
+
+/** TD-489: the same capture around the drain door. */
+async function runDrain(opts: { dryRun?: boolean } = {}): Promise<{ code: number; out: string }> {
+  return runDoor("runSyncDrain", opts);
+}
+
+async function runDoor(
+  name: "runSyncPush" | "runSyncDrain",
+  opts: { dryRun?: boolean },
+): Promise<{ code: number; out: string }> {
   const buf: string[] = [];
   const cap = (chunk: unknown): boolean => {
     buf.push(typeof chunk === "string" ? chunk : String(chunk));
@@ -226,8 +244,11 @@ async function runPush(opts: { dryRun?: boolean } = {}): Promise<{ code: number;
     vi.spyOn(console, "error").mockImplementation(line),
   ];
   try {
-    const { runSyncPush } = await import("../lib/sync/push.js");
-    const code = await runSyncPush(opts);
+    const door = (await import("../lib/sync/push.js")) as unknown as Record<
+      string,
+      (o: { dryRun?: boolean }) => Promise<number>
+    >;
+    const code = await door[name](opts);
     return { code, out: buf.join("") };
   } finally {
     for (const sp of spies) sp.mockRestore();
@@ -405,6 +426,9 @@ describe("TD-350 — `igris sync push` (in process, vendored handler)", () => {
     expect(out).toContain("HTTP 401");
     expect(out).not.toContain(CANARY);
     expect(out).toContain("[redacted]");
+    // BR-118: nor in any FILE — the brain queued the failed rows with the 401
+    // text, and before the brain-side redaction that text held the key.
+    expect(filesHolding(homedir(), CANARY)).toEqual([]);
   });
 
   it("S9: remote unconfigured → exit 1, the engine is never booted", async () => {
@@ -433,7 +457,7 @@ describe("TD-350 — `igris sync push` (in process, vendored handler)", () => {
 // ---------------------------------------------------------------------------
 
 const CLI_ENTRY = join(CLI_DIR, "dist", "index.js");
-const DIST_FROM_SRC = ["index", "verbs/sync", "lib/sync/push", "lib/sync/status", "lib/brain-db"];
+const DIST_FROM_SRC = ["index", "verbs/sync", "lib/sync/push", "lib/sync/status", "lib/brain-db", "lib/mcp-client"];
 const STRIP_FROM_CHILD = /^(VITEST(_.*)?|TEST|NODE_ENV|NODE_OPTIONS|IGRIS_REAL_HOME)$/;
 
 /**
@@ -442,6 +466,9 @@ const STRIP_FROM_CHILD = /^(VITEST(_.*)?|TEST|NODE_ENV|NODE_OPTIONS|IGRIS_REAL_H
  * stay under so the child's own output is what a hang reports). MEASURED
  * 2026-10-01 in two full-suite runs under K=2 burners (1-min load ~37): R1
  * 589 / 756 ms, S3 408 / 349 ms. 10_000 is ~13x the worst.
+ * TD-489's drain children share it: two full-suite runs on 2026-10-02 (1-min
+ * load 5-15) gave R2 374 / 514 ms and S3b under 300 / 270 ms, under 1/13 of
+ * 10_000 (769 ms), so no DRAIN_CHILD_TIMEOUT_MS was defined.
  */
 const PUSH_CHILD_TIMEOUT_MS = 10_000;
 
@@ -509,6 +536,174 @@ describe("TD-350 — the BUILT `igris sync push` as a real process", () => {
     expect(status, out).not.toBe(0);
     expect(out).toContain("unknown option '--api-key'");
     expect(remote.pushes.length).toBe(0);
+    expect(out).not.toContain(CANARY);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-489 — `igris sync drain`: THIS machine's brain retry queue (the local
+// `sync_queue` TABLE that failed pushes fill), drained through the same
+// config-reading door as `sync push`. `igris sync data` cannot stand in: its
+// phase 2 asks the REMOTE host to drain ITS OWN table over `/mcp`. The verb
+// dispatches the vendored `igris_sync_queue_drain` handler in process; the key
+// travels only as the request's Authorization header.
+// ---------------------------------------------------------------------------
+
+/** Two queued rows in two tables, as a failed push leaves them (the db.ts v5 table). */
+function seedQueue(): void {
+  const db = new Database(dbPath());
+  try {
+    const ins = db.prepare(
+      "INSERT INTO sync_queue (table_name, row_data, operation, status, error_message) VALUES (?, ?, 'push', 'pending', 'HTTP 500')",
+    );
+    ins.run("learnings", JSON.stringify({ ...WITNESS, title: "td489 queued learning", review_status: "approved" }));
+    ins.run("projects", JSON.stringify({ slug: "td489", name: "td489", path: "td489", updated_at: "2026-10-01 10:00:00" }));
+  } finally {
+    db.close();
+  }
+}
+
+function queueStatus(): Record<string, string> {
+  const db = new Database(dbPath(), { readonly: true });
+  try {
+    const rows = db.prepare("SELECT table_name, status FROM sync_queue ORDER BY id").all() as Array<{
+      table_name: string;
+      status: string;
+    }>;
+    return Object.fromEntries(rows.map((r) => [r.table_name, r.status]));
+  } finally {
+    db.close();
+  }
+}
+
+describe("TD-489 — `igris sync drain` (in process, vendored handler)", () => {
+  it("D1: drains the queued rows with the config key on the wire ONLY; rows sent; exit 0", async () => {
+    remote = await startRemote("ok");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+
+    const { code, out } = await runDrain();
+    expect(code, out).toBe(0);
+    expect(out).toContain("Sync queue drain completed successfully.");
+    expect(out).toContain("Items sent: 2");
+    expect(remote.pushes.length).toBe(1);
+    expect(remote.pushes[0].auth).toBe(`Bearer ${CANARY}`);
+    expect(Object.keys(remote.pushes[0].tables).sort()).toEqual(["learnings", "projects"]);
+    expect(queueStatus()).toEqual({ learnings: "sent", projects: "sent" });
+    expect(out).not.toContain(CANARY);
+    expect(filesHolding(homedir(), CANARY)).toEqual([]);
+    expect(refused).toEqual([]);
+  });
+
+  it("D2: an empty queue → exit 0, 'Sync queue is empty', no request", async () => {
+    remote = await startRemote("ok");
+    writeConfig(remote.url);
+    await seedBrain();
+
+    const { code, out } = await runDrain();
+    expect(code, out).toBe(0);
+    expect(out).toContain("Sync queue is empty");
+    expect(remote.pushes.length).toBe(0);
+    expect(refused).toEqual([]);
+  });
+
+  it("D3: a remote that ECHOES the bearer in a 401 → exit 1; the key in no stream and no file (BR-118 via the vendored bundle)", async () => {
+    remote = await startRemote("echo-401");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+
+    const { code, out } = await runDrain();
+    expect(code, out).toBe(1);
+    expect(out).toContain("Sync queue drain failed");
+    expect(queueStatus()).toEqual({ learnings: "retrying", projects: "retrying" });
+    expect(out).not.toContain(CANARY);
+    expect(filesHolding(homedir(), CANARY)).toEqual([]);
+  });
+
+  it("D4: remote unconfigured → exit 1, the engine is never booted", async () => {
+    await seedBrain();
+    const { code, out } = await runDrain();
+    expect(code).toBe(1);
+    expect(out).toContain("remote_brain config not found");
+    expect(writeEngineState()).toBe("not-booted");
+  });
+
+  it("D5: a non-local http:// remote is REFUSED before boot — no request, no engine", async () => {
+    writeConfig("http://brain.td489.invalid");
+    await seedBrain();
+    seedQueue();
+    const { code, out } = await runDrain();
+    expect(code).toBe(1);
+    expect(out).toContain("refusing to sync over http://");
+    expect(out).not.toContain(CANARY);
+    expect(writeEngineState()).toBe("not-booted");
+    expect(refused).toEqual([]);
+  });
+
+  it("D6: --dry-run — no request, no engine boot, DB bytes unchanged, key absent, exit 0", async () => {
+    remote = await startRemote("ok");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+    const before = sha(dbPath());
+
+    const { code, out } = await runDrain({ dryRun: true });
+    expect(code, out).toBe(0);
+    expect(out).toContain(`${remote.url}/sync/push`);
+    expect(out).toContain("sync drain (dry-run)");
+    expect(out).not.toContain(CANARY);
+    expect(remote.pushes.length).toBe(0);
+    expect(writeEngineState()).toBe("not-booted");
+    expect(sha(dbPath())).toBe(before);
+  });
+
+  it("D7: a 207 that errors one table → 'partial success', exit 1; that table's row retrying, the other sent", async () => {
+    remote = await startRemote("err-learnings");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+
+    const { code, out } = await runDrain();
+    expect(code, out).toBe(1);
+    expect(out).toContain("Sync queue drain completed with partial success.");
+    expect(queueStatus()).toEqual({ learnings: "retrying", projects: "sent" });
+    expect(out).not.toContain(CANARY);
+  });
+});
+
+describe("TD-489 — the BUILT `igris sync drain` as a real process", () => {
+  it("R2: exits 0 with the key on the wire only — never in the child's streams or argv, never 134", async () => {
+    remote = await startRemote("ok");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+    const args = ["sync", "drain"];
+    expect(args.join(" ")).not.toContain(CANARY);
+    const { status, signal, out } = await runBuiltCli(args, PUSH_CHILD_TIMEOUT_MS);
+    const why = `child status=${status} signal=${signal}\n${out}`;
+    expect(status, why).toBe(0);
+    expect(status).not.toBe(134);
+    expect(signal).toBeNull();
+    expect(out).toContain("Sync queue drain completed successfully.");
+    expect(out).not.toContain(CANARY);
+    expect(remote.pushes.length).toBe(1);
+    expect(remote.pushes[0].auth).toBe(`Bearer ${CANARY}`);
+    expect(queueStatus()).toEqual({ learnings: "sent", projects: "sent" });
+    expect(filesHolding(homedir(), CANARY)).toEqual([]);
+  });
+
+  it("S3b: the drain takes NO key argument — `sync drain --api-key x` is a usage error and sends nothing", async () => {
+    remote = await startRemote("ok");
+    writeConfig(remote.url);
+    await seedBrain();
+    seedQueue();
+    const { status, out } = await runBuiltCli(["sync", "drain", "--api-key", "x"], PUSH_CHILD_TIMEOUT_MS);
+    expect(status, out).not.toBe(0);
+    expect(out).toContain("unknown option '--api-key'");
+    expect(remote.pushes.length).toBe(0);
+    expect(queueStatus()).toEqual({ learnings: "pending", projects: "pending" });
     expect(out).not.toContain(CANARY);
   });
 });

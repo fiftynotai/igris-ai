@@ -136,3 +136,12 @@ JSON
   [[ "$output" == *"sync_state.last_push_at"* ]] || return 1
   [[ "$output" != *"test-key"* ]] || return 1
 }
+
+@test "sync drain --dry-run: prints the plan and the /sync/push URL, never the key (TD-489)" {
+  run $CLI_BIN sync drain --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dry-run plan:"* ]] || return 1
+  [[ "$output" == *"http://127.0.0.1:1/sync/push"* ]] || return 1
+  [[ "$output" == *"pending sync_queue rows"* ]] || return 1
+  [[ "$output" != *"test-key"* ]] || return 1
+}
