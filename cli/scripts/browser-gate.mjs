@@ -102,6 +102,14 @@ const CHROME =
  * it from a diff.
  */
 const MUTATIONS = {
+  "br19-session-fused": {
+    gate: "G-BR-19a",
+    how: "open the sibling tab on the first recording, reproducing a dropped per-chat selection",
+  },
+  "br19-preview-as-full": {
+    gate: "G-BR-19a",
+    how: "rewrite preview node states to full in the browser response, collapsing the delivery distinction",
+  },
   "br1-fuse-projects": {
     gate: "G-BR-1d",
     how: "assert the two BR-001 detail titles are EQUAL — the exact BR-078 fusion signature",
@@ -1159,6 +1167,13 @@ async function startChrome() {
       "--no-default-browser-check",
       "--disable-gpu",
       /*
+       * FR-276: under a fenced HOME (no login keychain) Chrome's OSCrypt blocks
+       * its first network request waiting on the keychain, and every gate then
+       * times out on `Page.navigate`. A mock keychain keeps the gate runnable
+       * without a wrapper script; the profile is a throwaway temp dir anyway.
+       */
+      "--use-mock-keychain",
+      /*
        * THIS IS NOT THE VIEWPORT ANY GATE MEASURES AT, AND SAYING SO HERE IS
        * TD-332's first finding. Headless Chrome counts its own browser chrome
        * INSIDE `--window-size`, so the content box is ~1058x813, not 1440x900 —
@@ -1172,7 +1187,9 @@ async function startChrome() {
       "--window-size=1440,900",
       "about:blank",
     ],
-    { stdio: ["ignore", "pipe", "pipe"] },
+    // Nothing reads Chrome's output (the gate talks CDP over the port), and an
+    // unread pipe that fills would block Chrome's own logging writes.
+    { stdio: "ignore" },
   );
   children.push(child);
   const version = await waitForHttp(`http://127.0.0.1:${port}/json/version`, 20_000, "chrome");
@@ -1840,9 +1857,15 @@ const READ = {
   emptyKind: `const e = document.querySelector('[data-empty-kind]'); return e === null ? null : e.getAttribute('data-empty-kind');`,
   banners: `return [...document.querySelectorAll('.shell-banner')].map(e => e.textContent.trim());`,
   readouts: `return [...document.querySelectorAll('.record-readout')].map(e => e.textContent.trim());`,
-  inspectorTitle: `const e = document.querySelector('.graph-inspector-title'); return e === null ? null : e.textContent.trim();`,
-  inspectorEye: `const e = document.querySelector('.graph-inspector-eye'); return e === null ? null : e.textContent.trim();`,
-  inspectorMore: `const e = document.querySelector('.graph-inspector-more'); return e === null ? null : e.textContent.trim();`,
+  /*
+   * FR-276 — the node-inspector readers are SCOPED to `.graph-inspector` (the
+   * `<aside>` in NodeInspector.tsx / Graph.tsx). The session-attention panel sits
+   * before it in the same column and reuses `graph-inspector-eye` / `-hint`, so an
+   * unscoped `querySelector` read "// SESSION ATTENTION" instead of the node's eye.
+   */
+  inspectorTitle: `const e = document.querySelector('.graph-inspector .graph-inspector-title'); return e === null ? null : e.textContent.trim();`,
+  inspectorEye: `const e = document.querySelector('.graph-inspector .graph-inspector-eye'); return e === null ? null : e.textContent.trim();`,
+  inspectorMore: `const e = document.querySelector('.graph-inspector .graph-inspector-more'); return e === null ? null : e.textContent.trim();`,
   openRecordHref: `const a = [...document.querySelectorAll('.graph-inspector a')].find(x => x.textContent.trim() === 'OPEN RECORD'); return a === null || a === undefined ? null : a.getAttribute('href');`,
   /** `TIER A · 13 NODES · 3 EDGES` — the scope's identity, in one string. */
   graphReadout: `const e = document.querySelector('.graph-readout'); return e === null ? null : e.textContent.trim().replace(/\\s+/g, ' ');`,
@@ -8345,6 +8368,118 @@ function gLedger() {
   );
 }
 
+/** FR-276 — real ledger + two tabs + stable topology through activity/replay. */
+async function gBr19(cdpPort, world) {
+  gate("G-BR-19", "session attention isolation, evidence, history and graph stillness");
+  const ids = { a: "00000000-0000-4000-8000-000000000019", b: "00000000-0000-4000-8000-000000000020", child: "00000000-0000-4000-8000-000000000021" };
+  const graph = await apiJson(`${world.url}/api/graph`);
+  const node = graph.nodes.find((item) => item.type === "brief" && item.project === "demo");
+  if (!node) throw new Error("FR-276 fixture has no demo brief — the isolation check is unarmed");
+  const nodeRef = { type: node.type, project: node.project, id: node.id };
+  const attentionDir = join(CLI_ROOT, "dist", "brain-mcp-server", "dist", "engine", "components", "attention");
+  const mutateLedger = (body) => runSeedScript(`
+    const D = (await import('better-sqlite3')).default;
+    const db = new D(process.env.GATE_DB);
+    const { initializeAttention, sessionAction } = await import(process.env.GATE_ACTIONS);
+    const { appendEvent } = await import(process.env.GATE_STORE);
+    const ids = JSON.parse(process.env.GATE_IDS);
+    const node = JSON.parse(process.env.GATE_NODE);
+    const must = (value) => { if (!value.ok) throw new Error(value.reason); return value; };
+    ${body}
+    db.close();
+  `, { GATE_DB: world.db, GATE_IDS: JSON.stringify(ids), GATE_NODE: JSON.stringify(nodeRef),
+    GATE_ACTIONS: pathToFileURL(join(attentionDir, "actions.js")).href,
+    GATE_STORE: pathToFileURL(join(attentionDir, "store.js")).href,
+    IGRIS_BRAIN_DIR: world.brain, HOME: join(world.brain, "home") });
+  mutateLedger(`
+    initializeAttention(db);
+    for (const id of [ids.a, ids.b]) must(sessionAction(db, { action:'begin', session_id:id, project:'demo', harness:'fixture' }));
+    must(sessionAction(db, { action:'begin', session_id:ids.child, project:'demo', parent_session_id:ids.a }));
+    appendEvent(db, { session_id:ids.a, operation_id:'first-full', event_key:'read', actor_id:'actor-a', kind:'delivery', node, outcome:'succeeded', extent:'full', origin:'loader', bytes:123, source_revision:'fixture-v1' });
+    appendEvent(db, { session_id:ids.b, operation_id:'sibling-preview', event_key:'read', actor_id:'actor-b', kind:'delivery', node, outcome:'succeeded', extent:'preview', origin:'tool_boundary', bytes:12 });
+  `);
+  const watch = `
+    window.__attentionReads = { graph: 0, inventory: 0 };
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (...args) => {
+      const path = String(args[0]);
+      if (/^api\\/graph(?:\\?|$)/.test(path)) window.__attentionReads.graph++;
+      if (/^api\\/attention\\/inventory(?:\\?|$)/.test(path)) window.__attentionReads.inventory++;
+      const response = await originalFetch(...args);
+      if (${mut("br19-preview-as-full")} && path.startsWith('api/attention/session?') && response.ok) {
+        const body = await response.clone().json();
+        for (const node of body.node_states) if (node.state === 'preview') node.state = 'full';
+        return new Response(JSON.stringify(body), { status:response.status, headers:response.headers });
+      }
+      return response;
+    };
+  `;
+  const a = await openTab(cdpPort, `${world.url}/#/graph?session=${ids.a}`, watch);
+  const b = await openTab(cdpPort, `${world.url}/#/graph?session=${mut("br19-session-fused") ? ids.a : ids.b}`, watch);
+  const ready = async (tab) => {
+    await tab.focus();
+    await tab.until(has("[data-attention-node]"), { label: "recorded node evidence" });
+    await tab.until("return window.__igrisGraphStillness?.state() === 'still';", { label: "settled evidence canvas" });
+  };
+  const read = (tab) => tab.eval(`return {
+    session:document.querySelector('[data-attention-session]')?.dataset.attentionSession,
+    through:Number(document.querySelector('[data-attention-through]')?.dataset.attentionThrough),
+    evidence:[...document.querySelectorAll('[data-attention-node]')].map(e => ({key:e.dataset.attentionNode,state:e.dataset.evidence,text:e.textContent})),
+    positions:window.__igrisGraphStillness.positions(), zoom:window.__igrisGraphStillness.zoom(),
+    reads:{...window.__attentionReads}, text:document.querySelector('.attention-panel')?.textContent
+  };`);
+  await ready(a); const initialA = await read(a);
+  await ready(b); const initialB = await read(b);
+  check("19a", initialA.session === ids.a && initialB.session === ids.b && initialA.evidence.length === 1 && initialB.evidence.length === 1 && initialA.evidence[0].state === "full" && initialB.evidence[0].state === "preview",
+    `Independent tabs for one project: A ${JSON.stringify(initialA.evidence)}, B ${JSON.stringify(initialB.evidence)}.`);
+
+  mutateLedger(`appendEvent(db, { session_id:ids.a, operation_id:'later-failure', event_key:'read', actor_id:'actor-a', kind:'delivery', node, outcome:'failed', extent:'unknown', origin:'loader', reason:'fixture unreadable' });`);
+  await a.focus();
+  await a.until("return Number(document.querySelector('[data-attention-through]')?.dataset.attentionThrough) === 2;", { label: "A receives new activity" });
+  await a.until("return window.__igrisGraphStillness.state() === 'still';", { label: "A finite repaint ends" });
+  const updatedA = await read(a);
+  await b.focus(); await clickButton(b, "REFRESH ACTIVITY"); await b.settle(400);
+  const unchangedB = await read(b);
+  check("19b", updatedA.through === 2 && unchangedB.through === 1 && JSON.stringify(updatedA.positions) === JSON.stringify(initialA.positions) && updatedA.zoom === initialA.zoom && updatedA.reads.graph === 1 && updatedA.reads.inventory === 1,
+    `A advances to ${updatedA.through}; B remains ${unchangedB.through}; topology reads ${JSON.stringify(updatedA.reads)}; positions/camera unchanged.`);
+  await a.focus();
+  await a.eval("document.querySelector('[data-attention-node]').click(); return true;");
+  await a.until("return document.querySelector('[data-attention-inspector]')?.textContent.includes('fixture unreadable');", { label: "supporting failed attempt" });
+  const evidence = await a.eval("return document.querySelector('[data-attention-inspector]').textContent;");
+  check("19c", evidence.includes("Full delivered") && evidence.includes("delivery failed") && evidence.includes("actor-a") && evidence.includes("fixture-v1") && !evidence.includes("actor-b"),
+    "The inspector preserves full delivery plus failure, with actor and revision, and never includes sibling provenance.");
+  await a.until("return window.__igrisGraphStillness.state() === 'still';", { label: "selection settles" });
+  const beforeReplay = await read(a);
+  await a.eval("document.querySelector('[aria-label=\"Replay through event 1\"]').click(); return true;");
+  await a.until("return document.querySelector('.attention-panel')?.textContent.includes('REPLAY THROUGH 1');", { label: "explicit replay mode" });
+  await a.until("return window.__igrisGraphStillness.state() === 'still';", { label: "replay stillness" });
+  const replayed = await read(a);
+  check("19d", replayed.through === 1 && replayed.zoom === beforeReplay.zoom && JSON.stringify(replayed.positions) === JSON.stringify(beforeReplay.positions) && replayed.reads.graph === 1,
+    "Replay changes only evidence; the settled map and camera are preserved.");
+
+  mutateLedger(`must(sessionAction(db, { action:'epoch', session_id:ids.a, operation_id:'compact', reason:'observed reset' }));`);
+  // The history controls sit below the fold of the panel at the default viewport.
+  await clickButton(a, "RETURN TO LIVE", { scroll: true });
+  await a.until("return document.querySelector('[data-attention-node]')?.dataset.evidence === 'historical';", { label: "prior epoch becomes historical" });
+  const historical = await read(a);
+  check("19e", historical.evidence[0].state === "historical" && historical.text.includes("compaction observed") && historical.text.includes("CHILD"),
+    "Observed epoch boundary marks old delivery historical; explicit child lineage remains navigable.");
+  mutateLedger(`must(sessionAction(db, { action:'end', session_id:ids.a, operation_id:'rest' }));`);
+  // The same URL again is a same-document navigation, not a reload (G-BR-15's `coldGoto` note).
+  await a.send("Page.navigate", { url: "about:blank" });
+  await a.until("return document.readyState !== 'loading' ? 1 : 0", { timeout: 10_000, label: "about:blank before the reload" });
+  await a.goto(`${world.url}/#/graph?session=${ids.a}`); await ready(a);
+  const ended = await read(a);
+  check("19f", ended.session === ids.a && ended.text.includes("ended") && ended.evidence[0].state === "historical",
+    "Reloading the exact session after rest preserves evidence and an ended status.");
+  await a.send("Emulation.setDeviceMetricsOverride", { width:320, height:800, deviceScaleFactor:1, mobile:false });
+  await a.settle(300);
+  const mobile = await a.eval("return {width:innerWidth, overflow:document.documentElement.scrollWidth > innerWidth, select:!!document.querySelector('#attention-session')};");
+  check("19g", mobile.width === 320 && !mobile.overflow && mobile.select, `Narrow view remains usable: ${JSON.stringify(mobile)}.`);
+  const rows = await apiJson(`${world.url}/api/attention/session?session=${ids.a}`);
+  check("19h", rows.latest_sequence === 4, `Dashboard navigation/selection/replay created no agent events: ledger remains ${rows.latest_sequence}.`);
+}
+
 async function main() {
   if (!existsSync(CLI_ENTRY)) {
     process.stderr.write(`missing ${CLI_ENTRY} — run \`cd cli && npm run build\` first\n`);
@@ -8484,6 +8619,7 @@ async function main() {
     // which is where the write bar lives. It writes a goal and one edge, so it
     // must follow every reading G-BR-14 takes of that world.
     await runGate("G-BR-18", () => gBr18(tabs, worlds));
+    await runGate("G-BR-19", () => gBr19(chrome.port, worlds.seeded));
     await runGate("G-BR-11", () => gBr11(tabs.dense));
     // TD-332, ABSOLUTELY LAST and numbered 0 to say so. It audits the LEDGER
     // rather than the browser: `notRun` is only fully populated once every

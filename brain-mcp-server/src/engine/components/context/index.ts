@@ -24,6 +24,7 @@
  * @author fifty.dev
  */
 
+import { observeDelivery, attentionCaptureActive } from '../attention/capture.js';
 import type {
   BrainComponent,
   ComponentContext,
@@ -60,7 +61,7 @@ import { homedir } from 'node:os';
 
 /** Absolute path to the generated OS module index. */
 export function osIndexPath(): string {
-  return join(homedir(), '.igris', 'core', 'os', 'INDEX.md');
+  return join(process.env.IGRIS_BRAIN_DIR?.trim() || join(homedir(), '.igris'), 'core', 'os', 'INDEX.md');
 }
 
 /** A single module-roster row parsed from the INDEX. */
@@ -135,12 +136,13 @@ export function parseIndexModules(indexContent: string): IndexModule[] {
  * the loader — TD-271 — so this case is defensive for any other caller.)
  */
 export function moduleFilePath(moduleName: string): string {
-  const coreDir = join(homedir(), '.igris', 'core');
+  const root = process.env.IGRIS_BRAIN_DIR?.trim() || join(homedir(), '.igris');
+  const coreDir = join(root, 'core');
   if (moduleName === 'SOUL') {
     return join(coreDir, 'SOUL.md');
   }
   if (moduleName === 'USER') {
-    return join(homedir(), '.igris', 'USER.md');
+    return join(root, 'USER.md');
   }
   return join(coreDir, 'os', `${moduleName}.md`);
 }
@@ -315,6 +317,9 @@ export function createContextComponent(): BrainComponent {
 
               const foundKeys = new Set(rows.map((r) => r.key));
               const missing = keys.filter((k) => !foundKeys.has(k));
+
+              if (attentionCaptureActive()) for (const row of rows) observeDelivery({node:{type:'context_doc',project,id:row.key.replace(/\.md$/, '')},outcome:'succeeded',extent:'full',bytes:Buffer.byteLength(row.content??'', 'utf8'),source_revision:row.updated_at});
+              if (attentionCaptureActive()) for (const key of missing) observeDelivery({node:{type:'context_doc',project,id:key.replace(/\.md$/, '')},outcome:'failed',extent:'unknown',reason:'Context document not found'});
 
               const result = {
                 project,
@@ -572,6 +577,9 @@ export function createContextComponent(): BrainComponent {
                   size_bytes: Buffer.byteLength(content, 'utf-8'),
                 });
               }
+
+              if (attentionCaptureActive()) for (const file of files) observeDelivery({node:{type:'os_module',project:null,id:'igris-core:'+file.key},outcome:'succeeded',extent:'full',bytes:file.size_bytes,source_revision:createHash('sha256').update(file.content).digest('hex')});
+              if (attentionCaptureActive()) for (const key of missing) observeDelivery({node:{type:'os_module',project:null,id:'igris-core:'+key},outcome:'failed',extent:'unknown',reason:'OS module not found'});
 
               const totalBytes = files.reduce((sum, f) => sum + f.size_bytes, 0);
               const totalKb = +(totalBytes / 1024).toFixed(1);

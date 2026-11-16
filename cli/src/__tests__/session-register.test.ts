@@ -103,6 +103,7 @@ async function runRegister(opts: {
   selfInstanceId?: string;
   seedNextSteps?: string;
   projectPath?: string;
+  harnessSessionId?: string;
 }): Promise<RegisterDigest> {
   const { runSession } = await import("../verbs/session.js");
   const origWrite = process.stdout.write.bind(process.stdout);
@@ -428,6 +429,65 @@ describe("session register — §3.7", () => {
     const row = readSessionRow("demo", filename);
     expect(row?.state).toBe("live"); // explicit live re-affirm
     expect(row?.instance_id).toBe(id); // never nulled
+  });
+
+  it("FR-276: a plain re-register keeps the bound native chat; a different chat mints a fresh instance and leaves the old one untouched", async () => {
+    seedSchema();
+    const id = (await runRegister({ project: "demo", harnessSessionId: "chat-a" })).instance_id;
+    // Recovered + omitted chat id keeps the bound one (COALESCE).
+    await runRegister({ project: "demo", selfInstanceId: id });
+    // Recovered + the same chat id refreshes the same instance.
+    expect(await runRegister({ project: "demo", selfInstanceId: id, harnessSessionId: "chat-a" }))
+      .toMatchObject({ instance_id: id, minted: false, degraded: false });
+    await closeBrainDb();
+    const instanceRow = (rowId: string) => {
+      const db = new Database(dbFile(), { readonly: true });
+      const row = db.prepare("SELECT * FROM instances WHERE id = ?").get(rowId) as Record<string, unknown> | undefined;
+      db.close();
+      return row;
+    };
+    const before = instanceRow(id)!;
+    expect(before.harness_session_id).toBe("chat-a");
+    const beforeFile = readFileSync(instanceFilePath("demo", id), "utf-8");
+    const beforeLive = readSessionRow("demo", `instances/${id}.md`);
+
+    // Recovered + a DIFFERENT chat id: a new native chat is a new identity.
+    const { runSession } = await import("../verbs/session.js");
+    const origWrite = process.stdout.write.bind(process.stdout);
+    const origErr = process.stderr.write.bind(process.stderr);
+    let captured = "";
+    let stderr = "";
+    process.stdout.write = ((c: string | Uint8Array): boolean => {
+      captured += typeof c === "string" ? c : c.toString();
+      return true;
+    }) as typeof process.stdout.write;
+    process.stderr.write = ((c: string | Uint8Array): boolean => {
+      stderr += typeof c === "string" ? c : c.toString();
+      return true;
+    }) as typeof process.stderr.write;
+    let code: number;
+    try {
+      code = runSession({ action: "register", project: "demo", selfInstanceId: id, harnessSessionId: "chat-b" });
+    } finally {
+      process.stdout.write = origWrite as typeof process.stdout.write;
+      process.stderr.write = origErr as typeof process.stderr.write;
+    }
+    expect(code).toBe(0);
+    const fresh = JSON.parse(captured.trim()) as RegisterDigest;
+    expect(fresh).toMatchObject({ degraded: false, minted: true });
+    expect(fresh.instance_id).not.toBe(id);
+    expect(fresh.live_file).toBe(`instances/${fresh.instance_id}.md`);
+    expect(stderr).toMatch(/^warn: .*minting a fresh instance/m);
+    expect(stderr).toContain(id);
+    await closeBrainDb();
+    // The bound chat is never overwritten: the old row, its live file and its DB row are byte-identical.
+    expect(instanceRow(id)).toEqual(before);
+    expect(readFileSync(instanceFilePath("demo", id), "utf-8")).toBe(beforeFile);
+    expect(readSessionRow("demo", `instances/${id}.md`)).toEqual(beforeLive);
+    // The fresh instance carries the new chat and its own live file.
+    expect(instanceRow(fresh.instance_id)!.harness_session_id).toBe("chat-b");
+    expect(existsSync(instanceFilePath("demo", fresh.instance_id))).toBe(true);
+    expect(readSessionRow("demo", fresh.live_file)?.instance_id).toBe(fresh.instance_id);
   });
 });
 

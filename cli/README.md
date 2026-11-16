@@ -67,6 +67,8 @@ sections below are for contributors working on the CLI source.
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
 | `igris export <project> [--tier core\|standard\|full] [--since <date>]` | Serialize one project's brain slice into a portable `<slug>.igris-pack.tar.gz` (the handoff PRODUCER) |
 | `igris import <bundle> [--dry-run] [--on-conflict ask\|theirs\|mine\|newer] [--as <slug>] [--project-path <path>]` | Import a `.igris-pack` bundle with a reviewed, ancestor-based merge (the handoff CONSUMER) |
+| `igris dashboard --session <uuid> --ensure` | Return a verified link to one chat’s attention map, reusing or starting the local dashboard |
+| `igris attention <action>` | Begin, bind, inspect, or end a local chat recording; track resource deliveries and correlated brain calls |
 | `igris doctor [--fix\|--remove-orphans]` | Diagnose and repair drift |
 
 `--dry-run` is supported on every state-changing verb.
@@ -78,6 +80,28 @@ sections below are for contributors working on the CLI source.
 
 End-user docs (install, upgrade, channels) live in the repo-root
 [`README.md`](https://github.com/fiftynotai/igris-ai#readme).
+
+## Session attention
+
+Boot creates a separate recording for each chat. The graph shows what was
+available, delivered as a preview or in full, and invoked, with the supporting
+evidence and observation gaps. `igris attention sessions` lists recordings;
+`igris attention show --session <uuid>` inspects one. Completed recordings remain
+available after rest. These records stay on the machine and are not replicated
+with project knowledge.
+
+With a recording selected, the graph opens in **This chat**. Toggle **Whole brain**
+for the complete map, or include related nodes to see one-hop knowledge links.
+The inspector shows **Why selected**, distinguishing observed retrieval from a
+caller's declared reason. Older receipts show **Not recorded**.
+
+For `read`, `call`, and `event`, `--selection boot|task|retrieval|user_request`
+records a declared reason; optional `--selection-ref <id>` records a safe policy
+or task identifier. Do not put prose, paths, queries, or secrets in references.
+These flags explain an operation; they do not load additional resources or
+execute capabilities by themselves.
+
+Contributor contract and examples: [session attention](https://github.com/fiftynotai/igris-ai/blob/main/docs/architecture/session_attention.md).
 
 ## Contributor flow
 

@@ -2374,3 +2374,49 @@ h6.record-md-h {
   margin: 0;
   word-break: break-word;
 }
+
+/* FR-276 — session evidence uses the existing role palette and hairline grammar. */
+.attention-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-1);
+  margin-bottom: var(--s-2);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+.attention-picker select { min-width: 0; max-width: 100%; flex: 1 1 240px; }
+.attention-side { overflow-y: auto; overflow-x: hidden; }
+.attention-side > .graph-inspector { flex: 0 0 auto; max-height: none; overflow: visible; }
+.attention-side > .graph-twin { flex: 0 0 auto; max-height: none; }
+.attention-panel { flex: 0 0 auto; min-width: 0; border: 0.5px solid var(--line); }
+.attention-section { padding: var(--s-2); border-bottom: 0.5px solid var(--line); font-family: var(--mono); font-size: 11px; overflow-wrap: anywhere; }
+.attention-section:last-child { border-bottom: 0; }
+.attention-section h2 { font-family: var(--ui); font-size: 18px; color: var(--fg); margin: var(--s-1) 0; }
+.attention-section h3 { margin: 0 0 var(--s-1); font-size: 11px; font-weight: 600; }
+.attention-section p { line-height: 1.6; margin: var(--s-1) 0; }
+.attention-section summary { cursor: pointer; line-height: 1.5; }
+.attention-section ul { padding-left: var(--s-2); line-height: 1.6; }
+.attention-section .graph-control { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.attention-facts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: var(--s-1); margin: var(--s-2) 0; }
+.attention-facts dt { color: var(--muted); }
+.attention-facts dd { margin: 0; color: var(--fg); }
+.attention-coverage, .attention-self-report { color: var(--accent); }
+.attention-self-report { display: block; font-size: 10px; margin-top: var(--s-1); }
+.attention-legend, .attention-nodes, .attention-history { list-style: none; padding: 0 !important; margin: var(--s-1) 0 0; }
+.attention-legend li { display: grid; grid-template-columns: 24px 1fr auto; gap: var(--s-1); align-items: center; }
+.attention-mark { font-family: var(--mono); color: var(--accent); text-align: center; }
+.attention-nodes { max-height: 280px; overflow-y: auto; }
+.attention-nodes button { display: block; width: 100%; margin-bottom: var(--s-1); }
+.attention-nodes small { display: block; margin-top: var(--s-1); font-size: 9px; color: var(--muted); }
+.attention-history li, .attention-event { border-top: 0.5px solid var(--line); padding: var(--s-1) 0; }
+.attention-history span, .attention-history time { display: block; margin-top: var(--s-1); color: var(--muted); font-size: 10px; }
+.attention-actions { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+@media (max-width: 1100px) { .attention-side { overflow: visible; } }
+
+/* FR-276: lens changes visibility, while the topology remains settled. */
+.attention-lens { margin: var(--s-2) 0; font-family: var(--mono); font-size: 11px; }
+.attention-lens p { margin: var(--s-1) 0 0; color: var(--muted); line-height: 1.6; }
+.attention-lens [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.attention-empty { position: absolute; inset: var(--s-3); color: var(--muted); font-family: var(--mono); font-size: 12px; pointer-events: none; }

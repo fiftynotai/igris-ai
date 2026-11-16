@@ -513,6 +513,17 @@ export class BrainTableMissingError extends Error {
   }
 }
 
+/**
+ * FR-276: a bound native chat identity is never replaced — the same rule the
+ * attention recording's bind applies. Thrown before any write.
+ */
+export class InstanceIdentityConflictError extends Error {
+  constructor(instanceId: string) {
+    super(`instance ${instanceId} already belongs to a different native chat`);
+    this.name = "InstanceIdentityConflictError";
+  }
+}
+
 /** Input for {@link registerOrUpdateInstanceState} — mirrors the instance-state tool subset the boot path passes. */
 export interface InstanceStateRegistrationInput {
   /** Recovered prior id (gather G4) → refresh; omit → mint a fresh UUID. */
@@ -632,19 +643,36 @@ export function registerOrUpdateInstanceState(
     if (!columns.has(name)) continue;
     insertColumns.push(name);
     values.push(value);
-    updates.push(`${name} = excluded.${name}`);
+    // FR-276: a re-register that omits the native chat id keeps the bound one.
+    updates.push(
+      name === "harness_session_id"
+        ? `${name} = COALESCE(excluded.${name}, instances.${name})`
+        : `${name} = excluded.${name}`,
+    );
   }
 
-  handle
-    .prepare(
-      `
+  const upsert = handle.prepare(
+    `
       INSERT INTO instances (${insertColumns.join(", ")})
       VALUES (${insertColumns.map(() => "?").join(", ")})
       ON CONFLICT(id) DO UPDATE SET
         ${updates.join(",\n        ")}
     `,
-    )
-    .run(...values);
+  );
+  // One IMMEDIATE transaction, so no concurrent register can bind between the check and the write.
+  handle
+    .transaction(() => {
+      if (input.harness_session_id != null && columns.has("harness_session_id")) {
+        const prior = handle
+          .prepare("SELECT harness_session_id FROM instances WHERE id = ?")
+          .get(instanceId) as { harness_session_id: string | null } | undefined;
+        if (prior?.harness_session_id != null && prior.harness_session_id !== input.harness_session_id) {
+          throw new InstanceIdentityConflictError(instanceId);
+        }
+      }
+      upsert.run(...values);
+    })
+    .immediate();
 
   return { instance_id: instanceId, minted };
 }

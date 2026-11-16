@@ -24,6 +24,7 @@ import type { ComponentRegistry } from './registry.js';
 import type { StorageAdapter, EventBus } from './types.js';
 
 // Domain components
+import { createAttentionComponent } from './components/attention/index.js';
 import { createMemoryComponent } from './components/memory/index.js';
 import { createErrorsComponent } from './components/errors/index.js';
 import { createProjectsComponent } from './components/projects/index.js';
@@ -56,6 +57,12 @@ export interface Engine {
 const DEFAULT_COMPONENT_CONFIG: ComponentConfig = { enabled: true };
 
 /**
+ * FR-276: machine-local components. An engine served over HTTP (the VPS brain)
+ * never registers them: no tables, no tools, no attention dispatch facade.
+ */
+const LOCAL_ONLY_COMPONENTS: ReadonlySet<string> = new Set(['attention']);
+
+/**
  * Boot the Brain Engine.
  *
  * Creates all infrastructure, registers domain components, runs migrations,
@@ -84,13 +91,14 @@ export function bootEngine(config: EngineConfig): Engine {
   // 5. Create registry
   const registry = createRegistry(storage, bus);
 
-  // 6. Register domain components (15 — perception + subconscious collapsed
+  // 6. Register domain components (perception + subconscious collapsed
   //    into one cognition component in FR-118 M4a; tasks + coordination removed
   //    in TD-265 full worker-subsystem teardown; metrics retired in FR-267,
   //    2026-08-26: its table is frozen history, agent_events is the record).
   // FR-109/FR-118: cognition is registered AFTER memory because the perception
   // instance depends on the memory schema (learnings.review_status, db.ts v15).
   const componentFactories = [
+    createAttentionComponent,
     createMemoryComponent,
     createErrorsComponent,
     createProjectsComponent,
@@ -113,6 +121,7 @@ export function bootEngine(config: EngineConfig): Engine {
 
   for (const factory of componentFactories) {
     const component = factory();
+    if (config.transport === 'http' && LOCAL_ONLY_COMPONENTS.has(component.name)) continue;
     const componentConfig = config.components[component.name] ?? DEFAULT_COMPONENT_CONFIG;
     registry.register(component, componentConfig);
   }
@@ -125,7 +134,7 @@ export function bootEngine(config: EngineConfig): Engine {
   gateway.register(allTools);
 
   // 9. Emit engine.ready — components that need dispatchTool can capture it
-  bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway) });
+  bus.emit('engine.ready', { dispatch: gateway.dispatch.bind(gateway), tools: gateway.listTools() });
 
   console.error(
     `[engine] Brain Engine v7.0 ready — ${gateway.toolCount()} tools, ${registry.getBootOrder().length} components`

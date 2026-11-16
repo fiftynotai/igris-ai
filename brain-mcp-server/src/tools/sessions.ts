@@ -1,3 +1,4 @@
+import { observeDelivery, attentionCaptureActive } from '../engine/components/attention/capture.js';
 /**
  * Igris Brain -- Session Tools
  *
@@ -90,7 +91,7 @@ function handleSessionRecall(args: SessionRecallInput): { content: { type: strin
   const days = args.days ?? 7;
 
   const rows = db.prepare(`
-    SELECT s.project, s.brief_id, s.phase, s.mode, s.summary,
+    SELECT s.id, s.project, s.brief_id, s.phase, s.mode, s.summary,
            s.started_at, s.ended_at,
            p.name as project_name
     FROM sessions s
@@ -124,6 +125,7 @@ function handleSessionRecall(args: SessionRecallInput): { content: { type: strin
   for (const [date, sessions] of grouped) {
     sections.push(`## ${date}`);
     for (const s of sessions) {
+      if (attentionCaptureActive()) observeDelivery({node:{type:'session',project:String(s.project),id:String(s.id)},outcome:'succeeded',extent:'preview'});
       const name = s.project_name || s.project;
       const briefPart = s.brief_id ? ` [${s.brief_id}]` : '';
       const phasePart = s.phase ? `, ${s.phase}` : '';

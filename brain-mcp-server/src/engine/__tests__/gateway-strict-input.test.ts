@@ -24,6 +24,7 @@ import type { ToolDefinition, ToolResult } from '../types.js';
 // engine/index.ts. We wire them into a freshly-created gateway so the
 // parameterized test sees every production-registered tool without booting
 // the full engine (no DB, no migrations, no event bus required).
+import { createAttentionComponent } from '../components/attention/index.js';
 import { createMemoryComponent } from '../components/memory/index.js';
 import { createErrorsComponent } from '../components/errors/index.js';
 import { createProjectsComponent } from '../components/projects/index.js';
@@ -159,6 +160,7 @@ describe('TD-128 gateway strict-input contract — M4 reject-mode', () => {
 // with the engine bootstrap chain.
 
 const COMPONENT_FACTORIES = [
+  createAttentionComponent,
   createMemoryComponent,
   createErrorsComponent,
   createProjectsComponent,

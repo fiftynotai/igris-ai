@@ -101,7 +101,7 @@ Pass A - tool -> required map. Parse `engine/components/*/index.ts`. Bound each
   declares a NESTED `required: ['to_type','to_id','edge_type']` (the
   `edges[]` item schema) BEFORE its real one, so a first-match parser builds a
   wrong map and every conclusion downstream is noise. Tools with `required: []`
-  are dropped. COUNT SENTINEL: 79 (see below).
+  are dropped. COUNT SENTINEL: 82 (see below).
 
 Pass B - site scan. Every `.md` under `core/skills/`, recursive — not only
   `SKILL.md`. That restriction is precisely how `hunt/workflow-template.md`
@@ -147,11 +147,15 @@ Pass D - ledger subtraction (above).
 
 COUNT SENTINEL
 --------------
-The tool map must have exactly 79 entries on the real tree:
-    84 `required: [` literals
+The tool map must have exactly 82 entries on the real tree:
+    88 `required: [` literals
    -  4 empty `required: []`  (memory x2, errors, briefs)
    -  1 nested item schema    (memory `edges[]`)
-   = 79
+   -  1 shared sub-schema     (attention `selection`, outside any tool block)
+   = 82
+Re-measured 2026-10-19 at FR-276: the attention component added 4 literals,
+3 of them tools (`igris_attention_session`, `_event`, `_call`) and 1 the
+module-level `selection` sub-schema, so 84 -> 88 and 79 -> 82.
 Re-measured 2026-09-29 at FR-273 round B: `igris_project_relations_derive`
 (`['slug']`), 83 -> 84 and 78 -> 79.
 Re-measured 2026-09-29 at FR-273: the projects component gained
@@ -162,8 +166,9 @@ Re-measured 2026-09-09 at TD-460: the context component gained
 `igris_context_sync` (`required: ['project']`), so 79 -> 80 and 74 -> 75.
 Re-measured 2026-08-26 at FR-267: the metrics component (and its single
 `igris_metrics_record` literal) left the tree, so 80 -> 79 and 75 -> 74.
-This is in-family with `gateway-tool-count.test.ts` pinning 113 registered
-tools. When a tool is legitimately added the sentinel goes red on purpose: bump
+This is in-family with `gateway-tool-count.test.ts` pinning 116 registered
+tools on the local engine (113 on the HTTP engine, which omits attention).
+When a tool is legitimately added the sentinel goes red on purpose: bump
 the constant AND re-read the ledger, because a new tool means new call sites.
 The sentinel is skipped when the components root is overridden for fixtures.
 
@@ -212,7 +217,8 @@ DEFAULT_COMPONENTS_ROOT = (
 # Count sentinel — see COUNT SENTINEL in the module docstring for the
 # arithmetic. Bumping this is a conscious act that must be paired with a ledger
 # review, because a new tool means new (unclassified) call sites.
-EXPECTED_TOOL_COUNT = 79  # FR-273 round B (2026-09-29): +igris_project_relations_derive (required: ['slug']), 78 -> 79
+EXPECTED_TOOL_COUNT = 82  # FR-276 (2026-10-19): attention session/event/call, 79 -> 82
+#                          FR-273 round B (2026-09-29): +igris_project_relations_derive (required: ['slug']), 78 -> 79
 #                          FR-273 (2026-09-29): +3 project-relation tools, each with a non-empty required, 75 -> 78
 #                          TD-460 (2026-09-09): +igris_context_sync (required: ['project']), 74 -> 75
 #                          FR-267 (2026-08-26): metrics component retired, 75 -> 74
@@ -978,18 +984,21 @@ def main(argv: list[str]) -> int:
         # restated, so this message cannot again disagree with the constant it
         # explains. It did: TD-460 bumped the constant and the docstring to 75
         # and left this string at "expected 75 ... 79 - 4 - 1 = 74", which is
-        # self-refuting at the one moment a human reads it. The two SUBTRAHENDS
+        # self-refuting at the one moment a human reads it. The SUBTRAHENDS
         # stay literal because they are the structural facts a reader checks
         # with a grep — the only `required: [` literals that do not become a map
-        # entry are the 4 empty `required: []` and the 1 nested item schema.
-        empty_literals, nested_schemas = 4, 1
-        literal_count = EXPECTED_TOOL_COUNT + empty_literals + nested_schemas
+        # entry are the 4 empty `required: []`, the 1 nested item schema and
+        # the 1 shared sub-schema outside any tool block (attention `selection`).
+        empty_literals, nested_schemas, shared_schemas = 4, 1, 1
+        literal_count = (EXPECTED_TOOL_COUNT + empty_literals + nested_schemas
+                         + shared_schemas)
         print(
             f"Error: tool -> required map has {len(tool_map)} entries, "
             f"expected {EXPECTED_TOOL_COUNT}.\n"
             f"  Arithmetic: {literal_count} `required: [` literals "
             f"- {empty_literals} empty `required: []` "
             f"- {nested_schemas} nested item schema (memory `edges[]`) "
+            f"- {shared_schemas} shared sub-schema (attention `selection`) "
             f"= {EXPECTED_TOOL_COUNT}.\n"
             "  A different number means either the block-bounding / "
             "shallowest-indent rule broke, or a tool was legitimately added.\n"

@@ -356,6 +356,9 @@ describe("T2 — Host allowlist and CORS absence", () => {
       "/api/summary",
       "/api/graph/stats",
       "/api/graph",
+      "/api/attention/sessions",
+      "/api/attention/session",
+      "/api/attention/inventory",
     ]) {
       const r = await req(p);
       expect(r.headers["cache-control"]).toBe("no-store");
@@ -608,6 +611,9 @@ const ALL_ENDPOINTS = [
   "/api/summary?project=demo",
   "/api/graph/stats?project=demo",
   "/api/graph?project=demo", // FR-239 — the fifth endpoint (row 108)
+  "/api/attention/sessions",
+  "/api/attention/session?session=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "/api/attention/inventory",
 ];
 
 async function expectAllDegradeCleanly(): Promise<void> {
@@ -779,6 +785,9 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       // The zero-SQL claim is what says the classifier was reused rather than
       // re-implemented one tier out.
       "../lib/dashboard/cognition-read.ts",
+      "../lib/dashboard/attention-routes.ts",
+      "../lib/dashboard/managed.ts",
+      "../lib/attention-bridge.ts",
     ]) {
       const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
       const code = src
@@ -860,6 +869,8 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       "context-docs-read.ts",
       "graph-query.ts",
       "search-fuse.ts", // FR-248 — pure rank arithmetic; takes no `db`
+      "attention-routes.ts", // FR-276 — pure validated GET dispatch
+      "managed.ts", // FR-276 — process readiness/lifecycle only
       "cognition-read.ts", // FR-266 — forwards the cognition verb's digest; no `db`
       // Not SQL-scanned above but deliberately so, and named here so the set is
       // a complete accounting rather than a partial one:

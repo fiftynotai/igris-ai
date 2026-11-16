@@ -355,6 +355,9 @@ export interface GatherDigest {
  * Next Steps were carried into the new LIVE file (the resume context).
  */
 export interface RegisterDigest {
+  attention_session_id?: string;
+  attention_binding?: { ok: boolean; reason: string | null };
+  harness_session_id?: string;
   degraded: boolean;
   instance_id: string;
   minted: boolean;
@@ -1266,6 +1269,9 @@ export interface DryRunPlan {
 
 /** Flags accepted by `igris dashboard`. */
 export interface DashboardOptions {
+  session?: string;
+  ensure?: boolean;
+  stop?: boolean;
   /** Exact port. When taken, the verb HARD-FAILS — explicit intent is never silently reassigned. */
   port?: number;
   /** Do not launch a browser. */
@@ -1298,6 +1304,9 @@ export interface DashboardDegraded {
 
 /** `GET /api/health`. */
 export interface HealthPayload {
+  attention_protocol?: number;
+  server_pid?: number;
+  dashboard_bundle_present?: boolean;
   ok: boolean;
   cli_version: string;
   brain: {
@@ -2531,3 +2540,59 @@ export interface KpiDigest {
   /** Stated conventions and residuals the reader must know. */
   notes: string[];
 }
+
+// FR-276 — structural mirror of brain attention/types.ts. No content bodies.
+export interface AttentionNodeRef { type: string; project: string | null; id: string }
+export interface AttentionCoverage {
+  level: "partial" | "unavailable"; observed: string[]; gaps: string[];
+  compaction: "observed" | "unknown";
+}
+export interface AttentionSession {
+  id: string; project: string | null; instance_id: string | null;
+  harness: string | null; harness_session_id: string | null; machine_id: string | null;
+  parent_session_id: string | null; status: "active" | "ended" | "interrupted";
+  current_epoch: number; started_at: string; ended_at: string | null;
+  last_sequence: number; coverage: AttentionCoverage;
+}
+export interface AttentionSelection {
+  category: "boot" | "task" | "retrieval" | "user_request";
+  provenance: "caller_declared" | "observed"; reference: string | null;
+}
+export interface AttentionEvent {
+  id: number; session_id: string; sequence: number; context_epoch: number;
+  actor_id: string; operation_id: string; event_key: string;
+  kind: "delivery" | "invocation" | "availability" | "epoch" | "end";
+  node: AttentionNodeRef | null;
+  outcome: "started" | "succeeded" | "failed" | "unknown";
+  extent: "preview" | "full" | "unknown" | null;
+  origin: "loader" | "tool_boundary" | "harness" | "self_report";
+  source_revision: string | null; bytes: number | null; reason: string | null; observed_at: string;
+  selection: AttentionSelection | null;
+}
+export interface AttentionNodeState {
+  key: string; node: AttentionNodeRef;
+  state: "available" | "preview" | "full" | "invoked" | "failed" | "unknown" | "historical";
+  self_reported: boolean; historical: boolean; last_event: AttentionEvent; events: AttentionEvent[];
+}
+export interface AttentionSnapshot {
+  session: AttentionSession | null; through_sequence: number; latest_sequence: number;
+  node_states: AttentionNodeState[]; recent_events: AttentionEvent[]; next_before: number | null;
+  generated_at: string; degraded: { reason: string } | null;
+  truncated: boolean;
+  counts: { events_total: number; events_reduced: number; nodes_reduced: number; node_states: number };
+}
+export interface AttentionInventory {
+  nodes: import("./lib/brain-bridge.js").BrainGraphNode[];
+  revision: string; generated_at: string;
+  sources: { source: string; available: boolean; reason: string | null }[];
+  degraded: { reason: string } | null;
+}
+export interface AttentionSessionList {
+  sessions: AttentionSession[]; next_before: string | null;
+  generated_at: string; degraded: { reason: string } | null;
+}
+export interface AttentionActionResult {
+  ok: boolean; action: string; session: AttentionSession | null; event: AttentionEvent | null;
+  degraded: boolean; reason: string | null;
+}
+export interface DashboardEnsureResult { available: boolean; url: string | null; reason: string | null }

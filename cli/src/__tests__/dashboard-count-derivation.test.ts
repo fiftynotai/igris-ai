@@ -625,7 +625,7 @@ function batsExpectedSet(): { reads: string[]; writes: string[] } {
 /** The `N read paths` figure inside the bats digest assertion. */
 function batsReadPathFigure(): number {
   const src = read(REPO_ROOT, "cli", "tests", "integration", "dashboard.bats");
-  const m = /'(\d+) read paths all 200, (\d+) write path 400'/.exec(src);
+  const m = /'(\d+) read paths verified, (\d+) write path 400'/.exec(src);
   expect(m, "dashboard.bats no longer asserts the `N read paths …` digest line").not.toBeNull();
   return Number(m![1]);
 }
@@ -736,7 +736,10 @@ describe("TD-420 part 0 — the scan has a corpus, derived from the map row itse
 
 describe("TD-420 part 1 — the independent enumerations of the local surface agree", () => {
   it("`server.ts` arms, `SMOKE_PROBE_PATHS` and `dashboard.bats` name the same GET paths", () => {
-    const arms = [...serverGetArms().keys()].sort();
+    const attentionDispatch = read(DASH, "server.ts").match(/if \(\[([^\]]+)\]\.includes\(pathname\)\)/);
+    expect(attentionDispatch, "attention dispatch must enumerate its exact paths").not.toBeNull();
+    const attentionPaths = [...attentionDispatch![1]!.matchAll(/"([^"]+)"/g)].map(m => m[1]!);
+    const arms = [...serverGetArms().keys(), ...attentionPaths].sort();
     const smoke = apiOnly(smokeProbePaths());
     const bats = batsExpectedSet();
     expect(smoke, "SMOKE_PROBE_PATHS has drifted from server.ts's route arms").toEqual(arms);
@@ -865,7 +868,10 @@ describe("TD-420 part 1 — the independent enumerations of the local surface ag
   });
 
   it("SELF-NEGATIVE-CONTROL — the set comparison reports a path present in only one derivation", () => {
-    const arms = [...serverGetArms().keys()].sort();
+    const attentionDispatch = read(DASH, "server.ts").match(/if \(\[([^\]]+)\]\.includes\(pathname\)\)/);
+    expect(attentionDispatch, "attention dispatch must enumerate its exact paths").not.toBeNull();
+    const attentionPaths = [...attentionDispatch![1]!.matchAll(/"([^"]+)"/g)].map(m => m[1]!);
+    const arms = [...serverGetArms().keys(), ...attentionPaths].sort();
     const drifted = [...arms, "/api/invented"].sort();
     expect(drifted).not.toEqual(arms);
     // …and the shape the pin uses (sorted array equality) is what discriminates,
@@ -1109,7 +1115,7 @@ describe("TD-420 part 2 — the scanner fires, and fires only on what it claims"
     // is protecting them — which is the point of anchoring on the noun.
     for (const line of [
       "the sixteen lines under it are the derivation",
-      "a change to ALL FIFTEEN gates is a contract change",
+      "renaming either silently returns ALL EIGHTEEN browser gates",
       "the grid is sixteen columns wide",
       "Triage spans all nineteen projects on this brain",
       "there are 6 goals on the operator brain",

@@ -12,6 +12,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Session attention map — what each chat was given and what it used
+  (FR-276).** Igris had one whole-brain graph but no record of which part of
+  it a given chat received or invoked, and two chats in the same project could
+  not be told apart. Each chat now gets its own attention recording, begun
+  before the first boot read, and its own view of the map. The recording is
+  evidence of delivery and invocation, not of what the model attended to: each
+  recorded node is available, preview, full, invoked, failed, unknown or
+  historical, and agent-reported receipts are marked self-reported. The
+  recording is machine-local by operator decision (2026-11-16): it is never
+  synced or exported, and the VPS brain does not expose the attention tools.
+  The four entries below are its parts.
+
+- **Attention ledger and brain component (FR-276a).** A new `attention`
+  component owns three tables (`attention_sessions`, `attention_events`,
+  `attention_tool_inventory`), created by its own component migrations, and
+  three tools: `igris_attention_session` (begin, bind, epoch, end),
+  `igris_attention_event` (a self-reported receipt) and `igris_attention_call`
+  (runs a brain tool and records what it delivered, returning the tool's own
+  result plus an `_meta.igris_attention` note). The database orders events;
+  a retry with the same operation id returns the first event, and a retry that
+  changes the evidence is refused. Memory, brief, session, goal and context
+  reads record what they delivered (full or preview, bytes, source revision)
+  only inside an `igris_attention_call`; anywhere else nothing is recorded.
+  Readers never write or migrate. The inventory lists OS modules, context
+  docs, skills, agents and the brain's own tools under stable ids, and names
+  each source it could not read.
+
+- **`igris attention`, and `/boot` and `/rest` record the session (FR-276b).**
+  `igris attention begin|bind|read|call|event|epoch|end|show|sessions|inventory`
+  works on the local brain only (exit 0 ok, 1 refused, 2 usage, 3 attention
+  unavailable or degraded; `show` exits 0 for a snapshot whose only degradation
+  is its size bound, which still carries `truncated: true`, `counts` and a
+  `Snapshot bounded: …` sentence in `degraded.reason`). `read` delivers an OS module, skill, agent or project document
+  by canonical id and records full or preview; `call` runs a brain tool
+  through the bundled LOCAL engine, never a remote MCP connection.
+  `igris session register --attention-session <uuid>` binds the recording to
+  the instance and adds an `**Attention Session ID:**` line to its scratchpad.
+  Register never overwrites a bound native chat: a plain register (no
+  `--attention-session`) whose recovered `--self-instance-id` is bound to a
+  different chat than `--harness-session-id` mints a fresh instance (exit 0,
+  `minted: true`) and leaves the old one untouched, while with
+  `--attention-session` a chat conflict, the recording's or the recovered
+  instance's, is still refused. On the recovered instance's refusal, `/boot`
+  §4.4 re-runs the register without `--self-instance-id`, which mints a fresh
+  instance bound to the same recording.
+  `/boot` begins the recording before Detect (§0.1), binds it after Detect,
+  reads the OS index, modules and USER through `igris attention read`, runs
+  its brain recall through `igris attention call` (§4.3), registers with the
+  recording, and finishes by printing the session-map link (§8). `/rest` ends
+  the recording (§2.4) and keeps its history. `core/os/conduct.md` asks agents
+  to route later retrieval the same way, and `core/os/harness-specific/codex.md`
+  opens the link in the Codex browser panel when that tool is available. An
+  older CLI or a missing module degrades to a one-line notice and never blocks
+  boot.
+
+- **The dashboard's session view, and `igris dashboard --session`, `--ensure`
+  and `--stop` (FR-276b, FR-276c).** `--session <uuid>` opens
+  `#/graph?session=<uuid>`. `--ensure` starts or reuses one managed loopback
+  dashboard, checks through `/api/health` that it is this CLI's build serving
+  this brain, and prints `{available, url, reason}` without opening a browser;
+  `--stop` stops it only after checking that identity. Three read-only GETs
+  back the view (`/api/attention/sessions`, `/api/attention/session`,
+  `/api/attention/inventory`); they never write or migrate, answer 200 with
+  `degraded` on a missing or unreadable brain, 400 on a malformed request and
+  404 for an unknown session. The Graph page gains a session picker, a
+  per-session panel, a legend, an evidence inspector and history replay.
+  Polling repaints the evidence without refetching the topology or restarting
+  the layout, and a highlighted edge is labelled a relationship, never an
+  observed traversal.
+
+- **Session focus: This chat, related nodes and "Why selected" (FR-276d).**
+  With a session selected the map opens on This chat, showing only the nodes
+  the recording touched; Whole brain is one click away, and "Show related
+  nodes" adds their one-hop neighbours, which carry no activity unless
+  recorded. Hidden nodes lose their labels, links and pointer targets as well
+  as their glyphs, and the counts describe the visible map. A receipt can say
+  why it was selected (boot, task, retrieval or user request): declared by the
+  caller with `--selection` and `--selection-ref` (a short identifier, never
+  prose, a path or a query) or observed at a successful retrieval. The
+  inspector shows "Reported by agent" or "Observed retrieval", and older
+  receipts show "Not recorded". The reason is a nullable `selection` column
+  (attention schema v2), added by the next write or brain boot; dashboard
+  reads never migrate. Built in the FR-276 session before it was registered,
+  and kept by operator decision on 2026-11-16.
+
 - **`igris sync drain` — this machine's brain retry queue, with no key in any
   argument (TD-489).** Failed pushes queue their rows in the local brain's
   `sync_queue` table, and nothing drains it any more: `igris sync data` asks the
@@ -82,6 +167,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   FR-273's lookup tool.
 
 ### Fixed
+
+- **Two processes migrating one brain no longer collide (FR-276).**
+  `runComponentMigrations` re-reads a component's version before each
+  migration's pre-flight and again under the IMMEDIATE lock, and skips a
+  version another connection has already applied. A bare `ALTER TABLE ADD
+  COLUMN` (attention schema v2) applied twice used to throw `duplicate column
+  name`; FR-276 made this reachable by running attention migrations from CLI
+  actions as well as engine boot. Pinned by
+  `brain-mcp-server/src/engine/storage/__tests__/component-migrations-race.test.ts`.
 
 - **A remote that echoes the API key no longer leaves it in the local brain
   (BR-118).** `fetchWithRetry` redacts the request's own bearer key from a 4xx
@@ -210,6 +304,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mktemp -d`, and that suite's teardown removes it whole.
 
 ### Changed
+
+- **The CLI package's changelog starts at 7.3.1 (FR-276).** The
+  `cli/CHANGELOG.md` releases 7.3.0 and earlier moved verbatim to
+  `cli/CHANGELOG-ARCHIVE.md`, which `cli/package.json` `files` does not name,
+  so the npm package no longer ships them. The operator chose on 2026-11-16 to
+  trim rather than raise the +150 KB packed-size ceiling, and FR-276's
+  attention code took the tarball 31,104 B past it. The move recovers
+  70,621 packed B without re-basing the floor (delta 184,704 to 114,161 B over
+  1,843,276, with this entry's cli twin; FR-276's review fixes then added
+  1,538 B, to 115,699). Figures and method: grep
+  `FR-276 MEASURED LAST` in `cli/src/__tests__/tarball.test.ts`.
 
 - **The CLI test tier's timeouts are measured, and proximity is reported
   (TD-344).** `cli/vitest.config.ts` sets `testTimeout: 15_000` (twice the worst

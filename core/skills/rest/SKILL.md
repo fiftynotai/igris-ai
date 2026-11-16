@@ -37,6 +37,17 @@ Read this instance's own LIVE scratchpad: `~/.igris/projects/{project}/session/i
 
 Ask: "Save session and enter REST MODE? Any unsaved work will be noted for resumption."
 
+### 2.4. End local attention recording (FR-276)
+
+Read this chat's explicit `**Attention Session ID:**` from its own scratchpad (or
+its already-known chat context). If present, run
+`igris attention end --session <attention_id> --reason "rest"` before removing
+live instance ownership. Inspect the digest; a failure is a one-line coverage
+notice and never blocks rest. Do not derive an ID from project/recency/PID.
+The ledger stays local and remains readable after instance deregistration.
+Preserve the attention ID line in the RESTED/archive scratchpad and preserve its
+session-map link. This step is a clean end, not deletion. Older CLI/no ID: skip.
+
 ### 2.5. Close Instance Ownership (Mandatory)
 
 You MUST close out this instance's ownership when ending a session. This is the deliberate "task closed" signal (Lock 1: ownership is explicit, never implied) AND it removes the instance from the VPS dashboard.
@@ -152,7 +163,7 @@ After writing the file content, call `igris_session_file_update` with:
 - `instance_id` = `<instance_id>`
 - `state` = `'rested'`
 
-Keep the `**Instance ID:**` line in the file body — it is the per-instance identity.
+Keep the `**Instance ID:**` line in the file body — it is the per-instance identity. Also preserve the existing `**Attention Session ID:**` line verbatim when present; do not add a placeholder when there was no recording.
 
 File content:
 

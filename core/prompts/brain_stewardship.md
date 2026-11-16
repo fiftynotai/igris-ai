@@ -603,4 +603,10 @@ FROM hunt_runs WHERE project='igris-ai' AND brief_id='FR-267'
 GROUP BY brief_id, size, agent, model_requested ORDER BY MIN(ended_at);
 ```
 
+## Local session attention (FR-276)
+
+`igris_attention_session` begins or binds a durable recording, advances an explicitly observed context epoch, or ends it. `igris_attention_event` records only self-reported external activity. `igris_attention_call` invokes a target through the same brain's strict gateway and records delivery evidence from instrumented response boundaries. These tools require identity on the same brain; never pass a local session ID to an unknown remote MCP connection. The local CLI `igris attention` route is the boot default.
+
+Attention records are local execution evidence, excluded from replication and project exports. Availability is not invocation; preview is not full delivery; delivery does not prove model use or retention. No confidence or relevance score is derived from these records. Use the session URL returned by the local dashboard for inspection; viewing it writes nothing.
+
 <!-- /SECTION: brain_stewardship -->

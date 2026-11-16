@@ -58,5 +58,6 @@ points here.
 | harness | file | delegation_model |
 |---|---|---|
 | antigravity | harness-specific/antigravity.md | dynamic-define |
+| codex | harness-specific/codex.md | native-static |
 | cursor | harness-specific/cursor.md | inline |
 | gemini | harness-specific/gemini.md | dynamic-define |

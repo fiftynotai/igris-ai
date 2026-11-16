@@ -44,6 +44,9 @@ interface Stub extends ForceGraphLike {
   data: { nodes: GraphDatum[]; links: LinkDatum[] } | null;
   centre: { x: number; y: number };
   scaleValue: number;
+  nodeVisible: (node: GraphDatum) => boolean;
+  linkVisible: (edge: LinkDatum) => boolean;
+  fitFilter: ((node: GraphDatum) => boolean) | null;
 }
 
 function makeStub(): Stub {
@@ -58,6 +61,7 @@ function makeStub(): Stub {
     data: null as { nodes: GraphDatum[]; links: LinkDatum[] } | null,
     centre: { x: 0, y: 0 },
     scaleValue: 1,
+    nodeVisible: () => true, linkVisible: () => true, fitFilter: null,
     fireEngineStop: () => engineStop(),
     fireNodeClick: (n: GraphDatum) => nodeClick(n),
     fireBackgroundClick: () => backgroundClick(),
@@ -84,6 +88,8 @@ function makeStub(): Stub {
     nodeRelSize: () => chain("nodeRelSize"),
     nodeCanvasObject: () => chain("nodeCanvasObject"),
     nodePointerAreaPaint: () => chain("nodePointerAreaPaint"),
+    nodeVisibility: (fn: (node: GraphDatum) => boolean) => { stub.nodeVisible = fn; return chain("nodeVisibility"); },
+    linkVisibility: (fn: (edge: LinkDatum) => boolean) => { stub.linkVisible = fn; return chain("linkVisibility"); },
     nodeLabel: () => chain("nodeLabel"),
     linkLabel: () => chain("linkLabel"),
     linkColor: () => chain("linkColor"),
@@ -134,7 +140,7 @@ function makeStub(): Stub {
       stub.scaleValue = args[0];
       return chain(`zoom/${args.length}`);
     },
-    zoomToFit: () => chain("zoomToFit"),
+    zoomToFit: (_ms?: number, _px?: number, fn?: (node: GraphDatum) => boolean) => { stub.fitFilter = fn ?? null; return chain("zoomToFit"); },
     screen2GraphCoords: (x: number, y: number) => ({ x, y }),
     graph2ScreenCoords: (x: number, y: number) => ({ x, y }),
     _destructor: () => chain("_destructor"),
@@ -777,5 +783,38 @@ describe("T10 — reheat is deliberate, never ambient (D8)", () => {
     expect(code).toMatch(/idleTimer = setTimeout\(/);
     // And the only `clearTimeout`s are the ones that cancel that debounce.
     expect(code).toMatch(/clearTimeout\(idleTimer\)/);
+  });
+});
+
+
+describe("FR-276 visibility retains the graph instance and settled positions", () => {
+  it("gates real visibility accessors and rejects stale hidden-node clicks without graphData or camera updates", async () => {
+    const { nodeVisible, edgeVisible } = await import("../../attention/lens");
+    const { repaintEvidence } = await import("../attention");
+    let visible: ReadonlySet<string> | null = null;
+    const onSelect = vi.fn();
+    const g = build({ onSelect, paint: { ...NOOP_PAINT, nodeVisible: (n) => nodeVisible(visible, n.key), linkVisible: (e) => edgeVisible(visible, e) } });
+    g.setData([node("a"), node("b")], [edge("a", "b")], { a: { x: 1, y: 2 }, b: { x: 3, y: 4 } });
+    stub.fireEngineStop(); await tick();
+    const topology = stub.data;
+    const positions = g.positions();
+    const camera = { ...stub.centre, k: stub.scaleValue };
+    stub.calls.length = 0;
+    visible = new Set(["a"]);
+    const stop = repaintEvidence(g, 1);
+    expect(stub.nodeVisible(topology!.nodes[0])).toBe(true);
+    expect(stub.nodeVisible(topology!.nodes[1])).toBe(false);
+    expect(stub.linkVisible(topology!.links[0])).toBe(false);
+    stub.fireNodeClick(topology!.nodes[1]); expect(onSelect).not.toHaveBeenCalled();
+    stub.fireNodeClick(topology!.nodes[0]); expect(onSelect).toHaveBeenCalledOnce();
+    stop(); await tick();
+    expect(stub.data).toBe(topology); expect(g.positions()).toEqual(positions);
+    expect({ ...stub.centre, k: stub.scaleValue }).toEqual(camera);
+    expect(stub.calls).not.toContain("graphData"); expect(stub.calls).not.toContain("zoomToFit");
+    expect(stub.calls.some((call) => call.startsWith("cooldown"))).toBe(false);
+    g.zoomToFit(); expect(stub.fitFilter!(topology!.nodes[0])).toBe(true); expect(stub.fitFilter!(topology!.nodes[1])).toBe(false);
+    visible = new Set(); stub.calls.length = 0; g.zoomToFit(); expect(stub.calls).not.toContain("zoomToFit");
+    visible = null; expect(stub.nodeVisible(topology!.nodes[1])).toBe(true); expect(stub.linkVisible(topology!.links[0])).toBe(true);
+    g.destroy();
   });
 });

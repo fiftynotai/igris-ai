@@ -35,6 +35,14 @@ const REF_FALSE = /\bref:\s*false\b/g;
 
 /** Every allowed site, with WHY it is not a wait a standalone CLI depends on. */
 const ALLOWED: Record<string, { count: number; reason: string }> = {
+  "lib/dashboard/managed.ts": {
+    count: 1,
+    reason:
+      "child.unref() unrefs the DETACHED long-lived dashboard server that `igris dashboard --ensure` " +
+      "(FR-276) starts, not a wait: the readiness wait is the ref'd `await delay(100)` lock poll beside " +
+      "it, and the finally block kills a child that never became ready. The unref only stops the server " +
+      "from holding the /boot-time CLI open after readiness.",
+  },
   "lib/open-url.ts": {
     count: 1,
     reason:

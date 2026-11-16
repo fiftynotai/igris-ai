@@ -27,6 +27,8 @@
 import { get as httpGet, request as httpRequest } from "node:http";
 import { brainDbPath } from "../lib/paths.js";
 import { existsSync } from "node:fs";
+import { ensureDashboard, stopDashboard, dashboardSessionUrl } from "../lib/dashboard/managed.js";
+import { ATTENTION_UUID } from "./attention.js";
 import * as bridge from "../lib/brain-bridge.js";
 import { shutdownWriteEngine } from "../lib/brain-write-bridge.js";
 import {
@@ -116,6 +118,10 @@ const SMOKE_PROBE_PATHS: readonly string[] = [
   // `cognition_instances` table answers 200 with the digest's own `degraded`
   // set, and no brain at all answers 200 with the envelope's.
   "/api/cognition",
+  // FR-276: the identity-required session path intentionally answers 400.
+  "/api/attention/sessions",
+  "/api/attention/session",
+  "/api/attention/inventory",
 ];
 
 /**
@@ -185,6 +191,16 @@ function openBrowser(url: string): void {
 export async function runDashboard(
   opts: DashboardOptions & { cliVersion: string },
 ): Promise<number> {
+  if (opts.session !== undefined && !ATTENTION_UUID.test(opts.session)) {
+    logError("dashboard: --session must be a UUID");
+    return 2;
+  }
+  if (opts.ensure || opts.stop) {
+    if (opts.ensure && opts.stop || opts.smoke) { logError("dashboard: --ensure, --stop and --smoke cannot be combined"); return 2; }
+    const result = opts.stop ? await stopDashboard(opts.cliVersion) : await ensureDashboard(opts);
+    process.stdout.write(JSON.stringify(result) + "\n");
+    return result.available ? 0 : 3;
+  }
   // --- 1. Single-instance guard ------------------------------------------
   const state = inspectLock();
   if (state.kind === "live") {
@@ -197,7 +213,7 @@ export async function runDashboard(
       );
       return 1;
     }
-    if (opts.noOpen !== true) openBrowser(state.lock.url);
+    if (opts.noOpen !== true) openBrowser(dashboardSessionUrl(state.lock.url, opts.session));
     return 0;
   }
   if (state.lock !== null) {
@@ -258,7 +274,7 @@ export async function runDashboard(
     const checks: DashboardDigest["checks"] = [];
     for (const path of SMOKE_PROBE_PATHS) {
       const status = await probeStatus(`${srv.url.replace(/\/$/, "")}${path}`);
-      checks.push({ path, status, ok: status === 200 });
+      checks.push({ path, status, ok: status === (path === "/api/attention/session" ? 400 : 200) });
     }
     // The write path, probed with the INVERTED expectation — see WRITE_PROBE.
     const writeStatus = await probePostStatus(
@@ -292,9 +308,9 @@ export async function runDashboard(
   }
 
   // --- 4. Foreground -----------------------------------------------------
-  info(`IGRIS dashboard — ${srv.url}`);
+  info(`IGRIS dashboard — ${dashboardSessionUrl(srv.url, opts.session)}`);
   info("Press Ctrl-C to stop.");
-  if (opts.noOpen !== true) openBrowser(srv.url);
+  if (opts.noOpen !== true) openBrowser(dashboardSessionUrl(srv.url, opts.session));
 
   return new Promise<number>((resolve) => {
     let shuttingDown = false;

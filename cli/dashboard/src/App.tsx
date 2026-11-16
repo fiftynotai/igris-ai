@@ -105,7 +105,7 @@ const Diagnostics = lazy(() =>
 
 export function App() {
   const [palette, setPalette] = usePalette();
-  const [{ route, layer, address, focus }, navigate] = useRoute();
+  const [{ route, layer, address, focus, attentionSession }, navigate] = useRoute();
   const live = useLive();
 
   /**
@@ -194,7 +194,7 @@ export function App() {
             }
           >
             {route === "graph" ? (
-              <Graph search={search} focus={focus} />
+              <Graph search={search} focus={focus} attentionSession={attentionSession} />
             ) : route === "layers" ? (
               <Layers live={live} search={search} layer={layer} address={address} />
             ) : route === "triage" ? (

@@ -766,6 +766,29 @@ describe("brain-db — instance state registration (WRITE: mint-or-recover upser
     });
   });
 
+  it("FR-276: keeps a bound harness_session_id on a re-register without one, and refuses a different one", async () => {
+    seedBrain((db) => db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL));
+    const m = await getModule();
+    const base = { instance_id: "i-chat", machine_hostname: "host-1", project_slug: "demo" };
+    const bound = () => {
+      const check = new Database(join(tmpRoot, "memory", "knowledge.db"), { readonly: true });
+      const row = check
+        .prepare("SELECT harness_session_id, current_brief FROM instances WHERE id = 'i-chat'")
+        .get() as { harness_session_id: string | null; current_brief: string | null };
+      check.close();
+      return row;
+    };
+    m.registerOrUpdateInstanceState({ ...base, harness_session_id: "chat-a" });
+    m.registerOrUpdateInstanceState({ ...base, current_brief: "FR-276" });
+    expect(bound()).toEqual({ harness_session_id: "chat-a", current_brief: "FR-276" });
+    expect(() =>
+      m.registerOrUpdateInstanceState({ ...base, current_brief: "OTHER", harness_session_id: "chat-b" }),
+    ).toThrow(m.InstanceIdentityConflictError);
+    expect(bound()).toEqual({ harness_session_id: "chat-a", current_brief: "FR-276" });
+    m.registerOrUpdateInstanceState({ ...base, harness_session_id: "chat-a" });
+    expect(bound().harness_session_id).toBe("chat-a");
+  });
+
   it("instanceStateUpdate writes display state and a lease expiry", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);

@@ -486,6 +486,9 @@ describe("igris export — exclusions self-described + absent from data/", () =>
     expect(excluded).toContain("instances");
     expect(excluded).toContain("session_files");
     expect(excluded).toContain("embeddings");
+    expect(excluded).toContain("attention_sessions");
+    expect(excluded).toContain("attention_events");
+    expect(excluded).toContain("attention_tool_inventory");
     // FR-273: project relations are cross-project (an edge joins TWO
     // projects), not a project slice — replicated by sync, never exported.
     expect(excluded).toContain("project_relation_kinds");

@@ -161,6 +161,8 @@ function getEngine(): Engine {
     console.error(`[brain] db: ${_engineDbPath}`);
     const config: EngineConfig = {
       dbPath: _engineDbPath,
+      // FR-276: the HTTP (VPS) server never exposes machine-local components.
+      transport: parseConfig().mode,
       components: {
         memory: { enabled: true },
         errors: { enabled: true },

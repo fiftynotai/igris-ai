@@ -38,6 +38,36 @@ Initialize Igris AI and resume any pending work.
 
 Run `igris ceremony start --name boot 2>/dev/null || true` — the brain-timed start of this ceremony (FR-268). The verb derives the slug from the working directory the same way §1's detection verb does, writes `ceremony_events` through the CLI's local write door (`created_at` is the brain's clock), and never blocks boot: a missing brain or an older schema degrades silently. Read nothing from its digest here; §7 writes the matching stop.
 
+### 0.1 Start local attention recording (FR-276)
+
+Before running an attention command, choose exactly one branch:
+
+- **New chat:** run `igris attention begin` and keep the returned `session.id` as
+  this chat's explicit **attention session ID**. It starts without a project;
+  Detect binds that identity next. A new chat always begins a new recording.
+- **Known context reassembly of this chat:** when this chat's own attention ID is
+  already known from the chat or its own scratchpad, first inspect it with
+  `igris attention show --session <attention_id>`. Exit 0 returns the recording,
+  even when the snapshot reports `truncated: true` and a `Snapshot bounded: …`
+  sentence in `degraded.reason`: that bound limits only the snapshot's size, so
+  it is no reason to leave attention unavailable. Exit 3 (attention unavailable
+  or otherwise degraded) or any other non-zero exit means the recording cannot
+  be verified. Reuse it only when the returned active recording and known chat
+  identity match, then call
+  `igris attention epoch --session <attention_id> --operation <unique-reassembly-id> --reason "explicit context reassembly"`.
+  Do not begin another recording first. If identity cannot be verified, leave
+  attention unavailable for this reassembly rather than borrowing another chat.
+
+Do not infer a recording from the newest project session, owner PID, or another
+chat. Pass the literal ID on every later command; environment exports do not
+persist between independent tool shells. Compaction is unknown unless this
+explicit boundary was observed; never guess it.
+
+**Older CLI fallback:** an unknown command, failed begin, or missing module/schema
+means attention coverage is unavailable. Continue the existing boot steps, do not
+pass new attention flags to the old CLI, and display one short unavailable notice.
+Never invent an ID or a dashboard URL. The ceremony still completes.
+
 ### 1. Detect — L0
 
 Run the detection verb first and read its JSON digest:
@@ -66,14 +96,37 @@ Carry these fields forward:
 - `detect.brain_root` is the runtime brain root for context reads.
 - `detect.mode` / booleans drive degraded notices only; detection never blocks boot.
 
+When an attention ID exists, bind the detected identity locally:
+`igris attention bind --session <attention_id> --project <detect.project_slug> --harness <detect.harness>`.
+Include `--harness-session-id` only if the current harness explicitly provides its
+native chat ID. Unknown is null; neither the project nor process is a chat ID.
+
 ### 2. Boot — L1 OS Core
 
 Read `<detect.brain_root>/core/os/INDEX.md` first — this is the **module map** for what context to load. There is no monolith to slice: each row is a self-contained module, and the modules ARE the sections.
 
-1. Read `<detect.brain_root>/core/os/INDEX.md`
+1. Read the INDEX through the local loader when recording is available:
+   `igris attention read --session <attention_id> --type os_module --id igris-core:INDEX --selection boot --selection-ref boot:index`.
+   Read its returned `content`; a successful receipt concerns only those bytes.
+   Selection flags state the boot policy chosen by the caller; they do not
+   turn that explanation into an observed model decision. If an older CLI
+   rejects these flags before delivery, retry without the selection flags and
+   leave the reason unrecorded. Apply this compatibility fallback to the
+   module, harness, USER and recall commands below as well. Never retry an
+   operation that already returned a successful result to repair metadata.
+   Otherwise read `<detect.brain_root>/core/os/INDEX.md` directly.
 2. From the module table, load every module whose `tier` is `boot` except `USER` — read each from `<detect.brain_root>/core/os/<module>.md`. The `SOUL` row lives at `<detect.brain_root>/core/SOUL.md`; the `USER` row is visible in the map but is deferred to Login (§3).
-3. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
-4. From the `Harness-specific roster`, if a row's `harness` equals `detect.harness`, read `<detect.brain_root>/core/os/<file>` for that row. If no row matches, this is a clean no-op (native-static harnesses need no file; `unknown` is not an error).
+3. For each selected module, use
+   `igris attention read --session <attention_id> --type os_module --id igris-core:<module> --selection boot --selection-ref boot:module`
+   and consume the returned content. Shared OS nodes have no `--project` argument.
+   If the loader is unavailable or cannot deliver the file, perform the existing
+   direct file read and leave that use outside observed coverage. Read all resolved modules silently. `on-demand` / `reference` modules are NOT loaded here — pull them later when their `consult_when` fires.
+4. From the `Harness-specific roster`, if a row's `harness` equals `detect.harness`,
+   run `igris attention read --session <attention_id> --type os_module --id igris-core:harness-specific/<harness> --selection boot --selection-ref boot:harness`
+   and consume its returned content. If recording or the loader is unavailable,
+   or the loader cannot deliver the file, read `<detect.brain_root>/core/os/<file>`
+   directly and leave that use outside observed coverage. If no row matches,
+   this is a clean no-op (`unknown` is not an error).
 
 **Always-needed files** (boot mechanics, not context modules):
 - `<detect.brain_root>/config.json` - Remote brain URL and API key
@@ -82,7 +135,11 @@ Read `<detect.brain_root>/core/os/INDEX.md` first — this is the **module map**
 
 ### 3. Login — L2 Operator
 
-Read `<detect.brain_root>/USER.md`. This is the Login layer: the machine-home operator profile and preferences. It is distinct from Boot's OS core so the operator layer can vary per machine without being shipped as core OS content.
+When recording is available, read USER with
+`igris attention read --session <attention_id> --type os_module --id igris-core:USER --selection boot --selection-ref boot:identity`.
+If recording or the loader is unavailable, or the loader cannot deliver USER, read
+`<detect.brain_root>/USER.md` directly and leave that use outside observed coverage.
+This is the Login layer: the machine-home operator profile and preferences. It is distinct from Boot's OS core so the operator layer can vary per machine without being shipped as core OS content.
 
 ### 4. Mount — L3 Remote Sync
 
@@ -207,7 +264,32 @@ It prints `{ "completed": <bool>, "boot_welcomed": <bool>, "first_run": <bool> }
 
 ### 4.3 Query Brain for Context (Optional)
 
-If the `igris-brain` MCP server is available:
+When local attention recording is available, use local correlated calls for
+`igris_memory_recall` (required `project` and `context`) and `igris_session_recall`
+(optional `days` only). The recall arguments carry query text, so each call
+gets its own private, short-lived arguments file, created, used and deleted in
+ONE shell command: `umask 077; f=$(mktemp)` creates it (mode 0600), the tool's
+exact JSON arguments go into it, the call reads it through `--args-file "$f"`,
+and `rm -f "$f"` deletes it as soon as the call returns, whether it succeeded
+or failed:
+
+```bash
+( umask 077; f=$(mktemp) || exit 1; trap 'rm -f "$f"' EXIT
+  cat > "$f" <<'IGRIS_ARGS'
+<the tool's exact JSON arguments>
+IGRIS_ARGS
+  igris attention call --session <attention_id> --tool <tool_name> --args-file "$f" --selection boot --selection-ref boot:recall )
+```
+
+Never reuse the file or leave it behind.
+The call boots the LOCAL vendored brain against the same database as the recording.
+It runs after boot-sync. Consume the original tool response; inspect
+`_meta.igris_attention` for recording coverage. Never send a local session ID to a
+possibly remote MCP facade. Do not retry a target operation merely because receipt
+writing failed; the tool may already have succeeded. If attention is unavailable,
+use the existing MCP calls below without an attention ID.
+
+If the local correlated call path or the `igris-brain` MCP server is available:
 - Call `igris_memory_recall` with `project` = the current project slug and
   `context` = "session start, current project priorities". Both are REQUIRED — a
   call omitting either is rejected at the gateway (BR-080).
@@ -259,7 +341,7 @@ If the `igris-brain` MCP server is available:
   ```
 - This gives a "welcome back" overview across all projects
 
-If brain MCP is not available, skip this step silently. No errors, no warnings.
+If neither the local attention call nor brain MCP is available, skip this step silently. No errors, no warnings.
 
 ### 4.3.1 Surface Stale Previous Instances (Mandatory)
 
@@ -285,11 +367,33 @@ Run the register verb AFTER §4.1 gather (the ordering contract — gather's out
 igris session register --project <detect.project_slug> \
   [--self-instance-id <gather.self_instance_id>] \
   [--project-path <detect.project_path>] \
-  [--seed-next-steps "<gather.handoff.next_steps>"]
+  [--seed-next-steps "<gather.handoff.next_steps>"] \
+  [--attention-session <attention_id>] \
+  [--harness-session-id <verified_native_chat_id>]
 ```
 - `--self-instance-id` — pass `gather.self_instance_id` when it was recovered (non-null); OMIT it to mint a fresh UUID. (This is the G4 recover-or-mint decision, now resolved by gather + register together.)
 - `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward from §4.1). Omit on a fresh start.
 - `--project-path` — the absolute project directory (the instance row's `project_path` field).
+- `--attention-session` — ONLY when begin succeeded. Registration binds the local
+  attention ID and writes `**Attention Session ID:**` into this instance's scratchpad.
+  Read `attention_binding.ok/reason`; a failed binding preserves early history and
+  must be surfaced. Omit both new flags on an older CLI.
+- `--harness-session-id` — ONLY when the harness explicitly provides this chat's
+  native ID. A bound native chat is never overwritten. Without
+  `--attention-session`, a recovered `--self-instance-id` already bound to a
+  different chat makes register mint a fresh instance instead (exit 0,
+  `minted: true`) and leave the old instance untouched, so carry the digest's
+  `instance_id` forward, never the recovered one. With `--attention-session`,
+  a chat conflict (the recording's or the recovered instance's) is still
+  refused: exit 1, nothing written, the reason in `attention_binding.reason`.
+  When the refusal names the recovered instance's chat (`attention_binding.reason`
+  is `instance already belongs to a different native chat`, or stderr reports
+  `instance <id> already belongs to a different native chat` when a concurrent
+  register bound it first), re-run the same register WITHOUT `--self-instance-id`:
+  it mints a fresh instance and binds it to this same recording, so carry that
+  digest's `instance_id` forward. Surface any other refusal (including
+  `attention recording belongs to a different native chat`); never pass another
+  chat's ID to get past it.
 
 **The register digest** (stdout JSON — read these fields):
 ```jsonc
@@ -722,5 +826,16 @@ If `gather.fresh_start` is true (`handoff` is null), this is a fresh start — s
 The per-instance file replaces the old single `CURRENT_SESSION.md`. There is no Mode flip on a shared file; each instance owns and writes its own file freely.
 
 Run `igris ceremony stop --name boot --project <detect.project_slug> --instance-id <register.instance_id> 2>/dev/null || true` — the brain-timed end of this ceremony (FR-268); the brain computes the duration from the §0 start it pairs with. Never blocks.
+
+### 8. Open the session map (FR-276)
+
+When an attention ID exists, run:
+`igris dashboard --ensure --session <attention_id>`.
+Read `{available,url,reason}`. Always expose the verified `url` as a clickable
+**Session attention map** link when available. The managed service is reused across
+chats; the URL selects this recording. If unavailable, report the short reason and
+continue. Never substitute a guessed port or a link to a different session.
+The loaded harness-specific adapter may open the verified URL in a native panel
+when that capability is actually exposed. The link is the portable fallback.
 
 Display: "Igris AI initialized. System ready."

@@ -45,6 +45,53 @@ The brain's full capability is in `memory`. These reaches are **obligations**, n
 
 Enforcement of these belongs to the Enforcement layer — some gated, some automated, some honor-system. The authoritative obligation→mechanism map is `core/enforcement/INDEX.md`.
 
+## Keep the session attention map grounded (FR-276)
+
+Retain this chat's attention session ID from `/boot`; it belongs to the local brain.
+For subsequent brain retrieval, use
+`igris attention call --session <id> --tool <name> --args-file <file>`. The
+arguments can carry query text, so pass them through a private, short-lived
+file in ONE shell command: create it with `umask 077; f=$(mktemp)` (mode 0600),
+write the exact JSON object to it, pass `--args-file "$f"`, and delete it with
+`rm -f "$f"` as soon as the call returns, whether it succeeded or failed:
+
+```bash
+( umask 077; f=$(mktemp) || exit 1; trap 'rm -f "$f"' EXIT
+  cat > "$f" <<'IGRIS_ARGS'
+<exact JSON object>
+IGRIS_ARGS
+  igris attention call --session <id> --tool <name> --args-file "$f" )
+```
+
+Never reuse the file or leave it behind.
+For discovered OS modules, skills, agents and project documents, use
+`igris attention read --session <id> --type <type> --id <canonical-id>` (with
+`--project <slug>` only for a project-owned resource). Obtain canonical IDs from
+`igris attention inventory`; read the returned content, not just the receipt.
+Calls to a remote MCP connection never receive a local recording ID.
+When the reason is known, add `--selection task` or `--selection user_request`
+and optionally `--selection-ref <safe-id>` to the read/call. These are explicitly
+caller-declared reasons; never claim they observe model-internal selection.
+Use only a short policy, brief or task identifier in the reference, never task
+prose, a query, a path or secret. Omit selection when unknown. When no selection is declared, known retrieval
+boundaries can record an observed retrieval. Older receipts stay
+unexplained; do not backfill guessed reasons.
+
+External tool use and native delegation may be recorded with `igris attention event`
+using explicit actor/node/outcome/extent and a short reason. These receipts remain
+**self-reported**; never label them direct observations. Pass the parent attention
+ID and an explicit actor to subagents; a separate child recording uses
+`attention begin --parent-session <id>`. No global current-session variable or
+project-based inference is allowed. Uninstrumented use remains a named coverage
+gap. Do not rerun a successful operation to repair missing telemetry.
+
+After explicit context reassembly of this same chat, record one
+`igris attention epoch --session <id> --operation <unique-reassembly-id> --reason "explicit context reassembly"`
+before reloading context. Hidden compaction stays unknown. `/rest` ends the
+recording and preserves its history. If commands are unavailable, continue the
+work and report coverage unavailable; no fabricated attention is preferable to a
+false claim about what context was delivered or retained.
+
 ## Escape hatches (emergency only)
 
 - `IGRIS_BYPASS_BRIEF_GATE=1` — lets a single Write/Edit through the brief-gate (stderr warning + audit event).

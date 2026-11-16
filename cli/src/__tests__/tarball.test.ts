@@ -3179,6 +3179,62 @@ interface PackReport {
  *   3_541 = 635 + 523 + 479 + 168 + 441 + 358 + 246 + 245 + 173 + 147 + 113
  *   + 13; 149_277 + 1_208 = 150_485; 153_600 − 150_485 = 3_115.
  *
+ * FR-276 MEASURED LAST (2026-11-16), after its final shipped change, on the
+ * landing tree with both packages rebuilt (`npm run build -w brain-mcp-server
+ * && npm run build -w cli`, copy step run, smoke `(sandboxed)`), `npm pack
+ * --dry-run --json --ignore-scripts`, twice, identical. CONTROL = develop
+ * `eb6c9b8` built in a `git archive` scratch tree: 1_993_761 / 7_229_751 /
+ * 579 / `aec2ba5f…`, byte- and sha-identical to the BR-118/TD-489 FINAL above.
+ *   FR-276 before trim  2_027_980    unpacked 7_375_781, 603 entries (+24),
+ *                                    `33cd7354…`. Own share +34_219 B: the
+ *                                    vendored `attention` component (.js and
+ *                                    .d.ts), `lib/dashboard/managed.js`,
+ *                                    `verbs/attention.js`,
+ *                                    `lib/attention-bridge.js` and their maps,
+ *                                    the Graph chunk (+5_887 gz) and the
+ *                                    `CHANGELOG.md` entries. 184_704 over the
+ *                                    floor, 31_104 B PAST the ceiling.
+ *   the trim            −70_543 B    the operator chose (2026-11-16) to trim
+ *                                    rather than raise `PACK_HARD_CEILING_DELTA`.
+ *                                    `cli/CHANGELOG.md` releases 7.3.0 and
+ *                                    earlier (178_602 raw B, 111_509 of them
+ *                                    verbatim copies of root `CHANGELOG.md`
+ *                                    paragraphs) moved verbatim to
+ *                                    `cli/CHANGELOG-ARCHIVE.md`, which `files`
+ *                                    does not name: −70_621 for the move and
+ *                                    its pointer, +78 for the [Unreleased]
+ *                                    bullet saying so. No `files` entry, map,
+ *                                    `.d.ts` or pin changed; TD-443's and
+ *                                    TD-444's packlist decisions stand.
+ *   packed              1_957_437    unpacked 7_197_634, 603 entries,
+ *                                    `44312ace…`
+ *   cumulative delta    +114_161 B   (1_957_437 − 1_843_276), above the floor,
+ *                                    so no re-base (the TD-444 rule)
+ *   headroom remaining  39_439 B     (153_600 − 114_161)
+ *   dashboard TOTAL JS  586_407 B    of 586_923 (516 B left): the browser
+ *                                    ceiling is now the tight one again.
+ *   RE-DERIVED: 2_027_980 − 1_993_761 = 34_219; 1_957_437 − 2_027_980 =
+ *   −70_543 = −70_621 + 78; 150_485 + 34_219 − 70_543 = 114_161.
+ *   ROUND 2 (2026-11-16, the review fixes), re-measured the same way after
+ *   both rebuilds, twice, identical:
+ *   packed              1_958_975    unpacked 7_203_672, 603 entries,
+ *                                    `4449c9ba…`. +1_538 packed, +6_038
+ *                                    unpacked over the line above:
+ *                                    `verbs/session.js` +1_043 and its map
+ *                                    +424, `verbs/attention.js` +1_023 and
+ *                                    its map +528, the vendored `sqlite.js`
+ *                                    +837, `attention/actions.js` +383,
+ *                                    `capture.js` and `capture.d.ts` +115
+ *                                    each, the five `observeDelivery` call
+ *                                    sites +876 (context 288, memory 226,
+ *                                    briefs 146, goals 146, sessions 70),
+ *                                    `CHANGELOG.md` +694. Dashboard bytes
+ *                                    unchanged (TOTAL JS 586_407 B).
+ *   cumulative delta    +115_699 B   (1_958_975 − 1_843_276)
+ *   headroom remaining  37_901 B     (153_600 − 115_699)
+ *   RE-DERIVED: 1_043 + 424 + 1_023 + 528 + 837 + 383 + 115 + 115 + 876 +
+ *   694 = 6_038; 1_958_975 − 1_957_437 = 1_538; 114_161 + 1_538 = 115_699.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

@@ -18,6 +18,8 @@
  * NOT clobber).
  */
 
+import { attentionAction, attentionSnapshot } from "../lib/attention-bridge.js";
+import { ATTENTION_UUID, INSTANCE_ID } from "./attention.js";
 import { ensureMachineIdentity, readMachineIdentity } from "../lib/machine-identity.js";
 import {
   existsSync,
@@ -34,7 +36,9 @@ import {
 import {
   listSessionFiles,
   listInstances,
+  listInstancesReadonly,
   getSessionFileContent,
+  InstanceIdentityConflictError,
   registerOrUpdateInstanceState,
   sessionFileUpsert,
 } from "../lib/brain-db.js";
@@ -54,6 +58,8 @@ import type {
 export type SessionAction = "gather" | "register";
 
 export interface SessionOptions {
+  attentionSession?: string;
+  harnessSessionId?: string;
   /** Sub-action selector. */
   action: SessionAction;
   /** Project slug override; default basename(cwd) per the sync convention. */
@@ -415,7 +421,10 @@ function buildLiveFileContent(
  * `sessionFileUpsert(state='live')` re-affirms the DB row's LIVE state via
  * COALESCE (an omitted field never downgrades).
  */
-function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: number } {
+function runRegister(
+  opts: SessionOptions,
+  freshOnChatConflict = true,
+): { digest: RegisterDigest; code: number } {
   const slug = opts.project ?? basenameOfCwd();
   const seedNextSteps = opts.seedNextSteps ?? "";
 
@@ -490,7 +499,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
       },
       me,
     );
-    registration = registerOrUpdateInstanceState({
+    const input = {
       instance_id: opts.selfInstanceId,
       machine_hostname: machineHostname,
       machine_id: me.machine_id,
@@ -498,15 +507,32 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
       project_slug: slug,
       project_path: opts.projectPath ?? null,
       harness: caps.harness,
+      harness_session_id: opts.harnessSessionId,
       owner_pid: owner ? owner.pid : null,
       owner_started_at: owner ? owner.started_at : null,
       liveness_method: liveness.method,
       liveness_status: liveness.status,
       liveness_checked_at: liveness.checked_at,
-    });
+    };
+    try {
+      registration = registerOrUpdateInstanceState(input);
+    } catch (err) {
+      // FR-276: a new native chat is a new identity. The recovered instance stays
+      // bound to its own chat (the data layer refused before writing), so a plain
+      // register mints a fresh instance; the old row and its live file are untouched.
+      // An --attention-session register keeps the refusal (`freshOnChatConflict`).
+      if (!(err instanceof InstanceIdentityConflictError) || !freshOnChatConflict) throw err;
+      warn(
+        `session register: instance ${opts.selfInstanceId} is bound to a different native chat; minting a fresh instance (the old instance and its live file are untouched).`,
+      );
+      registration = registerOrUpdateInstanceState({ ...input, instance_id: undefined });
+    }
   } catch (err) {
+    // FR-276: an identity conflict that reaches here (the --attention-session path)
+    // is a refusal (nothing was written), not a degrade.
+    const refused = err instanceof InstanceIdentityConflictError;
     warn(
-      `session register: instance upsert skipped (${
+      `session register: instance upsert ${refused ? "refused" : "skipped"} (${
         err instanceof Error ? err.message : String(err)
       }).`,
     );
@@ -518,7 +544,7 @@ function runRegister(opts: SessionOptions): { digest: RegisterDigest; code: numb
         live_file: "",
         seeded_from_handoff: false,
       },
-      code: 0,
+      code: refused ? 1 : 0,
     };
   }
 
@@ -629,4 +655,112 @@ export function runSession(opts: SessionOptions): number {
   const digest = buildGatherDigest(slug, selfId);
   process.stdout.write(JSON.stringify(digest) + "\n");
   return 0;
+}
+
+/** Reject identity conflicts before instance upsert or scratchpad writes. */
+async function attentionRegistrationConflict(opts: SessionOptions): Promise<string | null> {
+  const slug = opts.project ?? basenameOfCwd();
+  if (!/^[a-zA-Z0-9_-]+$/.test(slug)) return "invalid project slug";
+  if (opts.selfInstanceId !== undefined && !INSTANCE_ID.test(opts.selfInstanceId)) {
+    return "invalid instance identity";
+  }
+  if (opts.harnessSessionId !== undefined &&
+      (opts.harnessSessionId.length === 0 || opts.harnessSessionId.length > 256 || /[\u0000-\u001f]/.test(opts.harnessSessionId))) {
+    return "invalid native chat identity";
+  }
+  const snapshot = await attentionSnapshot({ session_id: opts.attentionSession });
+  // A degraded read that still returned the recording (a collection gap) is checked
+  // in full; only an unreadable recording skips these checks, and bind re-checks it.
+  const session = snapshot.session;
+  if (session || !snapshot.degraded) {
+    if (!session || session.status !== "active") return "unknown or ended attention recording";
+    if (session.project !== null && session.project !== slug) return "attention recording belongs to another project";
+    if (session.instance_id !== null && session.instance_id !== opts.selfInstanceId) {
+      return "attention recording is already bound; pass its matching --self-instance-id";
+    }
+    if (session.harness_session_id !== null && opts.harnessSessionId !== undefined &&
+        session.harness_session_id !== opts.harnessSessionId) {
+      return "attention recording belongs to a different native chat";
+    }
+  }
+  if (opts.selfInstanceId) {
+    const instance = listInstancesReadonly({ status: "all", includeStale: true })
+      .find(row => row.id === opts.selfInstanceId);
+    if (instance?.project_slug && instance.project_slug !== slug) {
+      return "instance already belongs to another project";
+    }
+    if (instance?.harness_session_id && opts.harnessSessionId !== undefined &&
+        instance.harness_session_id !== opts.harnessSessionId) {
+      return "instance already belongs to a different native chat";
+    }
+    const path = join(projectSessionInstancesDir(slug), `${opts.selfInstanceId}.md`);
+    if (existsSync(path)) {
+      const prior = readFileSync(path, "utf8").match(/^\*\*Attention Session ID:\*\*\s*(.+)$/m)?.[1]?.trim();
+      if (prior && prior !== opts.attentionSession) return "instance scratchpad already belongs to a different attention recording";
+    }
+  }
+  return null;
+}
+
+/** Async CLI boundary; legacy synchronous gather/register consumers remain compatible. */
+export async function runSessionCommand(opts: SessionOptions): Promise<number> {
+  if (opts.attentionSession !== undefined && !ATTENTION_UUID.test(opts.attentionSession)) {
+    process.stderr.write("session: --attention-session must be a UUID\n");
+    return 2;
+  }
+  if (opts.action !== "register" || !opts.attentionSession) return runSession(opts);
+  try {
+    const conflict = await attentionRegistrationConflict(opts);
+    if (conflict) {
+      const refused: RegisterDigest = {
+        degraded: true, instance_id: opts.selfInstanceId ?? "", minted: false,
+        live_file: "", seeded_from_handoff: false, attention_session_id: opts.attentionSession,
+        attention_binding: { ok: false, reason: conflict },
+      };
+      process.stdout.write(JSON.stringify(refused) + "\n");
+      return 1;
+    }
+  } catch (err) {
+    process.stderr.write(`session: cannot verify attention ownership: ${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
+  }
+  // A recording binds to the chat it was presented with, so a chat conflict here stays a refusal.
+  const { digest, code } = runRegister(opts, false);
+  digest.attention_session_id = opts.attentionSession;
+  if (opts.harnessSessionId) digest.harness_session_id = opts.harnessSessionId;
+  if (digest.degraded || !digest.instance_id) {
+    digest.attention_binding = { ok: false, reason: "instance registration incomplete; early attention recording preserved" };
+  } else {
+    try {
+      const slug = opts.project ?? basenameOfCwd();
+      const path = join(projectSessionInstancesDir(slug), `${digest.instance_id}.md`);
+      const content = readFileSync(path, "utf8");
+      const prior = content.match(/^\*\*Attention Session ID:\*\*\s*(.+)$/m)?.[1]?.trim();
+      // Recheck after registration in case another writer changed the scratchpad.
+      if (prior && prior !== opts.attentionSession) {
+        digest.attention_binding = { ok: false, reason: "instance scratchpad already belongs to a different attention recording" };
+      } else {
+        const result = await attentionAction("bind", {
+          session_id: opts.attentionSession, project: slug, instance_id: digest.instance_id,
+          ...(opts.harnessSessionId ? { harness_session_id: opts.harnessSessionId } : {}),
+        });
+        const binding = "result" in result ? result.result : result;
+        digest.attention_binding = { ok: binding.ok, reason: binding.reason };
+        if (binding.ok && !prior) {
+          const updated = content.replace(/^(\*\*Instance ID:\*\*.*)$/m, `$1\n**Attention Session ID:** ${opts.attentionSession}`);
+          writeFileSync(path, updated, "utf8");
+          sessionFileUpsert({
+            project: slug, filename: `instances/${digest.instance_id}.md`, content: updated,
+            instance_id: digest.instance_id, state: "live",
+          });
+        }
+      }
+    } catch (err) {
+      digest.attention_binding = {
+        ok: false, reason: `instance registered; attention binding incomplete: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+  process.stdout.write(JSON.stringify(digest) + "\n");
+  return code;
 }

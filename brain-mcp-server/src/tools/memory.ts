@@ -24,6 +24,8 @@
  * @author fifty.dev
  */
 
+import { observeDelivery, attentionCaptureActive } from '../engine/components/attention/capture.js';
+import { createHash } from 'node:crypto';
 import { getDb, BRAIN_DIR } from '../db.js';
 import { sanitizeFts5Query } from '../utils/fts5.js';
 import { generateEmbedding, embeddingToBuffer, EMBEDDING_MODEL } from '../utils/embeddings.js';
@@ -434,6 +436,7 @@ function handleMemorySearch(args: MemorySearchInput): { content: { type: string;
     const promotedTo = typeof row.promoted_to_doc === 'string' && (row.promoted_to_doc as string).length > 0
       ? (row.promoted_to_doc as string)
       : null;
+    if (attentionCaptureActive()) observeDelivery({node:{type:'learning',project:String(row.project),id:String(row.id)},outcome:'succeeded',extent:promotedTo?'preview':'full',bytes:promotedTo?null:Buffer.byteLength(String(row.content),'utf8'),source_revision:promotedTo?null:createHash('sha256').update(String(row.content)).digest('hex')});
     const lines = [
       `--- Result ${i + 1} ---`,
       `ID: ${row.id}`,
@@ -710,6 +713,7 @@ async function handleMemoryRecall(args: MemoryRecallInput): Promise<{ content: {
     const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
       ? row.promoted_to_doc
       : null;
+    if (attentionCaptureActive()) observeDelivery({node:{type:'learning',project:String(row.project),id:String(row.id)},outcome:'succeeded',extent:promotedTo||fullContent.length>200?'preview':'full',bytes:promotedTo?null:Buffer.byteLength(truncated,'utf8'),source_revision:createHash('sha256').update(fullContent).digest('hex')});
     const lines = [
       `--- Recall ${i + 1} ---`,
       `ID: ${row.id}`,
@@ -770,6 +774,7 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
   const row = getLearning(db, args.id);
 
   if (!row) {
+    if (attentionCaptureActive()) observeDelivery({node:{type:'learning',project:null,id:String(args.id)},outcome:'failed',extent:'unknown',reason:'Learning not found; owner unknown'});
     return {
       content: [{
         type: 'text',
@@ -786,6 +791,7 @@ function handleMemoryGet(args: MemoryGetInput): { content: { type: string; text:
     WHERE id = ?
   `).run(args.id);
 
+  if (attentionCaptureActive()) observeDelivery({node:{type:'learning',project:String(row.project),id:String(row.id)},outcome:'succeeded',extent:'full',bytes:Buffer.byteLength(String(row.content),'utf8'),source_revision:createHash('sha256').update(String(row.content)).digest('hex')});
   const result = [
     `ID: ${row.id}`,
     `Project: ${row.project}`,
@@ -1150,6 +1156,7 @@ function formatHybridResult(
   const promotedTo = typeof row.promoted_to_doc === 'string' && row.promoted_to_doc.length > 0
     ? row.promoted_to_doc
     : null;
+  if (attentionCaptureActive()) observeDelivery({node:{type:'learning',project:row.project,id:String(row.id)},outcome:'succeeded',extent:promotedTo||fullContent.length>300?'preview':'full',bytes:promotedTo?null:Buffer.byteLength(truncated,'utf8'),source_revision:createHash('sha256').update(fullContent).digest('hex')});
   const lines = [
     `--- Result ${index + 1} ---`,
     `ID: ${row.id}`,

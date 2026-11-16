@@ -62,6 +62,8 @@
  */
 
 import { existsSync } from "node:fs";
+import { bundlePresent } from "./static.js";
+import { ATTENTION_PROTOCOL } from "./managed.js";
 import {
   briefStatusSummaryReadonly,
   listInstancesReadonly,
@@ -158,6 +160,9 @@ export async function health(cliVersion: string): Promise<HealthPayload> {
   return {
     ok: true,
     cli_version: cliVersion,
+    attention_protocol: ATTENTION_PROTOCOL,
+    server_pid: process.pid,
+    dashboard_bundle_present: bundlePresent(),
     brain: { present, path: brainDbPath() },
     bridge: { available: probe.available, reason: probe.reason },
     write: {

@@ -1,3 +1,4 @@
+import { observeDelivery, attentionCaptureActive } from '../engine/components/attention/capture.js';
 /**
  * Igris Brain -- Brief Tools
  *
@@ -527,6 +528,7 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
   const record = getBrief(getDb(), args.project, args.brief_id);
 
   if (record === null) {
+    if (attentionCaptureActive()) observeDelivery({node:{type:'brief',project:args.project,id:args.brief_id},outcome:'failed',extent:'unknown',reason:'Brief not found'});
     return {
       content: [{
         type: 'text',
@@ -535,6 +537,7 @@ function handleBriefGet(args: BriefGetInput): { content: { type: string; text: s
     };
   }
 
+  if (attentionCaptureActive()) observeDelivery({node:{type:'brief',project:record.project,id:record.brief_id},outcome:'succeeded',extent:typeof record.content==='string'?'full':'preview',source_revision:typeof record.content_hash==='string'?record.content_hash:null,bytes:typeof record.content==='string'?Buffer.byteLength(record.content,'utf8'):null});
   return {
     content: [{
       type: 'text',
@@ -568,6 +571,7 @@ function handleBriefList(args: BriefListInput): { content: { type: string; text:
     offset: args.offset,
   });
 
+  if (attentionCaptureActive()) for (const row of result.briefs) observeDelivery({node:{type:'brief',project:String(row.project),id:String(row.brief_id)},outcome:'succeeded',extent:args.include_content&&typeof row.content==='string'?'full':'preview',source_revision:typeof row.content_hash==='string'?row.content_hash:null});
   return {
     content: [{
       type: 'text',

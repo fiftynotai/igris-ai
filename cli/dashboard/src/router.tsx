@@ -34,6 +34,7 @@
  * here would be a second chance to drop the project segment.
  */
 import { useEffect, useState } from "react";
+import { parseAttentionSession } from "./attention/model";
 import {
   LAYER_IDS,
   parseGraphFocus,
@@ -109,6 +110,7 @@ export interface RouteState {
   address: RecordAddress | null;
   /** `#/graph?focus=<type>/<project>/<id>` — the LOCATE IN GRAPH target. */
   focus: NodeTriple | null;
+  attentionSession: string | null;
 }
 
 function parse(hash: string): RouteState {
@@ -128,6 +130,7 @@ function parse(hash: string): RouteState {
     layer: route === "layers" ? layers.layer : (LAYER_IDS[0] as LayerId),
     address: route === "layers" ? layers.address : null,
     focus: route === "graph" ? parseGraphFocus(hash) : null,
+    attentionSession: route === "graph" ? parseAttentionSession(hash) : null,
   };
 }
 

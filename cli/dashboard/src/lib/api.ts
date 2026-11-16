@@ -168,6 +168,63 @@ export interface GraphPayload {
   degraded: DashboardDegraded | null;
 }
 
+// FR-276 — structural mirrors of engine/components/attention/types.ts.
+export interface AttentionNodeRef { type: string; project: string | null; id: string }
+export type AttentionState = "available" | "preview" | "full" | "invoked" | "failed" | "unknown" | "historical";
+export interface AttentionCoverage {
+  level: "partial" | "unavailable";
+  observed: string[];
+  gaps: string[];
+  compaction: "observed" | "unknown";
+}
+export interface AttentionSession {
+  id: string; project: string | null; instance_id: string | null;
+  harness: string | null; harness_session_id: string | null; machine_id: string | null;
+  parent_session_id: string | null; status: "active" | "ended" | "interrupted";
+  current_epoch: number; started_at: string; ended_at: string | null;
+  last_sequence: number; coverage: AttentionCoverage;
+}
+export interface AttentionSelection {
+  category: "boot" | "task" | "retrieval" | "user_request";
+  provenance: "caller_declared" | "observed";
+  reference: string | null;
+}
+export interface AttentionEvent {
+  id: number; session_id: string; sequence: number; context_epoch: number;
+  actor_id: string; operation_id: string; event_key: string;
+  kind: "delivery" | "invocation" | "availability" | "epoch" | "end";
+  node: AttentionNodeRef | null;
+  outcome: "started" | "succeeded" | "failed" | "unknown";
+  extent: "preview" | "full" | "unknown" | null;
+  origin: "loader" | "tool_boundary" | "harness" | "self_report";
+  source_revision: string | null; bytes: number | null; reason: string | null;
+  observed_at: string;
+  /** Absent on older servers; null for receipts without selection metadata. */
+  selection?: AttentionSelection | null;
+}
+export interface AttentionNodeState {
+  key: string; node: AttentionNodeRef; state: AttentionState;
+  self_reported: boolean; historical: boolean;
+  last_event: AttentionEvent; events: AttentionEvent[];
+}
+export interface AttentionSnapshot {
+  session: AttentionSession | null; through_sequence: number; latest_sequence: number;
+  node_states: AttentionNodeState[]; recent_events: AttentionEvent[];
+  next_before: number | null; generated_at: string; degraded: DashboardDegraded | null;
+  /** The brain bounds node_states; a truncated snapshot also says so in degraded.reason. */
+  truncated: boolean;
+  counts: { events_total: number; events_reduced: number; nodes_reduced: number; node_states: number };
+}
+export interface AttentionInventory {
+  nodes: GraphNode[]; revision: string; generated_at: string;
+  sources: { source: string; available: boolean; reason: string | null }[];
+  degraded: DashboardDegraded | null;
+}
+export interface AttentionSessionList {
+  sessions: AttentionSession[]; next_before: string | null;
+  generated_at: string; degraded: DashboardDegraded | null;
+}
+
 // ---------------------------------------------------------------------------
 // FR-240 — the four layer views: nine endpoints, ten payloads.
 //
@@ -922,6 +979,20 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
 }
 
 export const api = {
+  attentionSessions: (before: string | null = null, signal?: AbortSignal): Promise<AttentionSessionList> => {
+    const query = new URLSearchParams({ limit: "50" });
+    if (before !== null) query.set("before", before);
+    return getJson<AttentionSessionList>(`api/attention/sessions?${query}`, signal);
+  },
+  attentionSnapshot: (session: string, through: number | null, before: number | null, signal?: AbortSignal): Promise<AttentionSnapshot> => {
+    const query = new URLSearchParams({ session, limit: "50" });
+    if (through !== null) query.set("through", String(through));
+    if (before !== null) query.set("before", String(before));
+    return getJson<AttentionSnapshot>(`api/attention/session?${query}`, signal);
+  },
+  attentionInventory: (project: string | null, signal?: AbortSignal): Promise<AttentionInventory> =>
+    getJson<AttentionInventory>(project === null ? "api/attention/inventory" : `api/attention/inventory?project=${encodeURIComponent(project)}`, signal),
+
   health: (signal?: AbortSignal): Promise<HealthPayload> =>
     getJson<HealthPayload>("api/health", signal),
 

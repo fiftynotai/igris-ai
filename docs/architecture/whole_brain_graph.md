@@ -109,6 +109,14 @@ explicit `0` rather than vanishing from the contract.
 
 ---
 
+## Session attention inventory (FR-276)
+
+The dashboard can merge additional discovered `os_module`, `context_doc`,
+`skill`, `agent`, and `tool` nodes with this graph. The inventory uses the same
+structured identity and key encoder but adds no semantic edges. Per-chat activity
+is a separate overlay; it never changes ownership or edge confidence. See
+[session attention](./session_attention.md) for capture and coverage semantics.
+
 ## 3. The ambiguous-edge resolution rule
 
 **Rule name: *intra-project projection with declared multiplicity*.**

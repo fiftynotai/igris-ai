@@ -31,7 +31,7 @@
  * `// STD` in the CSS — no plugin, no second definition.
  */
 
-import gsap from "gsap";
+import gsap from "gsap/gsap-core";
 import type { GraphEdge } from "../lib/api";
 import { buildTraceChain } from "./edges";
 

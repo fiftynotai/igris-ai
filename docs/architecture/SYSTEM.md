@@ -36,32 +36,36 @@ flowchart TB
 
 **Engine:** TypeScript MCP server (`brain-mcp-server/`) booted by the unified `igris` CLI. Database is SQLite WAL mode with FTS5 and sqlite-vec extensions; busy timeout is 30 s. Static schema migrations live in `brain-mcp-server/src/db.ts` (v1–v25+); each component runs its own programmatic migrations at boot (`brain-mcp-server/src/engine/index.ts` (`registry.boot()`, cited by symbol — the line moved under FR-267)).
 
-**The 15 components** (the `componentFactories` array in `brain-mcp-server/src/engine/index.ts`, booted in dependency order — counted from that array on 2026-08-26 UTC and cited by symbol so the pin cannot drift):
+**Components** are registered by `componentFactories` in
+`brain-mcp-server/src/engine/index.ts`. The current registration, including
+FR-276 attention, is listed below; the array remains the count authority.
 
-| # | Component | Purpose (one sentence) |
-|---|-----------|------------------------|
-| 1 | `memory` | Learnings DB with FTS5 + 384-D vector search; auto-promotes to global scope at 2+ projects |
-| 2 | `errors` | Error catalog & root-cause analysis |
-| 3 | `projects` | Registry of installed projects (path, slug, status, config) |
-| 4 | `context` | Replication + reconciliation for project-context docs (coding guidelines, architecture maps, etc.). The FILE under `~/.igris/projects/{slug}/context/` is the authority; `context_files` is its cross-machine replica, reconciled both directions by `igris_context_sync` (TD-460) |
-| 5 | `sessions` | Session lifecycle bookkeeping |
-| 6 | `briefs` | Brief storage with status & phase tracking |
-| 7 | `edges` | Typed entity relationships (FR-105) — provenance graph |
-| 8 | `goals` | Outcome-level goal tracking (FR-110) |
-| 9 | `tasks` | Autonomous task queue (v3 schema with retry + capability gates) |
-| 10 | `instances` | Agent instance lifecycle (run ID, hostname, model, tokens) |
-| 11 | `sync` | VPS sync queue & replication state |
-| 12 | `cache` | Guarded projection of `brief_files` / `session_files` to `~/.igris/projects/{project}/` (TD-414: a local brief file newer than the brain copy is never overwritten; `igris_cache_rebuild force:true` is the only override) |
-| 13 | `schedules` | Cron schedule + event-based triggers |
-| 14 | `coordination` | Autonomous decision rules & coordination config |
-| 15 | `subconscious` | Rule-based anomaly detection (**DISABLED in v7**; see §3.1) |
-| 16 | `perception` | Observation & pattern extraction from sessions |
-| 17 | `monitoring` | Agent & system observability (activity, SLA) |
-| 18 | `registry` | Reusable-assets catalog (templates/modules — the "lego" store; FR-099/FR-198) |
+| Component | Purpose |
+|---|---|
+| `attention` | Machine-local per-chat evidence, correlated calls, and capability inventory |
+| `memory` | Learnings with full-text and vector recall |
+| `errors` | Error catalog and root-cause analysis |
+| `projects` | Registered projects and project relationships |
+| `context` | OS context loading and project-context file reconciliation |
+| `sessions` | Session lifecycle and saved state |
+| `briefs` | Brief content, status, and workflow tracking |
+| `edges` | Typed knowledge relationships and graph readers |
+| `goals` | Outcome-level goals |
+| `instances` | Live agent ownership and activity |
+| `sync` | Explicit replication and synchronization queue |
+| `cache` | Guarded projection of brain records to local files |
+| `schedules` | Machine-local schedules and run ownership |
+| `cognition` | Unified perception and subconscious instance host |
+| `monitoring` | Agent and system observability |
+| `catalog` | Reusable assets and component discovery |
 
-_2026-08-26 UTC — Rows other than the metrics removal were not re-verified by FR-267 (the table still carries 18 names against the array's 15) — TD-430 tracks the sweep._
-
-**Tool count:** 113 brain tools across the 15 components — the figure is the pin in `brain-mcp-server/src/engine/__tests__/gateway-tool-count.test.ts` (`toBe(113)`: 112 at FR-237 − 4 + 1 + 4, FR-267 retired the metrics component, TD-460 added `igris_context_sync` and FR-273 the four project-relation tools) — served by the `igris-brain` MCP server as the single gateway. Every tool's `inputSchema` declares `additionalProperties: false` (TD-128 strict-input contract; enforced in `brain-mcp-server/src/engine/gateway.ts`'s `dispatch` — cited by symbol because TD-321 shifted that span and a range citation drifts on every edit inside it). Callers must use allowlists when forwarding queue entries or external payloads (see `cli/src/lib/sync/data.ts:224`).
+**Tool count** is pinned in
+`brain-mcp-server/src/engine/__tests__/gateway-tool-count.test.ts`; FR-276 adds
+`igris_attention_session`, `igris_attention_event`, and `igris_attention_call`.
+The MCP server is the single strict gateway: every tool rejects undeclared
+top-level arguments. A correlated attention call delegates to that same gateway
+and preserves the target response. See [session attention](./session_attention.md)
+for the local recording contract.
 
 **Key tables** (subset; the per-component schema files are the source of truth):
 
@@ -74,6 +78,7 @@ _2026-08-26 UTC — Rows other than the metrics removal were not re-verified by 
 | `event_log` | Audit trail of all events (used for perception extraction) |
 | `projects` | Installed projects registry |
 | `entity_edges` | Typed relationships across briefs, learnings, errors, sessions, goals |
+| `attention_sessions`, `attention_events`, `attention_tool_inventory` | Machine-local chat recordings and discovered tool publication; excluded from sync/export |
 | `sync_queue` | VPS replication backlog (JSONL-style queue, drained on `/boot`/`/rest`/`/sync`) |
 
 ### 3.1 Mirror invariant (TD-096)

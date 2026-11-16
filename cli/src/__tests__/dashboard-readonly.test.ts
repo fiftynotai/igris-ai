@@ -265,6 +265,9 @@ async function crawl(): Promise<void> {
      * makes exactly this point about FR-241's `/api/suggestions`.
      */
     "/api/cognition",
+    "/api/attention/sessions",
+    "/api/attention/session?session=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    "/api/attention/inventory",
     ...LAYER_PATHS,
   ];
   for (const p of paths) {
@@ -1057,6 +1060,9 @@ describe("G-RO-6 — the write engine is LAZY, and a POST really does wake it", 
       "/api/suggestions?project=demo&status=pending",
       // TD-326 — the `project_slug IS NULL` scope is still a READ.
       "/api/suggestions?project_scope=brain-level&status=pending",
+      "/api/attention/sessions",
+      "/api/attention/session?session=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "/api/attention/inventory",
     ]) {
       expect((await req(p)).status, p).toBe(200);
     }
