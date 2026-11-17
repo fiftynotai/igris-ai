@@ -382,6 +382,8 @@ Agent tool parameters:
   Follow the plan and implement all required changes.
   Ensure code follows all consulted project context docs.
   Add documentation comments to public APIs.
+  In your report's 'Changes:' list, name EVERY path you created, modified
+  or deleted, one per line: the close commits exactly that list (TD-493).
   In your final report, include a 'Context doc impact' block. List any durable
   convention, pattern, API shape, architecture boundary, UI standard, or test
   standard changed, and name which maintain_when condition it may trigger. If
@@ -730,22 +732,71 @@ Agent tool parameters:
    routine path.
 
 1. Update brief: Phase = COMMITTING, Active Agent = none
-2. Run git commands:
+2. **Commit this brief's own paths, and nothing else (TD-493).** Other
+   sessions share this working tree and its index. A sweeping stage (`git add`
+   with `-A`, `--all` or `.`, or a commit with `-a`) takes their in-flight files
+   and anything they staged into this commit, and the brief gates still pass
+   because they key off the footer. Never use those forms here.
+
+   **Build the path set** from these sources, and only these:
+   - every path in the forger's `Changes:` list, from every BUILDING round
+     (fix rounds included);
+   - every path you wrote yourself during this hunt (DOCUMENTING edits, the
+     CHANGELOG line, a fix you applied directly);
+   - every path sentinel or warden reported writing (a test it added).
+
+   Name files, not directories. A rename is two paths: list the old name and
+   the new one. Never derive the set from `git status` or from
+   "everything changed since the hunt began": a sibling's edit made during the
+   run shows up there as a change.
+
+   **Show the set before committing.** Add one Agent Log row,
+   `| {time} | orchestrator | Close path set | {path}, {path}, ... |`, and show
+   the same list to the operator.
+
+   **Commit through the scoped-commit script.** Write the message to a private
+   temp file, commit, then delete the file:
 
 ```bash
-git add -A
-git status
-git commit -m "$(cat <<'EOF'
+f=$(mktemp)
+cat > "$f" <<'EOF'
 <type>(<scope>): <summary from brief>
 
 <body from brief goal/problem>
 
 closes #{BRIEF_ID}
 EOF
-)"
+bash <scoped_commit> -F "$f" -- <path> <path> ...
+rc=$?; rm -f "$f"; echo "scoped_commit exit=$rc"; [ "$rc" -eq 0 ]
 ```
 
-3. Verify commit succeeded
+   `<scoped_commit>` is `core/scripts/scoped_commit.sh` in the project
+   checkout, or `~/.igris/core/scripts/scoped_commit.sh` at runtime. If
+   neither exists, STOP and tell the operator. Do not fall back to staging by
+   hand.
+
+   The script prints each path with its status, adds new files by explicit
+   path, and commits with `git commit --only -- <paths>`. Anything else in the
+   index stays out of the commit and stays staged. One limit: if another
+   session staged a hunk of a file in your set, the whole file is committed,
+   that hunk included, because `--only` commits files, not hunks. The
+   pre-commit and commit-msg hooks run as on any commit, including the AC and
+   event gates from step 0. Act on the exit code, which the block prints as
+   its last line, `scoped_commit exit=<n>`:
+   - `0`: committed. Continue.
+   - `1`: refused, nothing committed. The set is empty, a path has no change,
+     or a path names a directory, leaves the repository, or is not spelled
+     the way git prints it (a `.`, `..` or empty segment). The set is wrong:
+     rebuild it from the sources above and re-run. Never drop a path just to
+     get past the refusal without knowing why it has no change.
+   - `2`: usage error, or not a git work tree. Fix the call.
+   - `3`: `git add` or `git commit` failed, usually because a hook refused
+     the commit. Nothing was committed and new paths were unstaged again.
+     Read the hook output, resolve it, re-run.
+   - `4`: committed, but the commit holds a path outside the set. Stop and tell
+     the operator. Do not amend or reset on your own.
+
+3. Verify the commit succeeded: `git show --stat HEAD` lists exactly the set.
 4. Update brief: Status = "Done", Completed = today
 5. Call `igris_brief_sync` with the SAME `project`, `brief_id`, `brief_type`,
    `title`, `priority` and `effort` you passed in Phase 1 step 8, plus

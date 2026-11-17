@@ -168,6 +168,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
+  Phase 7 staged with `git add -A`, so a close in a working tree shared by
+  several sessions committed their in-flight and staged files under this
+  brief's footer. It now commits only the brief's own paths through
+  `core/scripts/scoped_commit.sh` (`git commit --only`) and refuses when the
+  set is empty or a listed path has no change. `test/scoped_commit.test.bash`
+  shows the old step committing all three sibling files and the new one none.
+
 - **Two processes migrating one brain no longer collide (FR-276).**
   `runComponentMigrations` re-reads a component's version before each
   migration's pre-flight and again under the IMMEDIATE lock, and skips a
