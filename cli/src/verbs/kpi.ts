@@ -14,7 +14,7 @@
  * not be computed (no brain, a brain older than v3 / v4).
  */
 
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { readKpiDigest } from "../lib/brain-db.js";
 import { kpiSqlListing } from "../lib/kpi-read.js";
 import type { KpiDigest } from "../types.js";
@@ -100,7 +100,7 @@ export function runKpi(opts: KpiOptions): number {
   }
   const weeks = opts.weeks !== undefined && Number.isFinite(opts.weeks) && opts.weeks >= 1 ? Math.floor(opts.weeks) : DEFAULT_WEEKS;
   // The alarm is per project: default the slug the way the lifecycle verbs do.
-  const project = opts.project ?? (opts.alarm ? basenameOfCwd() : null);
+  const project = opts.project ?? (opts.alarm ? defaultProjectSlug() : null);
   const digest = readKpiDigest({ project, weeks, alarm: opts.alarm === true });
 
   if (opts.alarm) {

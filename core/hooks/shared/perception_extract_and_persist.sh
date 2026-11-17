@@ -11,7 +11,8 @@
 # Input contract:
 #   stdin: same JSON the parent hook received (project_dir, transcript_path,
 #          payload, etc.)
-#   args:  $1 = project slug (required — derived by caller via basename)
+#   args:  $1 = project slug (required — the caller's resolved slug: the
+#               TD-359 `igris_resolve_project` answer from _gate.sh)
 #          $2 = trigger label (optional, default 'detached'; e.g. 'session_end',
 #               'pre_compact'). Threaded to the CLI as --source for log/audit.
 #

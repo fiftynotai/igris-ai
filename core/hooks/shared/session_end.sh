@@ -73,6 +73,16 @@ if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
   fi
 fi
 
+# TD-359: the ONE slug every reader and writer below uses — the gate's resolved
+# slug (`igris_resolve_project` in _gate.sh: a git worktree names its main
+# checkout's project, so a worktree session rests the main project's session
+# file and hands perception the main slug). basename is the last resort only
+# when _gate.sh is absent.
+IGRIS_SLUG="${_GATE_RESOLVED_SLUG:-}"
+if [ -z "$IGRIS_SLUG" ]; then
+  IGRIS_SLUG=$(basename "$PROJECT_DIR" 2>/dev/null) || IGRIS_SLUG=""  # TD-359 last-resort
+fi
+
 parse_reason() {
   if [ -z "$INPUT" ]; then
     echo "unknown"
@@ -98,9 +108,7 @@ except Exception:
 # Update session file to REST MODE
 # ---------------------------------------------------------------------------
 update_session() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$IGRIS_SLUG/session/CURRENT_SESSION.md"
 
   if [ ! -f "$session_file" ]; then
     return 0
@@ -153,9 +161,7 @@ PYEOF
 # Deregister instance from brain before session ends
 # ---------------------------------------------------------------------------
 deregister_instance() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$IGRIS_SLUG/session/CURRENT_SESSION.md"
 
   if [ ! -f "$session_file" ]; then
     return 0
@@ -242,7 +248,9 @@ PYEOF2
 # FR-274: record the knowledge watermark (HEAD SHA + branch of the project ROW's
 # path) through the CLI verb — no sqlite3 here, so no SQL interpolation (the
 # bash-3.2 escape idiom does not apply). The slug is the gate's resolved slug,
-# never basename(cwd): a session in a subdirectory still names its project.
+# never basename(cwd): a session in a subdirectory or a git worktree still
+# names its project (TD-359; a worktree records the main checkout row-path's
+# HEAD — the documented "understates" direction, MAINTAINING row 161).
 # Synchronous and LAST in main (after the detached perception spawn); the
 # verb's git reads are 3 s-capped; every failure is silent.
 # ---------------------------------------------------------------------------
@@ -263,8 +271,8 @@ main() {
   # The wrapper enforces a 60s min-window guard, locates the transcript file
   # from stdin, and invokes the brain-mcp-server CLI directly.
   if [ -x "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" ]; then
-    local slug
-    slug=$(basename "$PROJECT_DIR")
+    # `$slug` by name: test/session_end_hook.test.bash H7 pins this call line.
+    local slug="$IGRIS_SLUG"
     printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$slug" "session_end" >/dev/null 2>&1 & disown
   fi
   # FR-274: LAST, after the detached spawn — a slow or killed watermark call

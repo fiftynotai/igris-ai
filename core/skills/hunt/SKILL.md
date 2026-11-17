@@ -766,7 +766,7 @@ cat > "$f" <<'EOF'
 
 closes #{BRIEF_ID}
 EOF
-bash <scoped_commit> -F "$f" -- <path> <path> ...
+IGRIS_INSTANCE_ID={instance_id} bash <scoped_commit> -F "$f" -- <path> <path> ...
 rc=$?; rm -f "$f"; echo "scoped_commit exit=$rc"; [ "$rc" -eq 0 ]
 ```
 
@@ -774,6 +774,15 @@ rc=$?; rm -f "$f"; echo "scoped_commit exit=$rc"; [ "$rc" -eq 0 ]
    checkout, or `~/.igris/core/scripts/scoped_commit.sh` at runtime. If
    neither exists, STOP and tell the operator. Do not fall back to staging by
    hand.
+
+   `{instance_id}` is the stored Instance ID. The `IGRIS_INSTANCE_ID=` prefix
+   names this session to the pre-commit phase guard (TD-494), so the guard
+   gates the commit by this instance's own brief and phase, never a
+   sibling's. The script passes its environment to `git commit`, so the value
+   reaches both hooks. It is one-shot: never `export` it. With no stored
+   Instance ID, drop the prefix; the guard then identifies the session by its
+   owner process or as the one live instance at this worktree root, and lets
+   an unidentified commit through with a one-line notice.
 
    The script prints each path with its status, adds new files by explicit
    path, and commits with `git commit --only -- <paths>`. Anything else in the
@@ -846,9 +855,23 @@ rc=$?; rm -f "$f"; echo "scoped_commit exit=$rc"; [ "$rc" -eq 0 ]
      {"timestamp":"{ISO-8601 now}","operation":"brief_sync","project":"{project}","brief_id":"{BRIEF_ID}","title":"{title}","status":"Done","phase":"COMPLETE"}
      ```
    - Do NOT block the hunt workflow — continue.
+2.5. **Release this instance's brief (TD-494).** If the CLI is available and
+   an Instance ID is stored, run:
+   ```bash
+   igris instance state --project {project} --instance-id {instance_id} \
+     --current-brief "" --current-phase COMPLETE \
+     --current-task "brief closed" --lease-minutes 120
+   ```
+   `""` is the one "no brief" value. Passing the id here would leave the
+   instance pointing at a Done brief. Omitting `--current-brief` leaves the
+   stored value unchanged, so it cannot clear it either. The pre-commit phase
+   guard treats `""`, NULL and `none` (any case) as no brief. Skip silently
+   when the CLI or the Instance ID is missing.
 3. Update `~/.igris/projects/{project}/session/instances/<instance_id>.md`:
    - Add to Last Session Summary
-   - Clear Active Brief (or set to next)
+   - Clear Active Brief: set the `**Active Brief:**` line to `None`, as
+     step 2.5 did for the registry. The next `/hunt` sets it again in its
+     own INIT.
 
 4. Display completion message:
 ```
@@ -880,6 +903,10 @@ If the CLI is available AND an instance ID is stored:
      --current-task "{description}" \
      --lease-minutes 120
    ```
+   At every transition except COMPLETE, pass the brief id. **At COMPLETE pass
+   `--current-brief ""`** with `--current-phase COMPLETE` (Phase 8 step 2.5):
+   `""` is the one "no brief" value, and an omitted `--current-brief` leaves
+   the stored id in place (TD-494).
 3. This records progress and renews the remote-visible work lease. It is not a liveness proof; same-machine liveness comes from PID/start-time metadata recorded by `/boot`.
 
 If the CLI is unavailable or no instance ID is stored, skip silently. Do NOT block workflow execution.

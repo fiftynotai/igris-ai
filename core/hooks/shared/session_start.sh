@@ -66,10 +66,31 @@ PROJECT_DIR=$(resolve_project_dir)
 [ -d "$PROJECT_DIR" ] && cd "$PROJECT_DIR"
 
 # ---------------------------------------------------------------------------
-# Set the terminal tab title to the Igris project slug (FR-178).
-# Slug = registered-project lookup in the brain DB by longest path-prefix
-# match on PROJECT_DIR, falling back to basename (same posture as the
-# statusline script). Best-effort: silent no-op when no writable tty is
+# TD-359: ONE slug for this hook, resolved once by `igris_resolve_project`
+# (_gate.sh): marker, then the git main checkout, then the registry walk on the
+# worktree-translated path, then basename(main), then basename(dir) — so a git
+# worktree names its main checkout's project. _gate.sh only DEFINES functions,
+# so sourcing it here (above the gate) changes nothing else. basename is the
+# last resort only when _gate.sh is absent. The gate below re-confirms the slug
+# for a registered project; every reader under it uses $IGRIS_SLUG.
+# ---------------------------------------------------------------------------
+if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
+  # shellcheck source=/dev/null
+  . "$_IGRIS_HOOK_DIR/_gate.sh"
+fi
+IGRIS_SLUG=""
+if type igris_resolve_project >/dev/null 2>&1; then
+  igris_resolve_project "$PROJECT_DIR"
+  IGRIS_SLUG="$_IGRIS_RES_SLUG"
+fi
+if [ -z "$IGRIS_SLUG" ]; then
+  IGRIS_SLUG=$(basename "$PROJECT_DIR" 2>/dev/null) || IGRIS_SLUG=""  # TD-359 last-resort
+fi
+
+# ---------------------------------------------------------------------------
+# Set the terminal tab title to the Igris project slug (FR-178): the resolved
+# $IGRIS_SLUG above (registered or not — the title is cosmetic, so it names
+# ANY project tab). Best-effort: silent no-op when no writable tty is
 # present (headless, CI, Codex/Gemini bridges).
 # NEVER writes to stdout — hook stdout is the additionalContext JSON contract.
 # ---------------------------------------------------------------------------
@@ -78,25 +99,11 @@ set_terminal_title() {
   # device node is world-writable, so this can pass headless — the actual
   # open below is the authoritative (silenced) check.
   [ -w /dev/tty ] || return 0
-
-  local slug=""
-  local db="$HOME/.igris/memory/knowledge.db"
-  if command -v sqlite3 > /dev/null 2>&1 && [ -f "$db" ]; then
-    # Single-quote-escape the path for the SQL literal. Deliberately
-    # UNQUOTED expansion: double-quoting keeps the \ escapes literal
-    # (\'\') and corrupts the SQL. Assignments don't word-split, so this
-    # is safe (same form as the statusline script).
-    local esc
-    esc=${PROJECT_DIR//\'/\'\'}
-    slug=$(sqlite3 "$db" \
-      "SELECT slug FROM projects WHERE '$esc' = path OR '$esc' LIKE path || '/%' ORDER BY length(path) DESC LIMIT 1;" 2>/dev/null) || slug=""
-  fi
-  [ -n "$slug" ] || slug=$(basename "$PROJECT_DIR" 2>/dev/null) || slug=""
-  [ -n "$slug" ] || return 0
+  [ -n "$IGRIS_SLUG" ] || return 0
 
   # OSC 0 sets the icon name + window/tab title. Direct to the tty, never
   # stdout. Group redirection so a failed /dev/tty open is silenced too.
-  { printf '\033]0;%s\007' "$slug" > /dev/tty; } 2>/dev/null || true
+  { printf '\033]0;%s\007' "$IGRIS_SLUG" > /dev/tty; } 2>/dev/null || true
   return 0
 }
 
@@ -115,12 +122,11 @@ set_terminal_title || true
 # Igris nudge in a non-Igris project).
 #
 # Placed AFTER set_terminal_title (FR-178): the tab title is a harmless cosmetic
-# that should still name the project tab (basename fallback) for ANY harness —
+# that should still name the project tab (the resolved slug) for ANY harness —
 # only the Igris CONTEXT/nudge is gated on registration.
 # ---------------------------------------------------------------------------
 if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
-  # shellcheck source=/dev/null
-  . "$_IGRIS_HOOK_DIR/_gate.sh"
+  # _gate.sh was sourced above (same condition).
   if ! is_registered_igris_project "$PROJECT_DIR"; then
     if command -v jq &> /dev/null; then
       jq -n '{"additionalContext": ""}'
@@ -129,6 +135,7 @@ if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
     fi
     exit 0
   fi
+  IGRIS_SLUG="$_GATE_RESOLVED_SLUG"
 fi
 
 # ---------------------------------------------------------------------------
@@ -161,9 +168,7 @@ except Exception:
 # Read session mode from CURRENT_SESSION.md
 # ---------------------------------------------------------------------------
 read_session_mode() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$IGRIS_SLUG/session/CURRENT_SESSION.md"
   if [ -f "$session_file" ]; then
     grep '\*\*Mode:\*\*' "$session_file" 2>/dev/null | head -1 | sed 's/.*\*\*Mode:\*\* //' || echo "UNKNOWN"
   else
@@ -175,9 +180,7 @@ read_session_mode() {
 # Find active briefs (Status: In Progress)
 # ---------------------------------------------------------------------------
 find_active_briefs() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local briefs_dir="$HOME/.igris/projects/$slug/briefs"
+  local briefs_dir="$HOME/.igris/projects/$IGRIS_SLUG/briefs"
   if [ ! -d "$briefs_dir" ]; then
     return
   fi
@@ -212,9 +215,7 @@ find_active_briefs() {
 # Read blockers
 # ---------------------------------------------------------------------------
 read_blockers() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local blockers_file="$HOME/.igris/projects/$slug/session/BLOCKERS.md"
+  local blockers_file="$HOME/.igris/projects/$IGRIS_SLUG/session/BLOCKERS.md"
   if [ -f "$blockers_file" ]; then
     local count
     count=$(grep -c '^## ' "$blockers_file" 2>/dev/null) || count=0

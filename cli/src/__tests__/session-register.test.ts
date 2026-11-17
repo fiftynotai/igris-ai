@@ -18,15 +18,27 @@
  *   - COALESCE: re-registering does not downgrade the DB row's state.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import Database from "better-sqlite3";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+  existsSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { GatherDigest, RegisterDigest } from "../types.js";
 import { HARNESS_ENV_MARKERS } from "../lib/detect.js";
+import { restoreEnv } from "./home-fence.js";
 
 let tmpRoot: string;
+let homeRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
 
 const SESSION_FILES_DDL = `
@@ -226,8 +238,12 @@ function readSessionRow(
 
 beforeEach(() => {
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-register-"));
+  homeRoot = mkdtempSync(join(tmpdir(), "igris-cli-register-home-"));
   savedEnv = { ...process.env };
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
+  // TD-359: register now resolves project_path through the project resolver,
+  // whose marker walk stops at $HOME — so HOME is fenced too, restored BY KEY.
+  process.env.HOME = homeRoot;
   // Fully sandbox harness inference: clear EVERY marker detect() reads, not a
   // partial set — otherwise a live harness's ambient marker (e.g.
   // CLAUDE_CODE_ENTRYPOINT when the suite runs inside a Claude Code session)
@@ -242,8 +258,10 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await closeBrainDb();
-  process.env = savedEnv;
+  restoreEnv(savedEnv);
+  rmSync(homeRoot, { recursive: true, force: true });
 });
 
 describe("session register — §3.7", () => {
@@ -563,6 +581,143 @@ describe("TD-360 — register's Next Steps round-trips through gather", () => {
     const g = await runGather();
     // A stable shape: never an empty label, never an empty digest field.
     expect(g.handoff?.next_steps).toBe("None yet");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-494 §2.3 — register normalises project_path to the worktree root
+// ---------------------------------------------------------------------------
+
+/**
+ * The phase guard's S3 tier matches a committing worktree's root against
+ * `instances.project_path`, so register writes the ROOT, never the directory a
+ * session happened to boot in (PLAN §2.3, `cli/src/verbs/session.ts:508`):
+ *
+ *   project_path = resolveProjectIdentity(opts.projectPath ?? cwd).worktree_root
+ *                  — the realpath of the git toplevel (the WORKTREE root for a
+ *                  linked worktree, not the main checkout);
+ *                  else realpath(dir) when not in git;
+ *                  else the raw string when the path does not exist.
+ *
+ * Every input below enters through a SYMLINKED alias of the fixture root, so
+ * a stored value that skipped the realpath step cannot pass by coincidence on
+ * a machine whose tmpdir is already canonical.
+ */
+describe("TD-494 — session register stores project_path as the realpath of the worktree root", () => {
+  let fxReal: string;
+  let fxAlias: string;
+
+  const GIT_ENV_STRIP = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_PREFIX",
+  ];
+
+  function fixtureGit(cwd: string, ...args: string[]): void {
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+    for (const k of GIT_ENV_STRIP) delete env[k];
+    const r = spawnSync(
+      "git",
+      [
+        "-c", "user.name=igris-vitest",
+        "-c", "user.email=vitest@igris.invalid",
+        "-c", "commit.gpgsign=false",
+        "-c", "core.hooksPath=/dev/null",
+        "-c", "init.defaultBranch=main",
+        ...args,
+      ],
+      { cwd, encoding: "utf-8", env, timeout: 10_000 },
+    );
+    if (r.status !== 0) {
+      throw new Error(`fixture git ${args.join(" ")} failed (${String(r.status)}): ${r.stderr ?? ""}`);
+    }
+  }
+
+  /** `<fxReal>/repos/gproj` with one commit. */
+  function makeRepo(): string {
+    const main = join(fxReal, "repos", "gproj");
+    mkdirSync(main, { recursive: true });
+    fixtureGit(main, "init", "-q");
+    writeFileSync(join(main, "README.md"), "fixture\n");
+    fixtureGit(main, "add", "README.md");
+    fixtureGit(main, "commit", "-q", "--no-verify", "-m", "init");
+    return main;
+  }
+
+  /** The same path seen through the symlinked alias. */
+  function viaAlias(realPath: string): string {
+    return join(fxAlias, realPath.slice(fxReal.length));
+  }
+
+  function readProjectPath(id: string): string | null {
+    const db = new Database(dbFile(), { readonly: true });
+    const row = db.prepare("SELECT project_path FROM instances WHERE id = ?").get(id) as
+      | { project_path: string | null }
+      | undefined;
+    db.close();
+    return row === undefined ? null : row.project_path;
+  }
+
+  beforeEach(() => {
+    fxReal = realpathSync(mkdtempSync(join(tmpdir(), "igris-cli-register-fx-")));
+    fxAlias = join(realpathSync(mkdtempSync(join(tmpdir(), "igris-cli-register-alias-"))), "fx-link");
+    symlinkSync(fxReal, fxAlias);
+    for (const k of GIT_ENV_STRIP) delete process.env[k];
+  });
+
+  afterEach(() => {
+    rmSync(fxReal, { recursive: true, force: true });
+    rmSync(dirname(fxAlias), { recursive: true, force: true });
+  });
+
+  it("from a SUBDIRECTORY of a repo: the realpath of the git toplevel", async () => {
+    seedSchema();
+    const main = makeRepo();
+    const sub = join(main, "src", "deep");
+    mkdirSync(sub, { recursive: true });
+    const d = await runRegister({ project: "demo", projectPath: viaAlias(sub) });
+    expect(readProjectPath(d.instance_id)).toBe(main);
+  });
+
+  it("from inside a LINKED WORKTREE: the realpath of the worktree root, not the main checkout", async () => {
+    seedSchema();
+    const main = makeRepo();
+    const wt = join(fxReal, "elsewhere", "wt-td359");
+    mkdirSync(dirname(wt), { recursive: true });
+    fixtureGit(main, "worktree", "add", "-q", "-b", "td359-register", wt);
+    const sub = join(wt, "packages", "app");
+    mkdirSync(sub, { recursive: true });
+    const d = await runRegister({ project: "demo", projectPath: viaAlias(sub) });
+    expect(readProjectPath(d.instance_id)).toBe(wt);
+  });
+
+  it("an existing NON-git directory: its own realpath", async () => {
+    seedSchema();
+    const plain = join(fxReal, "plain", "notes");
+    mkdirSync(plain, { recursive: true });
+    const d = await runRegister({ project: "demo", projectPath: viaAlias(plain) });
+    expect(readProjectPath(d.instance_id)).toBe(plain);
+  });
+
+  it("a NONEXISTENT path: stored raw, exactly as given", async () => {
+    seedSchema();
+    const gone = join(fxAlias, "gone", "nowhere");
+    const d = await runRegister({ project: "demo", projectPath: gone });
+    expect(readProjectPath(d.instance_id)).toBe(gone);
+  });
+
+  it("--project-path OMITTED: defaults to the worktree root of the process cwd (was NULL)", async () => {
+    seedSchema();
+    const main = makeRepo();
+    const sub = join(main, "lib");
+    mkdirSync(sub, { recursive: true });
+    vi.spyOn(process, "cwd").mockReturnValue(viaAlias(sub));
+    const d = await runRegister({ project: "demo" });
+    expect(readProjectPath(d.instance_id)).toBe(main);
   });
 });
 

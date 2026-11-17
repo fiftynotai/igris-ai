@@ -27,7 +27,7 @@
  * telemetry); exit 2 only for an unknown action or an unexpected argument.
  */
 
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { detectCapabilities } from "../lib/detect.js";
 import {
   BrainColumnMissingError,
@@ -64,7 +64,7 @@ export interface ProjectOptions {
   action: string;
   /** Positional arguments after the action (`kinds list`). */
   args?: string[];
-  /** Slug; default = basename of cwd (the `igris ceremony` rule). */
+  /** Slug; default = the project the cwd resolves to (the `igris ceremony` rule, TD-359 `defaultProjectSlug`). */
   project?: string;
   /** relations: hops to follow (an integer; the action layer clamps to 5). */
   depth?: string;
@@ -120,8 +120,8 @@ export function runProject(opts: ProjectOptions): number {
     process.stderr.write(`error: unexpected argument '${opts.args![0]}' for 'project watermark'.\n`);
     return 2;
   }
-  // `||`, not `??`: `--project ""` falls to the cwd basename.
-  const slug = opts.project || basenameOfCwd();
+  // `||`, not `??`: `--project ""` falls to the cwd's resolved project.
+  const slug = opts.project || defaultProjectSlug();
 
   const digest: ProjectWatermarkDigest = {
     degraded: false,
@@ -224,7 +224,7 @@ async function runRelations(opts: ProjectOptions): Promise<number> {
   }
   if (opts.kind !== undefined) lookupArgs.kind = opts.kind;
   if (opts.check === false) lookupArgs.check_watermarks = false;
-  const slug = opts.project || basenameOfCwd();
+  const slug = opts.project || defaultProjectSlug();
 
   const ctx = await relationsContext();
   if (opts.boot === true) {

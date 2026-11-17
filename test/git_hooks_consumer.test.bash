@@ -30,12 +30,24 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 # Runs in the ROOT bats matrix (`.github/workflows/test.yml` "Run test suite",
 # ubuntu + macos, which installs gitleaks) — NOT in the `cli-bats` job, which
 # has no gitleaks and would skip the secret-scan case silently (L-552).
+#
+# TD-359: the git hooks resolve the project through `igris_resolve_project` in
+# `core/hooks/shared/_gate.sh`, reached hook-relative (`$0`'s real dir
+# `../hooks/shared/_gate.sh`) and then at `$HOME/.igris/core/hooks/shared/`.
+# For a consumer both are the runtime mirror, so the fake mirror carries
+# `_gate.sh` too (what `igris refresh` lands). R7 is the consumer-worktree
+# case: a linked worktree whose directory name is NOT the project resolves the
+# registry slug through the mirror's `_gate.sh` (RED on develop 5247c5a: the
+# hook took basename(toplevel) = the worktree's name and failed open). R7b is
+# its control: with the mirror's `_gate.sh` gone the hook keeps its tagged
+# basename last resort and never errors (a half-deployed core).
 
 load test_helper
 
 # Through the tracked symlink `scripts/git-hooks/* -> ../../core/git-hooks/*`
 # (FR-243) — `cp` follows it, so the fixture copies the canonical bytes.
 HOOK_SRC_DIR="$IGRIS_ROOT/scripts/git-hooks"
+GATE_SRC="$IGRIS_ROOT/core/hooks/shared/_gate.sh"
 
 # The layers-line grammar (MAINTAINING row "git-level gate projection contract"):
 #   [pre-commit] layers: phase-guard=<v> secret-scan=<v> repo-validators=<v>
@@ -47,6 +59,7 @@ setup() {
   command -v git >/dev/null 2>&1 || skip "git not available"
   [ -f "$HOOK_SRC_DIR/pre-commit" ] || { echo "hook not found at $HOOK_SRC_DIR/pre-commit"; return 1; }
   [ -f "$HOOK_SRC_DIR/commit-msg" ] || { echo "hook not found at $HOOK_SRC_DIR/commit-msg"; return 1; }
+  [ -f "$GATE_SRC" ] || { echo "_gate.sh not found at $GATE_SRC"; return 1; }
 
   SANDBOX="$TEST_TEMP_DIR/ghc_$BATS_TEST_NUMBER"
   FAKEHOME="$SANDBOX/fakehome"
@@ -55,6 +68,10 @@ setup() {
   cp "$HOOK_SRC_DIR/pre-commit" "$MIRROR/pre-commit"
   cp "$HOOK_SRC_DIR/commit-msg" "$MIRROR/commit-msg"
   chmod +x "$MIRROR/pre-commit" "$MIRROR/commit-msg"
+  # TD-359: the shared resolver the git hooks source (MAINTAINING row 151).
+  MIRROR_GATE="$FAKEHOME/.igris/core/hooks/shared/_gate.sh"
+  mkdir -p "$(dirname "$MIRROR_GATE")"
+  cp "$GATE_SRC" "$MIRROR_GATE"
 
   REPO="$SANDBOX/cproj"
   mkdir -p "$REPO"
@@ -230,4 +247,106 @@ stage_benign() {
   [ "$status" -eq 1 ]
   [[ "$output" == *"secret-scan=active (repo config)"* ]] || return 1
   [[ "$output" == *"SECRET-SHAPED CONTENT DETECTED"* ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# R7 — TD-359: a consumer's linked worktree whose directory name is NOT the
+# project. The registry slug `consumer-app` differs from BOTH basenames
+# (`cproj`, `cproj-lane`), so only the mirror's `_gate.sh` resolver — the
+# registry walk on the worktree-translated path — can name it. The session is
+# named by IGRIS_INSTANCE_ID and its brief is BUILDING, so a hook that resolved
+# `consumer-app` refuses and says so. RED on develop 5247c5a: PROJECT =
+# basename(toplevel) = `cproj-lane`, no instance row, the commit lands.
+# ---------------------------------------------------------------------------
+
+# seed_consumer_brain — registry row for the consumer at its REALPATH (the
+# resolver compares `pwd -P` paths), one active instance on this machine with
+# a BUILDING brief. Plain tables (no vec0/FTS5 on the system sqlite3).
+seed_consumer_brain() {
+  local repo_real lane_real host
+  repo_real="$(cd "$REPO" && pwd -P)"
+  lane_real="$(cd "$LANE" && pwd -P)"
+  host="$(hostname)"
+  repo_real=${repo_real//\'/\'\'}
+  lane_real=${lane_real//\'/\'\'}
+  host=${host//\'/\'\'}
+  mkdir -p "$FAKEHOME/.igris/memory"
+  sqlite3 "$FAKEHOME/.igris/memory/knowledge.db" "
+    CREATE TABLE projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL, path TEXT NOT NULL, status TEXT DEFAULT 'active',
+      registered_at TEXT NOT NULL DEFAULT (datetime('now')), metadata TEXT DEFAULT '{}'
+    );
+    CREATE TABLE brief_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,
+      brief_id TEXT NOT NULL, brief_type TEXT, title TEXT NOT NULL,
+      status TEXT NOT NULL, priority TEXT, effort TEXT, phase TEXT,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE instances (
+      id TEXT PRIMARY KEY, machine_hostname TEXT NOT NULL, machine_os TEXT,
+      project_slug TEXT, project_path TEXT, current_brief TEXT,
+      current_phase TEXT, current_task TEXT, status TEXT DEFAULT 'active',
+      started_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_activity_at TEXT NOT NULL DEFAULT (datetime('now')),
+      metadata TEXT DEFAULT '{}', harness TEXT, harness_session_id TEXT,
+      owner_pid INTEGER, owner_started_at TEXT, lease_expires_at TEXT,
+      state_updated_at TEXT, machine_id TEXT
+    );
+    INSERT INTO projects (slug, name, path) VALUES ('consumer-app', 'consumer-app', '$repo_real');
+    INSERT INTO instances (id, machine_hostname, project_slug, project_path,
+                           current_brief, current_phase, status,
+                           last_activity_at, lease_expires_at)
+      VALUES ('consumer-inst-0001', '$host', 'consumer-app', '$lane_real',
+              'FR-1', 'BUILDING', 'active', datetime('now'), datetime('now', '+1 hour'));
+    INSERT INTO brief_status (project, brief_id, title, status, phase)
+      VALUES ('consumer-app', 'FR-1', 't', 'In Progress', 'BUILDING');"
+}
+
+# make_lane — a linked worktree outside the consumer's tree. It runs the
+# common dir's hooks: `$REPO/.git/hooks/<name>` -> the mirror.
+make_lane() {
+  LANE="$SANDBOX/elsewhere/cproj-lane"
+  mkdir -p "$SANDBOX/elsewhere"
+  git -C "${REPO:?}" worktree add -q -b lane "$LANE"
+  printf 'export const lane = 1;\n' > "$LANE/lane.ts"
+  git -C "${LANE:?}" add lane.ts
+}
+
+@test "R7: a consumer worktree resolves the registry slug through the mirror's _gate.sh and the phase guard refuses" {
+  command -v sqlite3 >/dev/null 2>&1 || skip "sqlite3 not available"
+  [ -f "$MIRROR_GATE" ] || return 1
+  make_lane
+  seed_consumer_brain
+  before="$(git -C "${LANE:?}" rev-list --count HEAD)"
+  run env IGRIS_INSTANCE_ID=consumer-inst-0001 HOME="$FAKEHOME" IGRIS_BRAIN_DIR="$FAKEHOME/.igris" \
+    git -C "${LANE:?}" commit -q -m "chore: lane change"
+  echo "exit=$status"; echo "$output"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"PI-004 phase guard: refusing commit"* ]] || return 1
+  [[ "$output" == *"project: consumer-app (registry)"* ]] || return 1
+  [ "$(git -C "${LANE:?}" rev-list --count HEAD)" -eq "$before" ]
+  # The layers grammar is unchanged by the resolver.
+  line="$(printf '%s\n' "$output" | grep -E '^\[pre-commit\] layers: ' | head -n1)"
+  [[ "$line" =~ $LAYERS_RE ]] || return 1
+  [[ "$line" == *"phase-guard=active"* ]] || return 1
+}
+
+# R7b — control: the mirror's _gate.sh is gone (a half-deployed core). The
+# hook keeps its tagged basename last resort (`cproj-lane`), finds no session
+# of that project and lets the commit through — it never errors.
+@test "R7b (control): without the mirror's _gate.sh the consumer worktree commit is accepted, no error" {
+  command -v sqlite3 >/dev/null 2>&1 || skip "sqlite3 not available"
+  rm -f "$MIRROR_GATE"
+  make_lane
+  seed_consumer_brain
+  before="$(git -C "${LANE:?}" rev-list --count HEAD)"
+  run env IGRIS_INSTANCE_ID=consumer-inst-0001 HOME="$FAKEHOME" IGRIS_BRAIN_DIR="$FAKEHOME/.igris" \
+    git -C "${LANE:?}" commit -q -m "chore: lane change"
+  echo "exit=$status"; echo "$output"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"refusing commit"* ]] || return 1
+  [[ "$output" != *"project: consumer-app"* ]] || return 1
+  [[ "$output" != *"command not found"* ]] || return 1
+  [ "$(git -C "${LANE:?}" rev-list --count HEAD)" -eq $((before + 1)) ]
 }

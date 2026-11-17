@@ -158,8 +158,8 @@ Agents per phase: `PLANNING` → architect; `BUILDING` → forger; `TESTING` →
 
 **Escape hatches** (one-shot, never `export`, loud + event-logged):
 - `IGRIS_BYPASS_BRIEF_GATE=1` — bypass the brief-gate hook for one command.
-- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard discovers the Active Brief from the brain `instances` registry (machine-scoped, freshest activity timestamp), with a per-instance session-file fallback — not the retired `CURRENT_SESSION.md` (re-pointed under FR-186 / G-01R).
-- `IGRIS_BYPASS_AC_GATE=1` — bypass the acceptance-criteria gate for one commit (TD-325). The gate lives in `scripts/git-hooks/commit-msg`, not in the pre-commit phase guard: it keys on the `closes #<ID>` footer that DEFINES a closing commit, so a WIP commit needs no exemption, and it is free of `IGRIS_BYPASS_PHASE_GUARD` — which `/hunt` sets on the exact commit that must be gated.
+- `IGRIS_BYPASS_PHASE_GUARD=1` — bypass the phase-guard pre-commit hook for one commit. The guard identifies the COMMITTING session in the brain `instances` registry (this machine, this project) and gates the commit by that instance's own `current_brief`. It tries `IGRIS_INSTANCE_ID` first, then the instance whose owner process is an ancestor of the commit (pid plus start time), then the one live instance registered at the commit's worktree root (TD-494). It never falls back to the most recently active instance or to a session file. An unidentified commit is allowed with a one-line notice. `''`, NULL and `none` mean no brief. `CURRENT_SESSION.md` is not read.
+- `IGRIS_BYPASS_AC_GATE=1` — bypass the acceptance-criteria gate for one commit (TD-325). The gate lives in `scripts/git-hooks/commit-msg`, not in the pre-commit phase guard: it keys on the `closes #<ID>` footer that DEFINES a closing commit, so a WIP commit needs no exemption, and it is free of `IGRIS_BYPASS_PHASE_GUARD`, which a closing commit may carry and which would skip any check placed inside the phase guard.
 - `IGRIS_BYPASS_EVENT_GATE=1` — bypass the agent-event coverage gate for one commit (FR-267). Same hook, same footer: it refuses the close when a role the brief's Agent Log names has no `agent_events` row for that brief. Independent of `IGRIS_BYPASS_AC_GATE` — each bypass skips only its own section, so neither silences the other. The healthy path is to emit the missing `start`/`stop` pair; that row is the hunt-cost record.
 - `IGRIS_BYPASS_SIGNATURE_GATE=1` — bypass the AI-signature gate for one commit (TD-470). Same hook, but ANY commit: it refuses a col-0 `Co-authored-by:` trailer or a "Generated with" signature line (`core/os/standards.md`). Independent of the AC and event bypasses in both directions. It exists for a genuine human co-author; the healthy path for an AI line is to delete it.
 - `IGRIS_ALLOW_INSECURE_SYNC=1` — allow remote VPS sync over plain `http://` to a non-local host (TD-252). By default the transport classifier (`cli/src/lib/sync-transport.ts`) REFUSES non-local `http://` because the `api_key` would travel in cleartext; this override allows it with a loud per-sync warning. `https://` and `http://` to localhost (`127.0.0.1`/`::1`) are always allowed. Also settable persistently as `config.json` `remote_brain.allow_insecure: true`.
@@ -184,7 +184,7 @@ The merge logic in `cli/src/lib/json-merge.ts` (`mergeCanonicalHooks()`) preserv
 
 ```mermaid
 flowchart TB
-    A["Write/Edit invoked"] --> B["Resolve project slug<br/>(realpath ancestors → projects.path,<br/>fallback basename)"]
+    A["Write/Edit invoked"] --> B["Resolve project slug (TD-359)<br/>(.igris-project marker → registry ancestor,<br/>worktree mapped to its main checkout → basename)"]
     B --> C{"Slug valid?<br/>^[a-z0-9_-]+$"}
     C -->|"no"| ALLOW1["ALLOW<br/>(exempt path or unknown project)"]
     C -->|"yes"| D{"Brain DB has an<br/>in-flight brief for slug?<br/>(status folded, TD-340)"}
@@ -199,7 +199,7 @@ flowchart TB
 **Resolution order** (cite `core/hooks/shared/pre_tool_use.sh:23-36`):
 1. Brain DB query: `SELECT brief_id FROM brief_status WHERE project = '{slug}' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress'`. The fold is TD-340: it collapses NOTATION (`InProgress`, `in_progress`, `IN-PROGRESS`) but never VOCABULARY (`Done`, `Completed`, `Active`, `WIP` stay out). Before it, an `InProgress` brief left this gate silently inert.
 2. If brain miss / error → filesystem grep against `~/.igris/projects/{slug}/briefs/*.md`; emit `brief_gate.fallback_fired`.
-3. If both empty → DENY and emit `brief_gate.denied`.
+3. If both empty → DENY and emit `brief_gate.denied`. The deny names the resolved slug, the directory it came from and the resolution source, and adds a hint when that project has 0 briefs (TD-359), so a directory that resolves to the wrong project explains itself.
 
 **No caching post-TD-150** — every gate call queries the brain fresh. The filesystem fallback is a correctness safeguard, not a performance optimization. `emit_brief_gate_event()` is best-effort: errors are swallowed and never block the gate.
 

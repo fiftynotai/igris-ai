@@ -168,6 +168,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A git worktree resolves to its repository's project (TD-359).** The
+  project slug came from the directory name, so a worktree such as
+  `mbrgea-ai-gl010` became an empty phantom project. The brief gate then
+  denied every write, and the git hooks failed open. One resolver now has a
+  bash twin (`igris_resolve_project` in `core/hooks/shared/_gate.sh`) and a
+  TypeScript twin (`cli/src/lib/project-identity.ts`). Its precedence is a
+  `.igris-project` marker, then the registry row of the main checkout, then
+  the main checkout's name, then the directory name. Every shared hook, both
+  git hooks, `igris detect` (which gains `project_source`) and every CLI
+  `--project` default go through it. `test/project_slug_parity.test.bash` runs
+  all of them on one fixture matrix. The five repos registered under a slug
+  other than their directory name now resolve to the registry slug, which
+  holds their data. A brief-gate denial names the slug, the directory and the
+  source, and says when the project has 0 briefs.
+
+- **The phase guard gates a commit by the committing session's own brief
+  (TD-494).** It used to read the newest instance on the machine, so one
+  session's commit was gated by another session's brief, and a Done brief
+  left the guard open. It now identifies the committing session through
+  `IGRIS_INSTANCE_ID` (which `/hunt` prefixes to its close commit), then the
+  owner process (pid plus start time), then the one live instance at the
+  worktree root. An unidentified commit is allowed with a one-line notice.
+  The session-file and `CURRENT_SESSION.md` tiers are gone. `/hunt` clears
+  `current_brief` to `''` at COMPLETE, and the guard treats `''`, NULL and
+  `none` as no brief. The refusal names the session, project, brief and
+  phase, and no workflow role. `igris_instance_state` is now a partial
+  update: an omitted field keeps its stored value, and `''` clears a text
+  field. `igris session register` keeps the brief, phase, task and lease on
+  re-register, and stores the worktree root as `project_path`.
+
 - **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
   Phase 7 staged with `git add -A`, so a close in a working tree shared by
   several sessions committed their in-flight and staged files under this

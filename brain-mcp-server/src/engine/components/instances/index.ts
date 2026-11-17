@@ -195,7 +195,7 @@ export function createInstancesComponent(): BrainComponent {
       return [
         {
           name: 'igris_instance_state',
-          description: 'Register or update an Igris instance state row. This records activity/display/lease metadata only; same-machine liveness uses PID/start-time and cross-machine coordination uses leases/claims.',
+          description: "Register or update an Igris instance state row. This records activity/display/lease metadata only; same-machine liveness uses PID/start-time and cross-machine coordination uses leases/claims. An update is partial: an omitted field keeps its stored value; pass '' to clear a text field (owner_pid cannot be cleared here).",
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,

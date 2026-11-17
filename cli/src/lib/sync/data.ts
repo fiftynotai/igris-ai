@@ -42,7 +42,7 @@ import { join } from "node:path";
 import { mcpCall, readRemoteBrainConfig, type RemoteBrainConfig } from "../mcp-client.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir, expandTilde } from "../paths.js";
-import { basenameOfCwd } from "./util.js";
+import { defaultProjectSlug } from "../project-identity.js";
 import {
   acquireDrainSnapshot,
   finalizeDrainSnapshot,
@@ -57,7 +57,8 @@ export interface SyncDataOptions {
   dryRun?: boolean;
   /**
    * Override the project slug used to locate the local sync queue.
-   * Defaults to `basename(process.cwd())` — matches /sync skill convention.
+   * Defaults to the project the cwd resolves to (TD-359 `defaultProjectSlug`:
+   * a git worktree resolves to its main checkout's project).
    */
   projectSlug?: string;
 }
@@ -88,7 +89,7 @@ export async function runSyncData(opts: SyncDataOptions = {}): Promise<number> {
   }
 
   // Resolve local queue path (for dry-run display + log messages).
-  const slug = opts.projectSlug ?? basenameOfCwd();
+  const slug = opts.projectSlug ?? defaultProjectSlug();
   const queuePath = join(brainDir(), "projects", slug, "sync_queue.jsonl");
 
   // Dry-run: NEVER mutate the filesystem (no acquireDrainSnapshot). We
@@ -274,7 +275,7 @@ export interface QueueDrainResult {
 export async function drainSyncQueueOnly(
   opts: SyncDataOptions = {},
 ): Promise<QueueDrainResult> {
-  const slug = opts.projectSlug ?? basenameOfCwd();
+  const slug = opts.projectSlug ?? defaultProjectSlug();
   // Read depth BEFORE the drain — runSyncData renames/removes the queue file,
   // so a post-drain inspection would always report zero. Counts live lines in
   // the canonical queue plus any in-flight `.draining-*` temps from a prior

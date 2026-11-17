@@ -80,7 +80,7 @@ main() {
   # -------------------------------------------------------------------------
   # FR-212c REGISTRATION GATE. PostCompact projects GLOBALLY. Outside a
   # registered Igris project this hook MUST no-op: clean exit 0, NO side effects
-  # (no compact.log write under ~/.igris/projects/<basename>). FAIL-OPEN-TO-
+  # (no compact.log write under ~/.igris/projects/<slug>). FAIL-OPEN-TO-
   # NO-OP: a missing/locked brain DB resolves to not-registered -> clean exit.
   # -------------------------------------------------------------------------
   if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
@@ -94,8 +94,12 @@ main() {
   local source
   source=$(parse_source)
 
-  local slug
-  slug=$(basename "$project_dir")
+  # TD-359: the gate's resolved slug (a git worktree names its main checkout's
+  # project); basename is the last resort only when _gate.sh is absent.
+  local slug="${_GATE_RESOLVED_SLUG:-}"
+  if [ -z "$slug" ]; then
+    slug=$(basename "$project_dir" 2>/dev/null) || slug=""  # TD-359 last-resort
+  fi
   local log_dir="$HOME/.igris/projects/$slug/session"
   local log_file="$log_dir/compact.log"
 

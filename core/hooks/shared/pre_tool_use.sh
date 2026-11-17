@@ -39,9 +39,11 @@
 #      vocabulary.sh hand-mirrors today, and the TD-330 defect class). No brief
 #      owns that yet -- do not "fix" this with an ad-hoc regex in the meantime.
 #   3. Neither -> deny via JSON output.
-# Slug is resolved by walking PROJECT_DIR up its ancestors and matching
-# `projects.path` in the brain DB after pwd -P realpath normalisation
-# (TD-150); falls back to basename(PROJECT_DIR).
+# Slug (TD-359): the registration gate's answer from `igris_resolve_project`
+# in _gate.sh — marker, then the git main checkout, then the registry walk on
+# the worktree-translated path (pwd -P realpath, TD-150), then basename(main),
+# then basename(dir) — so a git worktree resolves to its main checkout's
+# project. basename(PROJECT_DIR) is used only when _gate.sh is absent.
 # Slug is validated against ^[a-z0-9_-]+$ before any SQL interpolation;
 # a non-matching slug skips the brain-DB branch (degrades to step 2).
 # No verdict caching: every call queries the brain DB fresh (TD-150).
@@ -174,39 +176,23 @@ build_payload_json() {
 }
 
 # ---------------------------------------------------------------------------
-# Resolve project slug by walking PROJECT_DIR's ancestors against the brain
-# DB's `projects.path`. Falls back to basename(PROJECT_DIR). TD-146.
-# Echoes the slug. Never fails (errors -> fallback).
-# TD-150 candidate C1: normalise symlinks via `pwd -P` so a symlinked
-# checkout resolves to the real path that matches `projects.path` rows.
+# find_project_slug — echoes the project slug. TD-146 / TD-150 / TD-359.
+# A thin wrapper over the ONE resolver (`igris_resolve_project`, _gate.sh): the
+# registration gate above has already resolved PROJECT_DIR, so its slug is
+# reused with no second walk. The resolver realpath-normalises (TD-150 C1) and
+# maps a git worktree onto its main checkout. Never fails.
 # ---------------------------------------------------------------------------
 find_project_slug() {
-  local db="$HOME/.igris/memory/knowledge.db"
-  local fallback
-  fallback=$(basename "$PROJECT_DIR")
-
-  if ! command -v sqlite3 >/dev/null 2>&1 || [ ! -f "$db" ]; then
-    echo "$fallback"
+  if [ -n "${_GATE_RESOLVED_SLUG:-}" ]; then
+    echo "$_GATE_RESOLVED_SLUG"
     return
   fi
-
-  # TD-150: realpath-normalise so symlinked checkouts match the registered path.
-  local current
-  current=$(cd "$PROJECT_DIR" 2>/dev/null && pwd -P || echo "$PROJECT_DIR")
-
-  while [ -n "$current" ] && [ "$current" != "/" ]; do
-    local current_esc
-    current_esc=$(printf '%s' "$current" | sed "s/'/''/g")
-    local hit
-    hit=$(sqlite3 "$db" "SELECT slug FROM projects WHERE path = '$current_esc' LIMIT 1;" 2>/dev/null) || hit=""
-    if [ -n "$hit" ]; then
-      echo "$hit"
-      return
-    fi
-    current=$(dirname "$current")
-  done
-
-  echo "$fallback"
+  if type igris_resolve_project >/dev/null 2>&1; then
+    igris_resolve_project "$PROJECT_DIR"
+    echo "$_IGRIS_RES_SLUG"
+    return
+  fi
+  basename "$PROJECT_DIR"  # TD-359 last-resort: _gate.sh is absent
 }
 
 # ---------------------------------------------------------------------------
@@ -448,25 +434,43 @@ check_active_brief() {
 }
 
 # ---------------------------------------------------------------------------
-# Output deny decision as JSON
+# Output deny decision as JSON. TD-359 AC6: the reason is self-diagnosing — it
+# names the resolved project, the directory it came from and how it was
+# resolved, and says so when that project has NO brief at all (the phantom-
+# project symptom of a directory resolving to the wrong slug). The fixed lead
+# `No active brief found` is kept (cli/tests/integration/pre-tool-use-hook.bats).
+# The dynamic reason reaches JSON through jq --arg / a python3 env var, never
+# by string splicing; the last-ditch echo stays static.
 # ---------------------------------------------------------------------------
 output_deny() {
+  local slug="" src="" reason="" db="" q="" n=""
+  slug=$(find_project_slug 2>/dev/null) || slug=""
+  src="${_IGRIS_RES_SOURCE:-basename}"
+  reason="No active brief found. Create a brief first: use REGISTER or 'create a brief for...' (project '$slug' resolved from $PROJECT_DIR via $src)"
+  db="$HOME/.igris/memory/knowledge.db"
+  if [ -n "$slug" ] && [ -f "$db" ] && command -v sqlite3 >/dev/null 2>&1; then
+    q=${slug//\'/\'\'}
+    n=$(sqlite3 "$db" "SELECT COUNT(*) FROM brief_status WHERE project = '$q';" 2>/dev/null) || n=""
+    if [ "$n" = "0" ]; then
+      reason="$reason; this project has 0 briefs — check the directory resolves to the right project"
+    fi
+  fi
   if command -v jq &> /dev/null; then
-    jq -n '{
+    jq -n --arg reason "$reason" '{
       "hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "deny",
-        "permissionDecisionReason": "No active brief found. Create a brief first: use REGISTER or '\''create a brief for...'\''"
+        "permissionDecisionReason": $reason
       }
     }'
   else
-    python3 -c "
-import json
+    IGRIS_DENY_REASON="$reason" python3 -c "
+import json, os
 result = {
     'hookSpecificOutput': {
         'hookEventName': 'PreToolUse',
         'permissionDecision': 'deny',
-        'permissionDecisionReason': \"No active brief found. Create a brief first: use REGISTER or 'create a brief for...'\"
+        'permissionDecisionReason': os.environ.get('IGRIS_DENY_REASON', '')
     }
 }
 print(json.dumps(result))

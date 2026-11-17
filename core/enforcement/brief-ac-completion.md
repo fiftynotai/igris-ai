@@ -56,9 +56,9 @@ store less truthful. So the brain gets the observer role — the shipped
 `commit-msg` is the only hook that sees the message, and the closing commit is
 **defined** by its `closes #<ID>` footer, so the gate needs no phase heuristic:
 a WIP commit has no footer and is untouched. It is also free of
-`IGRIS_BYPASS_PHASE_GUARD`, which `/hunt` sets on the exact commit that must be
-gated — a check inside the pre-commit phase guard would be bypassed by
-construction on every close.
+`IGRIS_BYPASS_PHASE_GUARD`: a closing commit may carry that one-shot flag, and
+a check inside the pre-commit phase guard would be skipped on exactly the
+closes that set it.
 
 ## The three box states
 

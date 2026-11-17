@@ -1,4 +1,4 @@
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { detectCapabilities } from "../lib/detect.js";
 import {
   instanceRemove,
@@ -50,7 +50,7 @@ export function runInstance(opts: InstanceOptions): number {
     return 0;
   }
 
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
 
   if (opts.action === "list") {
     // D-411-d, producer side. The three `liveness_*` COLUMNS are a

@@ -91,6 +91,10 @@ Liveness is the **instance registry's** job — never the session file's.
   no auto-adopt, no auto-release.
 - **Ownership is EXPLICIT:**
   - *Register-on-hunt* — `current_brief` is set when a hunt starts.
+  - *Release-on-COMPLETE* — `/hunt` clears `current_brief` to `''` when the
+    brief reaches COMPLETE (TD-494), so the instance never points at a Done
+    brief. `''` is the one "no brief" value; an omitted field leaves the
+    stored value unchanged.
   - *Release-on-`/rest`* — `/rest` explicitly clears `current_brief`. This
     clear is the deliberate "task closed" signal.
 - **The registry is visible.** `/hunt` and `/boot` surface "instance X is

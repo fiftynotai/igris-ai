@@ -996,7 +996,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug for the queue path (default: basename of cwd)",
+      "project slug for the queue path (default: the project resolved from cwd)",
     )
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action(
@@ -1016,7 +1016,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option(
       "--self-instance-id <id>",
@@ -1024,7 +1024,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project-path <path>",
-      "register: absolute path to the project directory (instance row project_path)",
+      "register: the project directory; stored in the instance row's project_path as its git worktree root (realpath), or its realpath outside git (default: cwd)",
     )
     .option(
       "--seed-next-steps <text>",
@@ -1067,7 +1067,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option("--instance-id <id>", "instance id for state/deregister")
     .option("--current-brief <id>", "state: currently reserved/active brief id")
@@ -1116,7 +1116,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option(
       "--roll-days <n>",
@@ -1177,7 +1177,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action((opts: { project?: string; json?: boolean }): void => {
@@ -1228,7 +1228,7 @@ async function main(argv: string[]): Promise<void> {
       "FR-268: brain-timed ceremony stamps. Actions: start, stop. Writes ceremony_events through the local write door (create-never); created_at is the DB clock and duration_ms is SQL-computed on stop from the paired open start — never caller-supplied. The four ceremony skills call this as their first and last executable step. Prints a JSON digest. Exit 0 even when degraded; unknown action/name → exit 2.",
     )
     .option("--name <ceremony>", "boot | rest | register | hunt-init")
-    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .option("--project <slug>", "project slug (default: the project resolved from cwd)")
     .option("--instance-id <id>", "instance id when known (boot's start predates the mint — omit there)")
     .option("--brief <id>", "brief id (register / hunt-init)")
     .option("--json", "emit the digest as JSON to stdout (default)", true)
@@ -1255,7 +1255,7 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "Project relations and per-project brain records. relations (FR-273): the project's related projects (both directions, --depth chain, repo_url, on-disk flag, watermark) through the brain's relations action layer, read-only; --boot prints the one-line /boot digest. kinds list (FR-273): the relation-kind registry. Writes (FR-273): relate <from> <kind> <to> [--detail k=v]..., unrelate <from> <kind> <to>, kinds add <name> --meaning --kind-direction --forward-label --inverse-label --example [--alias]..., kinds alias <name> <alias>, kinds merge <retired> <survivor> — through the brain's own relations module; exit 0 written, 1 refused, 3 degraded (nothing written). watermark (FR-274, called by /rest and the SessionEnd hook): record HEAD SHA + branch of the project row's path as the knowledge watermark; every failure writes nothing and is named in skipped[]. Prints one JSON digest. Reads exit 0 even when degraded; unknown action or bad argument → exit 2.",
     )
-    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .option("--project <slug>", "project slug (default: the project resolved from cwd)")
     .option("--depth <n>", "relations: hops to follow (default 1, max 5)")
     .option("--direction <d>", "relations: out | in | both (default both)")
     .option("--kind <kind>", "relations: only this relation kind")
@@ -1305,7 +1305,7 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-268: the seven OS KPIs (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost) computed on read from the brain's records — hunt_runs, brief_status, ceremony_runs. Weeks are Monday–Sunday UTC. Read-only. --sql prints the derivations for sqlite3; --alarm prints the one-line week-over-week reading /scan shows. Exit 0 even when degraded.",
     )
-    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the cwd basename)")
+    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the project resolved from cwd)")
     .option("--weeks <n>", "how many UTC weeks back, counting the current partial one", "4")
     .option("--json", "emit the digest as JSON", false)
     .option("--sql", "print the seven derivations verbatim and exit", false)

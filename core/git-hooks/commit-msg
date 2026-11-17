@@ -73,9 +73,9 @@
 #   (the `nonCanonical*Note` pattern: informs, never rejects).
 #
 #   NOT in the pre-commit phase guard. `scripts/git-hooks/pre-commit` wraps
-#   that whole guard in `IGRIS_BYPASS_PHASE_GUARD != 1`, and /hunt's COMMITTING
-#   step SETS that flag on the exact commit we need to gate. A check inside
-#   that block is bypassed by construction on every closing commit.
+#   that whole guard in `IGRIS_BYPASS_PHASE_GUARD != 1`, and a closing commit
+#   may carry that one-shot flag. A check inside that block would be skipped
+#   on exactly the closing commits that set it.
 #
 #   HERE, because the closing commit is DEFINED by its `closes #<ID>` footer —
 #   already this repo's own definition of closed
@@ -272,12 +272,50 @@ BRAIN_DB="$HOME/.igris/memory/knowledge.db"
 [ -f "$BRAIN_DB" ] || exit 0
 command -v sqlite3 >/dev/null 2>&1 || exit 0
 
-# $PROJECT is basename(repo); an id matched ^[A-Z]{2,3}-[0-9]+[a-z]?$ (the
-# extractor above — still no quote, TD-468), so BRIEF_SQL can never carry a
-# quote (its escape is uniformity; brief_ac_gate Q4 is the pin). Every escape is
-# an UNQUOTED assignment — under /bin/bash 3.2 the quoted form keeps its
-# backslashes and the read fails OPEN (TD-453; BR-104). DB opened -readonly.
-PROJECT="$(basename "$REPO_ROOT")"
+# TD-359 — the project is `igris_resolve_project "$REPO_ROOT"` from
+# core/hooks/shared/_gate.sh, so a closing commit in a git WORKTREE (named
+# anything) is gated under its main checkout's project instead of failing open
+# under a phantom slug. The locator is pre-commit's (keep the two in step;
+# this hook never `cd`s, so `$0` still resolves against the start directory):
+#   1. the hook's REAL directory (the `$0` symlink chain followed with
+#      readlink, at most 16 hops) + ../hooks/shared/_gate.sh — the repo's
+#      core/ on the igris-ai checkout, the runtime mirror for a consumer;
+#   2. $HOME/.igris/core/hooks/shared/_gate.sh;
+#   3. neither defines the resolver (a half-deployed core) -> basename of the
+#      toplevel, the tagged last resort. Never an error. MAINTAINING row 151.
+_IGRIS_LOC_PATH="${BASH_SOURCE[0]:-$0}"
+case "$_IGRIS_LOC_PATH" in /*) ;; *) _IGRIS_LOC_PATH="$PWD/$_IGRIS_LOC_PATH" ;; esac
+_IGRIS_LOC_HOPS=0
+while [ -L "$_IGRIS_LOC_PATH" ] && [ "$_IGRIS_LOC_HOPS" -lt 16 ]; do
+  _IGRIS_LOC_LINK="$(readlink "$_IGRIS_LOC_PATH" 2>/dev/null)" || break
+  [ -n "$_IGRIS_LOC_LINK" ] || break
+  case "$_IGRIS_LOC_LINK" in
+    /*) _IGRIS_LOC_PATH="$_IGRIS_LOC_LINK" ;;
+    *)  _IGRIS_LOC_PATH="${_IGRIS_LOC_PATH%/*}/$_IGRIS_LOC_LINK" ;;
+  esac
+  _IGRIS_LOC_HOPS=$((_IGRIS_LOC_HOPS + 1))
+done
+for _IGRIS_LOC_GATE in "${_IGRIS_LOC_PATH%/*}/../hooks/shared/_gate.sh" "$HOME/.igris/core/hooks/shared/_gate.sh"; do
+  if [ -f "$_IGRIS_LOC_GATE" ]; then
+    # shellcheck source=/dev/null
+    . "$_IGRIS_LOC_GATE" >/dev/null 2>&1 || true
+  fi
+  if type igris_resolve_project >/dev/null 2>&1; then
+    break
+  fi
+done
+
+# An id matched ^[A-Z]{2,3}-[0-9]+[a-z]?$ (the extractor above — still no
+# quote, TD-468), so BRIEF_SQL can never carry a quote (its escape is
+# uniformity; brief_ac_gate Q4 is the pin). Every escape is an UNQUOTED
+# assignment — under /bin/bash 3.2 the quoted form keeps its backslashes and
+# the read fails OPEN (TD-453; BR-104). DB opened -readonly.
+PROJECT=""
+if type igris_resolve_project >/dev/null 2>&1; then
+  igris_resolve_project "$REPO_ROOT"
+  PROJECT="$_IGRIS_RES_SLUG"
+fi
+[ -n "$PROJECT" ] || PROJECT="$(basename "$REPO_ROOT")"  # TD-359 last-resort: the resolver is unavailable
 PROJECT_SQL=${PROJECT//\'/\'\'}
 
 # =============================================================================

@@ -34,7 +34,7 @@ import { sshExec } from "../ssh.js";
 import { buildNodeVersionCommand, formatVpsNodeLine } from "./vps-deploy.js";
 import { DryRunCollector } from "../dry-run.js";
 import { brainDir } from "../paths.js";
-import { basenameOfCwd } from "./util.js";
+import { defaultProjectSlug } from "../project-identity.js";
 import { inspectQueueDepth } from "./queue.js";
 import { readLastPushAt } from "../brain-db.js";
 import { classifySyncTransport } from "../sync-transport.js";
@@ -45,7 +45,7 @@ export interface SyncStatusOptions {
   dryRun?: boolean;
   /**
    * Override the project slug used to locate the local sync queue.
-   * Defaults to `basename(process.cwd())`.
+   * Defaults to the project the cwd resolves to (TD-359 `defaultProjectSlug`).
    */
   projectSlug?: string;
 }
@@ -90,7 +90,7 @@ export async function runSyncStatus(
     return 1;
   }
 
-  const slug = opts.projectSlug ?? basenameOfCwd();
+  const slug = opts.projectSlug ?? defaultProjectSlug();
   const queuePath = join(brainDir(), "projects", slug, "sync_queue.jsonl");
   const vps = readVpsConfig();
 

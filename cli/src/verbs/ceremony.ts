@@ -28,7 +28,7 @@
  */
 
 import { ensureMachineIdentity } from "../lib/machine-identity.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { detectCapabilities } from "../lib/detect.js";
 import { BrainTableMissingError, ceremonyEventWrite } from "../lib/brain-db.js";
 import type { CeremonyDigest, CeremonyName } from "../types.js";
@@ -43,7 +43,7 @@ const VALID_ACTIONS: ReadonlySet<string> = new Set(["start", "stop"]);
 export interface CeremonyOptions {
   action: string;
   name?: string;
-  /** Slug; default = basename of cwd (the `igris instance` / `igris detect` rule). */
+  /** Slug; default = the project the cwd resolves to (the `igris instance` / `igris detect` rule, TD-359 `defaultProjectSlug`). */
   project?: string;
   instanceId?: string;
   brief?: string;
@@ -76,8 +76,8 @@ export function runCeremony(opts: CeremonyOptions): number {
     return 2;
   }
   const name = opts.name;
-  // `||`, not `??`: `--project ""` must fall to the cwd basename, never store an empty slug.
-  const slug = opts.project || basenameOfCwd();
+  // `||`, not `??`: `--project ""` must fall to the cwd's resolved project, never store an empty slug.
+  const slug = opts.project || defaultProjectSlug();
 
   const digest: CeremonyDigest = {
     degraded: false,

@@ -72,13 +72,19 @@ if [ -n "$_IGRIS_HOOK_DIR" ] && [ -f "$_IGRIS_HOOK_DIR/_gate.sh" ]; then
   fi
 fi
 
+# TD-359: the ONE slug every reader below uses — the gate's resolved slug
+# (`igris_resolve_project` in _gate.sh: a git worktree names its main
+# checkout's project). basename is the last resort only when _gate.sh is absent.
+IGRIS_SLUG="${_GATE_RESOLVED_SLUG:-}"
+if [ -z "$IGRIS_SLUG" ]; then
+  IGRIS_SLUG=$(basename "$PROJECT_DIR" 2>/dev/null) || IGRIS_SLUG=""  # TD-359 last-resort
+fi
+
 # ---------------------------------------------------------------------------
 # Read session mode from CURRENT_SESSION.md
 # ---------------------------------------------------------------------------
 read_session_mode() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local session_file="$HOME/.igris/projects/$slug/session/CURRENT_SESSION.md"
+  local session_file="$HOME/.igris/projects/$IGRIS_SLUG/session/CURRENT_SESSION.md"
   if [ -f "$session_file" ]; then
     grep '\*\*Mode:\*\*' "$session_file" 2>/dev/null | head -1 | sed 's/.*\*\*Mode:\*\* //' || echo "UNKNOWN"
   else
@@ -90,9 +96,7 @@ read_session_mode() {
 # Find active briefs and extract workflow state
 # ---------------------------------------------------------------------------
 find_active_briefs() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local briefs_dir="$HOME/.igris/projects/$slug/briefs"
+  local briefs_dir="$HOME/.igris/projects/$IGRIS_SLUG/briefs"
   if [ ! -d "$briefs_dir" ]; then
     return
   fi
@@ -131,9 +135,7 @@ find_active_briefs() {
 # Read blockers
 # ---------------------------------------------------------------------------
 read_blockers() {
-  local slug
-  slug=$(basename "$PROJECT_DIR")
-  local blockers_file="$HOME/.igris/projects/$slug/session/BLOCKERS.md"
+  local blockers_file="$HOME/.igris/projects/$IGRIS_SLUG/session/BLOCKERS.md"
   if [ -f "$blockers_file" ]; then
     local count
     count=$(grep -c '^## ' "$blockers_file" 2>/dev/null) || count=0
@@ -197,9 +199,7 @@ print(json.dumps({'additionalContext': context}))
   # We forward INPUT (the original stdin payload) so the wrapper can locate
   # transcript_path the same way the parent hook did.
   if [ -x "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" ]; then
-    local slug
-    slug=$(basename "$PROJECT_DIR")
-    printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$slug" "pre_compact" >/dev/null 2>&1 & disown
+    printf '%s' "$INPUT" | nohup bash "$HOME/.igris/core/hooks/shared/perception_extract_and_persist.sh" "$IGRIS_SLUG" "pre_compact" >/dev/null 2>&1 & disown
   fi
 
   exit 0

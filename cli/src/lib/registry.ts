@@ -187,6 +187,56 @@ export function listProjectsReadonly(): RegistryRow[] {
 }
 
 /**
+ * Every registry row's `{slug, path}`, in ROWID order, through the READ-ONLY
+ * door — the rows the TD-359 project resolver
+ * (`project-identity.ts#resolveProjectIdentity`) walks.
+ *
+ * Why not {@link listProjectsReadonly}: that one orders by SLUG, and the
+ * resolver needs the duplicate-path tie-break to be the LOWEST ROWID (the
+ * split-slug repos register one path under two slugs; the shell twin's walk
+ * orders `rowid ASC`, and the twins must agree). `rowid` works on both DDLs —
+ * the brain's `id INTEGER PRIMARY KEY` IS the rowid, and {@link getDb}'s
+ * fallback DDL has an implicit one.
+ *
+ * Same door as {@link listProjectsReadonly} (`openBrainReadonly`, the table
+ * preflighted, never created), plus one difference: it NEVER throws. It runs on
+ * every verb's default-slug path and inside `igris detect`, whose contract is
+ * "never block session start", so an absent brain, a missing table and a
+ * corrupt file all read as `[]`. That `[]` is a defined unknown, not a guess:
+ * the resolver's registry rung finds nothing and its git-main / basename rungs
+ * answer, and the corrupt file itself is surfaced by every verb that actually
+ * reads the brain and by `igris doctor`.
+ */
+export function listProjectPathsReadonly(): Array<{ slug: string; path: string }> {
+  let handle: Database.Database | null = null;
+  try {
+    handle = openBrainReadonly();
+    if (handle === null) return [];
+    if (!tableExists(handle, "projects")) return [];
+    const rows = handle
+      .prepare("SELECT slug, path FROM projects ORDER BY rowid ASC")
+      .all() as Array<{ slug: unknown; path: unknown }>;
+    const out: Array<{ slug: string; path: string }> = [];
+    for (const r of rows) {
+      if (typeof r.slug === "string" && typeof r.path === "string") {
+        out.push({ slug: r.slug, path: r.path });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  } finally {
+    if (handle !== null) {
+      try {
+        handle.close();
+      } catch {
+        /* already closed — nothing to do */
+      }
+    }
+  }
+}
+
+/**
  * Insert or update a row. Mirrors the SQL in igris_install.sh:441-459.
  *
  * CONFLICT ARM (TD-310, the CLI twin of TD-365): both callers pass placeholder

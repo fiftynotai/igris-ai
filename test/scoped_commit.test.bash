@@ -160,6 +160,34 @@ st_of() { git -C "${SBX:?}" status --porcelain=v1 --untracked-files=all -- "$1";
   [ "$(st_of r.txt)" = " M r.txt" ] || return 1
 }
 
+# (G2e) TD-494: /hunt identifies its close commit to the phase guard with a
+# one-shot env prefix, `IGRIS_INSTANCE_ID=<id> bash scoped_commit.sh ...`
+# (no new option, so row 169's grammar is unchanged). The script must hand the
+# variable to both hooks untouched; a future `env -i` or an unset list that
+# swallowed it would leave the guard unable to name the session. The second
+# commit, with no prefix, is the control: the hooks then see no value, so the
+# first reading came from the prefix and not from a leaked environment.
+@test "(G2e) a one-shot IGRIS_INSTANCE_ID prefix reaches both hooks unchanged; without it they see none" {
+  unset IGRIS_INSTANCE_ID
+  seed_mixed
+  pre_seen="$TEST_TEMP_DIR/pre-commit-iid.txt"
+  msg_seen="$TEST_TEMP_DIR/commit-msg-iid.txt"
+  printf '#!/bin/sh\necho "${IGRIS_INSTANCE_ID:-unset}" > "%s"\n' "$pre_seen" > "${SBX:?}/hooks/pre-commit"
+  printf '#!/bin/sh\necho "${IGRIS_INSTANCE_ID:-unset}" > "%s"\n' "$msg_seen" > "${SBX:?}/hooks/commit-msg"
+  chmod +x "${SBX:?}/hooks/pre-commit" "${SBX:?}/hooks/commit-msg"
+  iid="0b5e7c1a-94d2-4e0f-8a61-2f3c4d5e6f70"
+  cd "${SBX:?}"
+  run bash -c 'IGRIS_INSTANCE_ID="$1" bash "$2" -m "chore: close" -- own.txt' _ "$iid" "$SC"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [ "$(cat "$pre_seen")" = "$iid" ] || { echo "pre-commit saw: $(cat "$pre_seen")"; return 1; }
+  [ "$(cat "$msg_seen")" = "$iid" ] || { echo "commit-msg saw: $(cat "$msg_seen")"; return 1; }
+
+  run bash "$SC" -m "chore: close" -- new.txt
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [ "$(cat "$pre_seen")" = "unset" ] || { echo "control: pre-commit saw: $(cat "$pre_seen")"; return 1; }
+  [ "$(cat "$msg_seen")" = "unset" ] || { echo "control: commit-msg saw: $(cat "$msg_seen")"; return 1; }
+}
+
 @test "(G3) a deleted file, a git-rm'd file and a path with a space commit" {
   rm "${SBX:?}/gone.txt"
   git -C "${SBX:?}" rm -q sub/a.txt

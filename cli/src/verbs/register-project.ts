@@ -65,6 +65,12 @@ export async function runRegisterProject(
   }
 
   // 3. Resolve slug: explicit --slug wins, else basename(absPath).
+  //
+  // TD-359 MINT SITE — deliberately NOT routed through the project resolver
+  // (`lib/project-identity.ts`). This line NAMES the registry row for the
+  // explicit `<path>` argument; resolving instead would let `upsertProject`
+  // (ON CONFLICT(slug)) re-point a registered row's `path` at a worktree.
+  // Documented exemption (MAINTAINING "project identity resolution").
   const slug = (opts.slug ?? basename(absPath)).trim();
   if (slug.length === 0) {
     logError("could not derive a slug; pass --slug explicitly");

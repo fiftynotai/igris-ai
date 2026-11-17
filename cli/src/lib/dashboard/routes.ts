@@ -72,6 +72,7 @@ import { listProjectsReadonly } from "../registry.js";
 import { brainDbPath } from "../paths.js";
 import * as bridge from "../brain-bridge.js";
 import { resolveDefaultProject } from "./default-project.js";
+import { resolveProjectIdentity } from "../project-identity.js";
 import { composeQueryTwin } from "./graph-query.js";
 import { grepDocs, readDoc, readInventory } from "./context-docs-read.js";
 import { readCognitionHealth } from "./cognition-read.js";
@@ -189,6 +190,12 @@ export async function health(cliVersion: string): Promise<HealthPayload> {
  * The ladder itself is a pure function over these same rows (no second query,
  * and no SQL in this file — D3b).
  *
+ * TD-359: the ladder is handed the cwd's WORKTREE-TRANSLATED path
+ * (`resolveProjectIdentity(cwd).lookup_path` — the same subdirectory of the
+ * main checkout), so rung 1a ("cwd inside a registered path") also holds when
+ * the dashboard is launched from a linked worktree outside the registered tree.
+ * In a main checkout, and outside git, that path is the cwd itself.
+ *
  * @param cwd injectable for tests; defaults to the server's working directory,
  *            which never changes (nothing in the verb chdirs).
  */
@@ -211,7 +218,7 @@ export function projects(cwd: string = process.cwd()): ProjectsPayload {
     }));
     return {
       projects: rows,
-      default_project: resolveDefaultProject(rows, cwd).slug,
+      default_project: resolveDefaultProject(rows, resolveProjectIdentity(cwd).lookup_path).slug,
       generated_at: now(),
       degraded: null,
     };

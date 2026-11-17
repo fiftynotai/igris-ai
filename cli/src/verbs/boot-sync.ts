@@ -47,7 +47,7 @@ import {
   readPullSince,
 } from "../lib/brain-db.js";
 import type { PullMergeSummary } from "../lib/brain-db.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { warn } from "../lib/log.js";
 import type {
   BootSyncDigest,
@@ -58,7 +58,7 @@ import type {
 } from "../types.js";
 
 export interface BootSyncOptions {
-  /** Project slug override; default basename(cwd) per the sync convention. */
+  /** Project slug override; default: the project the cwd resolves to (TD-359 `defaultProjectSlug`). */
   project?: string;
   /** Emit JSON to stdout (default ON for the awaken path). */
   json?: boolean;
@@ -313,7 +313,7 @@ export async function buildBootSyncDigest(slug: string): Promise<BootSyncDigest>
  * list tell the skill what ran.
  */
 export async function runBootSync(opts: BootSyncOptions): Promise<number> {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const json = opts.json !== false;
 
   const digest = await buildBootSyncDigest(slug);

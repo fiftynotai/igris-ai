@@ -28,8 +28,9 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #
 # WHAT THIS FILE PROVES:
 #   SH1  the population (files with any hit) equals the ledger below — a NEW
-#        file spelling the shape reds until it joins the ledger (14 files,
-#        2026-09-14);
+#        file spelling the shape reds until it joins the ledger (13 files,
+#        2026-11-17: TD-494 deleted core/git-hooks/pre-commit's only capture,
+#        the per-instance-file tier);
 #   SH2  every ADMIT site carries the widened form on its CODE lines: the
 #        predicate count equals the widened count equals the pinned count;
 #   SH3  every LEAVE site still carries its recorded token exactly once, so
@@ -40,7 +41,9 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #   SH5  the comment exemption is proved, not assumed;
 #   SH6  cli/src spells the shape nowhere (the ledger's "none" row).
 # The BEHAVIOURAL witnesses live in test/brief_ac_gate.test.bash PART 6,
-# test/agent_event_gate.test.bash PART 3, test/phase_guard.test.bash (e3),
+# test/agent_event_gate.test.bash PART 3, test/phase_guard.test.bash (e3′)
+# (TD-494 moved it to the instances tier: a lettered current_brief is looked
+# up whole, with no shape capture in the hook),
 # test/validate_brief_state_reconciliation.test.bash and the two vitest
 # files named in the ledger. bash 3.2 throughout; keyed on file + literal
 # token, never on a line number (TD-324).
@@ -54,7 +57,6 @@ SELF="test/brief_id_shape.test.bash"
 # --- THE LEDGER (2026-09-14) --------------------------------------------------
 # ADMIT — extractors and filters, widened by TD-468; <path> <code-line hits>.
 ADMIT="core/git-hooks/commit-msg 3
-core/git-hooks/pre-commit 1
 core/hooks/shared/session_start.sh 1
 core/hooks/shared/pre_compact.sh 1
 scripts/validate_brief_state_reconciliation.sh 1
@@ -85,7 +87,6 @@ brain-mcp-server/src/tools/__tests__/extract-parent-brief-id.test.ts
 brain-mcp-server/src/tools/briefs.ts
 cli/tests/integration/release-audit-bypass-ids.bats
 core/git-hooks/commit-msg
-core/git-hooks/pre-commit
 core/hooks/shared/pre_compact.sh
 core/hooks/shared/session_start.sh
 core/scripts/brief_ac_check.sh
@@ -137,7 +138,7 @@ check_admit_site() {
   [ "$n" = "$w" ] && [ "$n" = "$want" ]
 }
 
-@test "(SH1) the population of files spelling the shape equals the ledger (14 files, 2026-09-14)" {
+@test "(SH1) the population of files spelling the shape equals the ledger (13 files, 2026-11-17)" {
   local got
   got="$(population)"
   printf '%s\n' "$got" >&2

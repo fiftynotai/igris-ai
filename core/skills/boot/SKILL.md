@@ -360,7 +360,7 @@ This is a read of genuine crashes, not a destructive sweep. Multi-instance is va
 
 ### 4.4 Mount — Register Instance (Mandatory)
 
-Registration — the instance metadata upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195, extended by FR-190). It mints-or-recovers the `instance_id`, writes the instance row with harness/PID/start-time metadata when available, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that the phase-guard fallback and `/hunt` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
+Registration — the instance metadata upsert + the LIVE per-instance file write — is OWNED by the `igris session register` verb (FR-195, extended by FR-190). It mints-or-recovers the `instance_id`, writes the instance row with harness/PID/start-time metadata when available, and writes `session/instances/<id>.md` at `state='live'` with the contract line shape (`**Instance ID:**`, `**Mode:** Active`, `**Active Brief:**`) that `/hunt` and `/scan` parse. It seeds the LIVE file's "Next Steps" from gather's chosen handoff so the resume context carries forward.
 
 Run the register verb AFTER §4.1 gather (the ordering contract — gather's outputs feed register):
 ```bash
@@ -373,7 +373,7 @@ igris session register --project <detect.project_slug> \
 ```
 - `--self-instance-id` — pass `gather.self_instance_id` when it was recovered (non-null); OMIT it to mint a fresh UUID. (This is the G4 recover-or-mint decision, now resolved by gather + register together.)
 - `--seed-next-steps` — pass `gather.handoff.next_steps` when gather selected a genuine handoff (the resume carry-forward from §4.1). Omit on a fresh start.
-- `--project-path` — the absolute project directory (the instance row's `project_path` field).
+- `--project-path` — the absolute project directory (the instance row's `project_path` field). Register normalises it before writing: it stores the git worktree root that contains the directory (the realpath of the directory itself outside git), so a boot from a subdirectory records the same root. With the flag omitted it uses the current directory. The pre-commit phase guard matches a commit's worktree root against this field to find the committing session (TD-494).
 - `--attention-session` — ONLY when begin succeeded. Registration binds the local
   attention ID and writes `**Attention Session ID:**` into this instance's scratchpad.
   Read `attention_binding.ok/reason`; a failed binding preserves early history and

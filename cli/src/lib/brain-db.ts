@@ -568,6 +568,11 @@ export interface InstanceStateRegistrationResult {
  * `minted` follows the handler's own action discrimination
  * (instances.ts:84): a fresh UUID (no `instance_id` supplied) is a mint; a
  * supplied id is a recover/refresh.
+ *
+ * A recover is PARTIAL on exactly four fields (TD-494 AC5): an omitted
+ * `current_brief`, `current_phase`, `current_task` or `lease_expires_at` keeps
+ * the stored value; the process snapshot (owner + liveness) is always
+ * rewritten. Rationale at the conflict arm below.
  */
 export function registerOrUpdateInstanceState(
   input: InstanceStateRegistrationInput,
@@ -612,14 +617,23 @@ export function registerOrUpdateInstanceState(
     "active",
     new Date().toISOString().replace("T", " ").substring(0, 19),
   ];
+  // TD-494 AC5 (the CLI twin of `handleInstanceState`'s partial conflict arm).
+  // Register never supplies the brief state — `/boot`'s recover-or-mint call
+  // passes none of it, and its contract is "Do NOT clear its current_brief"
+  // (core/skills/boot/SKILL.md) — so those three, and `lease_expires_at`
+  // below, are COALESCEd: an omission KEEPS the stored value, an explicit value
+  // still wins. Everything else stays `= excluded` ON PURPOSE: a re-register is
+  // a fresh process snapshot, and a stale owner pid / liveness stamp kept on a
+  // new process would classify a live session as dead. Clearing the brief is
+  // `instanceStateUpdate`'s job (`--current-brief ""`), never register's.
   const updates = [
     "machine_hostname = excluded.machine_hostname",
     "machine_os = excluded.machine_os",
     "project_slug = excluded.project_slug",
     "project_path = excluded.project_path",
-    "current_brief = excluded.current_brief",
-    "current_phase = excluded.current_phase",
-    "current_task = excluded.current_task",
+    "current_brief = COALESCE(excluded.current_brief, instances.current_brief)",
+    "current_phase = COALESCE(excluded.current_phase, instances.current_phase)",
+    "current_task = COALESCE(excluded.current_task, instances.current_task)",
     "status = 'active'",
     "last_activity_at = excluded.last_activity_at",
   ];
@@ -639,13 +653,15 @@ export function registerOrUpdateInstanceState(
       new Date().toISOString().replace("T", " ").substring(0, 19),
     ],
   ];
+  // FR-276: a re-register that omits the native chat id keeps the bound one.
+  // TD-494: an omitted lease keeps the stored one (see the `updates` note).
+  const keptOnOmission: ReadonlySet<string> = new Set(["harness_session_id", "lease_expires_at"]);
   for (const [name, value] of optionalInputs) {
     if (!columns.has(name)) continue;
     insertColumns.push(name);
     values.push(value);
-    // FR-276: a re-register that omits the native chat id keeps the bound one.
     updates.push(
-      name === "harness_session_id"
+      keptOnOmission.has(name)
         ? `${name} = COALESCE(excluded.${name}, instances.${name})`
         : `${name} = excluded.${name}`,
     );

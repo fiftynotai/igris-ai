@@ -148,13 +148,17 @@ export IGRIS_REPO_ROOT
 
 # stage_git_hooks_mirror — seeds $IGRIS_BRAIN_DIR/core/git-hooks/{pre-commit,
 # commit-msg} by COPYING the repo's canonical core/git-hooks/* (what `igris
-# refresh` lands). Call AFTER stage_brain. Echoes the mirror dir.
+# refresh` lands), plus core/hooks/shared/_gate.sh: since TD-359 both git hooks
+# source its `igris_resolve_project` (hook-relative `../hooks/shared/_gate.sh`,
+# then the runtime mirror), so a mirror without it is a half-deployed core.
+# Call AFTER stage_brain. Echoes the git-hooks mirror dir.
 stage_git_hooks_mirror() {
   local dir="$IGRIS_BRAIN_DIR/core/git-hooks"
-  mkdir -p "$dir"
+  mkdir -p "$dir" "$IGRIS_BRAIN_DIR/core/hooks/shared"
   cp "$IGRIS_REPO_ROOT/core/git-hooks/pre-commit" "$dir/pre-commit"
   cp "$IGRIS_REPO_ROOT/core/git-hooks/commit-msg" "$dir/commit-msg"
   chmod +x "$dir/pre-commit" "$dir/commit-msg"
+  cp "$IGRIS_REPO_ROOT/core/hooks/shared/_gate.sh" "$IGRIS_BRAIN_DIR/core/hooks/shared/_gate.sh"
   echo "$dir"
 }
 

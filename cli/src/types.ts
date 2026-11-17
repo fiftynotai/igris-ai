@@ -243,6 +243,15 @@ export type InstanceLivenessStatus =
   | "unknown_no_metadata";
 
 /**
+ * TD-359 — which rung of the project resolver
+ * (`lib/project-identity.ts#resolveProjectIdentity`) produced a slug:
+ * a `.igris-project` marker, the registry ancestor walk on the
+ * worktree-translated path, `basename(main checkout)`, or the last-resort
+ * `basename(dir)`.
+ */
+export type ProjectIdentitySource = "marker" | "registry" | "git-main" | "basename";
+
+/**
  * FR-195 (M1) — capability-detection digest emitted by `igris detect`.
  *
  * The L0 pass the awaken skill runs first. `mode` collapses the individual
@@ -254,9 +263,20 @@ export type InstanceLivenessStatus =
  */
 export interface DetectResult {
   harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "cursor" | "unknown";
-  /** Default project slug for Mount verbs: basename(process.cwd()). */
+  /**
+   * Default project slug for Mount verbs: the project the process cwd resolves
+   * to through the TD-359 chain (marker → registry walk on the
+   * worktree-translated path → basename(main checkout) → basename(cwd)), so a
+   * git worktree reports its main checkout's project. Every `--project`
+   * default in the CLI resolves through the same function.
+   */
   project_slug: string;
-  /** Current project directory seen by the booting CLI process. */
+  /**
+   * TD-359 (additive, MAINTAINING row 83) — the resolver rung that produced
+   * {@link project_slug}.
+   */
+  project_source: ProjectIdentitySource;
+  /** Current project directory seen by the booting CLI process (the raw cwd, unchanged by TD-359). */
   project_path: string;
   /** Resolved Igris brain root (`~/.igris` or IGRIS_BRAIN_DIR override). */
   brain_root: string;

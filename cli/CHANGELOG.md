@@ -177,6 +177,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A git worktree resolves to its repository's project (TD-359).** `igris
+  detect` and every `--project` default resolve through a marker, the
+  registry, then the main checkout instead of `basename(cwd)`. `detect` adds
+  `project_source`.
+
+- **`session register` keeps the brief on re-register and records the
+  worktree root as `project_path` (TD-494).**
+
 - **A remote that echoes the API key no longer gets it stored or printed
   (BR-118).** Brain sync redacts the key from remote error text before
   queueing, returning or logging it; `sync data` redacts it too.

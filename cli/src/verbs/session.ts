@@ -43,7 +43,7 @@ import {
   sessionFileUpsert,
 } from "../lib/brain-db.js";
 import { projectSessionInstancesDir } from "../lib/paths.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug, resolveProjectIdentity } from "../lib/project-identity.js";
 import { warn } from "../lib/log.js";
 import type {
   SessionFileRow,
@@ -62,7 +62,7 @@ export interface SessionOptions {
   harnessSessionId?: string;
   /** Sub-action selector. */
   action: SessionAction;
-  /** Project slug override; default basename(cwd) per the sync convention. */
+  /** Project slug override; default: the project the cwd resolves to (TD-359 `defaultProjectSlug`). */
   project?: string;
   /**
    * The harness's recovered prior instance id, if it could locate one
@@ -71,7 +71,12 @@ export interface SessionOptions {
    * fresh UUID via the instance upsert.
    */
   selfInstanceId?: string;
-  /** Absolute path to the project directory (instance row project_path field). */
+  /**
+   * `register`: the project directory (default: the process cwd). Stored in the
+   * instance row's `project_path` NORMALISED by {@link normaliseInstanceProjectPath}
+   * — the realpath of its git worktree root — because that column is the phase
+   * guard's S3 key (TD-494).
+   */
   projectPath?: string;
   /**
    * `register` only: the chosen handoff's resume content from `gather`'s
@@ -372,9 +377,10 @@ function collapseToLine(value: string, fallback: string): string {
  *     `/rest` authors this label rather than expecting it. `parseMode` above
  *     reads the `**Mode:**` line of the chosen HANDOFF row, which is this same
  *     file only after `/rest` has re-authored it to `REST MODE`.
- *   - `**Active Brief:** <brief|None>` — grepped by the pre-commit phase guard
- *     (`scripts/git-hooks/pre-commit:224`, tier 2 of brief discovery) and
- *     rewritten by `/hunt` step 7. No CLI code parses it.
+ *   - `**Active Brief:** <brief|None>` — rewritten by `/hunt` step 7 and read
+ *     by `/hunt` and `/scan`. The pre-commit phase guard no longer reads it:
+ *     TD-494 deleted that tier (the guard reads the committing session's
+ *     instances row). No CLI code parses it.
  *   - `**Next Steps:** <one line>` — parsed by `parseField` at the gather call
  *     site into the digest's `handoff.next_steps`, which `/boot` §5 renders and
  *     §4.4 hands back as the next `--seed-next-steps`. Same qualifier as
@@ -411,6 +417,28 @@ function buildLiveFileContent(
 }
 
 /**
+ * TD-494 §2.3 — the value `register` stores in `instances.project_path`.
+ *
+ * The pre-commit phase guard's S3 tier identifies the committing session by
+ * matching the commit's worktree root (`git rev-parse --show-toplevel`,
+ * realpath'd) against this column, so the column must hold the ROOT, never the
+ * directory a session happened to boot in:
+ *
+ *   - inside git: the realpath of the git toplevel — for a linked worktree that
+ *     is the WORKTREE's own root, never the main checkout's;
+ *   - an existing directory outside git: its realpath;
+ *   - a path that does not resolve: the raw string, exactly as given (a
+ *     defined value the reader can still print, never a guessed one).
+ *
+ * `detect.project_path` (what `/boot` passes) stays the raw process cwd
+ * (MAINTAINING row 83); this writer is the one place it is normalised.
+ */
+function normaliseInstanceProjectPath(dir: string): string {
+  const identity = resolveProjectIdentity(dir);
+  return identity.worktree_root ?? identity.dir;
+}
+
+/**
  * Run the `register` action — the instance metadata upsert + LIVE per-instance file
  * write (SKILL.md §3.7). Returns the digest + the process exit code.
  *
@@ -425,7 +453,7 @@ function runRegister(
   opts: SessionOptions,
   freshOnChatConflict = true,
 ): { digest: RegisterDigest; code: number } {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const seedNextSteps = opts.seedNextSteps ?? "";
 
   // Detect first — a missing brain DB means we cannot register (no registry,
@@ -505,7 +533,8 @@ function runRegister(
       machine_id: me.machine_id,
       machine_os: process.platform,
       project_slug: slug,
-      project_path: opts.projectPath ?? null,
+      // `||`: an empty `--project-path ""` is an omitted one (the cwd), never a stored "".
+      project_path: normaliseInstanceProjectPath(opts.projectPath || process.cwd()),
       harness: caps.harness,
       harness_session_id: opts.harnessSessionId,
       owner_pid: owner ? owner.pid : null,
@@ -632,7 +661,7 @@ export function runSession(opts: SessionOptions): number {
   }
 
   // action === "gather"
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const selfId = opts.selfInstanceId ?? null;
 
   // Detect first — a missing brain DB is a fresh-start (degraded), exit 0,
@@ -659,7 +688,7 @@ export function runSession(opts: SessionOptions): number {
 
 /** Reject identity conflicts before instance upsert or scratchpad writes. */
 async function attentionRegistrationConflict(opts: SessionOptions): Promise<string | null> {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   if (!/^[a-zA-Z0-9_-]+$/.test(slug)) return "invalid project slug";
   if (opts.selfInstanceId !== undefined && !INSTANCE_ID.test(opts.selfInstanceId)) {
     return "invalid instance identity";
@@ -732,7 +761,7 @@ export async function runSessionCommand(opts: SessionOptions): Promise<number> {
     digest.attention_binding = { ok: false, reason: "instance registration incomplete; early attention recording preserved" };
   } else {
     try {
-      const slug = opts.project ?? basenameOfCwd();
+      const slug = opts.project ?? defaultProjectSlug();
       const path = join(projectSessionInstancesDir(slug), `${digest.instance_id}.md`);
       const content = readFileSync(path, "utf8");
       const prior = content.match(/^\*\*Attention Session ID:\*\*\s*(.+)$/m)?.[1]?.trim();

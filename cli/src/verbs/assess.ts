@@ -27,7 +27,7 @@ import { detectCapabilities } from "../lib/detect.js";
 import { briefStatusSummary, listInstances, upcomingGoals } from "../lib/brain-db.js";
 import { classifyInstanceLiveness } from "../lib/process-liveness.js";
 import { projectBlockersPath } from "../lib/paths.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import type {
   AssessDigest,
   AssessBriefs,
@@ -39,7 +39,7 @@ import type {
 const GOALS_UPCOMING_DAYS = 14;
 
 export interface AssessOptions {
-  /** Project slug override; default basename(cwd) per the sync convention. */
+  /** Project slug override; default: the project the cwd resolves to (TD-359 `defaultProjectSlug`). */
   project?: string;
   /** Working dir for the git probes; default process.cwd(). */
   cwd?: string;
@@ -162,7 +162,7 @@ export function buildAssessDigest(slug: string, cwd: string): AssessDigest {
  * surfaces are present.
  */
 export function runAssess(opts: AssessOptions): number {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const cwd = opts.cwd ?? process.cwd();
   const json = opts.json !== false;
 

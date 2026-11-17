@@ -112,6 +112,14 @@ export async function runInstall(opts: InstallOptions): Promise<number> {
   }
 
   // 2. Resolve slug: explicit --slug wins, else basename.
+  //
+  // TD-359 MINT SITE — deliberately NOT routed through the project resolver
+  // (`lib/project-identity.ts`). This line NAMES a new registry row for the
+  // explicit `<path>` argument; it does not ask which project a directory
+  // already belongs to. Resolving here would make `upsertProject`
+  // (ON CONFLICT(slug)) re-point an existing row's `path` at a worktree when
+  // `igris install` is run on one. Documented exemption (MAINTAINING
+  // "project identity resolution").
   const slug = (opts.slug ?? basename(absPath)).trim();
   if (slug.length === 0) {
     logError("could not derive a slug; pass --slug explicitly");
