@@ -94,6 +94,7 @@ Carry these fields forward:
 - `detect.project_slug` is the `<slug>` used by Mount verbs below.
 - `detect.project_path` is the absolute project path passed to `session register`.
 - `detect.brain_root` is the runtime brain root for context reads.
+- `detect.remote_brain` is the remote brain's presence: `true` when one is configured. It is the only remote-brain signal boot needs (TD-492). Never read `config.json` for it: the file holds the remote brain's API key, and the verbs that talk to the remote (`igris boot-sync` here, the `/rest` sync verbs) read the URL and key themselves.
 - `detect.mode` / booleans drive degraded notices only; detection never blocks boot.
 
 When an attention ID exists, bind the detected identity locally:
@@ -128,10 +129,7 @@ Read `<detect.brain_root>/core/os/INDEX.md` first — this is the **module map**
    directly and leave that use outside observed coverage. If no row matches,
    this is a clean no-op (`unknown` is not an error).
 
-**Always-needed files** (boot mechanics, not context modules):
-- `<detect.brain_root>/config.json` - Remote brain URL and API key
-
-**Degradation:** if `<detect.brain_root>/core/os/INDEX.md` is absent, fall back to reading `<detect.brain_root>/core/SOUL.md` + `<detect.brain_root>/USER.md` + `<detect.brain_root>/config.json`, display one short degraded-context notice, and continue — never block session start.
+**Degradation:** if `<detect.brain_root>/core/os/INDEX.md` is absent, fall back to reading `<detect.brain_root>/core/SOUL.md` + `<detect.brain_root>/USER.md`, display one short degraded-context notice, and continue — never block session start.
 
 ### 3. Login — L2 Operator
 
@@ -186,6 +184,8 @@ Read its JSON digest and fold the counts into the same restore one-liner as `ses
 **Degradation:** a missing `context/` directory is a clean no-op (`absorbed`/`materialized` empty), and a per-doc failure lands in `refused[]` rather than failing the call. Never block session start on it — surface `refused[]` as a one-line notice and continue.
 
 > **What replaced what (FR-195):** boot-sync subsumes the former §3.6 (`igris_brain_pull`), §3.6.1 (`igris_sync_queue_drain`), §3.6.1.1 (`igris sync data` local drain), §3.6.2 (`igris_session_file_pull`), and §3.6.3 (`igris_definition_pull`) — five separate MCP/CLI calls collapsed into one verb. The `_pull` (VPS→local restore) vs `_list` (state-aware local enumerate) distinction that mattered when the skill called both is now internal: this Mount step owns the `_pull` side (restore), and §4.1 gather owns the `_list` side (classification). They no longer share a call site to conflate.
+
+> **What boot does not drain (TD-492 decision):** boot-sync's drain covers the local `sync_queue.jsonl` file and the remote host's own `sync_queue` table. It does not drain this machine's brain retry queue: the rows a failed push leaves in the local brain's `sync_queue` table. `/rest` §2.6.5 drains that queue with `igris sync drain` at every session end (TD-489), and that is enough, so boot runs no `igris sync drain`. The cost is timing only: rows from a failed push reach the remote at the next `/rest`, one session later than a boot-time drain would send them. The skill never calls the brain's queue-drain MCP tool itself (its schema takes the API key as an argument, L-1379); boot-sync makes that call for it.
 
 ### 4.1 Mount — Load Session State / Gather
 
@@ -791,10 +791,11 @@ If zero results, render nothing — no "No pending" line. If `sqlite3` is
 unavailable or the DB file is missing, skip silently (same defensive guards
 as the WARNING block above).
 
-If `auto_approve_enabled=true` is set in `<detect.brain_root>/config.json`'s `perception`
-section, the background extractor inserts new rows as `approved` directly
-and they bypass this surface — they appear in `recall`/`search` immediately
-without operator review. Default is opt-in (off).
+The operator can turn on `perception.auto_approve_enabled`, a setting the
+background extractor reads (do not read `config.json` to check it: the file
+holds the remote brain's API key). When it is on, the extractor inserts new
+rows as `approved` directly and they bypass this surface — they appear in
+`recall`/`search` immediately without operator review. Default is opt-in (off).
 
 ### 5. Display Resume Point (if resuming)
 

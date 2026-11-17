@@ -173,9 +173,11 @@ This is especially important for:
   require manual review before any repair attempt.
 - `duplicate-path`, `slug-basename-mismatch`, `symlink-target`: these may reflect
   intentional aliases or workspace layout.
-- `machine-identity`: informational and never auto-fixed. Add to `config.json`
-  `machine.aliases` ONLY hostnames this machine has actually used; a name from
-  another machine would attribute its rows to this one. The writer keeps the
+- `machine-identity`: informational and never auto-fixed. Report it to the
+  operator; never read or edit `config.json` yourself (it holds the remote
+  brain's API key). The operator adds to its `machine.aliases`, by hand, ONLY
+  hostnames this machine has actually used; a name from another machine would
+  attribute its rows to this one. The writer keeps the
   newest 16; a name you need to keep past that goes back in by hand (a
   hand-edited list is never trimmed — only a fresh append evicts).
 - `secret-scan-disarmed`: informational and never auto-fixed — the fix is a

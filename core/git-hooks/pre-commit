@@ -35,6 +35,16 @@ set -e
 #       disposition ledger (TD-324 classified all 56 sites: 26 prose, 27
 #       already-loud, 3 regressions fixed), so clean-tree output is ZERO and
 #       the only thing it ever reports is a NEW site. WARN only.
+#   - validate_skill_secret_handling.py  (TD-492)
+#       Triggers if: any core/skills/**/*.md OR the validator itself OR
+#                    scripts/validate_skill_required_args.py (whose window
+#                    rule it imports) is staged.
+#       Hard-fails on skill text that names a secret as a tool argument or
+#       CLI flag, or names config.json outside a recognised form (a negated
+#       read that governs the mention, the CLI reading it itself, or a
+#       ledgered descriptive mention): both put the remote brain's API key
+#       into the transcript. Fail-closed with an explicit content-keyed
+#       ledger, so a clean tree reports no finding (one OK line).
 #   - validate_lockfile_in_sync.sh  (TD-134)
 #       Triggers if: package.json (root) OR package-lock.json OR
 #                    cli/package.json OR brain-mcp-server/package.json
@@ -488,6 +498,7 @@ needs_harness_check=0
 needs_skill_yaml_check=0
 needs_skill_os_leak_check=0
 needs_skill_required_args_check=0
+needs_skill_secret_check=0
 needs_contract_check=0
 needs_reconciliation_check=0
 needs_brief_type_check=0
@@ -541,6 +552,16 @@ fi
 if [ -f "$REPO_ROOT/scripts/validate_skill_required_args.py" ]; then
   if echo "$staged" | grep -qE '^(core/skills/.*\.md|brain-mcp-server/src/engine/components/[^/]+/index\.ts|MAINTAINING\.md)$'; then
     needs_skill_required_args_check=1
+  fi
+fi
+
+# TD-492: trigger the secret-handling gate on a staged skill markdown file
+# (any .md under core/skills/, the same scope as TD-324), on the validator
+# itself, or on validate_skill_required_args.py, whose window rule it imports
+# (a change to that window changes this gate's verdicts too).
+if [ -f "$REPO_ROOT/scripts/validate_skill_secret_handling.py" ]; then
+  if echo "$staged" | grep -qE '^(core/skills/.*\.md|scripts/validate_skill_secret_handling\.py|scripts/validate_skill_required_args\.py)$'; then
+    needs_skill_secret_check=1
   fi
 fi
 
@@ -734,6 +755,18 @@ if [ "$needs_skill_required_args_check" = "1" ]; then
   # validator line, or a NOT NULL/CHECK column) in the validator.
   if ! python3 "$REPO_ROOT/scripts/validate_skill_required_args.py"; then
     echo "[pre-commit] Unclassified skill call sites surfaced above (WARN only — not blocking)."
+  fi
+fi
+
+if [ "$needs_skill_secret_check" = "1" ]; then
+  echo "[pre-commit] Checking skill text for secret routes into the transcript (TD-492)..."
+  # set -e is intentionally bypassed here (if-condition exits set -e scope)
+  # so multiple validator failures are aggregated into $failed and reported
+  # together at the end. HARD-FAIL, unlike TD-324's WARN: a read of
+  # config.json or a secret argument is a leak, not a judgement call. A truly
+  # descriptive mention goes in the validator's LEDGER_C with its reason.
+  if ! python3 "$REPO_ROOT/scripts/validate_skill_secret_handling.py"; then
+    failed=1
   fi
 fi
 

@@ -696,7 +696,7 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     // canonical sync path. Wrapped in its own try/catch so a push failure
     // does NOT reverse the extract success: the extracted rows are already
     // persisted and the failed-push rows are queued in `sync_queue` by
-    // handleBrainPush itself for the next /awaken §3.6.1 drain.
+    // handleBrainPush itself for the next `igris sync drain` (/rest).
     //
     // Position: AFTER inbox truncation (synchronous, fast) and BEFORE the
     // BR-060 finally block that disposes the transformers pipeline and

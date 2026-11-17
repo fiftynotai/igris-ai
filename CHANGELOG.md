@@ -176,6 +176,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   set is empty or a listed path has no change. `test/scoped_commit.test.bash`
   shows the old step committing all three sibling files and the new one none.
 
+- **`/boot` no longer reads `~/.igris/config.json` (TD-492).** Its
+  "Always-needed files" list told every boot to read the file, which holds the
+  remote brain's API key, so the key entered the transcript. Boot now takes
+  remote-brain presence from `igris detect`'s `remote_brain` field, and the
+  degraded fallback reads only `SOUL.md` and `USER.md`. A new pre-commit gate,
+  `scripts/validate_skill_secret_handling.py`, refuses skill text that names a
+  secret as a tool argument or CLI flag, or names `config.json` outside a
+  recognised form (a negated read that governs the mention, the CLI reading it
+  itself, or a ledgered descriptive mention). Two adversarial probe rounds
+  (639 fixtures) shaped its forms. Its tests quote the pre-fix `/boot` lines
+  and the pre-fix `/rest` drain and push steps, and each fails. Run over the
+  skill trees of seven earlier commits, from `ea083d3` (v6) to `eb6c9b8^`, it
+  flags all 22 `api_key` argument lines they contain; its only other hits
+  there are a config template showing the key and one Dart code sample.
+  `/igris-doctor` now leaves `machine.aliases` edits to the operator instead
+  of having the agent open the file. The decision that `/boot` does not drain
+  this machine's brain retry queue (the `/rest` drain is enough) is recorded
+  in the boot skill.
+
 - **Two processes migrating one brain no longer collide (FR-276).**
   `runComponentMigrations` re-reads a component's version before each
   migration's pre-flight and again under the IMMEDIATE lock, and skips a
