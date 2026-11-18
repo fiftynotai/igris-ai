@@ -198,6 +198,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   upstream renames the variable, or if Igris adopts a GPU provider. A Linux x64 contributor exports the variable before a root
   `npm ci` (CONTRIBUTING.md).
 
+  Upgrading (BR-119):
+  - 7.3.2 on Linux x64 leaves the brain without its dependencies. Until a
+    release carries this fix, run the postinstall's recovery command with
+    the opt-out, from the global package root (`$(npm root -g)/igris-ai`):
+    `ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --omit=dev --prefix dist/brain-mcp-server`.
+    macOS and Windows installs are unaffected.
+  - The VPS reuses its installed tree while the install fingerprint is
+    unchanged. The next `igris sync code` deploys a runner that exports the
+    opt-out for any fresh install.
+
 - **A git worktree resolves to its repository's project (TD-359).** The
   project slug came from the directory name, so a worktree such as
   `mbrgea-ai-gl010` became an empty phantom project. The brief gate then
@@ -249,6 +259,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Finish or park any in-flight close before the deploy.
   - A caller that sent JSON `null` to clear an `igris_instance_state` field
     must now send `''`.
+  - The BR-120 marker fix is in `core/hooks/shared/_gate.sh` and reaches
+    every clone the same way, through `igris refresh`. A marker whose first
+    line is 4096 bytes or more now falls through to the registry rung. Check
+    that a marker is a single short slug line:
+    `wc -c < .igris-project`.
 
 - **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
   Phase 7 staged with `git add -A`, so a close in a working tree shared by
