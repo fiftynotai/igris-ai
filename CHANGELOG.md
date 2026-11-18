@@ -198,6 +198,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field. `igris session register` keeps the brief, phase, task and lease on
   re-register, and stores the worktree root as `project_path`.
 
+  Upgrading (TD-359 and TD-494):
+  - A clone's `.git/hooks/pre-commit` and `commit-msg` are symlinks into
+    `~/.igris/core/git-hooks/`, and every worktree of the clone uses the same
+    hooks. `igris refresh` therefore updates them in place, with no per-clone
+    step.
+  - After the refresh, restart each running session's brain. An old daemon
+    keeps the old `igris_instance_state` handler, which nulls any field a call
+    omits.
+  - Then re-run `/boot` in each session. That records the worktree root, the
+    registry slug, and the owner pid and start time the guard uses to
+    identify the session.
+  - Finish or park any in-flight close before the deploy.
+  - A caller that sent JSON `null` to clear an `igris_instance_state` field
+    must now send `''`.
+
 - **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
   Phase 7 staged with `git add -A`, so a close in a working tree shared by
   several sessions committed their in-flight and staged files under this
