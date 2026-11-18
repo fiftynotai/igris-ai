@@ -29,6 +29,7 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 # plain projects/brief_status/event_log tables, no vec0 / FTS5.
 
 load test_helper
+load sql_escape_helpers
 
 setup() {
   rm -f /tmp/igris_brief_gate_cache
@@ -360,4 +361,268 @@ MD
   run_hook_split_stderr "$PROJ" "$PROJ/src/a.go"
   run_hook_split_stderr "$PROJ" "$PROJ/src/b.go"
   [ "$(event_count 'brief_gate.db_error')" -ge 2 ]
+}
+
+# =============================================================================
+# TD-510 — the brain lookup asks about every SLUG_RE slug.
+#
+# THE DEFECT. find_active_brief_in_brain refused every slug outside the narrow
+# charset `[a-z0-9_-]` before its SQL, so lifeOS, animated-fifty.dev and
+# CustomerPulse-Android (valid cli/src/lib/slug.ts SLUG_RE slugs, all in the
+# live registry) never reached the brain: their In Progress briefs were
+# invisible and every write was DENIED. The check is now `igris_slug_valid`
+# (_gate.sh, the one bash spelling of SLUG_RE), and the slug is escaped with
+# the unquoted idiom (MAINTAINING row 153).
+#
+# WORLD. <slug> registered at $PROJ with one In Progress brief, and NO
+# ~/.igris/projects/<slug>/briefs, so only the brain can allow. The hook runs
+# under /bin/bash, its shebang interpreter (test_standards BR-104), with HOME
+# and IGRIS_BRAIN_DIR fenced on one path and the git location variables unset.
+#
+#   B1   lifeOS                                  allow, quiet      (HEAD: deny)
+#   B2   animated-fifty.dev                      allow             (HEAD: deny)
+#   B3   o'brien (a quote, outside SLUG_RE)      deny, 0 db_error  (HEAD: deny)
+#   B4   _lead, 65 x a (outside SLUG_RE, inside the old charset)
+#                                                deny              (HEAD: allow)
+#   B4b  64 x a, CustomerPulse-Android           allow             (HEAD: allow, deny)
+#   MB1  the pre-TD-510 `case` put back in a scratch copy denies B1's world
+#   MB2  the check deleted, the escape kept: the copy ALLOWS B3's world, so the
+#        skip (not a SQL error) is what keeps a quote out of the lookup
+#   B6   static pin: neither narrow literal sits on a non-comment line
+#   B6n  the pin's self-negative
+# Each allow carries its own control: the brief deleted, the same world denies
+# and names the slug, so the allow came from the lookup and not from a no-op.
+# =============================================================================
+
+# td510_world <slug> — register <slug> at $PROJ with one In Progress brief.
+td510_world() {
+  local q
+  q="$(sql_q "$1")"
+  sqlite3 "$DB" "
+    INSERT INTO projects (slug,name,path) VALUES ('$q','$q','$PROJ');
+    INSERT INTO brief_status (project,brief_id,title,status)
+      VALUES ('$q','TD-510','t','In Progress');
+  " || return 1
+  # Arm: no cache entry, so the filesystem arm cannot allow.
+  [ ! -e "$FAKEHOME/.igris/projects/$1" ] || return 1
+}
+
+# run_gate_bin <hook> <project_dir> <file_path> — the hook under /bin/bash.
+# Sets GATE_RC, GATE_OUT, GATE_ERR (stdout and stderr apart) and GATE_VERDICT
+# (allow | deny | other).
+run_gate_bin() {
+  local hook="$1" proj="$2" fpath="$3" rc=0
+  printf '{"tool_name":"Write","tool_input":{"file_path":"%s"},"project_dir":"%s"}' \
+    "$fpath" "$proj" > "$SANDBOX/td510.json"
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+      -u IGRIS_BYPASS_BRIEF_GATE -u IGRIS_PROJECT_DIR -u CLAUDE_PROJECT_DIR \
+      HOME="$FAKEHOME" IGRIS_BRAIN_DIR="$FAKEHOME/.igris" \
+      /bin/bash "$hook" < "$SANDBOX/td510.json" \
+      > "$SANDBOX/td510.out" 2> "$SANDBOX/td510.err" || rc=$?
+  GATE_RC="$rc"
+  GATE_OUT="$(cat "$SANDBOX/td510.out")"
+  GATE_ERR="$(cat "$SANDBOX/td510.err")"
+  case "$GATE_OUT" in
+    '') GATE_VERDICT=allow ;;
+    *'"permissionDecision": "deny"'* | *'"permissionDecision":"deny"'*) GATE_VERDICT=deny ;;
+    *) GATE_VERDICT=other ;;
+  esac
+  echo "${hook#"$SANDBOX"/}: rc=$GATE_RC verdict=$GATE_VERDICT"
+  echo "  stdout: [$GATE_OUT]"
+  echo "  stderr: [$GATE_ERR]"
+}
+
+# td510_allows <slug> — B1/B2/B4b: the hook allows quietly, then, with the
+# brief deleted, denies and names <slug> (the control).
+td510_allows() {
+  local slug="$1"
+  td510_world "$slug" || return 1
+  run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_RC" -eq 0 ] || return 1
+  [ "$GATE_VERDICT" = allow ] || return 1
+  [[ "$GATE_ERR" != *"WARNING"* ]] || return 1
+  [ "$(event_count 'brief_gate.fallback_fired')" -eq 0 ] || return 1
+  [ "$(event_count 'brief_gate.db_error')" -eq 0 ] || return 1
+  # Control: the same world without the brief denies, naming the slug.
+  sqlite3 "$DB" "DELETE FROM brief_status;"
+  run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_VERDICT" = deny ] || return 1
+  [[ "$GATE_OUT" == *"project '$slug' resolved from"* ]] || return 1
+}
+
+# td510_denies <slug> — B3/B4: the hook denies, names <slug> (so the brief gate
+# ran: the registration gate did not no-op) and logs no db_error.
+td510_denies() {
+  local slug="$1"
+  td510_world "$slug" || return 1
+  run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_RC" -eq 0 ] || return 1
+  [ "$GATE_VERDICT" = deny ] || return 1
+  [[ "$GATE_OUT" == *"project '$slug' resolved from"* ]] || return 1
+  [[ "$GATE_ERR" != *"WARNING"* ]] || return 1
+  [ "$(event_count 'brief_gate.db_error')" -eq 0 ] || return 1
+}
+
+# td510_mutant <old|none> — a scratch copy of pre_tool_use.sh and _gate.sh in
+# $SANDBOX/mut-<mode>/ whose [[ TD-510 SLUG CHECK ]] block is either replaced
+# by the pre-TD-510 `case` (old) or deleted (none). Asserts the mutation
+# LANDED (test_standards "Scratch-copy mutation"). Prints the copy's path.
+td510_mutant() {
+  local mode="$1" dir="$SANDBOX/mut-$1" n_real
+  mkdir -p "$dir"
+  n_real="$(grep -c 'TD-510 SLUG CHECK' "$HOOK" || true)"
+  [ "$n_real" -eq 2 ] || { echo "the [[ TD-510 SLUG CHECK BEGIN/END ]] markers are absent from pre_tool_use.sh ($n_real): the mutation cannot land" >&2; return 1; }
+  cp "$REPO_ROOT/core/hooks/shared/_gate.sh" "$dir/_gate.sh"
+  python3 - "$HOOK" "$dir/pre_tool_use.sh" "$mode" <<'PY' || return 1
+import sys
+src, dst, mode = sys.argv[1:4]
+OLD = [
+    '  case "$slug" in\n',
+    '    *[!a-z0-9_-]*|"")\n',
+    '      _BRAIN_QUERY_STATUS="skipped"\n',
+    '      return 0\n',
+    '      ;;\n',
+    '  esac\n',
+]
+out, inside, blocks = [], False, 0
+for line in open(src, encoding="utf-8"):
+    if "[[ TD-510 SLUG CHECK BEGIN ]]" in line:
+        inside = True
+        if mode == "old":
+            out.extend(OLD)
+        continue
+    if "[[ TD-510 SLUG CHECK END ]]" in line:
+        inside = False
+        blocks += 1
+        continue
+    if not inside:
+        out.append(line)
+if blocks != 1:
+    sys.exit("expected one TD-510 SLUG CHECK block, found %d" % blocks)
+open(dst, "w", encoding="utf-8").write("".join(out))
+PY
+  # Landed: the markers are gone, no live line calls the helper, the escaped
+  # lookup survives, and the old literal is present exactly when restored.
+  [ "$(grep -c 'TD-510 SLUG CHECK' "$dir/pre_tool_use.sh" || true)" -eq 0 ] || return 1
+  [ "$(grep -vE '^[[:space:]]*#' "$dir/pre_tool_use.sh" | grep -c 'igris_slug_valid' || true)" -eq 0 ] || return 1
+  [ "$(grep -vE '^[[:space:]]*#' "$HOOK" | grep -c 'igris_slug_valid' || true)" -ge 1 ] || return 1
+  # The escape survives: both `q=${slug//...}` sites (this lookup's and
+  # output_deny's), and the lookup's SQL still reads the escaped `$q`.
+  local esc_real esc_mut
+  # shellcheck disable=SC2016  # the escape and SQL lines, matched literally
+  esc_real="$(grep -cF 'q=${slug//' "$HOOK" || true)"
+  # shellcheck disable=SC2016
+  esc_mut="$(grep -cF 'q=${slug//' "$dir/pre_tool_use.sh" || true)"
+  [ "$esc_real" -eq 2 ] && [ "$esc_mut" -eq "$esc_real" ] || return 1
+  # shellcheck disable=SC2016
+  [ "$(grep -cF "WHERE project = '\$q' AND replace(" "$dir/pre_tool_use.sh" || true)" -eq 1 ] || return 1
+  local old_n=0
+  [ "$mode" = old ] && old_n=1
+  [ "$(grep -vE '^[[:space:]]*#' "$dir/pre_tool_use.sh" | grep -cF '*[!a-z0-9_-]*' || true)" -eq "$old_n" ] || return 1
+  printf '%s\n' "$dir/pre_tool_use.sh"
+}
+
+@test "(B1) TD-510: lifeOS (mixed case, a SLUG_RE slug) with an In Progress brief -> allow, quiet" {
+  td510_allows lifeOS
+}
+
+@test "(B2) TD-510: animated-fifty.dev (a dot) with an In Progress brief -> allow" {
+  td510_allows animated-fifty.dev
+}
+
+@test "(B3) TD-510: o'brien (a quote, outside SLUG_RE) -> deny, and the lookup never ran (0 db_error)" {
+  td510_denies "o'brien"
+}
+
+@test "(B4) TD-510: _lead (a leading underscore, outside SLUG_RE, inside the old charset) -> deny" {
+  td510_denies _lead
+}
+
+@test "(B4) TD-510: a 65-character lowercase slug (over SLUG_RE's 64) -> deny" {
+  local s
+  s="$(printf '%*s' 65 '' | tr ' ' a)"
+  [ "${#s}" -eq 65 ] || return 1
+  td510_denies "$s"
+}
+
+@test "(B4b) TD-510: a 64-character slug (SLUG_RE's longest) -> allow" {
+  local s
+  s="$(printf '%*s' 64 '' | tr ' ' a)"
+  [ "${#s}" -eq 64 ] || return 1
+  td510_allows "$s"
+}
+
+@test "(B4b) TD-510: CustomerPulse-Android (capitals) -> allow" {
+  td510_allows CustomerPulse-Android
+}
+
+@test "(MB1) TD-510 mutation: the pre-TD-510 charset case put back denies B1's world (lifeOS)" {
+  local mutant
+  mutant="$(td510_mutant old)" || return 1
+  td510_world lifeOS || return 1
+  run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_VERDICT" = allow ] || return 1
+  run_gate_bin "$mutant" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_VERDICT" = deny ] || return 1
+  [[ "$GATE_OUT" == *"project 'lifeOS' resolved from"* ]] || return 1
+}
+
+@test "(MB2) TD-510 mutation: with the check deleted the escaped lookup ALLOWS B3's world (o'brien)" {
+  local mutant
+  mutant="$(td510_mutant none)" || return 1
+  td510_world "o'brien" || return 1
+  run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+  [ "$GATE_VERDICT" = deny ] || return 1
+  run_gate_bin "$mutant" "$PROJ" "$PROJ/src/x.go"
+  # The escape is sound: the quoted slug reaches SQL, finds the brief, and
+  # nothing errors. So the real hook's deny is the skip, by design.
+  [ "$GATE_VERDICT" = allow ] || return 1
+  [[ "$GATE_ERR" != *"WARNING"* ]] || return 1
+  [ "$(event_count 'brief_gate.db_error')" -eq 0 ] || return 1
+}
+
+# narrow_slug_filter_lines [root] — `<path>:<line>:<text>` for every
+# non-comment line under core/hooks, core/git-hooks, core/scripts, scripts and
+# core/skills that carries a pre-TD-510 narrow slug literal (`*[!a-z0-9_-]*`
+# or `^[a-z0-9_-]+$`).
+narrow_slug_filter_lines() {
+  local root="${1:-$IGRIS_ROOT}" d
+  for d in core/hooks core/git-hooks core/scripts scripts core/skills; do
+    [ -d "$root/$d" ] || continue
+    grep -rnF -e '*[!a-z0-9_-]*' -e '^[a-z0-9_-]+$' "$root/$d" 2>/dev/null \
+      | grep -vE '^[^:]+:[0-9]+:[[:space:]]*#' \
+      | sed "s|^$root/||"
+  done
+  return 0
+}
+
+@test "(B6) TD-510: no live line in the hooks, scripts or skills filters a slug with the narrow charset" {
+  local d
+  for d in core/hooks core/git-hooks core/scripts scripts core/skills; do
+    [ -d "$IGRIS_ROOT/$d" ] || { echo "scan root missing: $d"; return 1; }
+  done
+  run narrow_slug_filter_lines
+  echo "$output"
+  [ "$status" -eq 0 ] || return 1
+  [ -z "$output" ] || return 1
+}
+
+@test "(B6n) TD-510: the narrow-charset scanner reports a planted site in each scope and exempts a comment" {
+  local plant="$SANDBOX/plant"
+  mkdir -p "$plant/core/hooks/shared" "$plant/core/skills/x"
+  {
+    printf '%s\n' '#!/bin/bash'
+    printf '%s\n' '  case "$slug" in'
+    printf '%s\n' '    *[!a-z0-9_-]*|"") return 0 ;;'
+    printf '%s\n' '  esac'
+    printf '%s\n' '  # the old filter was *[!a-z0-9_-]* — a comment is not a site'
+  } > "$plant/core/hooks/shared/x.sh"
+  printf '%s\n' 'if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then' > "$plant/core/skills/x/SKILL.md"
+  run narrow_slug_filter_lines "$plant"
+  echo "$output"
+  [ "$status" -eq 0 ] || return 1
+  [ "$(printf '%s\n' "$output" | grep -c .)" -eq 2 ] || return 1
+  [[ "$output" == *"core/hooks/shared/x.sh:3:"* ]] || return 1
+  [[ "$output" == *"core/skills/x/SKILL.md:1:"* ]] || return 1
+  [[ "$output" != *"x.sh:5:"* ]] || return 1
 }

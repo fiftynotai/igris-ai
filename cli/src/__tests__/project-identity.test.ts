@@ -57,7 +57,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 
 /** The location variables a git hook exports (`git-head.ts` GIT_ENV_STRIP). */
 const GIT_ENV_STRIP = [
@@ -370,6 +370,45 @@ describe("TD-359 resolver — rung 0: the input directory is realpath'd", () => 
       });
     },
   );
+
+  // TD-510: rung 0 is the JS realpathSync in BOTH twins. A path that does not
+  // resolve is walked in its path.resolve form — anchored at the physical cwd
+  // when relative, folded (`..`, `.`, `//`, a trailing slash) either way —
+  // while `dir` keeps the raw input. Parity rows T8-T8e hold the shell twin.
+  it("(N6) an ABSOLUTE input that does not resolve is folded before the walk: `x/..` and a trailing slash reach the registered row", async () => {
+    register([{ slug: "gone-reg", path: `${sandbox}/gone/reg` }]);
+    // A raw string: path.join would fold it before the resolver saw it.
+    const given = `${sandbox}/gone/x/../reg/`;
+    expect(existsSync(join(sandbox, "gone"))).toBe(false);
+    const { resolveProjectIdentity } = await loadResolver();
+    expect(resolveProjectIdentity(given)).toMatchObject({
+      slug: "gone-reg",
+      source: "registry",
+      dir: given,
+      worktree_root: null,
+      main_root: null,
+      lookup_path: `${sandbox}/gone/reg`,
+    });
+  });
+
+  it("(N7) a RELATIVE input that does not resolve is anchored at process.cwd(): the registered ancestor, dir raw, lookup_path absolute", async () => {
+    const proj = mkdirp(join(sandbox, "proj"));
+    register([{ slug: "proj-rel", path: proj }]);
+    const target = join(proj, "ghost", "leaf");
+    // No process.chdir (vitest workers forbid it): relative to the real cwd.
+    const given = relative(process.cwd(), target);
+    expect(isAbsolute(given)).toBe(false);
+    expect(existsSync(target)).toBe(false);
+    const { resolveProjectIdentity } = await loadResolver();
+    expect(resolveProjectIdentity(given)).toMatchObject({
+      slug: "proj-rel",
+      source: "registry",
+      dir: given,
+      worktree_root: null,
+      main_root: null,
+      lookup_path: target,
+    });
+  });
 });
 
 // ===========================================================================

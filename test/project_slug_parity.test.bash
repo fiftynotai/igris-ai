@@ -66,8 +66,10 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 # these spellings — detect's directory is the process getcwd, which is already
 # physical and case-canonical, and the git hook passes git's toplevel). Outside
 # git there is no git-reported spelling, so the twins agree only if they
-# normalise alike: bash `cd -- dir && pwd -P` keeps the letter case it was
-# given and drops a `..` textually, and so must the TS twin's realpath.
+# normalise alike: rung 0 is the JS realpathSync in both (TD-510) — the bash
+# twin folds the path textually (`_igris_res_lexical`, so a `..` is dropped
+# before `cd` sees it) and `pwd -P` keeps the letter case it was given, as the
+# TS twin's realpath does.
 #   T1  $S/LOOSE/plain-case    (on disk loose/Plain-Case)   plain-case  basename
 #   T2  $S/near/hop/../beside  (hop -> $S/far/target)       near-reg    registry
 #   T3  $S/loose/bom-dir   marker = UTF-8 BOM + bomslug       bom-dir     basename
@@ -99,6 +101,21 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #   T6  $S/elsewhere/"lane " a linked worktree ROOT whose name ends in a
 #       space                                                igris-ai    registry
 #       (git's output is split on newlines only, never trimmed)
+#   T8  cwd $MAIN, input ghost/leaf (absent)                 igris-ai    registry
+#   T8b cwd $S/loose, input ./ghost//leaf/..                 ghost       basename
+#   T8c $S/lex/gone/reg/ (absolute, absent, trailing slash)  lex-gone    registry
+#   T8d $S/lex/logi/hop/../only (only phys/only exists)      lex-logi    registry
+#   T8e LOGICAL cwd $S/lex/logi/hop (-> phys/target), input ../beside
+#                                                            lex-phys    registry
+#       (TD-510: both twins run from ONE cwd, check_twins_at. A relative input
+#       is anchored at the PHYSICAL cwd, every input is folded the way
+#       path.resolve folds it, then realpath'd. Before TD-510 the bash twin
+#       walked a relative string (T8, T8b), anchored at the LOGICAL $PWD
+#       (T8e) and let `cd` fall back to the kernel's chdir on T8d's `hop/..`
+#       (measured on /bin/bash 3.2.57); the TS twin walked T8c unfolded)
+#   G1  igris_slug_valid (/bin/bash, C + en_US.UTF-8 if installed) against
+#       SLUG_RE.test over 14 inputs; G2 _igris_res_lexical against
+#       path.posix.resolve over 19 (TD-510)
 #
 # SELF-NEGATIVE CONTROLS (test_standards "Scratch-copy mutation": each asserts
 # its mutation LANDED before asserting the disagreement):
@@ -116,6 +133,11 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #       marker` where /bin/bash skips NUL bytes (bash >= 4.3: the CI cli-bats
 #       leg). Where it does not (bash 3.2, macOS) both readers agree: M3
 #       measures that agreement, then skips naming the version.
+#   M4a a copy without the `[[ TD-510 ANCHOR ]]` line makes T8 and T8e
+#       disagree (T8c still agrees); M4b, without the `[[ TD-510 LEXICAL ]]`
+#       line, makes T8b disagree on every bash and T8d where /bin/bash's `cd`
+#       falls back to the kernel's chdir (probed; 3.2.57 does), while T8 and
+#       T8e still agree. One mutant per half (BR-120).
 #   C0  the row checker itself can fail (a wrong expectation is RED).
 #
 # AC-W1 STATIC PINS (no fixture, no dist; they run in every leg):
@@ -274,6 +296,11 @@ build_matrix() {
   printf '%*s%s\000tail\n' 4088 '' padslug > "$S/loose/nul4095-dir/.igris-project"
   printf '%*s%s\000\n' 4089 '' padslug > "$S/loose/nul4096-dir/.igris-project"
   git -C "${MAIN:?}" worktree add -q -b space-lane "$S/elsewhere/lane "
+  # T8-T8e (twin-only rows, TD-510): rung 0 on inputs that do not resolve.
+  # logi/hop -> phys/target, so `logi/hop/..` is logi LEXICALLY and phys
+  # PHYSICALLY; only phys has an `only`. lex/gone/reg is never created.
+  mkdir -p "$S/lex/phys/target" "$S/lex/phys/beside" "$S/lex/phys/only" "$S/lex/logi/beside"
+  ln -s "$S/lex/phys/target" "$S/lex/logi/hop"
 
   sqlite3 "$DB" "
     CREATE TABLE projects (
@@ -320,6 +347,9 @@ build_matrix() {
   register dup_repo "$S/repos/dup_repo"
   register dotdot-reg "$S/repos/dotdot-repo"
   register near-reg "$S/near/beside"
+  register lex-phys "$S/lex/phys"
+  register lex-logi "$S/lex/logi"
+  register lex-gone "$S/lex/gone/reg"
 }
 
 # check_twins <dir> <slug> <source> — the two resolvers alone (T rows).
@@ -328,6 +358,21 @@ check_twins() {
   g="$(surface_gate "$dir")"
   t="$(surface_ts "$dir")"
   echo "dir:      $dir"
+  echo "expected: $want"
+  echo "  gate: [$g]"
+  echo "  ts:   [$t]"
+  [ "$g" = "$want" ] && [ "$t" = "$want" ]
+}
+
+# check_twins_at <cwd> <input> <slug> <source> — both twins run FROM ONE cwd
+# on a possibly relative <input> (T8 rows). check_twins cannot express that:
+# surface_gate runs in $S and surface_ts in the directory itself.
+check_twins_at() {
+  local cwd="$1" input="$2" want="$3 $4" g t
+  g="$(surface_gate_at "$cwd" "$input")"
+  t="$(surface_ts_at "$cwd" "$input")"
+  echo "cwd:      $cwd"
+  echo "input:    $input"
   echo "expected: $want"
   echo "  gate: [$g]"
   echo "  ts:   [$t]"
@@ -350,6 +395,19 @@ surface_gate() {
       igris_resolve_project "$2"
       printf "%s %s\n" "${_IGRIS_RES_SLUG:-}" "${_IGRIS_RES_SOURCE:-}"
     ' _ "$gate" "$dir" 2>/dev/null ) || true
+}
+
+# surface_gate_at <cwd> <input> [gate] — the bash twin run from <cwd>. The
+# subshell's `cd` is logical, so a cwd reached through a symlink reaches
+# /bin/bash as the inherited PWD (T8e asserts that before relying on it).
+surface_gate_at() {
+  local cwd="$1" input="$2" gate="${3:-$GATE_SRC}"
+  ( cd "$cwd" && "${FENCE_ENV[@]}" /bin/bash -c '
+      set -e
+      . "$1"
+      igris_resolve_project "$2"
+      printf "%s %s\n" "${_IGRIS_RES_SLUG:-}" "${_IGRIS_RES_SOURCE:-}"
+    ' _ "$gate" "$input" 2>/dev/null ) || true
 }
 
 # timed_gate <dir> <watchdog-s> — surface_gate's call, timed: prints
@@ -399,6 +457,22 @@ surface_ts() {
         console.log("");
       }
     ' "file://$IDENTITY_JS" "$dir" 2>/dev/null ) || true
+}
+
+# surface_ts_at <cwd> <input> — the TS twin run from <cwd>; node's
+# process.cwd() is the PHYSICAL working directory.
+surface_ts_at() {
+  local cwd="$1" input="$2"
+  ( cd "$cwd" && "${FENCE_ENV[@]}" "$NODE_BIN" --input-type=module -e '
+      const [mod, dir] = process.argv.slice(1);
+      try {
+        const m = await import(mod);
+        const r = await m.resolveProjectIdentity(dir);
+        console.log(`${r.slug} ${r.source}`);
+      } catch (e) {
+        console.log("");
+      }
+    ' "file://$IDENTITY_JS" "$input" 2>/dev/null ) || true
 }
 
 # surface_git_hook <dir> <expected-slug> — seed the observation under the
@@ -752,6 +826,160 @@ check_row() {
       return 1
       ;;
   esac
+}
+
+# =============================================================================
+# TD-510 — rung 0 is the JS realpathSync in both twins: a relative input is
+# anchored at the PHYSICAL cwd, every input is folded textually (repeated
+# slashes, `.`, `..` never above `/`, a trailing slash), then realpath'd; a
+# path that does not resolve is walked in that folded form.
+# =============================================================================
+
+@test "T8 (twins): a RELATIVE input that does not exist is anchored at the cwd -> igris-ai registry" {
+  [ ! -e "$MAIN/ghost" ] || return 1
+  check_twins_at "$MAIN" ghost/leaf igris-ai registry
+}
+
+@test "T8b (twins): a relative input is folded textually (./, //, a trailing ..) -> ghost basename" {
+  [ ! -e "$S/loose/ghost" ] || return 1
+  check_twins_at "$S/loose" './ghost//leaf/..' ghost basename
+}
+
+@test "T8c (twins): an ABSOLUTE input that does not exist, with a trailing slash -> lex-gone registry" {
+  # Arm: a registered directory that was deleted (never created here).
+  [ ! -e "$S/lex/gone" ] || return 1
+  check_twins_at "$S" "$S/lex/gone/reg/" lex-gone registry
+}
+
+@test "T8d (twins): link/.. where only the PHYSICAL target exists keeps the LEXICAL path -> lex-logi registry" {
+  # Arm: lexically logi/only (absent), physically phys/only (present), so a
+  # `cd` that falls back to the kernel's chdir lands somewhere else.
+  [ -L "$S/lex/logi/hop" ] || return 1
+  [ ! -e "$S/lex/logi/only" ] && [ -d "$S/lex/phys/only" ] || return 1
+  check_twins_at "$S" "$S/lex/logi/hop/../only" lex-logi registry
+}
+
+@test "T8e (twins): a cwd reached through a symlink anchors a relative input at the PHYSICAL cwd -> lex-phys registry" {
+  local seen
+  # Arm: /bin/bash inherits the LOGICAL cwd as PWD (node's cwd is physical).
+  seen="$(cd "$S/lex/logi/hop" && "${FENCE_ENV[@]}" /bin/bash -c 'printf %s "$PWD"')"
+  echo "inherited PWD: [$seen]"
+  [ "$seen" = "$S/lex/logi/hop" ] || return 1
+  check_twins_at "$S/lex/logi/hop" ../beside lex-phys registry
+}
+
+@test "G1 (grammar twin): igris_slug_valid (/bin/bash, C + en_US.UTF-8 if installed) and SLUG_RE.test (slug.js) agree over 14 inputs" {
+  local slug_js="$IGRIS_ROOT/cli/dist/lib/slug.js" a64 a65 eacute t g loc
+  [ -f "$slug_js" ] || return 1
+  a64="$(printf '%*s' 64 '' | tr ' ' a)"
+  a65="${a64}a"
+  eacute="$(printf '\303\251')"
+  local -a table=(lifeOS animated-fifty.dev CustomerPulse-Android a "$a64" "$a65"
+                  .x -x _x 'a b' "o'brien" "$eacute" a/b '')
+  [ "${#table[@]}" -eq 14 ] || return 1
+  # Arm: the helper exists in the bash twin.
+  "${FENCE_ENV[@]}" /bin/bash -c '. "$1"; type igris_slug_valid' _ "$GATE_SRC" >/dev/null 2>&1 \
+    || { echo "igris_slug_valid is not defined by _gate.sh"; return 1; }
+  t="$("$NODE_BIN" --input-type=module -e '
+      const [mod, ...xs] = process.argv.slice(1);
+      const { SLUG_RE } = await import(mod);
+      process.stdout.write(xs.map((x) => (SLUG_RE.test(x) ? "1" : "0")).join(""));
+    ' "file://$slug_js" "${table[@]}")"
+  echo "SLUG_RE.test:     $t"
+  # Arm: the table holds both verdicts, in SLUG_RE's order.
+  [ "$t" = "11111000000000" ] || return 1
+  for loc in C en_US.UTF-8; do
+    g="$(LC_ALL="$loc" "${FENCE_ENV[@]}" /bin/bash -c '
+        . "$1"; shift
+        for s in "$@"; do
+          if igris_slug_valid "$s"; then printf 1; else printf 0; fi
+        done
+      ' _ "$GATE_SRC" "${table[@]}" 2>/dev/null)"
+    echo "igris_slug_valid LC_ALL=$loc (charmap $(LC_ALL="$loc" locale charmap 2>/dev/null)): $g"
+    [ "$g" = "$t" ] || return 1
+  done
+}
+
+@test "G2 (fold twin): _igris_res_lexical (/bin/bash, C + en_US.UTF-8 if installed) folds 19 absolute paths exactly as path.posix.resolve" {
+  local t g loc
+  local -a table=(/ // /.. /a/.. /a/../.. /a//b/./c/ /a/b/../../.. /./ /a/.../b /a/..b/c
+                  /a/b./ '/ a/ b /' /a/b/c/../../d /x/y/../../../z ///a/// "/$(printf '\303\251')/./x"
+                  /a/b /x/.z /..x/)
+  [ "${#table[@]}" -eq 19 ] || return 1
+  "${FENCE_ENV[@]}" /bin/bash -c '. "$1"; type _igris_res_lexical' _ "$GATE_SRC" >/dev/null 2>&1 \
+    || { echo "_igris_res_lexical is not defined by _gate.sh"; return 1; }
+  t="$("$NODE_BIN" -e '
+      const { posix } = require("node:path");
+      for (const x of process.argv.slice(1)) process.stdout.write(posix.resolve(x) + "\n");
+    ' "${table[@]}")"
+  printf 'path.posix.resolve:\n%s\n' "$t"
+  # Arm: the table folds (at least `/..` -> `/` and the `.`/`//` cases differ).
+  [ "$(printf '%s\n' "$t" | sed -n 3p)" = "/" ] || return 1
+  [ "$(printf '%s\n' "$t" | sed -n 6p)" = "/a/b/c" ] || return 1
+  for loc in C en_US.UTF-8; do
+    g="$(LC_ALL="$loc" "${FENCE_ENV[@]}" /bin/bash -c '
+        . "$1"; shift
+        for s in "$@"; do _igris_res_lexical "$s"; printf "%s\n" "$_IGRIS_RES_LEX"; done
+      ' _ "$GATE_SRC" "${table[@]}" 2>/dev/null)"
+    [ "$g" = "$t" ] || { printf '_igris_res_lexical LC_ALL=%s (charmap %s):\n%s\n' "$loc" "$(LC_ALL="$loc" locale charmap 2>/dev/null)" "$g"; return 1; }
+  done
+}
+
+@test "M4a (mutation): _gate.sh without the [[ TD-510 ANCHOR ]] line makes T8 and T8e disagree" {
+  local mutant="$SCRATCH/_gate.no-anchor.sh" tag_real tag_mut
+  sed '/\[\[ TD-510 ANCHOR \]\]/d' "$GATE_SRC" > "$mutant"
+  tag_real="$(grep -c 'TD-510 ANCHOR' "$GATE_SRC" || true)"
+  tag_mut="$(grep -c 'TD-510 ANCHOR' "$mutant" || true)"
+  echo "TD-510 ANCHOR tag: real=$tag_real mutant=$tag_mut"
+  # The mutation LANDED: exactly the one tagged line is gone.
+  [ "$tag_real" -eq 1 ] || { echo "the [[ TD-510 ANCHOR ]] tag is not in _gate.sh: the mutation cannot land"; return 1; }
+  [ "$tag_mut" -eq 0 ] || return 1
+  [ "$(wc -l < "$mutant")" -eq "$(( $(wc -l < "$GATE_SRC") - 1 ))" ] || return 1
+  local t8 t8e t8c
+  t8="$(surface_gate_at "$MAIN" ghost/leaf "$mutant")"
+  t8e="$(surface_gate_at "$S/lex/logi/hop" ../beside "$mutant")"
+  t8c="$(surface_gate_at "$S" "$S/lex/gone/reg/" "$mutant")"
+  echo "mutant: T8=[$t8] T8e=[$t8e] T8c=[$t8c]"
+  # Without the anchor a relative input is resolved as the raw string again.
+  [ "$t8" = "leaf basename" ] || return 1
+  [ "$t8e" = "lex-logi registry" ] || return 1
+  # Targeted: an absolute input still folds.
+  [ "$t8c" = "lex-gone registry" ] || return 1
+  [ "$(surface_gate_at "$MAIN" ghost/leaf)" = "igris-ai registry" ] || return 1
+}
+
+@test "M4b (mutation): _gate.sh without the [[ TD-510 LEXICAL ]] line makes T8b and T8d disagree" {
+  local mutant="$SCRATCH/_gate.no-lexical.sh" tag_real tag_mut ver probe
+  sed '/\[\[ TD-510 LEXICAL \]\]/d' "$GATE_SRC" > "$mutant"
+  tag_real="$(grep -c 'TD-510 LEXICAL' "$GATE_SRC" || true)"
+  tag_mut="$(grep -c 'TD-510 LEXICAL' "$mutant" || true)"
+  echo "TD-510 LEXICAL tag: real=$tag_real mutant=$tag_mut"
+  [ "$tag_real" -eq 1 ] || { echo "the [[ TD-510 LEXICAL ]] tag is not in _gate.sh: the mutation cannot land"; return 1; }
+  [ "$tag_mut" -eq 0 ] || return 1
+  [ "$(wc -l < "$mutant")" -eq "$(( $(wc -l < "$GATE_SRC") - 1 ))" ] || return 1
+  local t8b t8d t8 t8e
+  t8b="$(surface_gate_at "$S/loose" './ghost//leaf/..' "$mutant")"
+  t8d="$(surface_gate_at "$S" "$S/lex/logi/hop/../only" "$mutant")"
+  t8="$(surface_gate_at "$MAIN" ghost/leaf "$mutant")"
+  t8e="$(surface_gate_at "$S/lex/logi/hop" ../beside "$mutant")"
+  echo "mutant: T8b=[$t8b] T8d=[$t8d] T8=[$t8] T8e=[$t8e]"
+  # Without the fold the unresolvable path is walked as spelled.
+  [ "$t8b" = ".. basename" ] || return 1
+  # T8d: an unfolded `link/..` reaches `cd`, whose fallback to the kernel's
+  # chdir (bash, non-POSIX mode) lands on the PHYSICAL path. Measured, not
+  # assumed: any other answer is RED.
+  ver="$(/bin/bash -c 'printf "%s.%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"')"
+  probe="$(/bin/bash -c 'cd -- "$1" 2>/dev/null && pwd -P' _ "$S/lex/logi/hop/../only" || true)"
+  echo "/bin/bash $ver cd probe: [$probe]"
+  case "$probe" in
+    "$S/lex/phys/only") [ "$t8d" = "lex-phys registry" ] || return 1 ;;
+    "") [ "$t8d" = "lex-logi registry" ] || return 1
+        echo "/bin/bash $ver: cd does not fall back, so T8d agrees here; T8b discriminates" ;;
+    *) echo "unexpected cd answer"; return 1 ;;
+  esac
+  # Targeted: relative inputs are still anchored.
+  [ "$t8" = "igris-ai registry" ] || return 1
+  [ "$t8e" = "lex-phys registry" ] || return 1
 }
 
 # =============================================================================

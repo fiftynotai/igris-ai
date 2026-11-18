@@ -18,10 +18,10 @@
  *
  * THE CHAIN (PLAN §1.1). Input `dir`; first rung that answers wins.
  *
- *   0. normalise  dir_real = realpath(dir), or `dir` unchanged when that fails.
- *                 The JS `realpathSync`, matching the shell twin's
- *                 `cd -- dir && pwd -P`: a `..` is dropped textually and the
- *                 letter case is kept as given (see realpathOrNull).
+ *   0. normalise  The JS `realpathSync` in both twins (TD-510): resolve(dir)
+ *                 (a relative dir anchored at the physical cwd, a `..` dropped
+ *                 textually, the letter case kept), then realpath; when that
+ *                 fails, the walks use the resolve() form (see realpathOrNull).
  *   1. git probe  (GIT_* location variables stripped first)
  *                 top    = realpath(`rev-parse --show-toplevel`)
  *                 prefix = `rev-parse --show-prefix` (same call), trailing
@@ -385,9 +385,9 @@ export function resolveProjectIdentity(
 ): ProjectIdentity {
   const git = deps.git ?? defaultGit;
   const dirReal = realpathOrNull(dir) ?? dir;
-  // The walks need an absolute path even when realpath failed on a RELATIVE
-  // input: a bare `foo` would otherwise walk `foo`, then `.` — the cwd.
-  const walkDir = isAbsolute(dirReal) ? dirReal : resolve(dirReal);
+  // When realpath failed, its own resolve() form — absolute and folded, as the
+  // shell twin walks it (TD-510); the identity otherwise.
+  const walkDir = resolve(dirReal);
 
   const { top, main, prefix } = probeGit(walkDir, git);
 

@@ -678,7 +678,7 @@ Run (set `$PROJECT_SLUG` from `detect.project_slug`):
 # that broadens slug sourcing (e.g., env var override). Same posture as the
 # other defensive guards in this section — skip silently if the slug came
 # from an unexpected source.
-if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+if [[ ! "$PROJECT_SLUG" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then  # cli/src/lib/slug.ts SLUG_RE
   return 0  # do not surface this section this run
 fi
 
@@ -700,7 +700,7 @@ The defensive "no later success" check (substitute the failed row's
 ```bash
 # Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
 # the registered slug shape.
-if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+if [[ ! "$PROJECT_SLUG" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then  # cli/src/lib/slug.ts SLUG_RE
   return 0
 fi
 
@@ -751,7 +751,7 @@ Run (set `$PROJECT_SLUG` from `detect.project_slug`):
 ```bash
 # Defense-in-depth (TD-080 Q-3): refuse to interpolate if slug doesn't match
 # the registered slug shape.
-if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+if [[ ! "$PROJECT_SLUG" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then  # cli/src/lib/slug.ts SLUG_RE
   return 0
 fi
 

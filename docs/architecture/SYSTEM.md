@@ -185,8 +185,8 @@ The merge logic in `cli/src/lib/json-merge.ts` (`mergeCanonicalHooks()`) preserv
 ```mermaid
 flowchart TB
     A["Write/Edit invoked"] --> B["Resolve project slug (TD-359)<br/>(.igris-project marker → registry ancestor,<br/>worktree mapped to its main checkout → basename)"]
-    B --> C{"Slug valid?<br/>^[a-z0-9_-]+$"}
-    C -->|"no"| ALLOW1["ALLOW<br/>(exempt path or unknown project)"]
+    B --> C{"Slug matches SLUG_RE?<br/>(igris_slug_valid, TD-510)"}
+    C -->|"no: brain skipped"| E; A -.->|"exempt path or<br/>unregistered (FR-212c)"| ALLOW1["ALLOW<br/>(exempt path or unknown project)"]
     C -->|"yes"| D{"Brain DB has an<br/>in-flight brief for slug?<br/>(status folded, TD-340)"}
     D -->|"yes"| ALLOW2["ALLOW"]
     D -->|"no / DB error"| E{"Filesystem grep<br/>~/.igris/projects/&lt;slug&gt;/briefs/<br/>finds '**Status:** In Progress'?"}

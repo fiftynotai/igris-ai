@@ -3299,6 +3299,39 @@ interface PackReport {
  *   RE-DERIVED: 1_969_700 − 1_969_130 = 570; 7_241_064 − 7_239_090 = 1_974
  *   = 1_078 + 896; 125_854 + 570 = 126_424; 153_600 − 126_424 = 27_176.
  *
+ * TD-510 MEASURED LAST (2026-11-18), after its final shipped change: rung 0
+ * of `lib/project-identity.ts` (`walkDir = resolve(dirReal)`: a path that
+ * does not resolve is walked in the JS `realpathSync` form, relative or
+ * absolute) and the two comments that state it (the module docblock's rung 0
+ * and the inline comment above the expression). The shell twin
+ * `core/hooks/shared/_gate.sh` (`igris_slug_valid`, `_igris_res_lexical`,
+ * rung 0), `pre_tool_use.sh`, the reconciliation validator, the two SKILL.md
+ * files, MAINTAINING, SYSTEM.md and every test pack 0 B (`core/`, `scripts/`
+ * and `docs/` are outside `files`; `tsconfig.json` excludes the tests from
+ * emit). Same method as BR-120 (`git archive` scratch builds,
+ * `copy-templates.sh` run in both arms, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, identical). CONTROL = develop `71866d0`:
+ * 1_969_700 / 7_241_064 / 603 / `4d791df1…`, byte- and sha-identical to the
+ * BR-120 FINAL (grep `BR-120 MEASURED LAST`). FINAL = the `71866d0` archive
+ * with the working tree's three changed `cli/` files copied over it (no git
+ * object written); its `dist/lib/project-identity.js` is byte-identical to
+ * the worktree build's. The live `cli/dist` mtimes unchanged by both arms
+ * (`~/.igris/config.json` not read). npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   packed              1_969_692    unpacked 7_240_986, 603 entries (+0),
+ *                                    shasum
+ *                                    `cf745d5fd253382321424f09d15eae97fd6e21fc`.
+ *   this round's share  −8 B         packed: the new comments are shorter than
+ *                                    the ones they replace, so the figure
+ *                                    moves DOWN; far under the plan's 2_000 B
+ *                                    hard stop. Unpacked −78 over 2
+ *                                    artifacts, reconciling exactly:
+ *                                    `project-identity.js` −23 / map −55.
+ *   cumulative delta    +126_416 B   (1_969_692 − 1_843_276)
+ *   headroom remaining  27_184 B     (153_600 − 126_416)
+ *   RE-DERIVED: 1_969_692 − 1_969_700 = −8; 7_240_986 − 7_241_064 = −78 =
+ *   −23 − 55; 126_424 − 8 = 126_416; 153_600 − 126_416 = 27_184.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4473,12 +4506,12 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of BR-100, measured 2026-09-06,
- * 146_885 B (143.4 KB) is what is left on PACKED — TD-444's re-based grant
- * minus the 6_715 B BR-100 spent, the grant's first consumer.** Grep `BR-100
- * MEASURED LAST` in this file for that reading and the method behind it
- * (TD-444 is the floor and the re-base, BR-101 the copy-step method both
- * readings use), and treat the 84_262 B above
+ * BRIEF, a DATE and no direction: **as of TD-510, measured 2026-11-18,
+ * 27_184 B (26.5 KB) is what is left on PACKED — TD-444's re-based grant
+ * minus the 126_416 B spent since (BR-100, at 6_715 B, was the grant's first
+ * consumer).** Grep `TD-510 MEASURED LAST` in this file for that reading and
+ * the method behind it (TD-444 is the floor and the re-base, BR-101 the
+ * copy-step method every reading since uses), and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
  * PARENTHETICAL IS THE STATED EXCEPTION, and it is safe for a reason the ban
  * does not cover: it is INTRA-PARAGRAPH — it names the 84_262 B in this same
@@ -4487,13 +4520,16 @@ interface PackReport {
  * the whole test. A direction word is safe exactly when nothing can be placed
  * between it and what it names; "the FR-268 row directly above" failed that test
  * because a row could be, and was. Whoever appends the next row
- * re-points THIS sentence at their own brief id, date and figure. TD-443 was
- * the reason the figure last went UP rather than down — it is a recovery row,
- * so do not read that jump from TD-423's 1_880 B as a ceiling change. TD-440
- * then spent 22_243 B of what TD-443 recovered; both constants are still
- * untouched, and the direction of travel is back down.)* **But packed is
- * NOT the binding ceiling any more:** `dashboard-chunks.test.ts`'s TOTAL_JS has
- * **13_601 B**, and any brief with a UI will hit that first. Read both — the
+ * re-points THIS sentence at their own brief id, date and figure (the rows
+ * after BR-100's, through BR-120's, did not; TD-510 re-pointed it from
+ * BR-100's 146_885 B). The
+ * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
+ * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
+ * do not read such a jump as a ceiling change; both constants are still
+ * untouched. **But packed is NOT the binding ceiling any more:**
+ * `dashboard-chunks.test.ts`'s TOTAL_JS has **516 B** (586_407 of 586_923,
+ * FR-276's figure, re-read in TD-510's build logs on 2026-11-18), and any
+ * brief with a UI will hit that first. Read both — the
  * packed GRANT is +150 KB and the headroom is what remains under it, and
  * the figure changed MEANING as well as value: TD-374 re-based the constant to
  * a clean measurement of TD-373's tree, and the operator granted +150 KB over

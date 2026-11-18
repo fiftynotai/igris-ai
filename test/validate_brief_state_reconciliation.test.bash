@@ -456,7 +456,7 @@ run_with() {
 # PROJECT here comes from the env override — the pre-commit hook invokes this
 # validator with no PROJECT (all projects), so the hook path never reaches the
 # site; the env override is the only input that does, and it is what the
-# operator's ad-hoc runs use. This validator ALSO defaults PROJECT to basename(REPO_DIR) — see V1r.
+# operator's ad-hoc runs use. This validator ALSO defaults PROJECT from REPO_DIR (TD-510: the project it resolves to) — see V1r.
 # V1 runs the real validator under /bin/bash; V1m the quoted-form mutant on a
 # scratch copy (RED only under /bin/bash 3.x — skipped with the reason on a
 # newer interpreter); V5 is the clean-name control (real AND mutant both fire).
@@ -509,8 +509,9 @@ run_validator_bin_q() {
 }
 
 # -----------------------------------------------------------------------------
-# (V1r) The HOOK's own input. This validator defaults PROJECT to
-#       basename(REPO_DIR); the pre-commit hook invokes it with no PROJECT, so a
+# (V1r) The HOOK's own input. This validator defaults PROJECT to the project
+#       REPO_DIR resolves to (TD-510; an unregistered repo is git-main, its
+#       directory name); the pre-commit hook invokes it with no PROJECT, so a
 #       repo named it's-proj reaches the site WITHOUT the env override — the
 #       only validator of the five where the hook path itself can carry a quote.
 # -----------------------------------------------------------------------------
@@ -522,7 +523,11 @@ run_validator_bin_q() {
   seed_brief "FR-200" "Done" "COMMITTING"
   make_closing_commit "FR-200"
 
-  run env -u PROJECT BRAIN_DB="$FIXTURE_DB" REPO_DIR="$FIXTURE_REPO" /bin/bash "$VALIDATOR"
+  # TD-510: with PROJECT unset the validator resolves REPO_DIR through
+  # _gate.sh, which reads the registry at $HOME/.igris — so HOME is fenced.
+  mkdir -p "$SCRATCH/fakehome"
+  run env -u PROJECT HOME="$SCRATCH/fakehome" IGRIS_BRAIN_DIR="$SCRATCH/fakehome/.igris" \
+    BRAIN_DB="$FIXTURE_DB" REPO_DIR="$FIXTURE_REPO" /bin/bash "$VALIDATOR"
   [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
   assert_output_contains "C1"
   assert_output_contains "FR-200"
@@ -558,4 +563,151 @@ run_validator_bin_q() {
   run_validator
   [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
   [[ "$output" == *"reconciliation clean"* ]] || return 1
+}
+
+# =============================================================================
+# TD-510 — the validator reconciles the project REPO_DIR RESOLVES to.
+#
+# THE DEFECT. With PROJECT unset (the pre-commit hook passes none) the slug
+# was `basename "$REPO_DIR"`, so a worktree whose directory name is not the
+# slug reconciled a PHANTOM project with no rows and passed silently. With
+# PROJECT unset the validator now sources _gate.sh (its own checkout's copy,
+# then the runtime mirror) and asks `igris_resolve_project`; a tagged basename
+# is the last resort when neither copy defines the resolver.
+#
+# WORLD (build_worktree_world). A registered main checkout `mainrepo` (slug
+# recon-slug) and its linked worktree `wt-lane`: neither directory name is the
+# slug. FR-300 is Done/COMMITTING under recon-slug (C1, and C2: no commit
+# names it); nothing is filed under wt-lane or mainrepo. HOME is a fake home
+# whose knowledge.db holds both the registry and the briefs.
+#   R1   REPO_DIR=$WT, PROJECT/BRAIN_DB unset   exit 1, project 'recon-slug'  (HEAD: exit 0, silent)
+#   R1d  the hook's own shape: run from $WT/scripts/ with REPO_DIR, PROJECT
+#        and BRAIN_DB unset (locator rung 1, the checkout's own _gate.sh)
+#                                                exit 1                        (HEAD: exit 0)
+#   R2   no _gate.sh reachable                   exit 0, no error; then a row
+#        filed under wt-lane is named (the tagged basename)       (control)
+#   MR   the [[ TD-510 RESOLVE ]] block deleted  real exit 1, mutant exit 0
+# =============================================================================
+
+# td510_git <dir> <git args...> — fixture git: fenced identity, no hooks, no
+# signing, the location variables unset.
+td510_git() {
+  local d="$1"
+  shift
+  env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+    git -c user.name=recon -c user.email=recon@igris.invalid -c commit.gpgsign=false \
+        -c core.hooksPath=/dev/null -c init.defaultBranch=main -C "$d" "$@"
+}
+
+build_worktree_world() {
+  command -v git >/dev/null 2>&1 || skip "git not available"
+  command -v sqlite3 >/dev/null 2>&1 || skip "sqlite3 not available"
+  SCRATCH="$(cd "$SCRATCH" && pwd -P)"
+  FAKEHOME="$SCRATCH/fakehome"
+  HOME_DB="$FAKEHOME/.igris/memory/knowledge.db"
+  MAIN="$SCRATCH/mainrepo"
+  WT="$SCRATCH/wt-lane"
+  mkdir -p "$FAKEHOME/.igris/memory" "$MAIN"
+  td510_git "$MAIN" init -q || return 1
+  printf 'x\n' > "$MAIN/README.md"
+  td510_git "$MAIN" add README.md || return 1
+  td510_git "$MAIN" commit -q --no-verify -m "chore: init" || return 1
+  td510_git "$MAIN" worktree add -q -b lane "$WT" || return 1
+  sqlite3 "$HOME_DB" "
+    CREATE TABLE projects (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL, path TEXT NOT NULL
+    );
+    CREATE TABLE brief_status (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL,
+      brief_id TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL,
+      phase TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO projects (slug, name, path) VALUES ('recon-slug', 'recon-slug', '$(sql_q "$MAIN")');
+    INSERT INTO brief_status (project, brief_id, title, status, phase)
+      VALUES ('recon-slug', 'FR-300', 't', 'Done', 'COMMITTING');
+  " || return 1
+  # Arm: the world discriminates. Both directory names differ from the slug,
+  # and the worktree really is a linked worktree of the registered checkout.
+  [ "$(basename "$WT")" != recon-slug ] && [ "$(basename "$MAIN")" != recon-slug ] || return 1
+  [ "$(td510_git "$WT" rev-parse --path-format=absolute --git-common-dir)" = "$MAIN/.git" ] || return 1
+}
+
+# run_recon <validator> [VAR=value...] — the validator under /bin/bash with
+# PROJECT and BRAIN_DB unset, HOME fenced on the fake home.
+run_recon() {
+  local v="$1"
+  shift
+  run env -u PROJECT -u BRAIN_DB -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE -u GIT_COMMON_DIR \
+    HOME="$FAKEHOME" IGRIS_BRAIN_DIR="$FAKEHOME/.igris" "$@" /bin/bash "$v"
+  echo "status=$status"
+  echo "$output"
+}
+
+# stage_in_worktree — the validator and _gate.sh copied into the worktree, as
+# a checkout carries them; REPO_ROOT then defaults to the worktree.
+stage_in_worktree() {
+  mkdir -p "$WT/scripts" "$WT/core/hooks/shared"
+  cp "$VALIDATOR" "$WT/scripts/validate_brief_state_reconciliation.sh"
+  cp "$IGRIS_ROOT/core/hooks/shared/_gate.sh" "$WT/core/hooks/shared/_gate.sh"
+}
+
+@test "(R1) TD-510: a worktree whose directory is not the slug reconciles the RESOLVED project (FR-300 named under recon-slug)" {
+  build_worktree_world || return 1
+  run_recon "$VALIDATOR" REPO_DIR="$WT"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"C1 (Done-but-not-COMPLETE): FR-300 "* ]] || return 1
+  [[ "$output" == *"project 'recon-slug'"* ]] || return 1
+}
+
+@test "(R1d) TD-510: the hook's own shape, run from the worktree's scripts/ with REPO_DIR, PROJECT and BRAIN_DB unset" {
+  build_worktree_world || return 1
+  stage_in_worktree
+  run_recon "$WT/scripts/validate_brief_state_reconciliation.sh"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"C1 (Done-but-not-COMPLETE): FR-300 "* ]] || return 1
+  [[ "$output" == *"project 'recon-slug'"* ]] || return 1
+}
+
+@test "(R2) TD-510 control: with no _gate.sh reachable the validator degrades to the tagged basename and never errors" {
+  build_worktree_world || return 1
+  mkdir -p "$SCRATCH/lone/scripts"
+  cp "$VALIDATOR" "$SCRATCH/lone/scripts/validate_brief_state_reconciliation.sh"
+  # Arm: neither locator rung exists.
+  [ ! -e "$SCRATCH/lone/core" ] && [ ! -e "$FAKEHOME/.igris/core" ] || return 1
+  run_recon "$SCRATCH/lone/scripts/validate_brief_state_reconciliation.sh" REPO_DIR="$WT"
+  [ "$status" -eq 0 ] || return 1
+  [ -z "$output" ] || return 1
+  # The degraded slug IS the worktree's basename: a row filed there is named.
+  sqlite3 "$HOME_DB" "INSERT INTO brief_status (project, brief_id, title, status, phase)
+                      VALUES ('wt-lane', 'FR-301', 't', 'Done', 'COMMITTING');"
+  run_recon "$SCRATCH/lone/scripts/validate_brief_state_reconciliation.sh" REPO_DIR="$WT"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"project 'wt-lane'"* ]] || return 1
+  [[ "$output" == *"FR-301"* ]] || return 1
+  [[ "$output" != *"FR-300"* ]] || return 1
+}
+
+@test "(MR) TD-510 mutation: the validator without its RESOLVE block reconciles the phantom wt-lane again (exit 0)" {
+  build_worktree_world || return 1
+  stage_in_worktree
+  local real="$WT/scripts/validate_brief_state_reconciliation.sh" mutant="$WT/scripts/mutant.sh"
+  local m_real m_mut r_real r_mut
+  sed '/\[\[ TD-510 RESOLVE BEGIN \]\]/,/\[\[ TD-510 RESOLVE END \]\]/d' "$real" > "$mutant"
+  m_real="$(grep -c 'TD-510 RESOLVE' "$real" || true)"
+  m_mut="$(grep -c 'TD-510 RESOLVE' "$mutant" || true)"
+  r_real="$(grep -vE '^[[:space:]]*#' "$real" | grep -c 'igris_resolve_project' || true)"
+  r_mut="$(grep -vE '^[[:space:]]*#' "$mutant" | grep -c 'igris_resolve_project' || true)"
+  echo "markers: real=$m_real mutant=$m_mut; resolver calls: real=$r_real mutant=$r_mut"
+  # The mutation LANDED: both markers and every live resolver call are gone.
+  [ "$m_real" -eq 2 ] || { echo "the [[ TD-510 RESOLVE BEGIN/END ]] markers are absent: the mutation cannot land"; return 1; }
+  [ "$m_mut" -eq 0 ] || return 1
+  [ "$r_real" -ge 1 ] && [ "$r_mut" -eq 0 ] || return 1
+  [ "$(wc -l < "$mutant")" -lt "$(wc -l < "$real")" ] || return 1
+  run_recon "$real"
+  [ "$status" -eq 1 ] || return 1
+  [[ "$output" == *"project 'recon-slug'"* ]] || return 1
+  run_recon "$mutant"
+  [ "$status" -eq 0 ] || return 1
+  [ -z "$output" ] || return 1
 }

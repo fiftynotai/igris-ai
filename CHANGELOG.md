@@ -265,6 +265,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     that a marker is a single short slug line:
     `wc -c < .igris-project`.
 
+- **The project resolver's last splits are closed (TD-510).** Three
+  leftovers of TD-359:
+  - The brief gate's brain lookup accepted only `^[a-z0-9_-]+$`, so for
+    `lifeOS`, `animated-fifty.dev` and `CustomerPulse-Android` it never asked
+    the brain and denied a write whose in-flight brief lived only there. The
+    hook now checks a slug with `igris_slug_valid` in
+    `core/hooks/shared/_gate.sh`, the bash spelling of the CLI's `SLUG_RE`
+    (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`). `/boot` and `/scan` filter slugs
+    with the same pattern. A slug that starts with `_` or `-`, or is longer
+    than 64 characters, is no longer looked up; no registered project has one.
+  - `scripts/validate_brief_state_reconciliation.sh` named the project after
+    its directory, so in a worktree it checked an empty phantom project and
+    passed. It now takes `PROJECT`, then the shared resolver, then the
+    directory name.
+  - The first rung, the directory itself, could resolve differently in the
+    two twins. The bash twin walked a relative path as written, anchored it at
+    the logical `$PWD`, and let `cd` resolve a `..` after a symlink through the
+    kernel, which lands in the link's target. The TypeScript twin walked a
+    deleted directory's path unfolded. Both now fold the path the way
+    `path.resolve` does and then take its real path, so a trailing slash, a
+    symlinked working directory and `link/..` resolve the same in both. The
+    bash rung costs +0.13 to +0.28 ms more per hook call.
+
+  The hook and validator changes reach every clone through `igris refresh`.
+
 - **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
   Phase 7 staged with `git add -A`, so a close in a working tree shared by
   several sessions committed their in-flight and staged files under this

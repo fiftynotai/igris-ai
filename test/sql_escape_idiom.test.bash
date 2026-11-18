@@ -19,7 +19,7 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 # control" template, test_standards.md):
 #   SC1  the quoted form counts 0 on NON-comment lines in every file of the
 #        population (per-file counts printed);
-#   SC2  the unquoted form counts the pinned population (21 sites, 2026-11-17,
+#   SC2  the unquoted form counts the pinned population (22 sites, 2026-11-18,
 #        by this scanner) over >= 9 files, so a wrong root cannot read clean;
 #   SC3  a planted quoted site in a temp copy IS reported (the scanner fires);
 #   SC4  the quoted form ONLY inside a `#` line is NOT reported — the comment
@@ -41,19 +41,20 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 load test_helper
 load sql_escape_helpers
 
-# UNQUOTED_SITES — the pinned population. 2026-11-17, counted by this file's
+# UNQUOTED_SITES — the pinned population. 2026-11-18, counted by this file's
 # scanner over the population below: core/git-hooks/pre-commit 9 (TD-453's 6
 # less the deleted duplicate PROJECT_SQL, plus TD-494's S1 id, S3 root, S3
 # `~` form and identified-row id), core/git-hooks/commit-msg 4 (BR-104),
 # core/hooks/shared/_gate.sh 2 (TD-359: the registry walk's ancestor list and
-# the marker-slug check), core/hooks/shared/pre_tool_use.sh 1 (TD-359: the
-# deny's 0-briefs count), core/hooks/shared/session_start.sh 0 (TD-359 moved
+# the marker-slug check), core/hooks/shared/pre_tool_use.sh 2 (TD-359: the
+# deny's 0-briefs count; TD-510: the active-brief lookup, which igris_slug_valid
+# keeps free of quotes), core/hooks/shared/session_start.sh 0 (TD-359 moved
 # its registry lookup into the resolver),
 # scripts/validate_brief_{state_reconciliation,priority_vocabulary,
-# status_vocabulary,type_vocabulary,ac_completion}.sh 1 each = 21 over 9
-# files. (2026-09-08 it was 16.) A NEW interpolation site joins this count in
+# status_vocabulary,type_vocabulary,ac_completion}.sh 1 each = 22 over 9
+# files. (2026-09-08 it was 16; 2026-11-17, 21.) A NEW interpolation site joins this count in
 # the same commit (MAINTAINING.md, the bash-3.2 SQL-escape idiom row).
-UNQUOTED_SITES=21
+UNQUOTED_SITES=22
 MIN_FILES=9
 
 setup() {
@@ -97,7 +98,7 @@ population() {
   [ "$bad" -eq 0 ] || { echo "$bad file(s) carry the quoted form"; return 1; }
 }
 
-@test "(SC2) the unquoted escape form counts the pinned population ($UNQUOTED_SITES sites, 2026-11-17) over >= $MIN_FILES files" {
+@test "(SC2) the unquoted escape form counts the pinned population ($UNQUOTED_SITES sites, 2026-11-18) over >= $MIN_FILES files" {
   local f n total=0 files=0
   while IFS= read -r f; do
     [ -n "$f" ] || continue

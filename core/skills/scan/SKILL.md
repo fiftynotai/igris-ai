@@ -485,7 +485,7 @@ Primary query (substitute `$PROJECT_SLUG`):
 # that broadens slug sourcing (e.g., env var override). Same posture as the
 # other defensive guards in this section — skip silently if the slug came
 # from an unexpected source.
-if [[ ! "$PROJECT_SLUG" =~ ^[a-z0-9_-]+$ ]]; then
+if [[ ! "$PROJECT_SLUG" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ ]]; then  # cli/src/lib/slug.ts SLUG_RE
   return 0  # do not surface this section this run
 fi
 

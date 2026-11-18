@@ -11,10 +11,18 @@
 #              non-Igris project sees a clean NO-OP instead of the brief-gate /
 #              session nudge / compaction side-effects.
 #
-# Usage: `source` this file, then call `igris_resolve_project <dir>` and/or
-#        `is_registered_igris_project <dir>`. Sourcing only DEFINES: the two
-#        functions, their private helpers and the result globals below. It
-#        runs nothing, so it is safe under `set -e` in every host script.
+# Usage: `source` this file, then call `igris_resolve_project <dir>`,
+#        `is_registered_igris_project <dir>` and/or `igris_slug_valid <s>`.
+#        Sourcing only DEFINES: the three functions, their private helpers
+#        and the result globals below. It runs nothing, so it is safe under
+#        `set -e` in every host script.
+#
+# ---------------------------------------------------------------------------
+# igris_slug_valid <s>  (TD-510)
+#   exit 0 iff <s> matches cli/src/lib/slug.ts SLUG_RE,
+#   ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$ — the ONE bash spelling of it, used by
+#   the marker read below and by pre_tool_use.sh before its brain lookup
+#   (test/project_slug_parity.test.bash G1 holds it to SLUG_RE).
 #
 # ---------------------------------------------------------------------------
 # igris_resolve_project <dir>  (TD-359; the TypeScript twin is
@@ -30,8 +38,12 @@
 #   Always returns 0 (safe under `set -e`, bash 3.2: no arrays, no ${x,,}).
 #
 #   Precedence:
-#     0. dir_real = realpath(<dir>) (`cd && pwd -P`: a `..` is dropped
-#        textually, the letter case is kept as given), or <dir> unchanged.
+#     0. dir_real = the JS realpathSync(<dir>), as in the TS twin (TD-510):
+#        a relative <dir> is anchored at the PHYSICAL cwd (`pwd -P`, else
+#        $PWD), the path is folded textually (_igris_res_lexical: `//`, `.`,
+#        `..` never above `/`, a trailing slash), then `cd && pwd -P` (the
+#        letter case kept as given); a path that does not resolve is walked
+#        in that folded form.
 #     1. git probe with the hook location variables (GIT_DIR, GIT_WORK_TREE,
 #        GIT_INDEX_FILE, GIT_COMMON_DIR, ...) STRIPPED — a git hook runs with
 #        them set. ONE rev-parse: top = --show-toplevel; prefix =
@@ -100,16 +112,56 @@ _IGRIS_RES_TOP=""
 _IGRIS_RES_MAIN=""
 _IGRIS_RES_LOOKUP=""
 _IGRIS_RES_MARK=""
+_IGRIS_RES_LEX=""
+
+# _igris_res_lexical <abs> — sets _IGRIS_RES_LEX to the absolute path <abs>
+# folded the way JS path.resolve folds it (TD-510): empty and `.` segments
+# dropped, `..` pops one (never above `/`), no trailing slash, `/` when
+# nothing is left. Textual only: nothing is looked up, so no `..` reaches
+# `cd`, whose fallback to the kernel's chdir would climb out of a symlink's
+# TARGET where the TS twin keeps the lexical path (parity T8d). Builtins
+# only, no subshell; `local LC_ALL=C` keeps the cuts byte-wise. A path with
+# no empty, `.` or `..` segment is already folded and returned as is, as
+# every hook input is (measured 2026-11-18, /bin/bash 3.2.57: the loop costs
+# ~0.55 ms a call on a 9-segment path; rung 0 with this check, +0.13-0.28 ms).
+_igris_res_lexical() {
+  local rest="$1" seg="" out="" LC_ALL=C
+  case "$rest" in
+    *//* | */ | */./* | */. | */../* | */..) ;;
+    *) _IGRIS_RES_LEX="$rest"; return 0 ;;
+  esac
+  while [ -n "$rest" ]; do
+    seg="${rest%%/*}"
+    if [ "$seg" = "$rest" ]; then rest=""; else rest="${rest#*/}"; fi
+    if [ -z "$seg" ] || [ "$seg" = "." ]; then continue; fi
+    if [ "$seg" = ".." ]; then out="${out%/*}"; continue; fi
+    out="$out/$seg"
+  done
+  _IGRIS_RES_LEX="${out:-/}"
+  return 0
+}
+
+# igris_slug_valid <s> — exit 0 iff <s> is a cli/src/lib/slug.ts SLUG_RE
+# slug, ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$: an alphanumeric FIRST character
+# (so never `.`, `..`, a hidden name or an option-shaped `-x` — a slug names
+# ~/.igris/projects/<slug>/ and must not escape it), then letters, digits,
+# dot, underscore, hyphen, 64 at most. The allowed characters are spelled
+# out, not a range: a range is locale-collated and could admit a non-ASCII
+# letter that the TS twin's regex refuses. `local LC_ALL=C` makes the match
+# and `${#s}` byte-wise (the length is checked after the class, so it counts
+# ASCII bytes only); the caller's LC_ALL comes back on return. Builtins only.
+igris_slug_valid() {
+  local s="$1" LC_ALL=C
+  case "$s" in
+    ''|[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]*) return 1 ;;
+    *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) return 1 ;;
+  esac
+  [ "${#s}" -le 64 ]
+}
 
 # _igris_res_read_marker <dir> — sets _IGRIS_RES_MARK to the valid slug in
 # <dir>/.igris-project, or to empty (absent, unreadable or invalid). Valid is
-# exactly cli/src/lib/slug.ts SLUG_RE, ^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$: an
-# alphanumeric FIRST character (so never `.`, `..`, a hidden name or an
-# option-shaped `-x` — a slug names ~/.igris/projects/<slug>/ and must not
-# escape it), then letters, digits, dot, underscore, hyphen, 64 at most. The
-# allowed characters are spelled out, not a range: a range is locale-collated
-# and could admit a non-ASCII letter that the TS twin's regex refuses. The
-# length is checked after the class, so `${#line}` counts ASCII bytes only.
+# exactly igris_slug_valid (SLUG_RE).
 # The trim is ASCII whitespace only (space, tab, CR, VT, FF), never
 # `[:space:]`: that class is locale-dependent (under a UTF-8 locale it trims a
 # no-break space the C locale keeps), and the TS twin trims the same five
@@ -136,17 +188,13 @@ _igris_res_read_marker() {
   [ "${#line}" -lt 4096 ] || return 0
   line="${line#"${line%%[!$ws]*}"}"
   line="${line%"${line##*[!$ws]}"}"
-  case "$line" in
-    ''|[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]*) return 0 ;;
-    *[!abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-]*) return 0 ;;
-  esac
-  [ "${#line}" -le 64 ] || return 0
+  igris_slug_valid "$line" || return 0
   _IGRIS_RES_MARK="$line"
   return 0
 }
 
 igris_resolve_project() {
-  local dir="$1" dir_real="" probe="" top="" common="" main="" cur="" next=""
+  local dir="$1" dir_real="" n="" probe="" top="" common="" main="" cur="" next=""
   local rest="" prefix="" here=""
   local home_real="" db="" in_list="" q="" hit="" nl='
 '
@@ -159,8 +207,14 @@ igris_resolve_project() {
   [ -n "$dir" ] || dir="$PWD"
 
   # 0. Normalise (TD-150): a symlinked checkout resolves to its real path.
-  dir_real="$(CDPATH='' cd -- "$dir" 2>/dev/null && pwd -P)" || dir_real=""
-  [ -n "$dir_real" ] || dir_real="$dir"
+  #    TD-510, the JS realpathSync: anchor a relative input at the physical
+  #    cwd, fold an absolute one, then realpath. One tagged line per half
+  #    (parity M4a, M4b); either deleted leaves a working resolver.
+  n="$dir"
+  [ "${n#/}" != "$n" ] || n="$(pwd -P 2>/dev/null || printf '%s' "$PWD")/$n"  # [[ TD-510 ANCHOR ]]
+  [ "${n#/}" = "$n" ] || { _igris_res_lexical "$n"; n="$_IGRIS_RES_LEX"; }  # [[ TD-510 LEXICAL ]]
+  dir_real="$(CDPATH='' cd -- "$n" 2>/dev/null && pwd -P)" || dir_real=""
+  [ -n "$dir_real" ] || dir_real="$n"
 
   # 1. Git probe. ONE rev-parse prints the toplevel, the prefix (the
   #    directory below the toplevel, `Sub/Deep/`, or an empty line at the

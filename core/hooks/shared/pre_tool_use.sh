@@ -44,8 +44,8 @@
 # the worktree-translated path (pwd -P realpath, TD-150), then basename(main),
 # then basename(dir) — so a git worktree resolves to its main checkout's
 # project. basename(PROJECT_DIR) is used only when _gate.sh is absent.
-# Slug is validated against ^[a-z0-9_-]+$ before any SQL interpolation;
-# a non-matching slug skips the brain-DB branch (degrades to step 2).
+# Slug is checked by igris_slug_valid (_gate.sh: SLUG_RE) and escaped with the
+# unquoted idiom before the SQL; a refused one degrades to step 2 (TD-510).
 # No verdict caching: every call queries the brain DB fresh (TD-150).
 #   Closes parked candidate C2 (per-user /tmp cache isolation no longer needed
 #   because the /tmp cache itself is gone).
@@ -222,12 +222,17 @@ find_active_brief_in_brain() {
   _BRAIN_QUERY_STATUS=""
   _BRAIN_QUERY_STDERR=""
 
-  case "$slug" in
-    *[!a-z0-9_-]*|"")
-      _BRAIN_QUERY_STATUS="skipped"
-      return 0
-      ;;
-  esac
+  # [[ TD-510 SLUG CHECK BEGIN ]] only a SLUG_RE slug reaches the brain (the
+  # old [a-z0-9_-] charset refused lifeOS). Without _gate.sh no slug reaches
+  # the brain, so a brain-only allow is lost and only step 2 can allow.
+  if ! type igris_slug_valid >/dev/null 2>&1 || ! igris_slug_valid "$slug"; then
+    _BRAIN_QUERY_STATUS="skipped"
+    return 0
+  fi
+  # [[ TD-510 SLUG CHECK END ]]
+  # No quote passes the check; escaped anyway for uniformity (MAINTAINING row 153).
+  local q
+  q=${slug//\'/\'\'}
 
   if ! command -v sqlite3 >/dev/null 2>&1 || [ ! -f "$db" ]; then
     _BRAIN_QUERY_STATUS="skipped"
@@ -254,7 +259,7 @@ find_active_brief_in_brain() {
   # mechanisms stay: this one guards NOTATION at the gate, that one guards
   # VOCABULARY at the write boundary and at sync ingress.
   stdout=$(sqlite3 "$db" \
-    "SELECT brief_id FROM brief_status WHERE project = '$slug' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress' ORDER BY updated_at DESC LIMIT 1;" \
+    "SELECT brief_id FROM brief_status WHERE project = '$q' AND replace(replace(replace(lower(status),' ',''),'-',''),'_','') = 'inprogress' ORDER BY updated_at DESC LIMIT 1;" \
     2>"$stderr_file")
   rc=$?
   set -e
