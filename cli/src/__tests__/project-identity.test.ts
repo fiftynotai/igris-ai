@@ -652,6 +652,9 @@ describe("TD-359 resolver — rung 2: the .igris-project marker", () => {
     // BR-120 MARKER_LINE_MAX: a first line of 4095 bytes is the longest kept (parity T7).
     ["a padded first line of 4095 bytes, ended by a newline", `${" ".repeat(4095 - 7)}padslug\n`, "padslug"],
     ["a padded first line of 4095 bytes, ended by EOF", `${" ".repeat(4095 - 7)}padslug`, "padslug"],
+    // A NUL at byte index 4095 ends the line inside the bound; without it the
+    // line would be 4099 bytes and refused (parity T7d).
+    ["a padded first line of 4095 bytes, ended by a NUL, then slug-valid bytes", `${" ".repeat(4095 - 7)}padslug\0tail\n`, "padslug"],
   ])("(M5) a valid marker — %s — is read as the slug", async (_label, content, want) => {
     const main = makeRepo(join(sandbox, "repos", "checkout"));
     writeMarker(main, content);
@@ -685,6 +688,9 @@ describe("TD-359 resolver — rung 2: the .igris-project marker", () => {
     ["a padded first line of 4096 bytes, ended by a newline", `${" ".repeat(4096 - 7)}padslug\n`],
     ["a padded first line of 4096 bytes, ended by EOF", `${" ".repeat(4096 - 7)}padslug`],
     ["1 MiB with no newline and no NUL", `${" ".repeat(1048576 - 8)}hugeslug`],
+    // A NUL at byte index 4096 lies past the bound, so the first 4096 bytes
+    // have not ended the line (parity T7e).
+    ["a padded first line of 4096 bytes, then a NUL", `${" ".repeat(4096 - 7)}padslug\0\n`],
   ])("(M6) an INVALID marker — %s — is ignored and resolution falls through (§1.5 row 10)", async (_label, content) => {
     const main = makeRepo(join(sandbox, "repos", "checkout"));
     register([{ slug: "proj-reg", path: main }]);

@@ -84,10 +84,18 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #   T7b $S/loose/pad4096-dir marker = 4089 spaces + padslug + LF  pad4096-dir basename
 #   T7c $S/loose/huge-dir  marker = 1 MiB, spaces + hugeslug, no LF, no NUL
 #                                                            huge-dir    basename
+#   T7d $S/loose/nul4095-dir marker = 4088 spaces + padslug + NUL + tail + LF
+#                                                            padslug     marker
+#   T7e $S/loose/nul4096-dir marker = 4089 spaces + padslug + NUL + LF
+#                                                            nul4096-dir basename
 #       (MARKER_LINE_MAX, BR-120: a first line that has not ended within
 #       4095 bytes is refused by both twins, so 4095 bytes is the longest kept
 #       line. T7c also times the bash twin against a 2 s ceiling, under a 20 s
-#       watchdog: an unbounded read of it cost 50 s or more per call)
+#       watchdog: an unbounded read of it cost 50 s or more per call. T7d and
+#       T7e end the line with a NUL, not a newline, at byte index 4095 (kept)
+#       and 4096 (refused). Without its NUL, T7d's first line is 4099 bytes,
+#       so a reader that skips the NUL refuses it under the bound, or names
+#       padslugtail with no bound: never padslug)
 #   T6  $S/elsewhere/"lane " a linked worktree ROOT whose name ends in a
 #       space                                                igris-ai    registry
 #       (git's output is split on newlines only, never trimmed)
@@ -256,11 +264,15 @@ build_matrix() {
   printf '\302\240nbslug\343\200\200\n' > "$S/loose/nbsp-dir/.igris-project"
   printf 'nulslug\000/../..\n' > "$S/loose/nul-dir/.igris-project"
   printf 'abc\000def\n' > "$S/loose/nulpost-dir/.igris-project"
-  # T7-T7c (twin-only rows): the MARKER_LINE_MAX bound (4096 bytes, BR-120).
+  # T7-T7e (twin-only rows): the MARKER_LINE_MAX bound (4096 bytes, BR-120).
   mkdir -p "$S/loose/pad4095-dir" "$S/loose/pad4096-dir" "$S/loose/huge-dir"
   printf '%*s%s\n' 4088 '' padslug > "$S/loose/pad4095-dir/.igris-project"
   printf '%*s%s\n' 4089 '' padslug > "$S/loose/pad4096-dir/.igris-project"
   printf '%*s%s' 1048568 '' hugeslug > "$S/loose/huge-dir/.igris-project"
+  # T7d/T7e: a NUL, not a newline, at byte index 4095 and 4096.
+  mkdir -p "$S/loose/nul4095-dir" "$S/loose/nul4096-dir"
+  printf '%*s%s\000tail\n' 4088 '' padslug > "$S/loose/nul4095-dir/.igris-project"
+  printf '%*s%s\000\n' 4089 '' padslug > "$S/loose/nul4096-dir/.igris-project"
   git -C "${MAIN:?}" worktree add -q -b space-lane "$S/elsewhere/lane "
 
   sqlite3 "$DB" "
@@ -615,6 +627,36 @@ check_row() {
   [ "$got" = "huge-dir basename" ] || return 1
   [ "$ms" -lt 2000 ] || return 1
   check_twins "$S/loose/huge-dir" huge-dir basename
+}
+
+@test "T7d (twins): a NUL at byte index 4095 ends a first line of 4095 bytes, the longest kept, in both twins -> padslug marker" {
+  local f="$S/loose/nul4095-dir/.igris-project"
+  # Arm: 4095 bytes of line (spaces then the slug) with no NUL or newline among
+  # them, the NUL at byte index 4095, then a slug-valid tail and the newline.
+  [ "$(wc -c < "$f" | tr -d ' ')" -eq 4101 ] || return 1
+  [ "$(head -c 4095 "$f" | tr -dc '\000\n' | wc -c | tr -d ' ')" -eq 0 ] || return 1
+  [ "$(head -c 4095 "$f" | tr -d ' ')" = "padslug" ] || return 1
+  [ "$(head -c 4096 "$f" | tail -c 1 | od -An -tx1 | tr -d ' \n')" = "00" ] || return 1
+  # Arm: the row discriminates. Without the NUL the first line is 4099 bytes
+  # (`padslugtail` once trimmed), so a reader that skips the NUL refuses it
+  # under the bound (nul4095-dir basename), or names padslugtail with no bound:
+  # never padslug.
+  [ "$(tr -d '\000\n' < "$f" | wc -c | tr -d ' ')" -eq 4099 ] || return 1
+  [ "$(tr -d ' \000\n' < "$f")" = "padslugtail" ] || return 1
+  check_twins "$S/loose/nul4095-dir" padslug marker
+}
+
+@test "T7e (twins): a NUL at byte index 4096 leaves a first line unended within 4096 bytes, refused by both twins -> nul4096-dir basename" {
+  local f="$S/loose/nul4096-dir/.igris-project"
+  # Arm: 4096 bytes of spaces then the slug with no NUL or newline among them,
+  # then the NUL at byte index 4096 and the newline. Still a valid slug once
+  # trimmed, so a reader that took that NUL as the line's end would name
+  # padslug here rather than refuse it.
+  [ "$(wc -c < "$f" | tr -d ' ')" -eq 4098 ] || return 1
+  [ "$(head -c 4096 "$f" | tr -dc '\000\n' | wc -c | tr -d ' ')" -eq 0 ] || return 1
+  [ "$(head -c 4096 "$f" | tr -d ' ')" = "padslug" ] || return 1
+  [ "$(tail -c 2 "$f" | od -An -tx1 | tr -d ' \n')" = "000a" ] || return 1
+  check_twins "$S/loose/nul4096-dir" nul4096-dir basename
 }
 
 @test "T6 (twins): a linked worktree ROOT whose name ends in a space -> igris-ai via registry" {
