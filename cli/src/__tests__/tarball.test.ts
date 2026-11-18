@@ -3269,6 +3269,36 @@ interface PackReport {
  *   7_238_454 = 636 = 293 + 231 + 87 + 25; 125_464 + 390 = 125_854;
  *   153_600 − 125_854 = 27_746.
  *
+ * BR-120 MEASURED LAST (2026-11-18), after its final shipped change: the
+ * marker reader in `lib/project-identity.ts` (`readMarker` now reads at most
+ * `MARKER_LINE_MAX` = 4096 bytes through `openSync`/`readSync` and refuses a
+ * first line not ended within 4095 bytes), the exported constant, and the
+ * comments that state it (the module docblock's rung 2, `readMarker`'s
+ * docblock and its inline comment). The shell twin `core/hooks/shared/_gate.sh`, the parity
+ * suite, MAINTAINING and the unit tests pack 0 B (`core/` is outside `files`;
+ * `tsconfig.json` excludes the tests from emit). Same method as BR-119 (`git
+ * archive` scratch builds, `copy-templates.sh` run in both arms, brain `dist`
+ * absent so the copy step rebuilt it, smoke `(sandboxed)`, `npm pack
+ * --dry-run --json --ignore-scripts` twice per arm, identical). CONTROL =
+ * `1c93c2e`: 1_969_130 / 7_239_090 / 603 / `7a1fc763…`, byte- and
+ * sha-identical to the BR-119 FINAL above. FINAL = the `1c93c2e` archive with
+ * the working tree's two changed `cli/` files copied over it (no git object
+ * written); its `dist/lib/project-identity.js` is byte-identical to the
+ * worktree build's. The live `cli/dist` mtimes and `~/.igris/config.json` sha
+ * unchanged by both arms. npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   packed              1_969_700    unpacked 7_241_064, 603 entries (+0),
+ *                                    shasum
+ *                                    `4d791df1cdac69001ddf5a47d0939f4f32c74893`.
+ *   this round's share  +570 B       packed — UNDER the plan's 2_000 B hard
+ *                                    stop, so no cut was taken. Unpacked
+ *                                    +1_974 over 2 artifacts, reconciling
+ *                                    exactly: `project-identity.js` +1_078 /
+ *                                    map +896.
+ *   cumulative delta    +126_424 B   (1_969_700 − 1_843_276)
+ *   headroom remaining  27_176 B     (153_600 − 126_424)
+ *   RE-DERIVED: 1_969_700 − 1_969_130 = 570; 7_241_064 − 7_239_090 = 1_974
+ *   = 1_078 + 896; 125_854 + 570 = 126_424; 153_600 − 126_424 = 27_176.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

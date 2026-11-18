@@ -113,13 +113,27 @@ _IGRIS_RES_MARK=""
 # The trim is ASCII whitespace only (space, tab, CR, VT, FF), never
 # `[:space:]`: that class is locale-dependent (under a UTF-8 locale it trims a
 # no-break space the C locale keeps), and the TS twin trims the same five
-# bytes. `read` keeps only the bytes before a NUL; the TS twin cuts there too
-# (test/project_slug_parity.test.bash T3-T5).
+# bytes. The line is the bytes before the first NUL or newline, as the TS twin
+# cuts it. A line `read` gives that only on bash 3.2 (macOS /bin/bash), which
+# ends the value at a NUL; bash 4.3+ skips NUL bytes and reads on (NEWS-4.3 p), so
+# `abc` NUL `def` read as `abcdef` on Linux while the TS twin read `abc`
+# (BR-120). So the read's delimiter is the NUL (`-d ''`, the same on every
+# bash) and the newline is cut after it. A marker that no NUL ends returns 1
+# at EOF (the usual case), hence `|| true`.
+# The read is BOUNDED at 4096 bytes, cli/src/lib/project-identity.ts
+# MARKER_LINE_MAX: a line that has not ended within 4095 bytes is refused, as
+# in the TS twin. Unbounded, a 1 MiB marker cost 50 s or more per hook call
+# (the unbuffered `-d ''` read and a quadratic cut); bounded, the cut sees at
+# most 4096 bytes. `local LC_ALL=C` makes `read -n` and `${#…}` count BYTES on
+# every bash; the caller's LC_ALL comes back on return. Builtins only: hooks
+# run on every tool call (test/project_slug_parity.test.bash T3-T7c, M3).
 _igris_res_read_marker() {
-  local f="$1/.igris-project" line="" ws=$' \t\r\v\f'
+  local f="$1/.igris-project" line="" ws=$' \t\r\v\f' nl=$'\n' LC_ALL=C
   _IGRIS_RES_MARK=""
   [ -f "$f" ] || return 0
-  IFS= read -r line 2>/dev/null < "$f" || true
+  IFS= read -r -d '' -n 4096 line 2>/dev/null < "$f" || true  # [[ BR-120 NUL READ ]]
+  line="${line%%"$nl"*}"
+  [ "${#line}" -lt 4096 ] || return 0
   line="${line#"${line%%[!$ws]*}"}"
   line="${line%"${line##*[!$ws]}"}"
   case "$line" in

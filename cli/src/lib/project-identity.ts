@@ -35,9 +35,11 @@
  *                 here   = top + prefix in git — git's on-disk spelling, which
  *                          a mis-cased dir_real on a case-insensitive volume
  *                          does not share — else dir_real.
- *   2. marker     `.igris-project`: first line, trimmed, matching slug.ts
- *                 SLUG_RE (alphanumeric first character, then letters, digits,
- *                 `._-`, 64 at most: never `.`, `..`, `.hidden` or `-x`).
+ *   2. marker     `.igris-project`: first line (ended by a NUL or newline
+ *                 within MARKER_LINE_MAX bytes, else refused), trimmed,
+ *                 matching slug.ts SLUG_RE (alphanumeric first character, then
+ *                 letters, digits, `._-`, 64 at most: never `.`, `..`,
+ *                 `.hidden` or `-x`).
  *                 In git: here and each ancestor up to AND including top,
  *                 then main/.igris-project when main != top (the marker is
  *                 untracked, so a linked worktree has none of its own).
@@ -79,7 +81,7 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, openSync, readSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { listProjectPathsReadonly } from "./registry.js";
 import { SLUG_RE } from "./slug.js";
@@ -149,6 +151,9 @@ const GIT_ENV_STRIP = [
 
 /** The marker file's name. */
 export const PROJECT_MARKER_FILE = ".igris-project";
+
+/** BR-120: the marker read's bound in BYTES; the shell twin's `read -n` mirrors it. */
+export const MARKER_LINE_MAX = 4096;
 
 /** The production git runner: no shell, a 3 s cap, no prompt, location vars stripped. */
 const defaultGit: GitRunner = (cwd, args) => {
@@ -267,7 +272,8 @@ function probeGit(
 
 /**
  * Read one `.igris-project` marker. Null when absent, unreadable, not a regular
- * file (a FIFO would block the read), or not a valid slug.
+ * file (a FIFO would block the read), a first line of MARKER_LINE_MAX bytes or
+ * more, or not a valid slug.
  *
  * Valid is exactly slug.ts `SLUG_RE`, the grammar `igris install` and
  * `igris register-project` mint slugs with. Live slugs include
@@ -280,17 +286,38 @@ function probeGit(
  */
 function readMarker(dir: string): string | null {
   const file = join(dir, PROJECT_MARKER_FILE);
+  let fd: number | null = null;
   try {
     if (!statSync(file).isFile()) return null;
-    // The first line, cut at a NUL (the shell twin's `read` keeps only the
-    // bytes before one), trimmed of ASCII whitespace only — `.trim()` would
-    // also strip a BOM or a no-break space, which the shell twin keeps
-    // (parity T3-T5).
-    const line = (readFileSync(file, "utf-8").split("\n")[0] ?? "").split("\0")[0] ?? "";
-    const first = line.replace(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/g, "");
+    // The bytes before the first NUL or newline, read at most MARKER_LINE_MAX
+    // bytes in; a line not ended within that is refused, as the shell twin
+    // does. Trimmed of ASCII whitespace only — `.trim()` would also strip a
+    // BOM or a no-break space, which the shell twin keeps (parity T3-T7c).
+    fd = openSync(file, "r");
+    const buf = Buffer.alloc(MARKER_LINE_MAX);
+    let n = 0;
+    while (n < MARKER_LINE_MAX) {
+      const got = readSync(fd, buf, n, MARKER_LINE_MAX - n, n);
+      if (got === 0) break;
+      n += got;
+    }
+    const head = buf.subarray(0, n);
+    const nul = head.indexOf(0);
+    const lf = head.indexOf(0x0a);
+    const end = Math.min(nul < 0 ? n : nul, lf < 0 ? n : lf);
+    if (end >= MARKER_LINE_MAX) return null;
+    const first = head.subarray(0, end).toString("utf-8").replace(/^[ \t\r\v\f]+|[ \t\r\v\f]+$/g, "");
     return SLUG_RE.test(first) ? first : null;
   } catch {
     return null;
+  } finally {
+    if (fd !== null) {
+      try {
+        closeSync(fd);
+      } catch {
+        /* a failed close leaves the answer unchanged */
+      }
+    }
   }
 }
 

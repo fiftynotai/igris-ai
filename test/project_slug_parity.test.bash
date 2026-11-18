@@ -21,7 +21,7 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #
 # For each fixture directory ONE expected `<slug> <source>` must equal:
 #   (1) gate      `igris_resolve_project` from `_gate.sh`, in /bin/bash -c
-#                 under `set -e` (bash 3.2 on macOS);
+#                 under `set -e` (bash 3.2 on macOS, bash 5 on the CI ubuntu leg);
 #   (2) detect    `node cli/dist/index.js detect` run in the directory
 #                 (project_slug + the new project_source key);
 #   (3) ts        `resolveProjectIdentity(dir)` imported from the dist;
@@ -75,7 +75,19 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #       (bash under BOTH LC_ALL=C and en_US.UTF-8: the trim is ASCII-only,
 #       never the locale's [:space:])
 #   T5  $S/loose/nul-dir   marker = nulslug NUL /../..        nulslug     marker
-#       (bash's read keeps only the bytes before a NUL; the TS twin cuts there)
+#   T5b $S/loose/nulpost-dir marker = abc NUL def             abc         marker
+#       (both twins keep the bytes before the first NUL or newline. A line
+#       `read` skips NUL bytes from bash 4.3 (NEWS-4.3 p), and T5b's NUL-stripped line
+#       `abcdef` is itself a valid slug, so a NUL-skipping reader names a
+#       DIFFERENT project there, not a refused one. BR-120)
+#   T7  $S/loose/pad4095-dir marker = 4088 spaces + padslug + LF  padslug  marker
+#   T7b $S/loose/pad4096-dir marker = 4089 spaces + padslug + LF  pad4096-dir basename
+#   T7c $S/loose/huge-dir  marker = 1 MiB, spaces + hugeslug, no LF, no NUL
+#                                                            huge-dir    basename
+#       (MARKER_LINE_MAX, BR-120: a first line that has not ended within
+#       4095 bytes is refused by both twins, so 4095 bytes is the longest kept
+#       line. T7c also times the bash twin against a 2 s ceiling, under a 20 s
+#       watchdog: an unbounded read of it cost 50 s or more per call)
 #   T6  $S/elsewhere/"lane " a linked worktree ROOT whose name ends in a
 #       space                                                igris-ai    registry
 #       (git's output is split on newlines only, never trimmed)
@@ -90,6 +102,12 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #       block, and the block is the only place it is rewritten to main +
 #       prefix.
 #   M2  a copy with `rowid ASC` flipped to `rowid DESC` makes row 5 disagree.
+#   M3  a copy whose marker read (the `_gate.sh` line tagged BR-120 NUL READ)
+#       loses `-d ''` and its `-n 4096` bound (the pre-BR-120 line read, which
+#       the sed restores byte for byte) makes T5b resolve `abcdef
+#       marker` where /bin/bash skips NUL bytes (bash >= 4.3: the CI cli-bats
+#       leg). Where it does not (bash 3.2, macOS) both readers agree: M3
+#       measures that agreement, then skips naming the version.
 #   C0  the row checker itself can fail (a wrong expectation is RED).
 #
 # AC-W1 STATIC PINS (no fixture, no dist; they run in every leg):
@@ -233,10 +251,16 @@ build_matrix() {
   ln -s "$S/far/target" "$S/near/hop"
   # T3-T6 (twin-only rows): whitespace and NUL handling of the marker and of
   # git's output.
-  mkdir -p "$S/loose/bom-dir" "$S/loose/nbsp-dir" "$S/loose/nul-dir"
+  mkdir -p "$S/loose/bom-dir" "$S/loose/nbsp-dir" "$S/loose/nul-dir" "$S/loose/nulpost-dir"
   printf '\357\273\277bomslug\n' > "$S/loose/bom-dir/.igris-project"
   printf '\302\240nbslug\343\200\200\n' > "$S/loose/nbsp-dir/.igris-project"
   printf 'nulslug\000/../..\n' > "$S/loose/nul-dir/.igris-project"
+  printf 'abc\000def\n' > "$S/loose/nulpost-dir/.igris-project"
+  # T7-T7c (twin-only rows): the MARKER_LINE_MAX bound (4096 bytes, BR-120).
+  mkdir -p "$S/loose/pad4095-dir" "$S/loose/pad4096-dir" "$S/loose/huge-dir"
+  printf '%*s%s\n' 4088 '' padslug > "$S/loose/pad4095-dir/.igris-project"
+  printf '%*s%s\n' 4089 '' padslug > "$S/loose/pad4096-dir/.igris-project"
+  printf '%*s%s' 1048568 '' hugeslug > "$S/loose/huge-dir/.igris-project"
   git -C "${MAIN:?}" worktree add -q -b space-lane "$S/elsewhere/lane "
 
   sqlite3 "$DB" "
@@ -314,6 +338,28 @@ surface_gate() {
       igris_resolve_project "$2"
       printf "%s %s\n" "${_IGRIS_RES_SLUG:-}" "${_IGRIS_RES_SOURCE:-}"
     ' _ "$gate" "$dir" 2>/dev/null ) || true
+}
+
+# timed_gate <dir> <watchdog-s> — surface_gate's call, timed: prints
+# "<wall ms> <slug> <source>", or "<wall ms> TIMEOUT" when the watchdog killed
+# it (python3 is already a precondition of this suite; bash 3.2 has no
+# sub-second clock).
+timed_gate() {
+  local dir="$1" limit="$2"
+  ( cd "$S" && "${FENCE_ENV[@]}" python3 - "$GATE_SRC" "$dir" "$limit" <<'PY'
+import subprocess, sys, time
+gate, d, limit = sys.argv[1], sys.argv[2], float(sys.argv[3])
+script = 'set -e; . "$1"; igris_resolve_project "$2"; printf "%s %s" "${_IGRIS_RES_SLUG:-}" "${_IGRIS_RES_SOURCE:-}"'
+t0 = time.monotonic()
+try:
+    r = subprocess.run(["/bin/bash", "-c", script, "_", gate, d],
+                       stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=limit)
+    out = r.stdout.decode("utf-8", "replace")
+except subprocess.TimeoutExpired:
+    out = "TIMEOUT"
+print("%d %s" % ((time.monotonic() - t0) * 1000, out))
+PY
+  ) || true
 }
 
 surface_detect() {
@@ -527,6 +573,50 @@ check_row() {
   check_twins "$S/loose/nul-dir" nulslug marker
 }
 
+@test "T5b (twins): slug-valid bytes after a NUL are dropped by both twins -> abc marker" {
+  local f="$S/loose/nulpost-dir/.igris-project"
+  # Arm: the marker really carries a NUL.
+  [ "$(od -An -tx1 "$f" | tr -s ' ' | grep -c ' 00')" -ge 1 ] || return 1
+  # Arm: the row discriminates. Without the NUL the line is `abcdef`, itself a
+  # VALID slug, so a NUL-skipping reader names a different project here rather
+  # than falling to the basename (nulpost-dir).
+  [ "$(tr -d '\000' < "$f")" = "abcdef" ] || return 1
+  check_twins "$S/loose/nulpost-dir" abc marker
+}
+
+@test "T7 (twins): a padded first line of 4095 bytes, the longest kept, is read by both twins -> padslug marker" {
+  local f="$S/loose/pad4095-dir/.igris-project"
+  # Arm: 4095 bytes of line (spaces then the slug), then the newline at byte 4096.
+  [ "$(wc -c < "$f" | tr -d ' ')" -eq 4096 ] || return 1
+  [ "$(head -c 4095 "$f" | tr -d ' ')" = "padslug" ] || return 1
+  [ "$(tail -c 1 "$f" | od -An -tx1 | tr -d ' \n')" = "0a" ] || return 1
+  check_twins "$S/loose/pad4095-dir" padslug marker
+}
+
+@test "T7b (twins): a padded first line of 4096 bytes is refused by both twins -> pad4096-dir basename" {
+  local f="$S/loose/pad4096-dir/.igris-project"
+  # Arm: one byte longer than T7, and still a valid slug once trimmed, so an
+  # unbounded reader would name padslug here rather than refuse it.
+  [ "$(wc -c < "$f" | tr -d ' ')" -eq 4097 ] || return 1
+  [ "$(head -c 4096 "$f" | tr -d ' ')" = "padslug" ] || return 1
+  [ "$(tail -c 1 "$f" | od -An -tx1 | tr -d ' \n')" = "0a" ] || return 1
+  check_twins "$S/loose/pad4096-dir" pad4096-dir basename
+}
+
+@test "T7c (twins): a 1 MiB marker with no newline is refused by both twins, and the bash twin stays under 2 s -> huge-dir basename" {
+  local f="$S/loose/huge-dir/.igris-project" out ms got
+  # Arm: 1 MiB of spaces then a valid slug, so neither a newline nor a NUL.
+  [ "$(wc -c < "$f" | tr -d ' ')" -eq 1048576 ] || return 1
+  [ "$(tr -d ' ' < "$f")" = "hugeslug" ] || return 1
+  out="$(timed_gate "$S/loose/huge-dir" 20)"
+  ms="${out%% *}"
+  got="${out#* }"
+  echo "bash twin: ${ms} ms -> [$got] (ceiling 2000 ms, watchdog 20 s)"
+  [ "$got" = "huge-dir basename" ] || return 1
+  [ "$ms" -lt 2000 ] || return 1
+  check_twins "$S/loose/huge-dir" huge-dir basename
+}
+
 @test "T6 (twins): a linked worktree ROOT whose name ends in a space -> igris-ai via registry" {
   [ -d "$S/elsewhere/lane " ] || return 1
   [ "$(git -C "$S/elsewhere/lane " rev-parse --show-toplevel)" = "$S/elsewhere/lane " ] || return 1
@@ -576,6 +666,50 @@ check_row() {
   echo "real=[$real] mutant=[$mut]"
   [ "$real" = "repo-legacy registry" ] || return 1
   [ "$mut" = "dup_repo registry" ] || return 1
+}
+
+@test "M3 (mutation): the pre-BR-120 line read makes T5b disagree where /bin/bash skips NUL bytes" {
+  local mutant="$SCRATCH/_gate.line-read.sh" tag_real tag_mut line_real line_mut ver probe real mut
+  sed "/BR-120 NUL READ/s/ -d '' -n 4096//" "$GATE_SRC" > "$mutant"
+  tag_real="$(grep -c 'BR-120 NUL READ' "$GATE_SRC" || true)"
+  tag_mut="$(grep -c 'BR-120 NUL READ' "$mutant" || true)"
+  line_real="$(grep 'BR-120 NUL READ' "$GATE_SRC" || true)"
+  line_mut="$(grep 'BR-120 NUL READ' "$mutant" || true)"
+  echo "BR-120 NUL READ tag: real=$tag_real mutant=$tag_mut"
+  echo "real line:   [$line_real]"
+  echo "mutant line: [$line_mut]"
+  # The mutation LANDED: one tagged line in each; the real one reads to a NUL
+  # within the MARKER_LINE_MAX bound, the mutant's is the exact pre-BR-120
+  # line read (no NUL delimiter, no bound).
+  [ "$tag_real" -eq 1 ] || { echo "the BR-120 NUL READ tag is not in _gate.sh: the mutation cannot land"; return 1; }
+  [ "$tag_mut" -eq 1 ] || return 1
+  case "$line_real" in *"read -r -d '' -n 4096 line"*) ;; *) return 1 ;; esac
+  case "$line_mut" in *"-d ''"* | *"-n 4096"*) return 1 ;; esac
+  # shellcheck disable=SC2016  # the pre-BR-120 source line, matched literally
+  case "$line_mut" in *'IFS= read -r line 2>/dev/null < "$f" || true'*) ;; *) return 1 ;; esac
+  # Measure the interpreter surface_gate runs (/bin/bash), not the one bats
+  # runs under: a line read either stops at a NUL (`a`) or skips it (`ab`).
+  ver="$(/bin/bash -c 'printf "%s.%s.%s" "${BASH_VERSINFO[0]}" "${BASH_VERSINFO[1]}" "${BASH_VERSINFO[2]}"')"
+  probe="$(printf 'a\000b\n' | /bin/bash -c 'IFS= read -r l; printf "%s" "$l"')"
+  real="$(surface_gate "$S/loose/nulpost-dir")"
+  mut="$(surface_gate "$S/loose/nulpost-dir" "$mutant")"
+  echo "/bin/bash $ver line-read probe=[$probe] real=[$real] mutant=[$mut]"
+  [ "$real" = "abc marker" ] || return 1
+  case "$probe" in
+    a)
+      # The old reader agrees here, and that is measured before skipping.
+      [ "$mut" = "abc marker" ] || return 1
+      skip "/bin/bash $ver: a line read stops at a NUL, so the pre-BR-120 reader agrees here; M3 discriminates on bash >= 4.3 only (the CI cli-bats leg)"
+      ;;
+    ab)
+      # Targeted: the old reader names the NUL-stripped slug, not a refusal.
+      [ "$mut" = "abcdef marker" ] || return 1
+      ;;
+    *)
+      echo "unexpected /bin/bash NUL behaviour [$probe]"
+      return 1
+      ;;
+  esac
 }
 
 # =============================================================================

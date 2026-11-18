@@ -212,6 +212,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other than their directory name now resolve to the registry slug, which
   holds their data. A brief-gate denial names the slug, the directory and the
   source, and says when the project has 0 briefs.
+  The marker is its first line, cut at the first NUL or newline and trimmed.
+  On bash 4.3 and later a line `read` skipped NUL bytes, so on Linux the
+  bash twin resolved `abc` NUL `def` as `abcdef` while the TS twin resolved
+  `abc` (BR-120). Both twins now read the marker the same way on every bash.
+  They read at most 4096 bytes and refuse a first line of 4096 bytes or more,
+  where a padded slug of any length used to be accepted. Before this bound, a
+  1 MiB marker cost 50 s or more on every hook call.
 
 - **The phase guard gates a commit by the committing session's own brief
   (TD-494).** It used to read the newest instance on the machine, so one

@@ -644,9 +644,14 @@ describe("TD-359 resolver — rung 2: the .igris-project marker", () => {
     ["the first line, trimmed; later lines ignored", "  lifeOS  \nsecond-line\n", "lifeOS"],
     // The SLUG_RE ceiling (slug.ts): 64 characters is the longest valid slug.
     ["64 characters, the SLUG_RE maximum", `a${"b".repeat(63)}\n`, `a${"b".repeat(63)}`],
-    // The shell twin's `read` keeps only the bytes before a NUL (parity T5).
+    // Both twins keep only the bytes before the first NUL (parity T5).
     ["the bytes before a NUL", "nulslug\0/../..\n", "nulslug"],
+    // BR-120: slug-valid bytes after the NUL are dropped too (parity T5b).
+    ["the bytes before a NUL, when the bytes after it are slug-valid", "abc\0def\n", "abc"],
     ["CRLF, tab and form feed trimmed (ASCII whitespace)", "\t lifeOS\f\r\n", "lifeOS"],
+    // BR-120 MARKER_LINE_MAX: a first line of 4095 bytes is the longest kept (parity T7).
+    ["a padded first line of 4095 bytes, ended by a newline", `${" ".repeat(4095 - 7)}padslug\n`, "padslug"],
+    ["a padded first line of 4095 bytes, ended by EOF", `${" ".repeat(4095 - 7)}padslug`, "padslug"],
   ])("(M5) a valid marker — %s — is read as the slug", async (_label, content, want) => {
     const main = makeRepo(join(sandbox, "repos", "checkout"));
     writeMarker(main, content);
@@ -675,6 +680,11 @@ describe("TD-359 resolver — rung 2: the .igris-project marker", () => {
     ["a UTF-8 BOM before the slug", "\uFEFFproj\n"],
     ["a no-break space before the slug", "\u00A0proj\n"],
     ["an ideographic space after the slug", "proj\u3000\n"],
+    // BR-120 MARKER_LINE_MAX: a first line not ended within 4095 bytes is
+    // refused, padding and all (parity T7b, T7c).
+    ["a padded first line of 4096 bytes, ended by a newline", `${" ".repeat(4096 - 7)}padslug\n`],
+    ["a padded first line of 4096 bytes, ended by EOF", `${" ".repeat(4096 - 7)}padslug`],
+    ["1 MiB with no newline and no NUL", `${" ".repeat(1048576 - 8)}hugeslug`],
   ])("(M6) an INVALID marker — %s — is ignored and resolution falls through (§1.5 row 10)", async (_label, content) => {
     const main = makeRepo(join(sandbox, "repos", "checkout"));
     register([{ slug: "proj-reg", path: main }]);
@@ -704,6 +714,16 @@ describe("TD-359 resolver — rung 2: the .igris-project marker", () => {
 
     writeMarker(join(home, "work"), "work-marker\n");
     expect(resolveProjectIdentity(proj)).toMatchObject({ slug: "work-marker", source: "marker" });
+  });
+
+  it("(M9) MARKER_LINE_MAX is 4096 bytes, and the shell twin's bounded read names the same number (BR-120)", async () => {
+    const mod = (await import("../lib/project-identity.js")) as unknown as { MARKER_LINE_MAX: number };
+    expect(mod.MARKER_LINE_MAX).toBe(4096);
+    const gate = readFileSync(join(__dirname, "..", "..", "..", "core", "hooks", "shared", "_gate.sh"), "utf-8");
+    const read = gate.split("\n").filter((l) => l.includes("[[ BR-120 NUL READ ]]"));
+    expect(read).toHaveLength(1);
+    expect(read[0]).toContain(`IFS= read -r -d '' -n ${mod.MARKER_LINE_MAX} line`);
+    expect(gate).toContain(`[ "\${#line}" -lt ${mod.MARKER_LINE_MAX} ] || return 0`);
   });
 });
 
