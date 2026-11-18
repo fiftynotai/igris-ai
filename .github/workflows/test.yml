@@ -14,6 +14,11 @@ on:
   # status check in branch protection.
   workflow_dispatch:
 
+# BR-119: skip onnxruntime-node's Linux x64 CUDA download, whose 404 fails
+# every `npm ci` here. Igris runs ONNX on the CPU provider (MAINTAINING row).
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: "skip"
+
 jobs:
   test:
     name: Test on ${{ matrix.os }}

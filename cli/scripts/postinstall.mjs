@@ -28,7 +28,9 @@ import { fileURLToPath } from "node:url";
 const cliRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
 const bundleDir = join(cliRoot, "dist", "brain-mcp-server");
 
-const RECOVERY_CMD = `npm install --omit=dev --prefix "${bundleDir}"`;
+// BR-119: a manual retry on Linux needs the CUDA opt-out too.
+const OPT = process.platform === "linux" ? "ONNXRUNTIME_NODE_INSTALL_CUDA=skip " : "";
+const RECOVERY_CMD = `${OPT}npm install --omit=dev --prefix "${bundleDir}"`;
 
 /** Print a clearly-delimited, actionable WARNING. Never throws. */
 function warn(reason) {
@@ -47,7 +49,7 @@ function warn(reason) {
       "  Recover manually by running:",
       "",
       `    cd "${bundleDir}"`,
-      "    npm install --omit=dev",
+      `    ${OPT}npm install --omit=dev`,
       "",
       "  (one-line equivalent:)",
       `    ${RECOVERY_CMD}`,
@@ -96,6 +98,8 @@ function main() {
   for (const key of Object.keys(childEnv)) {
     if (key.toLowerCase().startsWith("npm_config_")) delete childEnv[key];
   }
+  // BR-119: skip onnxruntime-node's CUDA download (its 404 fails the install).
+  childEnv.ONNXRUNTIME_NODE_INSTALL_CUDA = "skip";
 
   let result;
   try {

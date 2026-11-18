@@ -398,3 +398,23 @@ describe("TD-487 install fingerprint", () => {
     }
   }, 20_000);
 });
+
+/*
+ * BR-119 — the runner exports the onnxruntime-node CUDA opt-out before it can
+ * reach `npm ci` (path 5). An `export` line, not an inline prefix on the
+ * install line: the `(cd "$D/stage" && npm ci` needle is pinned above and in
+ * sync-code.test.ts. The behavioural twin is V2 in sync-code-remote.test.ts.
+ */
+describe("BR-119 — the VPS runner exports ONNXRUNTIME_NODE_INSTALL_CUDA=skip", () => {
+  it("V1: the export is a whole line, the only mention of the name, and precedes the stage npm ci", () => {
+    const s = buildRunnerScript("/srv/igris", ID);
+    const lines = s.split("\n");
+    const exp = lines.indexOf("export ONNXRUNTIME_NODE_INSTALL_CUDA=skip");
+    const ci = lines.findIndex((l) => l.includes('(cd "$D/stage" && npm ci'));
+    expect(exp, "no export line").toBeGreaterThanOrEqual(0);
+    expect(ci, "no stage npm ci").toBeGreaterThanOrEqual(0);
+    expect(exp).toBeLessThan(ci);
+    expect(s.split("ONNXRUNTIME_NODE_INSTALL_CUDA").length - 1).toBe(1);
+    execFileSync("bash", ["-n", "-c", s], { timeout: 10_000 });
+  });
+});

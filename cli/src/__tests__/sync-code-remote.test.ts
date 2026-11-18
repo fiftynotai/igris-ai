@@ -1051,3 +1051,51 @@ exec ${JSON.stringify(process.execPath)} "$@"
     expect(readFileSync(FP_FILE(join(D(), "prev")), "utf-8").trim(), "the old tree keeps its own").toBe(f1);
   }, 60_000);
 });
+
+/*
+ * BR-119 — the runner's `npm ci` carries ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+ * (path 5), observed where it matters: in the environment of the `npm`
+ * process the detached runner starts. No stub edit — the npm stub SOURCES
+ * `$BR116_CTL/npm.env` with its own positional parameters, so a COMMAND line
+ * there records `<argv1> <value>` per call. Appended after TD-487 so every
+ * line cite above holds.
+ */
+describe("BR-119 — the runner's npm ci carries the CUDA opt-out", () => {
+  const CUDA_LOG = (): string => join(CTL, "npm-cuda.log");
+  const recordCuda = (): void =>
+    writeFileSync(
+      join(CTL, "npm.env"),
+      `printf '%s %s\\n' "$1" "\${ONNXRUNTIME_NODE_INSTALL_CUDA-<unset>}" >> "$BR116_CTL/npm-cuda.log"\n`,
+    );
+  const ciLines = (): string[] =>
+    (existsSync(CUDA_LOG()) ? readFileSync(CUDA_LOG(), "utf-8") : "")
+      .split("\n")
+      .filter((l) => l.startsWith("ci "));
+
+  async function deployWithAmbient(value: string | undefined): Promise<{ code: number; out: string }> {
+    const key = "ONNXRUNTIME_NODE_INSTALL_CUDA";
+    const prior = process.env[key];
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+    try {
+      recordCuda();
+      return await deploy({ runId: "20261118T120000Z-b119" });
+    } finally {
+      if (prior === undefined) delete process.env[key];
+      else process.env[key] = prior;
+    }
+  }
+
+  it("V2: with the opt-out absent from the client env, the first deploy's npm ci sees skip", async () => {
+    const r = await deployWithAmbient(undefined);
+    expect(r.code, r.out).toBe(0);
+    // Vacuity guard: exactly one npm ci reached the stub through the runner.
+    expect(ciLines()).toEqual(["ci skip"]);
+  }, 60_000);
+
+  it("V2b (D2): a client env carrying v12 still gives the runner's npm ci skip", async () => {
+    const r = await deployWithAmbient("v12");
+    expect(r.code, r.out).toBe(0);
+    expect(ciLines()).toEqual(["ci skip"]);
+  }, 60_000);
+});

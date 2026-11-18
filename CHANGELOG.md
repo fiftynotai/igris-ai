@@ -168,6 +168,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Linux x64 installs of the brain no longer fail on a CUDA download
+  (BR-119).** onnxruntime-node 1.21.0, pinned by `@huggingface/transformers`,
+  runs a postinstall that on Linux x64 downloads
+  `onnxruntime-linux-x64-gpu-1.21.0.tgz` from a GitHub release URL that now
+  answers 404. The 404 throws, so every `npm ci` and `npm install` of the
+  brain tree failed: CI run 44258412602 on `ca9fe3f`, and the published
+  7.3.2 on Linux x64, where the postinstall warns and the brain has no
+  dependencies. Every install now sets the upstream opt-out
+  `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` in its own environment, overriding any
+  inherited value, at six sites:
+  a workflow-level `env:` in `test.yml` and `npm-publish.yml`, an inline
+  prefix on the vendor install in `cli/scripts/copy-templates.sh` and on the
+  `npm ci` in `scripts/igris_brain_deploy.sh`, a child-env key in
+  `cli/scripts/postinstall.mjs` (set after the BR-075 `npm_config_*` strip),
+  and an `export` in the `igris sync code` runner. On Linux the postinstall's
+  printed recovery command carries the prefix too. It is an environment
+  variable and not a `.npmrc` key because the postinstall strips inherited
+  npm config, the staged bundle never reads the root `.npmrc` and npm never
+  packs one, and npm 11 warns that unknown config keys will stop working in
+  its next major. The value must be exactly `skip`: install.js throws on
+  other words. Igris never used the CUDA execution provider, but the download
+  used to overwrite the package's `libonnxruntime` with the GPU build's copy;
+  Linux x64 now runs the CPU library that ships in the npm package. A new
+  brain test runs a real CPU-provider inference in CI. The VPS install
+  fingerprint is unchanged, so a VPS tree installed before the outage is
+  reused. Revisit when onnxruntime-node moves off 1.21.0, usually through a
+  `@huggingface/transformers` bump (a brain test pins the version), if
+  upstream renames the variable, or if Igris adopts a GPU provider. A Linux x64 contributor exports the variable before a root
+  `npm ci` (CONTRIBUTING.md).
+
 - **A git worktree resolves to its repository's project (TD-359).** The
   project slug came from the directory name, so a worktree such as
   `mbrgea-ai-gl010` became an empty phantom project. The brief gate then

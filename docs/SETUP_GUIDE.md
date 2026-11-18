@@ -504,6 +504,11 @@ cd "$(npm root -g)/igris-ai/dist/brain-mcp-server"
 npm install --omit=dev
 ```
 
+On Linux x64, run the install as
+`ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --omit=dev`. Without the
+variable, onnxruntime-node tries to download CUDA binaries from a URL that
+now returns 404, and the install fails (BR-119).
+
 If npm is configured to ignore scripts, the native modules still cannot
 build — re-enable scripts first, then re-run the install above:
 
@@ -542,6 +547,9 @@ git clone https://github.com/fiftynotai/igris-ai && cd igris-ai
 git checkout "v$version"
 cd brain-mcp-server && npm ci && npm run build
 ```
+
+On Linux x64, prefix that `npm ci` with `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`
+(BR-119), or it fails on a CUDA download that now returns 404.
 
 Then read the frame against the rebuilt `dist/` and its maps — run the
 reproduction with `node --enable-source-maps`, or open the sibling

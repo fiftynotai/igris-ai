@@ -115,6 +115,7 @@ export function buildRunnerScript(repoPath: string, runId: string): string {
   const rexcl = REUSE_EXCLUDES.map((p) => `--exclude=${p}`).join(" ");
   return [
     "set -u",
+    "export ONNXRUNTIME_NODE_INSTALL_CUDA=skip", // BR-119: its CUDA download 404s
     `R=${shellQuote(repoPath)}; ID=${runId}; SMOKE=${shellQuote(SMOKE_JS)}; FPJS=${shellQuote(FP_JS)}`,
     `D="$R/${DEPLOY_DIR_NAME}"; RUN="$D/runs/$ID"; PHASE=prepare; IS=; BS=; RB=0; RBS=; FP=; INST=; WHY=`,
     `SWAP='${SWAP_SET.join(" ")}'; NM='${NM_RELS.join(" ")}'; FPF=${INSTALL_FP_FILE}`,

@@ -136,7 +136,7 @@ bats test/*.test.bash
 
 # Suite 2 — CLI integration tests (cli/tests/integration/*.bats)
 # Requires a built cli/dist/ — see "Testing" below for why.
-npm ci                       # repo root (workspaces)
+npm ci                       # repo root (workspaces); Linux x64: run as ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci (BR-119)
 cd cli && npm run build && npm run test:bats && cd ..
 
 # Suite 3 — CLI vitest (cli/src/__tests__/*.test.ts; also needs cli/dist/)
@@ -369,6 +369,11 @@ npm ci                  # at the REPO ROOT: /package-lock.json is the only
 cd cli && npm run build # tests/integration/_helpers.bash resolves CLI_DIST
                         # from cli/dist — without a build EVERY file fails at load
 ```
+
+On Linux x64, `export ONNXRUNTIME_NODE_INSTALL_CUDA=skip` before that root
+`npm ci`. Without it, onnxruntime-node's postinstall tries to download CUDA
+binaries from a URL that now returns 404, and the install fails (BR-119;
+`npm run build`'s own vendor install sets it already).
 
 Also needed on PATH: `node` ≥ 20, `python3`, `sqlite3`, `shasum`, `tar`.
 

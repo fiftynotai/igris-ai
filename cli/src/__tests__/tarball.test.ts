@@ -3235,6 +3235,40 @@ interface PackReport {
  *   RE-DERIVED: 1_043 + 424 + 1_023 + 528 + 837 + 383 + 115 + 115 + 876 +
  *   694 = 6_038; 1_958_975 − 1_957_437 = 1_538; 114_161 + 1_538 = 115_699.
  *
+ * BR-119 MEASURED LAST (2026-11-18), after its final shipped change: the
+ * ONNXRUNTIME_NODE_INSTALL_CUDA=skip key in the consumer postinstall's child
+ * env plus the Linux recovery prefix (`scripts/postinstall.mjs`), the runner's
+ * `export` line in `lib/sync/vps-deploy.ts`, and one `CHANGELOG.md` bullet.
+ * `copy-templates.sh`, the workflows, MAINTAINING, the root CHANGELOG, the
+ * docs and every test (the brain's `onnx-cpu-runtime.test.ts` included, which
+ * `tsconfig.json` excludes from emit) pack 0 B. Same method as BR-101 (`git
+ * archive` scratch builds, `copy-templates.sh` run in both arms, brain `dist`
+ * absent so the copy step rebuilt it, smoke `(sandboxed)`, `npm pack
+ * --dry-run --json --ignore-scripts` twice per arm, identical). CONTROL =
+ * develop `ca9fe3f`: 1_968_740 / 7_238_454 / 603 / `1d176164…`. That control
+ * ABSORBS the unrecorded spend of the landings after FR-276 round 2
+ * (TD-359, TD-494, TD-492, TD-493): +9_765 packed, +34_782 unpacked, 0
+ * entries. FINAL = a `git write-tree` of the working tree through a TEMP
+ * index (`746bae34`, no commit); the live `cli/dist` mtime and
+ * `~/.igris/config.json` sha unchanged by both arms. npm 10.9.8, node
+ * v22.23.2, darwin/arm64.
+ *   packed              1_969_130    unpacked 7_239_090, 603 entries (+0),
+ *                                    shasum
+ *                                    `7a1fc7637e85b7b21220d0d819b1af7d116016b0`.
+ *   this round's share  +390 B       packed — BELOW the plan's +500–900 B
+ *                                    estimate and far UNDER its 2_000 B
+ *                                    hard stop, so no cut was taken.
+ *                                    Unpacked +636 over 4 artifacts,
+ *                                    reconciling exactly: `postinstall.mjs`
+ *                                    +293, `CHANGELOG.md` +231,
+ *                                    `vps-deploy.js` +87 / map +25.
+ *   cumulative delta    +125_854 B   (1_969_130 − 1_843_276)
+ *   headroom remaining  27_746 B     (153_600 − 125_854)
+ *   RE-DERIVED: 1_968_740 − 1_958_975 = 9_765; 115_699 + 9_765 = 125_464 =
+ *   1_968_740 − 1_843_276; 1_969_130 − 1_968_740 = 390; 7_239_090 −
+ *   7_238_454 = 636 = 293 + 231 + 87 + 25; 125_464 + 390 = 125_854;
+ *   153_600 − 125_854 = 27_746.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server

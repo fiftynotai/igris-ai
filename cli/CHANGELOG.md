@@ -177,6 +177,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`npm install -g igris-ai` on Linux x64 installs the brain's dependencies
+  again (BR-119).** The postinstall sets `ONNXRUNTIME_NODE_INSTALL_CUDA=skip`,
+  so onnxruntime-node skips its CUDA download, whose URL now returns 404.
+
 - **A git worktree resolves to its repository's project (TD-359).** `igris
   detect` and every `--project` default resolve through a marker, the
   registry, then the main checkout instead of `basename(cwd)`. `detect` adds

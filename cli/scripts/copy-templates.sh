@@ -292,7 +292,8 @@ node -e 'const fs=require("fs");const p=process.argv[1];
 # left enabled (the default) so native modules (better-sqlite3,
 # sqlite-vec) run their install scripts and produce their .node binaries.
 echo "copy-templates: vendoring brain-mcp-server production node_modules..."
-(cd "$MCP_DEST" && npm install --omit=dev --no-audit --no-fund)
+# BR-119: skip onnxruntime-node's CUDA download (its 404 fails the install).
+(cd "$MCP_DEST" && ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --omit=dev --no-audit --no-fund)
 
 # Fail loud if the vendored install is incomplete — a representative
 # runtime dep MUST be present or the bundled MCP cannot spawn.
