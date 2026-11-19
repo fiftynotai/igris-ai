@@ -158,6 +158,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   new table's rows actually reach the other machine — but it is a preference,
   not a precondition.
 
+- **Claude Code's commit and PR attribution is off by default (TD-470).**
+  `igris init` and `igris update` (and so `igris refresh`) add
+  `"attribution": {"commit": "", "pr": "", "sessionUrl": false}` to
+  `~/.claude/settings.json` when it has neither `attribution` nor
+  `includeCoAuthoredBy`, and print one line when they do. Either key, with any
+  value, is your choice and is kept. This pairs with the `commit-msg`
+  signature gate described in the root `CHANGELOG.md`.
+
+- **`igris doctor` reports `attribution-missing` (TD-473).** It fires when
+  `~/.claude/settings.json` exists and parses but carries neither key; an
+  absent or malformed file stays `hooks-missing`. `igris doctor --fix` adds
+  the default through the same writer as the hooks fix.
+
 ### Changed
 
 - **The package's `CHANGELOG.md` starts at 7.3.1 (FR-276).** 7.3.0 and earlier
@@ -246,6 +259,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never offered for deletion. The CLI reads that column only when the brain
   has it, so the class is dormant until the brain's repository-URL migration
   ships; `/boot` and `/igris-doctor` already ignore it.
+
+- **`igris cognition health` no longer reports `ok` for an instance whose
+  harness cannot run (TD-475).** A latest `run_skipped` with `harness_refused`
+  or `cli_missing` now reads `blocked_harness` and names each refused harness
+  and its reason. A run that succeeded on a fallback after a refusal stays
+  `ok` with a `(fallback: …)` suffix. `--json` gains `last_terminal_refused`,
+  `last_terminal_fallback_order` and `last_run_started_refused`.
 
 ---
 
