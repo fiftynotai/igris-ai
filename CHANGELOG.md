@@ -294,7 +294,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     symlinked working directory and `link/..` resolve the same in both. The
     bash rung costs +0.13 to +0.28 ms more per hook call.
 
-  The hook and validator changes reach every clone through `igris refresh`.
+  Upgrading (TD-510):
+  - The hook, the validator and the `/boot` and `/scan` skills reach every
+    clone through `igris refresh`; nothing changes per clone. On a
+    from-source machine: rebuild `cli/`, run
+    `igris refresh --from-source <checkout>`, then
+    `igris loadout project-skills --source ~/.igris/core/skills`.
+  - In `lifeOS`, `animated-fifty.dev` and `CustomerPulse-Android`, a write
+    whose in-flight brief is only in the brain is now allowed. A slug that
+    starts with `_` or `-`, or is longer than 64 characters, now falls to
+    the filesystem check.
 
 - **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
   Phase 7 staged with `git add -A`, so a close in a working tree shared by
