@@ -628,7 +628,7 @@ export async function runInit(opts: InitOptions): Promise<number> {
   // --- 9. Templates: USER.md and config.json (preserved if existing) ----
   const userMd = userMdPath();
   const configJson = configJsonPath();
-  const cliVersion = opts.cliVersion ?? "7.3.2";
+  const cliVersion = opts.cliVersion ?? "7.4.0";
   const installDate = new Date().toISOString();
 
   if (dry !== null) {

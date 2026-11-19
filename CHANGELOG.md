@@ -10,6 +10,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.4.0] - 2026-11-19
+
+> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-279
+
+Minor release on `v7.3.2`. 43 commits (counted 2026-11-19 with
+`git log v7.3.2..HEAD`), six of them features, no breaking change. The §17.2
+pre-tag audit was bypassed by operator decision for the one brief named above:
+FR-279 (`/do-lite` and `/shape-lite`) is unbuilt work on `develop` and no part
+of it is in this release.
+
+The headline is the session attention map (FR-276): each chat now records
+which brain nodes were delivered to it and which it invoked, machine-local and
+never synced. It is evidence of delivery and invocation, not of what the model
+attended to. Alongside it come project relations (FR-273), the knowledge
+watermark (FR-274), `igris sync push` and `igris sync drain` with no key in any
+argument, project-context docs that replicate across machines (TD-460), and an
+extractor whose children inherit an allowlisted environment, see only named
+auth stores, and have their tools denied or sandboxed (TD-472, BR-108, TD-476,
+TD-477; `docs/COGNITION.md` states what remains). Linux x64 installs of the
+brain no longer fail on onnxruntime's CUDA download (BR-119).
+
+Know one change before upgrading (TD-470, under Added). After `igris refresh`,
+the `commit-msg` hook refuses a commit that carries a `Co-authored-by:` trailer
+in its last paragraph, a `Co-authored-by: … <user@host>` line anywhere, or a
+`Generated with` signature line, a human co-author's trailer included; the way
+past is the one-shot `IGRIS_BYPASS_SIGNATURE_GATE=1 git commit ...`. And
+`igris init`, `igris update` and `igris refresh` turn off Claude Code's commit
+and PR attribution in the user-level `~/.claude/settings.json`, which reaches
+every repository on the machine, not only Igris ones. An existing
+`attribution` or `includeCoAuthoredBy` setting there is kept, and a project's
+own `attribution` wins.
+
+Upgrading: `npm install -g igris-ai@7.4.0` then `igris init --upgrade`; from
+source, rebuild `cli/`, then `igris refresh --from-source <checkout> --yes`
+and `igris doctor`. Restart running harness sessions afterwards so each one's
+brain process loads the new bundle and its migrations.
+
 ### Added
 
 - **Session attention map — what each chat was given and what it used

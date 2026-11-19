@@ -10,6 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+---
+
+## [7.4.0] - 2026-11-19
+
+> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-279
+
+Minor release on `v7.3.2`. The CLI half: `igris attention` and the
+dashboard's session view (FR-276), `igris sync push` and `igris sync drain`,
+`igris project relations` (FR-273), the Claude Code attribution default and
+its doctor check (TD-470, TD-473), a `cognition health` that names a harness
+it cannot run (TD-475), and Linux x64 installs that no longer fail on a CUDA
+download (BR-119). FR-279, the one brief the pre-tag audit flagged, is unbuilt
+and not in this release. See the root `CHANGELOG.md` for the whole, including
+the upgrade note on TD-470's commit-time signature gate.
+
 ### Added
 
 - **`igris attention` (FR-276, FR-276a, FR-276b).** Records and inspects a
