@@ -268,13 +268,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The project resolver's last splits are closed (TD-510).** Three
   leftovers of TD-359:
   - The brief gate's brain lookup accepted only `^[a-z0-9_-]+$`, so for
-    `lifeOS`, `animated-fifty.dev` and `CustomerPulse-Android` it never asked
-    the brain and denied a write whose in-flight brief lived only there. The
+    `animated-fifty.dev` it never asked the brain and denied a write whose
+    in-flight brief lived only there. For `lifeOS` and
+    `CustomerPulse-Android` the verdict depended on the shell: macOS's bash
+    3.2 matches the `a-z` range by the locale's collation, so it refused
+    capitals under the C locale (a shell with `LANG` unset) and admitted
+    them under `en_US.UTF-8`, while bash 5 refused them everywhere. The
     hook now checks a slug with `igris_slug_valid` in
     `core/hooks/shared/_gate.sh`, the bash spelling of the CLI's `SLUG_RE`
-    (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`). `/boot` and `/scan` filter slugs
-    with the same pattern. A slug that starts with `_` or `-`, or is longer
-    than 64 characters, is no longer looked up; no registered project has one.
+    (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`), with its classes spelled out
+    under `LC_ALL=C`, so it gives one verdict in every locale. `/boot` and
+    `/scan` filter slugs with the same pattern. A slug that starts with `_`
+    or `-`, or is longer than 64 characters, is no longer looked up; no
+    registered project has one.
   - `scripts/validate_brief_state_reconciliation.sh` named the project after
     its directory, so in a worktree it checked an empty phantom project and
     passed. It now takes `PROJECT`, then the shared resolver, then the

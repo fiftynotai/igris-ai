@@ -385,7 +385,11 @@ MD
 #   B4   _lead, 65 x a (outside SLUG_RE, inside the old charset)
 #                                                deny              (HEAD: allow)
 #   B4b  64 x a, CustomerPulse-Android           allow             (HEAD: allow, deny)
-#   MB1  the pre-TD-510 `case` put back in a scratch copy denies B1's world
+#   B1L  B1's world allows under LC_ALL=C and en_US.UTF-8 (the check is locale-free)
+#   MB1  the pre-TD-510 `case` put back in a scratch copy denies B1's world,
+#        under LC_ALL=C: the old filter is a bracket range, which /bin/bash 3.2
+#        matches by collation, so under en_US.UTF-8 it admitted capitals and
+#        the HEAD verdicts on B1 and B4b were allow (macos-latest CI)
 #   MB2  the check deleted, the escape kept: the copy ALLOWS B3's world, so the
 #        skip (not a SQL error) is what keeps a quote out of the lookup
 #   B6   static pin: neither narrow literal sits on a non-comment line
@@ -556,8 +560,14 @@ PY
   td510_allows CustomerPulse-Android
 }
 
-@test "(MB1) TD-510 mutation: the pre-TD-510 charset case put back denies B1's world (lifeOS)" {
+@test "(MB1) TD-510 mutation: the pre-TD-510 charset case put back denies B1's world (lifeOS), under LC_ALL=C" {
   local mutant
+  # The old filter is a bracket RANGE in a case glob. /bin/bash 3.2 matches a
+  # range by the locale's collation, so under en_US.UTF-8 `[a-z]` admits `O`
+  # and the old case let lifeOS through (macos-latest CI, run 44496245585);
+  # bash 5 keeps ranges ASCII (globasciiranges). Pin the locale in which the
+  # old filter refused capitals. The real hook is locale-free (B1L).
+  export LC_ALL=C
   mutant="$(td510_mutant old)" || return 1
   td510_world lifeOS || return 1
   run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
@@ -565,6 +575,17 @@ PY
   run_gate_bin "$mutant" "$PROJ" "$PROJ/src/x.go"
   [ "$GATE_VERDICT" = deny ] || return 1
   [[ "$GATE_OUT" == *"project 'lifeOS' resolved from"* ]] || return 1
+}
+
+@test "(B1L) TD-510: lifeOS allows under LC_ALL=C and en_US.UTF-8 (the real check is locale-free)" {
+  local loc v=""
+  td510_world lifeOS || return 1
+  for loc in C en_US.UTF-8; do
+    LC_ALL="$loc" run_gate_bin "$HOOK" "$PROJ" "$PROJ/src/x.go"
+    echo "LC_ALL=$loc (charmap $(LC_ALL="$loc" locale charmap 2>/dev/null)): $GATE_VERDICT"
+    v="$v$GATE_VERDICT "
+  done
+  [ "$v" = "allow allow " ] || return 1
 }
 
 @test "(MB2) TD-510 mutation: with the check deleted the escaped lookup ALLOWS B3's world (o'brien)" {
