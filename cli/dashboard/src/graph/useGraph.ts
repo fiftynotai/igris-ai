@@ -19,7 +19,10 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GraphEdge, GraphNode } from "../lib/api";
+import type { AttentionNodeState, GraphEdge, GraphNode } from "../lib/api";
+import { edgeVisible, nodeVisible, visibilitySignature } from "../attention/lens";
+import { evidenceSignature } from "../attention/model";
+import { fitAttentionEntry, paintEvidence, repaintEvidence, type AttentionFitEntry } from "./attention";
 import { useReducedMotion } from "../lib/usePalette";
 import {
   attachPointerBoundary,
@@ -78,6 +81,8 @@ import { canvasSurface, probe, type StillnessResult } from "./stillness";
 /** The live state every accessor reads. Mutated in place — never re-bound. */
 interface RenderState {
   policy: TierPolicy;
+  visible: ReadonlySet<string> | null;
+  visibleCount: number;
   palette: DatavizPalette;
   hovered: string | null;
   selected: string | null;
@@ -104,6 +109,7 @@ interface RenderState {
   coarsePointer: boolean;
   floorPx: number;
   nodeSizePx: number;
+  attention: ReadonlyMap<string, AttentionNodeState>;
 }
 
 export interface GraphSelection {
@@ -126,6 +132,11 @@ export interface UseGraphOptions {
    * the entrance fires once and never re-fires on a re-layout.
    */
   transition: "entrance" | "drill";
+  attention?: ReadonlyMap<string, AttentionNodeState>;
+  /** Paint/hit-test lens only. Never changes the simulation topology. */
+  visibleKeys?: ReadonlySet<string> | null;
+  /** Changes only on explicit lens/session entry, never on activity polls. */
+  fitKey?: string | null;
 }
 
 export interface UseGraph {
@@ -187,7 +198,8 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
   /** Adjacency, built once per payload. The 1-hop reveal reads it per select. */
   const adjacency = useMemo(() => buildAdjacency(opts.edges), [opts.edges]);
 
-  const policy = useMemo(() => policyFor(opts.nodes.length), [opts.nodes.length]);
+  const visibleCount = opts.visibleKeys?.size ?? opts.nodes.length;
+  const policy = useMemo(() => policyFor(visibleCount), [visibleCount]);
 
   /**
    * The filter/search match set. `null` means "no filter is active", which is
@@ -215,6 +227,8 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
   // ---- the mutable render state ------------------------------------------
   const state = useRef<RenderState>({
     policy,
+    visible: opts.visibleKeys ?? null,
+    visibleCount,
     palette: {
       bone: "transparent",
       accent: "transparent",
@@ -235,6 +249,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     coarsePointer: false,
     floorPx: 8,
     nodeSizePx: 8,
+    attention: new Map(),
   });
 
   const [aggregating, setAggregating] = useState(false);
@@ -270,6 +285,8 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       const s = state.current;
       const isActive = s.active.has(node.key);
       const isHovered = s.hovered === node.key;
+      const evidence = s.attention.get(node.key);
+      const deliveredOrInvoked = evidence !== undefined && ["full", "preview", "invoked"].includes(evidence.state);
       const muted =
         s.matches !== null && !s.matches.has(node.key) && s.filterProgress > 0;
 
@@ -288,7 +305,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
           ? s.clearing
             ? mix(s.palette.accent, s.palette.bone, emphasis)
             : s.palette.accent
-          : s.palette.bone;
+          : deliveredOrInvoked ? s.palette.accent : s.palette.bone;
       if (muted) {
         // Rung 3's dimension. HUE untouched — a muted brief is still a brief,
         // and category never lives in hue anyway (dataviz DON'T).
@@ -310,14 +327,21 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     };
 
     return {
+      nodeVisible: (node: GraphDatum) => nodeVisible(state.current.visible, node.key),
+      linkVisible: (edge: LinkDatum) => edgeVisible(state.current.visible, edge),
       drawNode: (
         node: GraphDatum,
         ctx: CanvasRenderingContext2D,
         scale: number,
       ) => {
         const s = state.current;
+        if (!nodeVisible(s.visible, node.key)) return;
         const visual = visualFor(node);
         drawNode(ctx, visual, node.x ?? 0, node.y ?? 0, scale);
+        const evidence = s.attention.get(node.key);
+        if (evidence !== undefined && (s.matches === null || s.matches.has(node.key))) {
+          paintEvidence(ctx, evidence, node.x ?? 0, node.y ?? 0, visual.sizePx, scale, s.palette, monoFont);
+        }
 
         // The selection ring — the ONE SPRING on this canvas (D7). A spawn, per
         // motion.md, and the only reason SPRING appears at all.
@@ -349,6 +373,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
         scale: number,
       ) => {
         const s = state.current;
+        if (!nodeVisible(s.visible, node.key)) return;
         // Rule 2.4: the capture radius — not the node — is what must meet the
         // 44 px minimum on a coarse pointer. Through the ONE size law, so the
         // capture area and the painted silhouette cannot drift apart (FR-244).
@@ -440,6 +465,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
 
         const candidates: LabelCandidate[] = [];
         for (const key of wanted) {
+          if (!nodeVisible(s.visible, key)) continue;
           const at = positions[key];
           const node = nodesByKey.get(key);
           if (at === undefined || node === undefined) continue;
@@ -479,6 +505,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
         const pad = 240 / scale;
         const obstacles: Box[] = [];
         for (const [key, at] of Object.entries(positions)) {
+          if (!nodeVisible(s.visible, key)) continue;
           if (
             at.x < minX - pad ||
             at.x > maxX + pad ||
@@ -525,7 +552,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       const ctrl = controller.current;
       if (ctrl === null) return;
       const s = state.current;
-      const nextKey = node?.key ?? null;
+      const nextKey = node !== null && nodeVisible(s.visible, node.key) ? node.key : null;
       if (nextKey === s.hovered) return;
       s.hovered = nextKey;
 
@@ -551,6 +578,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       const ctrl = controller.current;
       if (ctrl === null) return;
       const s = state.current;
+      if (key !== null && !nodeVisible(s.visible, key)) return;
       // NOT assigned for the null case — the clear branch below HOLDS the
       // previous selection until the ring finishes easing out.
       if (key !== null) {
@@ -636,7 +664,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       s.active = new Set([key, ...hop]);
       s.activeEdges = incidentEdgeIds(opts.edges, key);
 
-      setSelection({ node, neighbours });
+      setSelection({ node, neighbours: neighbours.filter((n) => nodeVisible(s.visible, n.key)) });
 
       // Interaction 3 — focus/select on `// STD` (D7: NOT spring; SPRING is an
       // easing and the spec assigns focus STD/STD)...
@@ -715,7 +743,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       // per-hop chain can be caught by a wall-clock test — a composition built
       // here would be invisible to any test that drives the unit.
       const handle = startTrace(
-        opts.edges,
+        opts.edges.filter((edge) => edgeVisible(s.visible, edge)),
         key,
         {
           onTraced: (ids) => {
@@ -743,6 +771,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     if (el === null) return;
 
     const s = state.current;
+    setSettled(false);
     s.coarsePointer = window.matchMedia("(pointer: coarse)").matches;
     invalidatePalette();
     s.palette = currentPalette();
@@ -782,10 +811,12 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
          * The instance is the right lifetime for the entry point, so the entry
          * point lives on the instance's callback.
          */
-        const entry = [...opts.nodes].sort(
+        const entry = opts.nodes.filter((node) => nodeVisible(s.visible, node.key)).sort(
           (a, b) => b.degree - a.degree || (a.key < b.key ? -1 : 1),
         )[0];
-        if (entry !== undefined) applySelection(entry.key);
+        // This-chat entry is framed as a group by the explicit fit effect.
+        // Whole-brain retains its original highest-degree entry point.
+        if (s.visible === null && entry !== undefined) applySelection(entry.key);
       },
       factory: forceGraphFactory,
     });
@@ -832,7 +863,7 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
       if (box === undefined) return;
       ctrl.resize(box.width, box.height);
       setAggregating(
-        shouldAggregate({ width: box.width, height: box.height }, opts.nodes.length, s.floorPx),
+        shouldAggregate({ width: box.width, height: box.height }, s.visibleCount, s.floorPx),
       );
     });
     ro.observe(el);
@@ -872,6 +903,8 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
        * belong to whoever owns those files.
        */
       zoom: (): number => ctrl.camera.scale(),
+      // Read-only coordinates support the activity stillness checkpoint.
+      positions: () => ctrl.positions(),
     };
     (window as unknown as Record<string, unknown>).__igrisGraphStillness =
       diagnostic;
@@ -892,12 +925,59 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [opts.nodes, opts.edges]);
 
+  // Visibility is independent of topology: no setData, reheat or camera call.
+  // Clear hidden selections immediately, including their stale hover targets.
+  const lensSignature = visibilitySignature(opts.visibleKeys ?? null);
+  useEffect(() => {
+    const s = state.current;
+    s.visible = opts.visibleKeys ?? null;
+    s.visibleCount = visibleCount;
+    if (s.hovered !== null && !nodeVisible(s.visible, s.hovered)) s.hovered = null;
+    if (s.selected !== null && !nodeVisible(s.visible, s.selected)) {
+      s.selected = null; s.active.clear(); s.activeEdges.clear(); s.traced.clear(); s.ring = 0;
+      setSelection(null);
+    } else if (s.selected !== null) {
+      const node = nodesByKey.get(s.selected);
+      const { neighbours } = neighboursFrom(nodesByKey, adjacency, s.selected);
+      if (node !== undefined) setSelection({ node, neighbours: neighbours.filter((n) => nodeVisible(s.visible, n.key)) });
+    }
+    const el = containerEl.current;
+    if (el !== null) setAggregating(shouldAggregate({ width: el.clientWidth, height: el.clientHeight }, visibleCount, s.floorPx));
+    const ctrl = controller.current;
+    if (ctrl !== null) return repaintEvidence(ctrl, durationMs("instant"));
+    return undefined;
+    // Equivalent polling responses must not wake or reset the graph.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lensSignature, opts.nodes, opts.edges]);
+
+  const fittedEntry = useRef<AttentionFitEntry>({ controller: null, key: null });
+  useEffect(() => {
+    const ctrl = controller.current;
+    if (ctrl === null || !fitAttentionEntry(ctrl, opts.fitKey ?? null, settled, fittedEntry.current)) return;
+    return repaintEvidence(ctrl, durationMs("instant"));
+  }, [opts.fitKey, settled, opts.nodes, opts.edges]);
+
+  // Activity changes repaint existing positions. No setData, force restart,
+  // selection, entrance, or camera calls belong on this path. A timestamp-only
+  // poll produces the same signature and does not wake the canvas at all.
+  const attentionSignature = evidenceSignature(opts.attention ?? new Map());
+  useEffect(() => {
+    state.current.attention = opts.attention ?? new Map();
+    const ctrl = controller.current;
+    if (ctrl === null) return;
+    return repaintEvidence(ctrl, durationMs("instant"));
+    // The paint-relevant signature, not response object identity, is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [attentionSignature, opts.nodes, opts.edges]);
+
   // ---- tier + floor, recomputed when the result set changes ---------------
   useEffect(() => {
     const s = state.current;
     s.policy = policy;
     s.floorPx = scalePx(policy.floorToken ?? "--s-3", 8);
     s.nodeSizePx = policy.tier === "A" ? scalePx("--s-3", 24) : s.floorPx;
+    const el = containerEl.current;
+    if (el !== null) setAggregating(shouldAggregate({ width: el.clientWidth, height: el.clientHeight }, s.visibleCount, s.floorPx));
   }, [policy]);
 
   // ---- interaction 4 — filter-to-muted ------------------------------------
@@ -930,11 +1010,16 @@ export function useGraph(opts: UseGraphOptions): UseGraph {
     select: (key: string) => applySelection(key),
     /** Interaction 5 — trace the lineage out of a node. Makes `hot` reachable. */
     trace: traceFrom,
-    matchCount: matches === null ? null : matches.size,
+    matchCount: matches === null ? null : [...matches].filter((key) => nodeVisible(opts.visibleKeys ?? null, key)).length,
     settled,
     aggregating,
     tier: policy.tier,
     positions: () => controller.current?.positions() ?? {},
-    refit: () => controller.current?.zoomToFit(),
+    refit: () => {
+      const ctrl = controller.current;
+      if (ctrl === null) return;
+      ctrl.zoomToFit();
+      repaintEvidence(ctrl, durationMs("instant"));
+    },
   };
 }

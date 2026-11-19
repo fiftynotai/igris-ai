@@ -9,12 +9,13 @@ Igris ships local git hooks that catch drift between the brain stewardship doc (
 Two hook types:
 
 - A `pre-commit` dispatcher (`core/git-hooks/pre-commit`) that conditionally invokes its validators based on which files are in the staging area, and prints one **layers line** on every run (below).
-- A `commit-msg` hook (`core/git-hooks/commit-msg`) carrying three independent checks. This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change).
+- A `commit-msg` hook (`core/git-hooks/commit-msg`) carrying four independent checks. This is a distinct hook TYPE from the pre-commit validators — it was added per the §Extending recipe below (drop the script under `scripts/git-hooks/`, no installer change).
   1. **Summary length (TD-180).** Hard-fails any commit whose summary (first non-comment, non-blank line) exceeds 72 characters. The limit matches `core/os/standards.md` and `core/templates/commit_message.md`.
-  2. **Acceptance-criteria gate (TD-325).** Hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no `DEFERRED` reason or no follow-up brief. It reads `brief_files.content` read-only from the brain and delegates the verdict to `core/scripts/brief_ac_check.sh`, the one shared parser. **This hook, and not `pre-commit`, is where the gate belongs:** the closing commit is *defined* by that footer, so the check needs no phase heuristic and a WIP commit is untouched; and `pre-commit`'s phase-guard block is wrapped in `IGRIS_BYPASS_PHASE_GUARD != 1`, a flag `/hunt` sets on the exact commit that must be gated. Fail-open at every tier (no brain DB, no `sqlite3`, no stored content, no parser → silent exit 0). Bypass this check only with `IGRIS_BYPASS_AC_GATE=1`.
+  1b. **AI-signature gate (TD-470).** Hard-fails ANY commit (closing or not) whose message carries, at column 0 and case-insensitive, a `Co-authored-by:` line in the last paragraph, a `Co-authored-by: … <user@host>` line anywhere, an emoji-led `Generated with ` line, or a line that is entirely `Generated with [name](url)`: `core/os/standards.md` "No AI signatures". Every co-author trailer is refused, a human pair's included. Matching runs after git's scissors cut and its col-0 `#` strip, so an indented or quoted signature in a body passes. It exits 1 immediately (before the closing-commit prelude, whose fail-open `exit 0`s would swallow a deferred verdict) and is silent on pass. Bypass this check only with `IGRIS_BYPASS_SIGNATURE_GATE=1`; the AC/event bypasses never silence it, nor it them (`test/commit_signature_gate.test.bash` SB1-SB5). Shown red-first on a real signed igris-ai commit — see `test/fixtures/signature-gate/README.md` and `core/enforcement/no-ai-signatures.md`.
+  2. **Acceptance-criteria gate (TD-325).** Hard-fails a CLOSING commit — one carrying a `closes #<BRIEF_ID>` footer (or `fixes #`; the id may carry one lowercase letter for a sub-brief, `FR-003e`, gated as itself and never as `FR-003`; a comma-separated list closes several — TD-468) — when that brief still has an unticked acceptance criterion, or a `- [~]` deferral with no `DEFERRED` reason or no follow-up brief. It reads `brief_files.content` read-only from the brain and delegates the verdict to `core/scripts/brief_ac_check.sh`, the one shared parser. **This hook, and not `pre-commit`, is where the gate belongs:** the closing commit is *defined* by that footer, so the check needs no phase heuristic and a WIP commit is untouched; and `pre-commit`'s phase-guard block is wrapped in `IGRIS_BYPASS_PHASE_GUARD != 1`, a one-shot flag a closing commit may carry, which would skip a check placed there. Fail-open at every tier (no brain DB, no `sqlite3`, no stored content, no parser → silent exit 0). Bypass this check only with `IGRIS_BYPASS_AC_GATE=1`.
   3. **Agent-event coverage gate (FR-267).** On the same closing footer, hard-fails when a role the brief's Agent Log names has no recorded agent event — no `agent_events` row with `event_type` start/stop/error for that brief (and that project, NULL-project legacy rows counting). The roles come from `core/scripts/brief_agent_log_roles.sh`, the one Agent-Log parser; a role with a start but no stop/error is a `WARN unpaired` line, not a refusal. Same fail-open tiers as check 2, plus: no `agent_events` table (a brain older than FR-267) → skip; a bullet-list Agent Log (the v4 template) parses to no roles → nothing demanded. Bypass this check only with `IGRIS_BYPASS_EVENT_GATE=1`. Checks 2 and 3 share the footer parse and the brain access but each has its own section skip, so a bypass of one never silences the other (`test/agent_event_gate.test.bash` G6 pins both directions). Shown red-first on a real omission — see `test/fixtures/event-gate/README.md`.
 
-  Bypass all three with `git commit --no-verify`.
+  Bypass all four with `git commit --no-verify`.
 
 The `pre-commit` dispatcher's validators:
 
@@ -73,7 +74,44 @@ Three fixed keys in that order; each value is one token plus at most one parenth
 | `secret-scan` | `active (repo config)` · `active (gitleaks defaults)` · `DISARMED (gitleaks not installed)` | `(repo config)` = `--config .gitleaks.toml`; `(gitleaks defaults)` = the built-in ruleset (consumer repos); `DISARMED` = the box above is printed and the commit is NOT scanned. |
 | `repo-validators` | `active (igris-ai)` · `n/a (not the igris-ai checkout)` | The 27 igris-ai-internal validator sites are wrapped in ONE inert region keyed on `IGRIS_REPO_INTERNAL`, which is 1 only when the repo carries **all** of `harness-manifest.json`, `brain-mcp-server/` and `scripts/git-hooks/`. A consumer never has all three (decision AC-4: whole script, one inert region, stated — not a projected subset that would duplicate the phase guard and the scan into a second file to drift). |
 
-`commit-msg` prints NO sibling status line: an optional `[commit-msg] gates:` echo was tried in FR-243 and dropped because ten pinned "exit 0, silent" cases — five in `test/brief_ac_gate.test.bash` (F1–F5) and five in `test/agent_event_gate.test.bash` (G2, G7a–G7d), counted 2026-09-07 with `grep -c 'exit 0, silent'` — pin a passing closing commit: nine of them assert an EMPTY output and (F5) asserts only exit 0 (its sandboxed-`sqlite3` probe hand-rolls the invocation), so any unconditional echo would red the nine. Its §1 length check is pure bash and cannot degrade; its fail-open exits are silent by design — the `pre-commit` layers line is the one unconditional per-run signal.
+`commit-msg` prints NO sibling status line: an optional `[commit-msg] gates:` echo was tried in FR-243 and dropped because ten pinned "exit 0, silent" cases — five in `test/brief_ac_gate.test.bash` (F1–F5) and five in `test/agent_event_gate.test.bash` (G2, G7a–G7d), counted 2026-09-07 with `grep -c 'exit 0, silent'` — pin a passing closing commit: nine of them assert an EMPTY output and (F5) asserts only exit 0 (its sandboxed-`sqlite3` probe hand-rolls the invocation), so any unconditional echo would red the nine. The TD-470 signature section (§1b) is silent on pass for the same reason — `test/commit_signature_gate.test.bash` adds ten tests (16 messages) that assert an EMPTY output on pass (counted 2026-09-24). Its §1 length check is pure bash and cannot degrade; its fail-open exits are silent by design — the `pre-commit` layers line is the one unconditional per-run signal.
+
+## The phase guard (PI-004, TD-494)
+
+`pre-commit` refuses a commit while the committing session's own brief is in BUILDING or TESTING. It reads the brain read-only, and without `sqlite3` or the brain DB it fails open (the layers line says so). Bypass one commit with `IGRIS_BYPASS_PHASE_GUARD=1`.
+
+**Project (TD-359).** Both hooks resolve the project slug with `igris_resolve_project` from `core/hooks/shared/_gate.sh`, the same function the shared harness hooks use. `igris detect` and the CLI defaults use its TypeScript twin, `cli/src/lib/project-identity.ts`, and `test/project_slug_parity.test.bash` pins the two to one answer per directory. The precedence is:
+
+1. A `.igris-project` marker file holding the slug.
+2. The registry row of the deepest registered ancestor. A linked worktree is looked up at the matching path in its main checkout.
+3. The main checkout's directory name.
+4. The directory's own name, as the last resort.
+
+A worktree named `wt-td359` of the `igris-ai` checkout therefore gates as `igris-ai`, and `commit-msg` runs its AC and event gates under that slug too.
+
+**Session.** Among this project's active instances on this machine (the BR-100 machine filter), the guard identifies the committing session in this order:
+
+| Tier | The committing session is | If the tier fails |
+|---|---|---|
+| S1 `IGRIS_INSTANCE_ID` | The active instance with that id. `/hunt` sets it as a one-shot prefix on its close commit. Never `export` it. | An unparseable value falls through to S2. A well-formed id that names no such instance leaves the commit unidentified and does **not** fall through: the guard never swaps in a guessed session for one the caller named. |
+| S2 owner process | The instance whose `owner_pid` is an ancestor of the hook (up to 16 hops) and whose `owner_started_at` equals that process's `ps -o lstart=` start time. The start-time match rules out a reused pid. The nearest ancestor wins. | Falls through to S3. Skipped when the instances table has no owner columns. |
+| S3 worktree root | The one live instance whose `project_path` is the commit's worktree root (the realpath of `git rev-parse --show-toplevel`, or its `~/` form). Live means an unexpired lease or a verified owner process. `igris session register` stores that root. | No live instance there, or more than one: unidentified. |
+
+No tier falls back to the most recently active instance, and no tier reads a session file.
+
+**Unidentified: fail open with a notice (decision D1).** The commit goes through. When the project has at least one active instance on this machine, the hook prints exactly one line naming the reason:
+
+```
+[pre-commit] phase-guard: committing session not identified (<reason>) — commit not gated
+```
+
+A project with no active instance, such as a plain-git consumer, stays silent. In a shared checkout, a session is identified only by S1, by S2 (Claude sessions), or by being the only live instance there. A per-session worktree makes S3 exact for every harness.
+
+**No brief.** The identified instance's `current_brief` is trimmed and lower-cased. `''`, NULL and `none` all mean no brief, and the commit is allowed. `/hunt` writes `''` at COMPLETE and `/rest` writes it at session end.
+
+**Refusal.** The message keeps the `PI-004 phase guard: refusing commit` line. It then names the session and how it was identified, the project slug and its source, the brief and its phase, and the bypass. It names no workflow role, so it reads the same under any mode.
+
+**`_gate.sh` is a hook dependency.** Each git hook follows its own symlink chain (at most 16 hops) and sources `../hooks/shared/_gate.sh` next to the real hook directory: the repo `core/` on the igris-ai checkout, or the runtime mirror `~/.igris/core/` for a consumer's FR-243 symlink. Failing that, it sources `~/.igris/core/hooks/shared/_gate.sh`. When neither exists, the hook uses the worktree's directory name as the slug, which was the behaviour before TD-359. A core with the new hooks and an old `_gate.sh` therefore degrades instead of erroring. `igris refresh` lands the hooks and `_gate.sh` together.
 
 ## Consumer projects (FR-243)
 
@@ -87,6 +125,8 @@ igris install /path/to/repo  # step 7b symlinks .git/hooks/{pre-commit,commit-ms
 ```
 
 `igris install` is idempotent (re-run it on an already-registered project); `--no-git-hooks` opts out. Rules the installer keeps: a pre-existing non-symlink hook is backed up as `<hook>.pre-igris.bak.<epoch>` before it is replaced; with `core.hooksPath` set (husky / lefthook) it REFUSES — a hook in `.git/hooks/` would never run — and tells you to add the two files to that pipeline; with `.git` a file (worktree / submodule) it refuses (install in the main checkout); with the mirror absent it refuses with "run `igris refresh`". A symlink means a later `igris refresh` updates every registered project at once.
+
+The installed hooks also need the mirror's `hooks/shared/_gate.sh` (see "The phase guard" above), which `igris refresh` lands in the same pass. A linked worktree of an installed clone runs the main checkout's hooks, because git reads hooks from the shared git directory, so it needs no install of its own; since TD-359 it resolves to the main checkout's project. One exception was measured and predates this change: with a relative `core.hooksPath`, git skips the hooks in linked worktrees without saying so.
 
 `igris doctor` reports two classes: `git-hooks-missing` (per project — hooks absent, foreign, dangling, **not executable** (git ignores such a hook with one `hint:` line and commits anyway), or bypassed by `core.hooksPath`; `--fix` runs the same installer, `chmod +x` only on a file under `~/.igris/`) and `secret-scan-disarmed` (brain-level, informational — an installed pre-commit exists and `gitleaks` is not on PATH; never auto-fixed). A project registered by `igris register-project` (row only) shows `git-hooks-missing` until `igris doctor --fix` or `igris install`.
 

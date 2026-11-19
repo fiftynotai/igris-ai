@@ -9,9 +9,20 @@
  *
  * The lifecycle identity:
  *   - harness        — inferred from the launching CLI's env markers.
- *   - project_slug   — basename(cwd), matching the Mount verbs' default.
+ *   - project_slug   — the project the cwd resolves to (TD-359:
+ *                      `project-identity.ts#resolveProjectIdentity` — marker,
+ *                      registry walk on the worktree-translated path,
+ *                      basename(main checkout), then basename(cwd) as the last
+ *                      resort), the SAME function every Mount verb's
+ *                      `--project` default calls, so a git worktree reports
+ *                      its main checkout's project instead of its own
+ *                      directory name.
+ *   - project_source — which of those rungs answered (additive, TD-359).
  *   - project_path   — process cwd, the path Mount verbs register/assess.
  *   - brain_root     — resolved Igris brain root (`~/.igris` or override).
+ *
+ * The resolver keeps this pass degraded-safe: a missing or broken `git` and an
+ * absent or corrupt brain fall through to the next rung, never to an error.
  *
  * The capability signals:
  *   - brain_db       — `existsSync(brainDbPath())`; the local channel is live.
@@ -31,10 +42,11 @@
  */
 
 import { existsSync } from "node:fs";
-import { basename, delimiter, join } from "node:path";
+import { delimiter, join } from "node:path";
 import { brainDbPath, brainDir } from "./paths.js";
 import { readRemoteBrainConfig } from "./mcp-client.js";
-import type { DetectResult } from "../types.js";
+import { resolveProjectIdentity, type ProjectIdentity } from "./project-identity.js";
+import type { DetectResult, ProjectIdentitySource } from "../types.js";
 
 /**
  * The harness-marker table: ordered [env-var markers, harness] pairs. FIRST
@@ -146,6 +158,16 @@ function commandOnPath(bin: string): boolean {
 
 /**
  * Run the L0 detection. Side-effect-free; safe to call once per verb.
+ *
+ * `project_slug` / `project_source` are LAZY (TD-359): the project resolver
+ * spawns up to three `git rev-parse` calls, and of the verbs that call this
+ * pass only `igris detect` itself reads the identity — the rest branch on
+ * `brain_db` / `remote_brain` / `harness`. So the two keys are enumerable
+ * getters over ONE memoised resolution of the cwd captured here: a verb that
+ * never reads them spawns no git, and `JSON.stringify` (the `igris detect`
+ * digest) still emits both, in this key order. Measured 2026-11-17 at load
+ * ~21: ~65 ms per `git rev-parse`, which an eager resolution charged to every
+ * verb's detect call.
  */
 export function detectCapabilities(): DetectResult {
   const harness = inferHarness();
@@ -153,6 +175,9 @@ export function detectCapabilities(): DetectResult {
   const sqlite3 = commandOnPath("sqlite3");
   const remoteBrain = readRemoteBrainConfig() !== null;
   const projectPath = process.cwd();
+  let identity: ProjectIdentity | null = null;
+  const resolveIdentity = (): ProjectIdentity =>
+    (identity ??= resolveProjectIdentity(projectPath));
 
   // Mode precedence: no local DB dominates (a fresh start with no resume),
   // then no remote (local-only run), else full.
@@ -167,7 +192,12 @@ export function detectCapabilities(): DetectResult {
 
   return {
     harness,
-    project_slug: basename(projectPath),
+    get project_slug(): string {
+      return resolveIdentity().slug;
+    },
+    get project_source(): ProjectIdentitySource {
+      return resolveIdentity().source;
+    },
     project_path: projectPath,
     brain_root: brainDir(),
     brain_db: brainDb,

@@ -32,6 +32,7 @@ import { errMsg, errorResult, successResult } from '../../../helpers.js';
 import type { Suggestion } from '../types.js';
 import {
   applyAddEdge,
+  applyAddProjectRelation,
   applyClusterMeta,
   applyCreateBrief,
   applyDismissExisting,
@@ -63,6 +64,8 @@ export const KNOWN_ACTION_KINDS = [
   'cluster_meta',
   // FR-116 M5 emergence kind (INFORMATIONAL — proposal-only, no vocab mutation):
   'propose_edge_type',
+  // FR-273 D6: a derived project relation (manifest derivation) → the edge.
+  'add_project_relation',
 ] as const;
 
 export type KnownActionKind = (typeof KNOWN_ACTION_KINDS)[number];
@@ -129,6 +132,8 @@ function dispatchKind(
         // of an emergent edge-type proposal. Does NOT mutate VALID_EDGE_TYPES
         // (proposal-only, Decision #3b); no db effect → no undo entry.
         return applyProposeEdgeType(params);
+      case 'add_project_relation':
+        return applyAddProjectRelation(db, params);
       default:
         // GRACEFUL FALLBACK: an unknown kind is flagged for review (the safe
         // sink), not thrown. The operator still sees the suggestion; we record

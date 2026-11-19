@@ -101,7 +101,7 @@ Pass A - tool -> required map. Parse `engine/components/*/index.ts`. Bound each
   declares a NESTED `required: ['to_type','to_id','edge_type']` (the
   `edges[]` item schema) BEFORE its real one, so a first-match parser builds a
   wrong map and every conclusion downstream is noise. Tools with `required: []`
-  are dropped. COUNT SENTINEL: 74 (see below).
+  are dropped. COUNT SENTINEL: 82 (see below).
 
 Pass B - site scan. Every `.md` under `core/skills/`, recursive — not only
   `SKILL.md`. That restriction is precisely how `hunt/workflow-template.md`
@@ -147,15 +147,28 @@ Pass D - ledger subtraction (above).
 
 COUNT SENTINEL
 --------------
-The tool map must have exactly 74 entries on the real tree:
-    79 `required: [` literals
+The tool map must have exactly 82 entries on the real tree:
+    88 `required: [` literals
    -  4 empty `required: []`  (memory x2, errors, briefs)
    -  1 nested item schema    (memory `edges[]`)
-   = 74
+   -  1 shared sub-schema     (attention `selection`, outside any tool block)
+   = 82
+Re-measured 2026-10-19 at FR-276: the attention component added 4 literals,
+3 of them tools (`igris_attention_session`, `_event`, `_call`) and 1 the
+module-level `selection` sub-schema, so 84 -> 88 and 79 -> 82.
+Re-measured 2026-09-29 at FR-273 round B: `igris_project_relations_derive`
+(`['slug']`), 83 -> 84 and 78 -> 79.
+Re-measured 2026-09-29 at FR-273: the projects component gained
+`igris_project_relations` (`['slug']`), `igris_project_relate`
+(`['action','from','kind','to']`) and `igris_project_relation_kinds`
+(`['action']`), so 80 -> 83 and 75 -> 78.
+Re-measured 2026-09-09 at TD-460: the context component gained
+`igris_context_sync` (`required: ['project']`), so 79 -> 80 and 74 -> 75.
 Re-measured 2026-08-26 at FR-267: the metrics component (and its single
 `igris_metrics_record` literal) left the tree, so 80 -> 79 and 75 -> 74.
-This is in-family with `gateway-tool-count.test.ts` pinning 108 registered
-tools. When a tool is legitimately added the sentinel goes red on purpose: bump
+This is in-family with `gateway-tool-count.test.ts` pinning 116 registered
+tools on the local engine (113 on the HTTP engine, which omits attention).
+When a tool is legitimately added the sentinel goes red on purpose: bump
 the constant AND re-read the ledger, because a new tool means new call sites.
 The sentinel is skipped when the components root is overridden for fixtures.
 
@@ -164,7 +177,7 @@ Discovers:
     `brain-mcp-server/src/engine/components/*/index.ts`.
   - SKILL_ARGS_SCAN_ROOT      env override -> alternate skills root (fixtures).
   - SKILL_ARGS_COMPONENTS_ROOT env override -> alternate components root; also
-    disables the 74 sentinel and the ledger (a fixture map has neither).
+    disables the 75 sentinel and the ledger (a fixture map has neither).
 
 Usage:
     python3 scripts/validate_skill_required_args.py
@@ -204,7 +217,11 @@ DEFAULT_COMPONENTS_ROOT = (
 # Count sentinel — see COUNT SENTINEL in the module docstring for the
 # arithmetic. Bumping this is a conscious act that must be paired with a ledger
 # review, because a new tool means new (unclassified) call sites.
-EXPECTED_TOOL_COUNT = 74  # FR-267 (2026-08-26): metrics component retired, 75 -> 74
+EXPECTED_TOOL_COUNT = 82  # FR-276 (2026-10-19): attention session/event/call, 79 -> 82
+#                          FR-273 round B (2026-09-29): +igris_project_relations_derive (required: ['slug']), 78 -> 79
+#                          FR-273 (2026-09-29): +3 project-relation tools, each with a non-empty required, 75 -> 78
+#                          TD-460 (2026-09-09): +igris_context_sync (required: ['project']), 74 -> 75
+#                          FR-267 (2026-08-26): metrics component retired, 75 -> 74
 
 
 # --- The disposition ledger (explicit constant — L-448) ----------------------
@@ -290,6 +307,19 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "prose", 1, "Same FR-195 note line as igris_brain_pull above."),
     ("core/skills/boot/SKILL.md", "igris_session_file_pull", ('project',)): (
         "prose", 1, "Same FR-195 note line as igris_brain_pull above."),
+    ("core/skills/boot/SKILL.md", "igris_context_sync", ('project',)): (
+        "prose", 1,
+        "The §4.1 ORDERING-CONTRACT sentence, which states where the call must "
+        "sit relative to boot-sync and gather. It is a constraint on the call "
+        "site in §4 Mount, not a second call: that site is a fenced "
+        "`igris_context_sync { project: \"<detect.project_slug>\" }` block and "
+        "names the argument."),
+    ("core/skills/ground/SKILL.md", "igris_context_sync", ('project',)): (
+        "prose", 1,
+        "The `## Output` line describing what the skill REPORTS ('one line "
+        "naming the igris_context_sync result'). No imperative — the call is "
+        "Step 4, a fenced `igris_context_sync { project: \"<slug>\" }` block "
+        "that names the argument."),
     ("core/skills/boot/SKILL.md", "igris_instance_remove", ('instance_id',)): (
         "prose", 2,
         "Two lines in the stale-instance DISPLAY section: one narrates that "
@@ -407,19 +437,12 @@ LEDGER: dict[tuple[str, str, tuple[str, ...]], tuple[str, int, str]] = {
         "not credit an unmarked word as a named argument, by design."),
     ("core/skills/rest/SKILL.md", "igris_sync_queue_drain",
      ('api_key', 'remote_url')): (
-        "prose", 4,
-        "Four sentences ABOUT the tool, none of them the call: what the CLI "
-        "drains for you (and that it reads both values from config itself), a "
-        "negative instruction, the CONDITION under which to call it directly, "
-        "and the BR-080 rule statement itself ('requires BOTH arguments'). "
-        "The call spec is the sub-list in the same section, which names "
-        "remote_url and api_key and is NOT flagged."),
-    ("core/skills/rest/SKILL.md", "igris_brain_push",
-     ('api_key', 'remote_url')): (
-        "prose", 1,
-        "A mandate sentence ('You MUST call ... when remote brain is "
-        "configured'). The call spec is the sub-list four lines below, which "
-        "names remote_url and api_key and is NOT flagged."),
+        "prose", 2,
+        "Two sentences ABOUT the tool, neither of them a call: what `igris "
+        "sync data` asks the remote to drain (reading both values from config "
+        "itself), and §2.6.5's negative instruction never to call it directly. "
+        "Since TD-489 no /rest step calls it — §2.6.5 runs the config-reading "
+        "`igris sync drain`, so no site names either key as an argument."),
 
     # --- reuse ---------------------------------------------------------------
     ("core/skills/reuse/SKILL.md", "igris_catalog_get", ('id',)): (
@@ -832,7 +855,7 @@ def strip_path_tokens(text: str) -> str:
     e.g. a URL query `.../sync?project=other`, which the form rule alone would
     credit as a named `project`.
 
-    Keeping the prefix is the symmetric correction. `boot/SKILL.md:629` writes
+    Keeping the prefix is the symmetric correction. `boot/SKILL.md` §7 writes
     `filename=instances/<instance_id>.md` — a properly NAMED argument whose
     VALUE happens to be a path. A blind whole-token strip removed `filename=`
     along with the path and reported the site as deficient, which is the same
@@ -928,7 +951,7 @@ def main(argv: list[str]) -> int:
     components_root = pathlib.Path(components_override or str(DEFAULT_COMPONENTS_ROOT))
     fixture_map = components_override is not None
     if fixture_map:
-        # A fixture map has neither the real 74 tools nor the real ledger.
+        # A fixture map has neither the real 75 tools nor the real ledger.
         use_ledger = False
 
     if not components_root.is_dir():
@@ -957,11 +980,26 @@ def main(argv: list[str]) -> int:
         return 0
 
     if not fixture_map and len(tool_map) != EXPECTED_TOOL_COUNT:
+        # The arithmetic is DERIVED from EXPECTED_TOOL_COUNT rather than
+        # restated, so this message cannot again disagree with the constant it
+        # explains. It did: TD-460 bumped the constant and the docstring to 75
+        # and left this string at "expected 75 ... 79 - 4 - 1 = 74", which is
+        # self-refuting at the one moment a human reads it. The SUBTRAHENDS
+        # stay literal because they are the structural facts a reader checks
+        # with a grep — the only `required: [` literals that do not become a map
+        # entry are the 4 empty `required: []`, the 1 nested item schema and
+        # the 1 shared sub-schema outside any tool block (attention `selection`).
+        empty_literals, nested_schemas, shared_schemas = 4, 1, 1
+        literal_count = (EXPECTED_TOOL_COUNT + empty_literals + nested_schemas
+                         + shared_schemas)
         print(
             f"Error: tool -> required map has {len(tool_map)} entries, "
             f"expected {EXPECTED_TOOL_COUNT}.\n"
-            "  Arithmetic: 79 `required: [` literals - 4 empty `required: []` "
-            "- 1 nested item schema (memory `edges[]`) = 74.\n"
+            f"  Arithmetic: {literal_count} `required: [` literals "
+            f"- {empty_literals} empty `required: []` "
+            f"- {nested_schemas} nested item schema (memory `edges[]`) "
+            f"- {shared_schemas} shared sub-schema (attention `selection`) "
+            f"= {EXPECTED_TOOL_COUNT}.\n"
             "  A different number means either the block-bounding / "
             "shallowest-indent rule broke, or a tool was legitimately added.\n"
             "  If a tool was added: bump EXPECTED_TOOL_COUNT *and* re-read the "

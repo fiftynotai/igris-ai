@@ -1,4 +1,5 @@
 #!/usr/bin/env bats
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # FR-238 — `igris dashboard` lifecycle + the PACK-EXTRACT PACKAGING SMOKE.
 #
 # The pack-extract test (T8) is the packaging AC's only automated proof. R1 says
@@ -200,7 +201,7 @@ wait_for_url() {
   # so there is no project axis to scope it to — which is why it is a path rather
   # than a parameter on anything. It sorts between `/api/briefs/search` and
   # `/api/context-doc`.
-  local expected="/ /api/brief /api/briefs /api/briefs/search /api/cognition /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/search /api/suggestions /api/summary POST /api/triage"
+  local expected="/ /api/attention/inventory /api/attention/session /api/attention/sessions /api/brief /api/briefs /api/briefs/search /api/cognition /api/context-doc /api/context-docs /api/goal /api/goals /api/graph /api/graph/stats /api/health /api/learning /api/learnings /api/learnings/search /api/projects /api/search /api/suggestions /api/summary POST /api/triage"
   local actual
   actual="$(echo "$output" | node -e "
     let s=''; process.stdin.on('data',c=>s+=c).on('end',()=>{
@@ -215,8 +216,8 @@ wait_for_url() {
     return 1
   fi
 
-  # Every READ path 200s on a brain that does not exist yet (the FR-238 degraded
-  # contract), and the ONE WRITE path 400s.
+  # Attention session requires explicit identity (400 without it); the other
+  # READ paths degrade with 200 on an absent brain. The WRITE probe returns 400.
   #
   # FR-241 — THE INVERTED EXPECTATION IS ASSERTED, NOT SMUGGLED. `POST
   # /api/triage` is probed with `{"action":"__invalid__"}`, so a **400** is the
@@ -231,13 +232,13 @@ wait_for_url() {
       const d = JSON.parse(s);
       const reads = d.checks.filter(c => !c.path.startsWith('POST '));
       const writes = d.checks.filter(c => c.path.startsWith('POST '));
-      const badReads = reads.filter(c => c.status !== 200);
+      const badReads = reads.filter(c => c.status !== (c.path === '/api/attention/session' ? 400 : 200));
       if (badReads.length > 0) { console.error('non-200 read:', JSON.stringify(badReads)); process.exit(1); }
       if (writes.length !== 1) { console.error('expected exactly 1 write probe, got ' + writes.length); process.exit(1); }
       if (writes[0].path !== 'POST /api/triage') { console.error('unexpected write probe: ' + writes[0].path); process.exit(1); }
       if (writes[0].status !== 400) { console.error('write probe must 400 on an invalid action, got ' + writes[0].status); process.exit(1); }
       if (writes[0].ok !== true) { console.error('write probe ok flag must be true on a 400'); process.exit(1); }
-      console.log(reads.length + ' read paths all 200, ' + writes.length + ' write path 400');
+      console.log(reads.length + ' read paths verified, ' + writes.length + ' write path 400');
     });
   " <<< "$output"
   [ "$status" -eq 0 ]
@@ -246,7 +247,7 @@ wait_for_url() {
   # the digest's OWN summary line, computed from `reads.length` above — so it is
   # a SECOND place the endpoint count is spelled out, and the exact-set assertion
   # earlier in this test does not cover it.
-  echo "$output" | grep '19 read paths all 200, 1 write path 400' >/dev/null
+  echo "$output" | grep '22 read paths verified, 1 write path 400' >/dev/null
 }
 
 @test "dashboard --smoke releases the lock on exit" {

@@ -368,7 +368,7 @@ export function createSubconsciousComponent(): BrainComponent {
         {
           name: 'igris_suggestion_apply_action',
           description:
-            "OPERATOR-INVOKED: apply the suggested_action of a reviewed suggestion (one-click apply). NEVER auto-fires — creating a suggestion does not execute its action. Validates the target resolves, dispatches the action kind (tick_ac / dismiss_existing / create_brief / flag_for_review / add_edge; an unknown kind falls back to flag_for_review), and marks the suggestion 'acted' on success / leaves it 'pending' on failure. create_brief DRAFTS a brief for approval — it does NOT create one (the operator creates it via /register).",
+            "OPERATOR-INVOKED: apply the suggested_action of a reviewed suggestion (one-click apply). NEVER auto-fires — creating a suggestion does not execute its action. Validates the target resolves, dispatches the action kind (tick_ac / dismiss_existing / create_brief / flag_for_review / add_edge / add_project_relation — a derived project relation, written with provenance derived; an unknown kind falls back to flag_for_review), and marks the suggestion 'acted' on success / leaves it 'pending' on failure. create_brief DRAFTS a brief for approval — it does NOT create one (the operator creates it via /register).",
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,

@@ -552,16 +552,16 @@ describe("T8 — our code owns no animation loop", () => {
     expect(found, `setInterval sites:\n${found.join("\n")}`).toEqual([]);
   });
 
-  it("every setTimeout in the graph source is one of the five known ones", () => {
+  it("every setTimeout in the graph source is one of the six known ones", () => {
     /**
      * SCOPE, stated because the previous version of this guard silently had a
      * narrower one: `instance.test.ts` pins the two timers in `instance.ts`
      * (the deferred halt and the pointer-idle debounce) and nothing pinned the
      * two in `useGraph.ts` at all.
      *
-     * All five are one-shots that END motion, bound a repaint window, or pace
+     * All six are one-shots that END motion, bound a repaint window, or pace
      * the stillness probe's sampler. None repeats. The count is pinned across
-     * the WHOLE graph source so a sixth cannot arrive unexamined — which is how
+     * the WHOLE graph source so a seventh cannot arrive unexamined — which is how
      * an ambient one eventually lands. (Widening this from "instance.ts only"
      * immediately surfaced the `stillness.ts` site, which nothing had pinned.)
      */
@@ -571,6 +571,8 @@ describe("T8 — our code owns no animation loop", () => {
       if (n > 0) sites.push({ file: rel(file), count: n });
     }
     expect(sites).toEqual([
+      // FR-276 — a finite evidence repaint; cleanup balances rapid updates/unmount.
+      { file: "dashboard/src/graph/attention.ts", count: 1 },
       // 1 — the deferred halt (bug 1). 2 — the pointer-idle re-pause (C1).
       { file: "dashboard/src/graph/instance.ts", count: 2 },
       // 3 — the AC #5 probe's sample interval. Injectable, and the unit tests
@@ -603,7 +605,7 @@ describe("T8 — no free duration anywhere on the canvas", () => {
     const found: string[] = [];
     for (const file of shippedSources()) {
       if (rel(file).endsWith("graph/motion.ts")) continue;
-      if (/from\s+["']gsap["']/.test(readFileSync(file, "utf-8"))) {
+      if (/from\s+["']gsap(?:\/[^"']+)?["']/.test(readFileSync(file, "utf-8"))) {
         found.push(rel(file));
       }
     }

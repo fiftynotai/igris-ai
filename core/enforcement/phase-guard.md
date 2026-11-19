@@ -3,12 +3,17 @@ obligation: "Phase discipline — no commit while the active brief is in BUILDIN
 mechanism: gate
 status: shipped
 lives_in: "scripts/git-hooks/pre-commit"
-summary: "Pre-commit phase guard discovers the active brief and blocks the commit when phase IN (BUILDING, TESTING); one-shot escape via IGRIS_BYPASS_PHASE_GUARD."
+summary: "Pre-commit phase guard identifies the committing session (IGRIS_INSTANCE_ID, then its owner process, then the one live instance at the worktree root) and blocks the commit when that session's own brief is in BUILDING or TESTING; an unidentified commit is allowed with a one-line notice; one-shot escape via IGRIS_BYPASS_PHASE_GUARD."
 ---
 
 # Phase guard (PI-004)
 
-The commit-time phase guard reads the active brief from the `instances` registry
-(per-instance session file → legacy fallback) and blocks `git commit` while the
-brief's phase is `BUILDING` or `TESTING` — the orchestrator advances to
-`COMMITTING` before committing. Fail-open escape: `IGRIS_BYPASS_PHASE_GUARD=1`.
+The commit-time phase guard identifies the committing session in the brain
+`instances` registry (this machine, this project) and blocks `git commit` while
+that session's own `current_brief` is in `BUILDING` or `TESTING` (TD-494). It
+tries `IGRIS_INSTANCE_ID`, then the instance whose owner process is an ancestor
+of the commit, then the one live instance registered at the commit's worktree
+root. It never picks the most recently active instance and never reads a
+session file, so one session's build phase no longer blocks another session's
+commit. An unidentified commit is allowed with a one-line notice; `''`, NULL
+and `none` mean no brief. Fail-open escape: `IGRIS_BYPASS_PHASE_GUARD=1`.

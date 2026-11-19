@@ -3,24 +3,42 @@
  *
  * Covers:
  *   - makeIsolatedHome anchors under the brain-owned scratch root (NEVER real HOME)
- *   - the gemini family gets an empty mcpServers config ({"mcpServers": {}})
+ *   - antigravity (the sole `.gemini/*`-owning extractor harness since TD-474)
+ *     gets an empty mcpServers config ({"mcpServers": {}})
  *   - NO Igris-global markers leak into the isolated home
  *   - assertUnderRoot REJECTS any write path escaping the scratch root
  *   - cleanup reaps the home
  *
+ * HOME is fenced to an EMPTY temp dir (asserted armed): since BR-108 the builder
+ * READS the operator's config files to write owned copies, so an unfenced run
+ * would read the real ~/.claude.json, ~/.codex and ~/.gemini.
+ *
  * @module engine/components/cognition/__tests__/isolation.test
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, lstatSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 import {
   makeIsolatedHome,
   assertUnderRoot,
   writeEmptyGeminiMcp,
   extractorScratchRoot,
+  FORBIDDEN_IGRIS_MARKERS,
 } from '../backend/isolation.js';
+import type { ExtractorHarness } from '../types.js';
+
+let fenceHome = '';
+beforeEach(() => {
+  fenceHome = mkdtempSync(join(tmpdir(), 'cog-iso-home-'));
+  vi.stubEnv('HOME', fenceHome);
+  expect(homedir()).toBe(fenceHome); // armed, not assumed
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  rmSync(fenceHome, { recursive: true, force: true });
+});
 
 describe('extractorScratchRoot', () => {
   it('defaults under ~/.igris/cache/llm-extractor and honours the env override', () => {
@@ -59,16 +77,7 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     b.cleanup();
   });
 
-  it('the gemini family gets an EMPTY mcpServers config (no brain reach)', () => {
-    const iso = makeIsolatedHome('gemini', env);
-    const mcpConfig = join(iso.home, '.gemini', 'config', 'mcp_config.json');
-    expect(existsSync(mcpConfig)).toBe(true);
-    const parsed = JSON.parse(readFileSync(mcpConfig, 'utf-8')) as { mcpServers: Record<string, unknown> };
-    expect(parsed.mcpServers).toEqual({}); // ZERO MCP servers — R-BRAIN-LEAK
-    iso.cleanup();
-  });
-
-  it('antigravity also gets the empty gemini mcpServers', () => {
+  it('antigravity gets an EMPTY mcpServers config (no brain reach)', () => {
     const iso = makeIsolatedHome('antigravity', env);
     const mcpConfig = join(iso.home, '.gemini', 'config', 'mcp_config.json');
     expect(existsSync(mcpConfig)).toBe(true);
@@ -76,11 +85,55 @@ describe('makeIsolatedHome — anchored under the brain-owned scratch root', () 
     iso.cleanup();
   });
 
-  it('does NOT contain Igris-global OS markers (clean isolation floor)', () => {
-    const iso = makeIsolatedHome('claude', env);
-    expect(existsSync(join(iso.home, '.claude', 'CLAUDE.md'))).toBe(false);
-    expect(existsSync(join(iso.home, '.codex', 'AGENTS.md'))).toBe(false);
-    expect(existsSync(join(iso.home, '.igris', 'core'))).toBe(false);
+  it.each(['claude', 'codex', 'antigravity', 'opencode'] as ExtractorHarness[])(
+    'the %s home contains none of FORBIDDEN_IGRIS_MARKERS (clean isolation floor)',
+    (h) => {
+      mkdirSync(join(fenceHome, '.gemini', 'agents'), { recursive: true }); // an operator marker to NOT forward
+      if (h === 'opencode') {
+        mkdirSync(join(fenceHome, '.local', 'share', 'opencode'), { recursive: true });
+        writeFileSync(
+          join(fenceHome, '.local', 'share', 'opencode', 'auth.json'),
+          JSON.stringify({ 'igris-fixture-oauth': { type: 'oauth' } }),
+        );
+      }
+      const iso = makeIsolatedHome(h, env);
+      const present = FORBIDDEN_IGRIS_MARKERS.filter((m) => {
+        if (m === '.gemini/config/mcp_config.json') return false; // the owned empty file, checked above
+        if (m === '.config/opencode/opencode.json') return false; // the owned enabled_providers allowlist (BR-110, checked below)
+        try {
+          lstatSync(join(iso.home, m));
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      expect(present).toEqual([]);
+      iso.cleanup();
+    },
+  );
+
+  it('opencode with NO oauth provider gets no .config/opencode/opencode.json at all (never an empty list)', () => {
+    // No auth.json seeded at all: oauthProviders() is empty — writeOwnedConfigs
+    // SKIPS the file rather than writing `{"enabled_providers":[],"permission":{...}}`.
+    // Unaffected by TD-476's permission block: the whole write is still gated on
+    // `providers.length > 0`, so an unresolvable harness still produces no file.
+    const iso = makeIsolatedHome('opencode', env);
+    expect(existsSync(join(iso.home, '.config', 'opencode', 'opencode.json'))).toBe(false);
+    iso.cleanup();
+  });
+
+  it('opencode gets an owned enabled_providers allowlist naming ONLY the oauth provider, plus a deny-all permission block (BR-110 / TD-476)', () => {
+    mkdirSync(join(fenceHome, '.local', 'share', 'opencode'), { recursive: true });
+    writeFileSync(
+      join(fenceHome, '.local', 'share', 'opencode', 'auth.json'),
+      JSON.stringify({ 'igris-fixture-oauth': { type: 'oauth' }, 'igris-fixture-metered': { type: 'api' } }),
+    );
+    const iso = makeIsolatedHome('opencode', env);
+    const p = join(iso.home, '.config', 'opencode', 'opencode.json');
+    const j = JSON.parse(readFileSync(p, 'utf-8')) as Record<string, unknown>;
+    expect(Object.keys(j)).toEqual(['enabled_providers', 'permission']);
+    expect(j.enabled_providers).toEqual(['igris-fixture-oauth']);
+    expect(j.permission).toEqual({ '*': 'deny', external_directory: { '*': 'deny' } });
     iso.cleanup();
   });
 });

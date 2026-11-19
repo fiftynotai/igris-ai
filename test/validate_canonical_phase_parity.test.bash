@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # Canonical phase enum parity guard (TD-238).
 #
 # CANONICAL_PHASES is dual-sourced — there is no build step generating one copy

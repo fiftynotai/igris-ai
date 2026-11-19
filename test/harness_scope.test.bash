@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_scope.test.bash — FR-155 scope-aware overlay.
 #
 # FR-155 introduces a `scope` field on overlay agent + skill entries:
@@ -100,6 +100,7 @@ teardown() {
   [ -d "$PROJ_A" ] && rm -rf "$PROJ_A"
   [ -d "$PROJ_B" ] && rm -rf "$PROJ_B"
   [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
+  cleanup_test_temp_dir
 }
 
 # ---------------------------------------------------------------------------

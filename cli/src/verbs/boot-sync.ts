@@ -28,7 +28,7 @@
  * `definition_files` are both in the brain's `SYNC_TABLES`, so `/sync/pull`
  * already carries them. The MCP tools `igris_session_file_pull` /
  * `igris_definition_pull` are LOCAL-DB READERS (they SELECT from the process's
- * own db; brain-mcp-server/src/tools/sync.ts:1499/1601) — NOT remote
+ * own db; brain-mcp-server/src/tools/sync.ts:1524/1601) — NOT remote
  * replicators — so there is no separate remote endpoint to hit for them.
  *
  * Channel: REMOTE (HTTP). The LOCAL merge target is reached through brain-db.ts
@@ -43,23 +43,36 @@ import { drainSyncQueueOnly } from "../lib/sync/data.js";
 import {
   BOOT_SYNC_PULL_TABLES,
   mergePulledTables,
+  readLastPushAt,
   readPullSince,
 } from "../lib/brain-db.js";
 import type { PullMergeSummary } from "../lib/brain-db.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { warn } from "../lib/log.js";
 import type {
   BootSyncDigest,
   BootSyncNormalization,
   BootSyncPull,
+  BootSyncPush,
   BootSyncQueueDrain,
 } from "../types.js";
 
 export interface BootSyncOptions {
-  /** Project slug override; default basename(cwd) per the sync convention. */
+  /** Project slug override; default: the project the cwd resolves to (TD-359 `defaultProjectSlug`). */
   project?: string;
   /** Emit JSON to stdout (default ON for the awaken path). */
   json?: boolean;
+}
+
+/** TD-350 (D-4): a push older than this many days is `stale` at /boot. */
+export const PUSH_STALE_DAYS = 7;
+
+/** TD-350: freshness of a `sync_state` stamp (`YYYY-MM-DD HH:MM:SS`, UTC). */
+export function pushFreshness(lastPushAt: string | null, nowMs: number): BootSyncPush {
+  if (lastPushAt === null) return { last_push_at: null, stale: true, age_days: null };
+  const age = nowMs - Date.parse(lastPushAt.replace(" ", "T") + "Z");
+  if (Number.isNaN(age)) return { last_push_at: lastPushAt, stale: true, age_days: null };
+  return { last_push_at: lastPushAt, stale: age > PUSH_STALE_DAYS * 86_400_000, age_days: Math.floor(age / 86_400_000) };
 }
 
 /** Empty per-pull / drain / definitions shapes for the skip/degraded branches. */
@@ -266,6 +279,7 @@ export async function buildBootSyncDigest(slug: string): Promise<BootSyncDigest>
       session_files_pulled: 0,
       definitions_updated: noDefinitions(),
       skipped: ["remote unconfigured"],
+      push: null,
     };
   }
 
@@ -289,6 +303,7 @@ export async function buildBootSyncDigest(slug: string): Promise<BootSyncDigest>
     session_files_pulled: sessionFilesPulled,
     definitions_updated: definitions,
     skipped,
+    push: pushFreshness(readLastPushAt(remote.url), Date.now()),
   };
 }
 
@@ -298,7 +313,7 @@ export async function buildBootSyncDigest(slug: string): Promise<BootSyncDigest>
  * list tell the skill what ran.
  */
 export async function runBootSync(opts: BootSyncOptions): Promise<number> {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const json = opts.json !== false;
 
   const digest = await buildBootSyncDigest(slug);

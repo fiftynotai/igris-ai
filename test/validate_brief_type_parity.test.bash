@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # Canonical brief_type vocabulary parity guard (TD-330).
 #
 # CANONICAL_BRIEF_TYPES is dual-sourced — there is no build step generating one

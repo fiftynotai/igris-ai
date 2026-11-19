@@ -142,7 +142,7 @@ describe('runBackend classifies a claude is_error result envelope as a backend f
   });
 
   it('T6 (AC-4 control) — the SAME 529 line under harness codex → ok:true, text lifted: classification is claude-scoped', async () => {
-    // The harness guard is what keeps codex/gemini/opencode/antigravity on the
+    // The harness guard is what keeps codex/opencode/antigravity on the
     // unchanged extractText path. This control OBSERVES the guard: delete it and
     // this case goes red (mutation M2).
     const { res } = await run('codex', LIVE_529, 1);

@@ -11,6 +11,12 @@
 
 import type { Migration } from '../../types.js';
 
+/** Survivor order within one name: enabled, latest last_run_at (NULL last), oldest created_at, id. */
+const RANKED = `SELECT id, name,
+  FIRST_VALUE(id) OVER w AS survivor, ROW_NUMBER() OVER w AS rn
+  FROM schedules
+  WINDOW w AS (PARTITION BY name ORDER BY enabled DESC, last_run_at IS NULL, last_run_at DESC, created_at ASC, id ASC)`;
+
 /**
  * Schedule management schema migrations.
  *
@@ -20,6 +26,8 @@ import type { Migration } from '../../types.js';
  *
  * Version 2: Add composite index on (enabled, next_run_at) for daemon
  * polling query.
+ *
+ * Version 3 (TD-361): run owner stamp, one row per name, no FK orphans.
  */
 export const scheduleMigrations: Migration[] = [
   {
@@ -71,5 +79,38 @@ export const scheduleMigrations: Migration[] = [
     sql: `
       CREATE INDEX IF NOT EXISTS idx_schedules_enabled_next ON schedules(enabled, next_run_at);
     `,
+  },
+  {
+    version: 3,
+    // TD-361. The legs, so the next reader does not re-derive them:
+    // (1) OWNER STAMP, ALTER-only (L-53), nullable: a run is judged dead by its
+    //     owner process, never by age; an old-bundle sibling still inserts the
+    //     5-column form and its row lands NULL-owner (the legacy-horizon rule).
+    // (2) ONE ROW PER NAME: the bootstraps de-duplicate by name while sync keyed
+    //     on a per-machine random id. Losers' runs are re-pointed to the survivor
+    //     BEFORE the losers are deleted, so no run cascades away.
+    // (3) ORPHANS: runs whose parent a foreign_keys=OFF connection deleted are
+    //     removed — exactly what ON DELETE CASCADE would have done.
+    // Both tables left SYNC_TABLES in the same change: nothing re-imports a
+    // duplicate, and no remote needs this schema first.
+    description: 'TD-361: schedule_runs owner stamp; one schedules row per name; FK orphans removed',
+    sql: `
+      ALTER TABLE schedule_runs ADD COLUMN machine_id TEXT;
+      ALTER TABLE schedule_runs ADD COLUMN machine_hostname TEXT;
+      ALTER TABLE schedule_runs ADD COLUMN owner_pid INTEGER;
+      ALTER TABLE schedule_runs ADD COLUMN owner_started_at TEXT;
+
+      UPDATE schedule_runs
+        SET schedule_id = (SELECT r.survivor FROM (${RANKED}) r WHERE r.id = schedule_runs.schedule_id)
+        WHERE schedule_id IN (SELECT id FROM (${RANKED}) WHERE rn > 1);
+      DELETE FROM schedules WHERE id IN (SELECT id FROM (${RANKED}) WHERE rn > 1);
+      DELETE FROM schedule_runs WHERE schedule_id NOT IN (SELECT id FROM schedules);
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_schedules_name ON schedules(name);
+    `,
+    post: (db: unknown): void => {
+      const orphans = (db as { pragma: (s: string) => unknown[] }).pragma('foreign_key_check(schedule_runs)');
+      console.error(`[engine] schedules@3 post-check: ${orphans.length} schedule_runs FK violation(s)`);
+    },
   },
 ];

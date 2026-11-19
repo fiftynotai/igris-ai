@@ -18,6 +18,7 @@
  * @author fifty.dev
  */
 
+import { observeDelivery, attentionCaptureActive } from '../attention/capture.js';
 import { getDb } from '../../../db.js';
 import type { ToolResult } from '../../types.js';
 import { errorResult, successResult } from '../../helpers.js';
@@ -436,6 +437,8 @@ export function handleGoalList(args: Record<string, unknown>): ToolResult {
     offset,
   });
 
+  if (attentionCaptureActive()) for (const goal of result.goals) observeDelivery({node:{type:'goal',project:goal.project_slug,id:goal.goal_id},outcome:'succeeded',extent:'preview'});
+
   // FR-246: `search` is a DASHBOARD field and is projected out here on purpose.
   // This object is `JSON.stringify`d STRAIGHT onto the MCP wire, whose exact key
   // set `tools/__tests__/wrapper-wire-parity.test.ts` pins, and `igris_goal_list`
@@ -480,9 +483,11 @@ export function handleGoalGet(args: Record<string, unknown>): ToolResult {
   const detail = getGoal(getDb(), goalId);
 
   if (detail === null) {
+    if (attentionCaptureActive()) observeDelivery({node:{type:'goal',project:null,id:goalId},outcome:'failed',extent:'unknown',reason:'Goal not found; owner unknown'});
     return errorResult(`Goal not found: ${goalId}`);
   }
 
+  if (attentionCaptureActive()) observeDelivery({node:{type:'goal',project:detail.goal.project_slug,id:detail.goal.goal_id},outcome:'succeeded',extent:'full'});
   return successResult(JSON.stringify(detail, null, 2));
 }
 

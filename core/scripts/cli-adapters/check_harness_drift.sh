@@ -17,13 +17,13 @@
 # Dependencies: python3, _common.sh (auto-sourced from script dir)
 # Exit codes:
 #   0 - All checked harness targets are in sync with canonical
-#   1 - One or more harness targets DRIFTED or MISSING
+#   1 - A failing verdict (list below), a skills-delegate failure, or an early error
 #   2 - Usage error (bad/missing arguments)
 #
-# The report is self-evidencing in the spirit of verify_mirror.sh: for every
-# target it prints the canonical body sha, the harness body sha, both version
-# markers, and a per-target verdict (MATCH / DRIFTED / MISSING). The exit code
-# cannot be misread as PASS unless every target shows MATCH.
+# The report is self-evidencing in the spirit of verify_mirror.sh: per target it
+# prints its evidence and a verdict — MATCH / DRIFTED / MISSING / DRIFT-WARN /
+# SCHEMA-INVALID / PARITY (NOTE / SKIP are informational). The exit code cannot
+# be misread as PASS unless no failing verdict and no unverdicted failure printed.
 #
 # CODEX TARGETS: the harness body for codex is the decoded
 # `developer_instructions` value from the TOML. The leading GENERATED-MARKER
@@ -1672,9 +1672,9 @@ fi
 # fixture's bare-word `evil` (never skipped). Rules + names live in _common.sh
 # (IGRIS_MCP_FIXTURE_NAMES / IGRIS_MCP_FIXTURE_PREFIX / scan_mcp_fixture_entries).
 #
-# VERDICT SHAPE IS LOAD-BEARING (TD-390): scripts/validate_harness_drift.sh
-# classifies verdict LINES (`MATCH|DRIFTED|MISSING`) — a new token would be
-# invisible at the commit gate — so a hit is `[mcp-fixture/<name>/<harness>]
+# VERDICT SHAPE IS LOAD-BEARING (TD-390): the commit gate names verdict LINES;
+# since TD-396 a token it does not classify is FATAL but UNNAMED (the floor), not
+# invisible — so, to stay named, a hit is `[mcp-fixture/<name>/<harness>]
 # DRIFTED` + a `config :` line, and the reason MUST NOT contain the
 # `differing key(s):` clause (that clause is what routes an mcp/* block into
 # the TD-388 sibling-worktree exemption; with no clause the block is

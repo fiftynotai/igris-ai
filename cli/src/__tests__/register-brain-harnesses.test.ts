@@ -9,6 +9,12 @@
  * harness files. The hard constraint (the projected path is
  * `bundledMcpEntryPath()`-resolved and carries NO checkout literal) is asserted
  * in scenario #2.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — was SAFE-BY-CALL-SITE — every
+ *   registerBrainAcrossHarnesses passes {configPaths}, but
+ *   registerBrainAcrossHarnesses -> harnessIds -> loadHarnessDescriptor ->
+ *   resolveManifestPath -> homedir() reads the operator's real manifest
+ *   with no override.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -32,6 +38,10 @@ import {
   type McpHarness,
 } from "../lib/mcp-register.js";
 import { bundledMcpEntryPath } from "../lib/paths.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 // FR-212d Phase 2: these are the per-harness MERGER-SHAPE oracle tests — they
 // validate `buildHarnessMcpEntry`'s native shapes + the no-clobber/idempotent
@@ -71,11 +81,13 @@ function sandboxConfigPaths(): Record<McpHarness, string> {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-reg-brain-home-"); // BR-106: HOME moves FIRST, and ARMED
   workDir = mkdtempSync(join(tmpdir(), "igris-brain-harness-"));
 });
 
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 function readJson(path: string): Record<string, unknown> {

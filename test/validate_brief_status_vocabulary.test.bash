@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # Tests for scripts/validate_brief_status_vocabulary.sh (TD-333).
 #
 # The validator reads brief_status.status from a brain DB, prints the
@@ -36,6 +36,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Minimal brief_status table mirroring the columns the validator SELECTs.

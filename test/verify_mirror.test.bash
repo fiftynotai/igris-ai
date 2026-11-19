@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # verify_mirror.test.bash - Tests for core/scripts/verify_mirror.sh
 #
 # Created in response to BR-062. The primitive's contract is:
@@ -33,6 +33,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 @test "test_all_pairs_match: two MATCH pairs yield exit 0" {

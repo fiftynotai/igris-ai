@@ -26,6 +26,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { IGRIS_ATTRIBUTION } from "../lib/attribution-settings.js";
 
 let tmpRoot: string;
 /** Sandboxed HOME so claudeJsonPath() (used by the mcp-unregistered
@@ -131,13 +132,19 @@ function stageProject(name = "proj"): string {
  * file. The sandboxed HOME starts WITHOUT it, which would make every test trip a
  * brain-level `hooks-missing` row — so the baseline stages it. Tests that
  * exercise hooks-missing/hooks-stale mutate or remove it in their own setup.
+ *
+ * TD-473: also carries the Igris `attribution` default — a real post-TD-470
+ * clean install (`mergeGlobalCanonicalHooks` composes `applyAttributionDefault`
+ * after the hooks merge) has it, and without it every test here would ALSO trip
+ * the new `attribution-missing` row. Tests that exercise attribution-missing
+ * mutate/remove it in their own setup, same convention as the hooks key.
  */
 function stageValidGlobalHooks(): void {
   const settingsDir = join(homeOverride, ".claude");
   mkdirSync(settingsDir, { recursive: true });
   writeFileSync(
     join(settingsDir, "settings.json"),
-    JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    JSON.stringify({ ...CANONICAL_HOOKS, attribution: { ...IGRIS_ATTRIBUTION } }, null, 2) + "\n",
   );
 }
 
@@ -324,6 +331,57 @@ describe("doctor — drift classification (read-only)", () => {
     const row = drift.find((r) => r.driftClass === "hooks-stale");
     expect(row).toBeDefined();
     expect(row!.slug).toBe("(brain)");
+  });
+
+  // -----------------------------------------------------------------------
+  // TD-473 — attribution-missing (E1-E4: detection; E5-E7 below: --fix)
+  // -----------------------------------------------------------------------
+
+  it("E1: attribution present (any value, incl. a non-Igris object), hooks canonical → clean, no attribution-missing row", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ ...CANONICAL_HOOKS, attribution: { commit: "always", pr: "always", sessionUrl: true } }, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E2: includeCoAuthoredBy present, no attribution key, hooks canonical → clean", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({ ...CANONICAL_HOOKS, includeCoAuthoredBy: false }, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E3 (AC-1 target case): NEITHER key present, hooks canonical → attribution-missing row naming the fix command (proves independence from hooks-missing/hooks-stale)", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    );
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "hooks-missing")).toBe(false);
+    expect(drift.some((r) => r.driftClass === "hooks-stale")).toBe(false);
+    const row = drift.find((r) => r.driftClass === "attribution-missing");
+    expect(row).toBeDefined();
+    expect(row!.slug).toBe("(brain)");
+    expect(row!.recommendedFix).toContain("igris doctor --fix");
+  });
+
+  it("E4 (self-negative control): settings.json ABSENT entirely → NO attribution-missing row (covered by hooks-missing instead)", async () => {
+    const { classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    rmSync(join(homeOverride, ".claude", "settings.json"), { force: true });
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "hooks-missing")).toBe(true);
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
   });
 
   it("slug-basename-mismatch: row.slug != basename(row.path)", async () => {
@@ -631,6 +689,104 @@ describe("doctor — runDoctor exit codes", () => {
     expect(sessionEnd[0].hooks[0].command).toBe(
       "$HOME/.igris/core/hooks/shared/session_end.sh",
     );
+  });
+
+  // -----------------------------------------------------------------------
+  // TD-473 — E5-E7: the --fix disclosure line, printed ONLY on `added`
+  // -----------------------------------------------------------------------
+
+  /** Capture every `info()`/stdout line written during `fn`, via the SAME
+   * `process.stdout.write` spy idiom this file already uses to capture the
+   * drift table (see the BR-103 describe block below). */
+  async function captureStdout(fn: () => Promise<void>): Promise<string> {
+    let captured = "";
+    const logSpy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        captured += String(chunk);
+        return true;
+      }) as typeof process.stdout.write);
+    try {
+      await fn();
+    } finally {
+      logSpy.mockRestore();
+    }
+    return captured;
+  }
+
+  it("E5 (--fix disclosure): E3's fixture → --fix prints the same one-line disclosure init/update print, and re-probes clean", async () => {
+    const { runDoctor, classifyDriftAll } = await import("../verbs/doctor.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
+    const { attributionAddedNote } = await import("../lib/attribution-settings.js");
+    const reg = await import("../lib/registry.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).toContain(attributionAddedNote(claudeUserSettingsPath()));
+    const drift = await classifyDriftAll(reg.listProjects());
+    expect(drift.some((r) => r.driftClass === "attribution-missing")).toBe(false);
+  });
+
+  it("E6 (--fix silence): attribution already the Igris object (outcome 'present') but hooks are STALE → --fix repairs hooks and prints NOTHING attribution-related", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { IGRIS_ATTRIBUTION } = await import("../lib/attribution-settings.js");
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            { hooks: [{ type: "command", command: "$HOME/.igris/core/hooks/old/session_end.sh" }] },
+          ],
+        },
+        attribution: { ...IGRIS_ATTRIBUTION },
+      }, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).not.toContain("attribution set off");
+  });
+
+  it("E7 (--fix silence, kept-user): a user-authored non-Igris attribution value survives a hooks-stale fix untouched, outcome 'kept-user', no disclosure line", async () => {
+    // Paired with a hooks-stale row (rather than an already-clean fixture) so the
+    // SAME writer `mergeGlobalCanonicalHooks` actually runs and its attribution
+    // outcome is exercised as 'kept-user' — a fixture with nothing to fix would
+    // never invoke the writer at all and would prove nothing about its outcome.
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { claudeUserSettingsPath } = await import("../lib/paths.js");
+    const userAttribution = { commit: "always", pr: "never", sessionUrl: true };
+    writeFileSync(
+      join(homeOverride, ".claude", "settings.json"),
+      JSON.stringify({
+        hooks: {
+          SessionEnd: [
+            { hooks: [{ type: "command", command: "$HOME/.igris/core/hooks/old/session_end.sh" }] },
+          ],
+        },
+        attribution: userAttribution,
+      }, null, 2) + "\n",
+    );
+    const out = await captureStdout(async () => {
+      const code = await runDoctor({ fix: true, removeOrphans: false, yes: false });
+      expect(code).toBe(0);
+    });
+    expect(out).not.toContain("attribution set off");
+    const settings = JSON.parse(readFileSync(claudeUserSettingsPath(), "utf-8")) as {
+      hooks: { SessionEnd: Array<{ hooks: Array<{ command: string }> }> };
+      attribution: unknown;
+    };
+    // The hooks-stale row IS repaired (proves the writer ran)...
+    expect(settings.hooks.SessionEnd[0].hooks[0].command).toBe(
+      "$HOME/.igris/core/hooks/shared/session_end.sh",
+    );
+    // ...while the user's own attribution value is byte-identical (kept-user).
+    expect(settings.attribution).toEqual(userAttribution);
   });
 
   it("--remove-orphans --yes deletes path-missing rows", async () => {
@@ -1027,6 +1183,10 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     expect(sweep.removed).toBe(0);
     // A declined row is not an ATTEMPT — it must not show up as a skip.
     expect(sweep.results).toEqual([]);
+    // BR-087 V2: ...but it IS named, as declined (unresolved drift), so a
+    // reader can tell "the operator said no" from "nobody was asked".
+    expect(sweep.declined).toEqual(["orphan-keep"]);
+    expect(sweep.unadjudicated).toEqual([]);
     expect(reg.listProjects().length).toBe(1);
   });
 
@@ -1045,6 +1205,10 @@ describe("doctor — --remove-orphans interactive prompt (TD-111)", () => {
     );
     expect(sweep.removed).toBe(0);
     expect(sweep.results).toEqual([]);
+    // BR-087: an abort adjudicates NOTHING — the row it was asked about and
+    // every row after it are named as not adjudicated (never "kept").
+    expect(sweep.unadjudicated).toEqual(["orphan-x", "orphan-y", "orphan-z"]);
+    expect(sweep.declined).toEqual([]);
     expect(reg.listProjects().length).toBe(3);
   });
 
@@ -1180,7 +1344,12 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
     expect(reg.listProjects().map((r) => r.slug)).toEqual([CLEAN, BRIEFED]);
 
     // BRIEFED first — the throw used to happen here, before CLEAN was reached.
-    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true);
+    // TD-310: `--yes` alone now REFUSES a data-owning row before any delete, so
+    // this pin of the FK backstop (BR-084) passes `includeOwning` — the one
+    // route on which the DELETE is still attempted and the FK must refuse it.
+    const sweep = await confirmAndRemoveOrphans(rowsFor([BRIEFED, CLEAN]), true, undefined, {
+      includeOwning: true,
+    });
 
     expect(sweep.removed).toBe(1);
     expect(sweep.skipped).toBe(1);
@@ -1248,13 +1417,20 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
 
     let created = 0;
     let closed = 0;
+    // BR-087: the production reader is a LINE QUEUE on one interface
+    // (`on('line')` / `on('close')` + `setPrompt`/`prompt`), not a per-row
+    // `question` — so the synthetic failure is raised where the reader
+    // subscribes. The invariant is unchanged: one interface created, and
+    // closed exactly once on the throwing path.
     vi.doMock("node:readline", () => {
       const createInterface = (): unknown => {
         created++;
         return {
-          question: (): never => {
-            throw new Error("synthetic stdin failure");
+          on: (event: string): never => {
+            throw new Error(`synthetic stdin failure (on '${event}')`);
           },
+          setPrompt: (): void => {},
+          prompt: (): void => {},
           close: (): void => {
             closed++;
           },
@@ -1280,6 +1456,179 @@ describe("doctor — --remove-orphans partial failure (BR-084)", () => {
       const reg = await import("../lib/registry.js");
       reg.closeDb();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-087 / TD-310 / FR-265 — the sweep is honest about what it did NOT do, and
+// knows what each orphan owns before it offers to delete it.
+//
+// Ownership comes from real tables in the sandbox brain: `learnings` is seeded
+// through a SEPARATE short-lived handle opened after `closeDb()` (never two live
+// RW connections — the BR-084 fixture rule). `learnings` has NO foreign key, so
+// a learnings-only row is exactly the one the FK backstop cannot protect.
+// ---------------------------------------------------------------------------
+describe("doctor — --remove-orphans is honest and ownership-aware (BR-087 / TD-310 / FR-265)", () => {
+  function rows(slugs: string[]): Array<{
+    slug: string;
+    path: string;
+    driftClass: "path-missing";
+    recommendedFix: string;
+  }> {
+    return slugs.map((slug) => ({
+      slug,
+      path: `/no/such/dir/${slug}`,
+      driftClass: "path-missing" as const,
+      recommendedFix: "delete row",
+    }));
+  }
+
+  async function seed(slugs: string[], learningsBy: Record<string, number> = {}): Promise<void> {
+    const reg = await import("../lib/registry.js");
+    for (const slug of slugs) {
+      reg.upsertProject({
+        slug,
+        name: slug,
+        path: `/no/such/dir/${slug}`,
+        tech_stack: "",
+        igris_version: "7.0.0",
+      });
+    }
+    reg.closeDb();
+    const { brainDbPath } = await import("../lib/paths.js");
+    const Database = (await import("better-sqlite3")).default;
+    const db = new Database(brainDbPath());
+    try {
+      db.exec(
+        "CREATE TABLE IF NOT EXISTS learnings (id INTEGER PRIMARY KEY AUTOINCREMENT, project TEXT NOT NULL)",
+      );
+      const ins = db.prepare("INSERT INTO learnings (project) VALUES (?)");
+      for (const [slug, n] of Object.entries(learningsBy)) {
+        for (let i = 0; i < n; i++) ins.run(slug);
+      }
+    } finally {
+      db.close();
+    }
+  }
+
+  /** A scripted reader: `null` is EOF. Running past the script is a test bug. */
+  function script(answers: Array<string | null>): {
+    prompt: (q: string) => Promise<string | null>;
+    asked: string[];
+    left: () => number;
+  } {
+    const queue = [...answers];
+    const asked: string[] = [];
+    return {
+      asked,
+      left: () => queue.length,
+      prompt: async (q: string): Promise<string | null> => {
+        asked.push(q);
+        if (queue.length === 0) {
+          throw new Error("test bug: prompt called more times than answers were scripted");
+        }
+        return queue.shift() as string | null;
+      },
+    };
+  }
+
+  it("V1 (BR-087): EOF mid-sweep — the answered row is removed, every later row is UNADJUDICATED, and EOF is final", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["eof-1", "eof-2", "eof-3"]);
+    const s = script(["y", null]);
+    const sweep = await confirmAndRemoveOrphans(rows(["eof-1", "eof-2", "eof-3"]), false, s.prompt);
+    expect(sweep.removed).toBe(1);
+    expect(sweep.unadjudicated).toEqual(["eof-2", "eof-3"]);
+    expect(sweep.declined).toEqual([]);
+    // EOF is not re-asked: the reader said the stream is over.
+    expect(s.asked.length).toBe(2);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["eof-2", "eof-3"]);
+  });
+
+  it("V3 (TD-310): 'all' never auto-confirms a data-owning row — it still gets its own prompt, with its counts", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["all-a", "all-b-owns", "all-c"], { "all-b-owns": 1 });
+    const s = script(["all", "n"]);
+    const sweep = await confirmAndRemoveOrphans(rows(["all-a", "all-b-owns", "all-c"]), false, s.prompt);
+    expect(s.left()).toBe(0);
+    expect(s.asked.length).toBe(2);
+    expect(s.asked[1]).toContain("all-b-owns");
+    expect(s.asked[1]).toContain("learnings 1");
+    expect(sweep.removed).toBe(2);
+    expect(sweep.declined).toEqual(["all-b-owns"]);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["all-b-owns"]);
+  });
+
+  it("V4 (TD-310): --yes refuses a data-owning row BEFORE any delete; includeOwning lets it be attempted", async () => {
+    const { confirmAndRemoveOrphans } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["y-empty", "y-owns"], { "y-owns": 2 });
+    const sweep = await confirmAndRemoveOrphans(rows(["y-owns", "y-empty"]), true);
+    expect(sweep.refused.map((r) => r.slug)).toEqual(["y-owns"]);
+    expect(sweep.refused[0].reason).toContain("learnings 2");
+    expect(sweep.refused[0].reason).toContain("--include-owning");
+    // Never ATTEMPTED: `results` is attempts only, so the refusal is not a skip.
+    expect(sweep.results.map((r) => r.slug)).toEqual(["y-empty"]);
+    expect(sweep.removed).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["y-owns"]);
+
+    const again = await confirmAndRemoveOrphans(rows(["y-owns"]), true, undefined, {
+      includeOwning: true,
+    });
+    expect(again.refused).toEqual([]);
+    expect(again.results).toEqual([{ slug: "y-owns", ok: true, error: null }]);
+    expect(reg.listProjects()).toEqual([]);
+  });
+
+  it("V5 (TD-310 + BR-087): runDoctor --remove-orphans --yes over [empty, learnings-only] keeps the owner and exits 1 from the RE-READ", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    await seed(["v5-empty", "v5-owns"], { "v5-owns": 1 });
+    const code = await runDoctor({ fix: false, removeOrphans: true, yes: true });
+    // The sibling "--remove-orphans --yes deletes path-missing rows" pins exit 0
+    // for two REMOVABLE orphans in this same baseline.
+    expect(code).toBe(1);
+    expect(reg.listProjects().map((r) => r.slug)).toEqual(["v5-owns"]);
+  });
+
+  it("V7 (FR-265): classifyDrift — a missing path WITH a non-empty repo_url is source-reclaimed; '' and NULL stay path-missing", async () => {
+    const { classifyDrift, isNotDrift } = await import("../verbs/doctor.js");
+    const base = { name: "x", tech_stack: "", igris_version: "7.0.0" };
+    const out = classifyDrift([
+      { ...base, slug: "rec", path: "/no/such/dir/rec", repo_url: "https://example.invalid/o/r.git" },
+      { ...base, slug: "blank", path: "/no/such/dir/blank", repo_url: "" },
+      { ...base, slug: "none", path: "/no/such/dir/none", repo_url: null },
+    ]);
+    expect(out.map((r) => [r.slug, r.driftClass])).toEqual([
+      ["rec", "source-reclaimed"],
+      ["blank", "path-missing"],
+      ["none", "path-missing"],
+    ]);
+    // The one exit-neutral non-clean class — and nothing else is.
+    expect(isNotDrift("source-reclaimed")).toBe(true);
+    expect(isNotDrift("clean")).toBe(true);
+    expect(isNotDrift("path-missing")).toBe(false);
+    expect(isNotDrift("slug-basename-mismatch")).toBe(false);
+  });
+
+  it("V8 (FR-265): the restore line ends git's options, single-quotes both arguments, and survives a quote and a space in either", async () => {
+    const { restoreCommand } = await import("../verbs/doctor.js");
+    const url = "https://example.invalid/o'brien/r.git";
+    const path = "/tmp/with space/it's";
+    const cmd = restoreCommand(url, path);
+    expect(cmd).toBe(
+      "git clone -- 'https://example.invalid/o'\\''brien/r.git' '/tmp/with space/it'\\''s'",
+    );
+    // Mechanically: bash parses the two quoted words back to the original strings.
+    const { execFileSync } = await import("node:child_process");
+    // `--` ends git's option parsing: a stored value starting with `-` stays a repository.
+    const words = cmd.replace(/^git clone -- /, "");
+    const argv = execFileSync("bash", ["-c", `set -- ${words}; printf '%s\\n' "$#" "$1" "$2"`], {
+      encoding: "utf-8",
+    });
+    expect(argv).toBe(`2\n${url}\n${path}\n`);
   });
 });
 

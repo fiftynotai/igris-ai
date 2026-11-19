@@ -13,13 +13,18 @@
  * backend a {system, user} pair. Claude takes `--system-prompt` (the perception
  * pattern — instructions on a separate channel from untrusted content); the
  * other harnesses (no system-prompt flag) get the system text prepended to the
- * user text with a clear delimiter. The `prompt` passed via argv/stdin is built
- * by the caller (`exec` pipes it on stdin for claude/codex per the perception
- * extractor, or via argv for the gemini-family `--print`).
+ * user text with a clear delimiter. The prompt goes on stdin for claude and as
+ * the argv tail for codex, opencode and agy.
  *
- * EVERY spawn runs in the brain-isolated HOME (empty mcpServers, auth symlinked
- * forward, --strict-mcp-config / read-only sandbox) so the extraction child can
- * NEVER reach the live brain (R-BRAIN-LEAK).
+ * TD-474: gemini is retired from this map — the vendor discontinued gemini-cli's
+ * personal Code Assist tier; antigravity is the extractor's Google option now.
+ * An explicit `gemini` selection is refused before it ever reaches this module
+ * (`backend/env.ts#resolveBackend`); `ExtractorHarness` no longer has a `gemini`
+ * member, so `buildExtractorSpawn`'s switch is exhaustive over four harnesses.
+ *
+ * EVERY spawn runs in the brain-isolated HOME (auth stores symlinked, owned
+ * MCP-free configs; see docs/COGNITION.md) plus each CLI's verified MCP switch,
+ * so the extraction child can NEVER reach the live brain (R-BRAIN-LEAK).
  *
  * @module engine/components/cognition/backend/spawn-map
  * @author fifty.dev
@@ -28,6 +33,7 @@
 import type { ExtractorHarness, ExtractorPrompt } from '../types.js';
 import { subscriptionOnlyEnv, HARNESS_BIN } from './env.js';
 import { makeIsolatedHome, type IsolatedHome } from './isolation.js';
+import { resolveOpencodeModel } from './opencode-model.js';
 
 /** How the prompt body reaches the child: piped on stdin, or passed as an argv tail. */
 export type PromptDelivery = 'stdin' | 'argv';
@@ -54,7 +60,7 @@ export interface ExtractorSpawn {
 export interface SpawnOptions {
   /** Optional model pin (a valid id for the harness). Omitted ⇒ subscription default. */
   model?: string;
-  /** Soft timeout in seconds for harnesses with their own print-timeout (gemini family). */
+  /** agy's own `--print-timeout` in seconds (min 60, default 120). */
   printTimeoutSec?: number;
   /** Env override for the isolated home scratch root (tests inject a temp dir). */
   env?: NodeJS.ProcessEnv;
@@ -112,10 +118,10 @@ function buildClaudeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isol
 }
 
 /**
- * Codex (OpenAI). `codex exec` read-only with NO MCP/tools: the read-only
- * sandbox + pointing the brain MCP at `/usr/bin/false` so it cannot reach the
- * eval/live DB. The composed prompt is the argv tail. Subscription auth (no
- * OPENAI_API_KEY). Ported from `judge.ts:buildCodexSpawn:345-369`.
+ * Codex (OpenAI). `codex exec` in the read-only sandbox; the owned config.toml
+ * declares no MCP server, so no `-c mcp_servers.*` override is passed (one on an
+ * absent table CREATES a server, BR-108). The composed prompt is the argv tail.
+ * Subscription auth (no OPENAI_API_KEY). Ported from `judge.ts:buildCodexSpawn:345-369`.
  */
 function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
   const args = [
@@ -125,9 +131,6 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
     // Read-only sandbox: no filesystem writes, cannot read brain state on disk.
     '--sandbox',
     'read-only',
-    // No MCP: point the brain at a no-op so it cannot reach the live DB.
-    '-c',
-    `mcp_servers.igris-brain.command="/usr/bin/false"`,
   ];
   if (opts.model) args.push('-m', opts.model);
   return {
@@ -142,27 +145,38 @@ function buildCodexSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Isola
 }
 
 /**
- * Gemini-family (gemini / antigravity → the `gemini`/`agy` CLI). Headless
- * `--print` in the brain-isolated Gemini HOME whose `config/mcp_config.json` is
- * OWNED and EMPTY (`{"mcpServers": {}}` — written by isolation.ts), so the child
- * has ZERO brain/tool access. `--print-timeout` pins the deadline. The composed
- * prompt is the argv tail. Subscription auth.
- * Ported from `judge.ts:buildAgySpawn:526-545` (generalized to gemini too).
+ * Antigravity (`agy`). Headless `--print` in the brain-isolated Gemini HOME;
+ * `--sandbox` wraps terminal commands in a macOS Seatbelt profile (`deny
+ * default`, `plans/td476-evidence/phase0-static.txt`); `--print-timeout` pins
+ * the deadline; the composed prompt is the argv tail. Ported from
+ * `judge.ts:buildAgySpawn:526-545`.
+ *
+ * TD-476: `--sandbox` is best-available defense-in-depth, NOT a proven
+ * no-tools switch — its own `--help` text says "terminal restrictions
+ * enabled," which covers shell/terminal execution but is not proven to cover
+ * in-process tools (read_file, list dir, browser_*). `--mode plan` was
+ * considered and DROPPED: the binary itself prints "warning: --mode %s is
+ * not supported in print mode; continuing in the default mode" (Orchestrator
+ * Phase-0 result #2) — shipping an ignored flag would be a false sense of
+ * safety. A Phase-0b static read of the installed binary
+ * (`plans/td476-evidence/phase0b-agy-settings.txt`) found no settings.json
+ * key that clears the bar (deny-by-default or no-tools) for antigravity's
+ * OWN built-in tools, so none is added here. Per operator decision
+ * (2026-09-25), agy stays selectable; its posture is documented as an
+ * accepted limit in docs/COGNITION.md, not a refusal.
  */
-function buildGeminiFamilySpawn(
-  harness: 'gemini' | 'antigravity',
-  prompt: ExtractorPrompt,
-  opts: SpawnOptions,
-  iso: IsolatedHome,
-): ExtractorSpawn {
+function buildAgySpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
   const printTimeoutSec = Math.max(60, opts.printTimeoutSec ?? 120);
-  const args = ['--print-timeout', `${printTimeoutSec}s`, '--print'];
+  const args = ['--sandbox', '--print-timeout', `${printTimeoutSec}s`, '--print'];
   if (opts.model) args.push('--model', opts.model);
   return {
-    bin: HARNESS_BIN[harness],
+    bin: HARNESS_BIN.antigravity,
     args,
     env: subscriptionOnlyEnv(process.env, { HOME: iso.home }),
-    cwd: iso.home,
+    // TD-476: an empty workspace, not the HOME. Headless agy reads freely inside its cwd and
+    // auto-denies reads outside it, so the forwarded `.gemini/` credential links must not sit
+    // under the cwd.
+    cwd: iso.workspace,
     delivery: 'argv',
     prompt: composePrompt(prompt),
     cleanup: iso.cleanup,
@@ -171,15 +185,30 @@ function buildGeminiFamilySpawn(
 
 /**
  * OpenCode. Headless `run` in the brain-isolated HOME. OpenCode reads
- * project-scoped config from the cwd (the empty isolated home) and global config
- * from `~/.config/opencode` (symlinked forward minus the OS-context files). The
- * composed prompt is the argv tail. Subscription auth.
+ * project-scoped config from the cwd (the isolated home, which now owns a
+ * copied model catalog + an `enabled_providers` allowlist, BR-110); of its
+ * data dir only `auth.json` is forwarded (BR-109). The composed prompt is the
+ * argv tail.
+ *
+ * `--model` is ALWAYS explicit (BR-110) — opencode's own default (no catalog,
+ * no recent-model state) picks an unusable or METERED model. The value comes
+ * from `resolveOpencodeModel`, the SAME resolver the selection preflight uses,
+ * so a spawn this builder produces is by construction oauth-backed; this is a
+ * DEFENSIVE throw, not the primary gate — `preflightHarness` should already
+ * have refused an unresolvable harness before a spawn is ever built.
+ * Subscription auth.
  * (No FR-201 judge backend for opencode — modelled on the antigravity `--print`
  * shape + opencode's `run` headless verb; the same isolation guarantees apply.)
  */
 function buildOpencodeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: IsolatedHome): ExtractorSpawn {
-  const args = ['run'];
-  if (opts.model) args.push('--model', opts.model);
+  const resolved = resolveOpencodeModel(opts.model);
+  if (!resolved.usable) {
+    throw new Error(
+      `cognition/spawn-map: opencode has no usable model (${resolved.reason}): ${resolved.detail}. ` +
+        'preflightHarness should have refused this harness before a spawn was built.',
+    );
+  }
+  const args = ['run', '--model', resolved.model];
   return {
     bin: HARNESS_BIN.opencode,
     args,
@@ -197,7 +226,7 @@ function buildOpencodeSpawn(prompt: ExtractorPrompt, opts: SpawnOptions, iso: Is
 
 /**
  * Build the spawn for one extraction call on `harness`. Creates the
- * brain-isolated HOME (empty mcpServers, auth symlinked) and composes the
+ * brain-isolated HOME (auth symlinked, owned MCP-free configs) and composes the
  * per-harness headless invocation. The caller (`exec.ts:execHarness`) runs it,
  * then MUST call `spawn.cleanup()` to reap the isolated HOME.
  *
@@ -213,16 +242,22 @@ export function buildExtractorSpawn(
   opts: SpawnOptions = {},
 ): ExtractorSpawn {
   const iso = makeIsolatedHome(harness, opts.env ?? process.env);
-  switch (harness) {
-    case 'claude':
-      return buildClaudeSpawn(prompt, opts, iso);
-    case 'codex':
-      return buildCodexSpawn(prompt, opts, iso);
-    case 'gemini':
-      return buildGeminiFamilySpawn('gemini', prompt, opts, iso);
-    case 'antigravity':
-      return buildGeminiFamilySpawn('antigravity', prompt, opts, iso);
-    case 'opencode':
-      return buildOpencodeSpawn(prompt, opts, iso);
+  // A builder may throw after the isolated HOME exists (BR-110: opencode refuses to build
+  // without a subscription model). The caller never receives a spawn to `cleanup()`, so the
+  // HOME is reaped here before the error propagates.
+  try {
+    switch (harness) {
+      case 'claude':
+        return buildClaudeSpawn(prompt, opts, iso);
+      case 'codex':
+        return buildCodexSpawn(prompt, opts, iso);
+      case 'antigravity':
+        return buildAgySpawn(prompt, opts, iso);
+      case 'opencode':
+        return buildOpencodeSpawn(prompt, opts, iso);
+    }
+  } catch (err) {
+    iso.cleanup();
+    throw err;
   }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # home-fence.bats — TD-456: the HOME fence the whole tier stands on.
 #
 # `igris install` step 11 and `igris init` write ~/.claude.json (+ the other
@@ -59,10 +59,10 @@ HELPERS="$BATS_TEST_DIRNAME/_helpers.bash"
   [ -f "$HOME/.gitconfig" ]
   PROJ="$(stage_git_project gcommit)"
   printf 'x\n' > "$PROJ/file.txt"
-  git -C "$PROJ" add file.txt
-  run git -C "$PROJ" commit -q -m "fenced commit"
+  git -C "${PROJ:?}" add file.txt
+  run git -C "${PROJ:?}" commit -q -m "fenced commit"
   [ "$status" -eq 0 ]
-  run git -C "$PROJ" log -1 --format='%an <%ae>'
+  run git -C "${PROJ:?}" log -1 --format='%an <%ae>'
   [ "$status" -eq 0 ]
   # The author IS the seed — a commit that fell back to a machine-derived
   # identity would read back a different name.

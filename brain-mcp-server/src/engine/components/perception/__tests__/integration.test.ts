@@ -491,7 +491,7 @@ describe('Perception channel — end-to-end', () => {
     // pending row is excluded.
     //
     // Schema enforces NOT NULL DEFAULT 'approved' for review_status (migration v15);
-    // NULL is impossible going forward. Production sync filter at tools/sync.ts:600
+    // NULL is impossible going forward. Production sync filter at tools/sync.ts:625
     // uses only `review_status = 'approved'` — this test mirrors that.
     const rows = db
       .prepare(

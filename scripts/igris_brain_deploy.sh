@@ -141,7 +141,8 @@ build_server() {
   # Install dependencies and build
   cd "$MCP_SERVER_DIR"
   echo "  Installing dependencies..."
-  npm ci --silent 2>&1 | tail -1
+  # BR-119: skip onnxruntime-node's CUDA download (its 404 fails the install).
+  ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm ci --silent 2>&1 | tail -1
   echo "  [ok] Dependencies installed."
 
   echo "  Building TypeScript..."

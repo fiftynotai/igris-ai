@@ -25,6 +25,11 @@ on:
         required: false
         type: string
 
+# BR-119: skip onnxruntime-node's Linux x64 CUDA download, whose 404 fails
+# every install here. Igris runs ONNX on the CPU provider (MAINTAINING row).
+env:
+  ONNXRUNTIME_NODE_INSTALL_CUDA: "skip"
+
 jobs:
   publish:
     name: Build, test, publish

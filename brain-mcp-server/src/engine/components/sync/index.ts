@@ -41,7 +41,7 @@ import {
   handleFilePush,
   handleFilePull,
   fetchWithRetry,
-  queueFailedRows,
+  queueFailedRows, redactSecret,
   chunkTablesForPush,
   redactTablesForEgress,
   SYNC_TABLES,
@@ -114,6 +114,8 @@ const BATCH_EVENT_TABLE_MAP: Record<string, string[]> = {
   'error.stored': ['errors'],
   'project.registered': ['projects'],
   'agent_event.recorded': ['agent_events'],
+  // FR-273: one event marks BOTH relation tables dirty (a merge touches both).
+  'project.relation_changed': ['project_relation_kinds', 'project_relations'],
 };
 
 // ---------------------------------------------------------------------------
@@ -208,7 +210,7 @@ async function pushTables(
           // First failure wins; subsequent chunks for the same table do
           // not overwrite — keeps the queue's error_message stable.
           if (!(tableName in failedTables)) {
-            failedTables[tableName] = errMessage;
+            failedTables[tableName] = redactSecret(errMessage, config.apiKey);
           }
         }
       }
@@ -330,6 +332,25 @@ export function createSyncComponent(): BrainComponent {
         if (statusRows.length > 0) tables['brief_status'] = statusRows;
         const fileRows = queryTableRows('brief_files', 'WHERE project = ? AND brief_id = ?', [project, briefId]);
         if (fileRows.length > 0) tables['brief_files'] = fileRows;
+        break;
+      }
+
+      case 'context.registered': {
+        // TD-460 — a context doc replica pushes immediately, so an edit reaches
+        // the VPS without any skill having remembered to sync.
+        //
+        // TWO PRODUCERS emit this event, not one. `igris_context_sync`'s ABSORB
+        // (disk -> row) is the TD-460 half; `igris_context_register`
+        // (`components/context/index.ts`, PREDATES TD-460) emitted it already
+        // and, since this listener was wired, auto-pushes too. Both are egress
+        // doors — do not read this case as absorb-only. Neither can leak
+        // `file_path`: `queryTableRows` SELECTs `tableConfig.columns` only and
+        // TD-460 keeps that column out of the `context_files` set, so the
+        // exclusion holds for the older producer without a second guard.
+        const project = data.project as string;
+        const key = data.key as string;
+        const rows = queryTableRows('context_files', 'WHERE project_slug = ? AND key = ?', [project, key]);
+        if (rows.length > 0) tables['context_files'] = rows;
         break;
       }
 
@@ -475,7 +496,7 @@ export function createSyncComponent(): BrainComponent {
       return [
         {
           name: 'igris_brain_push',
-          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_events changed since last push. Uses last-write-wins for conflict resolution.',
+          description: 'Push local brain changes to a remote brain server. Syncs learnings, errors, projects, sessions, brief_status, agent_events changed since last push. Uses last-write-wins for conflict resolution. Agents: run `igris sync push` instead; it reads the key from config.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -525,7 +546,7 @@ export function createSyncComponent(): BrainComponent {
         },
         {
           name: 'igris_sync_queue_drain',
-          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking.',
+          description: 'Process pending sync queue items by pushing them to the remote brain. Retries failed push operations with exponential backoff tracking. Agents: run `igris sync drain` instead; it reads the key from config.',
           inputSchema: {
             type: 'object' as const,
             additionalProperties: false,
@@ -726,12 +747,14 @@ export function createSyncComponent(): BrainComponent {
           { name: 'brief.completed', description: 'Auto-push brief status on completion' },
           { name: 'session.synced', description: 'Auto-push latest session on sync' },
           { name: 'session.file.updated', description: 'Auto-push session file on update' },
+          { name: 'context.registered', description: 'Auto-push context doc replica — emitted by igris_context_sync absorb AND by igris_context_register (TD-460)' },
           { name: 'instance.state_updated', description: 'Auto-push instance data on state update' },
           // Batched push events (10s window)
           { name: 'memory.stored', description: 'Batch-push learnings table' },
           { name: 'error.stored', description: 'Batch-push errors table' },
           { name: 'project.registered', description: 'Batch-push projects table' },
           { name: 'agent_event.recorded', description: 'Batch-push agent_events table (FR-267)' },
+          { name: 'project.relation_changed', description: 'Batch-push project_relation_kinds + project_relations (FR-273)' },
         ],
       };
     },
@@ -747,11 +770,13 @@ export function createSyncComponent(): BrainComponent {
       ctx.bus.on('brief.completed', onImmediateEvent);
       ctx.bus.on('session.synced', onImmediateEvent);
       ctx.bus.on('session.file.updated', onImmediateEvent);
+      ctx.bus.on('context.registered', onImmediateEvent);
       ctx.bus.on('instance.state_updated', onImmediateEvent);
       ctx.bus.on('memory.stored', onBatchedEvent);
       ctx.bus.on('error.stored', onBatchedEvent);
       ctx.bus.on('project.registered', onBatchedEvent);
       ctx.bus.on('agent_event.recorded', onBatchedEvent);
+      ctx.bus.on('project.relation_changed', onBatchedEvent);
 
       const status = _autoPushConfig
         ? `enabled, remote: ${_autoPushConfig.remoteUrl}`
@@ -772,11 +797,13 @@ export function createSyncComponent(): BrainComponent {
         _ctx.bus.off('brief.completed', onImmediateEvent);
         _ctx.bus.off('session.synced', onImmediateEvent);
         _ctx.bus.off('session.file.updated', onImmediateEvent);
+        _ctx.bus.off('context.registered', onImmediateEvent);
         _ctx.bus.off('instance.state_updated', onImmediateEvent);
         _ctx.bus.off('memory.stored', onBatchedEvent);
         _ctx.bus.off('error.stored', onBatchedEvent);
         _ctx.bus.off('project.registered', onBatchedEvent);
         _ctx.bus.off('agent_event.recorded', onBatchedEvent);
+        _ctx.bus.off('project.relation_changed', onBatchedEvent);
       }
 
       _ctx = null;

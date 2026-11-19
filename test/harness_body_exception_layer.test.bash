@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_body_exception_layer.test.bash - Tests for FR-144 layer-keyed
 # body-exception sidecar resolution in BOTH harness adapters
 # (compile_harnesses.sh + check_harness_drift.sh).
@@ -72,6 +72,7 @@ EOF
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # write_personal_manifest <body_exception-name>

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # worktree_write_gate.test.bash — TD-408.
 #
 # The gate's whole value is that it needs no model of the mechanism, so these
@@ -28,7 +28,7 @@ setup() {
 }
 
 @test "ARM: the sandbox is a git worktree with tracked files (else every arm is vacuous)" {
-  run git -C "$SBX" ls-files
+  run git -C "${SBX:?}" ls-files
   [ "$status" -eq 0 ] || return 1
   [ -n "$output" ] || return 1
 }
@@ -88,7 +88,7 @@ setup() {
 
 @test "a command that COMMITS is a failure even though the worktree ends clean" {
   run bash "$GATE" --repo "$SBX" -- sh -c \
-    "printf 'x\n' >> '$SBX/tracked.txt' && git -C '$SBX' add -A && git -C '$SBX' -c user.email=t@t -c user.name=t commit -qm sneak"
+    "printf 'x\n' >> '$SBX/tracked.txt' && git -C '${SBX:?}' add -A && git -C '${SBX:?}' -c user.email=t@t -c user.name=t commit -qm sneak"
   [ "$status" -eq 1 ] || return 1
   assert_output_contains "HEAD moved during the run" || return 1
 }

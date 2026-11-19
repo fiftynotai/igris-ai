@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # validate_brain_stewardship_enums.test.bash - Tests for
 #   scripts/validate_brain_stewardship_enums.sh (TD-072 F1+F2 regression;
 #   script + test renamed from validate_memory_agency_enums in TD-148).
@@ -29,6 +29,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 # Helper: build a minimal brain_stewardship fixture that backticks every

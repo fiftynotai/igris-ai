@@ -766,6 +766,150 @@ describe("brain-db — instance state registration (WRITE: mint-or-recover upser
     });
   });
 
+  it("FR-276: keeps a bound harness_session_id on a re-register without one, and refuses a different one", async () => {
+    seedBrain((db) => db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL));
+    const m = await getModule();
+    const base = { instance_id: "i-chat", machine_hostname: "host-1", project_slug: "demo" };
+    const bound = () => {
+      const check = new Database(join(tmpRoot, "memory", "knowledge.db"), { readonly: true });
+      const row = check
+        .prepare("SELECT harness_session_id, current_brief FROM instances WHERE id = 'i-chat'")
+        .get() as { harness_session_id: string | null; current_brief: string | null };
+      check.close();
+      return row;
+    };
+    m.registerOrUpdateInstanceState({ ...base, harness_session_id: "chat-a" });
+    m.registerOrUpdateInstanceState({ ...base, current_brief: "FR-276" });
+    expect(bound()).toEqual({ harness_session_id: "chat-a", current_brief: "FR-276" });
+    expect(() =>
+      m.registerOrUpdateInstanceState({ ...base, current_brief: "OTHER", harness_session_id: "chat-b" }),
+    ).toThrow(m.InstanceIdentityConflictError);
+    expect(bound()).toEqual({ harness_session_id: "chat-a", current_brief: "FR-276" });
+    m.registerOrUpdateInstanceState({ ...base, harness_session_id: "chat-a" });
+    expect(bound().harness_session_id).toBe("chat-a");
+  });
+
+  /**
+   * TD-494 AC5, the CLI register twin (PLAN §4). `/boot`'s recover-or-mint
+   * register never supplies `current_brief`, `current_phase`, `current_task` or
+   * `lease_expires_at`, and its contract says "Do NOT clear its current_brief"
+   * (`core/skills/boot/SKILL.md:355`). Those four are COALESCEd. The owner and
+   * liveness columns stay `= excluded`: a re-register is a fresh process
+   * snapshot, and a stale owner pid kept on a new process would classify a live
+   * session as dead.
+   */
+  const SEED_RECOVERED_ROW = `
+    INSERT INTO instances (
+      id, machine_hostname, project_slug, project_path, status, last_activity_at,
+      current_brief, current_phase, current_task, lease_expires_at,
+      harness, owner_pid, owner_started_at, liveness_method, liveness_status, liveness_checked_at
+    ) VALUES (
+      'i-boot', 'host-old', 'igris-ai', '/old/path', 'active', datetime('now','-10 minutes'),
+      'TD-359', 'BUILDING', 'wiring the resolver', '2026-11-17 20:00:00',
+      'claude', 111, 'Mon Nov 17 10:00:00 2026', 'pid_start_time', 'alive', '2026-11-17 10:00:00'
+    )
+  `;
+
+  function readRecovered(): Record<string, unknown> {
+    const check = new Database(join(tmpRoot, "memory", "knowledge.db"), { readonly: true });
+    const row = check
+      .prepare(
+        `SELECT machine_hostname, current_brief, current_phase, current_task, lease_expires_at,
+                owner_pid, owner_started_at, liveness_method, liveness_status, liveness_checked_at
+           FROM instances WHERE id = 'i-boot'`,
+      )
+      .get() as Record<string, unknown>;
+    check.close();
+    return row;
+  }
+
+  it("TD-494 AC5: a recovered-id re-register KEEPS current_brief/phase/task/lease and OVERWRITES the owner + liveness snapshot", async () => {
+    seedBrain((db) => {
+      db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);
+      db.exec(SEED_RECOVERED_ROW);
+    });
+    const m = await getModule();
+    const res = m.registerOrUpdateInstanceState({
+      instance_id: "i-boot",
+      machine_hostname: "host-new",
+      project_slug: "igris-ai",
+      project_path: "/new/path",
+      harness: "claude",
+      owner_pid: 222,
+      owner_started_at: "Mon Nov 17 12:00:00 2026",
+      liveness_method: "pid_start_time",
+      liveness_status: "alive",
+      liveness_checked_at: "2026-11-17 12:00:00",
+    });
+    expect(res).toEqual({ instance_id: "i-boot", minted: false });
+    m.closeDb();
+    expect(readRecovered()).toEqual({
+      // The four fields register never supplies: kept (COALESCE).
+      current_brief: "TD-359",
+      current_phase: "BUILDING",
+      current_task: "wiring the resolver",
+      lease_expires_at: "2026-11-17 20:00:00",
+      // The process snapshot: overwritten.
+      machine_hostname: "host-new",
+      owner_pid: 222,
+      owner_started_at: "Mon Nov 17 12:00:00 2026",
+      liveness_method: "pid_start_time",
+      liveness_status: "alive",
+      liveness_checked_at: "2026-11-17 12:00:00",
+    });
+  });
+
+  it("TD-494 AC5: a re-register with NO owner (a harness with no owner process) nulls the stale owner + liveness, still keeping the four", async () => {
+    // The over-COALESCE guard: if the owner columns were COALESCEd too, pid 111
+    // from the previous process would survive onto this one.
+    seedBrain((db) => {
+      db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);
+      db.exec(SEED_RECOVERED_ROW);
+    });
+    const m = await getModule();
+    m.registerOrUpdateInstanceState({
+      instance_id: "i-boot",
+      machine_hostname: "host-new",
+      project_slug: "igris-ai",
+      harness: "codex",
+    });
+    m.closeDb();
+    expect(readRecovered()).toEqual({
+      current_brief: "TD-359",
+      current_phase: "BUILDING",
+      current_task: "wiring the resolver",
+      lease_expires_at: "2026-11-17 20:00:00",
+      machine_hostname: "host-new",
+      owner_pid: null,
+      owner_started_at: null,
+      liveness_method: null,
+      liveness_status: null,
+      liveness_checked_at: null,
+    });
+  });
+
+  it("TD-494 AC5: an EXPLICIT current_brief on re-register still wins (COALESCE keeps only on omission)", async () => {
+    seedBrain((db) => {
+      db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);
+      db.exec(SEED_RECOVERED_ROW);
+    });
+    const m = await getModule();
+    m.registerOrUpdateInstanceState({
+      instance_id: "i-boot",
+      machine_hostname: "host-new",
+      project_slug: "igris-ai",
+      current_brief: "TD-494",
+      current_phase: "REVIEWING",
+    });
+    m.closeDb();
+    expect(readRecovered()).toMatchObject({
+      current_brief: "TD-494",
+      current_phase: "REVIEWING",
+      current_task: "wiring the resolver",
+      lease_expires_at: "2026-11-17 20:00:00",
+    });
+  });
+
   it("instanceStateUpdate writes display state and a lease expiry", async () => {
     seedBrain((db) => {
       db.exec(INSTANCES_DDL + INSTANCE_LIVENESS_DDL);

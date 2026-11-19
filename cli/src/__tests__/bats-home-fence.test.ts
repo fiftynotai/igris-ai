@@ -24,6 +24,12 @@
  * the population (a wrong directory scans nothing and reads "clean"), and
  * prove the scanner with a planted negative AND the exemption with a planted
  * `--help`-only copy.
+ *
+ * BR-106 triage: NO-SUT, out of scope — no change needed. This file imports nothing
+ *   from `cli/src/lib` or `cli/src/verbs`; it is a pure `node:fs` text scan over
+ *   `cli/tests/integration/*.bats`, so it reaches no path builder in either tier.
+ *   It is the BATS-tier twin of `cli/src/__tests__/vitest-home-fence.test.ts`, and
+ *   the two are deliberately independent: neither can cover the other's tier.
  */
 
 import { describe, expect, it } from "vitest";

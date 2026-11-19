@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_skill_tree.test.bash — TD-201 skill TREE vendor + tree drift verify.
 #
 # TD-201 ports the FR-156 agent tree pre-check to the surfaces.skills loop.
@@ -72,7 +72,7 @@ setup() {
 teardown() {
   [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
   [ -n "${SANDBOX_HOME:-}" ] && [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
-  return 0
+  cleanup_test_temp_dir
 }
 
 # ---------- helpers ----------------------------------------------------------

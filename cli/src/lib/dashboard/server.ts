@@ -57,6 +57,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import * as routes from "./routes.js";
+import { attentionRoute } from "./attention-routes.js";
 import { SECURITY_HEADERS } from "./headers.js";
 import { bundleIndexPath, bundlePresent, resolveStatic, serveFile } from "./static.js";
 
@@ -367,6 +368,11 @@ async function handle(
 
   if (pathname === "/api/health") {
     sendJson(res, 200, await routes.health(cliVersion));
+    return;
+  }
+  if (["/api/attention/sessions", "/api/attention/session", "/api/attention/inventory"].includes(pathname)) {
+    const result = await attentionRoute(pathname, url.searchParams);
+    sendJson(res, result.status, result.body);
     return;
   }
   if (pathname === "/api/projects") {

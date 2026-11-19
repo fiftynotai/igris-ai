@@ -48,11 +48,11 @@ import {
   projectSessionInstancesDir,
   projectSessionArchiveDir,
 } from "../lib/paths.js";
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import type { SessionFileRow, HousekeepingDigest } from "../types.js";
 
 export interface HousekeepingOptions {
-  /** Project slug override; default basename(cwd) per the sync convention. */
+  /** Project slug override; default: the project the cwd resolves to (TD-359 `defaultProjectSlug`). */
   project?: string;
   /** 30-day digest-roll window (SKILL.md "tunable knob"); default 30. */
   rollDays?: number;
@@ -411,7 +411,7 @@ function runH3(archiveDir: string, ceiling: number): number {
  * do NOT block session start").
  */
 export function runHousekeeping(opts: HousekeepingOptions): number {
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
   const rollDays = opts.rollDays ?? DEFAULT_ROLL_DAYS;
   const ceiling = opts.ceiling ?? DEFAULT_CEILING;
   const json = opts.json !== false;

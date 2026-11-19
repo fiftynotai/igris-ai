@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # agent_event_gate.test.bash — FR-267. Tests for the agent-event coverage gate:
 #   the shared parser  core/scripts/brief_agent_log_roles.sh
 #   the L2 gate        scripts/git-hooks/commit-msg  (§3)
@@ -61,9 +61,9 @@ setup() {
   PROJECT="gproj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO/core/scripts"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   cp "$ROLES" "$REPO/core/scripts/brief_agent_log_roles.sh"
   cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 
@@ -97,6 +97,7 @@ setup() {
 
 teardown() {
   [ -n "${SANDBOX:-}" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # --- helpers -----------------------------------------------------------------
@@ -155,9 +156,9 @@ use_quoted_repo() {
   PROJECT="it's-proj"
   REPO="$SANDBOX/$PROJECT"
   mkdir -p "$REPO/core/scripts"
-  git -C "$REPO" init -q
-  git -C "$REPO" config user.email t@t.t
-  git -C "$REPO" config user.name t
+  git -C "${REPO:?}" init -q
+  git -C "${REPO:?}" config user.email t@t.t
+  git -C "${REPO:?}" config user.name t
   cp "$ROLES" "$REPO/core/scripts/brief_agent_log_roles.sh"
   cp "$AC_CHECK" "$REPO/core/scripts/brief_ac_check.sh"
 }
@@ -786,4 +787,107 @@ MD
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"max 72"* ]] || return 1
   [[ "$output" != *"EVENT-GATE"* ]] || return 1
+}
+
+# =============================================================================
+# PART 3 — TD-468: the gate reads the CHILD's Agent Log, not the parent's
+# =============================================================================
+# The extractor used to truncate `closes #FR-700a` to `FR-700`, so §3 read the
+# PARENT's log and counted the PARENT's events — a lettered sub-brief could
+# pass a gate it never satisfied (the silent direction, the dangerous one).
+# Synthetic parent/child pair: mbrgea-ai's real FR-003 family is a client
+# project's content and cannot ship as a fixture in this public repo (the
+# plan's P-4). The plan's L1-L4 are SB1-SB4 here (L1 is taken above).
+#
+#   SB1  RED: parent FR-700 names architect+forger (both have events); child
+#        FR-700a names sentinel only, NO events; both ACs ticked;
+#        `closes #FR-700a`. HEAD: exit 0 SILENT (the parent's log, the
+#        parent's events). Fixed: exit 1, `EVENT-GATE FR-700a ... missing=sentinel`.
+#   SB2  a sentinel pair under FR-700a -> exit 0 silent (the child, satisfied).
+#   SB3  isolation: a sentinel pair under FR-700 (the PARENT) only -> still
+#        FAIL. The `brief_id=` predicate keys on the child, not just the log.
+#   SB4  `closes #FR-700, #FR-700a` with FR-700 clean -> exactly one verdict,
+#        the child's.
+
+parent_log() {
+  write_md "$1" <<'MD'
+# FR-700: the parent
+
+## Acceptance Criteria
+
+- [x] done
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| t | orchestrator | INIT | SUCCESS |
+| t | architect | plan | SUCCESS |
+| t | forger | build | SUCCESS |
+MD
+}
+
+child_log() {
+  write_md "$1" <<'MD'
+# FR-700a: the lettered child
+
+## Acceptance Criteria
+
+- [x] done
+
+### Agent Log
+| Time | Agent | Action | Result |
+|------|-------|--------|--------|
+| t | orchestrator | INIT | SUCCESS |
+| t | sentinel | test | PASS |
+MD
+}
+
+seed_parent_child() {
+  parent_log "$SCRATCH/parent.md"
+  child_log "$SCRATCH/child.md"
+  seed_brief_file FR-700 "$SCRATCH/parent.md"
+  seed_brief_file FR-700a "$SCRATCH/child.md"
+  seed_pair FR-700 architect
+  seed_pair FR-700 forger
+}
+
+@test "(SB1) TD-468 RED: closes #FR-700a with the child's role (sentinel) unrecorded -> exit 1 naming FR-700a, not the parent's clean log" {
+  seed_parent_child
+  closing_msg FR-700a
+
+  run_hook
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"EVENT-GATE FR-700a: VERDICT=FAIL roles=sentinel missing=sentinel"* ]] || { echo "child verdict missing: [$output]"; return 1; }
+  [[ "$output" != *"EVENT-GATE FR-700:"* ]] || return 1
+}
+
+@test "(SB2) TD-468: a sentinel start+stop under FR-700a -> exit 0 silent" {
+  seed_parent_child
+  seed_pair FR-700a sentinel
+  closing_msg FR-700a
+
+  run_hook
+  [ "$status" -eq 0 ] || { echo "expected exit 0, got $status; output: [$output]"; return 1; }
+  [ "$output" = "" ] || return 1
+}
+
+@test "(SB3) TD-468 RED (isolation): a sentinel pair under the PARENT only -> FR-700a still FAILs (brief_id predicate, not just the log)" {
+  seed_parent_child
+  seed_pair FR-700 sentinel
+  closing_msg FR-700a
+
+  run_hook
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"EVENT-GATE FR-700a: VERDICT=FAIL roles=sentinel missing=sentinel"* ]] || return 1
+}
+
+@test "(SB4) TD-468 RED: closes #FR-700, #FR-700a with the parent clean -> exactly one verdict, the child's" {
+  seed_parent_child
+  printf 'fix(x): y\n\ncloses #FR-700, #FR-700a\n' > "$MSG_FILE"
+
+  run_hook
+  [ "$status" -eq 1 ] || { echo "expected exit 1, got $status; output: [$output]"; return 1; }
+  [[ "$output" == *"EVENT-GATE FR-700a: VERDICT=FAIL roles=sentinel missing=sentinel"* ]] || return 1
+  [[ "$output" != *"EVENT-GATE FR-700:"* ]] || return 1
+  [ "$(printf '%s\n' "$output" | grep -c 'VERDICT=FAIL')" -eq 1 ] || { echo "expected exactly one verdict: [$output]"; return 1; }
 }

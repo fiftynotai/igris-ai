@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # awaken-verbs.bats — FR-195 (M1+M2) integration tests for the awaken verbs.
 #
 # Exercises the CLI bridge end-to-end via $CLI_BIN (L-330: producer verb TS +
@@ -23,6 +23,8 @@
 #           12. `igris cognition yield` scores an instance the CLI never heard of,
 #               and reports one with no verdicts as unmeasured rather than zero.
 #           13. `igris cognition bogus` names BOTH actions in its exit-2 message.
+#   TD-359: 14. `igris detect` with no `git` on PATH → exit 0, basename(cwd)
+#               slug, the 8 keys plus `project_source`.
 
 load _helpers.bash
 
@@ -130,6 +132,44 @@ setup() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'"mode":"degraded-no-db"'* ]]
   [[ "$output" == *'"brain_db":false'* ]]
+}
+
+# TD-359 — detect stays degraded-safe: with NO `git` on PATH it exits 0, falls
+# through to basename(cwd), and keeps the 8-key shape plus the additive
+# `project_source` (row 83). The cwd is a SUBDIRECTORY of a git repo on purpose:
+# with git reachable the resolver would answer the repo's slug, so the
+# basename answer here is the missing-git fall-through, not a non-git dir.
+@test "detect: PATH without git → exit 0, basename(cwd) slug, 8 keys + project_source (TD-359)" {
+  unset_harness_markers
+  local repo sub bin
+  repo="$(cd "$(stage_git_project td359-nogit-repo)" && pwd -P)"
+  sub="$repo/sub-nogit"
+  mkdir -p "$sub"
+  bin="$BATS_TEST_TMPDIR/nogit-bin"
+  mkdir -p "$bin"
+  ln -s "$(command -v node)" "$bin/node"
+  # ARM: git is unreachable on that PATH, node is reachable.
+  run env PATH="$bin" /bin/sh -c 'command -v git'
+  [ "$status" -ne 0 ] || { echo "git still resolves: $output"; return 1; }
+  run env PATH="$bin" /bin/sh -c 'command -v node'
+  [ "$status" -eq 0 ] || return 1
+
+  cd "$sub"
+  run --separate-stderr env PATH="$bin" "$bin/node" "$CLI_DIST/index.js" detect
+  [ "$status" -eq 0 ] || { echo "exit $status; stderr: $stderr"; return 1; }
+  echo "$output" | node -e '
+    let s = "";
+    process.stdin.on("data", d => s += d);
+    process.stdin.on("end", () => {
+      const o = JSON.parse(s);
+      for (const k of ["harness","project_slug","project_path","brain_root","brain_db","sqlite3","remote_brain","mode","project_source"]) {
+        if (!(k in o)) { console.error("missing key: " + k); process.exit(1); }
+      }
+      if (o.project_slug !== "sub-nogit") { console.error("project_slug: " + o.project_slug); process.exit(1); }
+      if (o.project_source !== "basename") { console.error("project_source: " + o.project_source); process.exit(1); }
+      process.exit(0);
+    });
+  ' || { echo "stdout: $output"; return 1; }
 }
 
 @test "session gather: on a seeded brain returns the expected handoff" {

@@ -230,4 +230,10 @@ export interface EngineConfig {
   dbPath: string;
   /** Per-component configuration keyed by component name */
   components: Record<string, ComponentConfig>;
+  /**
+   * How this engine is served. 'http' is the remote/VPS brain: machine-local
+   * components (FR-276 attention) are never registered there. Omitted means
+   * 'stdio', the local brain (the CLI's vendored engine boots this way).
+   */
+  transport?: 'stdio' | 'http';
 }

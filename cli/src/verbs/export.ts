@@ -139,18 +139,25 @@ const EXCLUDED_STORES = [
   "agent_events",
   // FR-268: the ceremony record is machine-keyed telemetry, not project content — replicated by sync, never exported.
   "ceremony_events",
+  "attention_sessions",
+  "attention_events",
+  "attention_tool_inventory",
   "suggestions",
   "dismissed_patterns",
   "embeddings",
   "loadout",
   "catalog",
   "definition_files",
+  // TD-361: execution state is per-DB-file — also out of `SYNC_TABLES` since 2026-09-24.
   "schedules",
   "schedule_runs",
   "event_log",
   "skills",
   "agents",
   "hooks",
+  // FR-273: cross-project (an edge joins two projects) — synced, never exported.
+  "project_relation_kinds",
+  "project_relations",
 ];
 
 function sha256(text: string): string {

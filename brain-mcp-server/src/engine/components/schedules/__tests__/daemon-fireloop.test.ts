@@ -24,9 +24,13 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import Database from 'better-sqlite3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { startDaemon } from '../daemon.js';
 import type { DaemonHandle } from '../daemon.js';
 import { scheduleMigrations } from '../schema.js';
+import { pidsDir } from '../../../../stdio-lifecycle.js';
 
 // ---------------------------------------------------------------------------
 // Test DB
@@ -78,8 +82,16 @@ function nextRunAt(db: Database.Database, scheduleId: string): string | null {
 describe('schedule daemon — fire-loop correctness (BR-067)', () => {
   let db: Database.Database;
   let daemon: DaemonHandle | null = null;
+  // TD-361: the daemon's sweep reads the pidfile registry and config.json for
+  // a legacy `running` row, so both are sandboxed (ARMED below) and restored by key.
+  let sandbox: string;
+  const saved = { IGRIS_BRAIN_DIR: process.env.IGRIS_BRAIN_DIR, IGRIS_PIDS_DIR: process.env.IGRIS_PIDS_DIR };
 
   beforeEach(() => {
+    sandbox = mkdtempSync(join(tmpdir(), 'br067-fireloop-'));
+    process.env.IGRIS_BRAIN_DIR = sandbox;
+    process.env.IGRIS_PIDS_DIR = join(sandbox, 'pids');
+    expect(pidsDir()).toBe(join(sandbox, 'pids'));
     db = createScheduleDb();
   });
 
@@ -89,6 +101,11 @@ describe('schedule daemon — fire-loop correctness (BR-067)', () => {
       daemon = null;
     }
     db.close();
+    rmSync(sandbox, { recursive: true, force: true });
+    for (const k of ['IGRIS_BRAIN_DIR', 'IGRIS_PIDS_DIR'] as const) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
   });
 
   it('fires a due schedule exactly once on a single tick', async () => {
@@ -246,7 +263,10 @@ describe('schedule daemon — fire-loop correctness (BR-067)', () => {
 
   it('skips a schedule with an already-running run (overlap guard)', async () => {
     const id = seedDueSchedule(db);
-    // Pre-existing 'running' run — models a long-running prior fire.
+    // Pre-existing 'running' run — models a long-running prior fire. It is a
+    // LEGACY-shaped row (no owner columns) that started NOW, i.e. after this
+    // process started, so the TD-361 sweep cannot prove its owner dead and it
+    // still blocks (`legacy_unprovable`). The reaping side is daemon-wedge.test.ts.
     db.prepare(`
       INSERT INTO schedule_runs (id, schedule_id, status, started_at, attempt)
       VALUES ('run-stuck', ?, 'running', ?, 1)
@@ -261,5 +281,8 @@ describe('schedule daemon — fire-loop correctness (BR-067)', () => {
       "SELECT COUNT(*) AS c FROM schedule_runs WHERE schedule_id = ? AND status = 'running'",
     ).get(id) as { c: number };
     expect(stillRunning.c).toBe(1);
+    // TD-361 (2026-09-24): a blocked claim SKIPS the slot — next_run_at moves
+    // forward — instead of leaving it due and re-arming setTimeout(tick, 0).
+    expect(Date.parse(nextRunAt(db, id) as string)).toBeGreaterThan(Date.now());
   });
 });

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # secrets_scan.test.bash - Tests for the TD-159 gitleaks secret-scanning gate.
 #
 # Verifies that .gitleaks.toml (the curated ruleset + Igris custom rules +
@@ -31,6 +31,7 @@ setup() {
 
 teardown() {
   [ -d "$SCAN_DIR" ] && rm -rf "$SCAN_DIR"
+  cleanup_test_temp_dir
 }
 
 # scan_dir — runs gitleaks against $SCAN_DIR with the repo config.

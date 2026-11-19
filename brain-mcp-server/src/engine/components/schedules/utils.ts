@@ -44,6 +44,7 @@ export function generateRunId(): string {
  *
  * Retries on failure up to max_retries additional attempts (so total attempts
  * = max_retries + 1). Uses linear backoff: delay = 1000ms * attempt_number.
+ * Adds NO timeout: only a `shell` handler honours `timeout_ms` (TD-361 F3).
  *
  * @param schedule - The schedule row from the database
  * @param dispatchTool - Optional function to dispatch MCP tool calls

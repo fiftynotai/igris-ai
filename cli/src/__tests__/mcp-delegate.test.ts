@@ -23,9 +23,17 @@
  *      is the LOCAL binary (no bare npx), the verdict keys on the exit code, and
  *      NO inline secret-literal appears in any logged argv (the ${VAR} ref is
  *      passed VERBATIM — never the resolved value).
+ *
+ * BR-106 triage: FENCED (Tier H + B) — the plan's NO-SUT verdict was HALF
+ *   right — lib/mcp-delegate.ts itself contains zero homedir/expandTilde
+ *   references (confirmed), but this file also imports mcpAgentIds from
+ *   lib/harness-descriptor.ts, and mcpAgentIds -> skillAgentIds -> entry ->
+ *   loadHarnessDescriptor -> resolveManifestPath -> homedir() reads the
+ *   operator's real ~/.igris/core/harness-manifest.json with no override.
+ *   Read-only, but still real operator state.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import {
@@ -42,6 +50,19 @@ import {
 // FR-217: the default MCP target set is now descriptor-derived; assert against
 // the accessor the SUT reads (mcpAgentIds()), not the deleted hardcoded const.
 import { mcpAgentIds } from "../lib/harness-descriptor.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
+
+beforeEach(() => {
+  br106Fence = fenceHome("igris-mcp-delegate-home-"); // BR-106: HOME moves FIRST, and ARMED
+});
+
+afterEach(() => {
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
+});
+
 
 /** A fake absolute binary path for the injected resolver (never spawned). */
 const FAKE_BIN = "/abs/node_modules/add-mcp/dist/index.js";

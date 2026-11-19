@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_descriptor.test.bash — FR-217 (harness-wiring consolidation).
 #
 # Covers the bash side of the canonical harness descriptor:

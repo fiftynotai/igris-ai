@@ -12,6 +12,872 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [7.4.0] - 2026-11-19
+
+> RELEASE AUDIT BYPASSED (IGRIS_BYPASS_RELEASE_AUDIT=1): FR-279
+
+Minor release on `v7.3.2`. 43 commits (counted 2026-11-19 with
+`git log v7.3.2..HEAD`), six of them features, no breaking change. The §17.2
+pre-tag audit was bypassed by operator decision for the one brief named above:
+FR-279 (`/do-lite` and `/shape-lite`) is unbuilt work on `develop` and no part
+of it is in this release.
+
+The headline is the session attention map (FR-276): each chat now records
+which brain nodes were delivered to it and which it invoked, machine-local and
+never synced. It is evidence of delivery and invocation, not of what the model
+attended to. Alongside it come project relations (FR-273), the knowledge
+watermark (FR-274), `igris sync push` and `igris sync drain` with no key in any
+argument, project-context docs that replicate across machines (TD-460), and an
+extractor whose children inherit an allowlisted environment, see only named
+auth stores, and have their tools denied or sandboxed (TD-472, BR-108, TD-476,
+TD-477; `docs/COGNITION.md` states what remains). Linux x64 installs of the
+brain no longer fail on onnxruntime's CUDA download (BR-119).
+
+Know one change before upgrading (TD-470, under Added). After `igris refresh`,
+the `commit-msg` hook refuses a commit that carries a `Co-authored-by:` trailer
+in its last paragraph, a `Co-authored-by: … <user@host>` line anywhere, or a
+`Generated with` signature line, a human co-author's trailer included; the way
+past is the one-shot `IGRIS_BYPASS_SIGNATURE_GATE=1 git commit ...`. And
+`igris init`, `igris update` and `igris refresh` turn off Claude Code's commit
+and PR attribution in the user-level `~/.claude/settings.json`, which reaches
+every repository on the machine, not only Igris ones. An existing
+`attribution` or `includeCoAuthoredBy` setting there is kept, and a project's
+own `attribution` wins.
+
+Upgrading: `npm install -g igris-ai@7.4.0` then `igris init --upgrade`; from
+source, rebuild `cli/`, then `igris refresh --from-source <checkout> --yes`
+and `igris doctor`. Restart running harness sessions afterwards so each one's
+brain process loads the new bundle and its migrations.
+
+### Added
+
+- **Session attention map — what each chat was given and what it used
+  (FR-276).** Igris had one whole-brain graph but no record of which part of
+  it a given chat received or invoked, and two chats in the same project could
+  not be told apart. Each chat now gets its own attention recording, begun
+  before the first boot read, and its own view of the map. The recording is
+  evidence of delivery and invocation, not of what the model attended to: each
+  recorded node is available, preview, full, invoked, failed, unknown or
+  historical, and agent-reported receipts are marked self-reported. The
+  recording is machine-local by operator decision (2026-11-16): it is never
+  synced or exported, and the VPS brain does not expose the attention tools.
+  The four entries below are its parts.
+
+- **Attention ledger and brain component (FR-276a).** A new `attention`
+  component owns three tables (`attention_sessions`, `attention_events`,
+  `attention_tool_inventory`), created by its own component migrations, and
+  three tools: `igris_attention_session` (begin, bind, epoch, end),
+  `igris_attention_event` (a self-reported receipt) and `igris_attention_call`
+  (runs a brain tool and records what it delivered, returning the tool's own
+  result plus an `_meta.igris_attention` note). The database orders events;
+  a retry with the same operation id returns the first event, and a retry that
+  changes the evidence is refused. Memory, brief, session, goal and context
+  reads record what they delivered (full or preview, bytes, source revision)
+  only inside an `igris_attention_call`; anywhere else nothing is recorded.
+  Readers never write or migrate. The inventory lists OS modules, context
+  docs, skills, agents and the brain's own tools under stable ids, and names
+  each source it could not read.
+
+- **`igris attention`, and `/boot` and `/rest` record the session (FR-276b).**
+  `igris attention begin|bind|read|call|event|epoch|end|show|sessions|inventory`
+  works on the local brain only (exit 0 ok, 1 refused, 2 usage, 3 attention
+  unavailable or degraded; `show` exits 0 for a snapshot whose only degradation
+  is its size bound, which still carries `truncated: true`, `counts` and a
+  `Snapshot bounded: …` sentence in `degraded.reason`). `read` delivers an OS module, skill, agent or project document
+  by canonical id and records full or preview; `call` runs a brain tool
+  through the bundled LOCAL engine, never a remote MCP connection.
+  `igris session register --attention-session <uuid>` binds the recording to
+  the instance and adds an `**Attention Session ID:**` line to its scratchpad.
+  Register never overwrites a bound native chat: a plain register (no
+  `--attention-session`) whose recovered `--self-instance-id` is bound to a
+  different chat than `--harness-session-id` mints a fresh instance (exit 0,
+  `minted: true`) and leaves the old one untouched, while with
+  `--attention-session` a chat conflict, the recording's or the recovered
+  instance's, is still refused. On the recovered instance's refusal, `/boot`
+  §4.4 re-runs the register without `--self-instance-id`, which mints a fresh
+  instance bound to the same recording.
+  `/boot` begins the recording before Detect (§0.1), binds it after Detect,
+  reads the OS index, modules and USER through `igris attention read`, runs
+  its brain recall through `igris attention call` (§4.3), registers with the
+  recording, and finishes by printing the session-map link (§8). `/rest` ends
+  the recording (§2.4) and keeps its history. `core/os/conduct.md` asks agents
+  to route later retrieval the same way, and `core/os/harness-specific/codex.md`
+  opens the link in the Codex browser panel when that tool is available. An
+  older CLI or a missing module degrades to a one-line notice and never blocks
+  boot.
+
+- **The dashboard's session view, and `igris dashboard --session`, `--ensure`
+  and `--stop` (FR-276b, FR-276c).** `--session <uuid>` opens
+  `#/graph?session=<uuid>`. `--ensure` starts or reuses one managed loopback
+  dashboard, checks through `/api/health` that it is this CLI's build serving
+  this brain, and prints `{available, url, reason}` without opening a browser;
+  `--stop` stops it only after checking that identity. Three read-only GETs
+  back the view (`/api/attention/sessions`, `/api/attention/session`,
+  `/api/attention/inventory`); they never write or migrate, answer 200 with
+  `degraded` on a missing or unreadable brain, 400 on a malformed request and
+  404 for an unknown session. The Graph page gains a session picker, a
+  per-session panel, a legend, an evidence inspector and history replay.
+  Polling repaints the evidence without refetching the topology or restarting
+  the layout, and a highlighted edge is labelled a relationship, never an
+  observed traversal.
+
+- **Session focus: This chat, related nodes and "Why selected" (FR-276d).**
+  With a session selected the map opens on This chat, showing only the nodes
+  the recording touched; Whole brain is one click away, and "Show related
+  nodes" adds their one-hop neighbours, which carry no activity unless
+  recorded. Hidden nodes lose their labels, links and pointer targets as well
+  as their glyphs, and the counts describe the visible map. A receipt can say
+  why it was selected (boot, task, retrieval or user request): declared by the
+  caller with `--selection` and `--selection-ref` (a short identifier, never
+  prose, a path or a query) or observed at a successful retrieval. The
+  inspector shows "Reported by agent" or "Observed retrieval", and older
+  receipts show "Not recorded". The reason is a nullable `selection` column
+  (attention schema v2), added by the next write or brain boot; dashboard
+  reads never migrate. Built in the FR-276 session before it was registered,
+  and kept by operator decision on 2026-11-16.
+
+- **`igris sync drain` — this machine's brain retry queue, with no key in any
+  argument (TD-489).** Failed pushes queue their rows in the local brain's
+  `sync_queue` table, and nothing drains it any more: `igris sync data` asks the
+  REMOTE host to drain its own table, and `/rest` §2.6.5 called
+  `igris_sync_queue_drain` only when that failed, passing the key as a tool
+  argument. The new verb reads `remote_brain` from config and dispatches the
+  bundled handler in process; §2.6.5 now runs it on every `/rest` (no MCP
+  call, no key in the transcript). A read-only count on 2026-10-02 found 1,051
+  pending rows in this machine's queue, none ever retried; its newest `sent_at`
+  was 2026-08-12.
+
+- **`igris sync push` — a push with no key in any argument (TD-350).** The
+  verb reads `remote_brain.url` and `remote_brain.api_key` from
+  `~/.igris/config.json` itself, accepts no key argument, and dispatches the
+  bundled `igris_brain_push` handler in process, so the delta and the BR-097
+  stamp rule are unchanged; exit 1 on a partial push. `/rest` §2.7 now runs it
+  — its MUST used to require pasting the key into the transcript, so sessions
+  skipped it. `/boot` surfaces a never-made or 7-day-stale push from a new
+  boot-sync digest field (`push`). The VPS was already receiving pushes (the
+  session-end extractor and auto-push): a read-only snapshot at 14:54 UTC on
+  2026-10-01 found 31 per-table `sync_state` stamps for `brain.fifty.dev`, 8
+  of them dated that day, the newest 14:53:55. What was missing was a key-free
+  door.
+
+- **Project relations (FR-273, round A).** Registered projects can now be
+  related, and every agent can see it. Two synced brain tables (projects
+  component migration v3): `project_relation_kinds`, a governed registry seeded
+  with `uses_package`, `calls_service`, `white_label_of`, `variant_of` and
+  `supersedes` (each with meaning, direction, labels, an example and aliases),
+  and `project_relations`, the edges with per-edge detail and provenance. Three
+  MCP tools over ONE action layer that the CLI also imports:
+  `igris_project_relations` (neighbours in both directions with kind, labels,
+  detail, `repo_url`, on-disk flag and the FR-274 watermark — at most 4 local
+  git checks — plus `depth` for the chain and the derived "system"),
+  `igris_project_relate` (declare/remove; only a registered kind, an alias is
+  stored canonical; both endpoints must be registered and not duplicate-path;
+  removal is a tombstone) and `igris_project_relation_kinds`
+  (list/add/alias/merge; a near-duplicate kind is refused by a lexical gate, and
+  a semantic gate reports the nearest kind without refusing — calibrated, no
+  threshold separated synonyms on this model; `IGRIS_RELATIONS_SEMANTIC=off`
+  disables it). `igris project relations` and `igris project kinds list` read
+  the same data from the CLI, and `/boot` prints one `Connected: …` line
+  (§4.7.1). Both tables replicate (LWW, tombstones; concurrent alias adds
+  union on the replica that receives the newer row and converge on the next
+  write of the kind); a new table is deploy-order safe. `core/os/memory.md` says when to call it.
+- **Project relations, round B (FR-273): CLI writes and manifest derivation.**
+  `igris project relate|unrelate` and `igris project kinds add|alias|merge` run
+  the brain's own relations action layer on a create-never write handle (exit 0
+  written, 1 refused, 2 usage, 3 degraded; a CLI write replicates on the next
+  brain push). `igris_project_relations_derive` reads a project's
+  `pubspec.yaml` / `package.json` / `pyproject.toml` git and path dependencies
+  and turns a match with another registered project (normalised `repo_url`, or
+  realpath) into a pending `add_project_relation` suggestion — never an edge
+  until `igris_suggestion_apply_action` applies it (provenance `derived`). It
+  reads the working tree only.
+
+- **Knowledge watermark (FR-274).** The brain now records, per project, the
+  commit its knowledge reflects: `projects.knowledge_sha`, `knowledge_branch`
+  and `knowledge_recorded_at` (projects component migration v2, ALTER-only, not
+  synced — FR-271 owns replication). `igris project watermark` writes it at
+  session end from both `/rest` (§2.5.5) and `core/hooks/shared/session_end.sh`,
+  reading HEAD of the project row's path (repo top level only; a failure writes
+  nothing). `igris_project_status` renders it with a `git log <sha>..origin/<branch>`
+  line and a local reachability verdict: `reachable` notes commits ahead of
+  origin that were never pushed, `DIVERGED` is reported only for a real fork,
+  and an `invalid` stored value is refused before any git call.
+  `renderKnowledgeWatermark` and `checkKnowledgeWatermark` are exported for
+  FR-273's lookup tool.
+
+- **`commit-msg` refuses AI signatures, and `igris init` and `igris update`
+  turn off Claude Code's commit and PR attribution (TD-470).**
+  `core/os/standards.md` has always said "No AI signatures", and nothing
+  checked it. A new signature gate in the hook runs on every commit, closing or
+  not. It exits 1 when, after git's scissors cut and its `#` comment lines are
+  removed, a line at column 0 (any case) is a `Co-authored-by:` trailer in the
+  last paragraph, a `Co-authored-by: … <user@host>` line anywhere, an emoji
+  (U+1F000 to U+1FFFF) followed by `Generated with`, or nothing but
+  `Generated with [name](url)`. An indented or quoted line passes, so a body
+  can quote one, and so does a bare `Generated with X`. A human pair's trailer
+  is refused too; the way past is the one-shot
+  `IGRIS_BYPASS_SIGNATURE_GATE=1 git commit ...`, which neither skips nor is
+  skipped by the other gates' bypasses, and `--no-verify` still skips every
+  hook. The gate is not limited to this repository: it runs in every clone
+  where `igris install` linked `.git/hooks/commit-msg` to
+  `~/.igris/core/git-hooks/commit-msg`. Cherry-picks, rebases and `git am` do
+  not run the hook. On 1,747 real commit messages from six repositories it
+  refused the 50 signed ones and nothing else. `igris init` and `igris update`
+  (and `igris refresh`, which runs `igris update`) now add
+  `"attribution": {"commit": "", "pr": "", "sessionUrl": false}` to
+  `~/.claude/settings.json` when that file has neither `attribution` nor
+  `includeCoAuthoredBy`, and print one line when they do. The file is
+  user-level, so Claude Code stops adding the trailer and the PR byline in
+  every repository on the machine; an `attribution` you set there or in a
+  project's `.claude/settings.json` is kept and wins. This repository's own
+  `.claude/settings.json` carries the same block. Run `igris refresh` to get
+  both; a commit with a genuine human co-author then needs the bypass.
+
+- **`igris doctor` reports a missing attribution default (TD-473).** A
+  machine that ran `igris init` before TD-470 and never ran `igris update`
+  has no Claude Code attribution setting. Doctor now reports
+  `attribution-missing` when `~/.claude/settings.json` exists and parses but
+  carries neither `attribution` nor `includeCoAuthoredBy`; an absent or
+  malformed file is left to `hooks-missing`. `igris doctor --fix` adds the
+  default through the same writer as the hooks fix and prints the one-line
+  notice `init` and `update` print. Either key, with any value, counts as
+  your own choice and is kept.
+
+- **Project-context docs replicate across machines (TD-460).** The brain had a
+  `context_files` table, a writer and two tools, with zero rows and zero
+  callers, so the docs under `~/.igris/projects/{slug}/context/` lived on one
+  machine only. `context_files` now joins `SYNC_TABLES` and
+  `BOOT_SYNC_PULL_TABLES`. The file stays the authority; the row is a replica
+  for transport. A new tool, `igris_context_sync`, reconciles both directions
+  in one pass: `/boot` calls it right after boot-sync, and `/ground` and
+  `/document` call it after they write a doc. A locally newer file is absorbed
+  into the row and auto-pushed; a brain-newer row is written to disk only after
+  the old bytes are saved under `context-backups/`. `file_path` is left out of
+  the synced columns (the receiver rebuilds it), and the `.igris-pack` bundle
+  still carries the docs as files. Two limits: the last write wins, so the
+  losing edit of a two-machine collision survives only as that backup; and a
+  deletion does not propagate, so a doc removed with `rm` comes back at the
+  next reconcile while its row exists (TD-463). Deploy the VPS brain first
+  (`igris sync code`) so the rows reach the other machines; an older remote
+  only skips the table.
+
+- **Projects record where their source lives, and `igris doctor` tells a
+  reclaimed project from an orphan (FR-265).** A new nullable
+  `projects.repo_url` column, added by the projects component's migration v1,
+  is local to each brain and not replicated. `igris_project_register` fills it
+  from `git remote get-url origin` when the path is a repo's top level, with
+  credentials stripped (an ssh user is kept); `igris_project_update` sets it,
+  and `''` clears it. `igris_project_status` prints `Repo URL:` and a
+  copy-pasteable `Clone:` line. `igris doctor` classifies a row whose directory
+  is gone but whose `repo_url` is recorded as `source-reclaimed`: not drift
+  (exit-neutral), printed with a
+  `restore <slug>: git clone -- '<url>' '<path>'` line, and never offered for
+  deletion. `/boot` and `/igris-doctor` do not count it as an issue. Against a
+  brain without the column the CLI reads `NULL`, so the class stays dormant
+  until that brain is upgraded.
+
+- **The extractor probe tells a CLI's own helpers from model tools, and
+  measures egress (TD-477, TD-478).** The operator-run probe
+  `brain-mcp-server/scripts/td472_child_env_probe.ts` (not in the package)
+  compares a child's env with the previous rule on the same argv and home,
+  and counts the MCP and tool processes the child spawns (`--adversarial`
+  sends a tool-eliciting prompt). It gains `--egress`: a `127.0.0.1`
+  listener on a random port and nonce path, a fetch prompt, and a hit or
+  miss. Its census now counts claude's hardened git repo probe and the
+  `xcodebuild` license check as `cli_helper`, and, under a harness whose
+  model has no tools, an exited process with no argv too, so the claude
+  probe reads `PASS`. A live process with an argv still counts as `tool`.
+
+### Fixed
+
+- **Linux x64 installs of the brain no longer fail on a CUDA download
+  (BR-119).** onnxruntime-node 1.21.0, pinned by `@huggingface/transformers`,
+  runs a postinstall that on Linux x64 downloads
+  `onnxruntime-linux-x64-gpu-1.21.0.tgz` from a GitHub release URL that now
+  answers 404. The 404 throws, so every `npm ci` and `npm install` of the
+  brain tree failed: CI run 44258412602 on `ca9fe3f`, and the published
+  7.3.2 on Linux x64, where the postinstall warns and the brain has no
+  dependencies. Every install now sets the upstream opt-out
+  `ONNXRUNTIME_NODE_INSTALL_CUDA=skip` in its own environment, overriding any
+  inherited value, at six sites:
+  a workflow-level `env:` in `test.yml` and `npm-publish.yml`, an inline
+  prefix on the vendor install in `cli/scripts/copy-templates.sh` and on the
+  `npm ci` in `scripts/igris_brain_deploy.sh`, a child-env key in
+  `cli/scripts/postinstall.mjs` (set after the BR-075 `npm_config_*` strip),
+  and an `export` in the `igris sync code` runner. On Linux the postinstall's
+  printed recovery command carries the prefix too. It is an environment
+  variable and not a `.npmrc` key because the postinstall strips inherited
+  npm config, the staged bundle never reads the root `.npmrc` and npm never
+  packs one, and npm 11 warns that unknown config keys will stop working in
+  its next major. The value must be exactly `skip`: install.js throws on
+  other words. Igris never used the CUDA execution provider, but the download
+  used to overwrite the package's `libonnxruntime` with the GPU build's copy;
+  Linux x64 now runs the CPU library that ships in the npm package. A new
+  brain test runs a real CPU-provider inference in CI. The VPS install
+  fingerprint is unchanged, so a VPS tree installed before the outage is
+  reused. Revisit when onnxruntime-node moves off 1.21.0, usually through a
+  `@huggingface/transformers` bump (a brain test pins the version), if
+  upstream renames the variable, or if Igris adopts a GPU provider. A Linux x64 contributor exports the variable before a root
+  `npm ci` (CONTRIBUTING.md).
+
+  Upgrading (BR-119):
+  - 7.3.2 on Linux x64 leaves the brain without its dependencies. Until a
+    release carries this fix, run the postinstall's recovery command with
+    the opt-out, from the global package root (`$(npm root -g)/igris-ai`):
+    `ONNXRUNTIME_NODE_INSTALL_CUDA=skip npm install --omit=dev --prefix dist/brain-mcp-server`.
+    macOS and Windows installs are unaffected.
+  - The VPS reuses its installed tree while the install fingerprint is
+    unchanged. The next `igris sync code` deploys a runner that exports the
+    opt-out for any fresh install.
+
+- **A git worktree resolves to its repository's project (TD-359).** The
+  project slug came from the directory name, so a worktree such as
+  `mbrgea-ai-gl010` became an empty phantom project. The brief gate then
+  denied every write, and the git hooks failed open. One resolver now has a
+  bash twin (`igris_resolve_project` in `core/hooks/shared/_gate.sh`) and a
+  TypeScript twin (`cli/src/lib/project-identity.ts`). Its precedence is a
+  `.igris-project` marker, then the registry row of the main checkout, then
+  the main checkout's name, then the directory name. Every shared hook, both
+  git hooks, `igris detect` (which gains `project_source`) and every CLI
+  `--project` default go through it. `test/project_slug_parity.test.bash` runs
+  all of them on one fixture matrix. The five repos registered under a slug
+  other than their directory name now resolve to the registry slug, which
+  holds their data. A brief-gate denial names the slug, the directory and the
+  source, and says when the project has 0 briefs.
+  The marker is its first line, cut at the first NUL or newline and trimmed.
+  On bash 4.3 and later a line `read` skipped NUL bytes, so on Linux the
+  bash twin resolved `abc` NUL `def` as `abcdef` while the TS twin resolved
+  `abc` (BR-120). Both twins now read the marker the same way on every bash.
+  They read at most 4096 bytes and refuse a first line of 4096 bytes or more,
+  where a padded slug of any length used to be accepted. Before this bound, a
+  1 MiB marker cost 50 s or more on every hook call (TD-515).
+
+- **The phase guard gates a commit by the committing session's own brief
+  (TD-494).** It used to read the newest instance on the machine, so one
+  session's commit was gated by another session's brief, and a Done brief
+  left the guard open. It now identifies the committing session through
+  `IGRIS_INSTANCE_ID` (which `/hunt` prefixes to its close commit), then the
+  owner process (pid plus start time), then the one live instance at the
+  worktree root. An unidentified commit is allowed with a one-line notice.
+  The session-file and `CURRENT_SESSION.md` tiers are gone. `/hunt` clears
+  `current_brief` to `''` at COMPLETE, and the guard treats `''`, NULL and
+  `none` as no brief. The refusal names the session, project, brief and
+  phase, and no workflow role. `igris_instance_state` is now a partial
+  update: an omitted field keeps its stored value, and `''` clears a text
+  field. `igris session register` keeps the brief, phase, task and lease on
+  re-register, and stores the worktree root as `project_path`.
+
+  Upgrading (TD-359 and TD-494):
+  - A clone's `.git/hooks/pre-commit` and `commit-msg` are symlinks into
+    `~/.igris/core/git-hooks/`, and every worktree of the clone uses the same
+    hooks. `igris refresh` therefore updates them in place, with no per-clone
+    step.
+  - After the refresh, restart each running session's brain. An old daemon
+    keeps the old `igris_instance_state` handler, which nulls any field a call
+    omits.
+  - Then re-run `/boot` in each session. That records the worktree root, the
+    registry slug, and the owner pid and start time the guard uses to
+    identify the session.
+  - Finish or park any in-flight close before the deploy.
+  - A caller that sent JSON `null` to clear an `igris_instance_state` field
+    must now send `''`.
+  - The BR-120 marker fix is in `core/hooks/shared/_gate.sh` and reaches
+    every clone the same way, through `igris refresh`. A marker whose first
+    line is 4096 bytes or more now falls through to the registry rung. Check
+    that a marker is a single short slug line:
+    `wc -c < .igris-project`.
+
+- **The project resolver's last splits are closed (TD-510).** Three
+  leftovers of TD-359:
+  - The brief gate's brain lookup accepted only `^[a-z0-9_-]+$`, so for
+    `animated-fifty.dev` it never asked the brain and denied a write whose
+    in-flight brief lived only there. For `lifeOS` and
+    `CustomerPulse-Android` the verdict depended on the shell: macOS's bash
+    3.2 matches the `a-z` range by the locale's collation, so it refused
+    capitals under the C locale (a shell with `LANG` unset) and admitted
+    them under `en_US.UTF-8`, while bash 5 refused them everywhere. The
+    hook now checks a slug with `igris_slug_valid` in
+    `core/hooks/shared/_gate.sh`, the bash spelling of the CLI's `SLUG_RE`
+    (`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`), with its classes spelled out
+    under `LC_ALL=C`, so it gives one verdict in every locale. `/boot` and
+    `/scan` filter slugs with the same pattern. A slug that starts with `_`
+    or `-`, or is longer than 64 characters, is no longer looked up; no
+    registered project has one.
+  - `scripts/validate_brief_state_reconciliation.sh` named the project after
+    its directory, so in a worktree it checked an empty phantom project and
+    passed. It now takes `PROJECT`, then the shared resolver, then the
+    directory name.
+  - The first rung, the directory itself, could resolve differently in the
+    two twins. The bash twin walked a relative path as written, anchored it at
+    the logical `$PWD`, and let `cd` resolve a `..` after a symlink through the
+    kernel, which lands in the link's target. The TypeScript twin walked a
+    deleted directory's path unfolded. Both now fold the path the way
+    `path.resolve` does and then take its real path, so a trailing slash, a
+    symlinked working directory and `link/..` resolve the same in both. The
+    bash rung costs +0.13 to +0.28 ms more per hook call.
+
+  Upgrading (TD-510):
+  - The hook, the validator and the `/boot` and `/scan` skills reach every
+    clone through `igris refresh`; nothing changes per clone. On a
+    from-source machine: rebuild `cli/`, run
+    `igris refresh --from-source <checkout>`, then
+    `igris loadout project-skills --source ~/.igris/core/skills`.
+  - In `lifeOS`, `animated-fifty.dev` and `CustomerPulse-Android`, a write
+    whose in-flight brief is only in the brain is now allowed. A slug that
+    starts with `_` or `-`, or is longer than 64 characters, now falls to
+    the filesystem check.
+
+- **`/hunt`'s close commit no longer takes other sessions' files (TD-493).**
+  Phase 7 staged with `git add -A`, so a close in a working tree shared by
+  several sessions committed their in-flight and staged files under this
+  brief's footer. It now commits only the brief's own paths through
+  `core/scripts/scoped_commit.sh` (`git commit --only`) and refuses when the
+  set is empty or a listed path has no change. `test/scoped_commit.test.bash`
+  shows the old step committing all three sibling files and the new one none.
+
+- **`/boot` no longer reads `~/.igris/config.json` (TD-492).** Its
+  "Always-needed files" list told every boot to read the file, which holds the
+  remote brain's API key, so the key entered the transcript. Boot now takes
+  remote-brain presence from `igris detect`'s `remote_brain` field, and the
+  degraded fallback reads only `SOUL.md` and `USER.md`. A new pre-commit gate,
+  `scripts/validate_skill_secret_handling.py`, refuses skill text that names a
+  secret as a tool argument or CLI flag, or names `config.json` outside a
+  recognised form (a negated read that governs the mention, the CLI reading it
+  itself, or a ledgered descriptive mention). Two adversarial probe rounds
+  (639 fixtures) shaped its forms. Its tests quote the pre-fix `/boot` lines
+  and the pre-fix `/rest` drain and push steps, and each fails. Run over the
+  skill trees of seven earlier commits, from `ea083d3` (v6) to `eb6c9b8^`, it
+  flags all 22 `api_key` argument lines they contain; its only other hits
+  there are a config template showing the key and one Dart code sample.
+  `/igris-doctor` now leaves `machine.aliases` edits to the operator instead
+  of having the agent open the file. The decision that `/boot` does not drain
+  this machine's brain retry queue (the `/rest` drain is enough) is recorded
+  in the boot skill.
+
+- **Two processes migrating one brain no longer collide (FR-276).**
+  `runComponentMigrations` re-reads a component's version before each
+  migration's pre-flight and again under the IMMEDIATE lock, and skips a
+  version another connection has already applied. A bare `ALTER TABLE ADD
+  COLUMN` (attention schema v2) applied twice used to throw `duplicate column
+  name`; FR-276 made this reachable by running attention migrations from CLI
+  actions as well as engine boot. Pinned by
+  `brain-mcp-server/src/engine/storage/__tests__/component-migrations-race.test.ts`.
+
+- **A remote that echoes the API key no longer leaves it in the local brain
+  (BR-118).** `fetchWithRetry` redacts the request's own bearer key from a 4xx
+  body before it is thrown, so the queued `sync_queue.error_message` rows, the
+  handler texts and the logs no longer carry it; the 207 per-table error text
+  is redacted where it is read, and the CLI's `mcpCall` redacts the key from a
+  remote body before `igris sync data` prints it. Exact matches only, with the
+  token `[redacted]`.
+
+- **`igris sync status` printed `last push: never` while pushes succeeded
+  (TD-350).** It printed the mtime of `sync_queue.jsonl`, a file that exists
+  only while FAILED operations are queued. It now prints the newest
+  `sync_state.last_push_at` for the configured remote (`<ts> UTC`).
+
+- **The brain test tier could open and migrate the live brain (TS-002).**
+  `brain-mcp-server/vitest.setup.ts` gives every brain test file its own
+  `HOME`, publishes `IGRIS_REAL_HOME` first and unsets `IGRIS_DB_PATH`,
+  `IGRIS_BRAIN_DIR` and `IGRIS_PIDS_DIR`, so a test that reaches `getDb()`
+  with no path lands in a throwaway DB. Measured 2026-10-01: the full brain
+  suite with no per-invocation fence, 214 files / 3689 passed / 1 skipped,
+  left the live brain's `engine_migrations`, `user_version` and schema version
+  identical.
+
+- **Root bats suites leaked their per-test temp roots (TD-481).** 36 of the
+  38 `test/*.test.bash` files that override `teardown()` never removed
+  `TEST_TEMP_DIR`. A guarded `cleanup_test_temp_dir` in `test/test_helper.bash`
+  is now the last statement of every override, enforced by
+  `test/teardown_temp_dir.test.bash`. One full root run left 156 non-empty
+  `igris-test-*` roots before and 0 after.
+
+- **VPS code deploys are detached, staged and health-gated (BR-116).**
+  `igris sync code` ran the VPS `npm ci` in the foreground under a 5-minute
+  ssh timeout; on 2026-09-29 an install that needed longer (its debug log shows
+  it still extracting; why it was slow was not measured) was killed and left
+  `node_modules` partial under a live brain. A detached runner in
+  `<repo_path>/.igris-deploy/` now installs + builds into a stage copy, swaps
+  `node_modules` + `dist` only after a native smoke passes, re-smokes live and
+  auto-rolls back; the client's 30-min wait is reported, never enforced by
+  killing. The restart is gated on pm2 `online` + `/health` `ok` twice in a
+  row with the pm2 restart count past its pre-restart value, one retry, exit 1
+  naming the state (`pm2 jlist` is filtered on the VPS, so its env never
+  leaves it). Errors headline npm's real failure, not EBADENGINE warnings;
+  `sync status` shows the VPS Node vs the engines range. The TD-141 smoke
+  never loaded the binding and now does. New contract row "VPS deploy
+  workspace protocol" in `MAINTAINING.md`; update the CLI on every deploying
+  workstation (an older CLI's `rsync --delete` removes `.igris-deploy/`).
+
+- **`igris sync code` no longer exits 0 right after launching the VPS run
+  (BR-117).** The first live runs after BR-116 printed `… launched on the VPS`
+  and ended: the wait between polls was an unref'd timer, so a standalone CLI
+  emptied its event loop and abandoned the deploy before the pm2 restart and
+  health verification. The wait is now ref'd, and the `sync` action pre-sets
+  exit code 1, so an `igris sync code|all` that ends before its result is known
+  exits 1, never 0. Measured on the BUILT CLI as a real child process against
+  the fake-ssh tier (`sync-code-remote.test.ts`, red on 2a9eae4); not yet re-run
+  against the real VPS. `unref-audit.test.ts` allowlists the two remaining
+  `unref()`s in `cli/src` with their reasons. Rebuild the CLI on every
+  deploying workstation.
+
+- **The contract-map gate reads the whole map, the same way in every checkout,
+  and says what a clean run does not prove (TD-466, TD-313, TD-435, TD-346).**
+  `scripts/check_contract_consumers.sh` stopped reading `MAINTAINING.md` at the
+  first heading after `## The Map`, so six rows (FR-243, BR-103, BR-104,
+  BR-105, TD-460, BR-106) were never validated; the map now ends at an explicit
+  `<!-- MAP:END -->`, and a missing marker or a map row after it is a STALE
+  MAP. The row parser honours the `\|` escape, a row that does not split into
+  five columns is a STALE MAP, and a Contract token that is one bare word
+  (`nodes`, `Done`) is no longer minted as a contract. Git-ignored citations are
+  classified before anything is resolved, so a clean clone or worktree no longer
+  fails on `cli/dist` and counts the same as a built tree. A short-form citation
+  that more than one tracked path ends with is a STALE MAP naming every
+  candidate (row 131's `src/` matched four directories and had been resolving to
+  the wrong one). Measured on 2026-09-28 in a clean worktree: 577 validated
+  citations before, 629 after; the map registers 968 distinct contract tokens
+  (1047 before), 319 bare-word tokens dropped, none of them a row's only token.
+- **A bats fixture can no longer run under plain `bash` (TD-348).** Every
+  fixture in `test/` and `cli/tests/integration/` now starts by sourcing
+  `test/require_bats.bash`, which exits 2 with the command to run unless bats is
+  running it; and every `git -C` path in the fixture set (108 occurrences on 107
+  lines, 2026-09-28) is `"${V:?}"`, so an empty sandbox path fails before git
+  runs instead of falling through to the current directory. The incident it
+  closes: `bash test/check_contract_consumers.test.bash` committed 12 files of
+  in-flight work to `develop` on 2026-08-05.
+- **A cognition run that cannot finish no longer wedges its schedule forever
+  (TD-361).** The daemon refused to fire while ANY run of a schedule was
+  `running`, with no age bound and no owner check, so a run whose process exited
+  mid-run blocked its schedule until someone cleared the row with SQL: 94 days
+  once (TD-327), and 12.4 and 11.8 days on 2026-09-24 — both runs started on the
+  machine that wedged. Every run row now records its owner process (schedules
+  migration v3), and a sweep at daemon start and at every tick marks a row
+  `failed` (`abandoned: …`) only when that owner provably cannot finish it. A
+  live owner is never reaped however old the run is — there is no age bound. A
+  graceful shutdown marks the process's own in-flight runs `interrupted: …`. A
+  schedule blocked by a genuinely live run now skips the slot instead of
+  re-arming a zero-delay timer (measured at the old code: 180 to 200 re-arms
+  per 250 ms across three runs on one machine, 2026-09-24). Details: `docs/COGNITION.md`, "how a wedge is released".
+- **Two brains can no longer produce two `schedules` rows under one name.**
+  `schedules.name` is UNIQUE (the name the bootstraps already de-duplicate by);
+  v3 collapses existing duplicates onto one survivor, re-pointing their runs,
+  and deletes the `schedule_runs` rows whose parent schedule was deleted
+  (8 on the operator's brain, measured 2026-09-24 on the pre-unwedge snapshot).
+- **The harness-drift commit gate fails closed (TD-396, TD-451, TD-188).** The
+  wrapper (`scripts/validate_harness_drift.sh`) discarded the drift guard's exit
+  status and classified only `MATCH`, `DRIFTED` and `MISSING` lines, so a guard
+  that exited 1 on `DRIFT-WARN`, `SCHEMA-INVALID`, `PARITY`, or on a failure
+  with no verdict line at all (a schema-invalid manifest, a failed skills
+  re-check), passed the gate. It now reconciles the guard's exit status and
+  summary counters against the blocks it classified: each of those classes is
+  a named FATAL, a failure no verdict line explains is FATAL, and the only
+  downgrades left are the two printed NOTICEs (home-path MISSING, the TD-388
+  worktree exemption). A DRIFT-WARN FATAL prints a command that re-links that
+  one target. A classifier crash or malformed classifier output now prints a
+  tagged FATAL line instead of a bare traceback or an exit 0.
+- **The harness-drift gate runs again when the harness descriptor is staged
+  (TD-389).** The pre-commit trigger still named
+  `core/scripts/cli-adapters/harness-manifest.json` (moved to the repo root by
+  FR-136) and `core/rules/` (deleted by FR-187), so staging
+  `harness-manifest.json` never ran the gate. The trigger now names the real
+  projection inputs: `core/agents/*.md`, `harness-manifest.json`,
+  `surfaces-manifest.json` and `manifest.schema.json`. A test fails if any
+  branch of it stops naming a tracked path.
+- **Root bats suites get a fresh temp root per test (TD-394).** `TEST_TEMP_DIR`
+  was keyed on the test's PID, and suites that overrode `teardown()` leaked
+  their roots, so a test that reused a dead test's PID inherited its fixtures
+  (`ln: … File exists` in `harness_drift_gate.test.bash`). The root is now
+  `mktemp -d`, and that suite's teardown removes it whole.
+
+- **The `commit-msg` gates check a lettered sub-brief as itself (TD-468).**
+  The hook read a closing id as `[A-Z]{2,3}-[0-9]+`, so `closes #FR-003e`
+  gated the parent, FR-003. The acceptance-criteria gate (TD-325) refused a
+  good commit over the parent's open criteria, and the agent-event gate
+  (FR-267) read the parent's Agent Log and passed with nothing checked. An id
+  is now `[A-Z]{2,3}-[0-9]+[a-z]?`, matched case-sensitively and as a whole
+  word: `closes #FR-003e` gates FR-003e, and `FR-003E` or `FR-003and` is not
+  read as an id. One verb can close a comma-separated list
+  (`closes #FR-003, #FR-003e` gates both); `and` does not continue a list.
+  `fixes` and `fixed`, which `core/templates/commit_message.md` documented but
+  no hook read, now trigger both gates the same as `closes`, anywhere in the
+  message, so a `fixes #BR-12` commit is gated like `closes #BR-12`
+  (`IGRIS_BYPASS_AC_GATE=1` and `IGRIS_BYPASS_EVENT_GATE=1` still apply). The
+  same shape now reads sub-brief ids in the session-start and pre-compact
+  hooks' active-brief list, in the brain's parent detection (a
+  `**Parent Brief:** FR-003b` line used to put its `parent_of` edge on FR-003)
+  and in `backfill_brief_edges.ts`, and
+  `scripts/validate_brief_state_reconciliation.sh` no longer skips lettered
+  briefs. `test/brief_id_shape.test.bash` fails on any site that spells the id
+  shape without the letter. `igris refresh` updates the hooks in every
+  installed clone.
+
+- **`commit-msg` no longer prints `Broken pipe` on stderr (BR-107).** Under a
+  parent that ignores SIGPIPE (GitHub Actions runners, some IDE and git GUI
+  parents), the hook's summary-length pick and the TD-470 gate's hit list each
+  ended in `head`. When `head` exited first, the writer feeding it printed
+  `grep: write error: Broken pipe` (GNU) or `grep: stdout: Broken pipe` (BSD),
+  even on a commit the hook passed; the exit code was always right. Both now
+  read with `sed -n`, which drains its input, and select the same lines
+  (compared over 1,747 messages with SIGPIPE ignored and default).
+  `test/commit_msg_sigpipe.test.bash` reproduces both sites.
+
+- **A desktop-hosted brain's extractors no longer inherit its token-refresh
+  channel (TD-471).** Extractor children ran with the brain's environment.
+  Under the Claude desktop app that includes `CLAUDE_CODE_ENTRYPOINT` and
+  `CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH`, which in claude 2.1.281 hand token
+  refresh to a host a detached child does not have. Once the stored access
+  token expired, every extractor failed with "OAuth session expired and
+  could not be refreshed" (`auth_error` on most days since 2026-09-10, one
+  machine). Children of every harness no longer inherit any `CLAUDE*` or
+  `ANTHROPIC_*` name, and TD-472's allowlist keeps that rule. A 30-hour run
+  of the repo-only watcher `brain-mcp-server/scripts/td471_host_auth_watch.ts`
+  saw no auth failure but captured no token expiry either, so the fix is not
+  yet observed across a real expiry.
+
+- **Every extractor failure is named, and a broken harness is refused before
+  the run (BR-109).** opencode exits 0 on an error, so its failed runs read
+  as `empty_response`, and codex's error events were taken as the answer
+  (`ok: true`, then `parse_error`). One classifier now reads each CLI on its
+  real failure channel and records `auth_error`, `model_unsupported`,
+  `cli_incompatible` or `api_error` (or `account_unsupported`, which no
+  current harness produces) with the CLI's own short message and any
+  credential-shaped string masked. Perception's `llm_status` gains the
+  matching `failed:` values. Before a run, a cached preflight that makes no
+  model call checks that the CLI runs, that every flag the builder passes
+  appears in its `--help` (a help it cannot read counts as usable), and that
+  opencode's `auth.json` exists. The harness walk skips a refused harness and
+  `run_started` lists it under `refused`; when none is usable the run is
+  skipped with `harness_refused`, or `cli_missing` when every refusal is a
+  missing CLI.
+
+- **The opencode extractor runs, on a subscription model only (BR-110).** In
+  the isolated home opencode had no model catalog and no model choice, so it
+  fell back to its own default: a metered OpenRouter model reachable through
+  the api-key entry in the forwarded `auth.json`. Every opencode extraction
+  failed, and a route to metered credit was open. The spawn now always
+  passes `--model`, resolved by `resolveOpencodeModel` as the first recent
+  or favorite model whose provider logs in by OAuth. The isolated home gets a
+  copy of the operator's model catalog (`~/.cache/opencode/models.json` and
+  `version`) and an owned `opencode.json` whose `enabled_providers` lists
+  OAuth providers only, so a metered provider never loads. Preflight refuses
+  opencode with `no_model_catalog` or `no_subscription_model`, and a builder
+  that throws is reported as `spawn_error` instead of throwing. On one
+  machine opencode then passed a live probe on `openai/gpt-5.5`. If
+  `igris cognition health` shows `no_model_catalog`, run the opencode CLI
+  once in your shell; for `no_subscription_model`, run `opencode auth login`
+  with an OAuth provider.
+
+- **`igris cognition health` no longer reports `ok` for an instance whose
+  harness cannot run (TD-475).** The reader looked at terminal events only,
+  so a run skipped because every harness was refused or missing read `ok`,
+  and so did a run that succeeded on a fallback after a refusal, such as a
+  config that still names gemini. A latest `run_skipped` with
+  `harness_refused` or `cli_missing` now reads `blocked_harness`, naming each
+  refused harness, its reason and the first sentence of its detail, and
+  `/boot` lists it in its Cognition WARNING block. A successful run that
+  followed a refusal stays `ok` and gains
+  `(fallback: <harness> <reason> — <detail>)`, read from the `run_started`
+  paired with that run.
+
+- **`igris_project_register` checks its input and no longer blanks curated
+  columns (TD-365).** A null, empty or whitespace `slug`, `name` or `path` is
+  now refused before any database access
+  (`Validation error: Invalid <key>: must be a non-empty string.`); a null one
+  used to surface as a raw `NOT NULL constraint failed`. The handler bound an
+  omitted `tech_stack` as `''`, so a re-register that left it out erased the
+  stored stack. `tech_stack` and `repo_url` now keep their stored value when a
+  call omits them, as `archetype` already did, and an explicit value, `''`
+  included, still wins. `name` and `path` are still replaced by what the call
+  passes. `/boot` keeps echoing the stored row back on register, because a
+  core newer than its CLI's bundled brain would bring the blanking back.
+
+- **`igris doctor --remove-orphans` exits 1 while an orphan row survives
+  (BR-087).** Declining a row (`n`), aborting (`a`) and running out of piped
+  input all exited 0 with the `path-missing` row still in the registry, and of
+  several piped answers only the first was read (readline dropped the lines
+  that arrived while no question was pending). Answers now go through a line
+  queue, so every piped answer is consumed in order, and end of input means
+  "not adjudicated". The exit code comes from a re-read of the registry, not
+  from the sweep's own report, and the output names each row left as
+  `kept (declined): <slug>` or `not adjudicated: <slug>`. A sweep that leaves a
+  row now exits 1, as `cli/README.md` already said it did.
+
+- **`--remove-orphans` shows what each orphan owns, and `--yes` no longer
+  deletes a row that owns data (TD-310).** `--yes` deleted a row that owned
+  only learnings without a word, because no foreign key stopped it. Every
+  `path-missing` row now shows `briefs N, learnings M` (errors and sessions
+  when non-zero) in the drift table, in a detail block printed on every run and
+  in its prompt, before anything is asked. `--yes` alone refuses a row that
+  owns briefs or learnings unless `--include-owning` is passed (the foreign key
+  still refuses one with briefs or sessions), and `all` at the prompt no longer
+  confirms such a row. New flags: `--empty-only` removes exactly the rows that
+  own nothing, with no prompt, and `--slug <slug>` acts on one row. A moved
+  project is offered a re-point first
+  (`igris register-project <new-path> --slug <slug>`), and that command no
+  longer resets a curated `name` or blanks `tech_stack`: on conflict the CLI
+  registry write only fills them when empty, while `path` still moves. Briefs
+  and learnings whose project row is already gone are reported as
+  `dangling knowledge (no registry row)` and never deleted. A `--yes` sweep
+  that must remove data-owning rows adds `--include-owning`.
+
+- **CLI tests can no longer write the operator's real `~/.igris/` (BR-106).**
+  On 2026-09-08 `cli/src/__tests__/http.test.ts`, run with its `HOME` fence
+  removed, still passed and overwrote the operator's real
+  `~/.igris/.install-source.json` with its fixture. TD-301's repair of that
+  file had saved and restored `HOME` and `IGRIS_BRAIN_DIR` but never set
+  either. The first `cli/vitest.config.ts` adds a setup file that publishes
+  `IGRIS_REAL_HOME` and then points `HOME` at a fresh temp directory for every
+  test file, the vitest twin of TD-456's bats fence. A new guard,
+  `cli/src/__tests__/vitest-home-fence.test.ts`, finds every test file that can
+  reach `homedir()`, directly or through a path helper, and fails one whose
+  fence is not assigned a fresh value; it found 14 exposed files beyond the 11
+  the brief listed, and all are fenced. Three boot-sync suites restored the
+  environment by rebinding `process.env`, so 36 cases ran under the first
+  test's fence instead of their own; they now restore by key. A contributor
+  who ran the CLI suite before this change checks that
+  `~/.igris/.install-source.json` still describes the real install, and if it
+  holds the fixture runs `igris refresh --from-source <checkout>`.
+
+### Changed
+
+- **The CLI package's changelog starts at 7.3.1 (FR-276).** The
+  `cli/CHANGELOG.md` releases 7.3.0 and earlier moved verbatim to
+  `cli/CHANGELOG-ARCHIVE.md`, which `cli/package.json` `files` does not name,
+  so the npm package no longer ships them. The operator chose on 2026-11-16 to
+  trim rather than raise the +150 KB packed-size ceiling, and FR-276's
+  attention code took the tarball 31,104 B past it. The move recovers
+  70,621 packed B without re-basing the floor (delta 184,704 to 114,161 B over
+  1,843,276, with this entry's cli twin; FR-276's review fixes then added
+  1,538 B, to 115,699). Figures and method: grep
+  `FR-276 MEASURED LAST` in `cli/src/__tests__/tarball.test.ts`.
+
+- **The CLI test tier's timeouts are measured, and proximity is reported
+  (TD-344).** `cli/vitest.config.ts` sets `testTimeout: 15_000` (twice the worst
+  loaded duration of an unbudgeted test at 1-min load peaks 30-48) and adds
+  `vitest-proximity-reporter.ts`, which prints each test's `duration / timeout`
+  after the run (NEAR BUDGET at 80%, CROSSED at 100%). The default is not
+  load-proof: it held at peaks up to 48, and of the runs with archived
+  per-test data plus sentinel's six on report, every run peaking at 63 or
+  more crossed it (sentinel's 3 of 6, and a K=6 run at 277; worst 24,802 ms),
+  always in the same synchronous scans. Those scans
+  (five in `vitest-home-fence`, one in `dashboard-count-derivation`) and
+  `harness-registry`'s FR-218 case now carry their own budgets, twice their
+  worst observed duration, the shared `npm pack` budget in `tarball.test.ts`
+  rises from 30 s to 40 s by the same rule, and `hookTimeout` rises to 20_000 (a file's first
+  test measured 8.6 s at peak 191, nearly all of it a cold engine import in
+  `beforeEach`). With them, three full runs at peaks 151-223 passed
+  3387/3387, worst ratio 57%. The missing spawn halves landed: every
+  `execFileSync`/`spawnSync` in `harness-registry.test.ts` (13 s, from a 6336 ms
+  worst call), the TD-168 `npm pack` pair and a fixture `tar` in
+  `tarball.test.ts` — the TD-378 note said those were done, and they were not —
+  and `git ls-files` in `dashboard-count-derivation.test.ts`. The
+  `dashboard-server` curl probe's two async tests get a test half (25 s) above
+  its 20 s spawn half.
+
+- **VPS code deploys skip `npm ci` when the install inputs are unchanged
+  (TD-487).** The detached runner hashes node + npm (with the native ABI,
+  platform and arch), `package-lock.json`, the root and every workspace
+  `package.json` and the root `.npmrc`. When the hash equals the marker
+  `node_modules/.igris-install-fp` inside the LIVE tree, a new `reuse` phase
+  copies the live `node_modules` into the stage (without the transformers model
+  cache), refuses an absolute symlink, smokes the copy, and falls back to
+  `npm ci` in the same run on any failure; the build, stage smoke, swap and live
+  smoke are unchanged. The marker is written only after the live smoke passes,
+  so it travels with its tree through every swap, rollback and printed restore.
+  `rc` gains `install` and `install_why`; a skipped deploy prints the command
+  that deletes the marker to force a clean install. Measured on the brain VPS
+  (Ubuntu 24.04, Node 22.23.3, 2026-10-01, one A/B pair): run A
+  (`20261001T121849Z-372e`, `npm ci: first`) installed in 408 s, built in 204 s,
+  client wall 762 s; run B (`20261001T123130Z-81d3`) skipped `npm ci` and reused
+  `node_modules` in 107 s, built in 209 s, client wall 467 s; both pm2 online,
+  health ok, exit 0. Saving: install −301 s (−74%), client wall −295 s (−39%).
+  B's tree does not carry the transformers model cache, so it is re-downloaded
+  on first use, as after `npm ci` today. On a macOS arm64 workstation (node
+  v22.23.2, npm 10.9.8, local SSD, warm npm cache; 556 MB, 9,908 files) the copy
+  took 6.4–10.9 s against `npm ci` 5.8–6.6 s (9.1 s with an empty cache), so it
+  saved nothing at that scope.
+
+- **`schedules` and `schedule_runs` no longer sync between brains.** A replicated
+  schedule was executed by every receiving brain, and a replicated `running` row
+  could never be terminated. A schedule created on one machine now stays on that
+  machine; cognition runs stay visible across machines through `event_log`. The
+  egress manifest drops its "schedules & runs" category. The change needs no
+  deploy order: a new remote ignores an old client's schedule rows, and a new
+  client ignores them in an old remote's pull.
+
+- **gemini is retired from the extractor; antigravity is its Google option
+  (TD-474).** Google retired gemini-cli's personal Code Assist tier
+  (`UNSUPPORTED_CLIENT`, measured 2026-09-25), and the extractor's gemini
+  builder passed `--print` flags that gemini-cli 0.45.0 does not have. By
+  operator decision gemini leaves the extractor only; it stays an Igris
+  harness everywhere else. Auto-detection never probes it, even with the
+  binary on `PATH`. A `gemini` selection in `llm_extractor.harness`,
+  `fallback_order`, a per-instance pin, `IGRIS_LLM_EXTRACTOR_HARNESS` or
+  `IGRIS_<ID>_HARNESS` is refused with `harness_retired` and a detail naming
+  antigravity, and the walk goes on to the next present harness.
+  Perception's session-end extractor logs the refusal and extracts nothing.
+  Where any of these names `gemini`, set `antigravity` or remove it.
+
+### Security
+
+- **Extractor children inherit only an allowlisted environment (TD-472).** An
+  extractor child got the brain process's environment minus two metered keys
+  (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`), so any `GEMINI_API_KEY`,
+  `GOOGLE_API_KEY`, `IGRIS_BRAIN_API_KEY`, `SSH_AUTH_SOCK` or `NODE_OPTIONS`
+  that was set, config pointers such as `CODEX_HOME` and `OPENCODE_CONFIG`, and
+  the claude login-routing names `USE_LOCAL_OAUTH` and `USE_STAGING_OAUTH`
+  reached whichever harness ran. `subscriptionOnlyEnv` now passes on only 25
+  names (identity, `PATH`, locale, proxy, CA and platform variables) plus
+  `LC_*`. A builder injects anything else by name (today only `HOME`), and
+  every name ending `_API_KEY` is dropped, injected or not.
+  `docs/COGNITION.md`, "what an extractor child inherits", lists what is kept
+  and what is dropped. Under the allowlist claude, codex, antigravity and
+  opencode each authenticated by subscription in a live probe on one machine
+  (2026-09-25).
+
+- **The extractor's isolated home links auth stores only, never MCP config
+  (BR-108).** The per-run home an extractor child runs in symlinked the
+  operator's own config: all of `~/.claude.json` and most of `~/.codex`,
+  `~/.gemini` and `~/.config/opencode`. A gemini child could read the
+  `mcpServers` in `settings.json` and boot the live `igris-brain`; a codex
+  child booted computer-use and four other MCP servers, because only
+  `igris-brain` was pointed at `/usr/bin/false`. Measured on one machine:
+  10, 6, 2 and 2 MCP server names reachable for claude, codex, gemini and
+  antigravity, and 0 for all five harnesses after. Only named auth stores
+  are linked now: the macOS Keychain, `.claude/.credentials.json`,
+  `.codex/auth.json`, the gemini and antigravity OAuth files, and opencode's
+  `auth.json` alone (BR-109), so its `mcp-auth.json` stays behind. Every
+  config file a child reads is an owned copy with MCP, hook and command keys
+  removed. The `.claude.json` copy also drops `projects` and
+  `primaryApiKey`, and codex's `config.toml` keeps six auth and model keys
+  and turns off six features that can bring in MCP servers or apps. Owned
+  empty `.env` files end gemini's `.env` search, and an owned file is never
+  written through a linked directory into the operator's real files.
+
+- **Extractor children can no longer run tools or read their harness's
+  credentials (TD-476, TD-477).** The isolated home is not a filesystem
+  sandbox, and the opencode and antigravity children ran with their tools
+  unrestricted. Adversarial live probes showed codex running `zsh`, `rg` and
+  `head` inside `--sandbox read-only`, and antigravity reading freely inside
+  its working directory, which was the isolated home holding its OAuth
+  links. A prompt-injected transcript could have copied a harness's token
+  into an extraction result. opencode's owned `opencode.json` now denies
+  every tool (`"*": "deny"`, and `external_directory` with it). antigravity
+  runs with `--sandbox` in an empty `workspace` directory, so headless `agy`
+  auto-denies reads of the credential links outside it. codex's owned config
+  turns off `shell_tool`, `code_mode_host` and `shell_snapshot` (codex
+  0.157.0 keeps `unified_exec` on whatever the config says). claude already
+  ran with `--allowedTools ''`. On one machine codex, opencode and
+  antigravity spawned no tool under an adversarial prompt, and every direct
+  request to read a credential file was refused. A codex child can still
+  read files its process can reach and put them in its answer text;
+  `docs/COGNITION.md` states that limit. No harness followed a fetch prompt
+  to a local listener (TD-477). antigravity's `search_web` still runs without
+  a prompt; the operator accepted that because its query goes only to the
+  provider that already receives the prompt.
+
+---
+
 ## [7.3.2] - 2026-09-09
 
 Hotfix on `v7.3.1`. One fix commit (`a0e0a7c`, counted 2026-09-09 with

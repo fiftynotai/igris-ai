@@ -38,7 +38,7 @@ resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
 | Script | Contract | Output |
 |--------|----------|--------|
 | `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|opencode\|all]` | Orchestrates: reads the manifest. Every agent-target harness (`agentTargetTypes()` — claude/codex/gemini/opencode) α-projects from loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`). claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_loadout` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
-| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). Every agent-target harness uses the per-harness loadout-resident file as its verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
+| `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). Every agent-target harness uses the per-harness loadout-resident file as its verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). Verdict vocabulary: `[name] MATCH`, `DRIFTED`, `MISSING`, `DRIFT-WARN`, `SCHEMA-INVALID`, `PARITY`, plus the informational `NOTE` and `SKIP`; exit 1 also covers the no-verdict-line failures (the skills-delegate re-check, the early pre-verdict exits). The commit gate (`scripts/validate_harness_drift.sh`) fails CLOSED on all of it (TD-396): DRIFT-WARN, SCHEMA-INVALID and PARITY (TD-451) are named FATAL classes, DRIFTED and MISSING keep their two NOTICE downgrades (TD-388 worktree, FR-138 home-path), and a failure the guard counts but no verdict line explains is FATAL, unnamed. |
 
 `sync_codex_agents.sh` was RETIRED by FR-159 — the codex TOML emit moved to
 TS `assembleCodexHarness` in `cli/src/verbs/loadout.ts` (vendor-side) with a
@@ -227,7 +227,9 @@ so a block projecting `demo-mcp` to claude exempts the claude config only and
 the same name in the gemini config is still flagged; the command rule never
 is. Per hit: `[mcp-fixture/<name>/<harness>] DRIFTED` + `config :`
 + a reason with NO `differing key(s)` clause (so the TD-388 worktree exemption
-in `scripts/validate_harness_drift.sh` cannot swallow it), `TOTAL++`/`DRIFT++`;
+in `scripts/validate_harness_drift.sh` cannot swallow it; the `DRIFTED` token
+keeps the hit NAMED in the gate's DRIFTED FATAL — since TD-396 a token the gate
+did not know would still fail closed, but unnamed), `TOTAL++`/`DRIFT++`;
 silent and count-neutral on a clean config. Gates: `$MCP_DRIFT_ROWS` non-empty
 and `FILTER='*'`. Never prints `env`, `args` or any value. TOML (codex) uses
 `extract_mcp_entry`'s loader fallback; with no TOML parser it prints nothing.

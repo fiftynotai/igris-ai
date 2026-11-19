@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # session_start_hook.test.bash - Tests for core/hooks/shared/session_start.sh
 #
 # Added for FR-178 (terminal tab title = Igris project slug). The hook's
@@ -53,6 +53,7 @@ EOF
 
 teardown() {
   [ -d "$SANDBOX" ] && rm -rf "$SANDBOX"
+  cleanup_test_temp_dir
 }
 
 # register_proj <home> <projpath> [slug] — seed a brain DB row so the FR-212c

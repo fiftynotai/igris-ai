@@ -17,12 +17,37 @@
  * no cursor is dead weight and `cursor: none` there would be actively hostile.
  */
 import { useEffect, useRef } from "react";
-import gsap from "gsap";
+import gsap from "gsap/gsap-core";
 import { useReducedMotion } from "../../lib/usePalette";
+
+/** Tween scalars, as the canvas does, so neither consumer ships CSSPlugin. */
+export function followRing(
+  ring: Pick<HTMLElement, "style">,
+  position: { x: number; y: number },
+  reduced: boolean,
+) {
+  const draw = () => {
+    ring.style.transform = `translate(${position.x}px, ${position.y}px) translate(-50%, -50%)`;
+  };
+  if (reduced) {
+    return {
+      move: (x: number, y: number) => { position.x = x; position.y = y; draw(); },
+      dispose: () => {},
+    };
+  }
+  const toX = gsap.quickTo(position, "x", { duration: 0.35, ease: "power3", onUpdate: draw });
+  const toY = gsap.quickTo(position, "y", { duration: 0.35, ease: "power3", onUpdate: draw });
+  draw();
+  return {
+    move: (x: number, y: number) => { toX(x); toY(y); },
+    dispose: () => { gsap.killTweensOf(position); },
+  };
+}
 
 export function Cursor() {
   const dotRef = useRef<HTMLDivElement>(null);
   const ringRef = useRef<HTMLDivElement>(null);
+  const positionRef = useRef({ x: 0, y: 0 });
   const reduced = useReducedMotion();
 
   useEffect(() => {
@@ -37,29 +62,16 @@ export function Cursor() {
     }
     document.body.setAttribute("data-cursor", "dot");
 
-    let moveRing: (x: number, y: number) => void;
-    if (reduced) {
-      moveRing = (x, y) => {
-        ring.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`;
-      };
-    } else {
-      const toX = gsap.quickTo(ring, "x", { duration: 0.35, ease: "power3" });
-      const toY = gsap.quickTo(ring, "y", { duration: 0.35, ease: "power3" });
-      gsap.set(ring, { xPercent: -50, yPercent: -50 });
-      moveRing = (x, y) => {
-        toX(x);
-        toY(y);
-      };
-    }
+    const follower = followRing(ring, positionRef.current, reduced);
 
     const onMove = (e: PointerEvent): void => {
       dot.style.transform = `translate(${e.clientX}px, ${e.clientY}px) translate(-50%, -50%)`;
-      moveRing(e.clientX, e.clientY);
+      follower.move(e.clientX, e.clientY);
     };
     window.addEventListener("pointermove", onMove, { passive: true });
     return () => {
       window.removeEventListener("pointermove", onMove);
-      gsap.killTweensOf(ring);
+      follower.dispose();
     };
   }, [reduced]);
 

@@ -485,13 +485,16 @@ describe('Context Component', () => {
       expect(comp.version).toBe('1.0.0');
     });
 
-    it('tools() returns 4 tools', () => {
+    it('tools() returns 5 tools', () => {
+      // TD-460: +igris_context_sync, the bidirectional reconciler. The gateway
+      // pin moved 108 -> 109 in the same commit.
       const comp = createContextComponent();
       const tools = comp.tools();
-      expect(tools).toHaveLength(4);
+      expect(tools).toHaveLength(5);
       const names = tools.map((t) => t.name);
       expect(names).toContain('igris_context_register');
       expect(names).toContain('igris_context_get');
+      expect(names).toContain('igris_context_sync');
       expect(names).toContain('igris_context_tree');
       expect(names).toContain('igris_context_load');
     });

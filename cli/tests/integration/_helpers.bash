@@ -75,7 +75,8 @@ read -r -d '' STUB_CANONICAL_HOOKS <<'JSON' || true
     "PostCompact":  [{"hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/post_compact.sh"}]}],
     "PreToolUse":   [{"matcher":"Write|Edit","hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/pre_tool_use.sh"}]}],
     "PostToolUse":  [{"matcher":"Write|Edit","hooks":[{"type":"command","command":"$HOME/.igris/core/hooks/shared/post_tool_use.sh","timeout":20}]}]
-  }
+  },
+  "attribution": {"commit": "", "pr": "", "sessionUrl": false}
 }
 JSON
 export STUB_CANONICAL_HOOKS
@@ -127,6 +128,9 @@ stage_home() {
 EOF
   chmod 600 "$home/.claude.json"
   cp "$IGRIS_BRAIN_DIR/core/hooks/canonical-settings.json" "$home/.claude/settings.json"
+  # TD-473: a clean baseline carries the Igris attribution default (what init/update write),
+  # so `attribution-missing` fires only when a test removes it on purpose.
+  node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));j.attribution={commit:"",pr:"",sessionUrl:false};fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n");' "$home/.claude/settings.json"
   printf '{ "version": "7.0.0", "cli_targets": {} }\n' > "$IGRIS_BRAIN_DIR/config.json"
   chmod 600 "$IGRIS_BRAIN_DIR/config.json"
   echo "$home"
@@ -144,13 +148,17 @@ export IGRIS_REPO_ROOT
 
 # stage_git_hooks_mirror — seeds $IGRIS_BRAIN_DIR/core/git-hooks/{pre-commit,
 # commit-msg} by COPYING the repo's canonical core/git-hooks/* (what `igris
-# refresh` lands). Call AFTER stage_brain. Echoes the mirror dir.
+# refresh` lands), plus core/hooks/shared/_gate.sh: since TD-359 both git hooks
+# source its `igris_resolve_project` (hook-relative `../hooks/shared/_gate.sh`,
+# then the runtime mirror), so a mirror without it is a half-deployed core.
+# Call AFTER stage_brain. Echoes the git-hooks mirror dir.
 stage_git_hooks_mirror() {
   local dir="$IGRIS_BRAIN_DIR/core/git-hooks"
-  mkdir -p "$dir"
+  mkdir -p "$dir" "$IGRIS_BRAIN_DIR/core/hooks/shared"
   cp "$IGRIS_REPO_ROOT/core/git-hooks/pre-commit" "$dir/pre-commit"
   cp "$IGRIS_REPO_ROOT/core/git-hooks/commit-msg" "$dir/commit-msg"
   chmod +x "$dir/pre-commit" "$dir/commit-msg"
+  cp "$IGRIS_REPO_ROOT/core/hooks/shared/_gate.sh" "$IGRIS_BRAIN_DIR/core/hooks/shared/_gate.sh"
   echo "$dir"
 }
 
@@ -160,7 +168,7 @@ stage_git_project() {
   local name="${1:-gproj}"
   local dir="$BATS_TEST_TMPDIR/$name"
   mkdir -p "$dir"
-  git -C "$dir" init -q
+  git -C "${dir:?}" init -q
   echo "$dir"
 }
 

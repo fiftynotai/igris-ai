@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # release-audit-brief-type.bats — TD-289 + TD-340 regression test for the
 # /release Step 0 broken-feature audit (coding_guidelines §17.2, executor in
 # core/skills/release/SKILL.md).

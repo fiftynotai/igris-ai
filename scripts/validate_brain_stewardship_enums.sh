@@ -298,9 +298,13 @@ INTERNAL_TOOL_ALLOWLIST = {
     # cache management — operator/janitor surface
     'igris_cache_clean', 'igris_cache_rebuild',
 
-    # context mechanics — wired into /boot, not actor-chosen
+    # context mechanics — the reconciler IS wired into /boot (TD-460: /boot
+    # Mount calls igris_context_sync after boot-sync; /ground and /document
+    # call it after authoring or editing). The rest are per-doc primitives it
+    # composes, plus two OS-roster readers. None are actor-chosen, so none are
+    # documented in brain_stewardship.md.
     'igris_context_get', 'igris_context_load', 'igris_context_register',
-    'igris_context_tree',
+    'igris_context_sync', 'igris_context_tree',
 
     # scheduling subsystem — cron surface,
     # not part of actor decision triggers documented in brain_stewardship.md

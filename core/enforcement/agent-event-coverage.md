@@ -3,7 +3,7 @@ obligation: "A brief must not be closed while a role its Agent Log names has no 
 mechanism: gate
 status: shipped
 lives_in: "scripts/git-hooks/commit-msg"
-summary: "FR-267 agent-event coverage gate, §3 of the commit-msg hook. One parser (core/scripts/brief_agent_log_roles.sh) reads the roles a brief's Agent Log names; the hook HARD-FAILS a closes-footer commit when any of them has zero agent_events rows for that brief — predicate: brief_id = the id AND agent = the role AND event_type IN (start, stop, error) AND (project = basename(repo) OR project IS NULL). A role with a start but no stop/error is a WARN unpaired line, not a refusal. One-shot escape via IGRIS_BYPASS_EVENT_GATE, independent of IGRIS_BYPASS_AC_GATE (a bypass of one gate never silences the other). Does NOT cover: a close with no commit, --no-verify, a checkout without hooks, a brain older than the FR-267 schema (no agent_events table, skipped), a bullet-list Agent Log (parses to no roles, nothing demanded), and roles the log does not name."
+summary: "FR-267 agent-event coverage gate, §3 of the commit-msg hook. One parser (core/scripts/brief_agent_log_roles.sh) reads the roles a brief's Agent Log names; the hook HARD-FAILS a closes-footer commit when any of them has zero agent_events rows for that brief — predicate: brief_id = the id AND agent = the role AND event_type IN (start, stop, error) AND (project = the resolved project slug OR project IS NULL). A role with a start but no stop/error is a WARN unpaired line, not a refusal. One-shot escape via IGRIS_BYPASS_EVENT_GATE, independent of IGRIS_BYPASS_AC_GATE (a bypass of one gate never silences the other). Does NOT cover: a close with no commit, --no-verify, a checkout without hooks, a brain older than the FR-267 schema (no agent_events table, skipped), a bullet-list Agent Log (parses to no roles, nothing demanded), and roles the log does not name."
 ---
 
 # Agent-event coverage (FR-267)
@@ -49,12 +49,15 @@ different populations — the defect TD-325 removed once already.
 SELECT COUNT(*) FROM agent_events
  WHERE brief_id = '<id>' AND agent = '<role>'
    AND event_type IN ('start','stop','error')
-   AND (project = '<basename(repo)>' OR project IS NULL);
+   AND (project = '<resolved slug>' OR project IS NULL);
 ```
 
 `0` → the role is MISSING → `EVENT-GATE <id>: VERDICT=FAIL roles=<all>
 missing=<m1,m2>` and exit 1. The `project` predicate is applied only when the
-column exists (schema v3); NULL-project rows predate the column and count. A
+column exists (schema v3); NULL-project rows predate the column and count.
+The slug is the commit's project as `igris_resolve_project` resolves it
+(TD-359: a linked worktree is its main checkout's project), not the checkout
+directory's name. A
 role with a start but no `stop`/`error` prints `WARN unpaired: <role>` — a
 crashed agent still ran; its round's duration is NULL, which the record says.
 

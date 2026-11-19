@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # register-project.bats — integration tests for `igris register-project`
 # (M3.6). Sandboxed via IGRIS_BRAIN_DIR. Asserts that the verb's end-to-end
 # CLI invocation:

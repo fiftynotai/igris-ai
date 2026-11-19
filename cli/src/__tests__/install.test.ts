@@ -9,6 +9,17 @@
  * native TS calls (symlinks.ts, igris-version.ts) produce the correct
  * artifacts. FR-191 retired the CLAUDE.md render — install writes no
  * identity file.
+ *
+ * BR-106 triage: FENCED (Tier H) — this file was the LIVE hazard. Its
+ * `beforeEach` set only `IGRIS_BRAIN_DIR`, and 19 `runInstall()` calls reach
+ * install step 11 (`verbs/install.ts:272`), which calls
+ * `registerMcpInClaudeJson()` with NO arguments -> `claudeJsonPath()` ->
+ * `join(homedir(), ".claude.json")`. `planClaudeMcpRegistration` skips the
+ * write only on `keep-foreign`; `register` and `repair` both WRITE, and
+ * `repair` is the reachable state during any `cli/dist` rebuild. So a full
+ * suite run re-pointed the operator's real global `mcpServers.igris-brain`
+ * entry and left a rolling `~/.claude.json.igris.bak`. `install-mcp-keep.test.ts`
+ * fenced the same verb correctly, one directory apart.
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,9 +36,11 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fenceHome, type HomeFence } from "./home-fence.js";
 
 let tmpRoot: string;
 let projectDir: string;
+let homeFence: HomeFence;
 
 const CANONICAL_HOOKS = {
   hooks: {
@@ -142,6 +155,10 @@ function stageProject(): string {
 }
 
 beforeEach(async () => {
+  // BR-106: HOME moves FIRST — before any module resolves a home path.
+  // `fenceHome` asserts `homedir() === fence` and that the fence is not the
+  // operator's real home, so the fence is ARMED rather than assumed.
+  homeFence = fenceHome("igris-cli-install-home-");
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-install-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
   stageBrain();
@@ -160,6 +177,7 @@ afterEach(async () => {
   rmSync(projectDir, { recursive: true, force: true });
   delete process.env.IGRIS_BRAIN_DIR;
   delete process.env.IGRIS_KEEP_BAK;
+  homeFence.release(); // restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 // FR-212d Phase 2: `igris install` is register-only — the per-project

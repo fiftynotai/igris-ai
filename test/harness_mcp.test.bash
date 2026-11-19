@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_mcp.test.bash - Tests for the FR-164 MCP projection surface.
 #
 # FR-164 folds MCP servers into the FR-136 manifest-driven engine as a third
@@ -83,6 +83,7 @@ teardown() {
   # `not ok … # skip` (this file was the macOS suite-killer on run
   # 26973181843, 2026-06-04, before the PyYAML step masked it).
   if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
+  cleanup_test_temp_dir
 }
 
 # Write a project-OWNED base manifest declaring one MCP block, 4 targets.

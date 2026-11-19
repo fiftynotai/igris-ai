@@ -51,6 +51,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -81,7 +82,15 @@ import { getDb } from '../../../../db.js';
 import { createEventBus } from '../../../bus.js';
 import type { ComponentContext, EventBus } from '../../../types.js';
 import { createCacheComponent } from '../index.js';
-import { cacheRoot, diskEditState, handleCacheRebuild } from '../handlers.js';
+import {
+  backupContextDocDisk,
+  cacheRoot,
+  contextDocDir,
+  contextDocPath,
+  diskEditState,
+  handleCacheRebuild,
+  projectContextFile,
+} from '../handlers.js';
 
 const mockedGetDb = vi.mocked(getDb);
 
@@ -361,6 +370,115 @@ describe('TD-414 — brief-file projection guard (one writer, classified)', () =
       expect(diskEditState('p', 'TD-900.md', row)).toBe('local-newer');
       putDisk(briefPath, TICKED, new Date('2026-09-01T10:00:00.000Z'));
       expect(diskEditState('p', 'TD-900.md', row)).toBe('brain-newer');
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // TD-460 — the SECOND file class under the same classifier.
+  //
+  // This block adds a third class to the module; it does NOT move the second.
+  // T8 above still pins session files OUTSIDE the guard and is untouched.
+  //
+  // The whole point is ONE row of the action table: for a brief, `local-newer`
+  // is REFUSED and frozen (brain-canonical); for a context doc it is left on
+  // disk for the reconciler to ABSORB (disk-authored). If the `local-newer`
+  // case below is missing, the plan's central claim is unpinned.
+  // -------------------------------------------------------------------------
+
+  describe('TD-460 — projectContextFile, the context-doc writer', () => {
+    const KEY = 'coding_guidelines.md';
+    // Non-ASCII on purpose: every real context doc is full of em-dashes, and a
+    // writer that round-trips through a lossy encoding would pass a
+    // length-based check and fail this one.
+    const BRAIN_DOC = '# Coding guidelines\n\nRule — one writer, always.\n';
+    const DISK_DOC = '# Coding guidelines\n\nRule — one writer, and a “quoted” clause.\n';
+    const row = { key: KEY, content: BRAIN_DOC, updated_at: BRAIN_STAMP };
+    let docPath: string;
+
+    beforeEach(() => {
+      docPath = join(root, 'projects', 'p', 'context', KEY);
+    });
+
+    it('absent -> written, and the context/ directory is created for it', () => {
+      expect(existsSync(dirname(docPath))).toBe(false);
+      expect(projectContextFile('p', row)).toBe('written');
+      expect(readFileSync(docPath, 'utf-8')).toBe(BRAIN_DOC);
+      // ensureCacheDir gained the third mkdirSync — a fresh machine
+      // materialises into a directory that exists.
+      expect(existsSync(dirname(docPath))).toBe(true);
+    });
+
+    it('same -> skipped-same, with NO write and NO mtime bump', () => {
+      putDisk(docPath, BRAIN_DOC, OLDER_MTIME);
+      const before = statSync(docPath).mtimeMs;
+      expect(projectContextFile('p', row)).toBe('skipped-same');
+      expect(statSync(docPath).mtimeMs).toBe(before);
+      // `same` short-circuits before the backup too: nothing accumulates.
+      expect(existsSync(join(root, 'projects', 'p', 'context-backups'))).toBe(false);
+    });
+
+    it('brain-newer -> the prior bytes are BACKED UP, then the file is overwritten', () => {
+      putDisk(docPath, DISK_DOC, OLDER_MTIME);
+      expect(projectContextFile('p', row)).toBe('backed-up-and-written');
+      expect(readFileSync(docPath, 'utf-8')).toBe(BRAIN_DOC);
+
+      // The losing prose survives, named and timestamped. This is what makes
+      // LWW acceptable for this content: the only destructive operation in the
+      // design is preceded by a backup.
+      const backupDir = join(root, 'projects', 'p', 'context-backups');
+      const backups = readdirSync(backupDir);
+      expect(backups).toHaveLength(1);
+      expect(backups[0]).toMatch(/^coding_guidelines\.md\..+\.bak$/);
+      expect(readFileSync(join(backupDir, backups[0]), 'utf-8')).toBe(DISK_DOC);
+    });
+
+    it('a SIBLING directory, not context/.backup/ — the doc scan stays clean', () => {
+      putDisk(docPath, DISK_DOC, OLDER_MTIME);
+      projectContextFile('p', row);
+      // readContextDocs (export.ts) and the dashboard glob context/ FLAT for
+      // *.md. A backup inside context/ would show up in every inventory as if
+      // it were a curated standard.
+      expect(readdirSync(contextDocDir('p')).filter((f) => f.endsWith('.md'))).toEqual([KEY]);
+    });
+
+    it('local-newer -> the file is UNTOUCHED and the outcome says so (the inversion)', () => {
+      putDisk(docPath, DISK_DOC); // mtime now: newer than BRAIN_STAMP
+      const before = statSync(docPath).mtimeMs;
+
+      expect(projectContextFile('p', row)).toBe('local-newer');
+
+      // Not 'refused-local-newer': the brief writer freezes here, the context
+      // writer defers so the reconciler can absorb disk -> row. Either way the
+      // file is never clobbered and no backup is taken (nothing was lost).
+      expect(readFileSync(docPath, 'utf-8')).toBe(DISK_DOC);
+      expect(statSync(docPath).mtimeMs).toBe(before);
+      expect(existsSync(join(root, 'projects', 'p', 'context-backups'))).toBe(false);
+    });
+
+    it('force overrides the classifier, and STILL backs up first', () => {
+      putDisk(docPath, DISK_DOC); // local-newer
+      expect(projectContextFile('p', row, true)).toBe('backed-up-and-written');
+      expect(readFileSync(docPath, 'utf-8')).toBe(BRAIN_DOC);
+      expect(readdirSync(join(root, 'projects', 'p', 'context-backups'))).toHaveLength(1);
+    });
+
+    it('force over an ABSENT file writes without a backup (nothing to back up)', () => {
+      expect(projectContextFile('p', row, true)).toBe('written');
+      expect(backupContextDocDisk('p', 'never-existed.md')).toBeNull();
+    });
+
+    it('the classifier reads the context/ subdir, not briefs/ (the klass argument)', () => {
+      // A file with the same name under briefs/ must not satisfy a context
+      // lookup — the two classes share a classifier BODY, not a directory.
+      putDisk(join(root, 'projects', 'p', 'briefs', KEY), BRAIN_DOC, OLDER_MTIME);
+      expect(diskEditState('p', KEY, row, 'context')).toBe('absent');
+      expect(diskEditState('p', KEY, row, 'briefs')).toBe('same');
+    });
+
+    it('traversal is refused for a bad slug OR a bad key', () => {
+      expect(() => contextDocPath('../escape', KEY)).toThrow(/Invalid path segment/);
+      expect(() => contextDocPath('p', '../../etc/passwd')).toThrow(/Invalid path segment/);
+      expect(() => projectContextFile('p', { ...row, key: 'a/b.md' })).toThrow(/Invalid path segment/);
     });
   });
 });

@@ -15,6 +15,10 @@
  * NEVER throws on a write/merge error — returns a `failed` outcome the caller
  * warn-and-continues on (init must reach exit 0 even if the global hooks can't
  * be written).
+ *
+ * TD-470: the one write applies TWO independent rules — the hooks merge
+ * (replace Igris-owned entries) and `applyAttributionDefault` (add Claude
+ * Code's `attribution` only when absent). `mergeCanonicalHooks` is unchanged.
  */
 
 import {
@@ -26,6 +30,10 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { loadCanonicalHooks } from "./canonical-hooks.js";
+import {
+  applyAttributionDefault,
+  type AttributionOutcome,
+} from "./attribution-settings.js";
 import { mergeCanonicalHooks, MalformedSettingsError } from "./json-merge.js";
 import { claudeUserSettingsPath } from "./paths.js";
 
@@ -40,6 +48,8 @@ export interface GlobalHooksResult {
   path: string;
   /** Populated when `outcome === "failed"`. */
   error?: string;
+  /** TD-470: set whenever the settings were merged (absent on `failed`). */
+  attribution?: AttributionOutcome;
 }
 
 function backupSettings(filePath: string): void {
@@ -95,8 +105,11 @@ export function mergeGlobalCanonicalHooks(opts?: {
   }
 
   let merged: Record<string, unknown>;
+  let attribution: AttributionOutcome;
   try {
-    merged = mergeCanonicalHooks(existing, canonical);
+    ({ settings: merged, outcome: attribution } = applyAttributionDefault(
+      mergeCanonicalHooks(existing, canonical),
+    ));
   } catch (err) {
     if (err instanceof MalformedSettingsError) {
       return {
@@ -115,7 +128,7 @@ export function mergeGlobalCanonicalHooks(opts?: {
   const serialized = JSON.stringify(merged, null, 2) + "\n";
   // Idempotency: skip the write (and the backup) when nothing changed.
   if (existingText !== null && existingText === serialized) {
-    return { outcome: "unchanged", path: targetPath };
+    return { outcome: "unchanged", path: targetPath, attribution };
   }
 
   try {
@@ -136,5 +149,5 @@ export function mergeGlobalCanonicalHooks(opts?: {
     };
   }
 
-  return { outcome: "merged", path: targetPath };
+  return { outcome: "merged", path: targetPath, attribution };
 }

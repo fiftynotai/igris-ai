@@ -196,7 +196,7 @@
  *   STEP 8b — booting WITHOUT calling shutdown also leaves no active handle and
  *   still exits 0, because the only timer a default-minus-schedules boot can
  *   arm is `sync`'s 10 s batch flush, which is `.unref()`'d
- *   (`sync/index.ts:410-411`) AND is armed only on a bus event when
+ *   (`sync/index.ts:412-413`) AND is armed only on a bus event when
  *   `auto_push === true` in `~/.igris/config.json` (absent on this machine, so
  *   `loadAutoPushConfig()` returns null and the path is inert). The
  *   NON-unref'd timers are the schedules daemon's (`daemon.ts:314,326,332,336`)
@@ -251,7 +251,7 @@
  *         the second, independent reason the precondition below refuses such a
  *         ref for `attach_goal` too, not only for `set_priority`.
  *
- * P0.5 — THE AUTO-PUSH FENCE (R4). `sync/index.ts:720` wires
+ * P0.5 — THE AUTO-PUSH FENCE (R4). `sync/index.ts:722` wires
  *   `bus.on('brief.synced', onImmediateEvent)` UNCONDITIONALLY, and that
  *   handler fire-and-forgets `pushTables({brief_status, brief_files})` to
  *   `remote_brain.url` whenever `_autoPushConfig` is non-null. `_autoPushConfig`
@@ -991,7 +991,7 @@ export function writeProbe(): WriteProbe {
  * Wired into the verb's SIGINT/SIGTERM teardown. Phase-0 step 8b established
  * that this is HYGIENE rather than a hang-fix — the only timer a
  * minus-schedules boot can arm is `sync`'s batch flush, which is `unref()`'d
- * (`sync/index.ts:410-411`) — but it closes the read-write connection, which on
+ * (`sync/index.ts:412-413`) — but it closes the read-write connection, which on
  * a WAL brain is what lets the `-wal` checkpoint out.
  */
 export function shutdownWriteEngine(): void {

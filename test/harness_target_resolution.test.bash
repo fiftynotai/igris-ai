@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_target_resolution.test.bash — FR-154 path-shape parity for agent
 # target.path resolution.
 #
@@ -76,6 +76,7 @@ EOF
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
   [ -d "$SANDBOX_HOME" ] && rm -rf "$SANDBOX_HOME"
+  cleanup_test_temp_dir
 }
 
 # write_manifest_for <target-path>

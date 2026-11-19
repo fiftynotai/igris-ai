@@ -117,6 +117,10 @@ function tableColumns(db: Database.Database, name: string): Set<string> {
 // Sync table definitions
 // ---------------------------------------------------------------------------
 
+// `schedules` + `schedule_runs` are deliberately ABSENT (TD-361): execution
+// state is per-DB-file — a replicated schedule was EXECUTED by every receiver,
+// and an append-only replicated `running` row could never be terminated.
+// Never re-add them; see MAINTAINING's TD-361 row.
 export const SYNC_TABLES: SyncTableConfig[] = [
   {
     table: 'learnings',
@@ -223,6 +227,23 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: ['project', 'brief_id', 'filename', 'content', 'content_hash', 'updated_at'],
   },
   {
+    // TD-460: project-context docs replicate so a doc authored on one machine
+    // reaches every machine on the same VPS. The FILE under
+    // ~/.igris/projects/{slug}/context/ stays the authority; this row is a
+    // content-addressed REPLICA whose only job is transport, reconciled by
+    // igris_context_sync and written to disk only by projectContextFile.
+    // `key` is by contract the doc-type `target` filename (coding_guidelines.md).
+    // `file_path` is deliberately EXCLUDED, not redacted: it is an absolute
+    // local path with no cross-machine meaning, and the receiver rebuilds the
+    // path from its own cacheRoot() + key. Excluding it discharges the TD-253
+    // absolute-path obligation by omission (pinned in auto-push.test.ts).
+    table: 'context_files',
+    syncKey: ['project_slug', 'key'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: ['project_slug', 'key', 'content', 'content_hash', 'updated_at'],
+  },
+  {
     table: 'session_files',
     syncKey: ['project', 'filename'],
     timestampCol: 'updated_at',
@@ -263,27 +284,6 @@ export const SYNC_TABLES: SyncTableConfig[] = [
     columns: [
       'project', 'ceremony', 'event_type', 'machine_hostname', 'instance_id', 'brief_id',
       'duration_ms', 'metadata', 'created_at',
-    ],
-  },
-  {
-    table: 'schedules',
-    syncKey: ['id'],
-    timestampCol: 'updated_at',
-    strategy: 'lww',
-    columns: [
-      'id', 'name', 'description', 'cron_expr', 'handler_type', 'handler_config',
-      'enabled', 'project_slug', 'tags', 'max_retries', 'timeout_ms',
-      'next_run_at', 'last_run_at', 'created_at', 'updated_at',
-    ],
-  },
-  {
-    table: 'schedule_runs',
-    syncKey: ['id'],
-    timestampCol: 'started_at',
-    strategy: 'append',
-    columns: [
-      'id', 'schedule_id', 'status', 'started_at', 'finished_at',
-      'duration_ms', 'result', 'error', 'attempt',
     ],
   },
   {
@@ -438,6 +438,31 @@ export const SYNC_TABLES: SyncTableConfig[] = [
       'dismiss_count', 'last_dismissed_at', 'reasons',
     ],
   },
+  {
+    // FR-273 (projects:3) — kind registry; aliases union (merge_tags). Rules:
+    // MAINTAINING row "project relations store".
+    table: 'project_relation_kinds',
+    syncKey: ['name'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    mergeFields: { aliases: 'merge_tags' },
+    columns: [
+      'name', 'meaning', 'direction', 'forward_label', 'inverse_label', 'example',
+      'aliases', 'status', 'merged_into', 'created_at', 'updated_at',
+    ],
+  },
+  {
+    // FR-273 — relation edges on the natural key. `removed_at` is the tombstone
+    // (sync is upsert-only, #1067): it MUST stay in `columns`.
+    table: 'project_relations',
+    syncKey: ['from_slug', 'kind', 'to_slug'],
+    timestampCol: 'updated_at',
+    strategy: 'lww',
+    columns: [
+      'from_slug', 'kind', 'to_slug', 'detail', 'provenance', 'removed_at',
+      'created_at', 'updated_at',
+    ],
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -551,7 +576,7 @@ export async function fetchWithRetry(
       clearTimeout(timeout);
       if (response.ok) return response;
       if (response.status >= 400 && response.status < 500) {
-        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+        throw new Error(redactSecret(`HTTP ${response.status}: ${await response.text()}`, bearerOf(options)));
       }
       lastError = new Error(`HTTP ${response.status}`);
     } catch (err) {
@@ -1334,14 +1359,14 @@ async function handleBrainPush(
       // so they surface in /scan and operator logs. Treat truly broken
       // responses (missing `results` entirely) as fatal.
       if (!result.results) {
-        console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, JSON.stringify(result));
+        console.error(`[brain] Remote sync response missing 'results' for chunk ${i + 1}/${chunks.length}:`, redactSecret(JSON.stringify(result), args.api_key));
         throw new Error(`Remote returned invalid response for chunk ${i + 1}/${chunks.length}`);
       }
       for (const t of Object.keys(result.results as Record<string, unknown>)) acked.add(t);
       const remoteErrors = (result.errors ?? {}) as Record<string, string>;
       for (const [tableName, errMessage] of Object.entries(remoteErrors)) {
-        console.error(`[brain] Remote sync table=${tableName} error: ${errMessage}`);
-        if (!failed.has(tableName)) failed.set(tableName, errMessage);
+        console.error(`[brain] Remote sync table=${tableName} error: ${redactSecret(errMessage, args.api_key)}`);
+        if (!failed.has(tableName)) failed.set(tableName, redactSecret(errMessage, args.api_key));
       }
       if (Array.isArray(result.skipped)) {
         for (const t of result.skipped) skippedByRemote.add(String(t));
@@ -1883,7 +1908,7 @@ async function handleSyncQueueDrain(
         for (const t of chunk) {
           if (failedTables[t.table]) {
             const tableErr = failedTables[t.table];
-            updateRetry.run(now, `HTTP 207 — table=${t.table}: ${tableErr}`, t.id);
+            updateRetry.run(now, `HTTP 207 — table=${t.table}: ${redactSecret(tableErr, args.api_key)}`, t.id);
             totalFailed++;
           } else {
             markSent.run(now, t.id);
@@ -2337,6 +2362,15 @@ async function handleFilePull(
       isError: true,
     } as { content: { type: string; text: string }[]; isError: boolean };
   }
+}
+
+/** BR-118: replace every occurrence of `secret` in remote-authored text; '' is a no-op. */
+export function redactSecret(text: string, secret: string): string {
+  return secret ? String(text).split(secret).join('[redacted]') : text;
+}
+
+function bearerOf(init: RequestInit): string {
+  return (new Headers(init.headers).get('authorization') ?? '').replace(/^Bearer\s*/, '');
 }
 
 export {

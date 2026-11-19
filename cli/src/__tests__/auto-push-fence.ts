@@ -17,12 +17,12 @@
  *      that tool, so the dashboard's first brief write is also the first
  *      dashboard mutation that emits this event at all (none of FR-241's five
  *      does).
- *   2. `sync/index.ts:720` — the sync component wires
+ *   2. `sync/index.ts:722` — the sync component wires
  *      `bus.on('brief.synced', onImmediateEvent)` **unconditionally**. The
  *      comment there says so explicitly: "ALWAYS wire listeners (event-bus
  *      integrity tests require it). Handlers early-return when
  *      `_autoPushConfig` is null."
- *   3. `sync/index.ts:291-308` — that handler selects the brief's
+ *   3. `sync/index.ts:293-310` — that handler selects the brief's
  *      `brief_status` and `brief_files` rows and FIRE-AND-FORGETS
  *      `pushTables(...)` at `remote_brain.url`.
  *   4. `sync/index.ts:81-105` — `_autoPushConfig` is `loadAutoPushConfig()`,
@@ -72,7 +72,7 @@
  * and it makes the zero-attempt assertion in every other test meaningful.
  *
  * The thrower's message deliberately begins `HTTP 4`: `fetchWithRetry`
- * (`tools/sync.ts:463-493`) re-throws immediately on a `HTTP 4`-prefixed error
+ * (`tools/sync.ts:488-518`) re-throws immediately on a `HTTP 4`-prefixed error
  * and otherwise retries twice with 1s/2s backoff. A fence that made every
  * blocked call take three seconds would be a fence people delete.
  */
@@ -161,9 +161,17 @@ export function armAutoPushFence(sandbox: string): AutoPushFence {
         );
       }
       // ...and the operator's real config must be out of reach, whatever it says.
-      const real = join(String(prevHome ?? ""), ".igris", "config.json");
-      if (configPath() === real) {
-        throw new Error("FR-247 fence NOT ARMED: the sandbox config IS the real one");
+      //
+      // BR-106: check BOTH homes. Under the tier-wide belt
+      // (`cli/vitest.setup.ts`) `prevHome` is a throwaway temp dir, so
+      // comparing against it alone would prove only that the sandbox differs
+      // from the belt. `IGRIS_REAL_HOME` carries the operator's home.
+      for (const candidate of [process.env.IGRIS_REAL_HOME, prevHome]) {
+        if (candidate === undefined || candidate.length === 0) continue;
+        const real = join(candidate, ".igris", "config.json");
+        if (configPath() === real) {
+          throw new Error("FR-247 fence NOT ARMED: the sandbox config IS the real one");
+        }
       }
       // L2.
       const current = (globalThis as unknown as Record<string, unknown>).fetch;

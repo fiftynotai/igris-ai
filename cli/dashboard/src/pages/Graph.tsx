@@ -32,7 +32,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, ApiError, type GraphPayload, type ProjectsPayload } from "../lib/api";
+import { api, ApiError, type GraphPayload, type ProjectsPayload, type AttentionInventory, type AttentionNodeState, type GraphEdge, type GraphNode } from "../lib/api";
 import {
   cachedScope,
   fetchScope,
@@ -46,6 +46,16 @@ import { QueryTwin } from "../components/graph/QueryTwin";
 import { NodeInspector } from "../components/graph/NodeInspector";
 import { useGraph } from "../graph/useGraph";
 import { findNode, type NodeTriple } from "../layers/model";
+import { useAttention } from "../attention/useAttention";
+import { mergeInventory, partitionEvidence } from "../attention/model";
+import { SessionPicker } from "../attention/SessionPicker";
+import { attentionLens, lensTypes, nodeVisible, type AttentionLens } from "../attention/lens";
+import { AttentionLensControls } from "../attention/AttentionLensControls";
+import { AttentionPanel } from "../attention/AttentionPanel";
+
+const NO_NODES: GraphNode[] = [];
+const NO_EDGES: GraphEdge[] = [];
+const NO_STATES: AttentionNodeState[] = [];
 
 export interface GraphProps {
   /** Search text, owned by `App` and shared with the nav's reserved slot. */
@@ -59,9 +69,10 @@ export interface GraphProps {
    * (D5) and `BR-001` in two projects focuses two different nodes.
    */
   focus?: NodeTriple | null;
+  attentionSession?: string | null;
 }
 
-export function Graph({ search, focus = null }: GraphProps) {
+export function Graph({ search, focus = null, attentionSession = null }: GraphProps) {
   const [scope, setScope] = useState<string | null>(null);
   const [payload, setPayload] = useState<GraphPayload | null>(null);
   const [projects, setProjects] = useState<ProjectsPayload | null>(null);
@@ -69,6 +80,16 @@ export function Graph({ search, focus = null }: GraphProps) {
   const [fatal, setFatal] = useState<string | null>(null);
   const [typeFilter, setTypeFilter] = useState<ReadonlySet<string>>(new Set());
   const [nonce, setNonce] = useState(0);
+  const [inventory, setInventory] = useState<AttentionInventory | null>(null);
+  const [inventoryError, setInventoryError] = useState<string | null>(null);
+  const [evidenceKey, setEvidenceKey] = useState<string | null>(null);
+  const attention = useAttention(attentionSession);
+  // A newly selected chat always starts focused; toggling does not edit its URL.
+  const [view, setView] = useState<{ session: string | null; lens: AttentionLens; neighbours: boolean }>({ session: attentionSession, lens: "chat", neighbours: false });
+  const lens: AttentionLens = attentionSession === null ? "brain" : view.session === attentionSession ? view.lens : "chat";
+  const includeNeighbours = view.session === attentionSession && view.neighbours;
+  useEffect(() => { setView({ session: attentionSession, lens: "chat", neighbours: false }); setTypeFilter(new Set()); }, [attentionSession]);
+  const setLens = (next: AttentionLens) => setView({ session: attentionSession, lens: next, neighbours: includeNeighbours });
   /**
    * How the CURRENT payload arrived. A first load runs the `// CINE` entrance
    * once; a scope change is a page transition on `// SLOW` (M1). dataviz.md:
@@ -101,20 +122,24 @@ export function Graph({ search, focus = null }: GraphProps) {
   // The payload. Keyed on scope + an explicit REFRESH nonce, and on NOTHING
   // else — in particular not on `live.tick`. See the header.
   useEffect(() => {
-    const cached = cachedScope(scope);
-    if (cached !== undefined && nonce === 0) {
-      setPayload(cached.payload);
-      return;
-    }
     const ctrl = new AbortController();
     setBusy(true);
     // `force` on an explicit REFRESH only. The signal is the ABANDONMENT check,
     // not a cancellation: the request is shared with the record detail, so
     // aborting it here would cancel someone else's read (`graphCache.ts` header).
-    fetchScope(scope, { force: nonce > 0 })
-      .then((p) => {
+    // Commit one topology after both reads finish. Activity never enters this
+    // dependency list and cannot replace node/edge arrays or restart layout.
+    Promise.all([
+      fetchScope(scope, { force: nonce > 0 }),
+      api.attentionInventory(scope, ctrl.signal).then(
+        (value) => ({ value, error: null }),
+        (error: unknown) => ({ value: null, error: String(error) }),
+      ),
+    ]).then(([p, discovered]) => {
         if (ctrl.signal.aborted) return;
         setPayload(p);
+        setInventory(discovered.value);
+        setInventoryError(discovered.error);
         setFatal(null);
       })
       .catch((err: unknown) => {
@@ -127,8 +152,10 @@ export function Graph({ search, focus = null }: GraphProps) {
     return () => ctrl.abort();
   }, [scope, nonce]);
 
-  const nodes = payload?.nodes ?? [];
-  const edges = payload?.edges ?? [];
+  const topology = useMemo(() => mergeInventory(payload?.nodes ?? NO_NODES, inventory?.nodes ?? NO_NODES), [payload, inventory]);
+  const nodes = topology.nodes;
+  const edges = payload?.edges ?? NO_EDGES;
+  const evidence = useMemo(() => partitionEvidence(nodes, attention.snapshot?.node_states ?? NO_STATES), [nodes, attention.snapshot?.node_states]);
 
   // The seed for a back-out: the positions this scope settled at last time.
   const seed = useMemo(
@@ -138,7 +165,11 @@ export function Graph({ search, focus = null }: GraphProps) {
     [nodes],
   );
 
-  const graph = useGraph({ nodes, edges, typeFilter, search, seed, transition });
+  const map = useMemo(() => attentionLens(nodes, edges, evidence.onMap, lens, includeNeighbours), [nodes, edges, evidence.onMap, lens, includeNeighbours]);
+  const fitKey = attentionSession === null ? null : attention.snapshot?.session?.id === attentionSession
+    ? `${attentionSession}:${lens}:${includeNeighbours}:${scope}:${nonce}` : null;
+  const graph = useGraph({ nodes, edges, typeFilter, search, seed, transition, attention: evidence.onMap, visibleKeys: map.visible, fitKey });
+  useEffect(() => { setEvidenceKey(graph.selection?.node.key ?? null); }, [graph.selection?.node.key]);
 
   // Persist settled positions so backing out restores the layout rather than
   // paying a second entrance for a payload we already have.
@@ -161,27 +192,24 @@ export function Graph({ search, focus = null }: GraphProps) {
     [focus, nodes],
   );
 
+  const focusVisible = focusNode !== null && nodeVisible(map.visible, focusNode.key);
+
   // Select and centre it once the simulation has positions to centre on.
   // `graph.select` moves the camera only if the node has settled coordinates
   // (`useGraph`'s `ctrl.positions()[key]` guard), so this waits for `settled`
   // rather than firing at mount and losing the camera move.
   useEffect(() => {
-    if (focusNode === null) return;
+    if (focusNode === null || !focusVisible) return;
     if (!graph.settled) return;
     graph.select(focusNode.key);
-    // `graph.select`'s identity changes with the payload; depending on it would
-    // re-select on every payload identity change and fight the operator's own
-    // clicks. The focus key and the settle latch are the real triggers.
+    // Only explicit focus/view/session intent or layout settlement may move
+    // the camera. A poll can make a hidden focus visible, but must not select
+    // it automatically. The reveal action changes `lens` and retries here.
+    // `graph.select` and `focusVisible` deliberately are not dependencies.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusNode?.key, graph.settled]);
+  }, [focusNode?.key, graph.settled, lens, includeNeighbours, attentionSession]);
 
-  const types = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const n of nodes) counts.set(n.type, (counts.get(n.type) ?? 0) + 1);
-    return [...counts.entries()]
-      .map(([type, count]) => ({ type, count }))
-      .sort((a, b) => b.count - a.count || (a.type < b.type ? -1 : 1));
-  }, [nodes]);
+  const types = useMemo(() => lensTypes(nodes, map.visible, typeFilter), [nodes, map.visible, typeFilter]);
 
   const toggleType = useCallback((type: string) => {
     setTypeFilter((cur) => {
@@ -234,6 +262,11 @@ export function Graph({ search, focus = null }: GraphProps) {
     );
   }
 
+  const attentionPanel = <AttentionPanel sessionId={attentionSession} snapshot={attention.snapshot} error={attention.error} loading={attention.loading}
+    inventory={inventory} inventoryError={inventoryError} selectedKey={evidenceKey} neighbour={map.neighbours.get(evidenceKey ?? "") ?? null} offMap={evidence.offMap} sessions={attention.sessions}
+    through={attention.through} before={attention.before} onReplay={attention.replay} onPage={attention.page}
+    onSelect={(key) => { setEvidenceKey(key); if (evidence.onMap.has(key)) graph.select(key); }} onRefresh={attention.refresh} />;
+
   return (
     /*
      * FR-244 — `.graph-page` is a FLEX COLUMN whose min-height is the viewport
@@ -246,13 +279,22 @@ export function Graph({ search, focus = null }: GraphProps) {
      */
     <div className="graph-page">
       <span className="shell-eye">// GRAPH</span>
-      <h1 className="shell-h1 glitch">WHOLE BRAIN</h1>
+      <h1 className="shell-h1 glitch">{lens === "chat" ? "THIS CHAT" : "WHOLE BRAIN"}</h1>
+      <SessionPicker selected={attentionSession} payload={attention.sessions} error={attention.sessionsError}
+        older={attention.listBefore !== null} onPage={attention.pageSessions} onRefresh={attention.refreshSessions} />
+      {attentionSession !== null && <AttentionLensControls lens={lens} neighbours={includeNeighbours} recordedCount={evidence.onMap.size} neighbourCount={map.neighbours.size}
+        onLens={setLens} onNeighbours={(include) => setView({ session: attentionSession, lens, neighbours: include })} />}
+      {topology.conflicts.length > 0 && <div className="shell-banner" role="status">INVENTORY IDENTITY CONFLICT — {topology.conflicts.length} references could not be merged.</div>}
+      {inventoryError !== null && <div className="shell-banner" role="status">CAPABILITY INVENTORY UNAVAILABLE — the knowledge map is still shown. {inventoryError}</div>}
 
       {payload.degraded !== null && (
         <div className="shell-banner" role="status">
           GRAPH DEGRADED — {payload.degraded.reason}
         </div>
       )}
+      {focusNode !== null && !focusVisible && <div className="shell-banner" role="status">
+        {focusNode.label} is outside this chat’s view. <button type="button" className="graph-control" onClick={() => setLens("brain")}>Show in Whole brain</button>
+      </div>}
       {focus !== null && focusNode === null && (
         <div className="shell-banner" role="status">
           FOCUS NODE NOT IN THIS SCOPE — {focus.type} {focus.id}
@@ -279,8 +321,8 @@ export function Graph({ search, focus = null }: GraphProps) {
         onFit={graph.refit}
         matchCount={graph.matchCount}
         tier={graph.tier}
-        nodeCount={nodes.length}
-        edgeCount={edges.length}
+        nodeCount={map.nodeCount}
+        edgeCount={map.edgeCount}
         busy={busy}
       />
 
@@ -306,10 +348,12 @@ export function Graph({ search, focus = null }: GraphProps) {
             which is exactly the case whose provenance a reader most needs.
           */}
           <QueryTwin twin={payload.query} />
+          {attentionPanel}
         </>
       ) : (
         <div className="graph-layout">
-          <GraphSurface ref={graph.containerRef} label="Whole-brain graph">
+          <GraphSurface ref={graph.containerRef} label={lens === "chat" ? "This chat attention map" : "Whole-brain graph"}>
+            {map.nodeCount === 0 && <p className="attention-empty" role="status">{attention.loading ? "Reading this chat’s recorded activity…" : attention.error !== null ? "This chat’s activity could not be read. See the session details." : "No recorded nodes in this map. Evidence outside the current scope remains in the list."}</p>}
             {graph.aggregating && (
               <div className="shell-banner graph-density" role="status">
                 {/*
@@ -378,7 +422,8 @@ export function Graph({ search, focus = null }: GraphProps) {
             always"* — adjacency is a relationship, not a particular edge, and
             beside the canvas is at least as adjacent as beneath it.
           */}
-          <div className="graph-side">
+          <div className="graph-side attention-side">
+            {attentionPanel}
             {graph.selection !== null ? (
               <NodeInspector
                 node={graph.selection.node}

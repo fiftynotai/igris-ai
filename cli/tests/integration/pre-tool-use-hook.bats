@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # pre-tool-use-hook.bats — TD-146. Exercises the brief-gate hook's
 # brain-DB-first brief lookup and parent-walk slug resolution.
 #
@@ -102,10 +102,10 @@ run_hook() {
 }
 
 @test "PROJECT_DIR basename with space -> brain-DB branch skipped, v4 fallback resolves" {
-  # Covers Decision 1: slug-regex rejection. basename = 'proj with spaces'
-  # fails ^[a-z0-9_-]+$, so find_active_brief_in_brain returns empty without
-  # touching SQL. The v4 fallback (literal slug dir) supplies the brief; the
-  # contract verified here is "no crash, no mis-interpolation".
+  # Since FR-212c this passes at the registration gate: the directory is not
+  # registered, so the hook no-ops (allow) before the brief gate. Registered,
+  # 'proj with spaces' fails SLUG_RE (igris_slug_valid, TD-510), the brain is
+  # skipped and the literal slug dir below answers: no crash, no mis-interpolation.
   PROJ="$SANDBOX/proj with spaces"; mkdir -p "$PROJ/src"
   mkdir -p "$FAKEHOME/.igris/projects/proj with spaces/briefs"
   printf '**Status:** In Progress\n' > "$FAKEHOME/.igris/projects/proj with spaces/briefs/X.md"

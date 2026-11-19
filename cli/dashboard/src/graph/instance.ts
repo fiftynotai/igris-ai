@@ -110,6 +110,8 @@ export interface ForceGraphLike {
       scale: number,
     ) => void,
   ): ForceGraphLike;
+  nodeVisibility(fn: (n: GraphDatum) => boolean): ForceGraphLike;
+  linkVisibility(fn: (l: LinkDatum) => boolean): ForceGraphLike;
   nodeLabel(fn: (n: GraphDatum) => string): ForceGraphLike;
   linkLabel(fn: (l: LinkDatum) => string): ForceGraphLike;
   linkColor(fn: (l: LinkDatum) => string): ForceGraphLike;
@@ -148,7 +150,7 @@ export interface ForceGraphLike {
   centerAt(x: number, y: number): ForceGraphLike;
   zoom(): number;
   zoom(k: number): ForceGraphLike;
-  zoomToFit(ms?: number, px?: number): ForceGraphLike;
+  zoomToFit(ms?: number, px?: number, nodeFilter?: (node: GraphDatum) => boolean): ForceGraphLike;
   screen2GraphCoords(x: number, y: number): { x: number; y: number };
   graph2ScreenCoords(x: number, y: number): { x: number; y: number };
   _destructor(): void;
@@ -208,6 +210,8 @@ export type LoopState = "settling" | "still" | "interacting";
 
 /** Everything the paint accessors need, re-read per frame from live state. */
 export interface PaintHooks {
+  nodeVisible?: (node: GraphDatum) => boolean;
+  linkVisible?: (link: LinkDatum) => boolean;
   drawNode: (
     node: GraphDatum,
     ctx: CanvasRenderingContext2D,
@@ -334,6 +338,8 @@ export function createGraphInstance(
     // colour literal, so it also survives the T13 scan intact.
     .backgroundColor("transparent")
     .nodeRelSize(1)
+    .nodeVisibility((n) => opts.paint.nodeVisible?.(n) ?? true)
+    .linkVisibility((l) => opts.paint.linkVisible?.(l) ?? true)
     .nodeCanvasObject((n, ctx, scale) => opts.paint.drawNode(n, ctx, scale))
     .nodePointerAreaPaint((n, colour, ctx, scale) =>
       opts.paint.paintPointerArea(n, colour, ctx, scale),
@@ -453,8 +459,9 @@ export function createGraphInstance(
     }
   });
 
-  fg.onNodeHover((n) => opts.onHover(n));
-  fg.onNodeClick((n) => opts.onSelect(n));
+  fg.onNodeHover((n) => opts.onHover(n !== null && opts.paint.nodeVisible?.(n) === false ? null : n));
+  // A stale shadow-canvas hit can arrive between a visibility update and repaint.
+  fg.onNodeClick((n) => { if (opts.paint.nodeVisible?.(n) !== false) opts.onSelect(n); });
   fg.onBackgroundClick(() => opts.onSelect(null));
 
 
@@ -613,7 +620,8 @@ export function createGraphInstance(
     zoomToFit: () => {
       // No duration argument — the untimed form fits instantly. A timed fit
       // would be the library's easing, which is F2's whole problem.
-      fg.zoomToFit();
+      if (!data.nodes.some((node) => opts.paint.nodeVisible?.(node) ?? true)) return;
+      fg.zoomToFit(undefined, 48, (node) => opts.paint.nodeVisible?.(node) ?? true);
     },
     destroy: () => {
       // A pending idle timer holds a closure over the instance; firing it after

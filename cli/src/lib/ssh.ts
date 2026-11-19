@@ -1,7 +1,8 @@
 /**
  * Thin async wrapper around `child_process.execFile("ssh", ...)` and
- * `child_process.execFile("rsync", ...)`. Used exclusively by
- * `cli/src/lib/sync/code.ts` for VPS code-sync (M4 of MG-014).
+ * `child_process.execFile("rsync", ...)`. Used by
+ * `cli/src/lib/sync/code.ts` for VPS code-sync (M4 of MG-014) and the
+ * `sync status` node probe (BR-116).
  *
  * Why a separate module from `lib/exec.ts`?
  *   - `exec.ts` is a synchronous `execFileSync` wrapper used at install/update
@@ -25,6 +26,10 @@ export interface SshExecResult {
   stdout: string;
   /** Captured stderr (utf-8). */
   stderr: string;
+  /** BR-116: true when the client killed the child (timeout) — remote state unknown. */
+  timedOut?: boolean;
+  /** BR-116: the signal that ended the child, when one did. */
+  signal?: string | null;
 }
 
 export interface SshOptions {
@@ -140,9 +145,11 @@ function runChild(
           });
           return;
         }
+        const timedOut = err.killed === true;
+        const signal = err.signal ?? null;
         // Process exited non-zero — err.code is the numeric exit code.
         if (typeof err.code === "number") {
-          resolve({ exitCode: err.code, stdout: out, stderr: errOut });
+          resolve({ exitCode: err.code, stdout: out, stderr: errOut, timedOut, signal });
           return;
         }
         // Spawn or other error — surface as exit 1 with err.message.
@@ -150,6 +157,8 @@ function runChild(
           exitCode: 1,
           stdout: out,
           stderr: errOut + `\n${err.message}`,
+          timedOut,
+          signal,
         });
       },
     );

@@ -356,6 +356,9 @@ describe("T2 — Host allowlist and CORS absence", () => {
       "/api/summary",
       "/api/graph/stats",
       "/api/graph",
+      "/api/attention/sessions",
+      "/api/attention/session",
+      "/api/attention/inventory",
     ]) {
       const r = await req(p);
       expect(r.headers["cache-control"]).toBe("no-store");
@@ -608,6 +611,9 @@ const ALL_ENDPOINTS = [
   "/api/summary?project=demo",
   "/api/graph/stats?project=demo",
   "/api/graph?project=demo", // FR-239 — the fifth endpoint (row 108)
+  "/api/attention/sessions",
+  "/api/attention/session?session=aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "/api/attention/inventory",
 ];
 
 async function expectAllDegradeCleanly(): Promise<void> {
@@ -779,6 +785,9 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       // The zero-SQL claim is what says the classifier was reused rather than
       // re-implemented one tier out.
       "../lib/dashboard/cognition-read.ts",
+      "../lib/dashboard/attention-routes.ts",
+      "../lib/dashboard/managed.ts",
+      "../lib/attention-bridge.ts",
     ]) {
       const src = readFileSync(new URL(rel, import.meta.url), "utf-8");
       const code = src
@@ -860,6 +869,8 @@ describe("scope — the server layer holds zero SQL (brief scope item 2)", () =>
       "context-docs-read.ts",
       "graph-query.ts",
       "search-fuse.ts", // FR-248 — pure rank arithmetic; takes no `db`
+      "attention-routes.ts", // FR-276 — pure validated GET dispatch
+      "managed.ts", // FR-276 — process readiness/lifecycle only
       "cognition-read.ts", // FR-266 — forwards the cognition verb's digest; no `db`
       // Not SQL-scanned above but deliberately so, and named here so the set is
       // a complete accounting rather than a partial one:
@@ -1051,6 +1062,19 @@ describe("G-SEC-1 — the write surface's fences", () => {
    * verified against this exact server shape (`CODE=413`, exit 0): it keeps
    * reading the response after a send-side error, on loopback on both OSes.
    */
+  /**
+   * TD-344 — the TEST half for the two `postFromChild` cases. The probe's own
+   * halves are curl `--max-time 15` and spawn `timeout: 20_000` below. These
+   * bodies are ASYNC, so vitest PRE-EMPTS them at their test timeout: with the
+   * suite default (5000 ms before TD-344, 15_000 after) the test half fires
+   * BEFORE the spawn half, and a slow-but-alive curl reports as a vitest
+   * TIMEOUT instead of the probe's own error. So this half must exceed 20_000.
+   * MEASURED 2026-10-01: the 1 MB case 109 ms and its 16-byte control 64 ms in
+   * a full-suite run at 1-min load ~30 (8 cores). Formula: the spawn half +
+   * 5_000 for server start and teardown (over 45x the measured body) = 25_000.
+   */
+  const CURL_PROBE_TEST_TIMEOUT_MS = 25_000;
+
   async function postFromChild(
     port: number,
     bytes: number,
@@ -1218,7 +1242,7 @@ describe("G-SEC-1 — the write surface's fences", () => {
     const r = await postFromChild(srv!.port, 1_000_000);
     expect(r.status, `child reported: ${r.body}`).toBe(413);
     expect((JSON.parse(r.body) as { error: string }).error).toContain("too large");
-  });
+  }, CURL_PROBE_TEST_TIMEOUT_MS);
 
   it("SELF-NEGATIVE-CONTROL — the SAME out-of-process client reads a 200 on a small body", async () => {
     // Without this, "the child saw a 413" is also what you would observe from a
@@ -1228,7 +1252,7 @@ describe("G-SEC-1 — the write surface's fences", () => {
     const r = await postFromChild(srv!.port, 16);
     expect(r.status, `child reported: ${r.body}`).toBe(200);
     expect(JSON.parse(r.body)).toMatchObject({ action: "dismiss" });
-  });
+  }, CURL_PROBE_TEST_TIMEOUT_MS);
 
   it("a body just UNDER the cap is accepted — the cap is a boundary, not a wall", async () => {
     // The paired case. Without it, "413 on 1 MB" is satisfiable by an endpoint

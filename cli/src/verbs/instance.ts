@@ -1,4 +1,4 @@
-import { basenameOfCwd } from "../lib/sync/util.js";
+import { defaultProjectSlug } from "../lib/project-identity.js";
 import { detectCapabilities } from "../lib/detect.js";
 import {
   instanceRemove,
@@ -50,7 +50,7 @@ export function runInstance(opts: InstanceOptions): number {
     return 0;
   }
 
-  const slug = opts.project ?? basenameOfCwd();
+  const slug = opts.project ?? defaultProjectSlug();
 
   if (opts.action === "list") {
     // D-411-d, producer side. The three `liveness_*` COLUMNS are a
@@ -75,7 +75,7 @@ export function runInstance(opts: InstanceOptions): number {
     // The overrides MUST stay after the spread. Re-ordering them restores the
     // defect, and TWO independent guards catch it. `tsc` is the first and is
     // unconditional: `InstanceRow` declares all three stamp fields
-    // (`cli/src/types.ts:187-189`), so overrides placed above `...row` would be
+    // (`cli/src/types.ts:189-191`), so overrides placed above `...row` would be
     // overwritten by the spread and the compiler reports TS2783 — measured, not
     // assumed. `instance-verb.test.ts` is the second and is independent of the
     // first: it reds if either the values or the `liveness_*` key SET stops

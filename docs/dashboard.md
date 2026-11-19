@@ -13,9 +13,12 @@ This is the shell. FR-239 (graph canvas), FR-240 (layer views) and FR-241
 igris dashboard                 # bind 7317 (or an OS port), open the browser
 igris dashboard --port 8080     # exact port; if taken, HARD FAIL
 igris dashboard --no-open       # do not launch a browser
+igris dashboard --session <uuid> --ensure  # verified chat link as JSON
+igris dashboard --stop          # stop a verified compatible dashboard
 ```
 
-Ctrl-C stops it. The verb runs in the **foreground** — see Lifecycle.
+The ordinary command runs in the **foreground**; Ctrl-C stops it. `--ensure`
+returns after verifying a managed local dashboard — see Lifecycle.
 
 ---
 
@@ -24,10 +27,18 @@ Ctrl-C stops it. The verb runs in the **foreground** — see Lifecycle.
 `igris dashboard` is the CLI's first long-lived process. The other verbs all run
 and exit, so the model is stated explicitly rather than assumed.
 
-**Foreground.** The terminal is occupied while the lens is open, and the OS
-reaps the process with the terminal. There is no daemon, no `dashboard stop`, no
-log file and no orphan class. SIGINT / SIGTERM close the server, release the
-lock, and exit 0.
+**Foreground.** The ordinary command occupies its terminal while the lens is
+open. SIGINT / SIGTERM close the server, release the lock, and exit 0.
+
+**Managed session maps (FR-276).** `--ensure` reuses a compatible live server or
+starts one detached child with an atomic startup guard. It returns
+`{available, url, reason}` only after checking the server identity, local brain
+path, attention protocol, application bundle, and requested recording. A failed
+check returns an unavailable result, never a guessed URL. `--session <uuid>`
+selects `#/graph?session=<uuid>`. Boot uses this nonblocking readiness result and
+shows a link; a verified harness adapter may open the exact link in a panel.
+`--stop` terminates only a positively identified compatible dashboard. It never
+kills an arbitrary process because a lock file contains its PID.
 
 **Single instance.** `~/.igris/dashboard.lock` records
 `{pid, port, url, started_at, process_start_time}`. A second `igris dashboard`
@@ -81,11 +92,14 @@ changes a row.
 
 | Method | Path | Response | Backed by |
 |---|---|---|---|
-| `GET` | `/api/health` | `{ok, cli_version, brain:{present,path}, bridge:{available,reason}, generated_at, degraded}` | `paths.ts#brainDbPath` + `brain-bridge.ts#probe` |
+| `GET` | `/api/health` | `{ok, cli_version, attention_protocol, server_pid, dashboard_bundle_present, brain:{present,path}, bridge:{available,reason}, generated_at, degraded}` | `paths.ts#brainDbPath` + `brain-bridge.ts#probe` |
 | `GET` | `/api/projects` | `{projects:[{slug,name,path,status,last_session_at}], default_project, generated_at, degraded}` | `registry.ts#listProjectsReadonly` + `dashboard/default-project.ts` |
 | `GET` | `/api/summary[?project=<slug>]` | `{project, briefs:{total,by_status,by_priority}, instances:{active}, generated_at, degraded}` | `brain-db.ts#briefStatusSummaryReadonly` + `#listInstancesReadonly` |
 | `GET` | `/api/graph/stats?project=<slug>` | `{project, stats, edge_resolution, truncated, truncation_reason, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` |
 | `GET` | `/api/graph?project=<slug>` | `{project, nodes, edges, stats, truncated, truncation_reason, query, generated_at, degraded}` | `brain-bridge.ts` → FR-237 `buildBrainGraph` + `dashboard/graph-query.ts` |
+| `GET` | `/api/attention/sessions?project=&before=&limit=` | `{sessions, next_before, generated_at, degraded}` | `attention-bridge.ts` → attention `read.ts` |
+| `GET` | `/api/attention/session?session=&through=&before=&limit=` | `{session, through_sequence, latest_sequence, node_states, recent_events, next_before, generated_at, degraded}` | `attention-bridge.ts` → attention `read.ts` |
+| `GET` | `/api/attention/inventory?project=` | `{nodes, revision, sources, generated_at, degraded}` | `attention-bridge.ts` → attention `inventory.ts` |
 | `GET` | `/api/briefs` | `{items, count, total, limit, offset, params, generated_at, degraded}` | `brain-bridge.ts#loadLayerReaders` → `briefs-read.ts#listBriefs` |
 | `GET` | `/api/briefs/search?q=<query>[&project=<slug>]` | `{query, items, count, retrieval, params, generated_at, degraded}` | `briefs-read.ts#hybridSearchBriefs` — **FR-246, the one path it adds** |
 | `GET` | `/api/search?q=<query>[&project=<slug>][&limit=<n>][&layers=<csv>]` | `{query, items, count, layers, fusion, params, generated_at, degraded}` | `search-fuse.ts#fuseLayers` + `routes.ts#fusedSearch` — **FR-248, the one path it adds.** `layers[]` ALWAYS has all five entries so an unavailable layer is REPORTED, never absent; every row carries `layer` and `rank_basis`; `fusion` holds the INTER-layer `rrf_k` and is distinct from each layer's own `retrieval.rrf_k` |
@@ -101,6 +115,33 @@ changes a row.
 | `GET` | `/api/cognition` | `{cognition, generated_at, degraded}` — `cognition` is the `igris cognition health` digest FORWARDED VERBATIM (`degraded`, `degraded_reason`, `hostname`, `event_log_retention_days`, `event_log_oldest_at`, `instances[]`, `warnings[]`) | `dashboard/cognition-read.ts` -> `verbs/cognition.ts#buildCognitionHealthDigest` — **FR-266, the one path it adds.** NO PARAMETERS: the digest is per-MACHINE and per-REGISTRY, so there is no project axis to scope it to. TWO `degraded` FIELDS AT DIFFERENT DEPTHS AND THEY ARE NOT SYNONYMS: the envelope's means there is no brain, `cognition.degraded` means the brain is readable but carries no `cognition_instances` table (an old build). Different remedies |
 | **`POST`** | **`/api/triage`** | body `{action, ids, reason?, brief_id?}` → `{action, requested, applied, failed, results, params, generated_at, degraded}` | `brain-write-bridge.ts#dispatchTriage` → the brain's own `gateway.dispatch` |
 | `GET` | `/`, `/assets/*`, `/fonts/*` | the static bundle; unknown non-asset paths fall back to `index.html` | `dashboard/static.ts` |
+
+### Session attention (FR-276)
+
+The graph can display one chat's activity over the durable knowledge and
+capability map. Select a recording or open its session link. Same-project chats
+have separate histories; completed recordings remain available after rest.
+The panel distinguishes availability, preview delivery, full delivery,
+invocation, failure, self-report, historical evidence, and unknown coverage.
+Click an observed node to inspect its supporting events and source metadata.
+
+Use history to replay through an event and return to live when finished. A
+context epoch marks explicitly observed reassembly or compaction. Without an
+adapter signal, compaction remains unknown. Delivered content is not a claim
+about what the model currently retains.
+
+Graph and inventory form a stable topology. Activity polls every five seconds
+while visible and repaints independently. Session switching, replay, hover, and
+selection neither reload that topology nor create activity. Semantic edges
+keep their existing meaning; two highlighted endpoints do not imply traversal.
+Unavailable inventory sources and off-map events remain visible as gaps.
+
+The attention routes take limits from 1 to 100. A malformed request is 400, a
+valid unknown session is 404, and a missing brain/schema/runtime reports a
+degraded result. They use pure builders through the read-only database door;
+they never migrate, start the write engine, or create a database. The local
+recording CLI is the write surface. See [session attention architecture](./architecture/session_attention.md)
+for identity, capture, locality, and deployment contracts.
 
 #### `/api/summary` — omitting `project` is a request, not a mistake (BR-082)
 
@@ -221,7 +262,10 @@ the reason the write-path section below gives.
 
 **Context docs need no brain data.** `/api/context-docs` forwards the
 `igris context-docs inventory` digest; `applies_when` is evaluated by that verb
-and is deliberately **not** re-derived server-side. Path safety comes from two
+and is deliberately **not** re-derived server-side. This stayed true through
+TD-460, which made `context_files` a replication table: the doc's authority is
+still the FILE, so existence is still an `existsSync` fact and the body still
+comes off disk. The table is a transport, never a read source for this tier. Path safety comes from two
 properties rather than a filter: the slug is validated against
 `listProjectsReadonly()`,
 and the doc's filename is taken from the digest ROW — there is no code path that
@@ -502,7 +546,7 @@ different again from an empty result.
 | `/api/goals` | `title`, `description` | goals are hand-created, one per objective; `SELECT COUNT(*) FROM goals` measured **6** on the operator brain, and there is no `goals_fts` and no `goals_vec` |
 | `/api/suggestions` | `title`, `evidence` | the queue is DRAINED, not recalled over — a suggestion is triaged once |
 | `/api/learnings` | `title`, `content` | this is what the CANDIDATES tab filters on, and it is a DECISION — but no longer the one first written here. It was "`hybridSearchLearnings` structurally cannot return a `pending_review` row"; **BR-085 made that gate a parameter**, so recall can. The surviving reason is the shape of the answer: a queue must be shown exhaustively, in a stable order, with an honest `total` and continuous pages, while ranked recall returns ONE fused page with no stable offset semantics |
-| `/api/context-docs` | the doc BODIES on disk | five registered types of prose is not a retrieval problem, it is `grep` — and the payload says `body` rather than a column name, because there is no table |
+| `/api/context-docs` | the doc BODIES on disk | five registered types of prose is not a retrieval problem, it is `grep` — and the payload says `body` rather than a column name because the FILE is the authority. Since TD-460 a `context_files` table DOES exist, and this endpoint still reads disk ON PURPOSE: the row is a transport replica, and a reader that preferred it would be reading a copy in order to describe the original. |
 
 **Why a payload field and not a line of UI copy.** A hard-coded sentence is the
 claim that goes stale the day someone swaps the implementation underneath it,
@@ -2636,3 +2680,18 @@ assertion green.
 banner prints `Object.keys(WORLDS).length`. The file header states no number and
 no list, because it had drifted twice — stale at FOUR, then reading "SIX" beside
 a list of four.
+
+
+### Session focus and selection explanations
+
+A graph URL with a session opens in **This chat**, showing that recording's
+nodes. **Whole brain** restores the entire map. **Show related nodes** includes
+one hop of knowledge relationships; a related node is not evidence of loading.
+The lens preserves settled positions. Polling reveals newly recorded nodes in
+the loaded topology without moving the camera; use **Fit** to reframe them.
+
+The evidence inspector includes **Why selected**. Boot policy and explicit
+agent choices are labeled caller-declared. Observed retrieval is reserved for
+known successful retrieval boundaries. Older events show **Not recorded**;
+delivery extent and selection provenance remain separate facts. See the
+[selection contract](architecture/session_attention.md#selection-explanations).

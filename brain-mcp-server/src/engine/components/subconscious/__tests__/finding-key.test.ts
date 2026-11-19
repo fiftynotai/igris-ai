@@ -1556,11 +1556,12 @@ describe('TD-458 module-name gate (gate 1c)', () => {
     }
     expect(sites, 'writer population').toBeGreaterThanOrEqual(8);
     expect(bound).toEqual([join('cognition', 'extractors', 'subconscious.ts')]);
-    expect([...literals].sort()).toEqual(['arbiter', 'cartographer', 'curator', 'edge_inference', 'janitor']);
+    // FR-273 added projects/relations/derive.ts (literal 'project_relation').
+    expect([...literals].sort()).toEqual(['arbiter', 'cartographer', 'curator', 'edge_inference', 'janitor', 'project_relation']);
     // (3) the constant IS the union, and nothing else.
     const derived = [...new Set([...fromCheck, ...literals])].sort();
     expect([...MODULE_VOCABULARY].sort()).toEqual(derived);
-    expect(MODULE_VOCABULARY).toHaveLength(9);
+    expect(MODULE_VOCABULARY).toHaveLength(10);
   });
 });
 

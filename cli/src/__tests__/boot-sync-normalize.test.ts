@@ -11,6 +11,10 @@
  *
  * T2 asserts the two `mergeRows` copies AGREE: the payloads and expected
  * outcomes here mirror `brain-mcp-server/src/tools/__tests__/sync-ingress-normalize.test.ts`.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — buildBootSyncDigest -> runQueueDrain
+ *   -> drainSyncQueueOnly -> runSyncData -> dispatchEntry -> expandTilde ->
+ *   homedir().
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -25,6 +29,10 @@ import {
   type CapturedCall,
 } from "./loopback.js";
 import type { BootSyncDigest } from "../types.js";
+import { fenceHome, restoreEnv, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let tmpRoot: string;
 let savedEnv: NodeJS.ProcessEnv;
@@ -132,6 +140,7 @@ async function bootSync(remoteUrl: string): Promise<BootSyncDigest> {
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-bootsync-norm-home-"); // BR-106: HOME moves FIRST, and ARMED
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-cli-td338-"));
   savedEnv = { ...process.env };
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
@@ -144,7 +153,11 @@ afterEach(async () => {
   await closeBrainDb();
   vi.restoreAllMocks();
   vi.resetModules();
-  process.env = savedEnv;
+  // BR-106: restore BY KEY. `process.env = savedEnv` swaps libuv's live env
+  // for a plain object, after which the next test's `process.env.HOME = ...`
+  // never reaches os.homedir() and the fence silently reads as test 1's.
+  restoreEnv(savedEnv);
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 // ---------------------------------------------------------------------------

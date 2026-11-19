@@ -1097,3 +1097,140 @@ describe("BR-100 — the health digest scopes 'this host' by machine identity", 
     expect(pick(await digestAs(ME_MAC), "synapse").runs_today).toBe(3);
   });
 });
+
+// ---------------------------------------------------------------------------
+// TD-475 — blocked_harness status + the run_succeeded fallback hint
+// ---------------------------------------------------------------------------
+
+describe("a harness-refused run_skipped reads blocked_harness, and a fallback-succeeded run stays ok with a hint (TD-475)", () => {
+  /** No `.!?` inside on purpose — `firstSentence` then returns it byte-for-byte, so the
+   * assertions below can compare against the constant directly rather than re-deriving
+   * `firstSentence`'s own trimming rule. */
+  const GEMINI_RETIRED_DETAIL = "gemini is retired from the extractor role, use antigravity instead";
+
+  beforeEach(() => {
+    seedSchema();
+    writeConfig({ synapse: { enabled: true } });
+    seedInstance({ id: "synapse", gate_keys: ["cognition.synapse.enabled"] });
+  });
+
+  it("D1 — run_skipped{reason:'harness_refused', refused:[gemini/harness_retired]} → blocked_harness, naming the harness + reason + a detail-derived remedy", async () => {
+    const at = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_skipped", at, HOST, {
+      reason: "harness_refused",
+      refused: [{ harness: "gemini", reason: "harness_retired", detail: GEMINI_RETIRED_DETAIL }],
+      fallback_order: ["gemini", "antigravity"],
+    });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("blocked_harness");
+    expect(row.reason).toBe(
+      `harness refused (harness_refused): gemini harness_retired — ${GEMINI_RETIRED_DETAIL}. ` +
+        `latest terminal event on this host is cognition.synapse.run_skipped at ${at}`,
+    );
+  });
+
+  it("D2 — run_skipped{reason:'cli_missing', fallback_order:[codex,opencode]} (no refused[]) → blocked_harness, naming both harnesses from fallback_order", async () => {
+    const at = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_skipped", at, HOST, {
+      reason: "cli_missing",
+      fallback_order: ["codex", "opencode"],
+    });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("blocked_harness");
+    expect(row.reason).toBe(
+      `harness refused (cli_missing): codex, opencode. ` +
+        `latest terminal event on this host is cognition.synapse.run_skipped at ${at}`,
+    );
+  });
+
+  it("D3 (benign-skip control) — run_skipped{reason:'cold_start'} stays ok, unchanged sentence", async () => {
+    const at = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_skipped", at, HOST, { reason: "cold_start" });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toBe(`latest terminal event on this host is cognition.synapse.run_skipped at ${at}`);
+  });
+
+  it("D4 (existing-behavior control) — a run_skipped row with NO payload (pre-TD-447 shape) renders the legacy ok sentence byte-identically", async () => {
+    const at = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_skipped", at);
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toBe(`latest terminal event on this host is cognition.synapse.run_skipped at ${at}`);
+  });
+
+  it("D5 (AC-2, fallback-succeeded) — a run_started carrying refused[] followed by run_succeeded → ok, with a (fallback: …) hint", async () => {
+    const t0 = daysAgo(2);
+    const t1 = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", t0, HOST, {
+      harness: "antigravity",
+      refused: [{ harness: "gemini", reason: "harness_retired", detail: GEMINI_RETIRED_DETAIL }],
+    });
+    seedEvent("cognition.synapse", "cognition.synapse.run_succeeded", t1, HOST);
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toBe(
+      `latest terminal event on this host is cognition.synapse.run_succeeded at ${t1} ` +
+        `(fallback: gemini harness_retired — ${GEMINI_RETIRED_DETAIL})`,
+    );
+  });
+
+  it("D6 (adjacency-safety control) — the fallback hint reflects the CURRENT run_started/run_succeeded pair, not a stale older run_started", async () => {
+    const stale = daysAgo(10);
+    const benignSkip = daysAgo(8);
+    const t0 = daysAgo(2);
+    const t1 = daysAgo(1);
+    // An OLDER, unrelated run_started with NO refusal — must not be the pair picked.
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", stale, HOST);
+    // An unrelated benign skip in between: reads its own payload directly, never paired.
+    seedEvent("cognition.synapse", "cognition.synapse.run_skipped", benignSkip, HOST, { reason: "cold_start" });
+    // The CURRENT pair.
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", t0, HOST, {
+      refused: [{ harness: "gemini", reason: "harness_retired", detail: GEMINI_RETIRED_DETAIL }],
+    });
+    seedEvent("cognition.synapse", "cognition.synapse.run_succeeded", t1, HOST);
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toBe(
+      `latest terminal event on this host is cognition.synapse.run_succeeded at ${t1} ` +
+        `(fallback: gemini harness_retired — ${GEMINI_RETIRED_DETAIL})`,
+    );
+  });
+
+  it("D8 (adjacency bound) — a run_started LATER than the terminal (the next run, still in flight) is never paired with it", async () => {
+    const t0 = daysAgo(3);
+    const t1 = daysAgo(2);
+    const t2 = daysAgo(1);
+    // The pair this terminal belongs to.
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", t0, HOST, {
+      refused: [{ harness: "gemini", reason: "harness_retired", detail: GEMINI_RETIRED_DETAIL }],
+    });
+    seedEvent("cognition.synapse", "cognition.synapse.run_succeeded", t1, HOST);
+    // The NEXT run: started after the terminal, no terminal of its own yet, a different refusal.
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", t2, HOST, {
+      refused: [{ harness: "codex", reason: "cli_missing", detail: "codex not on PATH" }],
+    });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("ok");
+    expect(row.reason).toContain("(fallback: gemini harness_retired");
+    expect(row.reason).not.toContain("codex");
+  });
+
+  it("D7 — the paired lookup also fires for a run_failed terminal, but the fallback suffix never renders on failing (TD-447 shape preserved)", async () => {
+    const t0 = daysAgo(2);
+    const t1 = daysAgo(1);
+    seedEvent("cognition.synapse", "cognition.synapse.run_started", t0, HOST, {
+      refused: [{ harness: "gemini", reason: "harness_retired", detail: GEMINI_RETIRED_DETAIL }],
+    });
+    seedEvent("cognition.synapse", "cognition.synapse.run_failed", t1, HOST, {
+      reason: "timeout",
+      detail: "timeout after 300000ms",
+    });
+    const row = pick(await digest(), "synapse");
+    expect(row.status).toBe("failing");
+    expect(row.reason).toBe(
+      `timeout: timeout after 300000ms. latest terminal event on this host is cognition.synapse.run_failed at ${t1}, with no later success`,
+    );
+    expect(row.reason).not.toContain("fallback:");
+  });
+});

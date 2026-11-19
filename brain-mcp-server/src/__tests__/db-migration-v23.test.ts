@@ -242,7 +242,7 @@ describe('migration v23 — briefs_fts (FR-246)', () => {
       expect(ftsCount(db)).toBe(1);
     });
 
-    /** Shape 3 — `ON CONFLICT … DO UPDATE` on brief_files (`sync.ts:1595`). */
+    /** Shape 3 — `ON CONFLICT … DO UPDATE` on brief_files (`sync.ts:1620`). */
     it('shape 3 — an upsert of the BODY re-indexes it and drops the old body terms', () => {
       seed(db, 'FR-102', 'Kiln schedule', 'body about bisque');
       const id = idOf(db, 'FR-102');
@@ -259,7 +259,7 @@ describe('migration v23 — briefs_fts (FR-246)', () => {
       expect(ftsCount(db)).toBe(1);
     });
 
-    /** Shape 4 — `mergeRows`'s plain INSERT / UPDATE (`sync.ts:631-668`). */
+    /** Shape 4 — `mergeRows`'s plain INSERT / UPDATE (`sync.ts:656-693`). */
     it('shape 4 — mergeRows-style plain INSERT then UPDATE keeps exactly one index row', () => {
       db.prepare(
         `INSERT INTO brief_status (project, brief_id, brief_type, title, status, priority, phase, updated_at)

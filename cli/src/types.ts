@@ -2,6 +2,8 @@
  * Shared TS interfaces for the Igris CLI.
  */
 
+import type { RelationActionResult } from "./lib/brain-bridge.js";
+
 /**
  * Shape of `~/.igris/projects/<slug>/installed_features.json`.
  *
@@ -59,6 +61,26 @@ export interface RegistryRow {
   status?: string;
   registered_at?: string;
   last_session_at?: string;
+  /**
+   * FR-265: where the source can be cloned from. Read by the shared projection
+   * when the brain's `projects:1` migration has added the column, and `null`
+   * when the column is absent (an older brain). Brain writers strip
+   * credentials before storing it; the CLI only reads and prints it.
+   */
+  repo_url?: string | null;
+}
+
+/**
+ * TD-310: what one registry row owns in the brain, per knowledge table.
+ * `0` for a table that does not exist (an absent table holds zero rows);
+ * `null` when the table exists but its count could not be taken — UNKNOWN,
+ * which every caller treats as owning (never "nothing references it").
+ */
+export interface ProjectOwnership {
+  briefs: number | null;
+  learnings: number | null;
+  errors: number | null;
+  sessions: number | null;
 }
 
 /**
@@ -70,9 +92,13 @@ export interface DriftRow {
   driftClass:
     | "clean"
     | "path-missing"
+    /** FR-265: per-project — the path is gone but a `repo_url` is recorded: the source was removed on purpose. EXIT-NEUTRAL (the one non-clean class that is not drift, see `doctor.ts#isNotDrift`); never offered for deletion. */
+    | "source-reclaimed"
     | "not-installed"
     | "hooks-missing"
     | "hooks-stale"
+    /** TD-473: brain-level — the global settings are present/parseable but carry neither `attribution` nor `includeCoAuthoredBy`; `--fix`able via the same writer as hooks-missing/stale. */
+    | "attribution-missing"
     | "slug-basename-mismatch"
     | "duplicate-path"
     | "symlink-target"
@@ -92,6 +118,10 @@ export interface DriftRow {
   recommendedFix: string;
   /** Resolved realpath when row.path is itself a symlink. */
   resolvedPath?: string;
+  /** TD-310: what a `path-missing` row owns, attached by `runDoctor` before any prompt. */
+  ownership?: ProjectOwnership;
+  /** FR-265: the recorded clone URL of a `source-reclaimed` row. */
+  repoUrl?: string;
 }
 
 /**
@@ -213,6 +243,15 @@ export type InstanceLivenessStatus =
   | "unknown_no_metadata";
 
 /**
+ * TD-359 — which rung of the project resolver
+ * (`lib/project-identity.ts#resolveProjectIdentity`) produced a slug:
+ * a `.igris-project` marker, the registry ancestor walk on the
+ * worktree-translated path, `basename(main checkout)`, or the last-resort
+ * `basename(dir)`.
+ */
+export type ProjectIdentitySource = "marker" | "registry" | "git-main" | "basename";
+
+/**
  * FR-195 (M1) — capability-detection digest emitted by `igris detect`.
  *
  * The L0 pass the awaken skill runs first. `mode` collapses the individual
@@ -224,9 +263,20 @@ export type InstanceLivenessStatus =
  */
 export interface DetectResult {
   harness: "claude" | "codex" | "gemini" | "opencode" | "antigravity" | "cursor" | "unknown";
-  /** Default project slug for Mount verbs: basename(process.cwd()). */
+  /**
+   * Default project slug for Mount verbs: the project the process cwd resolves
+   * to through the TD-359 chain (marker → registry walk on the
+   * worktree-translated path → basename(main checkout) → basename(cwd)), so a
+   * git worktree reports its main checkout's project. Every `--project`
+   * default in the CLI resolves through the same function.
+   */
   project_slug: string;
-  /** Current project directory seen by the booting CLI process. */
+  /**
+   * TD-359 (additive, MAINTAINING row 83) — the resolver rung that produced
+   * {@link project_slug}.
+   */
+  project_source: ProjectIdentitySource;
+  /** Current project directory seen by the booting CLI process (the raw cwd, unchanged by TD-359). */
   project_path: string;
   /** Resolved Igris brain root (`~/.igris` or IGRIS_BRAIN_DIR override). */
   brain_root: string;
@@ -325,6 +375,9 @@ export interface GatherDigest {
  * Next Steps were carried into the new LIVE file (the resume context).
  */
 export interface RegisterDigest {
+  attention_session_id?: string;
+  attention_binding?: { ok: boolean; reason: string | null };
+  harness_session_id?: string;
   degraded: boolean;
   instance_id: string;
   minted: boolean;
@@ -422,8 +475,9 @@ export interface AssessDigest {
  * | `wedged` | its schedule is enabled and an OPEN `running` run exists |
  * | `blocked_upstream` | it is `co_driven` and its driver is `wedged`/`disabled`/`failing` |
  * | `failing` | the latest terminal event on THIS host is `run_failed`, no later success |
+ * | `blocked_harness` | the latest terminal event is `run_skipped` with reason `harness_refused` or `cli_missing` (TD-475) |
  * | `no_signal` | enabled, but no terminal event inside the retained `event_log` window |
- * | `ok` | the latest terminal on THIS host is `run_succeeded` or `run_skipped` |
+ * | `ok` | the latest terminal on THIS host is `run_succeeded` or a benign `run_skipped` |
  *
  * `no_signal` IS NOT "never ran". `monitoring/index.ts` purges `event_log`
  * older than 30 days on every engine init, so "stopped a while ago" and "never
@@ -431,12 +485,22 @@ export interface AssessDigest {
  * reports the retention floor alongside the status and cross-checks the
  * NON-purged `schedules` / `schedule_runs` signals before an operator draws a
  * conclusion.
+ *
+ * `blocked_harness` (TD-475) is distinct from `ok`'s benign skips (`disabled`
+ * gate, `cold_start`, `budget`, `no_candidates`, `gate_bytes`): the instance
+ * cannot run until an operator changes its harness selection, so it must not
+ * read as healthy. An `ok` run whose PAIRED `run_started.refused[]` shows a
+ * fallback harness overrode a refusal and still succeeded stays `ok`, with the
+ * reason gaining a `(fallback: …)` hint naming the override — success on a
+ * fallback is not a failure state, just one worth surfacing (TD-447's
+ * directive: enrich the reason, never add a digest field).
  */
 export type CognitionHealthStatus =
   | "disabled"
   | "wedged"
   | "blocked_upstream"
   | "failing"
+  | "blocked_harness"
   | "no_signal"
   | "ok";
 
@@ -449,10 +513,10 @@ export interface CognitionScheduleSignal {
   /** The `schedules.name` the instance declared as its `driver_ref`. */
   name: string;
   /**
-   * How many `schedules` rows share that NAME. >1 is a defect: the bootstrap's
-   * idempotency check is `WHERE name = ?` while `schedules` syncs on a
-   * per-machine random `id`, so two brains each keep their own row. Surfaced as
-   * a digest warning.
+   * How many `schedules` rows share that NAME. >1 is a defect: NAME is the
+   * identity (the bootstraps check `WHERE name = ?`), and since TD-361 it is
+   * UNIQUE (schedules v3) and the table no longer syncs, so >1 means a brain
+   * that has not run v3. Surfaced as a digest warning.
    */
   rows: number;
   /** True when ANY row with this name is enabled. */
@@ -691,7 +755,7 @@ export interface CognitionInstanceYield {
    * THE DISCRIMINATOR'S SOUNDNESS IS A CLAIM ABOUT THE WHOLE WRITER SET, so the
    * set is enumerated rather than sampled. SIX statements assign
    * `learnings.deleted_at`. Four stamp a timestamp
-   * (`perception/handlers.ts:682`; `subconscious/actions/kinds.ts:630`, `:743`,
+   * (`perception/handlers.ts:682`; `subconscious/actions/kinds.ts:631`, `:743`,
    * `:1079`) and two write it back to NULL (`janitor/undo.ts:243`, `:264`).
    * The two NULL-writers are the only ones that could mint a
    * `rejected AND deleted_at IS NULL` row without an expiry. Each restores
@@ -915,6 +979,20 @@ export interface BootSyncDigest {
   definitions_updated: { agents: number; skills: number; rules: number; prompts: number };
   /** One-line reasons any part was skipped (e.g. "remote unconfigured"). */
   skipped: string[];
+  /** TD-350: push freshness for the configured remote; null when unconfigured (degraded). */
+  push: BootSyncPush | null;
+}
+
+/**
+ * TD-350 — the newest `sync_state.last_push_at` this machine stamped for the
+ * configured remote (`null` = never pushed), whether it is older than
+ * `PUSH_STALE_DAYS` (`verbs/boot-sync.ts`), and its age in whole days.
+ * `/boot` §4 renders a never/stale push as a one-line nudge to `igris sync push`.
+ */
+export interface BootSyncPush {
+  last_push_at: string | null;
+  stale: boolean;
+  age_days: number | null;
 }
 
 /**
@@ -1211,6 +1289,9 @@ export interface DryRunPlan {
 
 /** Flags accepted by `igris dashboard`. */
 export interface DashboardOptions {
+  session?: string;
+  ensure?: boolean;
+  stop?: boolean;
   /** Exact port. When taken, the verb HARD-FAILS — explicit intent is never silently reassigned. */
   port?: number;
   /** Do not launch a browser. */
@@ -1243,6 +1324,9 @@ export interface DashboardDegraded {
 
 /** `GET /api/health`. */
 export interface HealthPayload {
+  attention_protocol?: number;
+  server_pid?: number;
+  dashboard_bundle_present?: boolean;
   ok: boolean;
   cli_version: string;
   brain: {
@@ -2253,6 +2337,86 @@ export interface CeremonyDigest {
   skipped: string[];
 }
 
+/** FR-274: a knowledge watermark as stored on the `projects` row. */
+export interface ProjectWatermark {
+  /** Full HEAD SHA (40 or 64 hex). */
+  sha: string;
+  /** Checked-out branch; `null` for a detached HEAD. */
+  branch: string | null;
+  /** The DB clock (`datetime('now')`, UTC); `null` only on a hand-edited row. */
+  recorded_at: string | null;
+}
+
+/**
+ * FR-274: the `igris project watermark` digest. `recorded` is true only when
+ * the row was written (and `watermark` is then the row READ BACK). `degraded`
+ * means the brain DB or its schema prevented the attempt; a project-side skip
+ * (not registered, no working copy, git failed) is `degraded: false` with the
+ * reason in `skipped[]`. A skip never writes: `previous` stays the stored value.
+ */
+export interface ProjectWatermarkDigest {
+  degraded: boolean;
+  project: string;
+  /** The row's `path` as stored (a `~/` path is expanded only for the read). */
+  path: string | null;
+  recorded: boolean;
+  watermark: ProjectWatermark | null;
+  /** The watermark before this call; `null` when none was recorded. */
+  previous: ProjectWatermark | null;
+  skipped: string[];
+}
+
+/**
+ * FR-273 — `igris project relations --project <slug> [--depth] [--direction]
+ * [--kind] [--no-check]`. `relations` is the relations action layer's result
+ * VERBATIM (the MCP tool's JSON); `null` when degraded. Exit 0 always.
+ */
+export interface ProjectRelationsDigest {
+  degraded: boolean;
+  reason: string | null;
+  project: string;
+  relations: RelationActionResult | null;
+}
+
+/**
+ * FR-273 — `igris project relations --boot`: the /boot line digest (the brain's
+ * `relationsBootDigest`, or a CLI-built degraded one). `line` is null when the
+ * project has no live edges, is unregistered, or the brain is degraded.
+ */
+export interface ProjectRelationsBootDigest {
+  degraded: boolean;
+  reason: string | null;
+  project: string;
+  registered: boolean;
+  line: string | null;
+  neighbours: number;
+}
+
+/** FR-273 — `igris project kinds list`. `result` is the MCP tool's JSON verbatim. */
+export interface ProjectKindsDigest {
+  degraded: boolean;
+  reason: string | null;
+  action: "kinds.list";
+  ok: boolean;
+  result: RelationActionResult | null;
+}
+
+/**
+ * FR-273 D11 — a relations WRITE verb (`relate`, `unrelate`, `kinds add|alias|merge`).
+ * `result` is the MCP tool's JSON verbatim; exit 0 written, 1 refused, 2 usage,
+ * 3 degraded (nothing written). `replication` is "next brain push" only when a
+ * row changed (a CLI write emits no bus event); null when degraded, refused or
+ * an idempotent no-op — nothing was written, so nothing will replicate.
+ */
+export interface ProjectWriteDigest {
+  degraded: boolean;
+  reason: string | null;
+  action: "relate" | "unrelate" | "kinds.add" | "kinds.alias" | "kinds.merge";
+  ok: boolean;
+  result: RelationActionResult | null;
+  replication: "next brain push" | null;
+}
+
 /** One UTC week (Monday–Sunday) in the KPI window. */
 export interface KpiWeek {
   week_start: string;
@@ -2396,3 +2560,59 @@ export interface KpiDigest {
   /** Stated conventions and residuals the reader must know. */
   notes: string[];
 }
+
+// FR-276 — structural mirror of brain attention/types.ts. No content bodies.
+export interface AttentionNodeRef { type: string; project: string | null; id: string }
+export interface AttentionCoverage {
+  level: "partial" | "unavailable"; observed: string[]; gaps: string[];
+  compaction: "observed" | "unknown";
+}
+export interface AttentionSession {
+  id: string; project: string | null; instance_id: string | null;
+  harness: string | null; harness_session_id: string | null; machine_id: string | null;
+  parent_session_id: string | null; status: "active" | "ended" | "interrupted";
+  current_epoch: number; started_at: string; ended_at: string | null;
+  last_sequence: number; coverage: AttentionCoverage;
+}
+export interface AttentionSelection {
+  category: "boot" | "task" | "retrieval" | "user_request";
+  provenance: "caller_declared" | "observed"; reference: string | null;
+}
+export interface AttentionEvent {
+  id: number; session_id: string; sequence: number; context_epoch: number;
+  actor_id: string; operation_id: string; event_key: string;
+  kind: "delivery" | "invocation" | "availability" | "epoch" | "end";
+  node: AttentionNodeRef | null;
+  outcome: "started" | "succeeded" | "failed" | "unknown";
+  extent: "preview" | "full" | "unknown" | null;
+  origin: "loader" | "tool_boundary" | "harness" | "self_report";
+  source_revision: string | null; bytes: number | null; reason: string | null; observed_at: string;
+  selection: AttentionSelection | null;
+}
+export interface AttentionNodeState {
+  key: string; node: AttentionNodeRef;
+  state: "available" | "preview" | "full" | "invoked" | "failed" | "unknown" | "historical";
+  self_reported: boolean; historical: boolean; last_event: AttentionEvent; events: AttentionEvent[];
+}
+export interface AttentionSnapshot {
+  session: AttentionSession | null; through_sequence: number; latest_sequence: number;
+  node_states: AttentionNodeState[]; recent_events: AttentionEvent[]; next_before: number | null;
+  generated_at: string; degraded: { reason: string } | null;
+  truncated: boolean;
+  counts: { events_total: number; events_reduced: number; nodes_reduced: number; node_states: number };
+}
+export interface AttentionInventory {
+  nodes: import("./lib/brain-bridge.js").BrainGraphNode[];
+  revision: string; generated_at: string;
+  sources: { source: string; available: boolean; reason: string | null }[];
+  degraded: { reason: string } | null;
+}
+export interface AttentionSessionList {
+  sessions: AttentionSession[]; next_before: string | null;
+  generated_at: string; degraded: { reason: string } | null;
+}
+export interface AttentionActionResult {
+  ok: boolean; action: string; session: AttentionSession | null; event: AttentionEvent | null;
+  degraded: boolean; reason: string | null;
+}
+export interface DashboardEnsureResult { available: boolean; url: string | null; reason: string | null }

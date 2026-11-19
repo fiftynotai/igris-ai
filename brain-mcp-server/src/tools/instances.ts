@@ -82,6 +82,7 @@ function optionalProjection(
  * If an instance_id is provided, attempts to update the existing row.
  * If no instance_id is provided or the update affects zero rows,
  * generates a new UUID and inserts a fresh instance record.
+ * An update is partial: an omitted field keeps its stored value (TD-494).
  *
  * @param args - Instance data including machine hostname and optional fields
  * @returns MCP-formatted response with the instance ID
@@ -115,14 +116,19 @@ function handleInstanceState(args: InstanceStateInput): { content: { type: strin
     'active',
     now,
   ];
+  // TD-494: a partial update. On conflict every caller-suppliable column is
+  // COALESCE(excluded.x, instances.x), so an omitted (NULL-bound) field keeps
+  // its stored value; pass '' to clear a text field (readers treat '' as unset).
+  // machine_hostname (required) and the server stamps are still overwritten.
+  const keep = (name: string): string => `${name} = COALESCE(excluded.${name}, instances.${name})`;
   const updates = [
     'machine_hostname = excluded.machine_hostname',
-    'machine_os = excluded.machine_os',
-    'project_slug = excluded.project_slug',
-    'project_path = excluded.project_path',
-    'current_brief = excluded.current_brief',
-    'current_phase = excluded.current_phase',
-    'current_task = excluded.current_task',
+    keep('machine_os'),
+    keep('project_slug'),
+    keep('project_path'),
+    keep('current_brief'),
+    keep('current_phase'),
+    keep('current_task'),
     "status = 'active'",
     'last_activity_at = excluded.last_activity_at',
   ];
@@ -142,7 +148,7 @@ function handleInstanceState(args: InstanceStateInput): { content: { type: strin
     if (!columns.has(name)) continue;
     insertColumns.push(name);
     values.push(value);
-    updates.push(`${name} = excluded.${name}`);
+    updates.push(name === 'state_updated_at' ? `${name} = excluded.${name}` : keep(name));
   }
 
   const result = db.prepare(`

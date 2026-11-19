@@ -513,6 +513,17 @@ export class BrainTableMissingError extends Error {
   }
 }
 
+/**
+ * FR-276: a bound native chat identity is never replaced — the same rule the
+ * attention recording's bind applies. Thrown before any write.
+ */
+export class InstanceIdentityConflictError extends Error {
+  constructor(instanceId: string) {
+    super(`instance ${instanceId} already belongs to a different native chat`);
+    this.name = "InstanceIdentityConflictError";
+  }
+}
+
 /** Input for {@link registerOrUpdateInstanceState} — mirrors the instance-state tool subset the boot path passes. */
 export interface InstanceStateRegistrationInput {
   /** Recovered prior id (gather G4) → refresh; omit → mint a fresh UUID. */
@@ -557,6 +568,11 @@ export interface InstanceStateRegistrationResult {
  * `minted` follows the handler's own action discrimination
  * (instances.ts:84): a fresh UUID (no `instance_id` supplied) is a mint; a
  * supplied id is a recover/refresh.
+ *
+ * A recover is PARTIAL on exactly four fields (TD-494 AC5): an omitted
+ * `current_brief`, `current_phase`, `current_task` or `lease_expires_at` keeps
+ * the stored value; the process snapshot (owner + liveness) is always
+ * rewritten. Rationale at the conflict arm below.
  */
 export function registerOrUpdateInstanceState(
   input: InstanceStateRegistrationInput,
@@ -601,14 +617,23 @@ export function registerOrUpdateInstanceState(
     "active",
     new Date().toISOString().replace("T", " ").substring(0, 19),
   ];
+  // TD-494 AC5 (the CLI twin of `handleInstanceState`'s partial conflict arm).
+  // Register never supplies the brief state — `/boot`'s recover-or-mint call
+  // passes none of it, and its contract is "Do NOT clear its current_brief"
+  // (core/skills/boot/SKILL.md) — so those three, and `lease_expires_at`
+  // below, are COALESCEd: an omission KEEPS the stored value, an explicit value
+  // still wins. Everything else stays `= excluded` ON PURPOSE: a re-register is
+  // a fresh process snapshot, and a stale owner pid / liveness stamp kept on a
+  // new process would classify a live session as dead. Clearing the brief is
+  // `instanceStateUpdate`'s job (`--current-brief ""`), never register's.
   const updates = [
     "machine_hostname = excluded.machine_hostname",
     "machine_os = excluded.machine_os",
     "project_slug = excluded.project_slug",
     "project_path = excluded.project_path",
-    "current_brief = excluded.current_brief",
-    "current_phase = excluded.current_phase",
-    "current_task = excluded.current_task",
+    "current_brief = COALESCE(excluded.current_brief, instances.current_brief)",
+    "current_phase = COALESCE(excluded.current_phase, instances.current_phase)",
+    "current_task = COALESCE(excluded.current_task, instances.current_task)",
     "status = 'active'",
     "last_activity_at = excluded.last_activity_at",
   ];
@@ -628,23 +653,42 @@ export function registerOrUpdateInstanceState(
       new Date().toISOString().replace("T", " ").substring(0, 19),
     ],
   ];
+  // FR-276: a re-register that omits the native chat id keeps the bound one.
+  // TD-494: an omitted lease keeps the stored one (see the `updates` note).
+  const keptOnOmission: ReadonlySet<string> = new Set(["harness_session_id", "lease_expires_at"]);
   for (const [name, value] of optionalInputs) {
     if (!columns.has(name)) continue;
     insertColumns.push(name);
     values.push(value);
-    updates.push(`${name} = excluded.${name}`);
+    updates.push(
+      keptOnOmission.has(name)
+        ? `${name} = COALESCE(excluded.${name}, instances.${name})`
+        : `${name} = excluded.${name}`,
+    );
   }
 
-  handle
-    .prepare(
-      `
+  const upsert = handle.prepare(
+    `
       INSERT INTO instances (${insertColumns.join(", ")})
       VALUES (${insertColumns.map(() => "?").join(", ")})
       ON CONFLICT(id) DO UPDATE SET
         ${updates.join(",\n        ")}
     `,
-    )
-    .run(...values);
+  );
+  // One IMMEDIATE transaction, so no concurrent register can bind between the check and the write.
+  handle
+    .transaction(() => {
+      if (input.harness_session_id != null && columns.has("harness_session_id")) {
+        const prior = handle
+          .prepare("SELECT harness_session_id FROM instances WHERE id = ?")
+          .get(instanceId) as { harness_session_id: string | null } | undefined;
+        if (prior?.harness_session_id != null && prior.harness_session_id !== input.harness_session_id) {
+          throw new InstanceIdentityConflictError(instanceId);
+        }
+      }
+      upsert.run(...values);
+    })
+    .immediate();
 
   return { instance_id: instanceId, minted };
 }
@@ -981,7 +1025,7 @@ export function upcomingGoals(slug: string, days: number): AssessGoal[] {
 // `boot-sync` (the REMOTE channel) GETs remote rows from the VPS's
 // `GET /sync/pull` endpoint and upserts them into the LOCAL brain DB here.
 // This is the CLIENT-SIDE reproduction of `handleBrainPull`
-// (brain-mcp-server/src/tools/sync.ts:913) — NOT a `mcpCall(remote,
+// (brain-mcp-server/src/tools/sync.ts:938) — NOT a `mcpCall(remote,
 // "igris_brain_pull")`, which would run the brain's pull handler on the VPS
 // against the VPS's OWN db (VPS→VPS, circular; the whole reason D-B exists,
 // learning #169). A CLI process has no stdio MCP server, so it reproduces the
@@ -1085,7 +1129,19 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
       "lease_expires_at", "state_updated_at",
     ],
   },
-  // sync.ts:166-172
+  // sync.ts:225-241
+  // TD-460 — the pull arm of project-context-doc replication. Verbatim from
+  // SYNC_TABLES: `file_path` is EXCLUDED there (an absolute local path), so it
+  // is absent here too. Landing these rows locally is what lets `/boot`'s
+  // igris_context_sync materialise a doc authored on another machine.
+  {
+    table: "context_files",
+    syncKey: ["project_slug", "key"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: ["project_slug", "key", "content", "content_hash", "updated_at"],
+  },
+  // sync.ts:242-248
   {
     table: "session_files",
     syncKey: ["project", "filename"],
@@ -1093,13 +1149,36 @@ export const BOOT_SYNC_PULL_TABLES: PullTableConfig[] = [
     strategy: "lww",
     columns: ["project", "filename", "content", "content_hash", "updated_at", "instance_id", "state"],
   },
-  // sync.ts:173-179
+  // sync.ts:249-255
   {
     table: "definition_files",
     syncKey: ["type", "name"],
     timestampCol: "updated_at",
     strategy: "lww",
     columns: ["type", "name", "filename", "content", "content_hash", "version", "updated_at"],
+  },
+  // FR-273 — verbatim from the two SYNC_TABLES entries appended after
+  // dismissed_patterns (kinds first); a removal arrives as a tombstone.
+  {
+    table: "project_relation_kinds",
+    syncKey: ["name"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    mergeFields: { aliases: "merge_tags" },
+    columns: [
+      "name", "meaning", "direction", "forward_label", "inverse_label", "example",
+      "aliases", "status", "merged_into", "created_at", "updated_at",
+    ],
+  },
+  {
+    table: "project_relations",
+    syncKey: ["from_slug", "kind", "to_slug"],
+    timestampCol: "updated_at",
+    strategy: "lww",
+    columns: [
+      "from_slug", "kind", "to_slug", "detail", "provenance", "removed_at",
+      "created_at", "updated_at",
+    ],
   },
 ];
 
@@ -1423,7 +1502,7 @@ function mergeRows(
  * Read the local `sync_state.last_pull_at` for `(remoteUrl, table)`, defaulting
  * to the epoch when absent. This is the `since_<table>` cursor `boot-sync` sends
  * to `GET /sync/pull` — verbatim from `handleBrainPull`'s per-table timestamp
- * loop (sync.ts:922-928). A brain DB without `sync_state` → epoch (full pull),
+ * loop (sync.ts:947-953). A brain DB without `sync_state` → epoch (full pull),
  * never a throw, never a CREATE (create-never).
  */
 export function readPullSince(remoteUrl: string, table: string): string {
@@ -1437,6 +1516,27 @@ export function readPullSince(remoteUrl: string, table: string): string {
     )
     .get(remoteUrl, table) as { last_pull_at: string | null } | undefined;
   return row?.last_pull_at ?? "1970-01-01T00:00:00";
+}
+
+/**
+ * TD-350: newest `sync_state.last_push_at` for `remoteUrl` (trailing `/`
+ * stripped, as both push clients stamp it; `file:%` rows excluded), or null.
+ * The ONE reader for `sync status` and `boot-sync`. Read-only door; never throws.
+ */
+export function readLastPushAt(remoteUrl: string): string | null {
+  try {
+    return withReadonlyBrain<string | null>(null, (handle) => {
+      if (!tableExists(handle, "sync_state")) return null;
+      const row = handle
+        .prepare(
+          "SELECT MAX(last_push_at) AS t FROM sync_state WHERE remote_url = ? AND table_name NOT LIKE 'file:%'",
+        )
+        .get(remoteUrl.replace(/\/+$/, "")) as { t: string | null } | undefined;
+      return row?.t ?? null;
+    });
+  } catch {
+    return null;
+  }
 }
 
 /** Per-table merge summary returned by {@link mergePulledTables}. */
@@ -1461,14 +1561,14 @@ export interface PullMergeSummary {
  * /sync/pull`) into the LOCAL brain DB, last-write-wins, then advance the local
  * `sync_state.last_pull_at` cursor for each merged table.
  *
- * VERBATIM reproduction of `handleBrainPull`'s merge half (sync.ts:954-988):
+ * VERBATIM reproduction of `handleBrainPull`'s merge half (sync.ts:979-1013):
  *   - one transaction around all tables (the brain's `db.transaction`);
  *   - iterate BOOT_SYNC_PULL_TABLES in order, `mergeRows` each table that has
  *     received rows, accumulate `inserted + updated` into totalMerged;
  *   - upsert `sync_state.last_pull_at = pulledAt` per merged table (the same
- *     INSERT … ON CONFLICT(remote_url, table_name) the brain uses, sync.ts:958).
+ *     INSERT … ON CONFLICT(remote_url, table_name) the brain uses, sync.ts:983).
  *
- * `pulledAt` uses the brain's timestamp shape (sync.ts:918:
+ * `pulledAt` uses the brain's timestamp shape (sync.ts:943:
  * `new Date().toISOString().replace('T',' ').substring(0,19)`) so the cursor
  * column format matches the brain's own writes — the next pull's `since_*`
  * comparison stays string-monotonic.
@@ -1587,7 +1687,7 @@ export interface ExportTableConfig extends PullTableConfig {
 }
 
 /**
- * The export-scoped subset of `SYNC_TABLES` (sync.ts:94-364). Each config is
+ * The export-scoped subset of `SYNC_TABLES` (sync.ts:120-458). Each config is
  * copied VERBATIM (syncKey / timestampCol / strategy / columns) from the cited
  * `SYNC_TABLES` entry. Distinct from `BOOT_SYNC_PULL_TABLES` (pull-scoped:
  * carries instances/session_files/definition_files, lacks brief_files/goals/
@@ -1615,7 +1715,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
     strategy: "lww",
     columns: ["project", "brief_id", "filename", "content", "content_hash", "updated_at"],
   },
-  // sync.ts:271-285 — brief↔brief subset filtered in readBriefBriefEdges; the
+  // sync.ts:332-379 — brief↔brief subset filtered in readBriefBriefEdges; the
   // concept-graph reuses this config for its concept-touching edges.
   {
     // BR-083 — VERIFIED as a verbatim mirror of `SYNC_TABLES`, not assumed:
@@ -1638,7 +1738,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "from_project", "to_project",
     ],
   },
-  // sync.ts:301-317 — project_slug-scoped.
+  // sync.ts:395-411 — project_slug-scoped.
   {
     table: "goals",
     syncKey: ["goal_id"],
@@ -1680,7 +1780,7 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "last_seen_at", "resolved_at",
     ],
   },
-  // sync.ts:286-300 — full tier only; the project concept-graph nodes
+  // sync.ts:380-394 — full tier only; the project concept-graph nodes
   // (node_type='concept'), scoped in readConceptNodes.
   {
     table: "graph_nodes",
@@ -1691,6 +1791,13 @@ export const EXPORT_TABLES: ExportTableConfig[] = [
       "node_type", "node_external_id", "label", "properties", "created_at",
     ],
   },
+  // TD-460 — `context_files` is DELIBERATELY ABSENT from EXPORT_TABLES even
+  // though it joined SYNC_TABLES. The pack already carries these docs as FILES
+  // (`context_docs`, a disk-backed store: export.ts readContextDocs →
+  // context/<file>, import.ts writes the file back). Adding the table would put
+  // the same bytes in one bundle twice and give the doc two authorities inside
+  // a single artifact — the duplication core/os/knowledge-map.md forbids. The
+  // omission is pinned with its reason in auto-push.test.ts.
 ];
 
 /** Look up an {@link ExportTableConfig} by table name. Throws if unknown (a coding error). */
@@ -2716,6 +2823,13 @@ function parseGateKeys(raw: string): string[] {
  * is reported alongside so the operator can see that the instance is alive
  * SOMEWHERE.
  */
+/** One harness refusal entry, as carried on `run_skipped.refused[]` / `run_started.refused[]` (TD-474/BR-109/TD-475). */
+export interface CognitionHarnessRefusal {
+  harness: string;
+  reason: string;
+  detail: string;
+}
+
 export interface CognitionRunSignals {
   /** Latest terminal event on this host: its ISO timestamp. */
   last_terminal_at: string | null;
@@ -2728,10 +2842,53 @@ export interface CognitionRunSignals {
    * `error_message`, the same slot under the older key — when present (TD-447).
    */
   last_terminal_detail: string | null;
+  /**
+   * Latest terminal event on this host: its `payload.refused` (TD-475) — the harnesses a
+   * `run_skipped{reason:'harness_refused'}` named, each with its OWN `reason`/`detail`. `null`
+   * when the payload carries no array (absent key, or a non-`run_skipped` terminal).
+   */
+  last_terminal_refused: CognitionHarnessRefusal[] | null;
+  /**
+   * Latest terminal event on this host: its `payload.fallback_order` (TD-475) — present on a
+   * `run_skipped{reason:'cli_missing'}` row that names harnesses without per-harness detail.
+   * `null` when the payload carries no array.
+   */
+  last_terminal_fallback_order: string[] | null;
+  /**
+   * The PAIRED `run_started.refused[]` for the latest terminal, when that terminal is a
+   * `run_succeeded` or `run_failed` (TD-475) — a fallback harness ran and won. Paired by
+   * ADJACENCY (`created_at <= thisHost.created_at`, latest first): `event_log` carries no
+   * `run_id`, and `run_started`/its terminal are written synchronously in the same
+   * `runExtractor` call with nothing else able to write a `run_started` for this instance in
+   * between, so the latest `run_started` at or before the terminal IS its pair. `null` when the
+   * terminal is not a `run_succeeded`/`run_failed`, or the paired start carried no refusal.
+   */
+  last_run_started_refused: CognitionHarnessRefusal[] | null;
   /** Latest terminal event on ANY host. */
   last_terminal_any_host_at: string | null;
   /** `run_started` rows on this host today (UTC). */
   runs_today: number;
+}
+
+/** Tolerant parse of a `refused[]` payload array — a malformed or non-object entry is dropped, never thrown. */
+function parseRefusedArray(raw: unknown): CognitionHarnessRefusal[] | null {
+  if (!Array.isArray(raw)) return null;
+  const out: CognitionHarnessRefusal[] = [];
+  for (const item of raw) {
+    if (item !== null && typeof item === "object") {
+      const o = item as Record<string, unknown>;
+      if (typeof o.harness === "string" && typeof o.reason === "string" && typeof o.detail === "string") {
+        out.push({ harness: o.harness, reason: o.reason, detail: o.detail });
+      }
+    }
+  }
+  return out;
+}
+
+/** Tolerant parse of a `fallback_order` payload array — non-string members are dropped, never thrown. */
+function parseStringArray(raw: unknown): string[] | null {
+  if (!Array.isArray(raw)) return null;
+  return raw.filter((v): v is string => typeof v === "string");
 }
 
 /**
@@ -2760,6 +2917,9 @@ export function readInstanceRunSignals(
     last_terminal_name: null,
     last_terminal_reason: null,
     last_terminal_detail: null,
+    last_terminal_refused: null,
+    last_terminal_fallback_order: null,
+    last_run_started_refused: null,
     last_terminal_any_host_at: null,
     runs_today: 0,
   };
@@ -2789,6 +2949,8 @@ export function readInstanceRunSignals(
     // row would throw inside withReadonlyBrain and degrade the WHOLE signal.
     let reason: string | null = null;
     let detail: string | null = null;
+    let refused: CognitionHarnessRefusal[] | null = null;
+    let fallbackOrder: string[] | null = null;
     try {
       const p = JSON.parse(thisHost?.payload ?? "{}") as Record<string, unknown>;
       if (typeof p.reason === "string") reason = p.reason;
@@ -2796,8 +2958,42 @@ export function readInstanceRunSignals(
       // the same message under `error_message`.
       const d = typeof p.detail === "string" ? p.detail : p.error_message;
       if (typeof d === "string") detail = d;
+      // TD-475: BR-109's `refused[]` and the `cli_missing` `fallback_order` — the same
+      // JS-side parse block, never `json_extract` in SQL, for the same reason as above.
+      refused = parseRefusedArray(p.refused);
+      fallbackOrder = parseStringArray(p.fallback_order);
     } catch {
-      /* malformed payload → both null; the digest is NOT degraded */
+      /* malformed payload → all null; the digest is NOT degraded */
+    }
+
+    // TD-475: the PAIRED `run_started.refused[]`, scoped to a `run_succeeded`/`run_failed`
+    // terminal only — `run_skipped` reads its own payload directly, above. No `run_id` column
+    // exists on `event_log`; pairing is by ADJACENCY (`created_at <= thisHost.created_at`,
+    // latest first), safe here because `run_started` and its terminal are written
+    // synchronously in the same `runExtractor` call with nothing else able to write a
+    // `run_started` for this instance in between.
+    let runStartedRefused: CognitionHarnessRefusal[] | null = null;
+    if (
+      thisHost !== undefined &&
+      (thisHost.event_name.endsWith(".run_succeeded") || thisHost.event_name.endsWith(".run_failed"))
+    ) {
+      const pairedStart = handle
+        .prepare(
+          `SELECT payload FROM event_log
+            WHERE component = ? AND event_name = ?
+              AND ${mine.sql}
+              AND datetime(created_at) <= datetime(?)
+            ORDER BY datetime(created_at) DESC LIMIT 1`,
+        )
+        .get(component, `${eventPrefix}.run_started`, ...mine.params, thisHost.created_at) as
+        | { payload: string | null }
+        | undefined;
+      try {
+        const sp = JSON.parse(pairedStart?.payload ?? "{}") as Record<string, unknown>;
+        runStartedRefused = parseRefusedArray(sp.refused);
+      } catch {
+        runStartedRefused = null;
+      }
     }
 
     const anyHost = handle
@@ -2822,6 +3018,9 @@ export function readInstanceRunSignals(
       last_terminal_name: thisHost?.event_name ?? null,
       last_terminal_reason: reason,
       last_terminal_detail: detail,
+      last_terminal_refused: refused,
+      last_terminal_fallback_order: fallbackOrder,
+      last_run_started_refused: runStartedRefused,
       last_terminal_any_host_at: anyHost?.created_at ?? null,
       runs_today: today.n,
     };
@@ -2847,10 +3046,11 @@ export function readEventLogFloor(): string | null {
  * from one that never existed if its schedule row is present and overdue.
  *
  * `schedules` is queried by NAME and the result is a COUNT, not a single row.
- * The bootstrap's idempotency check is `WHERE name = ?` while the table syncs on
- * a per-machine random `id`, so two brains each keep their own row under the
- * same name — a duplicate pair was measured on this brain. Reporting the count
- * makes a recurrence visible immediately.
+ * NAME is the schedule's identity: the bootstraps check `WHERE name = ?`, and
+ * since TD-361 the column is UNIQUE (schedules v3) and neither table syncs. A
+ * duplicate pair WAS measured on this brain when `schedules` still synced on a
+ * per-machine random `id`; a count above 1 now means a brain that has not run
+ * v3, and reporting it keeps that visible.
  */
 export interface CognitionScheduleRead {
   /** How many `schedules` rows carry this name. 0 means the schedule is absent. */
@@ -3750,4 +3950,148 @@ export function readUnattributedHostnames(me: MachineIdentity, days = 30): Unatt
       .map(([hostname, rows]) => ({ hostname, rows }))
       .sort((a, b) => b.rows - a.rows || a.hostname.localeCompare(b.hostname));
   });
+}
+
+// ---------------------------------------------------------------------------
+// FR-274 — the knowledge watermark: the LOCAL WRITE DOOR (create-never)
+// ---------------------------------------------------------------------------
+//
+// `projects.knowledge_sha` / `knowledge_branch` / `knowledge_recorded_at` are
+// added by the brain's projects COMPONENT migration v2 (FR-274). This is their
+// ONE writer (`igris project watermark`, called by `/rest` and the SessionEnd
+// hook) — the `ceremonyEventWrite` shape: probe, never CREATE or ALTER, and
+// surface an absent column as a typed error the verb degrades on.
+//
+// The columns are NOT in `BOOT_SYNC_PULL_TABLES` / `EXPORT_TABLES` (nor the
+// brain's `SYNC_TABLES`) by decision: replicating them is FR-271's single
+// remote-first deploy with a NULL-preserving merge rule
+// (`boot-sync-watermark-local.test.ts` is the pin it must flip deliberately).
+
+/** The three `projects` columns projects:2 adds (FR-274). */
+const KNOWLEDGE_WATERMARK_COLUMNS = ["knowledge_sha", "knowledge_branch", "knowledge_recorded_at"] as const;
+
+/**
+ * Full hex object name (SHA-1 40 / SHA-256 64) — the ONE definition in `cli/`:
+ * the writer re-validates with it and `git-head.ts` imports it (it lives here,
+ * not there, because this file's lines above are cited by line number and must
+ * not move for an import). The brain reproduces it (`tools/projects.ts`).
+ */
+export const KNOWLEDGE_SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+/**
+ * Raised when the brain DB has the table but not the columns a writer needs —
+ * a brain whose component migration has not applied yet (create-never: the
+ * writer never ALTERs; the verb degrades with the cause named).
+ */
+export class BrainColumnMissingError extends Error {
+  constructor(table: string, columns: readonly string[]) {
+    super(`brain-db: ${table} lacks ${columns.join(", ")} — refusing to write (create-never; the brain owns this schema)`);
+    this.name = "BrainColumnMissingError";
+  }
+}
+
+/** A project row's path and its stored knowledge watermark (all NULL when none). */
+export interface WatermarkTarget {
+  path: string;
+  knowledge_sha: string | null;
+  knowledge_branch: string | null;
+  knowledge_recorded_at: string | null;
+}
+
+function assertWatermarkColumns(handle: Database.Database): void {
+  if (!tableExists(handle, "projects")) throw new BrainTableMissingError("projects");
+  const cols = tableColumns(handle, "projects");
+  const missing = KNOWLEDGE_WATERMARK_COLUMNS.filter((c) => !cols.has(c));
+  if (missing.length > 0) throw new BrainColumnMissingError("projects", missing);
+}
+
+/**
+ * Read the row path and stored watermark for `slug`, or `undefined` when the
+ * slug is not registered.
+ *
+ * @throws BrainTableMissingError when `projects` is absent.
+ * @throws BrainColumnMissingError when projects:2 has not applied.
+ */
+export function readWatermarkTarget(slug: string): WatermarkTarget | undefined {
+  const handle = getDb();
+  assertWatermarkColumns(handle);
+  return handle
+    .prepare("SELECT path, knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?")
+    .get(slug) as WatermarkTarget | undefined;
+}
+
+/** The watermark as stored, read back after the write. */
+export interface KnowledgeWatermark {
+  sha: string;
+  branch: string | null;
+  recorded_at: string;
+}
+
+/**
+ * Record a knowledge watermark: ONE `UPDATE` of all three columns together.
+ *
+ * `branch` is bound EXPLICITLY — `null` for a detached HEAD — and never
+ * COALESCEd, which would pair a new SHA with a stale branch. `recorded_at` is
+ * the DB clock (`datetime('now')`); the caller never passes a time. The
+ * UPDATE never touches `last_session_at` (FR-271 owns which clock carries a
+ * projects-column change). Returns the row READ BACK, or `undefined` when no
+ * row matched `slug`.
+ *
+ * @throws BrainTableMissingError / BrainColumnMissingError on an older brain.
+ * @throws Error when `sha` is not a full hex object name or `branch` is empty.
+ */
+export function knowledgeWatermarkWrite(
+  slug: string,
+  sha: string,
+  branch: string | null,
+): KnowledgeWatermark | undefined {
+  if (!KNOWLEDGE_SHA_RE.test(sha)) throw new Error(`knowledgeWatermarkWrite: invalid sha ${JSON.stringify(sha)}`);
+  if (branch === "") throw new Error("knowledgeWatermarkWrite: empty branch (use null for detached)");
+  const handle = getDb();
+  assertWatermarkColumns(handle);
+  const info = handle
+    .prepare(
+      `UPDATE projects
+          SET knowledge_sha = ?, knowledge_branch = ?, knowledge_recorded_at = datetime('now')
+        WHERE slug = ?`,
+    )
+    .run(sha, branch, slug);
+  if (info.changes === 0) return undefined;
+  const row = handle
+    .prepare("SELECT knowledge_sha, knowledge_branch, knowledge_recorded_at FROM projects WHERE slug = ?")
+    .get(slug) as { knowledge_sha: string; knowledge_branch: string | null; knowledge_recorded_at: string };
+  return { sha: row.knowledge_sha, branch: row.knowledge_branch, recorded_at: row.knowledge_recorded_at };
+}
+
+// FR-273 D11 — the relations WRITE door: a create-never read-write handle for
+// the vendored relations action layer (the CLI holds no relations SQL).
+
+export class BrainDbAbsentError extends Error {
+  constructor() {
+    super("brain db absent");
+    this.name = "BrainDbAbsentError";
+  }
+}
+
+// Never creates the DB file or a table. `beforeClose` (the embeddings dispose,
+// BR-060) runs BEFORE the handle closes, also when `fn` throws.
+export async function withBrainWriteDoor<T>(
+  requiredTables: readonly string[],
+  fn: (handle: Database.Database) => T | Promise<T>,
+  opts: { beforeClose?: () => void | Promise<void> } = {},
+): Promise<T> {
+  if (!existsSync(brainDbPath())) throw new BrainDbAbsentError();
+  const handle = getDb();
+  try {
+    for (const t of requiredTables) {
+      if (!tableExists(handle, t)) throw new BrainTableMissingError(t);
+    }
+    return await fn(handle);
+  } finally {
+    try {
+      await opts.beforeClose?.();
+    } finally {
+      closeDb();
+    }
+  }
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # refresh-cache-hit.bats — TD-113 integration test for the cache fast-path.
 #
 # Proves that a SECOND `igris refresh` at the same SHA serves the brain core

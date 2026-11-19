@@ -174,6 +174,28 @@ import { join, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
+/**
+ * TD-344 — the per-test budget for "the contract corpus carries no unmarked
+ * count", a synchronous scan of the tracked corpus (vitest cannot pre-empt it,
+ * so this is post-hoc detection, not a hang stop). MEASURED 2026-10-01 across
+ * 17 full cli runs with archived per-test durations, 1-min load peaks 30-277
+ * (forger's 13, one — `final-cli` — unsampled; sentinel's L1-L4; 8 cores):
+ * worst 24_220 ms (peak 206); 18_856 ms (sentinel run L2, peak 127); 11_168
+ * ms at peak 277; 3.6-5.2 s at peaks 30-48 — the duration does not track the
+ * sampled peak. 2x the worst observed, rounded up to the next 5 s = 50_000
+ * (40_000 from the earlier worst sat at 61% in the peak-206 run). The suite's
+ * 15 s default crossed in run L2.
+ */
+const CORPUS_SCAN_TIMEOUT_MS = 50_000;
+
+/**
+ * TD-344 — the spawn half of `git ls-files` below. MEASURED 318 ms at a 1-min
+ * peak of 277 (K=6 burners). A multiple of a sub-second process start would
+ * make scheduler noise a red, so this is a hang stop, not a budget: 10 s is
+ * over 30x the measurement.
+ */
+const GIT_LS_FILES_TIMEOUT_MS = 10_000;
+
 const REPO_ROOT = fileURLToPath(new URL("../../..", import.meta.url));
 const MAINTAINING = join(REPO_ROOT, "MAINTAINING.md");
 
@@ -475,9 +497,9 @@ function mapRow(n: number): string {
 
 function consumersCell(row: string): string {
   const cells = row.split("|");
-  // Leading empty + five columns + trailing empty. `check_contract_consumers.sh`
-  // reads the same split, so a row that fails this is a row the repo's own
-  // contract gate is silently mis-reading too.
+  // Leading empty + five columns + trailing empty. A NAIVE split: the contract
+  // gate honours the `\|` escape (TD-313), so this is STRICTER than the gate —
+  // the row must hold no in-cell pipe at all, escaped or not.
   expect(cells.length, "row " + MAP_ROW + " is not a 5-column map row").toBe(7);
   return cells[3]!;
 }
@@ -485,7 +507,7 @@ function consumersCell(row: string): string {
 let trackedCache: string[] | null = null;
 function tracked(): string[] {
   if (trackedCache === null) {
-    trackedCache = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf-8" })
+    trackedCache = execFileSync("git", ["ls-files"], { cwd: REPO_ROOT, encoding: "utf-8", timeout: GIT_LS_FILES_TIMEOUT_MS })
       .split("\n")
       .filter((l) => l.length > 0);
   }
@@ -603,7 +625,7 @@ function batsExpectedSet(): { reads: string[]; writes: string[] } {
 /** The `N read paths` figure inside the bats digest assertion. */
 function batsReadPathFigure(): number {
   const src = read(REPO_ROOT, "cli", "tests", "integration", "dashboard.bats");
-  const m = /'(\d+) read paths all 200, (\d+) write path 400'/.exec(src);
+  const m = /'(\d+) read paths verified, (\d+) write path 400'/.exec(src);
   expect(m, "dashboard.bats no longer asserts the `N read paths …` digest line").not.toBeNull();
   return Number(m![1]);
 }
@@ -714,7 +736,10 @@ describe("TD-420 part 0 — the scan has a corpus, derived from the map row itse
 
 describe("TD-420 part 1 — the independent enumerations of the local surface agree", () => {
   it("`server.ts` arms, `SMOKE_PROBE_PATHS` and `dashboard.bats` name the same GET paths", () => {
-    const arms = [...serverGetArms().keys()].sort();
+    const attentionDispatch = read(DASH, "server.ts").match(/if \(\[([^\]]+)\]\.includes\(pathname\)\)/);
+    expect(attentionDispatch, "attention dispatch must enumerate its exact paths").not.toBeNull();
+    const attentionPaths = [...attentionDispatch![1]!.matchAll(/"([^"]+)"/g)].map(m => m[1]!);
+    const arms = [...serverGetArms().keys(), ...attentionPaths].sort();
     const smoke = apiOnly(smokeProbePaths());
     const bats = batsExpectedSet();
     expect(smoke, "SMOKE_PROBE_PATHS has drifted from server.ts's route arms").toEqual(arms);
@@ -843,7 +868,10 @@ describe("TD-420 part 1 — the independent enumerations of the local surface ag
   });
 
   it("SELF-NEGATIVE-CONTROL — the set comparison reports a path present in only one derivation", () => {
-    const arms = [...serverGetArms().keys()].sort();
+    const attentionDispatch = read(DASH, "server.ts").match(/if \(\[([^\]]+)\]\.includes\(pathname\)\)/);
+    expect(attentionDispatch, "attention dispatch must enumerate its exact paths").not.toBeNull();
+    const attentionPaths = [...attentionDispatch![1]!.matchAll(/"([^"]+)"/g)].map(m => m[1]!);
+    const arms = [...serverGetArms().keys(), ...attentionPaths].sort();
     const drifted = [...arms, "/api/invented"].sort();
     expect(drifted).not.toEqual(arms);
     // …and the shape the pin uses (sorted array equality) is what discriminates,
@@ -863,7 +891,7 @@ describe("TD-420 part 1 — the independent enumerations of the local surface ag
 // ===========================================================================
 
 describe("TD-420 part 2 — no quoted count for these sets survives in the corpus", () => {
-  it("the contract corpus carries no unmarked count", () => {
+  it("the contract corpus carries no unmarked count", { timeout: CORPUS_SCAN_TIMEOUT_MS }, () => {
     const findings = scanCorpus();
     expect(
       findings.length === 0,
@@ -1087,7 +1115,7 @@ describe("TD-420 part 2 — the scanner fires, and fires only on what it claims"
     // is protecting them — which is the point of anchoring on the noun.
     for (const line of [
       "the sixteen lines under it are the derivation",
-      "a change to ALL FIFTEEN gates is a contract change",
+      "renaming either silently returns ALL EIGHTEEN browser gates",
       "the grid is sixteen columns wide",
       "Triage spans all nineteen projects on this brain",
       "there are 6 goals on the operator brain",

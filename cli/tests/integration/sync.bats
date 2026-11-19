@@ -1,12 +1,12 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # sync.bats — integration tests for `igris sync` (M4 of MG-014).
 #
 # Hermetic via IGRIS_BRAIN_DIR. We DO NOT exercise real SSH/rsync paths
-# (those need a real VPS); per the architect's plan, code-sync is covered
-# by `cli/src/__tests__/sync-code.test.ts` at the unit layer with mocked
-# child_process, AND has a manual-runbook entry in cli/README.md for
-# end-to-end verification before npm publish.
+# (those need a real VPS); code-sync is covered by
+# `cli/src/__tests__/sync-code.test.ts` (mocked child_process), by the
+# BR-116 fake-ssh tier `cli/src/__tests__/sync-code-remote.test.ts`, AND by
+# a manual-runbook entry in cli/README.md for the real sshd/pm2/nginx path.
 #
 # What this file DOES cover (per L-330: both producer (verb TS) AND
 # consumer (CLI bridge in index.ts) must be exercised end-to-end via
@@ -17,6 +17,8 @@
 #   3. `igris sync all --dry-run`            — chains code+data plans
 #   4. argument validation: unknown sub-verb returns exit 2
 #   5. `igris sync code --dry-run --if-changed` — architect-added cron parity flag
+#   6. BR-116: `sync code --dry-run` names the deploy workspace + pm2 probe;
+#      `sync status --dry-run` names the read-only `node --version` probe
 #
 # Tests intentionally use `--dry-run` so no live SSH/HTTP happens; we are
 # verifying the CLI bridge wiring, the dispatcher routing, and the
@@ -106,4 +108,40 @@ JSON
   run $CLI_BIN sync data --dry-run
   [ "$status" -eq 1 ]
   [[ "$output" == *"remote_brain"* ]]
+}
+
+@test "sync code --dry-run: names the deploy workspace, the runner stages and the pm2 status probe (BR-116)" {
+  run $CLI_BIN sync code --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *".igris-deploy"* ]] || return 1
+  [[ "$output" == *"igris-deploy:preflight"* ]] || return 1
+  [[ "$output" == *"npm ci"* ]] || return 1
+  [[ "$output" == *'require("better-sqlite3")'* ]] || return 1
+  [[ "$output" == *"pm2 restart igris-brain"* ]] || return 1
+  [[ "$output" == *"pm2 jlist"* ]] || return 1
+  [[ "$output" == *"/health"* ]] || return 1
+}
+
+@test "sync status --dry-run with a vps block: names the read-only node --version probe (BR-116)" {
+  run $CLI_BIN sync status --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"node --version"* ]] || return 1
+}
+
+@test "sync push --dry-run: prints the plan and the /sync/push URL, never the key (TD-350)" {
+  run $CLI_BIN sync push --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dry-run plan:"* ]] || return 1
+  [[ "$output" == *"http://127.0.0.1:1/sync/push"* ]] || return 1
+  [[ "$output" == *"sync_state.last_push_at"* ]] || return 1
+  [[ "$output" != *"test-key"* ]] || return 1
+}
+
+@test "sync drain --dry-run: prints the plan and the /sync/push URL, never the key (TD-489)" {
+  run $CLI_BIN sync drain --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dry-run plan:"* ]] || return 1
+  [[ "$output" == *"http://127.0.0.1:1/sync/push"* ]] || return 1
+  [[ "$output" == *"pending sync_queue rows"* ]] || return 1
+  [[ "$output" != *"test-key"* ]] || return 1
 }

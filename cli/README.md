@@ -67,6 +67,8 @@ sections below are for contributors working on the CLI source.
 | `igris sync <code\|data\|all\|status>` | Push code/data to the VPS brain |
 | `igris export <project> [--tier core\|standard\|full] [--since <date>]` | Serialize one project's brain slice into a portable `<slug>.igris-pack.tar.gz` (the handoff PRODUCER) |
 | `igris import <bundle> [--dry-run] [--on-conflict ask\|theirs\|mine\|newer] [--as <slug>] [--project-path <path>]` | Import a `.igris-pack` bundle with a reviewed, ancestor-based merge (the handoff CONSUMER) |
+| `igris dashboard --session <uuid> --ensure` | Return a verified link to one chat’s attention map, reusing or starting the local dashboard |
+| `igris attention <action>` | Begin, bind, inspect, or end a local chat recording; track resource deliveries and correlated brain calls |
 | `igris doctor [--fix\|--remove-orphans]` | Diagnose and repair drift |
 
 `--dry-run` is supported on every state-changing verb.
@@ -78,6 +80,28 @@ sections below are for contributors working on the CLI source.
 
 End-user docs (install, upgrade, channels) live in the repo-root
 [`README.md`](https://github.com/fiftynotai/igris-ai#readme).
+
+## Session attention
+
+Boot creates a separate recording for each chat. The graph shows what was
+available, delivered as a preview or in full, and invoked, with the supporting
+evidence and observation gaps. `igris attention sessions` lists recordings;
+`igris attention show --session <uuid>` inspects one. Completed recordings remain
+available after rest. These records stay on the machine and are not replicated
+with project knowledge.
+
+With a recording selected, the graph opens in **This chat**. Toggle **Whole brain**
+for the complete map, or include related nodes to see one-hop knowledge links.
+The inspector shows **Why selected**, distinguishing observed retrieval from a
+caller's declared reason. Older receipts show **Not recorded**.
+
+For `read`, `call`, and `event`, `--selection boot|task|retrieval|user_request`
+records a declared reason; optional `--selection-ref <id>` records a safe policy
+or task identifier. Do not put prose, paths, queries, or secrets in references.
+These flags explain an operation; they do not load additional resources or
+execute capabilities by themselves.
+
+Contributor contract and examples: [session attention](https://github.com/fiftynotai/igris-ai/blob/main/docs/architecture/session_attention.md).
 
 ## Contributor flow
 
@@ -152,7 +176,8 @@ drift class:
 | Drift class | Meaning |
 |---|---|
 | `clean` | All checks pass (registered + path exists — the register-only happy path) |
-| `path-missing` | Registry path no longer exists (orphan) |
+| `path-missing` | Registry path no longer exists and no `repo_url` is recorded (orphan). Shown with what the row owns (briefs, learnings) and a re-point command |
+| `source-reclaimed` | Registry path no longer exists but a `repo_url` is recorded: the source was removed on purpose (FR-265). **Exit-neutral — not drift**; doctor prints a copy-pasteable `restore <slug>: git clone -- '<url>' '<path>'` line and never offers the row for deletion |
 | `hooks-missing` | The GLOBAL `~/.claude/settings.json` lacks the Igris SessionEnd hook (brain-level; the TD-100 silent-failure class). FR-212d moved hooks global — there is no per-project hooks layer. |
 | `hooks-stale` | The global settings carry the Igris hooks but at a non-canonical command path (brain-level) |
 | `slug-basename-mismatch` | Informational — slug != basename(path) |
@@ -186,16 +211,43 @@ replaced `~/.igris/core/` wholesale from the release channel and never wrote
 `~/.igris/core/`** except through the guarded `brain-core-missing` path. Other
 classes require manual decisions.
 
-`--remove-orphans` interactively deletes `path-missing` rows. Skip
-prompts with `--yes`. Per-row prompts accept `y`/`n`/`a` (abort)/`all`
-(yes-all).
+Every `path-missing` row is shown with what it owns — `briefs N, learnings M`
+(plus errors and sessions when non-zero) — in the table and in an orphan detail
+block printed on every run, before any prompt. A row that owns data is usually
+a moved project: the detail block offers the re-point first
+(`igris register-project <new-path> --slug <slug>`, which keeps the curated
+name and tech stack — TD-310), then recording a `repo_url`
+(→ `source-reclaimed`), then removal.
+
+`--remove-orphans` deletes `path-missing` rows (never `source-reclaimed` ones —
+reported as `not offered`). Modes:
+
+| Invocation | Behaviour |
+|---|---|
+| `--remove-orphans` | One prompt per row, counts shown: `y`/`n`/`a` (abort)/`all`. `all` auto-confirms only the remaining rows that own NOTHING — a data-owning row still gets its own prompt. |
+| `--remove-orphans --empty-only` | Non-interactive: removes exactly the rows that own nothing; names the rest `kept: <slug> (owns …)`. |
+| `--remove-orphans --yes` | No prompt: removes rows that own nothing and **refuses** a row that owns briefs or learnings (`refused: <slug> — owns …`). |
+| `--remove-orphans --yes --include-owning` | Also attempts data-owning rows (the foreign key below still refuses briefed/sessioned ones). |
+| `--slug <slug>` | Narrows any of the above to one `path-missing` row; a clean, missing or `source-reclaimed` slug is refused (exit 1). |
+
+`--empty-only`, `--slug` and `--include-owning` need `--remove-orphans`;
+`--include-owning` needs `--yes` and cannot be combined with `--empty-only`.
+Any other combination is a usage error (exit 1, nothing swept).
 
 A row the brain still references — a project that has briefs or sessions — is
 **skipped, not deleted**: the DELETE is refused by the foreign key (deleting it
 would orphan that history), so the sweep reports `skipped: <slug>` with the
 count that blocked it, keeps the registry row, and carries on with the other
-orphans. Deal with the briefs first, then re-run. A skipped row is still drift,
-so `igris doctor --remove-orphans` exits 1 when one is left behind.
+orphans. After the sweep, `dangling knowledge (no registry row): <slug> — …`
+names briefs/learnings whose project row is already gone (a report — nothing is
+deleted).
+
+The exit code comes from a **re-read** of the registry, not from the sweep's
+own report (BR-087): a row that is still `path-missing` afterwards — skipped,
+refused, declined (`n`), aborted (`a`), or never answered because the input
+ended — keeps `igris doctor --remove-orphans` at exit 1. Piped answers are all
+consumed in order, and end of input is "not adjudicated", never clean. No
+answer makes a row clean; a re-point, a `repo_url` or its removal does.
 
 ## `igris sync`
 
@@ -203,10 +255,12 @@ Replaces the retired `scripts/igris_vps_update.sh` (deleted in M4 of MG-014).
 
 | Sub-verb | Action |
 |---|---|
-| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last-push timestamp |
+| `status` | HTTP GET `<remote_brain.url>/health`, prints reachability + brain version + local queue depth + last push (the newest `sync_state.last_push_at` this machine stamped for the configured remote, or `never`); with a `vps` block, one read-only `node --version` ssh probe prints `vps node:` against the engines range (never changes the exit code) |
 | `data`   | Atomically drains local `~/.igris/projects/<slug>/sync_queue.jsonl` (rename-then-process; concurrency-safe under multi-harness use — see FR-128) via remote `igris_sync_queue_drain` MCP call. Recovers any stale `sync_queue.jsonl.draining-*` files from a prior crashed drain before processing. |
-| `code`   | rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, IDE files, etc.), run `npm ci` + `npm run build` (brain-mcp-server) on VPS, smoke-check `require("better-sqlite3")`, ssh-restart `igris-brain` via PM2, then verify `/health` |
+| `code`   | Preflight (VPS Node vs engines range; refuses if another deploy runs, a swap was interrupted, or disk is short), rsync local repo to `<vps.user>@<vps.host>:<vps.repo_path>` (excludes `node_modules/`, `.git/`, `dist/`, `.env`, `.igris-deploy/`, IDE files, etc.), then a DETACHED runner in `<repo_path>/.igris-deploy/` runs `npm ci` (or copies the live `node_modules` when the install fingerprint matches) + `npm run build` in a stage copy, smoke-loads `new Database(require("better-sqlite3"))`, swaps `node_modules` + `dist` in and re-smokes (auto-rollback). The client polls (30-min bound, reported — never kills the run), then restarts `igris-brain` via PM2 and exits 0 only when pm2 is `online` (restart count past its pre-restart value) and `/health` says `ok` twice in a row (one restart retry) |
 | `all`    | `code` then `data` sequentially; aborts on `code` failure |
+| `push`   | Pushes this machine's brain delta (rows newer than `sync_state.last_push_at`; every row for a table with no stamp) to `remote_brain` by running the `igris_brain_push` handler in process. Reads the url and api_key from `~/.igris/config.json` and takes no key argument. It boots the bundled brain engine on the live local brain, so any migration that bundle carries applies on that boot. Exits 1 if any table is held (BR-097) or the push fails. Not part of `all` |
+| `drain`  | Retries THIS machine's brain retry queue (the `sync_queue` table failed pushes fill; `data` drains the remote's) by running the `igris_sync_queue_drain` handler in process. Reads the url and api_key from config, takes no key argument, and boots the engine like `push`. Exits 1 unless every row is sent or the queue is empty. Not part of `all` |
 
 `--dry-run` previews the rsync/ssh/MCP calls without performing them.
 
@@ -217,15 +271,13 @@ push when local HEAD matches `origin/<branch>`. Useful for cron jobs:
 */5 * * * * /usr/local/bin/igris sync code --if-changed >> sync.log 2>&1
 ```
 
-### Manual code-sync verification (NOT covered by CI)
+### Code-sync verification
 
-Code-sync is intentionally NOT exercised in the
-`tests/integration/sync.bats` suite — the `code` sub-verb invokes real
-rsync + ssh against a configured VPS, which can't be hermetically
-reproduced in CI. The unit tests at `cli/src/__tests__/sync-code.test.ts`
-cover command-shape and exit-code contracts via mocked `child_process`;
-the manual runbook below verifies the wire-level integration before
-each `npm publish`:
+`src/__tests__/sync-code-remote.test.ts` (BR-116) runs the real runner
+under a fake `ssh` that executes locally (real bash, node, rsync; stub
+`npm`/`pm2`): detach, stage/swap/rollback, the post-restart gate and the
+secret filter. What stays manual (not CI): a real sshd, pm2, nginx and
+disk sizing — the runbook below, before each `npm publish`:
 
 1. **Pre-flight:** verify `~/.igris/config.json` has both `vps` (host,
    user, repo_path) and `remote_brain` (url, api_key) blocks populated,
@@ -233,21 +285,37 @@ each `npm publish`:
    prompting (key-based auth required; the verb passes `BatchMode=yes`).
 2. **Dry-run:** `igris sync code --dry-run` and confirm the printed plan
    names the expected `<src>` and `<dst>` paths.
-3. **Live:** `igris sync code` and watch the output:
-   - `sync code: rsync <src> -> <dst>` then any rsync transfer summary
-   - `sync code: npm ci complete on VPS` (Linux-native dep rebuild, ~30s)
-   - `sync code: brain-mcp-server build complete on VPS`
-   - `sync code: native-module smoke check passed` (TD-141 pre-restart
-     load-bearing gate; old brain stays serving on smoke fail —
-     `require("better-sqlite3")` on VPS)
-   - `sync code: pm2 restart issued`
-   - `sync code: health OK — {"status":"ok",...}` (or a WARN if the
-     service is still starting; re-run `igris sync status` to confirm)
+3. **Live:** `igris sync code` (from a terminal — a slow install can outlive
+   an agent's command timeout; the remote run finishes regardless) and watch:
+   - `sync code: VPS Node vX — within|OUTSIDE engines range …`
+   - `sync code: rsync <src> -> <dst>`, then `run <id> launched on the VPS`
+   - `sync code: [<id>] install` (or `reuse`) / `build` / `swap` … phase transitions
+   - `sync code: deployed run <id> — install Xs (npm ci: first|changed|…), build Ys; pm2 online (node vZ); health ok`,
+     or `install skipped (node_modules reused in Xs)` when the install fingerprint matches (inputs: node + npm
+     versions, native ABI, platform, arch, `package-lock.json`, root and workspace `package.json`, root `.npmrc`);
+     a reuse failure still runs `npm ci`
+   - on failure: the phase + npm's real exit code/error lines (EBADENGINE
+     warnings are counted, not quoted) and `full log: <user>@<host>:<repo>/.igris-deploy/runs/<id>/log`
 4. **Cron parity:** `igris sync code --if-changed` from a clean tree
    should print "local HEAD matches origin; nothing to push" and exit
    0 in <1s.
 5. **Failure modes:** drop the `vps` block from config.json and confirm
    `igris sync code` exits 1 with an actionable error (config gate).
+
+**Recovery** (`<repo_path>/.igris-deploy/`):
+- *Another deploy is running* — inspect `runs/<id>/phase` and `runs/<id>/log`;
+  a lock whose runner is dead is replaced automatically (a lock with no pid
+  yet counts as held for ~1-2 min).
+- *Interrupted swap* (`swap.inprogress` present) — never auto-restored; the
+  refusal prints the journal and a one-line restore command to run on the VPS.
+- *Unhealthy after restart* — `pm2 logs igris-brain --lines 50`; the error
+  prints the same restore command. It moves the new tree to `failed/`, puts
+  `prev/` back and restarts pm2; re-running it is harmless. Run it BEFORE
+  re-running `igris sync code`: the next run deletes `prev/`.
+- *Force a clean `npm ci`* — delete the install marker:
+  `ssh <user>@<host> "rm -f '<repo_path>/node_modules/.igris-install-fp'"`;
+  a skipped deploy prints this line. Never hand-edit the live `node_modules`
+  without deleting it.
 
 ## Project handoff — `igris export` / `igris import`
 
@@ -335,7 +403,7 @@ enforces vitest).
   `cache.test.ts`, `channel.test.ts`, `install-source.test.ts`,
   `cli-detect.test.ts`, `bridges.test.ts`, `from-source.test.ts`,
   `atomic-extract.test.ts`, `preflight.test.ts` — M1 building blocks
-- `src/__tests__/sync-{status,data,code}.test.ts` — sync sub-verbs
+- `src/__tests__/sync-{status,data,code,code-remote}.test.ts`, `vps-deploy.test.ts` — sync sub-verbs (code-remote = the BR-116 fake-ssh tier)
 - `src/__tests__/self-update.test.ts`, `register-project.test.ts` — M3
 - `tests/integration/version.bats` — CLI invocation smoke
 - `tests/integration/install.bats` — install end-to-end

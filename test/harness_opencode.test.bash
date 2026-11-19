@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_opencode.test.bash — FR-171 OpenCode first-class distribution.
 #
 # OpenCode joins claude/codex/gemini as a first-class harness for BOTH agents
@@ -54,6 +54,7 @@ setup() {
 
 teardown() {
   [ -d "$PROJ" ] && rm -rf "$PROJ"
+  cleanup_test_temp_dir
 }
 
 # Synthesize a vendored personal agent tree + manifest declaring an opencode

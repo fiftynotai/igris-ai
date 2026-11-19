@@ -31,6 +31,7 @@ import { describe, it, expect } from 'vitest';
 import { createGateway } from '../gateway.js';
 import type { ToolDefinition } from '../types.js';
 
+import { createAttentionComponent } from '../components/attention/index.js';
 import { createMemoryComponent } from '../components/memory/index.js';
 import { createErrorsComponent } from '../components/errors/index.js';
 import { createProjectsComponent } from '../components/projects/index.js';
@@ -48,6 +49,7 @@ import { createContextComponent } from '../components/context/index.js';
 import { createCatalogComponent } from '../components/catalog/index.js';
 
 const COMPONENT_FACTORIES = [
+  createAttentionComponent,
   createMemoryComponent,
   createErrorsComponent,
   createProjectsComponent,
@@ -82,7 +84,7 @@ describe('gateway tool count (TD-171 closeout)', () => {
   gateway.register(collectAllTools());
   const tools = gateway.listTools();
 
-  it('exposes exactly 108 tools (112 at FR-237 − 4: FR-267 retired the metrics component)', () => {
+  it('exposes exactly 116 tools (113 plus 3 local attention facades, FR-276 on 2026-10-19)', () => {
     // If this assertion fires, the registered surface drifted. Either a tool
     // was added/removed without bumping the count here, or the closeout
     // baseline shifted intentionally. In either case: open a brief, decide,
@@ -96,7 +98,16 @@ describe('gateway tool count (TD-171 closeout)', () => {
     // FR-267 (2026-08-26) RETIRED the metrics component — igris_metrics_record /
     // _query / _velocity / _dashboard were all surfaces of one metrics table, and that
     // table is now frozen history (agent_events is the record), 112→108.
-    expect(tools.length).toBe(108);
+    // TD-460 (2026-09-09) added igris_context_sync on the context component —
+    // the bidirectional disk↔brain reconciler that makes context_files a
+    // replication layer rather than a write-only store, 108→109.
+    // FR-273 (2026-09-29, round A) added igris_project_relations /
+    // igris_project_relate / igris_project_relation_kinds on the projects
+    // component — the project-relation lookup, edge writes and the governed
+    // kind registry, 109→112. FR-273 round B added igris_project_relations_derive
+    // (manifest derivation → pending suggestions), 112→113.
+    // FR-276: session, event and call facades, 113→116.
+    expect(tools.length).toBe(116);
   });
 
   it('every component factory contributes at least one tool', () => {

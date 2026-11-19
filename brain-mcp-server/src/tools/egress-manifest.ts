@@ -65,7 +65,6 @@ const CATEGORY_ORDER = [
   'Instance & host metadata',
   'Knowledge graph',
   'Reusable-asset catalog',
-  'Schedules & runs',
   'Perception & subconscious',
   'Other',
 ] as const;
@@ -79,6 +78,7 @@ const TABLE_CATEGORY: Record<string, string> = {
   sessions: 'Session, brief & task content',
   brief_status: 'Session, brief & task content',
   brief_files: 'Session, brief & task content',
+  context_files: 'Session, brief & task content', // TD-460
   session_files: 'Session, brief & task content',
   definition_files: 'Session, brief & task content',
   agent_metrics: 'Session, brief & task content',
@@ -90,8 +90,6 @@ const TABLE_CATEGORY: Record<string, string> = {
   graph_nodes: 'Knowledge graph',
   goals: 'Knowledge graph',
   catalog: 'Reusable-asset catalog',
-  schedules: 'Schedules & runs',
-  schedule_runs: 'Schedules & runs',
   suggestions: 'Perception & subconscious',
   dismissed_patterns: 'Perception & subconscious',
 };

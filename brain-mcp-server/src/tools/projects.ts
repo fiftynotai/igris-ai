@@ -16,17 +16,21 @@
  * @author fifty.dev
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, realpathSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 
 import { getDb } from '../db.js';
 
-/** Input shape for igris_project_register */
+/** Input shape for igris_project_register (`null` optional = omitted) */
 interface ProjectRegisterInput {
   slug: string;
   name: string;
   path: string;
-  tech_stack?: string;
-  archetype?: string;
+  tech_stack?: string | null;
+  archetype?: string | null;
+  repo_url?: string | null;
 }
 
 /** Input shape for igris_project_list */
@@ -47,6 +51,7 @@ interface ProjectUpdateInput {
   tech_stack?: string;
   archetype?: string;
   status?: 'active' | 'archived' | 'inactive';
+  repo_url?: string;
 }
 
 /** Input shape for igris_project_dashboard (TD-171 M3 — operator override 2026-05-15) */
@@ -89,18 +94,19 @@ function resolveForCompare(p: string): string {
  * as `path`, or `undefined` when the directory is free (the return value is
  * `Array.prototype.find`'s, so it is `undefined` and never `null`).
  *
- * ONE DEFINITION, TWO CALLERS, on purpose (TD-402 retry 1). Both writes in this
- * module that can set `projects.path` ask this same question, so the predicate
- * cannot drift between them: `handleProjectRegister` before its upsert and
- * `handleProjectUpdate` before its UPDATE. Excluding `slug` itself is what keeps
- * a same-slug re-registration an upsert and lets a row re-set its own path.
+ * ONE DEFINITION, THREE CALLERS, on purpose (TD-402 retry 1; FR-273). Both
+ * writes in this module that can set `projects.path` ask this same question, so
+ * the predicate cannot drift between them: `handleProjectRegister` before its
+ * upsert and `handleProjectUpdate` before its UPDATE; FR-273's relation endpoint
+ * check (`relations/write.ts`) is the third. Excluding `slug` itself is what
+ * keeps a same-slug re-registration an upsert and lets a row re-set its own path.
  *
  * Note the comparison is `realpathSync`-resolved on BOTH sides, so a symlink and
  * its target are one directory; `resolveForCompare` falls back to the raw string
  * for a path that does not exist, so a machine that lacks the directory still
  * compares.
  */
-function findPathHolder(
+export function findPathHolder(
   db: ReturnType<typeof getDb>,
   slug: string,
   path: string,
@@ -110,6 +116,265 @@ function findPathHolder(
     .prepare('SELECT slug, path FROM projects WHERE slug != ?')
     .all(slug) as { slug: string; path: string }[];
   return others.find((r) => resolveForCompare(r.path) === incoming);
+}
+
+// TD-365: the gateway checks PRESENCE (BR-080); this checks CONTENT. The keys
+// are the NOT NULL no-default `projects` columns (pinned from the real schema
+// by repo-url-v1.test.ts, TD-365 S3).
+export const PROJECT_REGISTER_REQUIRED_KEYS = ['slug', 'name', 'path'] as const;
+
+const PROJECT_REGISTER_OPTIONAL_KEYS = ['tech_stack', 'archetype', 'repo_url'] as const;
+
+// The validateMemoryInput shape: the message, or null when valid.
+export function validateProjectRegisterInput(args: Record<string, unknown>): string | null {
+  const a = args ?? {};
+  for (const key of PROJECT_REGISTER_REQUIRED_KEYS) {
+    const v = a[key];
+    if (typeof v !== 'string' || v.trim() === '') {
+      return `Invalid ${key}: must be a non-empty string.`;
+    }
+  }
+  for (const key of PROJECT_REGISTER_OPTIONAL_KEYS) {
+    const v = a[key];
+    if (v !== undefined && v !== null && typeof v !== 'string') {
+      return `Invalid ${key}: must be a string when provided.`;
+    }
+  }
+  return null;
+}
+
+// FR-265: strip URL credentials — all userinfo (a token is often the username),
+// except an ssh user (not a secret; the clone needs it). scp-like and local
+// paths are kept. Trimmed; empty → null.
+export function sanitizeRepoUrl(raw: string): string | null {
+  const s = raw.trim();
+  if (s === '') return null;
+  const m = /^([A-Za-z][A-Za-z0-9+.-]*):\/\/([^/?#]*)@/.exec(s);
+  if (m === null) return s;
+  const scheme = m[1];
+  const rest = s.slice(m[0].length);
+  const lower = scheme.toLowerCase();
+  if (lower === 'ssh' || lower === 'git+ssh' || lower === 'ssh+git') {
+    const user = m[2].split(':')[0];
+    return `${scheme}://${user === '' ? '' : `${user}@`}${rest}`;
+  }
+  return `${scheme}://${rest}`;
+}
+
+// FR-274: an inherited GIT_DIR / GIT_WORK_TREE (a git hook, a harness) would
+// point git at ANOTHER repo than `-C <cwd>`; the child env drops them.
+const GIT_ENV_STRIP = [
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_PREFIX',
+] as const;
+
+function gitEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: '0' };
+  for (const k of GIT_ENV_STRIP) delete env[k];
+  return env;
+}
+
+// One `git` read: no shell, 3 s cap, no prompt; any failure is null.
+function gitRead(cwd: string, args: string[]): string | null {
+  try {
+    const out = execFileSync('git', ['-C', cwd, ...args], {
+      encoding: 'utf-8',
+      timeout: 3000,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      env: gitEnv(),
+    });
+    const t = out.trim();
+    return t === '' ? null : t;
+  } catch {
+    return null;
+  }
+}
+
+// gitRead's boolean twin: `cat-file -e` and `merge-base --is-ancestor` print
+// nothing, so their answer is the exit status. Any failure is false.
+function gitOk(cwd: string, args: string[]): boolean {
+  try {
+    execFileSync('git', ['-C', cwd, ...args], { timeout: 3000, stdio: 'ignore', env: gitEnv() });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// FR-265 / FR-274: `path` exists AND is a git TOP level (a sub-directory, or a
+// directory nested inside another repo, is not) — never a spawn for an absent path.
+function isRepoTopLevel(path: string): boolean {
+  if (!existsSync(path)) return false;
+  const top = gitRead(path, ['rev-parse', '--show-toplevel']);
+  if (top === null) return false;
+  let real: string;
+  try {
+    real = realpathSync(path);
+  } catch {
+    return false;
+  }
+  return resolveForCompare(top) === real;
+}
+
+// FR-265 AC2: `origin` of the repo whose TOP LEVEL is `path` (a sub-directory's
+// clone would not recover it), else null — never a throw.
+function detectRepoUrl(path: string): string | null {
+  if (!isRepoTopLevel(path)) return null;
+  const url = gitRead(path, ['remote', 'get-url', 'origin']);
+  return url === null ? null : sanitizeRepoUrl(url);
+}
+
+// projects:1 adds the column; without it, register still works (no repo_url)
+// instead of throwing `no such column` at every /boot.
+function hasRepoUrlColumn(db: ReturnType<typeof getDb>): boolean {
+  const cols = db.pragma('table_info(projects)') as { name: string }[];
+  return cols.some((c) => c.name === 'repo_url');
+}
+
+// POSIX single-quote: safe to paste into any sh, whatever the value holds.
+function shellQuote(v: string): string {
+  return `'${v.replace(/'/g, "'\\''")}'`;
+}
+
+// Same form as doctor's restore line (`cli/src/verbs/doctor.ts#restoreCommand`).
+function cloneCommand(url: string, path: string): string {
+  return `git clone -- ${shellQuote(url)} ${shellQuote(path)}`;
+}
+
+// ---------------------------------------------------------------------------
+// FR-274 — the knowledge watermark (read side). The writer is the CLI's
+// `igris project watermark`; these render and check it. Exported for FR-273.
+// ---------------------------------------------------------------------------
+
+/** The three `projects` columns projects:2 adds (FR-274). */
+export const KNOWLEDGE_WATERMARK_COLUMNS = ['knowledge_sha', 'knowledge_branch', 'knowledge_recorded_at'] as const;
+
+// A pulled row can carry a TD-253 `~/...` path. Exported for FR-273's lookup.
+export function expandHome(p: string): string {
+  if (p === '~') return homedir();
+  return p.startsWith('~/') ? join(homedir(), p.slice(2)) : p;
+}
+
+// projects:2 applied? Without it status renders "no watermark recorded".
+// Exported for FR-273's lookup (a pre-projects:2 DB reads `watermark: null`).
+export function hasWatermarkColumns(db: ReturnType<typeof getDb>): boolean {
+  const cols = new Set((db.pragma('table_info(projects)') as { name: string }[]).map((c) => c.name));
+  return KNOWLEDGE_WATERMARK_COLUMNS.every((c) => cols.has(c));
+}
+
+/** The watermark fields of a `projects` row; all NULL when none is recorded. */
+export interface KnowledgeWatermarkRow {
+  path: string;
+  knowledge_sha: string | null;
+  knowledge_branch: string | null;
+  knowledge_recorded_at: string | null;
+}
+
+/**
+ * A LOCAL reachability verdict for a watermark (FR-274 D5): at most five local
+ * git spawns, each capped at 3 s, no fetch, no network. FR-273's lookup tool is
+ * the intended reuser. `invalid`: the stored value is not a full hex SHA (or the
+ * branch starts with `-`), checked before any spawn; `absent`: no git working
+ * copy at the path; `unreachable`: the SHA is not in that clone; `diverged`: a
+ * genuine fork — neither the SHA nor `origin/<branch>` contains the other;
+ * `reachable`: otherwise. `aheadOfRemote` marks a SHA that descends from
+ * `origin/<branch>` (committed, not pushed); `remoteRefPresent` is false when
+ * the clone lacks `origin/<branch>` (or `origin/HEAD` when detached).
+ */
+export interface KnowledgeWatermarkCheck {
+  state: 'invalid' | 'absent' | 'unreachable' | 'diverged' | 'reachable';
+  /** The checked path, `~/` expanded. */
+  path: string;
+  remoteRefPresent: boolean | null;
+  /** `reachable` only: the SHA descends from `origin/<branch>` (committed, not pushed). */
+  aheadOfRemote: boolean;
+}
+
+// The CLI writer's rule (`cli/src/lib/brain-db.ts#KNOWLEDGE_SHA_RE`, reproduced):
+// once FR-271 replicates the column a stored value is INGRESS, and one starting
+// with `-` would reach git (and a printed command) as an option.
+const KNOWLEDGE_SHA_RE = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+
+function isValidWatermark(sha: string, branch: string | null): boolean {
+  return KNOWLEDGE_SHA_RE.test(sha) && (branch === null || (branch !== '' && !branch.startsWith('-')));
+}
+
+/**
+ * Check a watermark against the git working copy at `path` (a leading `~/` is
+ * expanded). At most FIVE local git spawns, each capped at 3 s, no fetch; none
+ * at all for an absent path or an invalid stored value (`invalid`: not a full
+ * hex SHA, or a branch starting with `-`). Not an ancestor of `origin/<branch>`
+ * splits two ways: the reverse ancestry holds → `reachable` + `aheadOfRemote`
+ * (unpushed commits, the normal state at session end); neither holds →
+ * `diverged` (a fork). Never throws.
+ *
+ * @param path - The project row's path (the clone the operator re-clones to).
+ * @param sha - The full watermark SHA.
+ * @param branch - The watermark branch; `null` for a detached HEAD.
+ */
+export function checkKnowledgeWatermark(path: string, sha: string, branch: string | null): KnowledgeWatermarkCheck {
+  const p = expandHome(path);
+  const none = { remoteRefPresent: null, aheadOfRemote: false };
+  if (!isValidWatermark(sha, branch)) return { state: 'invalid', path: p, ...none };
+  if (!isRepoTopLevel(p)) return { state: 'absent', path: p, ...none };
+  if (!gitOk(p, ['cat-file', '-e', `${sha}^{commit}`])) return { state: 'unreachable', path: p, ...none };
+  const ref = `refs/remotes/origin/${branch ?? 'HEAD'}`;
+  const remoteRefPresent = gitOk(p, ['rev-parse', '--verify', '-q', `${ref}^{commit}`]);
+  if (branch !== null && remoteRefPresent && !gitOk(p, ['merge-base', '--is-ancestor', sha, ref])) {
+    if (gitOk(p, ['merge-base', '--is-ancestor', ref, sha])) {
+      return { state: 'reachable', path: p, remoteRefPresent, aheadOfRemote: true };
+    }
+    return { state: 'diverged', path: p, remoteRefPresent, aheadOfRemote: false };
+  }
+  return { state: 'reachable', path: p, remoteRefPresent, aheadOfRemote: false };
+}
+
+/**
+ * The `igris_project_status` watermark lines (FR-274), appended after `Clone:`.
+ * A row with no watermark renders ONE line, `Knowledge as of: no watermark
+ * recorded`, and `check` is then ignored (pass `null`). Otherwise:
+ * `Knowledge as of:`, `Since:` (a copy-pasteable `git log` over the FULL SHA),
+ * `Knowledge check:`, and `Verify:` only when no working copy was found. An
+ * invalid stored value renders two lines and is never echoed.
+ *
+ * @param row - The watermark fields of the project row.
+ * @param check - {@link checkKnowledgeWatermark}'s verdict for that row.
+ */
+export function renderKnowledgeWatermark(row: KnowledgeWatermarkRow, check: KnowledgeWatermarkCheck | null): string[] {
+  const sha = row.knowledge_sha;
+  if (typeof sha !== 'string' || sha === '' || check === null) return ['Knowledge as of: no watermark recorded'];
+  const branch = row.knowledge_branch ?? null;
+  if (check.state === 'invalid' || !isValidWatermark(sha, branch)) {
+    // Never echo the value: it would print a command line with an option in it.
+    return [
+      `Knowledge as of: invalid watermark recorded (not a full commit SHA), ${row.knowledge_recorded_at ?? '(unknown time)'} UTC`,
+      'Knowledge check: not verified: the recorded watermark is not a full commit SHA',
+    ];
+  }
+  const short = sha.slice(0, 12);
+  const remote = `origin/${branch ?? 'HEAD'}`;
+  const on = branch === null ? '(detached HEAD, no branch recorded)' : `on ${branch}`;
+  let verdict: string;
+  if (check.state === 'absent') {
+    verdict = `not verified: no git working copy at ${check.path}`;
+  } else if (check.state === 'unreachable') {
+    verdict = `UNREACHABLE: ${short} is not in the clone at ${check.path} (history rewritten, a shallow clone, or the commit was never pushed); knowledge unverified`;
+  } else if (check.state === 'diverged') {
+    verdict = `DIVERGED: ${short} and ${remote} have forked: neither contains the other (history rewritten, or the branch moved on a different line); knowledge unverified`;
+  } else {
+    verdict = `reachable in ${check.path}`;
+    if (check.aheadOfRemote) {
+      verdict += ` (ahead of ${remote}: not pushed; a fresh clone will not contain ${short} until it is pushed)`;
+    } else if (check.remoteRefPresent === false) {
+      verdict += ` (${remote} is not in this clone: run git fetch origin${branch === null ? '' : ` ${shellQuote(branch)}`} first)`;
+    }
+  }
+  return [
+    `Knowledge as of: ${short} ${on}, ${row.knowledge_recorded_at ?? '(unknown time)'} UTC`,
+    `Since: git log --oneline ${shellQuote(`${sha}..${remote}`)}`,
+    `Knowledge check: ${verdict}`,
+    ...(check.state === 'absent' ? [`Verify: git cat-file -e ${shellQuote(`${sha}^{commit}`)}`] : []),
+  ];
 }
 
 /**
@@ -137,10 +402,27 @@ function findPathHolder(
  * takes effect at the next bundle rebuild. Until then this path can still mint
  * a duplicate, which is a second route into TD-404's hazard.
  *
+ * TD-365: input is validated FIRST (no DB access, no raw NOT NULL). CONFLICT
+ * ARM, per column (MAINTAINING row 113) — an omitted value never replaces a
+ * curated one:
+ *  - `name`, `path`: explicit wins — both required and validated (a COALESCE
+ *    would be dead code); a new `path` IS the re-point.
+ *  - `tech_stack`: `COALESCE(@tech_stack, projects.tech_stack)` with a NULL
+ *    bind — the old `?? ''` bind would defeat it (S4 reds under that
+ *    mutation); VALUES wraps the bind in `COALESCE(…, '')` for a new row, so
+ *    read `@tech_stack`, never `excluded.tech_stack`. Explicit `''` clears.
+ *  - `archetype`, `repo_url`: COALESCE (repo_url: explicit > detected > stored).
+ * `/boot` §4.3 still echoes the row first — retained (skill/bundle skew).
+ *
  * @param args - Project registration data
  * @returns MCP-formatted response with the project record
  */
 function handleProjectRegister(args: ProjectRegisterInput): { content: { type: string; text: string }[] } {
+  const invalid = validateProjectRegisterInput(args as unknown as Record<string, unknown>);
+  if (invalid !== null) {
+    return { content: [{ type: 'text', text: `Validation error: ${invalid}` }] };
+  }
+
   const db = getDb();
 
   const holder = findPathHolder(db, args.slug, args.path);
@@ -175,16 +457,30 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
 
   const pathMissing = !existsSync(args.path);
 
+  const params: Record<string, string | null> = {
+    slug: args.slug,
+    name: args.name,
+    path: args.path,
+    tech_stack: args.tech_stack ?? null,
+    archetype: args.archetype ?? null,
+  };
+  const withRepoUrl = hasRepoUrlColumn(db);
+  if (withRepoUrl) {
+    const explicit = typeof args.repo_url === 'string' ? sanitizeRepoUrl(args.repo_url) : null;
+    params.repo_url = explicit ?? (pathMissing ? null : detectRepoUrl(args.path));
+  }
   db.prepare(`
-    INSERT INTO projects (slug, name, path, tech_stack, archetype, last_session_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO projects (slug, name, path, tech_stack, archetype${withRepoUrl ? ', repo_url' : ''}, last_session_at)
+    VALUES (@slug, @name, @path, COALESCE(@tech_stack, ''), @archetype${withRepoUrl ? ', @repo_url' : ''}, datetime('now'))
     ON CONFLICT(slug) DO UPDATE SET
       name = excluded.name,
       path = excluded.path,
-      tech_stack = excluded.tech_stack,
-      archetype = COALESCE(excluded.archetype, projects.archetype),
+      tech_stack = COALESCE(@tech_stack, projects.tech_stack),
+      archetype = COALESCE(excluded.archetype, projects.archetype),${
+        withRepoUrl ? '\n      repo_url = COALESCE(excluded.repo_url, projects.repo_url),' : ''
+      }
       last_session_at = excluded.last_session_at
-  `).run(args.slug, args.name, args.path, args.tech_stack ?? '', args.archetype ?? null);
+  `).run(params);
 
   const project = db.prepare(
     'SELECT * FROM projects WHERE slug = ?'
@@ -206,7 +502,9 @@ function handleProjectRegister(args: ProjectRegisterInput): { content: { type: s
         `Last Session: ${project.last_session_at}`,
         ...(pathMissing
           ? ['', `Warning: path does not exist on this machine: ${args.path}`,
-            'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as path-missing.']
+            typeof project.repo_url === 'string' && project.repo_url !== ''
+              ? 'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as source-reclaimed (its repo_url is recorded).'
+              : 'The row was written anyway (paths are machine-dependent). `igris doctor` reports this as path-missing.']
           : []),
       ].join('\n'),
     }],
@@ -315,6 +613,21 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     ).join('\n');
   }
 
+  const watermark: KnowledgeWatermarkRow = {
+    path: String(project.path),
+    knowledge_sha: null,
+    knowledge_branch: null,
+    knowledge_recorded_at: null,
+  };
+  if (hasWatermarkColumns(db)) {
+    watermark.knowledge_sha = (project.knowledge_sha as string | null) ?? null;
+    watermark.knowledge_branch = (project.knowledge_branch as string | null) ?? null;
+    watermark.knowledge_recorded_at = (project.knowledge_recorded_at as string | null) ?? null;
+  }
+  const watermarkCheck = typeof watermark.knowledge_sha === 'string' && watermark.knowledge_sha !== ''
+    ? checkKnowledgeWatermark(watermark.path, watermark.knowledge_sha, watermark.knowledge_branch)
+    : null;
+
   const dashboard = [
     `# Project Status: ${args.slug}`,
     '',
@@ -326,6 +639,13 @@ function handleProjectStatus(args: ProjectStatusInput): { content: { type: strin
     `Igris Version: ${project.igris_version}`,
     `Registered: ${project.registered_at}`,
     `Last Session: ${project.last_session_at || 'Never'}`,
+    // FR-265: after the lines /boot §4.3 parses, which stay byte-identical.
+    `Repo URL: ${typeof project.repo_url === 'string' && project.repo_url !== '' ? project.repo_url : '(none)'}`,
+    ...(typeof project.repo_url === 'string' && project.repo_url !== ''
+      ? [`Clone: ${cloneCommand(project.repo_url, String(project.path))}`]
+      : []),
+    // FR-274: after `Clone:`; everything above stays byte-identical.
+    ...renderKnowledgeWatermark(watermark, watermarkCheck),
     '',
     '## Knowledge Base',
     `Learnings: ${learningCount.count}`,
@@ -360,6 +680,7 @@ const PROJECT_UPDATABLE_FIELDS = [
   'tech_stack',
   'archetype',
   'status',
+  'repo_url', // FR-265: sanitised; '' clears to NULL
 ] as const;
 
 const PROJECT_VALID_STATUSES = ['active', 'archived', 'inactive'] as const;
@@ -461,6 +782,20 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
         }],
       };
     }
+    if (field === 'repo_url') {
+      if (!hasRepoUrlColumn(db)) {
+        return {
+          content: [{
+            type: 'text',
+            text: 'Error: this brain has no projects.repo_url column yet (projects migration v1 has not applied); no field was written.',
+          }],
+        };
+      }
+      setClauses.push('repo_url = ?');
+      params.push(sanitizeRepoUrl(value));
+      updatedFields.push(field);
+      continue;
+    }
     setClauses.push(`${field} = ?`);
     params.push(value);
     updatedFields.push(field);
@@ -470,7 +805,7 @@ function handleProjectUpdate(args: ProjectUpdateInput): { content: { type: strin
     return {
       content: [{
         type: 'text',
-        text: 'Error: no updatable fields provided. Pass at least one of: name, path, tech_stack, archetype, status.',
+        text: `Error: no updatable fields provided. Pass at least one of: ${PROJECT_UPDATABLE_FIELDS.join(', ')}.`,
       }],
     };
   }

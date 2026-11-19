@@ -527,3 +527,71 @@ describe('FR-118 M3 — applyAction', () => {
     expect(out.result.concern).toMatch(/malformed/i);
   });
 });
+
+// ---------------------------------------------------------------------------
+// FR-273 D7 — `add_project_relation`: a derived relation suggestion, applied by
+// the operator, writes the edge through the SAME `declareRelation` core as
+// `igris_project_relate`, with provenance `derived`. Creating the suggestion
+// wrote nothing; a refused apply leaves it `pending` (the dispatcher contract).
+// ---------------------------------------------------------------------------
+
+describe('FR-273 D7 — applyAction add_project_relation', () => {
+  let db: Database.Database;
+  let dirs: string;
+
+  beforeEach(async () => {
+    const { mkdtempSync, mkdirSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { relationsMigrationV3 } = await import('../../../projects/relations/schema.js');
+    db = new Database(':memory:');
+    buildSchema(db);
+    db.exec(`CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL,
+      name TEXT NOT NULL, path TEXT NOT NULL, repo_url TEXT);`);
+    db.exec(relationsMigrationV3.sql);
+    dirs = mkdtempSync(join(tmpdir(), 'fr273-d7-'));
+    for (const s of ['moca-agent-web', 'moca-agent-flutter-client']) {
+      mkdirSync(join(dirs, s));
+      db.prepare('INSERT INTO projects (slug, name, path) VALUES (?, ?, ?)').run(s, s, join(dirs, s));
+    }
+  });
+
+  afterEach(async () => {
+    db.close();
+    (await import('node:fs')).rmSync(dirs, { recursive: true, force: true });
+  });
+
+  const ACTION = {
+    kind: 'add_project_relation', from: 'moca-agent-web', relation_kind: 'uses_package', to: 'moca-agent-flutter-client',
+    detail: { package: 'moca_agent_client_ui', ref: 'v2.0.0', source: 'pubspec.yaml' },
+  };
+
+  it('D7: apply creates the edge with provenance derived and marks the suggestion acted', () => {
+    const id = seedSuggestion(db, ACTION, { project_slug: 'moca-agent-web' });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_relations').get()).toEqual({ n: 0 });
+    const r = applyAction(db, id);
+    expect(r.isError, r.content[0].text).toBeFalsy();
+    expect(parse<{ action_kind: string }>(r).action_kind).toBe('add_project_relation');
+    expect(db.prepare('SELECT from_slug, kind, to_slug, provenance, detail, removed_at FROM project_relations').all()).toEqual([{
+      from_slug: 'moca-agent-web', kind: 'uses_package', to_slug: 'moca-agent-flutter-client', provenance: 'derived',
+      detail: '{"package":"moca_agent_client_ui","ref":"v2.0.0","source":"pubspec.yaml"}', removed_at: null,
+    }]);
+    expect(statusOf(db, id).status).toBe('acted');
+  });
+
+  it('D7: a refused apply (endpoint de-registered meanwhile) leaves the suggestion pending and writes nothing', () => {
+    const id = seedSuggestion(db, ACTION, { project_slug: 'moca-agent-web' });
+    db.prepare("DELETE FROM projects WHERE slug = 'moca-agent-flutter-client'").run();
+    const r = applyAction(db, id);
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/add_project_relation.*moca-agent-flutter-client/);
+    expect(statusOf(db, id).status).toBe('pending');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_relations').get()).toEqual({ n: 0 });
+  });
+
+  it('D7: missing params are a failure, not a write', () => {
+    const id = seedSuggestion(db, { kind: 'add_project_relation', from: 'moca-agent-web' });
+    expect(applyAction(db, id).isError).toBe(true);
+    expect(statusOf(db, id).status).toBe('pending');
+  });
+});

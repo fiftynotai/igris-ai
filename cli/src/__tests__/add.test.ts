@@ -9,6 +9,10 @@
  * regression is asserted at the arm level (skill + agent): a core projection
  * that the ownership gate skips → non-zero + message; an incidental personal
  * compile → visible SKIPPED line + exit-0.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — runLoadout -> runProjectHook ->
+ *   homedir() (verbs/loadout.ts); IGRIS_BRAIN_DIR does not reach a
+ *   homedir()-only builder.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -37,6 +41,10 @@ import type {
   HookMaterializeResult,
 } from "../verbs/loadout.js";
 import type { AddCoreResult } from "../verbs/add-core.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 const BRAIN = "/tmp/igris-test-brain-add";
 
@@ -70,10 +78,12 @@ function captureStreams(): {
 
 let cap: ReturnType<typeof captureStreams>;
 beforeEach(() => {
+  br106Fence = fenceHome("igris-add-home-"); // BR-106: HOME moves FIRST, and ARMED
   cap = captureStreams();
 });
 afterEach(() => {
   cap.restore();
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 // A clean compile+check capture fake (1 target projected, drift-clean).

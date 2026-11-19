@@ -1448,7 +1448,9 @@ describe("sync data — remote drain result classification (BR-080)", () => {
     try {
       const { mcpCall } = await import("../lib/mcp-client.js");
       const r = await mcpCall(
-        { url: `http://127.0.0.1:${lb.port()}`, apiKey: "k" },
+        // BR-118 R1: a 1-char key now collides with body bytes ("chec[k]") once
+        // mcpCall redacts the configured key; a fixture-length key cannot.
+        { url: `http://127.0.0.1:${lb.port()}`, apiKey: "sk-fixture-mcpcall" },
         "igris_sync_queue_drain",
         {},
       );
@@ -1951,5 +1953,93 @@ describe("sync data — per-entry replay result classification (BR-080)", () => 
     expect(r.code).toBe(0);
     expect(r.tools).toEqual(["igris_brief_sync", "igris_sync_queue_drain"]);
     expect(r.stdout).toContain("replayed via igris_brief_sync");
+  });
+});
+
+// -------------------------------------------------------------------------
+// BR-118 (the CLI's sibling print path) — `igris sync data` prints remote-
+// authored text: a non-200 body verbatim (`dispatchEntry`, `callRemoteDrain`)
+// and the classifier's summary of a 200 body. A remote (or a proxy) that
+// echoes the bearer header would print the key — the S11 shape, on a step
+// `/rest` §2.6.4.5 runs every session. `mcpCall` now redacts the configured
+// key from the body BEFORE it is parsed, so `body` and `json` both come from
+// the redacted text and `data.ts` (whose line numbers are cited) is untouched.
+// The fixture reflects the request's OWN Authorization header.
+// -------------------------------------------------------------------------
+describe("BR-118 — `sync data` never prints a key the remote echoed", () => {
+  const CANARY = "sk-br118-cli-canary-41d0";
+
+  async function runAgainst(
+    respond: (auth: string, call: CapturedCall) => { status: number; body: string },
+    queue: string[],
+  ): Promise<{ code: number; out: string; calls: number }> {
+    const lb = makeLoopback((call) => respond(String(call.headers?.authorization ?? ""), call));
+    await new Promise<void>((resolve) => lb.server.listen(0, "127.0.0.1", resolve));
+    writeConfig({ remote_brain: { url: `http://127.0.0.1:${lb.port()}`, api_key: CANARY } });
+    writeQueue("br118", queue);
+    const buf: string[] = [];
+    const cap = (chunk: unknown): boolean => {
+      buf.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    };
+    const o = vi.spyOn(process.stdout, "write").mockImplementation(cap);
+    const e = vi.spyOn(process.stderr, "write").mockImplementation(cap);
+    try {
+      const { runSyncData } = await import("../lib/sync/data.js");
+      const code = await runSyncData({ projectSlug: "br118" });
+      return { code, out: buf.join(""), calls: lb.calls.length };
+    } finally {
+      o.mockRestore();
+      e.mockRestore();
+      await new Promise<void>((resolve) => lb.server.close(() => resolve()));
+    }
+  }
+
+  const ENTRY = JSON.stringify({
+    operation: "brief_sync",
+    project: "br118",
+    brief_id: "BR-118",
+    title: "t",
+    status: "ACTIVE",
+  });
+
+  it("E1a: a 401 echoing the bearer on the remote-drain call (callRemoteDrain) prints no key", async () => {
+    const { code, out, calls } = await runAgainst(
+      (auth) => ({ status: 401, body: `unauthorized: got ${auth}` }),
+      [],
+    );
+    expect(calls).toBe(1);
+    expect(code).toBe(1);
+    expect(out).toContain("remote drain failed (HTTP 401): unauthorized: got Bearer [redacted]");
+    expect(out).not.toContain(CANARY);
+  });
+
+  it("E1b: a 401 echoing the bearer on the per-entry replay (dispatchEntry) prints no key", async () => {
+    const { code, out, calls } = await runAgainst(
+      (auth) => ({ status: 401, body: `unauthorized: got ${auth}` }),
+      [ENTRY],
+    );
+    expect(calls).toBe(1);
+    expect(code).toBe(1);
+    expect(out).toContain("(HTTP 401): unauthorized: got Bearer [redacted]");
+    expect(out).not.toContain(CANARY);
+  });
+
+  it("E2: a 200 JSON-RPC error envelope echoing the key — the printed summary is parsed from the REDACTED body", async () => {
+    const { code, out, calls } = await runAgainst(
+      (auth, call) => ({
+        status: 200,
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          error: { code: -32602, message: `bad credential ${auth}` },
+          id: rpcRequestId(call),
+        }),
+      }),
+      [],
+    );
+    expect(calls).toBe(1);
+    expect(code).toBe(1);
+    expect(out).toContain("bad credential Bearer [redacted]");
+    expect(out).not.toContain(CANARY);
   });
 });

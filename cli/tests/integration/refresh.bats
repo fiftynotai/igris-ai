@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # refresh.bats — integration tests for `igris refresh`. Hermetic via
 # IGRIS_BRAIN_DIR + --from-source. Uses a pre-seeded brain (one init,
 # then one refresh) to mirror the real flow.

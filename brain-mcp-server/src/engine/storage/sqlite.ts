@@ -129,111 +129,6 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
     )
   `);
 
-  function runMigrations(componentName: string, migrations: Migration[]): void {
-    if (migrations.length === 0) return;
-
-    // Get current version for this component
-    let currentVersion = 0;
-    try {
-      const row = db.prepare(
-        'SELECT MAX(version) as version FROM engine_migrations WHERE component = ?'
-      ).get(componentName) as { version: number | null } | undefined;
-      if (row?.version) {
-        currentVersion = row.version;
-      }
-    } catch {
-      // Table may not exist yet on very first run
-    }
-
-    // Sort migrations by version and apply pending ones
-    const sorted = [...migrations].sort((a, b) => a.version - b.version);
-
-    for (const migration of sorted) {
-      if (migration.version <= currentVersion) continue;
-
-      // BR-083 D1a — PRE-FLIGHT, OUTSIDE THE TRANSACTION.
-      //
-      // A `false` return (or a throw) SKIPS this migration and every later one
-      // for this component: versions are monotonic, so applying v5 over a v3
-      // schema because v4 aborted would be worse than not migrating at all.
-      // The component stays at its previous version and the next boot retries
-      // — `db.ts` v22's abort semantics, which exist because the alternative
-      // to a verified backup is a hope.
-      if (migration.pre) {
-        let ok = false;
-        try {
-          ok = migration.pre(db);
-        } catch (err) {
-          console.error(
-            `[engine] Migration ${componentName}@${migration.version} pre-flight THREW: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-          ok = false;
-        }
-        if (!ok) {
-          console.error(
-            `[engine] Migration ${componentName}@${migration.version} ABORTED by pre-flight; ` +
-              `component stays at v${currentVersion}. Later migrations are skipped until this one applies.`,
-          );
-          return;
-        }
-      }
-
-      // MIGRATE WITH `trusted_schema = ON`, THEN HARDEN AGAIN (BR-089).
-      //
-      // The SECOND door with this problem, and the reason it needs its own fix
-      // rather than inheriting `db.ts`'s: this adapter opens its OWN connection
-      // (`new Database(dbPath)` above) and sets its own pragmas. A pragma is a
-      // property of a CONNECTION, not of a database file, so hardening one door
-      // does nothing for the other.
-      //
-      // `trusted_schema = OFF` is right at runtime — it stops a virtual table
-      // being reached from inside a trigger or view. But migration SQL is
-      // arbitrary DDL, and any `ALTER TABLE ... RENAME` in it makes SQLite
-      // re-parse every trigger in the schema, including the `vec0` cleanup
-      // triggers. Under `OFF` that re-parse is refused with
-      // `unsafe use of virtual table "learnings_vec"`, which surfaces here as
-      // `brain write engine boot failed` — 64 cli assertions at once, none of
-      // them naming a pragma.
-      //
-      // Latent under better-sqlite3 v11, live at v12 (BR-089). Scoped in TIME,
-      // and the `finally` means a migration that throws still leaves the
-      // connection hardened rather than trusting.
-      db.pragma('trusted_schema = ON');
-      try {
-        db.transaction(() => {
-          db.exec(migration.sql);
-          db.prepare(
-            'INSERT INTO engine_migrations (component, version) VALUES (?, ?)'
-          ).run(componentName, migration.version);
-        })();
-      } finally {
-        db.pragma('trusted_schema = OFF');
-      }
-
-      // BR-083 D1a — POST-COMMIT verification (e.g. `PRAGMA foreign_key_check`,
-      // restoring a pragma `pre` toggled). It runs after COMMIT because the
-      // checks it makes are about the NEW schema. A throw here is reported and
-      // does NOT roll the migration back — it is already committed; the honest
-      // signal is a loud log, not a lie about the version.
-      if (migration.post) {
-        try {
-          migration.post(db);
-        } catch (err) {
-          console.error(
-            `[engine] Migration ${componentName}@${migration.version} post-check FAILED: ${
-              err instanceof Error ? err.message : String(err)
-            }`,
-          );
-        }
-      }
-
-      console.error(
-        `[engine] Migration ${componentName}@${migration.version}: ${migration.description}`
-      );
-    }
-  }
 
   const adapter: StorageAdapter = {
     get rawConnection(): Database.Database {
@@ -256,7 +151,7 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
       return db.pragma(directive);
     },
 
-    runMigrations,
+    runMigrations: (name, migrations) => runComponentMigrations(db, name, migrations),
 
     close(): void {
       db.close();
@@ -264,4 +159,134 @@ export function createSqliteAdapter(dbPath: string): StorageAdapter {
   };
 
   return adapter;
+}
+
+/** Shared runner for explicit local actions and engine boot (FR-276). */
+export function runComponentMigrations(db: Database.Database, componentName: string, migrations: Migration[]): void {
+  db.exec(`CREATE TABLE IF NOT EXISTS engine_migrations (component TEXT NOT NULL, version INTEGER NOT NULL, applied_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY(component, version))`);
+  if (migrations.length === 0) return;
+
+  // The highest version of this component recorded so far (0 when none).
+  const readVersion = (): number =>
+    (db.prepare(
+      'SELECT MAX(version) as version FROM engine_migrations WHERE component = ?'
+    ).get(componentName) as { version: number | null } | undefined)?.version ?? 0;
+
+  // Get current version for this component
+  let currentVersion = 0;
+  try {
+    currentVersion = readVersion();
+  } catch {
+    // Table may not exist yet on very first run
+  }
+
+  // Sort migrations by version and apply pending ones
+  const sorted = [...migrations].sort((a, b) => a.version - b.version);
+
+  for (const migration of sorted) {
+    if (migration.version <= currentVersion) continue;
+
+    // FR-276 — re-read BEFORE the pre-flight as well as under the lock below.
+    // The CLI's attention actions and engine boot both run this runner, so
+    // another process may have applied this version since the read above; a
+    // pre() run against that newer schema could refuse it and abort every later
+    // migration. An applied version skips pre, SQL, insert and post alike.
+    currentVersion = Math.max(currentVersion, readVersion());
+    if (migration.version <= currentVersion) continue;
+
+    // BR-083 D1a — PRE-FLIGHT, OUTSIDE THE TRANSACTION.
+    //
+    // A `false` return (or a throw) SKIPS this migration and every later one
+    // for this component: versions are monotonic, so applying v5 over a v3
+    // schema because v4 aborted would be worse than not migrating at all.
+    // The component stays at its previous version and the next boot retries
+    // — `db.ts` v22's abort semantics, which exist because the alternative
+    // to a verified backup is a hope.
+    if (migration.pre) {
+      let ok = false;
+      try {
+        ok = migration.pre(db);
+      } catch (err) {
+        console.error(
+          `[engine] Migration ${componentName}@${migration.version} pre-flight THREW: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        ok = false;
+      }
+      if (!ok) {
+        console.error(
+          `[engine] Migration ${componentName}@${migration.version} ABORTED by pre-flight; ` +
+            `component stays at v${currentVersion}. Later migrations are skipped until this one applies.`,
+        );
+        return;
+      }
+    }
+
+    // MIGRATE WITH `trusted_schema = ON`, THEN HARDEN AGAIN (BR-089).
+    //
+    // The SECOND door with this problem, and the reason it needs its own fix
+    // rather than inheriting `db.ts`'s: this adapter opens its OWN connection
+    // (`new Database(dbPath)` above) and sets its own pragmas. A pragma is a
+    // property of a CONNECTION, not of a database file, so hardening one door
+    // does nothing for the other.
+    //
+    // `trusted_schema = OFF` is right at runtime — it stops a virtual table
+    // being reached from inside a trigger or view. But migration SQL is
+    // arbitrary DDL, and any `ALTER TABLE ... RENAME` in it makes SQLite
+    // re-parse every trigger in the schema, including the `vec0` cleanup
+    // triggers. Under `OFF` that re-parse is refused with
+    // `unsafe use of virtual table "learnings_vec"`, which surfaces here as
+    // `brain write engine boot failed` — 64 cli assertions at once, none of
+    // them naming a pragma.
+    //
+    // Latent under better-sqlite3 v11, live at v12 (BR-089). Scoped in TIME,
+    // and the `finally` means a migration that throws still leaves the
+    // connection hardened rather than trusting.
+    db.pragma('trusted_schema = ON');
+    let applied = false;
+    try {
+      // FR-276 — the CLI's attention actions and engine boot both run this
+      // runner, so another process can apply this version between the read
+      // above and here (a bare ADD COLUMN would then fail as a duplicate).
+      // IMMEDIATE takes the write lock first; the re-read under it decides.
+      applied = db.transaction(() => {
+        const latest = readVersion();
+        if (latest >= migration.version) {
+          currentVersion = latest;
+          return false;
+        }
+        db.exec(migration.sql);
+        db.prepare(
+          'INSERT INTO engine_migrations (component, version) VALUES (?, ?)'
+        ).run(componentName, migration.version);
+        return true;
+      }).immediate();
+    } finally {
+      db.pragma('trusted_schema = OFF');
+    }
+    // Already applied by another connection: no post-check, no "applied" log.
+    if (!applied) continue;
+
+    // BR-083 D1a — POST-COMMIT verification (e.g. `PRAGMA foreign_key_check`,
+    // restoring a pragma `pre` toggled). It runs after COMMIT because the
+    // checks it makes are about the NEW schema. A throw here is reported and
+    // does NOT roll the migration back — it is already committed; the honest
+    // signal is a loud log, not a lie about the version.
+    if (migration.post) {
+      try {
+        migration.post(db);
+      } catch (err) {
+        console.error(
+          `[engine] Migration ${componentName}@${migration.version} post-check FAILED: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
+
+    console.error(
+      `[engine] Migration ${componentName}@${migration.version}: ${migration.description}`
+    );
+  }
 }

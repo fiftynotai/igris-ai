@@ -15,8 +15,13 @@
  *           registered project nested inside another registered project beats
  *           its parent.
  *        b. `basename(cwd)` equals a slug exactly — the fallback for a row
- *           whose `path` is empty or stale, and the same shape `assess` uses
- *           (`basenameOfCwd`).
+ *           whose `path` is empty or stale. A documented ladder fallback,
+ *           kept as the old CLI default's shape; the CLI's own `--project`
+ *           default is now the TD-359 resolver
+ *           (`project-identity.ts#defaultProjectSlug`).
+ *      The caller (`routes.ts#projects`) passes the cwd's worktree-translated
+ *      path (`resolveProjectIdentity(cwd).lookup_path`), so both rungs also
+ *      work from a linked worktree of a registered project (TD-359).
  *      Only ever yields a slug that is actually IN the registry, because it is
  *      resolved BY scanning registry rows.
  *   2. Most recently active, by `projects.last_session_at`.

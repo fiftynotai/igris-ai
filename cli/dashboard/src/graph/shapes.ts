@@ -56,6 +56,12 @@ const ENTITY_SHAPE: Readonly<Record<string, ShapeKind>> = {
   decision: "STORE",
   goal: "AGENT",
   error: "TOOL",
+  // FR-276 inventory: stored instructions, callable procedures, actors, tools.
+  os_module: "STORE",
+  context_doc: "STORE",
+  skill: "SERVICE",
+  agent: "AGENT",
+  tool: "TOOL",
 };
 
 /**

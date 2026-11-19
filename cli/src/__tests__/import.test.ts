@@ -15,6 +15,9 @@
  * checksum-reject, executable-surface reject, claim-state never written,
  * context-doc conflict-protection + backup, the hand-off/hand-back round-trip,
  * and `--as` fresh-slug all-NEW.
+ *
+ * BR-106 triage: FENCED (Tier H + B) — runExport -> buildExport ->
+ *   redactTablesForEgress -> relativizeEgressPath -> homedir().
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -35,6 +38,10 @@ import { c as tarCreate, x as tarExtract } from "tar";
 import { runExport } from "../verbs/export.js";
 import { runImport } from "../verbs/import.js";
 import { closeDb } from "../lib/brain-db.js";
+import { fenceHome, type HomeFence } from "./home-fence.js";
+
+/** BR-106 — the tier-H HOME fence for this file. */
+let br106Fence: HomeFence;
 
 let tmpRoot: string;
 let prevBrainDir: string | undefined;
@@ -367,6 +374,7 @@ function projectRow(slug: string): { slug: string; path: string; name: string } 
 }
 
 beforeEach(() => {
+  br106Fence = fenceHome("igris-import-home-"); // BR-106: HOME moves FIRST, and ARMED
   prevBrainDir = process.env.IGRIS_BRAIN_DIR;
   tmpRoot = mkdtempSync(join(tmpdir(), "igris-import-brain-"));
   process.env.IGRIS_BRAIN_DIR = tmpRoot;
@@ -379,6 +387,7 @@ afterEach(() => {
   else process.env.IGRIS_BRAIN_DIR = prevBrainDir;
   rmSync(tmpRoot, { recursive: true, force: true });
   vi.restoreAllMocks();
+  br106Fence.release(); // BR-106: restores HOME / IGRIS_BRAIN_DIR by key
 });
 
 // --- AC1: dry-run zero writes ------------------------------------------------

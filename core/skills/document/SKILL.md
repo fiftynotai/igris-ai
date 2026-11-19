@@ -8,6 +8,7 @@ allowed-tools:
   - Write
   - Grep
   - Glob
+  - mcp__igris-brain__igris_context_sync
 triggers:
   - "DOCUMENT"
   - "CHRONICLE"
@@ -70,7 +71,24 @@ Documentation workflow for writing and maintaining project documentation.
   report `/ground <type>` or an operator follow-up instead of inventing a thin
   placeholder.
 
-### Step 4: Validate
+### Step 4: Replicate any edited context doc (TD-460)
+
+If Step 3 edited a doc under `~/.igris/projects/{project}/context/`, call:
+```
+igris_context_sync { project: "<slug>" }
+```
+The FILE stays the authority; this absorbs the edit into the `context_files`
+replica and auto-pushes it, so the updated standard is reachable from every
+machine on the same VPS. This is the hop that covers `/hunt` Phase 7, which
+delegates its context-doc maintenance here — the edits arrive as plain `Edit`
+calls that no hook can intercept, so nothing else would carry them.
+
+Expect each edited filename in the digest's `absorbed[]`. Skipping it is not
+data loss (`/boot` Mount runs the same reconciler as a catch-all), but the doc
+then replicates one session late. Skip the call entirely when Step 3 touched no
+context doc.
+
+### Step 5: Validate
 
 - All links work (internal and external)
 - Code examples are correct and runnable

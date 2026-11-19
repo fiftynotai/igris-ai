@@ -27,6 +27,7 @@ import {
 import { runInstall } from "./install.js";
 import { runSelfUpdate } from "../lib/self-update.js";
 import { mergeGlobalCanonicalHooks } from "../lib/global-hooks.js";
+import { attributionAddedNote } from "../lib/attribution-settings.js";
 import { info, warn, debug, error as logError } from "../lib/log.js";
 
 export interface UpdateOptions {
@@ -82,7 +83,9 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
         reason: `path does not exist: ${row.path}`,
       });
       warn(
-        `${row.slug}: path missing (${row.path}); skipped — use 'igris doctor --remove-orphans' to clean.`,
+        // TD-310: a missing path is often a MOVED project — point at doctor's
+        // orphan report (what the row owns, re-point first), not at deletion.
+        `${row.slug}: path missing (${row.path}); skipped — run 'igris doctor' to see what the row owns and re-point it, record its repo_url, or remove it.`,
       );
       continue;
     }
@@ -167,6 +170,9 @@ export async function runUpdate(opts: UpdateOptions): Promise<number> {
     } else {
       debug(`global Igris hooks already up to date (${gh.path})`);
     }
+    // TD-470: the same write applies Claude Code's `attribution` default.
+    if (gh.attribution === "added") info(attributionAddedNote(gh.path));
+    else if (gh.attribution) debug(`attribution ${gh.attribution} -> ${gh.path}`);
   }
 
   info("");

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # default-install-installs-hooks.bats — the v7-default canary, FR-212d-updated.
 #
 # TD-100 (the original): default install must not silently ship WITHOUT a

@@ -8,9 +8,9 @@
  *   - install <path> [--slug <slug>] [--no-hooks] [--dry-run]
  *   - update [--all] [--slug <slug>] [--self] [--dry-run]
  *   - register-project [path] [--slug <slug>] [--allow-missing-path]
- *   - sync <code|data|all|status> [--dry-run] [--if-changed]
+ *   - sync <code|data|all|status|push|drain> [--dry-run] [--if-changed]
  *   - context-docs inventory --project <slug> [--json]
- *   - doctor [--fix] [--remove-orphans] [--yes]
+ *   - doctor [--fix] [--remove-orphans [--yes [--include-owning]] [--empty-only] [--slug <slug>]]
  *
  * The CLI owns the install pipeline natively in TS. FR-212d Phase 2 made
  * `igris install` REGISTER-ONLY: it upserts the brain `projects` row +
@@ -51,15 +51,17 @@ import { runRemove } from "./verbs/remove.js";
 import { runDetect } from "./verbs/detect.js";
 import { runOnboarding } from "./verbs/onboarding.js";
 import { runBootSync } from "./verbs/boot-sync.js";
-import { runSession, type SessionAction } from "./verbs/session.js";
+import { runSessionCommand, type SessionAction } from "./verbs/session.js";
 import { runInstance, type InstanceAction } from "./verbs/instance.js";
 import { runHousekeeping } from "./verbs/housekeeping.js";
 import { runAssess } from "./verbs/assess.js";
 import { runContextDocs, type ContextDocsAction } from "./verbs/context-docs.js";
 import { runCognition } from "./verbs/cognition.js";
 import { runCeremony } from "./verbs/ceremony.js";
+import { runProjectCommand } from "./verbs/project.js";
 import { runKpi } from "./verbs/kpi.js";
 import { runDashboard } from "./verbs/dashboard.js";
+import { runAttention, type AttentionOptions } from "./verbs/attention.js";
 import { runExport } from "./verbs/export.js";
 import { runImport } from "./verbs/import.js";
 import type { ExportTier, OnConflictPolicy } from "./types.js";
@@ -383,7 +385,7 @@ async function main(argv: string[]): Promise<void> {
   program
     .command("sync <sub-verb>")
     .description(
-      "Push code/data to the VPS brain. Sub-verbs: code, data, all, status.",
+      "Push code/data to the VPS brain. Sub-verbs: code, data, all, status, push, drain.",
     )
     .option(
       "--dry-run",
@@ -400,6 +402,9 @@ async function main(argv: string[]): Promise<void> {
         subVerb: string,
         opts: { dryRun?: boolean; ifChanged?: boolean },
       ): Promise<void> => {
+        // BR-117: a run that ends before runSync returns (a drained event
+        // loop) exits 1; only the verified result below clears it.
+        process.exitCode = 1;
         const code = await runSync({
           subVerb: subVerb as SyncSubVerb,
           dryRun: opts.dryRun === true,
@@ -991,7 +996,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug for the queue path (default: basename of cwd)",
+      "project slug for the queue path (default: the project resolved from cwd)",
     )
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action(
@@ -1011,7 +1016,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option(
       "--self-instance-id <id>",
@@ -1019,15 +1024,17 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project-path <path>",
-      "register: absolute path to the project directory (instance row project_path)",
+      "register: the project directory; stored in the instance row's project_path as its git worktree root (realpath), or its realpath outside git (default: cwd)",
     )
     .option(
       "--seed-next-steps <text>",
       "register: the chosen handoff's resume content to seed the LIVE file's Next Steps (the resume carry-forward)",
     )
+    .option("--attention-session <uuid>", "register: explicit local attention recording to bind")
+    .option("--harness-session-id <id>", "register: verified native chat identity")
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action(
-      (
+      async (
         action: string,
         opts: {
           project?: string;
@@ -1035,15 +1042,19 @@ async function main(argv: string[]): Promise<void> {
           projectPath?: string;
           seedNextSteps?: string;
           json?: boolean;
+          attentionSession?: string;
+          harnessSessionId?: string;
         },
-      ): void => {
-        const code = runSession({
+      ): Promise<void> => {
+        const code = await runSessionCommand({
           action: action as SessionAction,
           project: opts.project,
           selfInstanceId: opts.selfInstanceId,
           projectPath: opts.projectPath,
           seedNextSteps: opts.seedNextSteps,
           json: opts.json !== false,
+          attentionSession: opts.attentionSession,
+          harnessSessionId: opts.harnessSessionId,
         });
         process.exitCode = code;
       },
@@ -1056,7 +1067,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option("--instance-id <id>", "instance id for state/deregister")
     .option("--current-brief <id>", "state: currently reserved/active brief id")
@@ -1105,7 +1116,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option(
       "--roll-days <n>",
@@ -1166,7 +1177,7 @@ async function main(argv: string[]): Promise<void> {
     )
     .option(
       "--project <slug>",
-      "project slug (default: basename of cwd)",
+      "project slug (default: the project resolved from cwd)",
     )
     .option("--json", "emit the digest as JSON to stdout (default; on for the awaken path)", true)
     .action((opts: { project?: string; json?: boolean }): void => {
@@ -1217,7 +1228,7 @@ async function main(argv: string[]): Promise<void> {
       "FR-268: brain-timed ceremony stamps. Actions: start, stop. Writes ceremony_events through the local write door (create-never); created_at is the DB clock and duration_ms is SQL-computed on stop from the paired open start — never caller-supplied. The four ceremony skills call this as their first and last executable step. Prints a JSON digest. Exit 0 even when degraded; unknown action/name → exit 2.",
     )
     .option("--name <ceremony>", "boot | rest | register | hunt-init")
-    .option("--project <slug>", "project slug (default: basename of cwd)")
+    .option("--project <slug>", "project slug (default: the project resolved from cwd)")
     .option("--instance-id <id>", "instance id when known (boot's start predates the mint — omit there)")
     .option("--brief <id>", "brief id (register / hunt-init)")
     .option("--json", "emit the digest as JSON to stdout (default)", true)
@@ -1237,6 +1248,56 @@ async function main(argv: string[]): Promise<void> {
       },
     );
 
+  // Visible since FR-273: `relate` / `unrelate` / `kinds` are operator verbs.
+  // `watermark` (FR-274) is the session-end hook's action and is unchanged.
+  program
+    .command("project <action> [args...]")
+    .description(
+      "Project relations and per-project brain records. relations (FR-273): the project's related projects (both directions, --depth chain, repo_url, on-disk flag, watermark) through the brain's relations action layer, read-only; --boot prints the one-line /boot digest. kinds list (FR-273): the relation-kind registry. Writes (FR-273): relate <from> <kind> <to> [--detail k=v]..., unrelate <from> <kind> <to>, kinds add <name> --meaning --kind-direction --forward-label --inverse-label --example [--alias]..., kinds alias <name> <alias>, kinds merge <retired> <survivor> — through the brain's own relations module; exit 0 written, 1 refused, 3 degraded (nothing written). watermark (FR-274, called by /rest and the SessionEnd hook): record HEAD SHA + branch of the project row's path as the knowledge watermark; every failure writes nothing and is named in skipped[]. Prints one JSON digest. Reads exit 0 even when degraded; unknown action or bad argument → exit 2.",
+    )
+    .option("--project <slug>", "project slug (default: the project resolved from cwd)")
+    .option("--depth <n>", "relations: hops to follow (default 1, max 5)")
+    .option("--direction <d>", "relations: out | in | both (default both)")
+    .option("--kind <kind>", "relations: only this relation kind")
+    .option("--no-check", "relations: skip the neighbours' watermark git checks")
+    .option("--boot", "relations: print the /boot one-line digest")
+    .option("--detail <k=v>", "relate: per-edge detail (repeatable)", collect, [])
+    .option("--meaning <text>", "kinds add: what the relation means (A/B endpoints)")
+    .option("--kind-direction <text>", "kinds add: which endpoint plays which role")
+    .option("--forward-label <text>", "kinds add: label read from the source")
+    .option("--inverse-label <text>", "kinds add: label read from the target")
+    .option("--example <text>", "kinds add: one example edge")
+    .option("--alias <name>", "kinds add: an alias (repeatable)", collect, [])
+    .action(
+      async (
+        action: string,
+        args: string[],
+        opts: {
+          project?: string; depth?: string; direction?: string; kind?: string; check?: boolean; boot?: boolean;
+          detail?: string[]; meaning?: string; kindDirection?: string; forwardLabel?: string;
+          inverseLabel?: string; example?: string; alias?: string[];
+        },
+      ): Promise<void> => {
+        process.exitCode = await runProjectCommand({
+          action,
+          args,
+          project: opts.project,
+          depth: opts.depth,
+          direction: opts.direction,
+          kind: opts.kind,
+          check: opts.check,
+          boot: opts.boot,
+          detail: opts.detail,
+          meaning: opts.meaning,
+          kindDirection: opts.kindDirection,
+          forwardLabel: opts.forwardLabel,
+          inverseLabel: opts.inverseLabel,
+          example: opts.example,
+          alias: opts.alias,
+        });
+      },
+    );
+
   // FR-268 — a REPORTING verb (markdown by default), visible: the operator
   // asks it directly; /ops renders it whole and /scan renders its --alarm line.
   program
@@ -1244,7 +1305,7 @@ async function main(argv: string[]): Promise<void> {
     .description(
       "FR-268: the seven OS KPIs (capacity, throughput, effort mix, minutes per hunt by phase, rounds per hunt, model per role, ceremony cost) computed on read from the brain's records — hunt_runs, brief_status, ceremony_runs. Weeks are Monday–Sunday UTC. Read-only. --sql prints the derivations for sqlite3; --alarm prints the one-line week-over-week reading /scan shows. Exit 0 even when degraded.",
     )
-    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the cwd basename)")
+    .option("--project <slug>", "scope to one project (default: all; --alarm defaults to the project resolved from cwd)")
     .option("--weeks <n>", "how many UTC weeks back, counting the current partial one", "4")
     .option("--json", "emit the digest as JSON", false)
     .option("--sql", "print the seven derivations verbatim and exit", false)
@@ -1265,6 +1326,39 @@ async function main(argv: string[]): Promise<void> {
   // signal arrives, so `process.exitCode` is set after the await rather than
   // synchronously. That is the whole point of a foreground server.
   program
+    .command("attention <action>")
+    .description("Record and inspect machine-local session attention: begin, bind, event, epoch, end, show, sessions, inventory, read, call")
+    .option("--session <uuid>", "explicit attention recording")
+    .option("--project <slug>", "project identity; node owner for read/event")
+    .option("--instance-id <id>", "Igris instance identity")
+    .option("--harness <name>", "native harness name")
+    .option("--harness-session-id <id>", "verified native chat identity")
+    .option("--parent-session <uuid>", "explicit parent recording")
+    .option("--actor <id>", "actor attribution")
+    .option("--operation <id>", "idempotency token")
+    .option("--event-key <key>", "event identity within an operation")
+    .option("--reason <text>", "short reason without secrets")
+    .option("--selection <category>", "declared selection: boot, task, retrieval or user_request (read/call/event)")
+    .option("--selection-ref <id>", "safe policy/task identifier; no prose, paths or queries")
+    .option("--type <type>", "resource node type")
+    .option("--id <id>", "resource canonical ID")
+    .option("--kind <kind>", "event: delivery, invocation, availability")
+    .option("--outcome <outcome>", "event: started, succeeded, failed, unknown")
+    .option("--extent <extent>", "event: full, preview, unknown")
+    .option("--source-revision <hash>", "source version")
+    .option("--bytes <n>", "delivered byte count")
+    .option("--max-bytes <n>", "read limit, at most 2 MiB")
+    .option("--status <status>", "end: ended or interrupted")
+    .option("--tool <name>", "call: local brain tool")
+    .option("--args-file <path>", "call: JSON arguments file")
+    .option("--through <sequence>", "show: replay cutoff")
+    .option("--before <cursor>", "history cursor")
+    .option("--limit <n>", "page size 1–100")
+    .action(async (action: string, opts: Omit<AttentionOptions, "action">) => {
+      process.exitCode = await runAttention({ ...opts, action });
+    });
+
+  program
     .command("dashboard")
     .description(
       "FR-238/FR-241: start the local IGRIS dashboard — a loopback-only server " +
@@ -1280,9 +1374,12 @@ async function main(argv: string[]): Promise<void> {
       "--port <n>",
       "exact port to bind. Without this the verb tries 7317, then an OS-assigned port. An explicit port that is taken is a hard failure — explicit intent is never silently reassigned.",
     )
+    .option("--session <uuid>", "open a specific attention recording")
+    .option("--ensure", "ensure one managed dashboard and return JSON readiness without opening a browser")
+    .option("--stop", "stop the verified managed dashboard")
     .option("--no-open", "do not launch a browser")
     .option("--smoke", "hidden self-check: start, probe, print a JSON digest, exit", false)
-    .action(async (opts: { port?: string; open?: boolean; smoke?: boolean }) => {
+    .action(async (opts: { port?: string; open?: boolean; smoke?: boolean; session?: string; ensure?: boolean; stop?: boolean }) => {
       let port: number | undefined;
       if (opts.port !== undefined) {
         port = Number.parseInt(opts.port, 10);
@@ -1297,6 +1394,7 @@ async function main(argv: string[]): Promise<void> {
         noOpen: opts.open === false,
         smoke: opts.smoke === true,
         cliVersion: readPackageVersion(),
+        session: opts.session, ensure: opts.ensure, stop: opts.stop,
       });
     });
 
@@ -1405,20 +1503,41 @@ async function main(argv: string[]): Promise<void> {
     .option("--fix", "auto-fix all fixable drift classes (see `igris doctor` output)", false)
     .option(
       "--remove-orphans",
-      "interactively delete registry rows whose path is missing",
+      "interactively delete registry rows whose path is missing (never source-reclaimed rows)",
       false,
     )
-    .option("-y, --yes", "skip per-row confirmation when --remove-orphans", false)
+    .option(
+      "-y, --yes",
+      "skip per-row confirmation when --remove-orphans; a row that owns briefs/learnings is refused unless --include-owning",
+      false,
+    )
+    .option(
+      "--empty-only",
+      "with --remove-orphans: non-interactively delete only the orphan rows that own nothing",
+      false,
+    )
+    .option("--slug <slug>", "with --remove-orphans: act on this one registry row only")
+    .option(
+      "--include-owning",
+      "with --remove-orphans --yes: also attempt rows that own briefs/learnings (the FK still refuses briefed/sessioned rows)",
+      false,
+    )
     .action(
       async (opts: {
         fix?: boolean;
         removeOrphans?: boolean;
         yes?: boolean;
+        emptyOnly?: boolean;
+        slug?: string;
+        includeOwning?: boolean;
       }): Promise<void> => {
         const code = await runDoctor({
           fix: opts.fix === true,
           removeOrphans: opts.removeOrphans === true,
           yes: opts.yes === true,
+          emptyOnly: opts.emptyOnly === true,
+          slug: opts.slug,
+          includeOwning: opts.includeOwning === true,
         });
         process.exitCode = code;
       },

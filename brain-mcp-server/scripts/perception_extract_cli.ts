@@ -696,7 +696,7 @@ export async function main(argv: string[] = process.argv): Promise<number> {
     // canonical sync path. Wrapped in its own try/catch so a push failure
     // does NOT reverse the extract success: the extracted rows are already
     // persisted and the failed-push rows are queued in `sync_queue` by
-    // handleBrainPush itself for the next /awaken §3.6.1 drain.
+    // handleBrainPush itself for the next `igris sync drain` (/rest).
     //
     // Position: AFTER inbox truncation (synchronous, fast) and BEFORE the
     // BR-060 finally block that disposes the transformers pipeline and
@@ -713,9 +713,9 @@ export async function main(argv: string[] = process.argv): Promise<number> {
         const pushText = pushResult.content?.[0]?.text ?? '(no push response)';
         // handleBrainPush contract (verified TD-097 audit): isError=true means
         // queueFailedRows was attempted before returning (catch block at
-        // sync.ts:864 always runs queueFailedRows ahead of isError return).
+        // sync.ts:889 always runs queueFailedRows ahead of isError return).
         // Hard-fail-without-attempting-queue is impossible by construction;
-        // a queue-write itself can still fail (inner try/catch at sync.ts:869).
+        // a queue-write itself can still fail (inner try/catch at sync.ts:894).
         pushSummary = pushResult.isError ? 'queued' : 'pushed';
         // Log the first line of the push text so operators tailing
         // perception_extract.log see the row counts and chunk count from

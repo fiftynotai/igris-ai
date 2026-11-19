@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # validate_skill_os_harness_leak.test.bash - Tests for
 #   scripts/validate_skill_os_harness_leak.py (TD-248).
 #
@@ -36,6 +36,7 @@ setup() {
 
 teardown() {
   [ -d "$SCRATCH" ] && rm -rf "$SCRATCH"
+  cleanup_test_temp_dir
 }
 
 @test "real_tree_passes: validator over repo skills/OS exits 0" {

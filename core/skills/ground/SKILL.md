@@ -10,6 +10,7 @@ allowed-tools:
   - Glob
   - Bash
   - mcp__igris-brain__igris_project_status
+  - mcp__igris-brain__igris_context_sync
 triggers:
   - "GROUND"
   - "STANDARDIZE"
@@ -149,6 +150,18 @@ the catalog — **not** hardwired to `coding_guidelines.md`):
 > / Structure & organization / Idiomatic patterns / Decisions* — identical to the
 > prior behavior.
 
+### Step 4: Replicate the authored doc (TD-460)
+After writing the target doc, call:
+```
+igris_context_sync { project: "<slug>" }
+```
+The file stays the authority; this absorbs it into the `context_files` replica
+and auto-pushes it, so a doc authored HERE is reachable from every machine on
+the same VPS. Skipping it is not data loss — `/boot` Mount runs the same
+reconciler as a catch-all — but it means the doc replicates one session late.
+Expect the new doc's filename in the digest's `absorbed[]`; a per-doc failure
+appears in `refused[]` and never fails the authoring.
+
 ## Inventory (`ground inventory`)
 
 `ground inventory` is a read-only, derived **status view** backed by the shared
@@ -208,3 +221,7 @@ Do not author them automatically — the inventory only reports.
 doc-type (default `coding_guidelines.md`), structured by that type's catalog
 skeleton. Or, for `ground inventory`, the printed status table (no file
 written).
+
+Plus one line naming the `igris_context_sync` result — e.g.
+`Replicated: coding_guidelines.md absorbed (1 doc)` — so the operator can see
+the doc reached the brain, or see it in `refused[]` if it did not.

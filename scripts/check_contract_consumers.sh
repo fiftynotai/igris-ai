@@ -16,26 +16,61 @@ set -euo pipefail
 #                                               # (SPACE-separated; a comma-joined
 #                                               #  argument is a usage error)
 #   check_contract_consumers.sh --map <file>    # override map location (tests)
+#   check_contract_consumers.sh --list-tokens   # print what the map registers:
+#                                               # <map line>\t<type>\t<token>, exit 0
 #
 # ---------------------------------------------------------------------------
-# WHAT AN EXIT 0 ACTUALLY PROVES (TD-334 — read this before trusting it)
+# WHAT AN EXIT 0 ACTUALLY PROVES (TD-334, TD-346 — read this before trusting it)
 # ---------------------------------------------------------------------------
 # Two independent verdicts come out of this script:
 #
 #   1. Token sweep — WARN only, never blocks. A renamed/deleted mapped contract
 #      is usually intentional, so the checker informs; it does not veto.
-#   2. Map self-consistency — HARD-FAIL (exit 1). Every consumer citation that
-#      is recognised as a repo path must resolve, and its line ref must exist.
+#   2. Map self-consistency — HARD-FAIL (exit 1), reported as a STALE MAP.
 #
 # Verdict 2 does not run in every mode, and that difference is the whole
 # reason an exit 0 gets over-read:
 #   * default (staged) mode runs it ONLY when MAINTAINING.md is itself staged.
 #     With the map unstaged, exit 0 says NOTHING about map health. That gate is
 #     right at commit time (the map WILL be staged then), but an interactive
-#     pre-commit run is not the check a reader assumes.
+#     pre-commit run is not the check a reader assumes. A map problem that
+#     keeps rows out of the token sweep is still announced there as a WARN.
 #   * `--paths` mode ALWAYS runs it. That is the meaningful manual invocation.
-#   Whenever verdict 2 runs it prints a `map citations: N validated / M skipped`
-#   line, so an exit 0 is never a silent "the whole map is healthy".
+#   Whenever verdict 2 runs it prints the `map citations:` summary line and a
+#   `coverage:` line, so an exit 0 is never a silent "the whole map is healthy".
+#
+# EVERY CAUSE OF A STALE MAP (this is the one list; the pre-commit hook and
+# MAINTAINING.md point here instead of repeating it):
+#   Citations (the Consumers column):
+#     1. a citation names a path that does not exist (not at the repo root,
+#        and no tracked path ends with it);
+#     2. a short-form citation is AMBIGUOUS: more than one tracked path ends
+#        with it (TD-346). Every candidate is named;
+#     3. a cited line number is past the end of the file (or < 1);
+#     4. a glob or brace citation matches nothing, or a brace member is gone.
+#   Row grammar (TD-313, TD-466):
+#     5. a malformed row: it does not split into exactly 7 cells;
+#     6. a row that registers no contract token;
+#     7. a map row after the `<!-- MAP:END -->` terminator;
+#     8. `## The Map` with no `<!-- MAP:END -->` terminator at all.
+#   A citation pointing at a BLANK line or a bare closing delimiter ("}",
+#   "];") is a WARNING, not a STALE MAP: "points at a construct" is a cheap
+#   proxy, not a proof, so it informs rather than blocks.
+#
+# WHAT A CLEAN RUN DOES NOT PROVE. Exit 0 proves that every validated citation
+#   resolves to ONE path and every cited line number is in range; 0 line-drift
+#   warnings adds that no cited line is blank or a bare delimiter. A clean run
+#   does NOT prove that a cited line is the construct the row describes: a
+#   citation still pointing at a real, non-blank line after its code moved
+#   (TD-321's `gateway.ts:155`) passes.
+#   file#symbol citations are counted, NOT checked: `file.ts#symbolName` is
+#   skipped like prose and reported as its own number inside the skipped
+#   total. GENERATED paths are never validated.
+#   One residual limit of the ambiguity rule: if the file a short form meant is
+#   deleted while exactly ONE other tracked file shares its tail, the citation
+#   re-resolves to that file silently. The rule catches the collision only
+#   while both files exist; test (u) of test/check_contract_consumers.test.bash
+#   runs `--paths MAINTAINING.md` on the real map in CI on every push.
 #
 # WHICH CITATIONS ARE VALIDATED (the Consumers column only — map column 3):
 #   Every backtick-quoted token in a Consumers cell is classified. A token is
@@ -49,7 +84,8 @@ set -euo pipefail
 #   Everything else is SKIPPED and COUNTED, not silently dropped: prose, call
 #   signatures (`buildBrainGraph(db, opts)`), JSON-schema pointers
 #   (`$defs/surface_contract`), <angle-bracket> placeholders, placeholder line
-#   refs like `handlers.ts:NN`, and `<other-repo>:<path>` citations.
+#   refs like `handlers.ts:NN`, `<other-repo>:<path>` citations, and
+#   file#symbol citations (counted separately, see above).
 #
 #   BOTH citation forms are validated, not just one (before TD-334 the bare
 #   form — the dominant one — was skipped entirely and the line half of the
@@ -60,9 +96,11 @@ set -euo pipefail
 #
 #   Resolution is repo-root first, then path-SUFFIX against `git ls-files`: the
 #   map deliberately cites short forms (`pages/Graph.tsx`, `edges/traversal.ts`)
-#   relative to a directory the row's own prose establishes. A citation passes
-#   when some tracked file ends with it at a segment boundary. A token ending
-#   in "/" is resolved the same way against tracked directories.
+#   relative to a directory the row's own prose establishes. A short form passes
+#   when EXACTLY ONE tracked file ends with it at a segment boundary; two or
+#   more is cause 2. A token ending in "/" is resolved the same way against
+#   tracked directories. A path that exists at the repo root is taken as
+#   root-relative, so a full path is never ambiguous.
 #
 #   GLOBS ARE RESOLVED, NOT SKIPPED. A token containing "*" or "{" is brace-
 #   and glob-expanded (`core/skills/*/SKILL.md`, `core/os/{conduct,standards}.md`)
@@ -71,28 +109,38 @@ set -euo pipefail
 #   catching. "**" is not a bash-3.2 pattern, so a trailing "/**" is validated
 #   as its directory.
 #
-#   GENERATED PATHS ARE SKIPPED. A citation git ignores (`cli/dist/...`) is not
-#   validated: it does not exist on a clean checkout, so failing on it would
-#   make the gate machine-dependent.
+#   GENERATED PATHS ARE CLASSIFIED FIRST, NEVER VALIDATED (TD-435). Every
+#   path-shaped citation is put to one `git check-ignore --stdin`, with a `p/`
+#   probe for any `p` that has no trailing slash, BEFORE anything is resolved.
+#   A git-ignored citation (`cli/dist/...`, or the bare directory `cli/dist`
+#   with or without its slash) is counted `generated` whether or not the
+#   artifact is built in this checkout — so the verdict and every count are
+#   the same in a built tree, a clean clone and a worktree. A tracked path is
+#   never generated (it exists in every checkout).
 #
-# LINE NUMBERS (TD-322, folded into TD-334) are validated in TWO TIERS, because
-#   the two kinds of drift do not cost the same:
-#     - a number GREATER than the file's line count (or < 1) is a HARD-FAIL:
-#       the citation cannot be pointing at anything.
-#     - a line that exists but is BLANK or a bare closing delimiter ("}", "];")
-#       is a WARNING (exit 0). "Points at a construct" is a cheap proxy, not a
-#       proof, so it informs rather than blocks.
-#   Full symbol resolution is out of scope: this catches drift, it does not
-#   type-check the map.
+# ROW GRAMMAR (TD-313, TD-466; MAINTAINING.md "Citation conventions" > "Row
+# grammar" is the author-facing version):
+#   * The map window runs from `## The Map` to the first `<!-- MAP:END -->`
+#     line after it; a heading inside the window does not end it. New rows are
+#     appended directly ABOVE the marker.
+#   * A row is one line of exactly 5 columns (7 cells when split on "|"). The
+#     GFM escape `\|` is the only way to write a pipe inside a cell, including
+#     inside a code span; it is honoured.
+#   * Contract tokens are the backtick-quoted runs of the Contract cell, each
+#     split on " / ". A token that is ONE alphabetic word — lowercase,
+#     Capitalised or ALLCAPS, /^([a-z]+|[A-Z][a-z]*|[A-Z]+)$/ — is NOT
+#     registered: a word like `nodes` or `Done` matches a large share of
+#     unrelated diffs and trains the reader to ignore the sweep. camelCase,
+#     internal capitals, digits, "_", ".", "/", "-" and spaces keep a token.
+#     Use --list-tokens to see exactly what a row registers.
 #
 # Dependencies: git, grep, sed, awk (all POSIX-standard; no sqlite3/jq).
 # Exit codes:
 #   0 - clean, or consumers surfaced as a WARNING (default non-blocking case),
-#       possibly with line-drift WARNINGs
-#   1 - stale map (a consumer citation does not resolve, a glob matches
-#       nothing, or a cited line number is out of range)
+#       possibly with line-drift WARNINGs; --list-tokens always
+#   1 - STALE MAP (any cause in the list above)
 #   2 - usage error (unknown flag; --paths with no argument or with a
-#       comma-joined argument)
+#       comma-joined argument; --list-tokens combined with --paths)
 
 # ---------------------------------------------------------------------------
 # Dependency validation (coding_guidelines §3) — validate upfront.
@@ -116,6 +164,9 @@ check_deps() {
 # ---------------------------------------------------------------------------
 MODE="staged"       # staged | paths
 MAP_FILE=""         # resolved below
+MAP_LABEL=""        # how findings name the map (resolved below)
+LIST_TOKENS=0       # --list-tokens: print the registered tokens and exit 0
+MAP_WINDOW=""       # none | bounded | unbounded (map_window_state)
 declare -a EXPLICIT_PATHS=()
 
 parse_args() {
@@ -149,6 +200,10 @@ parse_args() {
         MAP_FILE="$2"
         shift 2
         ;;
+      --list-tokens)
+        LIST_TOKENS=1
+        shift
+        ;;
       -h|--help)
         # Print the whole leading comment block (line 1 is the shebang, line 2
         # is `set`). A fixed line range goes stale the moment the header grows.
@@ -159,11 +214,18 @@ parse_args() {
         ;;
       *)
         echo "Error: unknown argument '$1'" >&2
-        echo "Usage: $0 [--paths <p>...] [--map <file>]" >&2
+        echo "Usage: $0 [--paths <p>...] [--map <file>] | --list-tokens [--map <file>]" >&2
         exit 2
         ;;
     esac
   done
+
+  # --list-tokens is a read-only diagnostic; beside --paths it would silently
+  # drop one of the two requests.
+  if [ "$LIST_TOKENS" = "1" ] && [ "$MODE" = "paths" ]; then
+    echo "Error: --list-tokens cannot be combined with --paths (it only prints what the map registers)." >&2
+    exit 2
+  fi
 
   # TD-334: `--paths` with no argument is the other silently-vacuous
   # invocation — it validates the map but previews nothing, and reads as a
@@ -193,58 +255,148 @@ resolve_paths() {
     # consumer projects that have not adopted FR-186).
     exit 0
   fi
+  # How findings name the map: repo-relative for the default map, so a finding
+  # reads `MAINTAINING.md:<line>`; as given for a --map override.
+  case "$MAP_FILE" in
+    "$REPO_ROOT"/*) MAP_LABEL="${MAP_FILE#"$REPO_ROOT"/}" ;;
+    *) MAP_LABEL="$MAP_FILE" ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
-# Parse the map. Emits one record per (token) on stdout in the form:
-#   <type>\t<token>\t<consumers-joined-by-;>
-# Only rows in the "## The Map" table are parsed (rows beginning with `| ` and
-# whose first cell, stripped of backticks, is non-empty and not a header/separator).
-# A Contract cell may hold multiple tokens separated by ` / `; each becomes its
-# own record carrying the shared consumer list.
+# Parse the map — ONE awk program, four modes (parse_map <mode>):
+#   records  <type>\t<token>\t<consumers>   one per registered Contract token
+#                                           (the token sweep, verdict 1)
+#   cites    <consumers>                    one per row (verdict 2's citation
+#                                           list — independent of the token
+#                                           filter, so a row that registers no
+#                                           token still has its citations read)
+#   list     <map line>\t<type>\t<token>    --list-tokens
+#   lint     one "STALE MAP: ..." finding per structural problem (verdict 2)
+#
+# Row grammar (TD-313; MAINTAINING.md "Citation conventions" > "Row grammar"):
+#   * A map row is ONE line that splits into exactly 7 cells on "|": a blank
+#     cell before the leading pipe, the five columns, a blank cell after the
+#     trailing pipe. The GFM escape `\|` is the ONLY way to put a pipe inside a
+#     cell — including inside a code span — and it is honoured here: it is
+#     swapped for a placeholder before the split and restored as "|" after.
+#     A row that does not split into 7 cells is a lint finding and is not read
+#     by the other modes (its columns would come from the wrong offsets).
+#   * Contract tokens: every backtick-quoted run in the Contract cell, each
+#     further split on " / ". With no backtick run at all, the whole cell is
+#     one token. A token that is ONE alphabetic word — lowercase, Capitalised
+#     or ALLCAPS, /^([a-z]+|[A-Z][a-z]*|[A-Z]+)$/ — is NOT registered: `nodes`,
+#     `Done` or `TOKEN` would match a large share of unrelated diffs and train
+#     the reader to ignore the sweep. camelCase, PascalCase with an internal
+#     capital, and anything with a digit, "_", ".", "/", "-" or a space stay.
+#     A row left with no token at all is a lint finding: it could never fire.
+#   * The header row ("Contract") and the separator row are cell-counted but
+#     register nothing.
+#
+# The window (TD-466): from the `## The Map` heading to the FIRST line that is
+# exactly `<!-- MAP:END -->` after it. A heading INSIDE the window does not end
+# it — before TD-466 any later H2 did, and the six rows appended below
+# `## Citation conventions` (FR-243, BR-103, BR-104, BR-105, TD-460, BR-106)
+# were never parsed while the gate reported clean. Structural lint findings:
+#   - `## The Map` with no terminator: nothing is parsed at all (never a silent
+#     fall-back to a guessed window), and verdict 2 fails;
+#   - a line AFTER the terminator that splits into 7 or more cells has a map
+#     row's shape (or a map row's plus a stray bare pipe): it would never be
+#     parsed, so it fails. The two-column Citation conventions table (4 cells)
+#     is untouched.
+# A file without `## The Map` has no map: nothing is parsed and nothing is
+# linted (a MAINTAINING.md that has not adopted FR-186).
+# LC_ALL=C: every awk (BSD, mawk, gawk) then splits and matches bytes the same
+# way; the map's non-ASCII characters are only ever copied through. The file is
+# read twice: pass 1 finds the window, pass 2 parses it.
 # ---------------------------------------------------------------------------
 parse_map() {
-  awk '
-    # Track whether we are inside the "## The Map" section.
-    /^## The Map[[:space:]]*$/ { in_map = 1; next }
-    /^## / { in_map = 0 }                       # any later H2 ends the table
-    in_map == 0 { next }
+  local mode="${1:-records}"
+  LC_ALL=C awk -v mode="$mode" -v label="$MAP_LABEL" '
+    function trim(s) { gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+    # Split a row on unescaped pipes; a `\|` comes back as "|" inside its cell.
+    function split_row(line, cell,    n, i) {
+      gsub(/\\[|]/, PH, line)
+      n = split(line, cell, "|")
+      for (i = 1; i <= n; i++) gsub(PH, "|", cell[i])
+      return n
+    }
+    function bare_word(t) { return t ~ /^([a-z]+|[A-Z][a-z]*|[A-Z]+)$/ }
+    function emit(tok) {
+      tcount++
+      if (mode == "records") print type "\t" tok "\t" consumers
+      else if (mode == "list") print FNR "\t" type "\t" tok
+    }
+    BEGIN { PH = sprintf("%c", 1) }
+    # Pass 1: locate the window.
+    FNR == NR {
+      if (!start && $0 ~ /^## The Map[[:space:]]*$/) start = FNR
+      else if (start && !stop && $0 ~ /^<!-- MAP:END -->[[:space:]]*$/) stop = FNR
+      next
+    }
+    # Pass 2.
+    FNR == 1 && mode == "lint" && start && !stop {
+      printf "STALE MAP: no <!-- MAP:END --> terminator after \"## The Map\" in %s — the map window cannot be bounded, so no row was parsed. Put the marker on its own line directly after the last row.\n", label
+    }
+    !start || !stop { next }                    # no map, or an unbounded one
+    FNR <= start { next }
+    FNR >= stop {
+      if (mode == "lint" && FNR > stop && $0 ~ /^\|/) {
+        n = split_row($0, cell)
+        if (n >= 7)
+          printf "STALE MAP: map row after <!-- MAP:END --> at %s:%d is never parsed — move it above the marker (new rows are appended directly above <!-- MAP:END -->).\n", label, FNR
+      }
+      next
+    }
     $0 !~ /^\|/ { next }                        # only table rows
     {
-      # Split the markdown row on the pipe.
-      n = split($0, cell, "|")
-      # cell[1] is empty (leading pipe). Contract=cell[2], Type=cell[3],
-      # Consumers=cell[4].
-      contract = cell[2]; type = cell[3]; consumers = cell[4]
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", contract)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", type)
-      gsub(/^[[:space:]]+|[[:space:]]+$/, "", consumers)
+      n = split_row($0, cell)
+      if (n != 7 || trim(cell[1]) != "" || trim(cell[7]) != "") {
+        if (mode == "lint")
+          printf "STALE MAP: malformed map row at %s:%d — it splits into %d cells; a map row has exactly 7 (a leading pipe, five columns, a trailing pipe). Write a pipe inside a cell as \\|.\n", label, FNR, n
+        next
+      }
+      # Contract=cell[2], Type=cell[3], Consumers=cell[4].
+      contract = trim(cell[2]); type = trim(cell[3]); consumers = trim(cell[4])
       # Skip the header row and the separator row.
-      if (contract == "Contract" || contract == "") next
-      if (contract ~ /^-+$/ || contract ~ /^:?-+:?$/) next
+      if (contract == "Contract") next
+      if (contract ~ /^:?-+:?$/) next
+      if (mode == "cites") print consumers
       # Strip backticks from the type cell.
       gsub(/`/, "", type)
       # A contract cell may carry several `tok` / `tok` tokens. Pull out each
       # backtick-quoted run; if none, treat the whole stripped cell as one token.
-      tcount = 0
+      tcount = 0; runs = 0
       rest = contract
       while (match(rest, /`[^`]+`/)) {
+        runs++
         tok = substr(rest, RSTART + 1, RLENGTH - 2)
         rest = substr(rest, RSTART + RLENGTH)
         # A single backtick cell may itself contain " / "-joined tokens.
         m = split(tok, parts, " / ")
         for (i = 1; i <= m; i++) {
-          p = parts[i]
-          gsub(/^[[:space:]]+|[[:space:]]+$/, "", p)
-          if (p != "") { tcount++; print type "\t" p "\t" consumers }
+          p = trim(parts[i])
+          if (p != "" && !bare_word(p)) emit(p)
         }
       }
-      if (tcount == 0) {
-        gsub(/`/, "", contract)
-        if (contract != "") print type "\t" contract "\t" consumers
+      if (runs == 0) {
+        whole = contract
+        gsub(/`/, "", whole)
+        whole = trim(whole)
+        if (whole != "" && !bare_word(whole)) emit(whole)
       }
+      if (tcount == 0 && mode == "lint")
+        printf "STALE MAP: map row at %s:%d registers no contract token — every Contract token is a bare single word (lowercase, Capitalised or ALLCAPS) or the cell is empty, so the row can never fire. Backtick a distinctive identifier: a path, a table.column, an env var, a dotted key, or a name with an internal capital, a digit or an underscore.\n", label, FNR
     }
-  ' "$MAP_FILE"
+  ' "$MAP_FILE" "$MAP_FILE"
+}
+
+# map_window_state — `none` (no "## The Map": nothing to parse), `bounded`, or
+# `unbounded` ("## The Map" with no <!-- MAP:END --> after it).
+map_window_state() {
+  awk '!s && /^## The Map[[:space:]]*$/ { s = 1; next }
+       s && /^<!-- MAP:END -->[[:space:]]*$/ { f = 1; exit }
+       END { print (f ? "bounded" : (s ? "unbounded" : "none")) }' "$MAP_FILE"
 }
 
 # ---------------------------------------------------------------------------
@@ -269,6 +421,10 @@ CITE_VALIDATED=0
 CITE_SKIPPED=0
 CITE_LINEREFS=0
 CITE_WARNS=0
+CITE_GENERATED=0
+CITE_SYMBOLS=0
+# A `file.ext#symbol` citation (TD-346 §B): counted inside the skipped total.
+SYMBOL_CITATION_RE='^[A-Za-z0-9_./-]+[.][A-Za-z0-9]+#[A-Za-z_$][A-Za-z0-9_$.]*$'
 
 # Called explicitly at the end of check_map_self_consistency — deliberately NOT
 # from an EXIT trap. See the TD-334 / TD-345 note below before changing that.
@@ -380,31 +536,109 @@ citation_is_repo_path() {
   return 0
 }
 
-# Does git ignore this path? Only asked when a citation FAILED to resolve, so
-# it costs at most a handful of forks per run.
-path_is_git_ignored() {
-  git -C "$REPO_ROOT" check-ignore -q -- "$1" 2>/dev/null
+# TD-435 — GENERATED (git-ignored) citations are classified BEFORE resolution.
+#
+# Before TD-435 git was asked only after a citation FAILED to resolve, which
+# made the verdict depend on the checkout: in a built tree `cli/dist` exists,
+# resolves, and is counted as validated; in a clean clone or a worktree it is
+# absent, and `git check-ignore cli/dist` does not report it either, because
+# git cannot know that an absent bare path is a directory, so a `dist/` rule
+# does not match it. The commit was refused there and the validated count
+# moved (580 vs 577 on the same map). Now every path-shaped citation is put to
+# ONE `git check-ignore --stdin`, together with a `p/` probe for any `p`
+# without a trailing slash, and a hit is counted GENERATED whether or not the
+# artifact happens to be built.
+#
+# A probe hit is NOT generated when the citation is itself a tracked file or
+# directory: the `p/` probe of a tracked FILE is reported ignored whenever a
+# non-directory pattern matches its name (measured: `.gitignore: build` plus a
+# force-added `pkg/lib/build`; `pkg/lib/build/` is reported, `pkg/lib/build`
+# is not). Tracked content exists in every checkout, so it is validated.
+#
+# CITE_IGNORED_SET is newline-FRAMED ("\np1\np2\n") so membership is one pure
+# bash `case` (bash 3.2 has no associative arrays). `--stdin` is read to EOF:
+# no `-q`, no `head` (TD-345).
+CITE_IGNORED_SET=""
+
+build_ignored_set() {
+  local probes="$1" hits
+  hits="$(printf '%s\n' "$probes" \
+    | awk 'NF { print; if ($0 !~ /\/$/) print $0 "/" }' \
+    | git -C "$REPO_ROOT" check-ignore --stdin 2>/dev/null || true)"
+  CITE_IGNORED_SET=$'\n'"$hits"$'\n'
 }
 
-# Resolve a non-glob citation: repo-root first, then as a path suffix of a
-# tracked file (or tracked directory, for a token ending in "/").
+citation_is_generated() {
+  local p="$1"
+  case "$CITE_IGNORED_SET" in
+    *$'\n'"$p"$'\n'*|*$'\n'"${p%/}/"$'\n'*) ;;
+    *) return 1 ;;
+  esac
+  # Only a probe hit reaches here (a handful per run), so these two forks are
+  # not paid per citation.
+  if grep -xF -- "$p" "$CITE_FILE_INDEX" >/dev/null \
+     || grep -xF -- "${p%/}/" "$CITE_DIR_INDEX" >/dev/null; then
+    return 1
+  fi
+  return 0
+}
+
+# split_citation <token> — sets CIT_PATH and CIT_LINEREF. A trailing line ref
+# is `:148`, `:79-102` or `:900,1359`. A placeholder ref (`handlers.ts:NN`)
+# does not match, so the token keeps its colon and is skipped by the charset
+# rule — deliberately.
+CIT_PATH=""
+CIT_LINEREF=""
+split_citation() {
+  if [[ "$1" =~ ^(.+):([0-9]+([-,][0-9]+)*)$ ]]; then
+    CIT_PATH="${BASH_REMATCH[1]}"
+    CIT_LINEREF="${BASH_REMATCH[2]}"
+  else
+    CIT_PATH="$1"
+    CIT_LINEREF=""
+  fi
+}
+
+# Resolve a non-glob citation: repo-root first; otherwise it must be the path
+# SUFFIX (at a segment boundary) of EXACTLY ONE tracked file — or tracked
+# directory, for a token ending in "/".
+#   return 0  resolved (RESOLVED = the absolute path)
+#   return 1  nothing ends with it (missing)
+#   return 2  AMBIGUOUS (TD-346): more than one tracked path ends with it.
+#             AMBIGUOUS_LIST holds every candidate, ", "-joined, and
+#             AMBIGUOUS_COUNT their number.
+# Before TD-346 this was `grep -m1`: the FIRST tracked path with a matching
+# tail won, so deleting the file a short form meant stayed silent whenever a
+# second file shared its tail. Every match is captured and counted now — no
+# `-m1`, no `-q`, no `head`. A path that exists at the repo root is still taken
+# as root-relative without looking for tail twins: a full path is never
+# ambiguous.
+AMBIGUOUS_LIST=""
+AMBIGUOUS_COUNT=0
 citation_resolves() {
-  local p="$1" esc hit
+  local p="$1" esc hits
   RESOLVED=""
+  AMBIGUOUS_LIST=""
+  AMBIGUOUS_COUNT=0
   if [ -e "$REPO_ROOT/$p" ]; then
     RESOLVED="$REPO_ROOT/$p"
     return 0
   fi
   esc="$(escape_ere "$p")"
   case "$p" in
-    */) hit="$(grep -m1 -xE "(.*/)?$esc" "$CITE_DIR_INDEX" || true)" ;;
-    *)  hit="$(grep -m1 -xE "(.*/)?$esc" "$CITE_FILE_INDEX" || true)" ;;
+    */) hits="$(grep -xE "(.*/)?$esc" "$CITE_DIR_INDEX" || true)" ;;
+    *)  hits="$(grep -xE "(.*/)?$esc" "$CITE_FILE_INDEX" || true)" ;;
   esac
-  if [ -n "$hit" ]; then
-    RESOLVED="$REPO_ROOT/$hit"
-    return 0
-  fi
-  return 1
+  [ -n "$hits" ] || return 1
+  case "$hits" in
+    *$'\n'*)
+      AMBIGUOUS_COUNT="$(printf '%s\n' "$hits" | awk 'END { print NR }')"
+      AMBIGUOUS_LIST="${hits//$'\n'/, }"
+      return 2
+      ;;
+  esac
+  RESOLVED="$REPO_ROOT/$hits"
+  return 0
 }
 
 # Resolve a glob/brace citation. Fails when the expansion is empty (a glob that
@@ -479,36 +713,75 @@ EOF
 
 check_map_self_consistency() {
   local bad=0
-  local citation path lineref
+  local citation citations probes="" rc
   CITE_VALIDATED=0
+  CITE_SYMBOLS=0
   CITE_SKIPPED=0
   CITE_LINEREFS=0
   CITE_WARNS=0
-  build_path_index
-  while IFS= read -r citation; do
-    # Split a trailing line ref: `:148`, `:79-102`, `:900,1359`. A placeholder
-    # ref (`handlers.ts:NN`) does not match, so the token keeps its colon and
-    # is skipped by the charset rule below — deliberately.
-    if [[ "$citation" =~ ^(.+):([0-9]+([-,][0-9]+)*)$ ]]; then
-      path="${BASH_REMATCH[1]}"
-      lineref="${BASH_REMATCH[2]}"
-    else
-      path="$citation"
-      lineref=""
-    fi
+  CITE_GENERATED=0
 
-    if ! citation_is_repo_path "$path"; then
+  # Row grammar first (TD-313): a malformed row or a row that registers no
+  # token is a STALE MAP in its own right.
+  local finding
+  while IFS= read -r finding; do
+    [ -n "$finding" ] || continue
+    echo "[contract-check] $finding" >&2
+    bad=1
+  done <<EOF
+$(parse_map lint)
+EOF
+
+  build_path_index
+
+  # Materialise the citation list first: the git-ignore classification needs
+  # every path-shaped citation in ONE batch, before any of them is resolved.
+  # Pull every backtick-quoted token out of the Consumers column. The single
+  # quotes are deliberate — we match LITERAL backtick characters, not a shell
+  # expansion. shellcheck SC2016 does not apply.
+  # NOTE: column 3 is the Consumers cell. A bogus citation planted in the
+  # Contract cell is NOT seen here, by design — only consumer citations are
+  # sweep targets.
+  # shellcheck disable=SC2016
+  citations="$(parse_map cites | tr ';' '\n' \
+    | grep -oE '`[^`]+`' | tr -d '`' | sort -u || true)"
+
+  while IFS= read -r citation; do
+    [ -n "$citation" ] || continue
+    split_citation "$citation"
+    citation_is_repo_path "$CIT_PATH" && probes="$probes$CIT_PATH"$'\n'
+  done <<EOF
+$citations
+EOF
+  build_ignored_set "$probes"
+
+  while IFS= read -r citation; do
+    [ -n "$citation" ] || continue
+    split_citation "$citation"
+
+    if ! citation_is_repo_path "$CIT_PATH"; then
       CITE_SKIPPED=$((CITE_SKIPPED + 1))
+      # TD-346 §B: a `file.ext#symbol` citation is skipped like any other
+      # non-path token, but it LOOKS checked, so it is counted separately and
+      # labelled NOT checked on the summary line.
+      if [[ "$CIT_PATH" =~ $SYMBOL_CITATION_RE ]]; then
+        CITE_SYMBOLS=$((CITE_SYMBOLS + 1))
+      fi
       continue
     fi
 
-    case "$path" in
+    # GENERATED first: never resolved, so the verdict and the counts do not
+    # depend on whether the artifact is built in this checkout.
+    if citation_is_generated "$CIT_PATH"; then
+      CITE_GENERATED=$((CITE_GENERATED + 1))
+      continue
+    fi
+
+    case "$CIT_PATH" in
       *'*'*|*'{'*)
         # Glob / brace citation.
-        if glob_resolves "$path"; then
+        if glob_resolves "$CIT_PATH"; then
           CITE_VALIDATED=$((CITE_VALIDATED + 1))
-        elif path_is_git_ignored "$path"; then
-          CITE_SKIPPED=$((CITE_SKIPPED + 1))
         else
           echo "[contract-check] STALE MAP: consumer citation '$citation' is a glob that does not resolve: $GLOB_MISS" >&2
           bad=1
@@ -517,35 +790,33 @@ check_map_self_consistency() {
         ;;
     esac
 
-    if ! citation_resolves "$path"; then
-      if path_is_git_ignored "$path"; then
-        CITE_SKIPPED=$((CITE_SKIPPED + 1))
-        continue
-      fi
-      echo "[contract-check] STALE MAP: consumer citation '$citation' names a file that does not exist: $REPO_ROOT/$path" >&2
+    rc=0
+    citation_resolves "$CIT_PATH" || rc=$?
+    if [ "$rc" -eq 2 ]; then
+      echo "[contract-check] STALE MAP: consumer citation '$citation' is ambiguous — $AMBIGUOUS_COUNT tracked paths end with it: $AMBIGUOUS_LIST. Lengthen it until exactly one tracked path ends with it, or cite it from the repo root." >&2
+      bad=1
+      continue
+    fi
+    if [ "$rc" -ne 0 ]; then
+      echo "[contract-check] STALE MAP: consumer citation '$citation' names a file that does not exist: $REPO_ROOT/$CIT_PATH" >&2
       bad=1
       continue
     fi
     CITE_VALIDATED=$((CITE_VALIDATED + 1))
 
-    if [ -n "$lineref" ]; then
+    if [ -n "$CIT_LINEREF" ]; then
       CITE_LINEREFS=$((CITE_LINEREFS + 1))
-      check_line_ref "$RESOLVED" "$lineref" "$citation" || bad=1
+      check_line_ref "$RESOLVED" "$CIT_LINEREF" "$citation" || bad=1
     fi
-  done < <(
-    # Pull every backtick-quoted token out of the Consumers column. The single
-    # quotes are deliberate — we match LITERAL backtick characters, not a shell
-    # expansion. shellcheck SC2016 does not apply.
-    # NOTE: column 3 is the Consumers cell. A bogus citation planted in the
-    # Contract cell is NOT seen here, by design — only consumer citations are
-    # sweep targets.
-    # shellcheck disable=SC2016
-    parse_map | cut -f3 | tr ';' '\n' \
-      | grep -oE '`[^`]+`' | tr -d '`' | sort -u || true
-  )
+  done <<EOF
+$citations
+EOF
   cleanup_path_index
-  # Always report the shape of the check, so an exit 0 carries a number.
-  echo "[contract-check] map citations: $CITE_VALIDATED validated ($CITE_LINEREFS with line refs), $CITE_SKIPPED skipped (not a repo path, external, or generated), $CITE_WARNS line-drift warning(s)." >&2
+  # Always report the shape of the check, so an exit 0 carries a number — and,
+  # on the next line, what that number does NOT cover (TD-346 §B). The header
+  # block at the top of this file is the long form of both lines.
+  echo "[contract-check] map citations: $CITE_VALIDATED validated ($CITE_LINEREFS with line refs), $CITE_GENERATED generated (git-ignored: never validated, the same in every checkout), $CITE_SKIPPED skipped (not a repo path, or external; $CITE_SYMBOLS of them file#symbol, NOT checked), $CITE_WARNS line-drift warning(s)." >&2
+  echo "[contract-check] coverage: a clean run proves every validated citation resolves to ONE path (repo root first, else the single tracked path ending with it) and every cited line number is in range; 0 line-drift warnings adds that no cited line is blank or a bare closing delimiter. It does NOT prove that a cited line is the construct the row describes, and it does not check generated paths or file#symbol citations." >&2
   return "$bad"
 }
 
@@ -677,6 +948,10 @@ escape_ere() {
 scan() {
   local hits=0
   local type token consumers
+  if [ "$MAP_WINDOW" = "unbounded" ]; then
+    echo "[contract-check] WARN: $MAP_LABEL has \"## The Map\" but no <!-- MAP:END --> terminator, so the map cannot be bounded: the token sweep did NOT run. Put the marker on its own line directly after the last row." >&2
+    return 0
+  fi
   while IFS=$'\t' read -r type token consumers; do
     [ -n "$token" ] || continue
     if token_hit "$type" "$token"; then
@@ -688,7 +963,7 @@ scan() {
       echo "[contract-check]   Consumers that may break: $clist" >&2
       echo "[contract-check]   Sweep them in this commit, or update MAINTAINING.md if the contract is genuinely retired." >&2
     fi
-  done < <(parse_map)
+  done < <(parse_map records)
 
   if [ "$hits" -gt 0 ]; then
     echo "[contract-check] $hits mapped contract(s) touched (WARNING — not blocking). See above." >&2
@@ -696,10 +971,30 @@ scan() {
   return 0
 }
 
+# Verdict 2 did not run (staged mode, map unstaged), so a row the parser could
+# not read was not reported — and was not swept either. Say so, loudly, without
+# blocking: the two-verdict model keeps structural failures hard only where
+# verdict 2 runs.
+warn_unswept_map_problems() {
+  local findings count
+  # An unbounded map is reported by scan() ("the token sweep did NOT run").
+  [ "$MAP_WINDOW" = "bounded" ] || return 0
+  findings="$(parse_map lint)"
+  [ -n "$findings" ] || return 0
+  count="$(printf '%s\n' "$findings" | awk 'END { print NR }')"
+  echo "[contract-check] WARN: $MAP_LABEL has $count map problem(s) that this run did not validate; the rows involved were NOT swept. Run: scripts/check_contract_consumers.sh --paths $MAP_LABEL" >&2
+}
+
 main() {
   check_deps
   parse_args "$@"
   resolve_paths
+  MAP_WINDOW="$(map_window_state)"
+
+  if [ "$LIST_TOKENS" = "1" ]; then
+    parse_map list
+    exit 0
+  fi
 
   # HARD-FAIL gate: stale-map self-consistency, only when MAINTAINING.md is
   # staged (staged mode) or always in --paths advisory mode if the map exists.
@@ -710,6 +1005,8 @@ main() {
       if ! check_map_self_consistency; then
         fail=1
       fi
+    else
+      warn_unswept_map_problems
     fi
     scan
   else
@@ -722,7 +1019,7 @@ main() {
   fi
 
   if [ "$fail" = "1" ]; then
-    echo "[contract-check] MAINTAINING.md is stale — fix the consumer citation(s) above before committing." >&2
+    echo "[contract-check] MAINTAINING.md is stale — fix the map problem(s) above before committing." >&2
     exit 1
   fi
   exit 0

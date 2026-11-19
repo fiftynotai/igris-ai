@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_retirement.test.bash - FR-152 / FR-159 retirement test for the legacy
 # agent-side cli-adapter scripts (sync_claude_agents.sh + sync_codex_agents.sh).
 #

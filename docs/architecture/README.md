@@ -2,7 +2,7 @@
 
 Contributor-facing reference for how the system fits together.
 
-**Start here if you're new:** [`SYSTEM.md`](./SYSTEM.md) is the canonical system overview — the 4 layers, the 19 brain components, the brief lifecycle, the hook dataflow, the agent roster + the skills, and "how do I add X?" extension points. It links out to the per-feature docs below for every subsystem.
+**Start here if you're new:** [`SYSTEM.md`](./SYSTEM.md) is the canonical system overview — the 4 layers, the registered brain components, the brief lifecycle, the hook dataflow, the agent roster + the skills, and "how do I add X?" extension points. It links out to the per-feature docs below for every subsystem.
 
 For any specific subsystem, read its per-feature doc directly. These are the source of truth; `SYSTEM.md` summarizes and cross-links.
 
@@ -17,6 +17,7 @@ For any specific subsystem, read its per-feature doc directly. These are the sou
 - **[`typed_edges.md`](./typed_edges.md)** — Foundational graph layer over briefs, learnings, errors, sessions, and goals (FR-105). Soft-delete on archive; relation catalog driven by enums.
 - **[`graph_traversal.md`](./graph_traversal.md)** — Three read-only MCP tools — `igris_graph_neighbors`, `igris_graph_path`, `igris_graph_subgraph` — for structured navigation of the entity-edge graph (FR-113).
 - **[`whole_brain_graph.md`](./whole_brain_graph.md)** — Cross-project graph data layer behind `igris_graph_brain` (FR-237). Composite `type|project|id` node key, the ambiguous-edge resolution rule, drill-down as a depth-1 closure over the same assembled graph, and the stated scale threshold.
+- **[`session_attention.md`](./session_attention.md)** — Per-chat evidence over the durable graph: local session identity, observed delivery, capability invocation, history, and coverage (FR-276).
 - **[`goals.md`](./goals.md)** — Outcome-level goals as first-class entities distinct from briefs (FR-110). Goals own measurable outcomes; briefs own work items.
 
 ## Perception & learning

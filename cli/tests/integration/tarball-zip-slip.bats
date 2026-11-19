@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # tarball-zip-slip.bats — integration test for the malicious-tarball
 # rejection path. We can't easily wire the CLI to fetch a tarball
 # from a local file (the verb expects an HTTPS URL); the unit test in

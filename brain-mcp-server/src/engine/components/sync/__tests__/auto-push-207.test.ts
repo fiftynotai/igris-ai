@@ -527,3 +527,94 @@ describe('BR-066 auto-push HTTP 207 partial-success handling', () => {
     comp.destroy();
   });
 });
+
+// ---------------------------------------------------------------------------
+// BR-118 — auto-push (`pushTables`) never persists or logs the configured key
+// when the remote echoes it. Two sinks: the catch path (a 4xx re-thrown by
+// `fetchWithRetry` → `log.warn` + `queueFailedRows`) and the 207 path (a
+// per-table `errors` value → `queueFailedRows` + `log.warn`). The fixture
+// reflects the request's OWN Authorization header, so the key under test is
+// whatever the component read from (mocked) config — a synthetic canary.
+// ---------------------------------------------------------------------------
+
+describe('BR-118 — auto-push leaves an echoed key in no queued row and no log line', () => {
+  const KEY = 'sk-br118-canary-autopush';
+  let db: Database.Database;
+  let bus: EventBus;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = makeAutoPushDb();
+    bus = createEventBus();
+    vi.mocked(getDb).mockReturnValue(db);
+    vi.mocked(readFileSync).mockReturnValue(
+      JSON.stringify({ auto_push: true, remote_brain: { url: 'https://brain.example.com', api_key: KEY } }),
+    );
+    originalFetch = globalThis.fetch;
+    db.prepare(
+      `INSERT INTO brief_status (id, project, brief_id, status, updated_at) VALUES ('bs-118', 'p', 'BR-118', 'In Progress', '2026-10-01 10:00:00')`,
+    ).run();
+    db.prepare(
+      `INSERT INTO brief_files (id, project, brief_id, filename, content, content_hash, updated_at)
+       VALUES ('bf-118', 'p', 'BR-118', 'BR-118.md', '# brief', 'b118', '2026-10-01 10:00:00')`,
+    ).run();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  function authOf(init: RequestInit): string {
+    return String((init.headers as Record<string, string>).Authorization);
+  }
+
+  async function run(): Promise<{ queued: string[]; logs: string }> {
+    const comp = createSyncComponent();
+    const ctx = makeCtx(bus);
+    comp.init(ctx);
+    bus.emit('brief.synced', { project: 'p', brief_id: 'BR-118' });
+    await flushAsync();
+    comp.destroy();
+    const queued = (db.prepare('SELECT error_message FROM sync_queue ORDER BY id').all() as { error_message: string }[])
+      .map((r) => r.error_message);
+    const logs = [ctx.log.warn, ctx.log.error, ctx.log.info]
+      .flatMap((fn) => vi.mocked(fn).mock.calls.map((c) => c.map(String).join(' ')))
+      .join('\n');
+    return { queued, logs };
+  }
+
+  it('B6-catch: an echo-401 — every queued error_message and the warn line exclude the key', async () => {
+    globalThis.fetch = vi.fn(async (_u: unknown, init: RequestInit) => ({
+      ok: false,
+      status: 401,
+      text: async () => `unauthorized: got ${authOf(init)}`,
+    } as Response)) as unknown as typeof globalThis.fetch;
+
+    const { queued, logs } = await run();
+    expect(queued.length).toBe(2);
+    for (const m of queued) expect(m).toBe('HTTP 401: unauthorized: got Bearer [redacted]');
+    expect(logs).toContain('Auto-push failed: HTTP 401: unauthorized: got Bearer [redacted]');
+    expect(logs).not.toContain(KEY);
+  });
+
+  it('B6-207: a per-table error echoing the key — the queued row and the warn line exclude it', async () => {
+    globalThis.fetch = vi.fn(async (_u: unknown, init: RequestInit) => {
+      const body = JSON.parse(init.body as string) as { tables: Record<string, unknown[]> };
+      const results: Record<string, unknown> = {};
+      const errors: Record<string, string> = {};
+      for (const t of Object.keys(body.tables)) {
+        if (t === 'brief_files') errors[t] = `refused for ${authOf(init)}`;
+        else results[t] = { inserted: 1, updated: 0, skipped: 0, failed: 0 };
+      }
+      return { ok: true, status: 207, json: async () => ({ ok: false, results, errors }), text: async () => '' } as Response;
+    }) as unknown as typeof globalThis.fetch;
+
+    const { queued, logs } = await run();
+    expect(queued).toEqual(['HTTP 207 — table=brief_files: refused for Bearer [redacted]']);
+    expect(logs).toContain('table=brief_files: refused for Bearer [redacted]');
+    expect(logs).not.toContain(KEY);
+  });
+});

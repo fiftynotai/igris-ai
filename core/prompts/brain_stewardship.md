@@ -23,8 +23,11 @@ the local file directly.
 Cross-instance sync to the VPS (URL from `~/.igris/config.json` → `remote_brain.url`) is **explicit**
 and happens via two paths:
 
-1. **Operator-initiated.** Call `igris_brain_push` to push the local delta
-   or `igris_brain_pull` to pull remote rows. `/sync data` wraps both.
+1. **Operator-initiated.** Run `igris sync push` to push the local delta (it
+   reads the remote and key from config and dispatches `igris_brain_push` in
+   process — never call that tool with a literal key yourself), or call
+   `igris_brain_pull` to pull remote rows. `/sync data` drains the local queue file and asks the remote to drain
+   its own table, `igris sync drain` retries this machine's brain queue; neither pushes the delta nor pulls (`/boot` pulls via `igris boot-sync`).
    Use when you want this Mac's recent work to show up on another instance
    immediately, or when you suspect the local DB is missing rows another
    machine wrote.
@@ -43,11 +46,11 @@ applies migrations on first use.
 ### Decision triggers — when to reach for which tool
 
 - **Stale recall result?** The local DB does not yet have the row. Either
-  pull from the VPS now (`igris_brain_pull` / `/sync data`) or wait for the
+  pull from the VPS now (`igris_brain_pull` / `igris boot-sync`) or wait for the
   next session_end push from the machine that wrote it.
-- **About to /rest after work another machine needs?** `/sync data` (push)
-  before `/rest` if you can't wait the ~1-3s for the inline auto-push to
-  land.
+- **About to /rest after work another machine needs?** `/rest` §2.7 runs
+  `igris sync push`; run it yourself first if you can't wait the ~1-3s for the
+  inline auto-push to land.
 - **`access_count` not incrementing?** That used to mean "two-DB drift"
   (FR-120 fixed it). Post-FR-120 the local DB IS the operating store —
   `sqlite3 ~/.igris/memory/knowledge.db "SELECT access_count..."` is the
@@ -395,7 +398,9 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 > the "lego" store).
 
 **Primary tools:** `igris_project_register`, `igris_project_list`,
-`igris_project_update`, `igris_project_dashboard`.
+`igris_project_update`, `igris_project_dashboard`; project relations (FR-273):
+`igris_project_relations`, `igris_project_relate`, `igris_project_relation_kinds`,
+`igris_project_relations_derive`.
 
 **What's there:** all registered Igris projects — slug, path, tech stack,
 archetype, status, last session. Drives the affinity boosts in recall.
@@ -417,6 +422,14 @@ archetype, status, last session. Drives the affinity boosts in recall.
   narrowed cross-project listings (replaces the older `_list` pattern).
   `summary_only: true` for counts-only during `/scan`.
 - During the `/ops` skill flow.
+- Before changing a public API, a package's exported surface or a pinned
+  version, or porting a fix between a variant/white-label build and its base:
+  `igris_project_relations({slug})` names the related projects (both
+  directions, `depth` for the chain). Declaring an edge (`igris_project_relate`)
+  or adding a kind (`igris_project_relation_kinds`) is rare and deliberate;
+  `igris_project_relations_derive` proposes manifest-derived edges as pending
+  suggestions for the operator to apply —
+  see `core/os/memory.md` §5 "Project relations — when to call".
 
 ### Example invocation
 
@@ -589,5 +602,11 @@ SELECT brief_id, size, agent, model_requested, COUNT(*) AS rounds,
 FROM hunt_runs WHERE project='igris-ai' AND brief_id='FR-267'
 GROUP BY brief_id, size, agent, model_requested ORDER BY MIN(ended_at);
 ```
+
+## Local session attention (FR-276)
+
+`igris_attention_session` begins or binds a durable recording, advances an explicitly observed context epoch, or ends it. `igris_attention_event` records only self-reported external activity. `igris_attention_call` invokes a target through the same brain's strict gateway and records delivery evidence from instrumented response boundaries. These tools require identity on the same brain; never pass a local session ID to an unknown remote MCP connection. The local CLI `igris attention` route is the boot default.
+
+Attention records are local execution evidence, excluded from replication and project exports. Availability is not invocation; preview is not full delivery; delivery does not prove model use or retention. No confidence or relevance score is derived from these records. Use the session URL returned by the local dashboard for inspection; viewing it writes nothing.
 
 <!-- /SECTION: brain_stewardship -->

@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # brain_reap_stale_instances.test.bash — Tests for the BR-067 stale-instance
 # reaper (brain-mcp-server/scripts/reap-stale-instances.ts).
 #
@@ -33,7 +33,7 @@ teardown() {
   for pid in "${SPAWNED_PIDS[@]:-}"; do
     [ -n "$pid" ] && kill -9 "$pid" 2>/dev/null || true
   done
-  [ -d "$TEST_TEMP_DIR" ] && rm -rf "$TEST_TEMP_DIR"
+  cleanup_test_temp_dir
 }
 
 # Write a pidfile (keyed by parent PID) into the sandboxed registry.

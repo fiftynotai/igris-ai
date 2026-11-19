@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/../../../test/require_bats.bash" || exit 2
 # loadout-verb.bats — FR-216: the Layer-2 customization store verb is `igris
 # loadout`. Proves the rename landed cleanly with NO back-compat:
 #   - `igris loadout` exists (--help + list work)

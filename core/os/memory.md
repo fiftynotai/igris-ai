@@ -279,7 +279,7 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 
 > **Naming note:** the **project** registry (registered Igris projects). Not the **reusable-assets catalog** in §5b (`igris_catalog_*`) — a different store.
 
-**Tools:** `igris_project_register`, `igris_project_list`, `igris_project_status`, `igris_project_update`, `igris_project_dashboard`.
+**Tools:** `igris_project_register`, `igris_project_list`, `igris_project_status`, `igris_project_update`, `igris_project_dashboard`; project relations (FR-273): `igris_project_relations`, `igris_project_relate`, `igris_project_relation_kinds`, `igris_project_relations_derive`. CLI verbs: `igris project relations` (`--boot` for the one-line /boot digest), `igris project kinds list`, and the writes `igris project relate|unrelate` and `igris project kinds add|alias|merge` (the same checks as the tools; exit 0 written, 1 refused, 3 degraded; a CLI write replicates on the next brain push).
 
 **What's there:** all registered Igris projects — slug, path, tech stack, archetype, status, last session. Drives the affinity boosts in recall.
 
@@ -297,6 +297,31 @@ igris_error_dashboard({ project: "igris-ai", summary_only: true })
 igris_project_status({ slug: "fifty_eco_system" })
 igris_project_update({ slug: "old-prototype", status: "archived" })
 igris_project_dashboard({ archetype: "ai-agent-system", summary_only: true })
+```
+
+### Project relations — when to call
+
+Registered projects can be related: a package one app imports, a service it calls at runtime, a white-label or variant build of a base, a project that replaced another. The relation lives in the brain, not in any one repo. `/boot` prints one `Connected: …` line when the current project has neighbours.
+
+Call `igris_project_relations` (or `igris project relations --project <slug>`):
+
+- before changing a public API, a package's exported surface, or a pinned version — the `in` neighbours are who breaks;
+- before porting a fix between a variant or white-label build and its base, in either direction;
+- when the /boot line shows neighbours and the task touches that boundary.
+
+It returns each neighbour with kind, labels, per-edge detail (package, ref, protocol), `repo_url` and whether the working copy is on disk (a deleted checkout is still a valid neighbour — clone it from `repo_url`), plus the FR-274 knowledge watermark when one is recorded. `depth` follows the chain (max 5); the connected "system" is derived, never stored.
+
+When to declare (`igris_project_relate`) or add a kind (`igris_project_relation_kinds`): rarely, and deliberately. Only a registered kind is accepted; an alias is stored under its canonical name. A new kind is refused when its name or meaning WORDING near-duplicates an existing one — accept the kind the refusal names, or `alias` your name onto it. The semantic check only advises: a kind that means the same thing in different words can be accepted, so run `list` first; `merge` is the recovery. Two kinds that turn out to mean the same thing are `merge`d. Removal is a tombstone, so it replicates. Aliases converge on the next write of the kind row: concurrent alias adds on two machines can leave one replica missing the other's alias until then.
+
+To find edges from code rather than declare them: `igris_project_relations_derive({ slug })` reads the project's `pubspec.yaml`, `package.json` and `pyproject.toml`, and turns a git or path dependency that matches another registered project (by `repo_url`, or by directory) into a PENDING suggestion — never an edge. Review the response, then apply one with `igris_suggestion_apply_action({ id })`; the edge is written with provenance `derived`. Limitation: it reads the working tree only, so a dependency that exists only on another branch is not seen — declare that one.
+
+```jsonc
+igris_project_relations({ slug: "moca-agent-web", depth: 2, direction: "out" })
+igris_project_relate({ action: "declare", from: "moca-agent-web", kind: "uses_package", to: "moca-agent-flutter-client", detail: { package: "moca_agent_client_ui", ref: "v2.0.0" } })
+igris_project_relate({ action: "remove", from: "moca-app", kind: "uses_package", to: "moca-agent-flutter-client" })
+igris_project_relation_kinds({ action: "list" })
+igris_project_relation_kinds({ action: "alias", name: "calls_service", alias: "invokes" })
+igris_project_relations_derive({ slug: "moca-agent-web" })
 ```
 
 ## 5b. Reusable-assets catalog (`igris_catalog_*`)

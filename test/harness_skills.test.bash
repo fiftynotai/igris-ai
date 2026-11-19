@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # harness_skills.test.bash - Tests for the FR-137 skills surface.
 #
 # FR-137 folds the FR-103 skill compilers into the FR-136 manifest-driven
@@ -119,7 +119,7 @@ EOF
 
 teardown() {
   [ -n "${PROJ:-}" ] && [ -d "$PROJ" ] && rm -rf "$PROJ"
-  return 0
+  cleanup_test_temp_dir
 }
 
 # --- Schema validation -------------------------------------------------------

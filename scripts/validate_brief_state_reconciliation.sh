@@ -53,8 +53,8 @@ set -e
 #   BRAIN_DB   override brain DB path (default: ~/.igris/memory/knowledge.db)
 #   REPO_DIR   override git repo to scan for closing commits
 #              (default: the repo containing this script)
-#   PROJECT    override the project slug to query
-#              (default: basename of REPO_DIR)
+#   PROJECT    override the project slug to query (default: the project
+#              REPO_DIR resolves to via _gate.sh, else its basename; TD-510)
 # Exit codes:
 #   0 - No contradictions (clean), OR fail-open (sqlite3/DB absent, no rows).
 #   1 - One or more contradictions (C1/C2/C3) detected. The pre-commit hook
@@ -67,7 +67,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # throwaway DB + git repo.
 BRAIN_DB="${BRAIN_DB:-$HOME/.igris/memory/knowledge.db}"
 REPO_DIR="${REPO_DIR:-$REPO_ROOT}"
-PROJECT="${PROJECT:-$(basename "$REPO_DIR")}"
+PROJECT="${PROJECT:-}"
 
 # --- Canonical phase enum (the SHARED CONSTANT) ------------------------------
 # This is the single definition of the valid brief phase set. TD-257 defines it
@@ -101,14 +101,39 @@ has_closing_commit() {
   local brief_id="$1"
   local matches
   # -F fixed-string (the id is literal); -i case-insensitive for safety; the id
-  # shape ([A-Z]+-[0-9]+) is validated by the caller before this is reached.
+  # shape ([A-Z]+-[0-9]+[a-z]?) is validated by the caller before this is reached.
   matches="$(git -C "$REPO_DIR" log --grep="$brief_id" -F -i --format='%H' 2>/dev/null | head -1)"
   [ -n "$matches" ]
 }
 
+# --- Resolve the project (TD-510) --------------------------------------------
+# With PROJECT unset (the pre-commit hook passes none) the slug is the project
+# REPO_DIR resolves to, through the one resolver (_gate.sh; MAINTAINING "project
+# identity resolver"), so a worktree whose directory name is not the slug
+# reconciles its project instead of a phantom one with no rows. _gate.sh is
+# this checkout's own copy, else the runtime mirror; with neither, basename.
+# The resolver reads the registry at $HOME/.igris/memory/knowledge.db, as every
+# hook does; BRAIN_DB overrides only the brief rows. Runs after the fail-open
+# exits, so a machine without the workflow spawns no git.
+if [ -z "$PROJECT" ]; then
+  # [[ TD-510 RESOLVE BEGIN ]]
+  for _gate in "$REPO_ROOT/core/hooks/shared/_gate.sh" "$HOME/.igris/core/hooks/shared/_gate.sh"; do
+    [ -f "$_gate" ] || continue
+    # shellcheck source=/dev/null
+    . "$_gate" >/dev/null 2>&1 || true
+    if type igris_resolve_project >/dev/null 2>&1; then
+      igris_resolve_project "$REPO_DIR"
+      PROJECT="${_IGRIS_RES_SLUG:-}"
+      break
+    fi
+  done
+  # [[ TD-510 RESOLVE END ]]
+  [ -n "$PROJECT" ] || PROJECT="$(basename "$REPO_DIR")"  # TD-359 last-resort: the resolver is unavailable
+fi
+
 # --- Query the canonical store -----------------------------------------------
 # Pull every brief's id/status/phase for the project. $PROJECT is a slug
-# (basename of repo or an env override) — single-quote-escaped (doubled) with
+# (the resolved project or an env override) — single-quote-escaped (doubled) with
 # an UNQUOTED assignment: under /bin/bash 3.2 the quoted form keeps its
 # backslashes and the query fails OPEN (TD-453 idiom; BR-104 fixed this site).
 PROJECT_SQL=${PROJECT//\'/\'\'}
@@ -130,9 +155,11 @@ report=""
 while IFS='|' read -r brief_id status phase; do
   [ -n "$brief_id" ] || continue
 
-  # Only evaluate well-formed brief ids ([A-Z]+-[0-9]+); skip anything else so
-  # the git grep is never fed an unexpected token. Defense-in-depth.
-  if ! [[ "$brief_id" =~ ^[A-Z]+-[0-9]+$ ]]; then
+  # Only evaluate well-formed brief ids ([A-Z]+-[0-9]+[a-z]?); skip anything
+  # else so the git grep is never fed an unexpected token. Defense-in-depth.
+  # The optional letter is TD-468: a lettered sub-brief (FR-212a) is a brief,
+  # and the digits-only shape had EXEMPTED every one of them from C1/C2/C3.
+  if ! [[ "$brief_id" =~ ^[A-Z]+-[0-9]+[a-z]?$ ]]; then
     continue
   fi
 

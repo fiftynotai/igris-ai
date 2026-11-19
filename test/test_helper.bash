@@ -10,14 +10,41 @@ export BATS_TEST_DIRNAME="${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}"
 export IGRIS_ROOT="$(cd "$BATS_TEST_DIRNAME/.." && pwd)"
 export SCRIPTS_DIR="$IGRIS_ROOT/scripts"
 
-# Test directory for temporary files
-export TEST_TEMP_DIR="${BATS_TMPDIR:-/tmp}/igris-test-$$"
+# Test directory for temporary files. TD-394: a FRESH mktemp root, not the
+# PID-keyed `igris-test-$$` that add0787 (TD-005) created this file with (no
+# reason recorded; it shipped beside the shared teardown below, which removes
+# the root). bats runs every @test in its own process, so a suite whose
+# teardown override skips that removal leaks one root per test, and a later
+# test that REUSES a dead test's PID inherits its fixtures (`ln: … File
+# exists`). mktemp is collision-free by construction; the `igris-test-` prefix
+# is kept for cleanup globs. A failed mktemp aborts the load: an EMPTY root
+# would turn every "$TEST_TEMP_DIR/…" path into "/…".
+TEST_TEMP_DIR="$(mktemp -d "${BATS_TMPDIR:-/tmp}/igris-test-XXXXXX")" \
+  || { echo "test_helper: mktemp -d failed under ${BATS_TMPDIR:-/tmp}" >&2; exit 1; }
+[ -n "$TEST_TEMP_DIR" ] \
+  || { echo "test_helper: mktemp -d returned an empty path" >&2; exit 1; }
+export TEST_TEMP_DIR
+
+# cleanup_test_temp_dir — remove THIS test's TEST_TEMP_DIR (TD-481). bats calls
+# the teardown() below after every @test, but a suite that defines its own
+# teardown() after `load test_helper` REPLACES it, so every override must call
+# this as its LAST line (test/teardown_temp_dir.test.bash enforces that).
+# Guarded so an empty, missing or foreign value can never widen the rm: the
+# root must exist AND its basename must carry the mktemp prefix above. The
+# `if` form plus `return 0` keep it from failing a teardown when the root is
+# already gone (`[ -d ] && rm` returns 1 there, and a failing teardown turns
+# a skip into `not ok … # skip` — TD-434).
+cleanup_test_temp_dir() {
+  if [ -n "${TEST_TEMP_DIR:-}" ] && [ -d "$TEST_TEMP_DIR" ] \
+     && [[ "$(basename "$TEST_TEMP_DIR")" == igris-test-* ]]; then
+    rm -rf "$TEST_TEMP_DIR"
+  fi
+  return 0
+}
 
 # Cleanup function (called automatically by bats)
 teardown() {
-  if [ -d "$TEST_TEMP_DIR" ]; then
-    rm -rf "$TEST_TEMP_DIR"
-  fi
+  cleanup_test_temp_dir
 }
 
 # =============================================================================
@@ -195,6 +222,7 @@ show_tree() {
 mkdir -p "$TEST_TEMP_DIR"
 
 # Export helper functions
+export -f cleanup_test_temp_dir
 export -f setup_test_project
 export -f assert_file_exists
 export -f assert_dir_exists

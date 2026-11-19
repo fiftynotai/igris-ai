@@ -3,11 +3,12 @@
  *
  * Tests the event-driven auto-push system in the sync component:
  * 1. Config loading (enabled/disabled, missing fields, malformed JSON)
- * 2. SYNC_TABLES completeness (27 entries — TD-171 M2 added graph_nodes)
+ * 2. SYNC_TABLES completeness (22 entries — TD-361 removed schedules + schedule_runs;
+ *    FR-273 appended project_relation_kinds + project_relations)
  * 3. Immediate push (brief/session/instance events)
  * 4. Batched push (memory/error/project/metrics events with 10s window)
  * 5. Cleanup (destroy clears timers, listeners, pending set)
- * 6. Events declaration (10 listened, 0 emitted)
+ * 6. Events declaration (11 listened, 0 emitted)
  *
  * @module engine/components/sync/__tests__/auto-push.test
  */
@@ -276,13 +277,35 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('SYNC_TABLES completeness', () => {
-    it('has exactly 21 entries', () => {
+    it('has exactly 22 entries', () => {
       // TD-265: −7 task/coordination tables (tasks, task_deps, task_results,
       // task_assignments, agent_capabilities, autonomous_decisions,
       // coordination_config) removed with the worker subsystem teardown.
       // FR-268 (2026-08-27): +1 `ceremony_events` (the ceremony record,
       // instances migration v4), 20→21.
-      expect(SYNC_TABLES).toHaveLength(21);
+      // TD-460 (2026-09-09): +1 `context_files` — project-context docs now
+      // replicate; the FILE stays the authority and the row is a replica for
+      // same-owner cross-machine transport, 21→22.
+      // TD-361 (2026-09-24): −2 schedules + schedule_runs, execution state is
+      // per-DB-file, 22→20.
+      // FR-273 (2026-09-29): +2 `project_relation_kinds` + `project_relations`
+      // (projects:3) — relations replicate, LWW on updated_at, removal is a
+      // tombstone; APPENDED after dismissed_patterns, 20→22.
+      expect(SYNC_TABLES).toHaveLength(22);
+    });
+
+    it('EXCLUDES schedules + schedule_runs — execution state is per-DB-file (TD-361)', () => {
+      // A replicated `schedules` row was EXECUTED by every receiving daemon (a
+      // `shell` schedule became cross-machine command execution), its
+      // `syncKey: ['id']` over a per-machine random id put two rows under one
+      // name, and an `append` `schedule_runs` row replicated mid-run could never
+      // receive its terminal UPDATE — the un-terminable wedge. Nothing reads a
+      // REMOTE brain's schedule state; cognition runs stay visible across
+      // machines through `event_log`. Removal is deploy-order-free: an unknown
+      // payload key is ignored by processSyncPush, and a pull reads its own list.
+      const tables = SYNC_TABLES.map((t) => t.table);
+      expect(tables).not.toContain('schedules');
+      expect(tables).not.toContain('schedule_runs');
     });
 
     it('EXCLUDES cognition_instances — the roster is per-machine derived state (TD-327)', () => {
@@ -291,7 +314,7 @@ describe('Sync Auto-Push', () => {
       // one machine's roster onto another — the same class of mistake that put
       // two `subconscious_engine` rows into `schedules` (a `syncKey: ['id']`
       // over a per-machine random `sch-XXXXXXXX`). It is cheap to lose and
-      // wrong to merge, so it stays out and the count above stays 21 (FR-268).
+      // wrong to merge, so it stays out (the count above is 22 since FR-273).
       expect(SYNC_TABLES.map((t) => t.table)).not.toContain('cognition_instances');
     });
 
@@ -320,6 +343,32 @@ describe('Sync Auto-Push', () => {
       ]);
     });
 
+    it('EXCLUDES file_path from the context_files column list (TD-460)', () => {
+      // TD-460 rule: `file_path` is an ABSOLUTE LOCAL PATH and is EXCLUDED
+      // from the sync column set rather than added to `redactCols`. Excluded,
+      // not redacted — a redacted path still egresses (relativized); this one
+      // has no cross-machine meaning at all, because the receiver rebuilds the
+      // path from its own cacheRoot() + key. `columns` is exactly what
+      // `mergeRows` reads/writes and what `queryTableRows` SELECTs, so the
+      // omission makes the column invisible to EVERY replication path, not
+      // merely to the push. This pin is what makes it a decision rather than
+      // an oversight (the TD-253 absolute-path obligation, discharged by
+      // omission — coding_guidelines §7's per-machine-value rule).
+      const contextFiles = SYNC_TABLES.find((t) => t.table === 'context_files');
+      expect(contextFiles).toBeDefined();
+      expect(contextFiles!.columns).not.toContain('file_path');
+      expect(contextFiles!.redactCols ?? []).not.toContain('file_path');
+      // …and the list is exactly the five replicating columns, so a sixth
+      // cannot slip in under a name this test does not name. `key` is by
+      // contract the doc-type `target` filename (coding_guidelines.md).
+      expect(contextFiles!.columns).toEqual([
+        'project_slug', 'key', 'content', 'content_hash', 'updated_at',
+      ]);
+      expect(contextFiles!.syncKey).toEqual(['project_slug', 'key']);
+      expect(contextFiles!.strategy).toBe('lww');
+      expect(contextFiles!.timestampCol).toBe('updated_at');
+    });
+
     it('EXCLUDES machine_id from event_log, instances AND ceremony_events (BR-100)', () => {
       // BR-100 (2026-09-06): the machine-identity stamp is a per-machine value
       // (coding_guidelines §7, TD-440) and its NON-replication is the contract —
@@ -337,13 +386,14 @@ describe('Sync Auto-Push', () => {
         expect(entry!.columns, table).not.toContain('machine_id');
         expect(entry!.syncKey, table).not.toContain('machine_id');
       }
-      // …and the count is unchanged: no new table joined for it either.
-      expect(SYNC_TABLES).toHaveLength(21);
+      // …and no new table joined for it either (22 at BR-100; TD-361
+      // (2026-09-24): −2 schedules + schedule_runs, execution state is
+      // per-DB-file, 22→20; FR-273 (2026-09-29): +2 project-relation tables,
+      // 20→22 — neither carries a machine_id).
+      expect(SYNC_TABLES).toHaveLength(22);
     });
 
     const newTables = [
-      { table: 'schedules', syncKey: ['id'], strategy: 'lww', timestampCol: 'updated_at' },
-      { table: 'schedule_runs', syncKey: ['id'], strategy: 'append', timestampCol: 'started_at' },
       // FR-105: typed-edges graph layer
       {
         table: 'entity_edges',
@@ -623,6 +673,25 @@ describe('Sync Auto-Push', () => {
       comp.destroy();
     });
 
+    it('project.relation_changed (FR-273) batch-pushes BOTH relation tables', async () => {
+      mockDb._stmt.get.mockReturnValue(undefined);
+      mockDb._stmt.all.mockReturnValue([{ name: 'uses_package', from_slug: 'a', kind: 'uses_package', to_slug: 'b' }]);
+
+      const comp = createSyncComponent();
+      comp.init(makeCtx(bus));
+
+      bus.emit('project.relation_changed', { action: 'relate.declare' });
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(fetchWithRetry).toHaveBeenCalledTimes(1);
+      const body = JSON.parse(
+        (vi.mocked(fetchWithRetry).mock.calls[0][1] as RequestInit).body as string
+      );
+      expect(Object.keys(body.tables).sort()).toEqual(['project_relation_kinds', 'project_relations']);
+
+      comp.destroy();
+    });
+
     it('pending set is cleared after flush', async () => {
       mockDb._stmt.get.mockReturnValue(undefined);
       mockDb._stmt.all.mockReturnValue([{ id: 1 }]);
@@ -759,13 +828,13 @@ describe('Sync Auto-Push', () => {
   // -------------------------------------------------------------------------
 
   describe('events declaration', () => {
-    it('declares 10 listened events', () => {
+    it('declares 12 listened events', () => {
       vi.mocked(readFileSync).mockReturnValue(VALID_CONFIG);
 
       const comp = createSyncComponent();
       const { listens } = comp.events();
 
-      expect(listens).toHaveLength(10);
+      expect(listens).toHaveLength(12);
     });
 
     it('declares 0 emitted events', () => {
@@ -777,7 +846,7 @@ describe('Sync Auto-Push', () => {
       expect(emits).toHaveLength(0);
     });
 
-    it('all 10 event names match expected names', () => {
+    it('all 12 event names match expected names', () => {
       vi.mocked(readFileSync).mockReturnValue(VALID_CONFIG);
 
       const comp = createSyncComponent();
@@ -789,11 +858,13 @@ describe('Sync Auto-Push', () => {
         'brief.completed',
         'session.synced',
         'session.file.updated',
+        'context.registered',
         'instance.state_updated',
         'memory.stored',
         'error.stored',
         'project.registered',
         'agent_event.recorded',
+        'project.relation_changed',
       ];
 
       const listenNames = listens.map((e) => e.name);

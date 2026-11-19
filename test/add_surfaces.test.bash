@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-
+source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" || exit 2
 # add_surfaces.test.bash — FR-180 `igris add` end-to-end (Phase 1: skill,
 # Phase 2: agent, Phase 3: mcp, Phase 5: hook + the R2 refresh-no-clobber merge
 # gate). FR-202 M4 retired the identity arm (the os_identity surface is gone).
@@ -119,6 +119,7 @@ teardown() {
   # `not ok … # skip`, killing the whole CI matrix suite on this file
   # (first file alphabetically; red 2026-06-04 → 2026-08-31).
   if [ -d "${PROJ:-}" ]; then rm -rf "$PROJ"; fi
+  cleanup_test_temp_dir
 }
 
 @test "add skill (personal): vendors + projects the symlink + verifies, exit 0" {
