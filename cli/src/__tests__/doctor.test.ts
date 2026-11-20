@@ -17,6 +17,7 @@ import {
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -25,7 +26,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { IGRIS_ATTRIBUTION } from "../lib/attribution-settings.js";
 
 let tmpRoot: string;
@@ -2289,5 +2290,226 @@ describe("doctor — machine-identity drift class (BR-100)", () => {
     expect(code).toBe(1);
     expect(sha(cfgPath)).toBe(before);
     expect(await machineRow()).not.toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-519: the header counts registered projects and machine-level `(brain)`
+// findings separately, and a run with no projects still states a verdict.
+// ---------------------------------------------------------------------------
+
+describe("doctor — machine-level checks and the project count are reported separately (TD-519)", () => {
+  type Row = import("../types.js").DriftRow;
+
+  const HEADER_NONE = "Drift report: 0 project(s), 0 clean; machine-level drift checks: all passed";
+  const NO_PROJECTS = "No projects registered — the registry is empty. Register one with 'igris install <path>'.";
+  const TABLE_HEAD = "| slug | path | drift-class | recommended-fix |";
+  const TABLE_RULE = "|------|------|-------------|-----------------|";
+  const DOCTOR_TS = join(__dirname, "..", "verbs", "doctor.ts");
+  const DRIFT_DIR = join(__dirname, "..", "lib", "drift");
+
+  /** A synthetic row, machine-level `(brain)` unless a slug is given. */
+  function row(driftClass: Row["driftClass"], slug = "(brain)", extra: Partial<Row> = {}): Row {
+    return { slug, path: `/x/${driftClass}`, driftClass, recommendedFix: "fix", ...extra };
+  }
+
+  /** The stdout lines written during `fn` (the TD-473 block's spy idiom). */
+  async function stdoutLines(fn: () => Promise<void>): Promise<string[]> {
+    let captured = "";
+    const spy = vi
+      .spyOn(process.stdout, "write")
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        captured += String(chunk);
+        return true;
+      }) as typeof process.stdout.write);
+    try {
+      await fn();
+    } finally {
+      spy.mockRestore();
+    }
+    return captured.split("\n").slice(0, -1);
+  }
+
+  /** E3's fixture: canonical hooks, NO attribution key → one (brain) attribution-missing row. */
+  function dropAttribution(): void {
+    writeFileSync(join(homeOverride, ".claude", "settings.json"), JSON.stringify(CANONICAL_HOOKS, null, 2) + "\n");
+  }
+
+  /** Register one bare non-git dir under slug = basename, so it classifies clean. */
+  async function registerCleanProject(): Promise<{ slug: string; dir: string }> {
+    const reg = await import("../lib/registry.js");
+    const dir = stageProject("td519");
+    const slug = basename(dir);
+    reg.upsertProject({ slug, name: slug, path: dir, tech_stack: "", igris_version: "7.0.0" });
+    return { slug, dir };
+  }
+
+  /** P1's scanner: every `slug / path / driftClass` producer literal in `src`, and each one whose slug disagrees with `scope`. */
+  function scanProducers(src: string, scope: Readonly<Record<string, string>>) {
+    const shape = new RegExp(String.raw`^\s*slug(?::\s*(.+?))?,\s*\n\s*path(?::.*)?,\s*\n\s*driftClass:\s*"([a-z-]+)",`, "gm");
+    const site = new RegExp(String.raw`^\s*driftClass:\s*"`, "gm");
+    const sites = (src.match(site) ?? []).length;
+    const found = [...src.matchAll(shape)].map((m) => ({ slugExpr: m[1], cls: m[2] }));
+    const mismatches = found
+      .filter(({ slugExpr, cls }) => (slugExpr === '"(brain)"') !== (scope[cls] === "machine"))
+      .map(({ slugExpr, cls }) => `${cls}: slug ${slugExpr ?? "(shorthand)"} but DRIFT_SCOPE says ${scope[cls]}`);
+    return { sites, found, mismatches };
+  }
+
+  it("U1 (AC1): no rows → the all-clear header, then the no-projects line", async () => {
+    const { driftSummaryLines } = await import("../verbs/doctor.js");
+    expect(driftSummaryLines([])).toEqual([HEADER_NONE, NO_PROJECTS]);
+  });
+
+  it("U2 (AC2): one (brain) row and no project → 0 project(s), 1 machine-level finding, plus the no-projects line", async () => {
+    const { driftSummaryLines, isMachineLevel } = await import("../verbs/doctor.js");
+    const attr = row("attribution-missing", "(brain)", { path: "/x/settings.json" });
+    expect(isMachineLevel(attr)).toBe(true);
+    const lines = driftSummaryLines([attr]);
+    expect(lines).toEqual([
+      "Drift report: 0 project(s), 0 clean; machine-level drift checks: 1 finding(s)",
+      NO_PROJECTS,
+    ]);
+    expect(lines[0]).not.toMatch(/\b1 project\(s\)/);
+  });
+
+  it("U3 (AC3): projects and machine findings are counted apart; the FR-265 segment is kept; per-project classes count as projects", async () => {
+    const { driftSummaryLines } = await import("../verbs/doctor.js");
+    // (a) one machine finding per ROW (two secret-perms rows count twice).
+    expect(
+      driftSummaryLines([
+        row("secret-perms"),
+        row("secret-perms"),
+        row("bridge-missing"),
+        row("clean", "a"),
+        row("source-reclaimed", "b", { repoUrl: "https://example.invalid/b.git" }),
+      ]),
+    ).toEqual(["Drift report: 2 project(s), 1 clean, 1 source-reclaimed; machine-level drift checks: 3 finding(s)"]);
+    // (b) no machine rows → all passed, and no no-projects line.
+    expect(driftSummaryLines([row("clean", "a"), row("clean", "b")])).toEqual([
+      "Drift report: 2 project(s), 2 clean; machine-level drift checks: all passed",
+    ]);
+    // (c) and (d): per-project classes that are not path-based.
+    expect(driftSummaryLines([row("channel-mismatch", "a")])).toEqual([
+      "Drift report: 1 project(s), 0 clean; machine-level drift checks: all passed",
+    ]);
+    expect(driftSummaryLines([row("git-hooks-missing", "a")])).toEqual([
+      "Drift report: 1 project(s), 0 clean; machine-level drift checks: all passed",
+    ]);
+  });
+
+  it("T1 (AC1): runDoctor, no project, every machine check passing → the all-clear header and a separate no-projects line, no table, exit 0", async () => {
+    const { runDoctor, classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    // Fixture validity: the baseline really is clean, so this pins wording, not luck.
+    expect(reg.listProjects()).toEqual([]);
+    expect(await classifyDriftAll(reg.listProjects())).toEqual([]);
+    let code = -1;
+    const lines = await stdoutLines(async () => {
+      code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    });
+    expect(code).toBe(0);
+    expect(lines.slice(0, 2)).toEqual([HEADER_NONE, NO_PROJECTS]);
+    expect(lines).not.toContain(TABLE_HEAD);
+    expect(lines.join("\n")).not.toContain("Registry is empty.");
+  });
+
+  it("T2 (AC2): runDoctor, no project, attribution removed → 0 project(s) and 1 machine-level finding, never '1 project(s)', exit 1", async () => {
+    const { runDoctor, classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    dropAttribution();
+    // Positive control: exactly one machine-level row, and no project.
+    expect(reg.listProjects()).toEqual([]);
+    const pre = await classifyDriftAll(reg.listProjects());
+    expect(pre.map((r) => [r.slug, r.driftClass])).toEqual([["(brain)", "attribution-missing"]]);
+    let code = -1;
+    const lines = await stdoutLines(async () => {
+      code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    });
+    expect(code).toBe(1);
+    expect(lines.some((l) => l.startsWith("| (brain) | ") && l.includes("| attribution-missing |"))).toBe(true);
+    expect(lines.slice(0, 2)).toEqual([
+      "Drift report: 0 project(s), 0 clean; machine-level drift checks: 1 finding(s)",
+      NO_PROJECTS,
+    ]);
+    expect(lines.filter((l) => /\b1 project\(s\)/.test(l))).toEqual([]);
+  });
+
+  it("T3 (AC3): runDoctor, one clean project, no machine row → only the header gains the machine-level verdict; the table is byte-identical, exit 0", async () => {
+    const { runDoctor, classifyDriftAll } = await import("../verbs/doctor.js");
+    const reg = await import("../lib/registry.js");
+    const { slug, dir } = await registerCleanProject();
+    const pre = await classifyDriftAll(reg.listProjects());
+    expect(pre.map((r) => [r.slug, r.driftClass])).toEqual([[slug, "clean"]]);
+    let code = -1;
+    const lines = await stdoutLines(async () => {
+      code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    });
+    expect(code).toBe(0);
+    // Everything after the header is the pre-TD-519 output, byte for byte
+    // (asserted first: on the old code this passes and only the header fails).
+    expect(lines.slice(1)).toEqual(["", TABLE_HEAD, TABLE_RULE, `| ${slug} | ${dir} | clean |  |`]);
+    expect(lines[0]).toBe("Drift report: 1 project(s), 1 clean; machine-level drift checks: all passed");
+    expect(lines.some((l) => l.startsWith("No projects registered"))).toBe(false);
+  });
+
+  it("T4 (AC2+AC3): runDoctor, one clean project + attribution removed → '1 project(s), 1 clean' and 1 machine-level finding, exit 1", async () => {
+    const { runDoctor } = await import("../verbs/doctor.js");
+    const { slug, dir } = await registerCleanProject();
+    dropAttribution();
+    let code = -1;
+    const lines = await stdoutLines(async () => {
+      code = await runDoctor({ fix: false, removeOrphans: false, yes: false });
+    });
+    expect(code).toBe(1);
+    expect(lines).toContain(`| ${slug} | ${dir} | clean |  |`);
+    expect(lines[0]).toBe("Drift report: 1 project(s), 1 clean; machine-level drift checks: 1 finding(s)");
+    expect(lines.some((l) => l.startsWith("No projects registered"))).toBe(false);
+  });
+
+  it("P1: DRIFT_SCOPE agrees with every producer — 'machine' exactly when the producer's slug is \"(brain)\"", async () => {
+    const { DRIFT_SCOPE } = await import("../verbs/doctor.js");
+    const files = [
+      DOCTOR_TS,
+      ...readdirSync(DRIFT_DIR)
+        .filter((f) => f.endsWith(".ts"))
+        .map((f) => join(DRIFT_DIR, f)),
+    ];
+    expect(files.length).toBeGreaterThanOrEqual(6);
+    const classes = new Set<string>();
+    let total = 0;
+    for (const file of files) {
+      const { sites, found, mismatches } = scanProducers(readFileSync(file, "utf-8"), DRIFT_SCOPE);
+      expect(
+        found.length,
+        `${file}: ${sites} driftClass sites but ${found.length} slug/path/driftClass literals — update the shape regex or DRIFT_SCOPE`,
+      ).toBe(sites);
+      expect(mismatches, file).toEqual([]);
+      for (const f of found) classes.add(f.cls);
+      total += sites;
+    }
+    // Population: every scoped class but the retired `not-installed` has a producer.
+    expect([...classes].sort()).toEqual(Object.keys(DRIFT_SCOPE).filter((k) => k !== "not-installed").sort());
+    expect(total).toBeGreaterThanOrEqual(24);
+  });
+
+  it("P1 self-negatives: the scanner reports a planted mismatch in EACH direction, a reshaped producer trips the site-count guard, and a correct pair passes", async () => {
+    const { DRIFT_SCOPE } = await import("../verbs/doctor.js");
+    const brainSlugProjectClass = scanProducers('      slug: "(brain)",\n      path: p,\n      driftClass: "clean",\n', DRIFT_SCOPE);
+    expect(brainSlugProjectClass.found).toHaveLength(1);
+    expect(brainSlugProjectClass.mismatches).toHaveLength(1);
+    const projectSlugMachineClass = scanProducers('      slug: r.slug,\n      path: r.path,\n      driftClass: "secret-perms",\n', DRIFT_SCOPE);
+    expect(projectSlugMachineClass.found).toHaveLength(1);
+    expect(projectSlugMachineClass.mismatches).toHaveLength(1);
+    const reshaped = scanProducers('    driftClass: "clean",\n    slug: r.slug,\n    path: r.path,\n', DRIFT_SCOPE);
+    expect(reshaped.sites).toBe(1);
+    expect(reshaped.found).toHaveLength(0);
+    const correct = scanProducers(
+      '      slug,\n      path,\n      driftClass: "git-hooks-missing",\n' +
+        '      slug: "(brain)",\n      path: p,\n      driftClass: "secret-perms",\n',
+      DRIFT_SCOPE,
+    );
+    expect(correct.found).toHaveLength(2);
+    expect(correct.mismatches).toEqual([]);
   });
 });

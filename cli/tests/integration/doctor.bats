@@ -422,3 +422,29 @@ project_slugs() {
     [ "$(project_count)" = "1" ]
   done
 }
+
+# TD-519: the header counts registered projects and machine-level (brain)
+# findings separately, and a run with no projects still states a verdict.
+# ASCII substrings only (the exact bytes, em dash included, are pinned in
+# doctor.test.ts), so no pattern depends on the locale or bash 3.2.
+@test "TD-519 AC1: no project registered + clean machine -> machine-level all-clear AND a separate no-projects line, exit 0" {
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 0 ]
+  [ "$(project_count)" = "0" ]
+  [[ "$output" == *"Drift report: 0 project(s), 0 clean; machine-level drift checks: all passed"* ]] || return 1
+  [[ "$output" == *"No projects registered"* ]] || return 1
+  [[ "$output" != *"| slug | path |"* ]] || return 1
+  [[ "$output" != *"Registry is empty."* ]] || return 1
+}
+
+@test "TD-519 AC2: no project + attribution removed -> header counts 0 projects and 1 machine-level finding, exit 1" {
+  node -e 'const fs=require("fs");const f=process.argv[1];const j=JSON.parse(fs.readFileSync(f,"utf8"));delete j.attribution;fs.writeFileSync(f,JSON.stringify(j,null,2)+"\n");' "$HOME/.claude/settings.json"
+  run $CLI_BIN doctor
+  echo "$output"
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"| (brain) | "*"| attribution-missing |"* ]] || return 1
+  [[ "$output" == *"Drift report: 0 project(s), 0 clean; machine-level drift checks: 1 finding(s)"* ]] || return 1
+  [[ "$output" == *"No projects registered"* ]] || return 1
+  [[ "$output" != *"1 project(s)"* ]] || return 1
+}

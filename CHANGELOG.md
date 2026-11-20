@@ -10,6 +10,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The brain reports its real version (TD-518).**
+  `brain-mcp-server/src/index.ts` had hard-coded `7.2.0` since the v7.2.0
+  cut. Every later release therefore told MCP clients
+  `serverInfo.version = "7.2.0"`, and so did both startup banners and the
+  `/api/brain-stats` `version` field. The brain now reads its version at boot
+  from `brain-mcp-server/package.json` (`src/server-version.ts`), which ships
+  beside `dist/` in the repo build, the npm bundle and the VPS checkout.
+  The reader checks the manifest's `name`. If the path resolves to the wrong
+  manifest, such as the monorepo root's, or the manifest is missing or
+  unreadable, the brain reports `0.0.0-unknown` instead of a plausible
+  number, prints one stderr warning and still starts. A source guard fails on
+  any semver literal in a version position in `index.ts`. The two engine boot
+  lines drop their stale `v7.0` label. A running brain keeps reporting 7.2.0
+  until it is rebuilt, or deployed with `igris sync code`, and its sessions
+  reconnect.
+
+- **`igris doctor` reports its machine-level result on every run
+  (TD-519).** With no project registered, doctor printed only
+  `Registry is empty.`. That was true, but nothing showed that its
+  machine-level checks (brain core, hooks, attribution, secret-file
+  permissions and the rest) had run and passed. When one of those checks
+  fired, the header counted the machine-level row as a project:
+  `1 project(s), 0 clean`. The header now reads
+  `Drift report: P project(s), C clean; machine-level drift checks: all
+  passed`, or `M finding(s)` when a check fires, and it counts only
+  registered projects. A run with no project adds
+  `No projects registered — the registry is empty.`. Each drift class has a
+  machine or project scope in a map that `tsc` checks for completeness. The
+  table rows, exit codes and `--fix` are unchanged.
+
 ---
 
 ## [7.4.0] - 2026-11-19

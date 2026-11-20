@@ -4,7 +4,8 @@
  * Read-only by default: walks the registry and classifies every row into a
  * `DriftRow` (see types.ts). Drift classes:
  *
- * Brain-level (synthetic slug "(brain)"):
+ * Brain-level (machine scope in `DRIFT_SCOPE`, the discriminator; the table
+ * shows them under the display slug "(brain)"):
  *   brain-core-missing      → ~/.igris/core/ absent or empty
  *   brain-core-stale        → a MUTABLE channel (main/branch) has moved past the
  *                             recorded ref_commit_sha; release/tag are exempt (TD-301)
@@ -97,6 +98,12 @@
  * was RETIRED — `igris install` is register-only and no longer writes a
  * per-project `.claude/` layer, so its absence no longer signals "not installed".
  * A registered project whose path exists is clean.
+ *
+ * Output (TD-519): the header counts registered projects and machine-level
+ * `(brain)` findings separately (`driftSummaryLines`). `machine-level drift
+ * checks: all passed` covers exactly the machine-scope drift classes, not the
+ * FR-165 MCP-secret advisory (a separate stderr WARN). With zero projects a
+ * `No projects registered` line follows. The exit code never reads printed text.
  *
  * Precedence (high → low): path-missing / source-reclaimed → brain-core-missing →
  * brain-core-stale → channel-mismatch → bridge-missing → mcp-unregistered → hooks-missing →
@@ -239,6 +246,70 @@ export function orphanFlagError(opts: DoctorOptions): string | null {
  */
 export function isNotDrift(cls: DriftRow["driftClass"]): boolean {
   return cls === "clean" || cls === "source-reclaimed";
+}
+
+/** TD-519: whether a drift class describes the machine or one registered project. */
+export type DriftScope = "machine" | "project";
+
+/**
+ * TD-519: the scope of every drift class. Scope belongs to the CLASS, and each
+ * class is emitted at exactly one scope. `"(brain)"` is only the display slug,
+ * not the discriminator. `tsc` enforces completeness (an unscoped class fails
+ * the build); P1 in `doctor.test.ts` enforces agreement with every producer.
+ */
+export const DRIFT_SCOPE: Readonly<Record<DriftRow["driftClass"], DriftScope>> = {
+  "brain-core-missing": "machine",
+  "brain-core-stale": "machine",
+  "bridge-missing": "machine",
+  "mcp-unregistered": "machine",
+  "hooks-missing": "machine",
+  "hooks-stale": "machine",
+  "attribution-missing": "machine",
+  "secret-perms": "machine",
+  "skills-pollution": "machine",
+  "antigravity-skills-link": "machine",
+  "machine-identity": "machine",
+  "secret-scan-disarmed": "machine",
+  clean: "project",
+  "path-missing": "project",
+  "source-reclaimed": "project",
+  "not-installed": "project", // retired by FR-212d, never emitted
+  "slug-basename-mismatch": "project",
+  "duplicate-path": "project",
+  "symlink-target": "project",
+  "channel-mismatch": "project",
+  "git-hooks-missing": "project",
+};
+
+/** TD-519: true for a machine-level row (one the table shows under `(brain)`). */
+export function isMachineLevel(row: Pick<DriftRow, "driftClass">): boolean {
+  return DRIFT_SCOPE[row.driftClass] === "machine";
+}
+
+/**
+ * TD-519: the drift report's header, printed on every run. It counts project
+ * rows (one per registered project) and machine-level findings separately,
+ * and adds the no-projects line when the registry is empty.
+ */
+export function driftSummaryLines(drift: DriftRow[]): string[] {
+  const projectRows = drift.filter((r) => !isMachineLevel(r));
+  const cleanCount = projectRows.filter((r) => r.driftClass === "clean").length;
+  // FR-265: the one exit-neutral non-clean class gets its own count, printed
+  // only when present.
+  const reclaimedCount = projectRows.filter(
+    (r) => isNotDrift(r.driftClass) && r.driftClass !== "clean",
+  ).length;
+  const machineCount = drift.length - projectRows.length;
+  const lines = [
+    `Drift report: ${projectRows.length} project(s), ${cleanCount} clean` +
+      (reclaimedCount > 0 ? `, ${reclaimedCount} source-reclaimed` : "") +
+      "; machine-level drift checks: " +
+      (machineCount === 0 ? "all passed" : `${machineCount} finding(s)`),
+  ];
+  if (projectRows.length === 0) {
+    lines.push("No projects registered — the registry is empty. Register one with 'igris install <path>'.");
+  }
+  return lines;
 }
 
 /** TD-310: "briefs N, learnings M" (+ errors/sessions when non-zero). */
@@ -1721,21 +1792,10 @@ function extractSessionEndCommand(filePath: string): string | null {
   }
 }
 
+/** TD-519: the header lines (`driftSummaryLines`) on every run, then the table when any row exists. */
 function printDriftTable(drift: DriftRow[]): void {
-  if (drift.length === 0) {
-    info("Registry is empty.");
-    return;
-  }
-  const cleanCount = drift.filter((r) => r.driftClass === "clean").length;
-  // FR-265: the one exit-neutral non-clean class gets its own count (printed
-  // only when present, so a registry without one keeps its header unchanged).
-  const reclaimedCount = drift.filter(
-    (r) => isNotDrift(r.driftClass) && r.driftClass !== "clean",
-  ).length;
-  info(
-    `Drift report: ${drift.length} project(s), ${cleanCount} clean` +
-      (reclaimedCount > 0 ? `, ${reclaimedCount} source-reclaimed` : ""),
-  );
+  for (const line of driftSummaryLines(drift)) info(line);
+  if (drift.length === 0) return;
   info("");
   info("| slug | path | drift-class | recommended-fix |");
   info("|------|------|-------------|-----------------|");

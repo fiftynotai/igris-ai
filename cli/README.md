@@ -194,6 +194,14 @@ FR-212d retired the `not-installed` class — `igris install` is register-only
 and writes no per-project `.claude/` layer, so its absence no longer means
 "not installed"; a registered project whose path exists is clean.
 
+Every run prints one header that counts registered projects and machine-level
+`(brain)` findings separately:
+`Drift report: N project(s), C clean; machine-level drift checks: all passed`
+(or `M finding(s)`). The machine-level checks run with or without a registered
+project. With none registered, doctor adds
+`No projects registered — the registry is empty. …`. The MCP-secret warning
+(FR-165) is a separate advisory, not part of that line (TD-519).
+
 `--fix` runs every repair in dependency order, each isolated (one failure
 cannot poison the rest), and prints a per-fix outcome table
 (`| class | target | action | outcome | now |` — `now` is a live re-probe that

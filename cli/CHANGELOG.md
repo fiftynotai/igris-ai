@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The bundled brain reports the package version (TD-518).** Since v7.2.0
+  it answered MCP `initialize` with `7.2.0`. It now reads the version from
+  its own `package.json`. Restart your sessions after updating so they
+  reconnect to the new brain.
+
+- **`igris doctor` says on every run whether its machine-level checks passed
+  (TD-519).** The header counts registered projects and machine-level
+  findings separately. With no project registered, doctor now adds
+  `No projects registered — the registry is empty.` instead of printing only
+  `Registry is empty.`.
+
 ---
 
 ## [7.4.0] - 2026-11-19

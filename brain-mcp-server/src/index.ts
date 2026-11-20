@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Igris AI Centralized Brain MCP Server v7.2
+ * Igris AI Centralized Brain MCP Server
  *
  * Modular engine architecture. Domain components are loaded via the
  * component registry, tools are dispatched through the API gateway,
@@ -10,7 +10,7 @@
  * - stdio  (default) — for local Claude Code integration
  * - http   (--http)  — for remote/VPS access via Streamable HTTP
  *
- * @version 7.2.0
+ * Version: package.json, read by ./server-version.ts (TD-518); never a literal here.
  * @author fifty.dev
  */
 
@@ -53,9 +53,13 @@ import {
   deregisterInstance,
   reapStaleInstances,
 } from './stdio-lifecycle.js';
+import { readServerVersion, UNKNOWN_SERVER_VERSION } from './server-version.js';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
+
+/** This server's version, from package.json (TD-518). */
+const SERVER_VERSION = readServerVersion() ?? UNKNOWN_SERVER_VERSION;
 
 /** Valid project slug format: lowercase alphanumeric with hyphens, 1-64 chars. */
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
@@ -225,7 +229,7 @@ function createBrainServer(): Server {
   const server = new Server(
     {
       name: 'igris-brain',
-      version: '7.2.0',
+      version: SERVER_VERSION,
     },
     {
       capabilities: {
@@ -306,7 +310,7 @@ async function runStdio(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error('Igris Brain MCP Server v7.2.0 started (stdio)');
+  console.error(`Igris Brain MCP Server v${SERVER_VERSION} started (stdio)`);
 
   // BR-067 Phase 4: register a per-client pidfile (keyed by parent PID).
   // Registration failure is non-fatal — the server still serves.
@@ -647,7 +651,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
       }
 
       res.json({
-        version: '7.2.0',
+        version: SERVER_VERSION,
         db_size_bytes: dbSizeBytes,
         counts: {
           projects: countTable('projects'),
@@ -1420,7 +1424,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Start listening
   const onListening = () => {
     const bind = config.host ? `${config.host}:${config.port}` : `port ${config.port}`;
-    console.error(`Igris Brain MCP Server v7.2.0 started (http, ${bind})`);
+    console.error(`Igris Brain MCP Server v${SERVER_VERSION} started (http, ${bind})`);
   };
   if (config.host) {
     app.listen(config.port, config.host, onListening);

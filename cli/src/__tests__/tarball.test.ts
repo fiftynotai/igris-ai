@@ -465,6 +465,143 @@ describe("tarball — bundled MCP in the npm pack manifest (TD-168)", () => {
     }
   }, PACK_TIMEOUT_MS);
 
+  // TD-518 AC-4 — the bundled-layout initialize tier. The brain reads its
+  // version at boot from `<module dir>/../package.json`; in the npm tarball
+  // that is `dist/brain-mcp-server/dist/index.js` -> `dist/brain-mcp-server/
+  // package.json`, staged by cli/scripts/copy-templates.sh. This sends a REAL
+  // MCP `initialize` to the bundled entry and asserts `serverInfo.version` is
+  // the bundled manifest's version. Together with the packlist pins above
+  // (both paths ship), that covers the packed tarball by composition: the
+  // tarball is cli/dist filtered by `files`. The brain-side tiers
+  // (brain-mcp-server/src/__tests__/server-version*.test.ts) pin the source;
+  // only this one sees the STAGED layout and its pruned manifest.
+  //
+  // A raw newline-delimited JSON-RPC line, not the SDK client: cli declares no
+  // @modelcontextprotocol/sdk dependency (a bare import would resolve only by
+  // workspace hoisting), and reaching into the vendored copy's dist/esm paths
+  // would couple this test to SDK internals. `initialize` is the protocol
+  // itself. The response is awaited BEFORE stdin is ended (BR-067's stdin-EOF
+  // teardown exits the child 0); every stdout line must parse as JSON, so a
+  // stray stdout write fails here as protocol corruption.
+  //
+  // Fence: an EXPLICIT minimal child env (fresh fake HOME + IGRIS_BRAIN_DIR
+  // sandbox, PATH, TMPDIR), never a spread of process.env, so IGRIS_DB_PATH,
+  // IGRIS_PIDS_DIR, BRAIN_HTTP, NODE_OPTIONS and VITEST* cannot reach it; the
+  // TD-426 escape assertions are repeated. Hang stop: SIGKILL at 30 s, inside
+  // PACK_TIMEOUT_MS.
+  //
+  // Red-first: a cli/dist staged from c5c523f answers '7.2.0' against the
+  // bundled manifest's '7.4.0'. GREEN needs `npm run build` (L-1533: this
+  // reads the VENDORED bundle, so a stale cli/dist is a stale answer).
+  it("bundled entry answers initialize with serverInfo.version === the bundled package.json version (TD-518 AC-4)", async () => {
+    if (!bundleBuilt()) return;
+    const cp = await import("node:child_process");
+
+    const bundledManifest = JSON.parse(
+      readFileSync(join(bundleDir, "package.json"), "utf-8"),
+    ) as { name?: string; version?: string };
+    expect(bundledManifest.name).toBe("igris-brain-mcp-server");
+    expect(bundledManifest.version).toMatch(/^\d+\.\d+\.\d+/);
+
+    const fakeHome = mkdtempSync(join(tmpdir(), "td518-t1-home-"));
+    const brainDir = mkdtempSync(join(tmpdir(), "td518-t1-brain-"));
+    const sandboxDb = join(brainDir, "memory", "knowledge.db");
+    try {
+      mkdirSync(join(fakeHome, ".igris", "memory"), { recursive: true });
+      mkdirSync(join(brainDir, "memory"), { recursive: true });
+
+      const child = cp.spawn(process.execPath, [bundledEntry], {
+        env: {
+          HOME: fakeHome,
+          IGRIS_BRAIN_DIR: brainDir,
+          PATH: process.env.PATH ?? "/usr/bin:/bin",
+          TMPDIR: tmpdir(),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      const hangStop = setTimeout(() => child.kill("SIGKILL"), 30_000);
+      let stderr = "";
+      child.stderr.setEncoding("utf-8");
+      child.stderr.on("data", (c: string) => {
+        stderr += c;
+      });
+      const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+        // "close", not "exit": stdio is drained by then, so the stderr
+        // assertions below see every line.
+        (done) => child.once("close", (code, signal) => done({ code, signal })),
+      );
+
+      try {
+        // Resolve on the first stdout line carrying id 1; reject on a
+        // non-JSON line or an exit before the answer.
+        const answer = new Promise<{
+          id?: unknown;
+          result?: { serverInfo?: unknown };
+          error?: unknown;
+        }>((done, fail) => {
+          let buf = "";
+          child.stdout.setEncoding("utf-8");
+          child.stdout.on("data", (c: string) => {
+            buf += c;
+            for (let nl = buf.indexOf("\n"); nl !== -1; nl = buf.indexOf("\n")) {
+              const line = buf.slice(0, nl).trim();
+              buf = buf.slice(nl + 1);
+              if (line === "") continue;
+              try {
+                const msg = JSON.parse(line) as { id?: unknown };
+                if (msg.id === 1) done(msg);
+              } catch {
+                fail(new Error(`non-JSON line on the stdio protocol channel: ${line}\n${stderr}`));
+              }
+            }
+          });
+          void exited.then(({ code, signal }) =>
+            fail(new Error(`bundled brain exited before answering initialize: code=${code} signal=${signal}\n${stderr}`)),
+          );
+        });
+        child.stdin.write(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: {
+              protocolVersion: "2025-06-18",
+              capabilities: {},
+              clientInfo: { name: "td518-t1-probe", version: "0.0.0" },
+            },
+          }) + "\n",
+        );
+        const msg = await answer;
+        expect(msg.error, stderr).toBeUndefined();
+        expect(msg.result?.serverInfo).toEqual({
+          name: "igris-brain",
+          version: bundledManifest.version,
+        });
+
+        // stdin EOF -> BR-067 teardown -> exit 0.
+        child.stdin.end();
+        const { code, signal } = await exited;
+        expect({ code, signal }, stderr).toEqual({ code: 0, signal: null });
+      } finally {
+        clearTimeout(hangStop);
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }
+
+      expect(stderr).toContain(
+        `Igris Brain MCP Server v${bundledManifest.version} started (stdio)`,
+      );
+      expect(stderr).not.toContain("[brain] version unknown");
+      // TD-426 escape check, as in the spawn test above.
+      expect(stderr).toContain(`[brain] db: ${sandboxDb}`);
+      expect(existsSync(sandboxDb)).toBe(true);
+      expect(existsSync(join(fakeHome, ".igris", "memory", "knowledge.db"))).toBe(false);
+      expect(existsSync(join(fakeHome, ".igris", "brain-mcp-server.pids"))).toBe(false);
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+      rmSync(fakeHome, { recursive: true, force: true });
+    }
+  }, PACK_TIMEOUT_MS);
+
   // BR-068: the vendored node_modules is a build/CI artifact only — it
   // MUST NOT ship in the published tarball (platform-locked native
   // addons + ~54 MB bloat; the `postinstall` hook rebuilds it fresh on
@@ -3332,6 +3469,67 @@ interface PackReport {
  *   RE-DERIVED: 1_969_692 − 1_969_700 = −8; 7_240_986 − 7_241_064 = −78 =
  *   −23 − 55; 126_424 − 8 = 126_416; 153_600 − 126_416 = 27_184.
  *
+ * TD-518 + TD-519 MEASURED LAST (2026-11-20), after the bundle's final
+ * shipped change. TD-518: the brain reads its `serverInfo.version` from its
+ * own `package.json` — the new `server-version.ts` (`readServerVersion`), the
+ * `SERVER_VERSION` const in `index.ts` and the four sites that print it
+ * (serverInfo, the `/api/brain-stats` body, both banners), the docblock's
+ * `@version` line, and the two `engine/index.ts` log strings that drop
+ * `v7.0`. TD-519: the `igris doctor` header in `verbs/doctor.ts` (projects
+ * and machine-level findings counted apart, plus a no-projects line) and a
+ * `README.md` paragraph. One `CHANGELOG.md` bullet each. The three brain test
+ * files, T1 above, the doctor vitest and bats tests, MAINTAINING and the root
+ * CHANGELOG pack 0 B (`tsconfig.json` excludes the tests from emit; the rest
+ * is outside `files`). Same method as TD-510 (`git archive` scratch builds,
+ * `copy-templates.sh` run in every arm, brain `dist` absent so the copy step
+ * rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, identical). CONTROL = develop `c5c523f`,
+ * the v7.4.0 cut: 1_970_448 / 7_242_880 / 603 / `523beb97…`. That control
+ * carries the release's own spend, re-derived here rather than absorbed:
+ *   the release         +756 B       packed over TD-510's FINAL, re-taken at
+ *                                    `32f2dcb` (1_969_692 / 7_240_986 / 603 /
+ *                                    `cf745d5f…`, byte- and sha-identical to
+ *                                    that row). Unpacked +1_894, all of it
+ *                                    `CHANGELOG.md`: the `5949d20` backfill
+ *                                    +1_210 and the 7.4.0 section +684. The
+ *                                    7.3.2 → 7.4.0 version stamps keep their
+ *                                    length, so they move no byte.
+ * FINAL = a `git write-tree` of the working tree through a TEMP index
+ * (`7fda9de7`, no commit; the four new files added to that index only). Its
+ * pack is sha-identical to the worktree's own `npm run build`. The live
+ * `cli/dist` mtimes and `~/.igris/config.json` sha unchanged by every arm.
+ * npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   packed              1_972_978    unpacked 7_249_691, 605 entries (+2:
+ *                                    the vendored `server-version.js` and
+ *                                    `.d.ts`; `files` excludes its maps),
+ *                                    shasum
+ *                                    `902ce0eaec8e87c83a1b61b661d4bb24062d0a74`.
+ *   this round's share  +2_530 B     packed, split by a MID arm (CONTROL with
+ *                                    TD-518's three brain sources and its
+ *                                    bullet copied over it, so TD-518 is
+ *                                    applied first: 1_971_610 / 7_245_196 /
+ *                                    605 / `7c702335…`): TD-518 +1_162 under
+ *                                    its 2_000 B hard stop, TD-519 +1_368
+ *                                    under its 3_000 B, so no cut was taken.
+ *                                    Unpacked +6_811 over 9 artifacts,
+ *                                    reconciling exactly. TD-518 +2_316: the
+ *                                    vendored `server-version.js` +1_227
+ *                                    (NEW) / `.d.ts` +463 (NEW), `index.js`
+ *                                    +310 / `index.d.ts` +63,
+ *                                    `engine/index.js` −10, `CHANGELOG.md`
+ *                                    +263 (with the `### Fixed` heading).
+ *                                    TD-519 +4_495: `verbs/doctor.js` +2_585
+ *                                    / map +1_137, `README.md` +455,
+ *                                    `CHANGELOG.md` +318.
+ *   cumulative delta    +129_702 B   (1_972_978 − 1_843_276)
+ *   headroom remaining  23_898 B     (153_600 − 129_702)
+ *   RE-DERIVED: 1_970_448 − 1_969_692 = 756; 7_242_880 − 7_240_986 = 1_894
+ *   = 1_210 + 684; 126_416 + 756 = 127_172 = 1_970_448 − 1_843_276;
+ *   1_971_610 − 1_970_448 = 1_162; 1_972_978 − 1_971_610 = 1_368; 1_162 +
+ *   1_368 = 2_530; 7_249_691 − 7_242_880 = 6_811 = 2_316 + 4_495; 2_316 =
+ *   1_227 + 463 + 310 + 63 − 10 + 263; 4_495 = 2_585 + 1_137 + 455 + 318;
+ *   127_172 + 2_530 = 129_702; 153_600 − 129_702 = 23_898.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4506,10 +4704,11 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-510, measured 2026-11-18,
- * 27_184 B (26.5 KB) is what is left on PACKED — TD-444's re-based grant
- * minus the 126_416 B spent since (BR-100, at 6_715 B, was the grant's first
- * consumer).** Grep `TD-510 MEASURED LAST` in this file for that reading and
+ * BRIEF, a DATE and no direction: **as of TD-518 + TD-519, measured
+ * 2026-11-20, 23_898 B (23.3 KB) is what is left on PACKED — TD-444's
+ * re-based grant minus the 129_702 B spent since (BR-100, at 6_715 B, was the
+ * grant's first consumer).** Grep `TD-518 + TD-519 MEASURED LAST` in this
+ * file for that reading and
  * the method behind it (TD-444 is the floor and the re-base, BR-101 the
  * copy-step method every reading since uses), and treat the 84_262 B above
  * as TD-378's historical figure, not a budget. THE ONE "above" IN THIS
@@ -4522,7 +4721,7 @@ interface PackReport {
  * because a row could be, and was. Whoever appends the next row
  * re-points THIS sentence at their own brief id, date and figure (the rows
  * after BR-100's, through BR-120's, did not; TD-510 re-pointed it from
- * BR-100's 146_885 B). The
+ * BR-100's 146_885 B, and TD-518 + TD-519 from TD-510's 27_184 B). The
  * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
  * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
  * do not read such a jump as a ceiling change; both constants are still
