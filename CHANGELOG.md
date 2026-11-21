@@ -10,6 +10,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Agent-memory lessons can move into the brain (TD-496, part 1).** A new
+  hidden CLI verb, `igris lessons`, has three actions. `ingest` stores
+  approved JSONL rows through the brain's own gateway, dispatching only
+  `igris_memory_store` and `igris_memory_update`. It refuses a row whose
+  project, category and title already exist, because sync would merge the
+  two into one row, and it keeps a ledger with one `{key, id, sha256, op}`
+  line per lesson it stores or finds already present. With `--dry-run` it
+  opens the brain read-only and, when vector search is available, reports
+  the nearest existing lesson. `digest --role <agent>` prints the approved
+  lessons tagged `role:<agent>` for a project, plus global ones, as one block
+  of at most 4,096 UTF-8 bytes by default (8,192 with `--max-bytes`) and
+  12 lessons. `audit` checks a ledger against the brain. The new
+  `core/scripts/agent_memory_export.sh` reads the per-role agent-memory
+  directories without writing, moving or deleting a source file, and sends
+  only operator-approved batches to `igris lessons ingest`; `/harvest` Mode B
+  drives it. `/hunt` pastes each role's digest into the architect, forger,
+  sentinel and warden delegations, and it now writes the plan file itself:
+  the architect returns the plan as its final message. Core agents keep
+  `memory: project` and their memory directories until part 2, which follows
+  the export.
+
 ### Fixed
 
 - **The brain reports its real version (TD-518).**

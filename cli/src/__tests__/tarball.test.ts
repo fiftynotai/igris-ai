@@ -3530,6 +3530,60 @@ interface PackReport {
  *   1_227 + 463 + 310 + 63 − 10 + 263; 4_495 = 2_585 + 1_137 + 455 + 318;
  *   127_172 + 2_530 = 129_702; 153_600 − 129_702 = 23_898.
  *
+ * TD-496 part 1 MEASURED LAST (2026-11-21), after the part's final shipped
+ * change: the hidden `igris lessons digest|ingest|audit` verb — the new
+ * `lib/lessons.js`, `lib/lessons-ingest.js` and `verbs/lessons.js`, the
+ * `lessons <action>` registration in `index.js`, `MODULE_RELS.perceptionDedup`
+ * + `loadNearestMatch` in `brain-bridge.js`, `readRoleDigest` /
+ * `readLessonsAudit` in `brain-db.js` — and one `CHANGELOG.md` bullet. The
+ * export script, its bats, the skill prose, `core/os/memory.md`, MAINTAINING,
+ * the root CHANGELOG and every test pack 0 B (`core/**` rides the core
+ * channel; `tsconfig.json` excludes the tests from emit; the rest is outside
+ * `files`). Same method as TD-518 + TD-519 (`git archive` scratch builds,
+ * `copy-templates.sh` in both arms, smoke `(sandboxed)`, `npm pack --dry-run
+ * --json --ignore-scripts` twice per arm, identical). CONTROL = develop
+ * `2d1b3df`, which reproduced that row's FINAL byte- and sha-identically
+ * (1_972_978 / 7_249_691 / 605 / `902ce0ea…`). FINAL = a `git write-tree` of
+ * the working tree through a TEMP index (`0f2be538`, no commit); its pack is
+ * sha-identical to the worktree's own `npm run build`. These figures were
+ * re-taken after the warden fix round (the pre-fix tree `f8255a93` read
+ * 1_987_354 / 7_317_832 / 611 / `bd3a2892…`; the fixes add +155 packed and
+ * +829 unpacked over 5 artifacts: `lib/lessons.js` +260 / map +366,
+ * `lib/lessons-ingest.js` +82 / map +81, `CHANGELOG.md` +40).
+ *   packed              1_987_509    unpacked 7_318_661, 611 entries (+6:
+ *                                    three `.js` and their three maps),
+ *                                    shasum
+ *                                    `20fc5af085e6bf7aa907ac7f8c016409bbf16fe7`.
+ *   this round's share  +14_531 B    packed — OVER the plan's 8_000 B hard
+ *                                    stop, ACCEPTED BY THE OPERATOR
+ *                                    2026-11-21 on condition that TD-520
+ *                                    (stop shipping the cli-own `.js.map`)
+ *                                    was filed; it was. The bytes are code:
+ *                                    the three new maps are 5_310 B packed
+ *                                    (+9_221 without them; a third arm,
+ *                                    FINAL's built tree with those three
+ *                                    maps deleted, packed twice: 1_982_199 /
+ *                                    7_284_017 / 608 / `13a05660…`), and the
+ *                                    new types are interfaces that emit
+ *                                    nothing (`types.js` moves 0 B).
+ *                                    Unpacked +68_970 over 13 artifacts,
+ *                                    reconciling exactly: new
+ *                                    `lib/lessons-ingest.js` +12_838 / map
+ *                                    +15_383, `lib/lessons.js` +9_796 / map
+ *                                    +12_276, `verbs/lessons.js` +5_757 /
+ *                                    map +6_985; `index.js` +1_323 / map
+ *                                    +625, `lib/brain-bridge.js` +1_377 /
+ *                                    map +1_086, `lib/brain-db.js` +599 /
+ *                                    map +520; `CHANGELOG.md` +405.
+ *   cumulative delta    +144_233 B   (1_987_509 − 1_843_276)
+ *   headroom remaining  9_367 B      (153_600 − 144_233)
+ *   RE-DERIVED: 1_987_509 − 1_972_978 = 14_531 = 5_310 + 9_221; 1_987_509 −
+ *   1_982_199 = 5_310; 1_982_199 − 1_972_978 = 9_221; 7_318_661 − 7_249_691
+ *   = 68_970 = 63_035 + 5_935; 63_035 = 12_838 + 15_383 + 9_796 + 12_276 +
+ *   5_757 + 6_985; 5_935 = 1_323 + 625 + 1_377 + 1_086 + 599 + 520 + 405;
+ *   1_987_509 − 1_987_354 = 155; 7_318_661 − 7_317_832 = 829 = 260 + 366 +
+ *   82 + 81 + 40; 129_702 + 14_531 = 144_233; 153_600 − 144_233 = 9_367.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4704,10 +4758,10 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-518 + TD-519, measured
- * 2026-11-20, 23_898 B (23.3 KB) is what is left on PACKED — TD-444's
- * re-based grant minus the 129_702 B spent since (BR-100, at 6_715 B, was the
- * grant's first consumer).** Grep `TD-518 + TD-519 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-496 part 1, measured
+ * 2026-11-21, 9_367 B (9.1 KB) is what is left on PACKED — TD-444's
+ * re-based grant minus the 144_233 B spent since (BR-100, at 6_715 B, was the
+ * grant's first consumer).** Grep `TD-496 part 1 MEASURED LAST` in this
  * file for that reading and
  * the method behind it (TD-444 is the floor and the re-base, BR-101 the
  * copy-step method every reading since uses), and treat the 84_262 B above
@@ -4721,7 +4775,8 @@ interface PackReport {
  * because a row could be, and was. Whoever appends the next row
  * re-points THIS sentence at their own brief id, date and figure (the rows
  * after BR-100's, through BR-120's, did not; TD-510 re-pointed it from
- * BR-100's 146_885 B, and TD-518 + TD-519 from TD-510's 27_184 B). The
+ * BR-100's 146_885 B, TD-518 + TD-519 from TD-510's 27_184 B, and TD-496
+ * part 1 from TD-518 + TD-519's 23_898 B). The
  * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
  * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
  * do not read such a jump as a ceiling change; both constants are still
@@ -5049,6 +5104,14 @@ describe("FR-238 — dist/dashboard ships in the npm tarball", () => {
     }
     // Round B: the embeddings module the write verbs load for its dispose.
     expect(packed.has("dist/brain-mcp-server/dist/utils/embeddings.js")).toBe(true);
+  }, PACK_TIMEOUT_MS);
+
+  it("ships the perception dedup module `igris lessons ingest --dry-run` imports (TD-496)", () => {
+    // `MODULE_RELS.perceptionDedup` reaches it by path literal, and
+    // `loadNearestMatch()` DEGRADES when it is missing (the dry run reports
+    // `vector_available: false`), so only a packaging assertion catches a
+    // consumer install that lost it.
+    expect(packedPaths().has("dist/brain-mcp-server/dist/engine/components/perception/dedup.js")).toBe(true);
   }, PACK_TIMEOUT_MS);
 
   it("ships the three FR-240 pure READ modules the layer endpoints import", () => {

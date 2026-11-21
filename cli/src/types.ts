@@ -2616,3 +2616,49 @@ export interface AttentionActionResult {
   degraded: boolean; reason: string | null;
 }
 export interface DashboardEnsureResult { available: boolean; url: string | null; reason: string | null }
+
+// TD-496 — `igris lessons`: role lessons in the brain (digest / ingest / audit).
+
+/** A `learnings` row as the role digest reads it (`lessons.ts#selectRoleLessons`). */
+export interface RoleLessonRow {
+  id: number; project: string; title: string; content: string; tags: string;
+  scope: string; confidence: number | null; created_at: string; promoted_to_doc: string | null;
+}
+/** What `igris lessons digest --json` prints. `markdown` is the exact text mode output. */
+export interface RoleDigest {
+  role: string; project: string; max_bytes: number; bytes: number;
+  included: number; available: number; truncated: boolean;
+  degraded: boolean; reason: string | null; markdown: string;
+  lessons: { id: number; title: string }[];
+}
+/** One parsed line of an ingest JSONL file. `invalid` is a per-item refusal found at parse time. */
+export interface IngestRow {
+  line: number; key: string; op: "store" | "add_tags";
+  args: Record<string, unknown> | null; id: number | null; tags: string | null;
+  invalid: string | null;
+}
+export interface IngestNearest {
+  id: number; project: string; title: string; tags: string; scope: string;
+  similarity: number; advisory: boolean;
+}
+/** One element of `results` in `igris lessons ingest --json` (dry run and write share the shape). */
+export interface IngestResult {
+  line: number; key: string; op: "store" | "add_tags";
+  status: "would-store" | "would-tag" | "stored" | "tagged" | "already-present" | "title-collision" | "error";
+  id: number | null; error: string | null; key_present: boolean;
+  collision: { id: number | null; key: string | null } | null;
+  project_registered: boolean | null;
+  vector_available: boolean | null; vector_reason: string | null;
+  nearest: IngestNearest | null;
+}
+/** One ledger line: what ingest stored or tagged, keyed by the `amx:` token. */
+export interface LedgerRow { key: string; id: number; sha256: string; op: "store" | "add_tags" }
+export interface LessonsAuditProblem {
+  kind: "missing-id" | "sha-mismatch" | "missing-token" | "deleted" | "orphan";
+  key: string | null; id: number; detail: string;
+}
+/** What `igris lessons audit --json` prints. */
+export interface LessonsAudit {
+  ok: boolean; ledger_rows: number; keys: number; verified: number;
+  problems: LessonsAuditProblem[];
+}

@@ -60,6 +60,7 @@ import { runCognition } from "./verbs/cognition.js";
 import { runCeremony } from "./verbs/ceremony.js";
 import { runProjectCommand } from "./verbs/project.js";
 import { runKpi } from "./verbs/kpi.js";
+import { runLessons } from "./verbs/lessons.js";
 import { runDashboard } from "./verbs/dashboard.js";
 import { runAttention, type AttentionOptions } from "./verbs/attention.js";
 import { runExport } from "./verbs/export.js";
@@ -1319,6 +1320,29 @@ async function main(argv: string[]): Promise<void> {
         alarm: opts.alarm === true,
       });
     });
+
+  // TD-496: /hunt pastes `digest`; /harvest's export drives `ingest` / `audit`.
+  program
+    .command("lessons <action>", { hidden: true })
+    .description(
+      "TD-496: role lessons. digest: a byte-capped role:<agent> digest (read-only; exit 0, 2 usage). ingest: store/tag rows through the brain gateway (0 ok, 1 a row failed, 2 bad input, 3 no brain). audit: verify a ledger (0 clean, 1 problems, 2 usage, 3 no brain).",
+    )
+    .option("--role <agent>", "digest: the agent role (role:<agent> tag token)")
+    .option("--project <slug>", "digest: project slug (default: the project resolved from cwd)")
+    .option("--context <text>", "digest: what the delegation is about (ranks lessons by word overlap)")
+    .option("--max-bytes <n>", "digest: UTF-8 byte cap, 512..8192 (default 4096)")
+    .option("--in <file>", "ingest: JSONL rows ('-' = stdin)")
+    .option("--ledger <path>", "ingest/audit: the append-only stored ledger (JSONL)")
+    .option("--dry-run", "ingest: report what would be stored; opens the brain read-only", false)
+    .option("--json", "emit one JSON object (ingest: {ok, dry_run, results[]})", false)
+    .action(
+      async (
+        action: string,
+        opts: { role?: string; project?: string; context?: string; maxBytes?: string; in?: string; ledger?: string; dryRun?: boolean; json?: boolean },
+      ): Promise<void> => {
+        process.exitCode = await runLessons(action, opts);
+      },
+    );
 
   // FR-238 — the CLI's first LONG-LIVED verb. Visible (not hidden): the
   // dashboard is a product surface, not an internal boot-lifecycle step.

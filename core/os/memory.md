@@ -106,6 +106,8 @@ Mapping common phrasings to the legal `category` enum:
 
 **Tag-namespace hygiene.** Tags are free-form, but prefer existing tags from prior memories — call `igris_memory_search` with a candidate tag first to check for collisions or synonyms. Otherwise the namespace drifts (`flutter` / `flutter-app` / `flutterapp`) and recall quality decays.
 
+**Role tokens (TD-496).** A lesson for one agent role carries the whole tag token `role:<agent>` (for example `role:warden`; agent-memory exports also carry `agent-memory` and `amx:<id>`), and role lessons reach agents through `igris lessons digest --role <agent>`, which `/hunt` pastes into each delegation.
+
 ### Quality Bar
 
 A good memory entry is:

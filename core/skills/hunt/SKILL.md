@@ -282,6 +282,9 @@ light confirm.
      `~/.igris/projects/{project}/context/`, grounded in the inventory digest
      when available, with `/ground <type>` remediation instead of invented
      placeholder docs.
+3.9. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
+   for `architect` (`igris lessons digest --role architect --project {project} --context "{safe title}"`)
+   and keep its output for the `Role lessons:` line of the step 4 prompt.
 4. **Delegate to the architect role** using your Agent tool:
 
 ```
@@ -307,7 +310,9 @@ Agent tool parameters:
   [raw JSON from `igris context-docs inventory --project {project} --json`,
   or 'unavailable']
 
-  Write plan to ~/.igris/projects/{project}/plans/{BRIEF_ID}-plan.md"
+  Role lessons: [the step 3.9 digest output for architect, verbatim]
+
+  Return the complete plan as your final message; do not write files."
 ```
 
 5. After architect returns:
@@ -322,6 +327,9 @@ Agent tool parameters:
      - phase: "PLANNING"
      - result: {brief summary of architect's output}
      Skip silently if unavailable.
+   - **Save the plan (TD-496):** write the returned plan verbatim to `~/.igris/projects/{project}/plans/{BRIEF_ID}-plan.md`.
+     The orchestrator writes it: the architect is read-only (Read, Grep,
+     Glob), so it returns the plan as its final message instead.
    - Update brief: Active Agent = none
    - Update Agent Log with result
    - Check brief Effort field
@@ -349,7 +357,7 @@ Agent tool parameters:
    Skip silently if MCP unavailable.
 3.5. **Pre-forger mistake recall** (fire-and-forget, never blocks):
    - Call `igris_memory_recall` with `project={current_project}`, `context="{brief title} mistake regression bug"`, `limit=5`
-   - Note: `igris_memory_recall` does NOT currently accept a `category=mistake` filter — the FTS5 keyword bias (`"mistake regression bug"`) approximates it. If a `category` arg ships in a future brief, switch to that.
+   - Note: recall accepts an optional `category` filter (TD-093), but this step deliberately keeps the FTS5 keyword bias (`"mistake regression bug"`) instead: a hard `category: "mistake"` filter would drop regression lessons stored under another category.
    - Aggregate results into a `Past mistakes to avoid:` markdown block (one bullet per recalled lesson with title + 1-line summary)
    - Pass into forger prompt under a `Past mistakes to avoid:` header (append to the template in step 4)
    - If the call fails or returns empty, log warning and continue without the block
@@ -362,6 +370,9 @@ Agent tool parameters:
    the prompt in step 4, omit any commit-related phase from the [plan
    content] inclusion or annotate it with "(orchestrator-owned, not
    forger's responsibility)".
+3.7. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
+   for `forger` (`igris lessons digest --role forger --project {project} --context "{safe title}"`)
+   and keep its output for the `Role lessons:` line of the step 4 prompt.
 4. **Delegate to the forger role** using your Agent tool:
 
 ```
@@ -378,6 +389,8 @@ Agent tool parameters:
   consult_when to decide which existing docs under
   ~/.igris/projects/{project}/context/ are relevant to this implementation.
   Do not reimplement applies_when.
+
+  Role lessons: [the step 3.7 digest output for forger, verbatim]
 
   Follow the plan and implement all required changes.
   Ensure code follows all consulted project context docs.
@@ -426,6 +439,9 @@ Agent tool parameters:
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
+3.5. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
+   for `sentinel` (`igris lessons digest --role sentinel --project {project} --context "{safe title}"`)
+   and keep its output for the `Role lessons:` line of the step 4 prompt.
 4. **Delegate to the sentinel role** using your Agent tool:
 
 ```
@@ -433,6 +449,8 @@ Agent tool parameters:
 - subagent_type: "sentinel"
 - description: "Test {BRIEF_ID} implementation"
 - prompt: "Run tests for the implementation.
+
+  Role lessons: [the step 3.5 digest output for sentinel, verbatim]
 
   Run:
   1. Linter/analyzer (if applicable)
@@ -564,6 +582,9 @@ Agent tool parameters:
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
+3.5. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
+   for `warden` (`igris lessons digest --role warden --project {project} --context "{safe title}"`)
+   and keep its output for the `Role lessons:` line of the step 4 prompt.
 4. **Delegate to the warden role** using your Agent tool:
 
 ```
@@ -571,6 +592,8 @@ Agent tool parameters:
 - subagent_type: "warden"
 - description: "Review {BRIEF_ID} implementation"
 - prompt: "Review the implementation for quality.
+
+  Role lessons: [the step 3.5 digest output for warden, verbatim]
 
   Check:
   1. Read ~/.igris/core/context-doc-types/INDEX.md and the plan's Context Docs
@@ -920,6 +943,35 @@ During long phases (BUILDING, TESTING), the active subagent may run for extended
 - Do not instruct subagents to emit instance activity calls; activity age is not a liveness signal.
 
 This ensures other machines can see that the work is still reserved without pretending they can inspect this machine's process liveness.
+
+## Role-Lesson Digest (TD-496)
+
+Each delegated role gets the lessons stored for it in the brain, as one
+byte-capped block. Phase 2 step 3.9, Phase 3 step 3.7, Phase 4 step 3.5 and
+Phase 5 step 3.5 run this recipe with `<role>` set to `architect`, `forger`,
+`sentinel` and `warden`:
+
+```bash
+igris lessons digest --role <role> --project {project} --context "{safe title}" 2>/dev/null \
+  || echo "Role lessons (<role>): unavailable — igris lessons digest failed or is not installed; proceeding without them."
+```
+
+- `{safe title}` is the brief title with every character outside `[A-Za-z0-9 .,_-]` replaced by a space.
+  Brief titles are brain data that sync from other machines, so the raw title
+  never goes into a shell command: a `"`, `$(…)` or backtick in it would break
+  the command or run code. The digest only scores words, so nothing is lost.
+- Paste the output verbatim after the prompt's `Role lessons:` label. Do not
+  summarise, reorder or trim it.
+- It never blocks. With nothing stored the verb prints `Role lessons (<role>):
+  none stored.`, and when it cannot read the brain it prints its own
+  `unavailable` line. Both are normal: delegate anyway.
+- The digest is capped at 4,096 B (UTF-8, header and footer included) and 12
+  lessons. It reads the brain read-only and does not touch recall's access
+  counters, so running it on every delegation changes nothing.
+- It selects approved, undeleted learnings tagged `role:<role>` (written by
+  `/harvest` Mode B) in this project or with global scope. It does not replace
+  the pre-architect brain pull or the pre-forger mistake recall.
+- `/hunt` delegates to no seeker, so no seeker digest is run.
 
 ## Agent Event Emission (Mandatory When Available)
 

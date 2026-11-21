@@ -59,6 +59,7 @@ import { normalizeSyncRow } from "./brief-normalize.generated.js";
 // FR-268: the PURE KPI reader (db-param, SELECT-only). This module is its
 // wrapper — the only place that opens a door for it.
 import { absentKpiDigest, buildKpiDigest, type KpiReadOptions } from "./kpi-read.js";
+import { auditLedger, buildRoleDigest, unavailableDigest, type RoleDigestOptions } from "./lessons.js";
 import type {
   SessionFileRow,
   InstanceRow,
@@ -75,6 +76,9 @@ import type {
   ImportStoreResult,
   ImportResult,
   KpiDigest,
+  LedgerRow,
+  LessonsAudit,
+  RoleDigest,
 } from "../types.js";
 
 let db: Database.Database | null = null;
@@ -3914,6 +3918,17 @@ export function ceremonyEventWrite(input: CeremonyEventWriteInput): CeremonyEven
  */
 export function readKpiDigest(opts: KpiReadOptions): KpiDigest {
   return withReadonlyBrain<KpiDigest>(absentKpiDigest(opts), (handle) => buildKpiDigest(handle, opts));
+}
+
+/** TD-496: read-only; no brain → the unavailable line. */
+export function readRoleDigest(opts: RoleDigestOptions): RoleDigest {
+  const why = existsSync(brainDbPath()) ? "brain database could not be opened read-only" : `no brain database at ${brainDbPath()}`;
+  return withReadonlyBrain<RoleDigest>(unavailableDigest(opts, why), (handle) => buildRoleDigest(handle, opts));
+}
+
+/** TD-496: read-only; `null` when no brain opens. */
+export function readLessonsAudit(ledger: LedgerRow[]): LessonsAudit | null {
+  return withReadonlyBrain<LessonsAudit | null>(null, (handle) => auditLedger(handle, ledger, {}));
 }
 
 // ---------------------------------------------------------------------------

@@ -51,7 +51,7 @@
 ### PLANNING
 - Delegate to architect agent
 - Create implementation plan
-- Save to ~/.igris/projects/{project}/plans/{BRIEF_ID}-plan.md
+- Save to ~/.igris/projects/{project}/plans/{BRIEF_ID}-plan.md (the orchestrator writes it; the architect is read-only)
 
 ### APPROVAL (L/XL only)
 - Display plan to user

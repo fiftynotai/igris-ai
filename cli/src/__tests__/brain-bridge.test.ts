@@ -498,6 +498,29 @@ describe("FR-240 bridge — the bundle-ROOT resolver (row 107)", () => {
     resetRelationsActions();
   });
 
+  it("resolves TD-496's dedup module and loadNearestMatch() loads findNearestMatch (or degrades with a cause)", async () => {
+    // Row 109: `MODULE_RELS.perceptionDedup` is a path literal into a build
+    // artifact; a moved file silently turns `igris lessons ingest --dry-run`
+    // into `vector_available: false`, so it gets the same rot guard.
+    const { loadNearestMatch, lastNearestMatchFailure, resetNearestMatch } = await import("../lib/brain-bridge.js");
+    const rel = join("engine", "components", "perception", "dedup.js");
+    resetNearestMatch();
+    const resolved = resolveBundleModule(rel);
+    const fn = await loadNearestMatch();
+    if (!readersStaged) {
+      expect(resolved).toBeNull();
+      expect(fn).toBeNull();
+      expect(lastNearestMatchFailure()).toMatch(/dedup/);
+      return;
+    }
+    expect(resolved, `${rel} did not resolve`).not.toBeNull();
+    expect(existsSync(resolved as string)).toBe(true);
+    expect(fn, lastNearestMatchFailure() ?? "").not.toBeNull();
+    expect(typeof fn).toBe("function");
+    expect(await loadNearestMatch()).toBe(fn); // memoised
+    resetNearestMatch();
+  });
+
   it("returns null for a module that is not there, without throwing", () => {
     expect(resolveBundleModule(join("tools", "no-such-module.js"))).toBeNull();
   });

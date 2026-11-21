@@ -10,6 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`igris lessons` (hidden; TD-496, part 1).** `ingest` stores approved
+  agent-memory lessons through the brain's gateway and keeps a ledger,
+  `digest --role <agent>` prints one role's lessons in at most 4,096 bytes
+  by default (8,192 with `--max-bytes`), and `audit` checks a ledger
+  against the brain. `/harvest` and `/hunt` run them. Core agents keep
+  `memory: project` until part 2.
+
 ### Fixed
 
 - **The bundled brain reports the package version (TD-518).** Since v7.2.0

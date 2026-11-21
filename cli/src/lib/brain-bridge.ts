@@ -250,6 +250,8 @@ const MODULE_RELS = {
   // FR-273 round B — the same embeddings module `actions.js` imports, loaded for
   // its `disposeEmbeddingPipeline` (the write verbs dispose before closing, BR-060).
   embeddings: join("utils", "embeddings.js"),
+  // TD-496: `lessons ingest --dry-run` dedup; loss reports vector_available:false.
+  perceptionDedup: join("engine", "components", "perception", "dedup.js"),
 } as const;
 
 /** The bundle-relative path of the write engine, for `brain-write-bridge.ts`. */
@@ -1286,6 +1288,50 @@ export async function loadRelationsActions(): Promise<RelationsActionsModule | n
 /** The vendored embeddings module's teardown (utils/embeddings.ts). */
 export interface VendoredEmbeddings {
   disposeEmbeddingPipeline(): Promise<void>;
+  /** embeddings.ts:158 (TD-496 dedup probe). */
+  generateEmbedding?(text: string): Promise<Float32Array>;
+}
+
+/** dedup.ts:230 — `findNearestMatch(db, candidate, threshold = 0.80)` → dedup.ts:112 `DedupMatch`. */
+export type FindNearestMatchFn = (
+  db: Database.Database,
+  candidate: { title: string; content: string },
+  threshold?: number,
+) => Promise<{ matched_id: number; status: string; similarity: number } | null>;
+
+let cachedNearest: FindNearestMatchFn | null = null;
+let cachedNearestFailure: string | null = null;
+
+export function lastNearestMatchFailure(): string | null {
+  return cachedNearestFailure;
+}
+
+export function resetNearestMatch(): void {
+  cachedNearest = null;
+  cachedNearestFailure = null;
+}
+
+/** TD-496: `null` with a memoised cause on any failure; never rejects. */
+export async function loadNearestMatch(): Promise<FindNearestMatchFn | null> {
+  if (cachedNearest !== null) return cachedNearest;
+  if (cachedNearestFailure !== null) return null;
+  const modulePath = resolveBundleModule(MODULE_RELS.perceptionDedup);
+  if (modulePath === null) {
+    cachedNearestFailure = `brain dedup module not found: ${MODULE_RELS.perceptionDedup}`;
+    return null;
+  }
+  try {
+    const fn = ((await import(pathToFileURL(modulePath).href)) as Record<string, unknown>).findNearestMatch;
+    if (typeof fn !== "function") {
+      cachedNearestFailure = `module at ${modulePath} does not export findNearestMatch`;
+      return null;
+    }
+    cachedNearest = fn as FindNearestMatchFn;
+    return cachedNearest;
+  } catch (err) {
+    cachedNearestFailure = `import failed for ${MODULE_RELS.perceptionDedup}: ${err instanceof Error ? err.message : String(err)}`;
+    return null;
+  }
 }
 
 /** Load the vendored embeddings module for its dispose; `null` on any failure. */

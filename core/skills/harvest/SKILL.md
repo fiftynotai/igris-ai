@@ -25,6 +25,8 @@ triggers:
   - "harvest knowledge"
   - "extract learnings"
   - "capture knowledge"
+  - "harvest agent memory"
+  - "export agent memory"
 ---
 
 # HARVEST — Knowledge Capture Skill
@@ -35,12 +37,24 @@ the project **archetype**. Every step is **operator-guided, never automatic** �
 this is the proven principle from the original capture design (revived FR-100):
 the model proposes, the operator decides what is worth keeping.
 
+## Modes
+
+- **Mode A — Guided project harvest (the default).** Phases 1–6 below: scan
+  the project, then curate the archetype, modules and 3–8 learnings with the
+  operator.
+- **Mode B — Agent-memory export (TD-496).** Bring the lessons agents saved in
+  their per-role agent-memory directories into the brain as role-tagged
+  learnings, in batches the operator approves. Use it when the operator asks to
+  "harvest agent memory" or to export agent memory. See "Mode B" below.
+
 ---
 
-Guided harvest in six phases. Determine the current project slug, name, and
-absolute path up front (the project the operator is in) — Phases 2–4 key off it.
+Mode A is a guided harvest in six phases. Determine the current project slug,
+name, and absolute path up front (the project the operator is in) — Phases 2–4
+key off it.
 
-> **Degradation (applies to EVERY brain call below):** if the `igris-brain` MCP
+> **Degradation (applies to EVERY Mode A brain call below; Mode B stops
+> instead, see Mode B):** if the `igris-brain` MCP
 > server is unavailable, do **not** block. Continue the operator interview,
 > collect the same answers, and warn **once** at the top:
 > `Note: brain MCP unavailable — capturing the interview locally; the learnings/modules/archetype will not be persisted to the brain this run. Re-run /harvest when the brain is reachable to store them.`
@@ -247,6 +261,141 @@ note that was written and remind them to re-run when the brain is reachable.
 
 ---
 
+## Mode B — Agent-memory export (TD-496)
+
+Agents keep lessons in per-role agent-memory directories: one directory per
+role, a `MEMORY.md` index, one file per lesson. Mode B turns those lessons into
+ordinary brain learnings tagged `amx:<id>` (the lesson's export key),
+`agent-memory` and one `role:<agent>` token per role, so `/hunt` can hand each
+role its own lessons through `igris lessons digest`.
+
+**Who writes what.** `E` below is the export script:
+`core/scripts/agent_memory_export.sh` in the project checkout, or
+`~/.igris/core/scripts/agent_memory_export.sh` at runtime. It reads the files,
+renders each lesson verbatim, applies mechanical defaults and keeps the
+decision ledger in a run dir. `igris lessons ingest` stores the approved rows
+through the brain's own gateway. You propose; the operator approves.
+
+- This mode never composes store arguments. It never runs `igris lessons
+  ingest` itself, with or without `--dry-run`: `next` runs the dry run, and the
+  only store path is `decide --accept --commit`.
+- The script never writes, moves or deletes a source file. The agent-memory
+  directories stay where they are. If the operator wants a copy, they make it.
+- **Brain unavailable → stop before `next`.** If `igris lessons digest --role
+  warden --project {project}` prints `unavailable`, `igris` is missing, or `E`
+  exits 3, say so and stop. Never fall back to storing lessons by hand.
+
+### B1 — Roots and the run dir
+
+```bash
+bash E roots --project-root <checkout root> --user-root auto --include-worktrees
+```
+
+Show the table. The script prints one `--root` spec for each root in the three
+sets: `main`, `nested:<relpath>` and `user`. Roots in other worktrees are
+reported as `extra` and are not processed unless the operator says so. The
+`user` root's lessons default to the current project; propose another
+registered project per row where the lesson belongs elsewhere. The operator
+confirms the set. The run dir is
+`~/.igris/projects/{project}/harvest/agent-memory-<date>/`.
+
+Before the first commit, note the brain's learnings total (the memory
+dashboard's summary); the close compares against it.
+
+**First run: a dry run on one small role.** Use a separate run dir and
+`scan --only-role seeker`, then `next`, `propose`, `sheet` and `decide` WITHOUT
+`--commit`. Nothing is written. The operator checks the sheet and the curation
+bar. The full scan can import those proposals with
+`--import-decisions <dry-run dir>`.
+
+### B2 — Scan
+
+```bash
+bash E scan --run-dir <R> --root <spec> [--root <spec> ...]
+```
+
+Show the per-root and per-role counts and the batch estimate.
+
+### B3 — One batch
+
+1. `bash E next --run-dir <R>` opens the next batch (one role group, small
+   roles first) and dry-runs it. Exit 3: the brain is unavailable, stop. Exit 1
+   naming `--allow-no-dedup`: vector dedup is unavailable. Tell the operator,
+   and continue only if they say so, with `next --allow-no-dedup` (the script
+   records it in `run.json`).
+2. For every `JUDGE` row (`project`-type files and index notes), propose keep
+   or drop against the curation bar below, each with a reason of six words or
+   fewer:
+   `bash E propose --run-dir <R> --batch <N> --keep 1,4 --drop "2:dated headroom snapshot"`.
+   You may also propose `--global <K>` for a project-independent process
+   lesson and `--project <K>=<slug>` for a `user`-root lesson that belongs to
+   another registered project. Read a row in full with
+   `bash E show --run-dir <R> --batch <N> --row <K>`.
+3. `bash E sheet --run-dir <R> --batch <N>` and show the sheet verbatim.
+4. Act on the operator's reply. `ok` runs `decide --accept --commit`. Any other
+   decision first runs `decide` with the matching flags and WITHOUT `--commit`
+   (a dry echo), waits for "ok", then re-runs the same flags with
+   `--accept --commit`.
+
+   | Reply | Effect | `decide` flags |
+   |---|---|---|
+   | `ok` | Commit exactly what the sheet showed | `--accept --commit` |
+   | `ok except 3,7` | Flip those rows (keep or tag ↔ drop) | `--flip 3,7` |
+   | `keep 3` | Keep the row | `--keep 3` |
+   | `drop 5 <reason>` | Drop the row, with a reason | `--drop "5:<reason>"` |
+   | `tag 4` | Add the role tag to the matched brain row | `--tag 4` |
+   | `new 4` | Store as a new row despite a near match | `--new 4` |
+   | `cat 4=mistake` | Change the category | `--cat 4=mistake` |
+   | `global 4` | Store with global scope | `--global 4` |
+   | `project 6=<slug>` | Store under another registered project | `--project 6=<slug>` |
+   | `title 2=<text>` | Replace the title | `--title "2=<text>"` |
+   | `show 8` | Show the full text | `show --row 8` |
+   | `stop` | Stop; resume later with the same run dir | — |
+
+   `decide --accept` refuses while a `JUDGE` row has no proposal, and when the
+   resolution no longer matches the sheet shown (run `sheet` again).
+5. Echo the script's result line, `stored n (L-ids), tagged m, dropped k,
+   already-present j, errors e`. An errored row stays pending for a later
+   batch. Between roles, show `bash E report --run-dir <R> --md` totals.
+
+### Curation bar
+
+- KEEP a rule, pitfall, pattern or durable code fact that would change how the
+  role acts on a different future brief, in a subsystem that still exists.
+- DROP brief status or progress, commit SHAs as the point, dated counts or
+  headroom figures, "next steps", anything that can be re-derived from git or
+  the brain, and lessons about retired features.
+
+The script's mechanical defaults, shown on the sheet: `feedback` and
+`reference` files KEEP; `project` files and index notes are `JUDGE` (your
+proposal); `user` files DROP `user-profile`; no frontmatter DROP; secret-shaped
+text DROP `secret?` (keeping it needs `--secret-override <K>:<reason>`); a near
+duplicate in the brain that already has the role DROP, one without it TAG; a
+lesson already stored ALREADY; a title collision RETITLE; an unregistered
+project BLOCK.
+
+### B4 — Resume, delta sweep, close
+
+- **Resume.** Run the mode again with the same run dir. `report --md` shows
+  what is pending; `next` re-opens an open batch or continues.
+- **Delta sweep.** Agents keep writing memory. `bash E scan --run-dir <R>
+  --rescan` adds new and changed files and keeps every decision; process the
+  new batches.
+- **Close.** All must pass:
+  - `bash E report --run-dir <R> --md --verify-sources` exits 0;
+  - `igris lessons audit --ledger <R>/stored.jsonl` exits 0;
+  - the learnings total grew by exactly the stored count;
+  - pending is 0, or every pending row was dropped with a `deferred` reason
+    the operator gave;
+  - `igris lessons digest --role warden --project {project} --json` shows
+    `included` of at least 1.
+
+  Then run `igris sync push` (a short CLI process ends before the brain's
+  timed flush) and keep its output, the report and the audit for the close
+  notes.
+
+---
+
 ## Constraints
 
 1. **GUIDED, never automatic** — the operator chooses every archetype, module,
@@ -257,8 +406,9 @@ note that was written and remind them to re-run when the brain is reachable.
 3. **`source_extractor: "distill"`** on every Phase-4 `igris_memory_store` (the
    persisted channel-tag enum — NOT the skill name; intentionally kept after the
    `/distill` → `/harvest` rename, see the Phase-4 note).
-4. **Curate, don't dump** — capture targets 3–8 learnings; resist storing
-   everything — curation is the value.
+4. **Curate, don't dump** (Mode A) — capture targets 3–8 learnings; resist
+   storing everything — curation is the value. Mode B has no count target: its
+   curation bar decides each lesson, and the operator approves every batch.
 5. **Graceful degradation** — brain absent → continue the interview, warn once,
    write a local capture note, never block.
 6. **NEVER modify source code** — harvest catalogs knowledge into the brain; it
