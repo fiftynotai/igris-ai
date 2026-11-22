@@ -3,7 +3,6 @@ name: scribe
 description: Documentation specialist for Igris AI. Writes and maintains READMEs, API references, architecture docs, and code comments. Turns implemented code into clear, accurate, audience-appropriate documentation.
 tools: Read, Write, Edit, Grep, Glob
 model: inherit
-memory: project
 ---
 
 # SCRIBE

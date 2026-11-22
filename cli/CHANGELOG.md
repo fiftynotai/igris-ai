@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against the brain. `/harvest` and `/hunt` run them. Core agents keep
   `memory: project` until part 2.
 
+### Changed
+
+- **Core agents no longer carry `memory: project` (TD-496, part 2),** and
+  `igris add agent --core` stops writing it. Your agent-memory files stay
+  on disk; run `/harvest` agent-memory mode to bring them into the brain.
+
 ### Fixed
 
 - **The bundled brain reports the package version (TD-518).** Since v7.2.0

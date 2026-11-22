@@ -29,9 +29,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   only operator-approved batches to `igris lessons ingest`; `/harvest` Mode B
   drives it. `/hunt` pastes each role's digest into the architect, forger,
   sentinel and warden delegations, and it now writes the plan file itself:
-  the architect returns the plan as its final message. Core agents keep
-  `memory: project` and their memory directories until part 2, which follows
-  the export.
+  the architect returns the plan as its final message. Part 2, under
+  Changed below, removes `memory: project` from the core agents once the
+  export is done.
+
+### Changed
+
+- **Core agents no longer carry `memory: project` (TD-496, part 2).** The
+  key gave each of the nine core agents a per-role memory directory and,
+  with it, Write and Edit whatever its `tools:` line said. It is gone from
+  `core/agents/*.md`, `core/templates/agent.md` and the
+  `igris add agent --core` scaffold, and so from the OpenCode agent targets,
+  which copied it through (Gemini already dropped it; Codex never carried
+  it). Each role's lessons now live in the brain as `role:<agent>` learnings
+  that `/hunt` pastes into its delegations. Your agent-memory files stay on
+  disk; run `/harvest` agent-memory mode to bring them into the brain.
 
 ### Fixed
 

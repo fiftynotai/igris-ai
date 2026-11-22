@@ -665,8 +665,9 @@ describe("loadout add", () => {
   });
 
   it("TD-229: auto-translate DROPS the Claude-only `memory` key (Gemini schema rejects it)", async () => {
-    // The 7 core agents carry `memory: project` in their canonical
-    // frontmatter. Gemini's strict subagent schema rejects unknown keys with
+    // Loadout agents may carry `memory: project` in their canonical
+    // frontmatter (the core agents dropped it in TD-496 part 2). Gemini's
+    // strict subagent schema rejects unknown keys with
     // "Unrecognized key(s) in object: 'memory'" → the agent fails to load
     // entirely. The translator must drop `memory` alongside model/temperature/
     // max_turns. Kept byte-for-byte in parity with the bash DROPS set.

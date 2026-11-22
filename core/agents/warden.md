@@ -3,7 +3,6 @@ name: warden
 description: Code review, quality guardian, and auditor for Igris AI. Reviews code for quality, security, and guideline compliance (APPROVE/REJECT). Also runs comprehensive codebase audits via /audit skill.
 tools: Read, Grep, Glob
 model: inherit
-memory: project
 ---
 
 # WARDEN

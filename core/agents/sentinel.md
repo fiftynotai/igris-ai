@@ -3,7 +3,6 @@ name: sentinel
 description: Test execution and validation specialist for Igris AI. Validates implementations by running tests, linting, and builds. Reports PASS/FAIL with detailed diagnostics.
 tools: Read, Bash, Grep
 model: inherit
-memory: project
 ---
 
 # SENTINEL

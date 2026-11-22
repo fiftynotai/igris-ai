@@ -3,7 +3,6 @@ name: architect
 description: Strategic implementation planner for Igris AI. Use when planning implementation for briefs, designing architecture, or creating step-by-step plans. Delegates to this agent before any code changes.
 tools: Read, Grep, Glob
 model: inherit
-memory: project
 ---
 
 # ARCHITECT

@@ -6,7 +6,6 @@ tools:
   - Grep
   - Glob
 model: inherit
-memory: project
 ---
 
 # {NAME}

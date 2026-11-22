@@ -330,7 +330,6 @@ name: ${name}
 description: "TODO describe the ${name} agent and when the orchestrator should delegate to it."
 tools: Read, Grep, Glob, Bash
 model: sonnet
-memory: project
 ---
 
 # ${name.toUpperCase()}

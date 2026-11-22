@@ -199,6 +199,9 @@ describe("addCoreAgent — happy path", () => {
     const text = readFileSync(src, "utf-8");
     expect(text).toMatch(/^description: ".*"$/m);
     expect(text).toContain("name: scribe");
+    // TD-496 part 2: a new core agent gets no `memory:` key (its lessons live
+    // in the brain, role-tagged), so the scaffold must not write one.
+    expect(text).not.toMatch(/^memory:/m);
     // Runtime mirror is byte-identical + verify_mirror MATCH.
     const mirror = join(brain, "core", "agents", "scribe.md");
     expect(readFileSync(mirror, "utf-8")).toBe(text);

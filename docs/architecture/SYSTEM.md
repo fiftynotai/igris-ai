@@ -365,7 +365,6 @@ name: agent_name
 description: What this agent does
 tools: [Read, Bash, Grep, Agent]
 model: inherit
-memory: project
 ---
 
 # AGENT_NAME
@@ -383,6 +382,8 @@ memory: project
 ## OUTPUT FORMAT
 ## CONSTRAINTS
 ```
+
+Core agents declare no `memory:` key (TD-496). An agent's lessons live in the brain as learnings tagged `role:<name>`, and `/hunt` pastes them into each delegation through `igris lessons digest --role <name>`.
 
 Agent registration:
 
@@ -413,7 +414,7 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 2. **Mirror invariant (TD-096)** — `~/.igris/core/` mirrors repo `core/` byte-for-byte. Verify with `core/scripts/verify_mirror.sh`; sentinel runs MIRROR_CHECK on every changed `core/` file.
 3. **Strict-input MCP gateway (TD-128)** — every brain tool's `inputSchema` declares `additionalProperties: false`; callers use `ALLOWED_KEYS_PER_OP` allowlists.
 4. **Local-primary sync** — never treat the VPS as authoritative; on divergence, trust the local DB.
-5. **Carried-but-not-committed drift** — agent working memory (`**/.claude/agent-memory/`, gitignored in *every* package since TD-317) and `.igris_version` regenerate post-install. Do not "clean" them in a code-touching commit. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
+5. **Carried-but-not-committed drift** — agent working memory (`**/.claude/agent-memory/`, gitignored in *every* package since TD-317) and `.igris_version` regenerate post-install. Do not "clean" them in a code-touching commit. For the core agents these directories are legacy since TD-496: those agents declare no `memory:` key, their lessons live in the brain as `role:<agent>` learnings, and `/harvest` Mode B exports any files left on disk. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
 8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CONTRIBUTING.md` "Project structure", any README banner. `CLAUDE.md` carries no version string (TD-267 — boot-pointer only). TD-147 is the cautionary tale.
