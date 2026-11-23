@@ -14,8 +14,9 @@
  * WHAT IS PINNED.
  *  - S1-S3 (negative): no object-literal `version:` key carrying a numeric
  *    string, no `v<digits>.<digits>` token anywhere, no `@version` tag.
- *  - S4 (positive): the derived forms are PRESENT — two `version: SERVER_VERSION`
- *    keys, both banners interpolate `${SERVER_VERSION}`, one assignment from
+ *  - S4 (positive): the derived forms are PRESENT — three `version: SERVER_VERSION`
+ *    keys (serverInfo, `/api/brain-stats`, and since BR-121 the unauthenticated
+ *    `/health`), both banners interpolate `${SERVER_VERSION}`, one assignment from
  *    `readServerVersion() ?? UNKNOWN_SERVER_VERSION`, one import. Without these
  *    a deletion of the version would pass S1-S3 vacuously.
  *  - S5: the reader never writes stdout (the stdio protocol channel).
@@ -119,8 +120,8 @@ describe('TD-518 source guard — src/index.ts states no version number', () => 
   });
 
   it('S4: the derived forms are present (a deleted version cannot pass S1-S3 vacuously)', () => {
-    // serverInfo (createBrainServer) and the /api/brain-stats body.
-    expect(count(src, /\bversion\s*:\s*SERVER_VERSION\b/g)).toBe(2);
+    // serverInfo (createBrainServer), the /api/brain-stats body and (BR-121) /health.
+    expect(count(src, /\bversion\s*:\s*SERVER_VERSION\b/g)).toBe(3);
     // Both startup banners interpolate the constant.
     expect(count(src, /MCP Server v\$\{SERVER_VERSION\} started \(stdio\)/g)).toBe(1);
     expect(count(src, /MCP Server v\$\{SERVER_VERSION\} started \(http, /g)).toBe(1);

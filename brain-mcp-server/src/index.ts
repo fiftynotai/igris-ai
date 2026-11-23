@@ -41,7 +41,13 @@ import { handleProjectBudget, handleProjectBudgetSet } from './tools/projects.js
 import { handleBriefVelocity } from './tools/briefs.js';
 
 // Sync tables config (used by HTTP /sync/push and /sync/pull endpoints)
-import { SYNC_TABLES, processSyncPush, scheduleLearningEmbedAfterMerge } from './tools/sync.js';
+import {
+  SYNC_TABLES,
+  scheduleLearningEmbedAfterMerge,
+  pushBodyDigest,
+  createPushReceiptLedger,
+  receiveSyncPush,
+} from './tools/sync.js';
 
 // Database lifecycle
 import { getDb, closeDb, resolveDbPath, BRAIN_DIR } from './db.js';
@@ -473,9 +479,10 @@ async function runHttp(config: ServerConfig): Promise<void> {
     }
   }, 5 * 60 * 1000);
 
-  // Health endpoint (no auth required, minimal info)
+  // Health endpoint (no auth required, minimal info). `status` stays the
+  // first key: scripts/igris_brain_deploy.sh greps the compact `"status":"ok"`.
   app.get('/health', (_req: Request, res: Response) => {
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', version: SERVER_VERSION });
   });
 
   // -----------------------------------------------------------------------
@@ -1192,7 +1199,20 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // handleBrainPush. BR-097: the skipped table is named in `skipped[]`
   // (always present) and is NOT in `errors`, so pre-BR-097 clients do not
   // queue it; clients hold that table's watermark instead.
-  app.post('/sync/push', express.json({ limit: '50mb' }), (req: Request, res: Response) => {
+  //
+  // BR-121: a byte-identical re-send (a client retry after its abort fired) is
+  // answered from the receipt of the first, clean merge — `replayed: true` —
+  // keyed on sha256 of the exact bytes received. The handler is synchronous,
+  // so a retry is read only after the first merge has committed.
+  const pushLedger = createPushReceiptLedger();
+  const pushDigests = new WeakMap<object, string>();
+  const pushJson = express.json({
+    limit: '50mb',
+    verify: (req, _res, buf) => {
+      pushDigests.set(req, pushBodyDigest(buf));
+    },
+  });
+  app.post('/sync/push', pushJson, (req: Request, res: Response) => {
     try {
       const db = getDb();
       const { tables } = req.body as {
@@ -1204,16 +1224,24 @@ async function runHttp(config: ServerConfig): Promise<void> {
         return;
       }
 
-      const { results, errors, skipped, ok } = processSyncPush(db, tables);
+      const digest = pushDigests.get(req);
+      const t0 = Date.now();
       // 207 Multi-Status when anything was not merged; still in 2xx range so
       // `response.ok` is true — internal callers (handleBrainPush,
       // handleSyncQueueDrain, pushTables auto-push) inspect the body.
-      const status = ok ? 200 : 207;
-      res.status(status).json({ ok, results, errors, skipped });
+      const r = receiveSyncPush(db, tables, digest, pushLedger);
+      const ms = Date.now() - t0;
+      if (!r.merged) {
+        console.error(`[brain] /sync/push replay ${digest?.slice(0, 12)}`);
+      } else if (ms >= 1000) {
+        const rows = Object.values(tables).reduce((n, t) => n + (Array.isArray(t) ? t.length : 0), 0);
+        console.error(`[brain] /sync/push slow merge: ${rows} row(s) in ${ms} ms`);
+      }
+      res.status(r.status).json(r.body);
       // FR-220: fire the fire-and-forget post-merge embed pass AFTER the
       // response is queued. Non-blocking (setImmediate inside), so it never
       // delays the sync response; a no-op when the merge touched no learnings.
-      scheduleLearningEmbedAfterMerge(db, results);
+      if (r.merged) scheduleLearningEmbedAfterMerge(db, r.body.results);
     } catch (err) {
       const message = errMsg(err);
       console.error('[brain] Sync push error:', message);

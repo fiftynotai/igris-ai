@@ -67,14 +67,26 @@ const H = vi.hoisted(() => {
     throwNext: false,
     gate: null as Promise<void> | null,
     embedCount: 0,
+    // BR-121 E4: a synchronous busy-wait of this many ms per call — the
+    // stand-in for ONNX's blocking `binding.run` (see learning-embed-yield.test.ts).
+    busyMs: 0,
+  };
+  /** Main-thread CPU in ms (the E4 lag clock). */
+  const threadCpuMs = (): number => {
+    const u = process.threadCpuUsage();
+    return (u.user + u.system) / 1e3;
   };
   const embed = async (text: string): Promise<Float32Array> => {
     control.embedCount++;
     if (control.throwNext) throw new Error('fr220 fake embedder boom');
+    if (control.busyMs > 0) {
+      const end = performance.now() + control.busyMs;
+      while (performance.now() < end) { /* block the event loop */ }
+    }
     if (control.gate) await control.gate;
     return fakeVector(text);
   };
-  return { fakeVector, control, embed };
+  return { fakeVector, control, embed, threadCpuMs };
 });
 
 vi.mock('../../utils/embeddings.js', async (importOriginal) => {
@@ -106,6 +118,12 @@ import {
   redactSecret,
   SYNC_TABLES,
   type SyncPushResult,
+  fetchWithRetry,
+  chunkTablesForPushSafe,
+  syncTimeoutMs,
+  pushBodyDigest,
+  createPushReceiptLedger,
+  receiveSyncPush,
 } from '../sync.js';
 import { createInstancesComponent } from '../../engine/components/instances/index.js';
 import {
@@ -630,11 +648,11 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
     (db.prepare('SELECT embedding FROM learnings WHERE id = ?').get(id) as { embedding: Buffer | null }).embedding;
 
   const tick = (): Promise<void> => new Promise((r) => setImmediate(r));
-  async function waitFor(pred: () => boolean, tries = 50): Promise<void> {
-    for (let i = 0; i < tries; i++) {
-      if (pred()) return;
-      await tick();
-    }
+  // BR-121: time-bounded. The post-merge pass now pauses between rows (a
+  // setTimeout), which a fixed count of setImmediate ticks would outrun.
+  async function waitFor(pred: () => boolean, budgetMs = 3_000): Promise<void> {
+    const end = Date.now() + budgetMs;
+    while (!pred() && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
   }
 
   beforeEach(() => {
@@ -643,12 +661,13 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
     H.control.throwNext = false;
     H.control.gate = null;
     H.control.embedCount = 0;
+    H.control.busyMs = 0;
   });
 
   afterEach(async () => {
     // Let any in-flight pass drain so the module-level coalescing guard resets
     // (embedInFlight clears in the pass's finally) before the next test.
-    await waitFor(() => nullCount() === 0, 10);
+    await waitFor(() => nullCount() === 0, 1_000);
     db.close();
     fs.rmSync(dir, { recursive: true, force: true });
     vi.clearAllMocks();
@@ -788,6 +807,77 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
     expect(nullCount()).toBe(0);
     expect(H.control.embedCount).toBe(2);
   });
+
+  // BR-121 E1 — the pass runs inside the STDIO brain too (handleBrainPull
+  // schedules it), where stdout is the MCP protocol channel.
+  it('E1: runPostMergeEmbedPass writes nothing to stdout; its progress line goes to stderr', async () => {
+    processSyncPush(db, { learnings: [wireRow({ content: 'e1 body' })] });
+    expect(nullCount()).toBe(1);
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const outSpy = vi.spyOn(process.stdout, 'write');
+    try {
+      await runPostMergeEmbedPass(db);
+      expect(nullCount()).toBe(0);
+      expect(logSpy).not.toHaveBeenCalled();
+      expect(outSpy).not.toHaveBeenCalled();
+      expect(errSpy.mock.calls.map((c) => String(c[0])).some((m) => m.startsWith('progress: 1/1'))).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+      errSpy.mockRestore();
+      outSpy.mockRestore();
+    }
+  });
+
+  // BR-121 E4 — the AC2 lag bound measured THROUGH the production call site,
+  // with the instrument of `utils/__tests__/learning-embed-yield.test.ts` (read
+  // its header for why lag is main-thread CPU between two turns of a 1 ms
+  // ticker, not `monitorEventLoopDelay`). The fake blocks D ms per row, as
+  // ONNX's synchronous `binding.run` does; without a macrotask yield the whole
+  // backlog is ONE stretch and the ticker never runs. The count of 25 ms timers
+  // and the wall-time floor prove the call site passes `yieldMs: 25`.
+  it('E4: a blocking backlog embedded by runPostMergeEmbedPass never holds the loop past the bound', async () => {
+    const N = 60;
+    const D = 20;
+    const PAUSE = 25;
+    const bound = 100 * (process.env.CI ? 3 : 1);
+    expect(bound).toBeLessThanOrEqual((N * D) / 4); // RED/GREEN separated by >= 4x
+    const ins = db.prepare('INSERT INTO learnings (project, category, title, content) VALUES (?, ?, ?, ?)');
+    for (let i = 0; i < N; i++) ins.run(T.project, T.category, `e4 title ${i}`, `e4 body ${i}`);
+    expect(nullCount()).toBe(N);
+    H.control.busyMs = D;
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    let ticks = 0;
+    let maxGap = 0;
+    let last = H.threadCpuMs();
+    let on = true;
+    const tick = (): void => {
+      const now = H.threadCpuMs();
+      maxGap = Math.max(maxGap, now - last);
+      last = now;
+      ticks++;
+      if (on) setTimeout(tick, 1);
+    };
+    try {
+      const t0 = performance.now();
+      setTimeout(tick, 1);
+      await runPostMergeEmbedPass(db);
+      on = false;
+      maxGap = Math.max(maxGap, H.threadCpuMs() - last);
+      const wall = performance.now() - t0;
+      expect(nullCount()).toBe(0);
+      expect(H.control.embedCount).toBe(N);
+      expect(timers.mock.calls.filter((c) => c[1] === PAUSE)).toHaveLength(N - 1);
+      expect(wall).toBeGreaterThanOrEqual(N * D + 0.8 * (N - 1) * PAUSE);
+      expect(ticks).toBeGreaterThanOrEqual(N - 1);
+      expect(maxGap).toBeLessThan(bound);
+    } finally {
+      on = false;
+      timers.mockRestore();
+      errSpy.mockRestore();
+    }
+  }, 20_000);
 });
 
 // ---------------------------------------------------------------------------
@@ -1683,5 +1773,354 @@ describe('BR-118 — a remote that echoes the key leaves it in no queue row and 
     expect(redactSecret('x aXb+c? y', 'a.b+c?')).toBe('x aXb+c? y');
     expect(redactSecret('sk-br118-canar', KEY)).toBe('sk-br118-canar');
     expect(redactSecret('unchanged', '')).toBe('unchanged');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-121 — a slow brain: bounded chunks, a byte-scaled timeout, a drain that
+// stops on a timeout, and a receiver that answers a byte-identical re-send
+// from its receipt instead of merging it again
+// ---------------------------------------------------------------------------
+// The 2026-11-22 incident: a 1.53 MB chunk outlived the client's fixed 30 s
+// abort on a CPU-starved VPS; the server kept merging and committed while the
+// client re-sent the SAME bytes twice more, then queued 899 rows anyway.
+// `fetchWithRetry` re-sends one `options.body` on every attempt and
+// `pushed_at` is fixed per push, so a retry is byte-identical — the receiver
+// keys its receipt on sha256 of the bytes it received (old clients included).
+// The constants these tests pin (1 MiB, 250 rows, 44.9 s at the cap) are the
+// Phase 0 measurement recorded in `sync-push-isolation.test.ts` C1.
+
+describe('BR-121 — slow-brain push: bounds, scaled timeout, drain stop, receipt replay', () => {
+  const REMOTE = 'http://test-remote.local';
+  const BYTE_CAP = 1024 * 1024;
+  const ROW_CAP = 250;
+  const W = {
+    project: 'p', category: 'pattern', title: 'br121 witness', content: 'w',
+    created_at: '2026-11-23 00:00:00', updated_at: '2026-11-23 00:00:00',
+    review_status: 'approved', provenance: 'observed', source_extractor: 'manual',
+  };
+  const EV = { id: 7, event_name: 'e', component: 'c', payload: '{}', created_at: '2026-11-23 00:00:00' };
+  let db: Database.Database;
+  let originalFetch: typeof globalThis.fetch;
+  let errSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    db = makeMinimalSyncDb();
+    // The drain's columns (db.ts v5 `sync_queue`), absent from the push-only stub.
+    db.exec(`
+      ALTER TABLE sync_queue ADD COLUMN retry_count INTEGER DEFAULT 0;
+      ALTER TABLE sync_queue ADD COLUMN max_retries INTEGER DEFAULT 5;
+      ALTER TABLE sync_queue ADD COLUMN last_retry_at TEXT;
+      ALTER TABLE sync_queue ADD COLUMN sent_at TEXT;
+    `);
+    mockedGetDb.mockReturnValue(db);
+    originalFetch = globalThis.fetch;
+    errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    globalThis.fetch = originalFetch;
+    errSpy.mockRestore();
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+  const textOf = (r: { content?: { text: string }[] }): string => r.content?.[0]?.text ?? '';
+  const countOf = (d: Database.Database, table: string): number =>
+    (d.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number }).c;
+  const witness = (d: Database.Database): number =>
+    (d.prepare('SELECT COUNT(*) AS c FROM learnings WHERE title = ?').get(W.title) as { c: number }).c;
+
+  function stamps(): Record<string, string> {
+    const rows = db
+      .prepare('SELECT table_name, last_push_at FROM sync_state WHERE remote_url = ?')
+      .all(REMOTE) as { table_name: string; last_push_at: string }[];
+    return Object.fromEntries(rows.map((r) => [r.table_name, r.last_push_at]));
+  }
+
+  function seedLearnings(n: number): void {
+    const ins = db.prepare(
+      `INSERT INTO learnings (project, category, title, content, review_status, provenance, source_extractor, created_at)
+       VALUES ('p', 'pattern', ?, 'body', 'approved', 'observed', 'manual', '2026-11-22 14:00:00')`,
+    );
+    for (let i = 0; i < n; i++) ins.run(`br121 learning ${i}`);
+  }
+
+  /** A fetch that never answers and rejects only when ITS signal aborts (the client's own timer). */
+  function hangingFetch(calls: { n: number; bodies: string[] }): typeof globalThis.fetch {
+    return vi.fn((_u: unknown, init: RequestInit) => {
+      calls.n++;
+      calls.bodies.push(init.body as string);
+      return new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () =>
+          reject(new DOMException('This operation was aborted', 'AbortError')));
+      });
+    }) as unknown as typeof globalThis.fetch;
+  }
+
+  it('C3: handleBrainPush sends 600 learnings in >= ceil(600/ROW_CAP) chunks; every row lands and learnings is stamped', async () => {
+    seedLearnings(600);
+    const remote = makeFixtureRemote();
+    const captured: SyncPushResult[] = [];
+    globalThis.fetch = fetchViaRemote(remote, captured);
+
+    const text = textOf(await handleBrainPush({ remote_url: REMOTE, api_key: 'k' }));
+    expect(text.split('\n')[0]).toBe('Brain push completed successfully.');
+    expect(captured.length).toBeGreaterThanOrEqual(Math.ceil(600 / ROW_CAP));
+    expect(countOf(remote, 'learnings')).toBe(600); // BR-097 across chunks: all acknowledged rows landed
+    expect(stamps()).toHaveProperty('learnings');
+    remote.close();
+  });
+
+  it('T1: syncTimeoutMs is 30 s at 0 B, monotone, 44.9 s at the 1 MiB cap, and never above 55 s', () => {
+    expect(syncTimeoutMs(0)).toBe(30_000);
+    expect(syncTimeoutMs(BYTE_CAP)).toBe(44_900);
+    let prev = 0;
+    for (const b of [0, 1, 1024, 256 * 1024, BYTE_CAP, 1.5 * BYTE_CAP, 2 * BYTE_CAP, 5 * BYTE_CAP]) {
+      const t = syncTimeoutMs(b);
+      expect(t).toBeGreaterThanOrEqual(prev);
+      prev = t;
+    }
+    expect(syncTimeoutMs(50 * BYTE_CAP)).toBe(55_000);
+    expect(syncTimeoutMs(Number.MAX_SAFE_INTEGER)).toBe(55_000);
+  });
+
+  it('T2a: a 1 MiB body is not aborted at 30 s; it is aborted at 44.9 s (the T1 value)', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const calls = { n: 0, bodies: [] as string[] };
+    globalThis.fetch = hangingFetch(calls);
+    const settled = fetchWithRetry(`${REMOTE}/sync/push`, { method: 'POST', body: 'x'.repeat(BYTE_CAP) }, 0)
+      .then(() => null, (e: unknown) => e as Error);
+    const signal = () => (vi.mocked(globalThis.fetch).mock.calls[0][1] as RequestInit).signal!;
+
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(signal().aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(44_900 - 30_000);
+    expect(signal().aborted).toBe(true);
+    const err = await settled;
+    expect(err?.name).toBe('SyncTimeoutError');
+    expect(err?.message).toBe('no answer within 45 s after 1 attempt(s); the remote may still be merging');
+  });
+
+  it('T2b: a fetch that rejects at once leaves no abort timer behind', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    globalThis.fetch = vi.fn(async () => {
+      throw new TypeError('fetch failed');
+    }) as unknown as typeof globalThis.fetch;
+    await expect(fetchWithRetry(`${REMOTE}/health`, { method: 'GET' }, 0)).rejects.toThrow('fetch failed');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('T3: three aborts fail the push once, naming the timeout; learnings stays unstamped and its rows are queued', async () => {
+    seedLearnings(1);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const calls = { n: 0, bodies: [] as string[] };
+    globalThis.fetch = hangingFetch(calls);
+
+    const p = handleBrainPush({ remote_url: REMOTE, api_key: 'k' });
+    await vi.runAllTimersAsync();
+    const r = await p;
+    const text = textOf(r);
+    expect(calls.n).toBe(3);
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    expect(text.startsWith('Brain push failed:')).toBe(true);
+    expect(text).toContain('no answer within');
+    expect(stamps()).not.toHaveProperty('learnings');
+    expect(countOf(db, 'sync_queue')).toBe(1);
+  });
+
+  it('D1: the drain stops at the first timed-out chunk — no bisect, later chunks stay pending', async () => {
+    // Four ~80 KB rows: the 256 KiB drain cap cuts [1,2,3] and [4].
+    const ins = db.prepare(
+      "INSERT INTO sync_queue (table_name, row_data, operation, status, retry_count, max_retries) VALUES ('event_log', ?, 'push', 'pending', 0, 5)",
+    );
+    for (let i = 1; i <= 4; i++) {
+      ins.run(JSON.stringify({ id: i, event_name: 'e', component: 'c', payload: 'x'.repeat(80_000), created_at: '2026-11-22 14:55:28' }));
+    }
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const calls = { n: 0, bodies: [] as string[] };
+    globalThis.fetch = hangingFetch(calls);
+
+    const p = handleSyncQueueDrain({ remote_url: REMOTE, api_key: 'k' });
+    await vi.runAllTimersAsync();
+    const r = await p;
+
+    expect(calls.n).toBe(3); // one chunk x (1 + 2 retries); the bisect cascade would make 18
+    expect(new Set(calls.bodies).size).toBe(1);
+    const q = db.prepare('SELECT id, status, retry_count, error_message FROM sync_queue ORDER BY id').all() as {
+      id: number; status: string; retry_count: number; error_message: string | null;
+    }[];
+    for (const row of q.slice(0, 3)) {
+      expect(row.status).toBe('retrying');
+      expect(row.retry_count).toBe(1);
+      expect(row.error_message).toMatch(/^timeout — no answer within \d+ s after 3 attempt\(s\)/);
+    }
+    expect(q[3]).toMatchObject({ status: 'pending', retry_count: 0 });
+    expect((r as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(r)).toContain('Stopped after a timeout: 1 item(s) not attempted (still pending).');
+  });
+
+  it('R0: an identical multi-table payload merged twice writes nothing the second time', () => {
+    const remote = makeFixtureRemote();
+    const payload = {
+      learnings: [W],
+      event_log: [EV],
+      entity_edges: [{
+        from_type: 'brief', from_id: 'BR-121', from_project: 'igris-ai', to_type: 'brief', to_id: 'BR-097',
+        to_project: 'igris-ai', edge_type: 'relates_to', confidence: 1, provenance: 'observed',
+        created_at: '2026-11-23 00:00:00', metadata: '{}',
+      }],
+    };
+    const first = processSyncPush(remote, clone(payload));
+    expect(first.ok).toBe(true);
+    for (const t of Object.keys(payload)) expect(first.results[t].inserted).toBe(1);
+    const before = (remote.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+    const second = processSyncPush(remote, clone(payload));
+    const after = (remote.prepare('SELECT total_changes() AS n').get() as { n: number }).n;
+    expect(second.ok).toBe(true);
+    expect(after - before).toBe(0);
+    remote.close();
+  });
+
+  it('R1: the same digest twice is answered from the receipt — replayed, not merged (the tombstone stays absent)', () => {
+    const remote = makeFixtureRemote();
+    const ledger = createPushReceiptLedger();
+    const first = receiveSyncPush(remote, clone({ learnings: [W] }), 'digest-a', ledger);
+    expect(first).toMatchObject({ status: 200, merged: true });
+    expect(witness(remote)).toBe(1);
+    remote.prepare('DELETE FROM learnings WHERE title = ?').run(W.title); // tombstone
+    const second = receiveSyncPush(remote, clone({ learnings: [W] }), 'digest-a', ledger);
+    expect(second.status).toBe(200);
+    expect(second.merged).toBe(false);
+    expect(second.body).toEqual({ ...first.body, replayed: true });
+    expect(witness(remote)).toBe(0);
+    remote.close();
+  });
+
+  it('R2 (control): a different digest merges again — the tombstone reappears, so R1 is armed', () => {
+    const remote = makeFixtureRemote();
+    const ledger = createPushReceiptLedger();
+    receiveSyncPush(remote, clone({ learnings: [W] }), 'digest-a', ledger);
+    remote.prepare('DELETE FROM learnings WHERE title = ?').run(W.title);
+    const other = receiveSyncPush(remote, clone({ learnings: [W] }), 'digest-b', ledger);
+    expect(other.merged).toBe(true);
+    expect(other.body).not.toHaveProperty('replayed');
+    expect(witness(remote)).toBe(1);
+    remote.close();
+  });
+
+  it('R3a: a 207 (a table skipped) is never recorded — the same digest merges again', () => {
+    const remote = makeFixtureRemote('ceremony_events');
+    const ledger = createPushReceiptLedger();
+    const payload = { learnings: [W], ceremony_events: [CEREMONY_ROW] };
+    const first = receiveSyncPush(remote, clone(payload), 'digest-a', ledger);
+    expect(first.status).toBe(207);
+    expect((first.body as SyncPushResult).skipped).toEqual(['ceremony_events']);
+    remote.prepare('DELETE FROM learnings WHERE title = ?').run(W.title);
+    const again = receiveSyncPush(remote, clone(payload), 'digest-a', ledger);
+    expect(again.merged).toBe(true);
+    expect(again.body).not.toHaveProperty('replayed');
+    expect(witness(remote)).toBe(1);
+    remote.close();
+  });
+
+  it('R3b: a 200 carrying a row failure (failed > 0) is never recorded — the same digest merges again', () => {
+    const remote = makeFixtureRemote();
+    const ledger = createPushReceiptLedger();
+    const poison = { ...W, title: 'br121 poison', content: { not: 'bindable' } };
+    const payload = { learnings: [W, poison] };
+    const first = receiveSyncPush(remote, clone(payload), 'digest-a', ledger);
+    expect(first.status).toBe(200);
+    expect((first.body as SyncPushResult).results.learnings.failed).toBe(1);
+    remote.prepare('DELETE FROM learnings WHERE title = ?').run(W.title);
+    const again = receiveSyncPush(remote, clone(payload), 'digest-a', ledger);
+    expect(again.merged).toBe(true);
+    expect(again.body).not.toHaveProperty('replayed');
+    expect(witness(remote)).toBe(1);
+    remote.close();
+  });
+
+  it('R4: an expired receipt re-merges, and at capacity + 1 the oldest is evicted', () => {
+    const remote = makeFixtureRemote();
+    const ledger = createPushReceiptLedger(2, 1_000);
+    const send = (d: string, now: number) =>
+      receiveSyncPush(remote, clone({ event_log: [EV] }), d, ledger, now).merged;
+    expect(send('a', 0)).toBe(true);
+    expect(send('a', 999)).toBe(false); // inside the TTL: replayed
+    expect(send('a', 1_001)).toBe(true); // expired: merged (and recorded) again
+    expect(send('b', 1_002)).toBe(true);
+    expect(send('c', 1_003)).toBe(true); // a third entry evicts 'a', the oldest
+    expect(send('a', 1_004)).toBe(true);
+    expect(send('c', 1_005)).toBe(false);
+    remote.close();
+  });
+
+  it('R6: abort after commit — the retry of the same bytes is replayed, the client stamps, nothing re-merges', async () => {
+    seedLearnings(1);
+    db.prepare(
+      `INSERT INTO learnings (project, category, title, content, review_status, provenance, source_extractor, created_at)
+       VALUES (?, ?, ?, ?, 'approved', 'observed', 'manual', '2026-11-22 14:00:00')`,
+    ).run(W.project, W.category, W.title, W.content);
+
+    async function run(replaying: boolean): Promise<{ text: string; bodies: string[]; remote: Database.Database }> {
+      const remote = makeFixtureRemote();
+      const ledger = createPushReceiptLedger();
+      const bodies: string[] = [];
+      globalThis.fetch = vi.fn(async (_u: unknown, init: RequestInit) => {
+        const raw = init.body as string;
+        bodies.push(raw);
+        const tables = (JSON.parse(raw) as { tables: Record<string, Record<string, unknown>[]> }).tables;
+        const r = replaying
+          ? receiveSyncPush(remote, tables, pushBodyDigest(Buffer.from(raw)), ledger)
+          : (() => { const b = processSyncPush(remote, tables); return { status: b.ok ? 200 : 207, body: b }; })();
+        if (bodies.length === 1) {
+          // The server committed; the client gave up before the answer arrived.
+          remote.prepare('DELETE FROM learnings WHERE title = ?').run(W.title);
+          throw new DOMException('This operation was aborted', 'AbortError');
+        }
+        return { ok: true, status: r.status, json: async () => r.body, text: async () => '' };
+      }) as unknown as typeof globalThis.fetch;
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }); // skip the 1 s backoff
+      const p = handleBrainPush({ remote_url: REMOTE, api_key: 'k' });
+      await vi.runAllTimersAsync();
+      const text = textOf(await p);
+      vi.useRealTimers();
+      return { text, bodies, remote };
+    }
+
+    const a = await run(true);
+    expect(a.text.split('\n')[0]).toBe('Brain push completed successfully.');
+    expect(a.bodies).toHaveLength(2);
+    expect(a.bodies[1]).toBe(a.bodies[0]); // a retry is byte-identical
+    expect(stamps()).toHaveProperty('learnings');
+    expect(witness(a.remote)).toBe(0); // the retry was answered, not merged
+    a.remote.close();
+
+    // Control: an OLD remote (no receipt ledger) re-merges — the witness comes back.
+    db.prepare('DELETE FROM sync_state').run();
+    const b = await run(false);
+    expect(b.text.split('\n')[0]).toBe('Brain push completed successfully.');
+    expect(stamps()).toHaveProperty('learnings');
+    expect(witness(b.remote)).toBe(1);
+    b.remote.close();
+  });
+
+  it('R7: an OLD client (5 MiB, no row cap) re-sending identical bytes to a new remote is replayed', () => {
+    const old = chunkTablesForPushSafe({ learnings: [W], event_log: [EV] }, 5 * 1024 * 1024, Infinity);
+    expect(old).toHaveLength(1);
+    const body = JSON.stringify({ tables: old[0], pushed_at: '2026-11-22 14:55:28', schema_version: 9 });
+    const digest = pushBodyDigest(Buffer.from(body));
+    expect(digest).toMatch(/^[0-9a-f]{64}$/);
+    const remote = makeFixtureRemote();
+    const ledger = createPushReceiptLedger();
+    const tablesOf = () => (JSON.parse(body) as { tables: Record<string, Record<string, unknown>[]> }).tables;
+    const first = receiveSyncPush(remote, tablesOf(), pushBodyDigest(Buffer.from(body)), ledger);
+    const second = receiveSyncPush(remote, tablesOf(), pushBodyDigest(Buffer.from(body)), ledger);
+    expect(first.merged).toBe(true);
+    expect(second.merged).toBe(false);
+    expect(second.body).toMatchObject({ replayed: true });
+    remote.close();
   });
 });

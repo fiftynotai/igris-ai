@@ -75,7 +75,7 @@ function identityModel(): Buffer {
   return Buffer.from([...varintField(0x08, 8), ...lenDelim(0x3a, graph), ...lenDelim(0x42, varintField(0x10, 13))]);
 }
 
-/** Runs in the child (CommonJS `node -e`); argv[1] is the model, base64. */
+/** Runs in the child (CommonJS `node -e`); argv[1] is the model, base64; argv[2] the session options, JSON. */
 const PROBE = `
 const { createRequire } = require('node:module');
 const path = require('node:path');
@@ -88,7 +88,7 @@ const fs = require('node:fs');
   const version = JSON.parse(fs.readFileSync(pkgJson, 'utf8')).version;
   const backends = ort.listSupportedBackends().map((b) => b.name);
   const cudaSo = fs.existsSync(path.join(path.dirname(pkgJson), 'bin', 'napi-v3', process.platform, process.arch, 'libonnxruntime_providers_cuda.so'));
-  const session = await ort.InferenceSession.create(Buffer.from(process.argv[1], 'base64'), { executionProviders: ['cpu'] });
+  const session = await ort.InferenceSession.create(Buffer.from(process.argv[1], 'base64'), JSON.parse(process.argv[2]));
   const out = await session.run({ x: new ort.Tensor('float32', Float32Array.from([1.5, -2]), [2]) });
   const y = Array.from(out.y.data);
   await session.release();
@@ -106,16 +106,25 @@ interface ProbeResult {
   cudaSo: boolean;
 }
 
-let cached: ProbeResult | undefined;
-function probe(): ProbeResult {
-  cached ??= JSON.parse(
-    execFileSync(process.execPath, ['-e', PROBE, identityModel().toString('base64')], {
-      cwd: BRAIN_ROOT,
-      encoding: 'utf-8',
-      timeout: CHILD_TIMEOUT_MS,
-    }),
-  ) as ProbeResult;
-  return cached;
+const CPU_ONLY = { executionProviders: ['cpu'] };
+/** BR-121: the session options `utils/embeddings.ts` passes through transformers.js. */
+const ONE_THREAD = { ...CPU_ONLY, intraOpNumThreads: 1, interOpNumThreads: 1 };
+
+const cached = new Map<string, ProbeResult>();
+function probe(options: object = CPU_ONLY): ProbeResult {
+  const key = JSON.stringify(options);
+  let r = cached.get(key);
+  if (!r) {
+    r = JSON.parse(
+      execFileSync(process.execPath, ['-e', PROBE, identityModel().toString('base64'), key], {
+        cwd: BRAIN_ROOT,
+        encoding: 'utf-8',
+        timeout: CHILD_TIMEOUT_MS,
+      }),
+    ) as ProbeResult;
+    cached.set(key, r);
+  }
+  return r;
 }
 
 const onGhaLinuxX64 =
@@ -124,6 +133,14 @@ const onGhaLinuxX64 =
 describe('BR-119 — ONNX Runtime runs on the CPU execution provider', () => {
   it('O1 (AC4): the CPU backend is listed and a real Identity inference returns its input', () => {
     const r = probe();
+    expect(r.backends).toContain('cpu');
+    expect(r.y).toEqual([1.5, -2]);
+  }, 30_000);
+
+  // A rejected option would fail every model load, and Stage 2 of
+  // `getPipeline` would retry it forever with semantic search off.
+  it('O3 (BR-121): the native binding accepts one intra-op and one inter-op thread, and the run returns its input', () => {
+    const r = probe(ONE_THREAD);
     expect(r.backends).toContain('cpu');
     expect(r.y).toEqual([1.5, -2]);
   }, 30_000);

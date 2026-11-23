@@ -551,6 +551,20 @@ function mergeTags(localTags: string, remoteTags: string): string {
   return Array.from(merged).sort().join(',');
 }
 
+/** Push chunk caps, bytes and rows. BR-121: measured, see sync-push-isolation C1. */
+const CHUNK_SIZE_LIMIT = 1024 * 1024;
+const CHUNK_ROW_LIMIT = 250;
+
+/** BR-121: the abort per attempt — 30 s plus 14.9 s per MiB of body, at most 55 s. */
+export function syncTimeoutMs(bytes: number): number {
+  return Math.min(55_000, 30_000 + Math.ceil((bytes * 14_900) / CHUNK_SIZE_LIMIT));
+}
+
+/** BR-121: the last attempt was aborted by its own timer; the remote may have committed. */
+export class SyncTimeoutError extends Error {
+  name = 'SyncTimeoutError';
+}
+
 /**
  * Fetch with retry logic and timeout.
  *
@@ -568,12 +582,17 @@ export async function fetchWithRetry(
   maxRetries: number = 2
 ): Promise<Response> {
   let lastError: Error | null = null;
+  let timedOut = false;
+  const ms = syncTimeoutMs(typeof options.body === 'string' ? Buffer.byteLength(options.body) : 0);
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, ms);
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
       const response = await fetch(url, { ...options, signal: controller.signal });
-      clearTimeout(timeout);
       if (response.ok) return response;
       if (response.status >= 400 && response.status < 500) {
         throw new Error(redactSecret(`HTTP ${response.status}: ${await response.text()}`, bearerOf(options)));
@@ -585,17 +604,21 @@ export async function fetchWithRetry(
       if (lastError.message.startsWith('HTTP 4')) {
         throw lastError;
       }
+    } finally {
+      clearTimeout(timeout);
     }
     if (attempt < maxRetries) {
       const delay = Math.pow(2, attempt) * 1000;
       await new Promise(resolve => setTimeout(resolve, delay));
     }
   }
+  if (timedOut) {
+    throw new SyncTimeoutError(
+      `no answer within ${Math.ceil(ms / 1000)} s after ${maxRetries + 1} attempt(s); the remote may still be merging`,
+    );
+  }
   throw lastError ?? new Error('Fetch failed');
 }
-
-/** Maximum approximate payload size per chunk in bytes (5 MB). */
-const CHUNK_SIZE_LIMIT = 5 * 1024 * 1024;
 
 /**
  * Conservative cap for the sync_queue drain path (BR-066).
@@ -612,29 +635,33 @@ const CHUNK_SIZE_LIMIT = 5 * 1024 * 1024;
 const CHUNK_SIZE_LIMIT_DRAIN = 256 * 1024;
 
 /**
- * Split a tables payload into multiple chunks, each under the given cap.
+ * Split a tables payload into multiple chunks, each under the given caps.
  * Iterates rows across tables, accumulating into chunks. A single oversized
  * row is allowed in its own chunk (never split a row).
  *
  * @param tables - Map of table name -> rows
  * @param sizeLimit - Optional byte cap per chunk; defaults to CHUNK_SIZE_LIMIT
+ * @param rowLimit - Optional row cap per chunk; defaults to CHUNK_ROW_LIMIT
  */
 export function chunkTablesForPushSafe(
   tables: Record<string, Record<string, unknown>[]>,
   sizeLimit: number = CHUNK_SIZE_LIMIT,
+  rowLimit: number = CHUNK_ROW_LIMIT,
 ): Record<string, Record<string, unknown>[]>[] {
   const chunks: Record<string, Record<string, unknown>[]>[] = [];
   let currentChunk: Record<string, Record<string, unknown>[]> = {};
   let currentSize = 0;
+  let currentRows = 0;
 
   for (const [tableName, rows] of Object.entries(tables)) {
     for (const row of rows) {
       const rowSize = Buffer.byteLength(JSON.stringify(row), 'utf8');
 
-      if (currentSize + rowSize > sizeLimit && currentSize > 0) {
+      if ((currentSize + rowSize > sizeLimit || currentRows >= rowLimit) && currentRows > 0) {
         chunks.push(currentChunk);
         currentChunk = {};
         currentSize = 0;
+        currentRows = 0;
       }
 
       if (!currentChunk[tableName]) {
@@ -642,10 +669,11 @@ export function chunkTablesForPushSafe(
       }
       currentChunk[tableName].push(row);
       currentSize += rowSize;
+      currentRows++;
     }
   }
 
-  if (currentSize > 0) {
+  if (currentRows > 0) {
     chunks.push(currentChunk);
   }
 
@@ -653,14 +681,14 @@ export function chunkTablesForPushSafe(
 }
 
 /**
- * Backwards-compatible wrapper using the default CHUNK_SIZE_LIMIT (5 MB).
+ * Backwards-compatible wrapper using the default byte and row caps.
  * Used by handleBrainPush and the auto-push hot path where rows are
  * incremental (low row counts, low risk of bad-row poisoning).
  */
 export function chunkTablesForPush(
   tables: Record<string, Record<string, unknown>[]>
 ): Record<string, Record<string, unknown>[]>[] {
-  return chunkTablesForPushSafe(tables, CHUNK_SIZE_LIMIT);
+  return chunkTablesForPushSafe(tables);
 }
 
 // ---------------------------------------------------------------------------
@@ -1146,6 +1174,52 @@ export function processSyncPush(
   };
 }
 
+/** BR-121: sha256 of the raw `/sync/push` bytes (§14: a collision would buy a wrong acknowledgement). */
+export function pushBodyDigest(buf: Buffer): string {
+  return createHash('sha256').update(buf).digest('hex');
+}
+
+/** BR-121: receipts of clean merges by body digest, oldest first; in memory (a restart's re-merge writes nothing). */
+export function createPushReceiptLedger(max = 64, ttlMs = 600_000) {
+  const m = new Map<string, { at: number; body: SyncPushResult }>();
+  return {
+    get(key: string, now: number): SyncPushResult | undefined {
+      for (const [k, e] of m) {
+        if (now - e.at <= ttlMs) break;
+        m.delete(k);
+      }
+      return m.get(key)?.body;
+    },
+    set(key: string, body: SyncPushResult, now: number): void {
+      m.delete(key);
+      m.set(key, { at: now, body });
+      if (m.size > max) m.delete(m.keys().next().value as string);
+    },
+  };
+}
+
+/**
+ * BR-121: answer a byte-identical re-send from its receipt, otherwise merge.
+ * Only a CLEAN merge is recorded (`ok` and no row failed): every client stamps
+ * a table named in `results`, so replaying a 207 or a row failure would stop a
+ * retry re-trying what did not merge. The receipt is stored before the caller
+ * writes the response.
+ */
+export function receiveSyncPush(
+  db: Database.Database,
+  tables: Record<string, Record<string, unknown>[]>,
+  digest: string | undefined,
+  ledger: ReturnType<typeof createPushReceiptLedger>,
+  now = Date.now(),
+): { status: number; body: SyncPushResult & { replayed?: true }; merged: boolean } {
+  const hit = digest ? ledger.get(digest, now) : undefined;
+  if (hit) return { status: 200, body: { ...hit, replayed: true }, merged: false };
+  const { ok, results, errors, skipped } = processSyncPush(db, tables);
+  const body = { ok, results, errors, skipped };
+  if (digest && ok && Object.values(results).every((r) => r.failed === 0)) ledger.set(digest, body, now);
+  return { status: ok ? 200 : 207, body, merged: true };
+}
+
 // ---------------------------------------------------------------------------
 // FR-220 — post-merge learning-embedding pass (fire-and-forget, coalescing)
 // ---------------------------------------------------------------------------
@@ -1156,6 +1230,9 @@ export function processSyncPush(
  * (the pass drains the whole NULL backlog); it only controls log cadence.
  */
 const EMBED_BATCH = 50;
+
+/** BR-121: pause between rows so a small VPS keeps answering `/health` while it embeds. */
+const POST_MERGE_EMBED_YIELD_MS = 25;
 
 /**
  * Coalescing guard for the post-merge embed pass. At most one pass runs at a
@@ -1220,7 +1297,12 @@ export async function runPostMergeEmbedPass(db: Database.Database): Promise<void
     for (;;) {
       embedRerun = false;
       try {
-        await embedNullLearnings(db, { dryRun: false, batchSize: EMBED_BATCH });
+        await embedNullLearnings(db, {
+          dryRun: false,
+          batchSize: EMBED_BATCH,
+          yieldMs: POST_MERGE_EMBED_YIELD_MS,
+          log: (m) => console.error(m), // stdout is the stdio brain's protocol channel
+        });
       } catch (err) {
         // AC2: never break the sync path. #125: no success-implying line here.
         console.error(
@@ -1810,7 +1892,7 @@ async function handleSyncQueueDrain(
     let currentSize = 0;
     for (const t of tagged) {
       const rowSize = Buffer.byteLength(JSON.stringify(t.row), 'utf8');
-      if (currentSize + rowSize > CHUNK_SIZE_LIMIT_DRAIN && currentSize > 0) {
+      if ((currentSize + rowSize > CHUNK_SIZE_LIMIT_DRAIN || current.length >= CHUNK_ROW_LIMIT) && current.length > 0) {
         initialChunks.push(current);
         current = [];
         currentSize = 0;
@@ -1837,6 +1919,7 @@ async function handleSyncQueueDrain(
 
   let totalSent = 0;
   let totalFailed = 0;
+  let stopped = false; // BR-121: set by a timed-out chunk; nothing after it is attempted
 
   /**
    * POST one chunk to the remote. Returns:
@@ -1844,6 +1927,7 @@ async function handleSyncQueueDrain(
    *   - { ok: false, errors }                HTTP 207 — partial success;
    *     `errors[table]` is the message for tables that failed
    *   - { ok: false, fatal: message }        network/HTTP-5xx, no body
+   *     (`timeout` when every attempt was aborted by its own timer)
    *
    * The caller decides what to do per chunk shape (single-row → mark
    * failed; multi-row → bisect-on-failure).
@@ -1851,7 +1935,7 @@ async function handleSyncQueueDrain(
   async function postChunk(chunk: TaggedChunk): Promise<
     | { ok: true }
     | { ok: false; errors: Record<string, string> }
-    | { ok: false; fatal: string }
+    | { ok: false; fatal: string; timeout: boolean }
   > {
     try {
       const response = await fetchWithRetry(`${remoteUrl}/sync/push`, {
@@ -1867,7 +1951,7 @@ async function handleSyncQueueDrain(
       if (Object.keys(errors).length === 0) return { ok: true };
       return { ok: false, errors };
     } catch (err) {
-      return { ok: false, fatal: errMsg(err) };
+      return { ok: false, fatal: errMsg(err), timeout: err instanceof SyncTimeoutError };
     }
   }
 
@@ -1883,7 +1967,7 @@ async function handleSyncQueueDrain(
    * cap, worst-case ~7 levels. No stack risk.
    */
   async function attemptChunk(chunk: TaggedChunk): Promise<void> {
-    if (chunk.length === 0) return;
+    if (chunk.length === 0 || stopped) return;
 
     const result = await postChunk(chunk);
 
@@ -1919,6 +2003,17 @@ async function handleSyncQueueDrain(
       return;
     }
 
+    // BR-121: a timeout is not a bad row — the remote may still be merging.
+    // Bisecting would multiply the load; fail this chunk once and stop.
+    if (result.timeout) {
+      db.transaction(() => {
+        for (const t of chunk) updateRetry.run(now, `timeout — ${result.fatal}`, t.id);
+      })();
+      totalFailed += chunk.length;
+      stopped = true;
+      return;
+    }
+
     // Wholesale fatal (no body, network, or 5xx). Bisect.
     if (chunk.length === 1) {
       const t = chunk[0];
@@ -1950,6 +2045,9 @@ async function handleSyncQueueDrain(
   const tablesSummary = Object.entries(tables)
     .map(([name, rows]) => `  - ${name}: ${rows.length} row(s)`)
     .join('\n');
+  const stopLine = stopped
+    ? [`Stopped after a timeout: ${items.length - totalSent - totalFailed} item(s) not attempted (still pending).`]
+    : [];
 
   if (totalSent === 0) {
     return {
@@ -1962,6 +2060,7 @@ async function handleSyncQueueDrain(
           `Chunks attempted: ${chunks.length}`,
           `Items sent: ${totalSent}`,
           `Items failed: ${totalFailed}`,
+          ...stopLine,
           `Tables:`,
           tablesSummary,
         ].join('\n'),
@@ -1982,6 +2081,7 @@ async function handleSyncQueueDrain(
         `Chunks sent: ${chunks.length}`,
         `Items sent: ${totalSent}`,
         ...(totalFailed > 0 ? [`Items failed: ${totalFailed}`] : []),
+        ...stopLine,
         `Tables:`,
         tablesSummary,
       ].join('\n'),

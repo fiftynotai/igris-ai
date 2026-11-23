@@ -95,13 +95,13 @@ async function getPipeline(): Promise<unknown> {
     // warning exactly ONCE per failure episode.
 
     // --- Stage 1: import (+ native addon load) — PERMANENT on failure ---
-    let pipeline: (task: string, model: string) => Promise<unknown>;
+    let pipeline: (task: string, model: string, opts?: object) => Promise<unknown>;
     try {
       // Dynamic import — rejects with ERR_MODULE_NOT_FOUND if the package is
       // absent; also surfaces onnxruntime-node native-load failures, which are
       // likewise deterministic for this process.
       ({ pipeline } = await import('@huggingface/transformers') as {
-        pipeline: (task: string, model: string) => Promise<unknown>;
+        pipeline: (task: string, model: string, opts?: object) => Promise<unknown>;
       });
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
@@ -121,7 +121,10 @@ async function getPipeline(): Promise<unknown> {
 
     // --- Stage 2: model weight fetch — RECOVERABLE on failure ---
     try {
-      _pipeline = await pipeline('feature-extraction', MODEL_NAME);
+      // BR-121: one ONNX thread, so an embed pass cannot take every core of a small VPS.
+      _pipeline = await pipeline('feature-extraction', MODEL_NAME, {
+        session_options: { intraOpNumThreads: 1, interOpNumThreads: 1 },
+      });
       _available = true;
       console.error('[embeddings] Pipeline loaded — model:', MODEL_NAME);
       return _pipeline;

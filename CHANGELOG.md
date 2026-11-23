@@ -77,6 +77,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   machine or project scope in a map that `tsc` checks for completeness. The
   table rows, exit codes and `--fix` are unchanged.
 
+- **A slow brain no longer turns one push into repeated merges, and its
+  embed pass no longer starves `/health` (BR-121).** On 2026-11-22 a 1.5 MB
+  push chunk outlived the client's fixed 30 s abort on a CPU-starved VPS:
+  the brain kept merging and committed while the client re-sent the same
+  bytes twice more. Push chunks are now capped at 1 MiB and 250 rows,
+  measured on that push. The abort scales with the body (30 s plus 14.9 s
+  per MiB, at most 55 s) and is cleared on every path. The brain answers a
+  byte-identical re-send from its in-memory receipt of a clean merge
+  (`replayed: true`) instead of merging it again. `igris sync drain` stops at
+  a timed-out chunk instead of bisecting it. The post-merge embed pass runs
+  ONNX on one thread, pauses 25 ms between rows and logs to stderr. `/health`
+  now carries the brain `version`, so `igris sync status` stops printing
+  `brain version: unknown`. Deploy the brain with `igris sync code` before
+  updating clients.
+
 ---
 
 ## [7.4.0] - 2026-11-19

@@ -3618,6 +3618,46 @@ interface PackReport {
  *   RE-DERIVED: 1_987_563 − 1_987_509 = 54; 7_318_880 − 7_318_661 = 219 =
  *   236 − 16 − 1; 144_233 + 54 = 144_287; 153_600 − 144_287 = 9_313.
  *
+ * BR-121 MEASURED LAST (2026-11-23), after its final shipped change: the
+ * push chunk caps (1 MiB, 250 rows), `syncTimeoutMs` and `SyncTimeoutError`
+ * in `fetchWithRetry`, the drain's stop-on-timeout, the `/sync/push` receipt
+ * ledger (`pushBodyDigest`, `createPushReceiptLedger`, `receiveSyncPush`) in
+ * `tools/sync.js`; the route's `verify` digest hook and the `/health`
+ * `version` in `index.js`; the one-thread ONNX `session_options` in
+ * `utils/embeddings.js`; the `yieldMs` row yield in `utils/learning-embed.js`;
+ * and one `CHANGELOG.md` bullet. MAINTAINING, the root CHANGELOG and every
+ * test (the new `sync-push-replay-spawn.test.ts` and
+ * `learning-embed-yield.test.ts`, the six edited brain test files, this row)
+ * pack 0 B (`tsconfig.json` excludes the tests from emit; the rest is
+ * outside `files`). Same method as TD-496 part 2 (`git archive` scratch
+ * builds, `copy-templates.sh` in both arms, brain `dist` absent so the copy
+ * step rebuilt it, smoke `(sandboxed)`, `npm pack --dry-run --json
+ * --ignore-scripts` twice per arm, identical). CONTROL = develop `d3eba00`,
+ * the TD-496 part 2 commit, which reproduced that row's FINAL byte- and
+ * sha-identically (1_987_563 / 7_318_880 / 611 / `fbf02234…`). FINAL = a
+ * `git write-tree` of the working tree through a TEMP index (`b361e18c`, no
+ * commit; the real index untouched), sha-identical to the worktree's own
+ * `npm run build`; a third arm taken after this row was written (tree
+ * `860c862f`) packed sha-identically, twice.
+ * `~/.igris/config.json` not read. npm 10.9.8, node v22.23.2, darwin/arm64.
+ *   packed              1_989_891    unpacked 7_326_645, 611 entries (+0),
+ *                                    shasum
+ *                                    `87cde504d992597e4b11c4cc92971b8de89c3ebe`.
+ *   this round's share  +2_328 B     packed, under the plan's 4_000 B hard
+ *                                    stop (estimated 2.3-2.8 KB), so no trim
+ *                                    step was taken. The dashboard moves 0 B.
+ *                                    Unpacked +7_765 over 7 artifacts,
+ *                                    reconciling exactly: `tools/sync.js`
+ *                                    +4_059 / `.d.ts` +1_571, `index.js`
+ *                                    +1_190, `utils/learning-embed.js` +270 /
+ *                                    `.d.ts` +107, `utils/embeddings.js`
+ *                                    +194, `CHANGELOG.md` +374.
+ *   cumulative delta    +146_615 B   (1_989_891 − 1_843_276)
+ *   headroom remaining  6_985 B      (153_600 − 146_615)
+ *   RE-DERIVED: 1_989_891 − 1_987_563 = 2_328; 7_326_645 − 7_318_880 =
+ *   7_765 = 4_059 + 1_571 + 1_190 + 270 + 107 + 194 + 374; 144_287 + 2_328 =
+ *   146_615; 153_600 − 146_615 = 6_985.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4792,10 +4832,10 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-496 part 2, measured
- * 2026-11-22, 9_313 B (9.1 KB) is what is left on PACKED — TD-444's
- * re-based grant minus the 144_287 B spent since (BR-100, at 6_715 B, was the
- * grant's first consumer).** Grep `TD-496 part 2 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of BR-121, measured
+ * 2026-11-23, 6_985 B (6.8 KB) is what is left on PACKED — TD-444's
+ * re-based grant minus the 146_615 B spent since (BR-100, at 6_715 B, was the
+ * grant's first consumer).** Grep `BR-121 MEASURED LAST` in this
  * file for that reading and
  * the method behind it (TD-444 is the floor and the re-base, BR-101 the
  * copy-step method every reading since uses), and treat the 84_262 B above
@@ -4810,8 +4850,8 @@ interface PackReport {
  * re-points THIS sentence at their own brief id, date and figure (the rows
  * after BR-100's, through BR-120's, did not; TD-510 re-pointed it from
  * BR-100's 146_885 B, TD-518 + TD-519 from TD-510's 27_184 B, TD-496
- * part 1 from TD-518 + TD-519's 23_898 B, and TD-496 part 2 from part 1's
- * 9_367 B). The
+ * part 1 from TD-518 + TD-519's 23_898 B, TD-496 part 2 from part 1's
+ * 9_367 B, and BR-121 from part 2's 9_313 B). The
  * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
  * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
  * do not read such a jump as a ceiling change; both constants are still

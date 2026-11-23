@@ -68,6 +68,8 @@ export interface EmbedNullOptions {
   batchSize?: number;
   /** log sink (default console.log). */
   log?: (msg: string) => void;
+  /** BR-121: ms to pause between rows; 0 (default) still yields one macrotask. */
+  yieldMs?: number;
 }
 
 export interface EmbedNullDeps {
@@ -131,6 +133,7 @@ export async function embedNullLearnings(
   const embed = deps.embed ?? generateEmbedding;
   const batchSize = options.batchSize ?? DEFAULT_BATCH;
   const log = options.log ?? ((m: string) => console.log(m));
+  const yieldMs = options.yieldMs ?? 0;
 
   const summary: EmbedNullSummary = {
     scanned: 0,
@@ -201,6 +204,11 @@ export async function embedNullLearnings(
         + `  (embedded=${summary.embedded} skipped=${summary.skipped}`
         + ` failures=${summary.failures})`,
       );
+    }
+
+    // The embed blocks the main thread; let the loop serve requests between rows.
+    if (i < rows.length - 1) {
+      await new Promise<void>((r) => (yieldMs > 0 ? setTimeout(r, yieldMs) : setImmediate(r)));
     }
   }
 

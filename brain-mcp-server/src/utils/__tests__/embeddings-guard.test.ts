@@ -39,7 +39,7 @@ describe('embeddings hybrid guard — BR-070', () => {
     const fakeExtractor = vi.fn(async (_text: string, _opts: unknown) => ({
       data: new Float32Array(384).fill(0.1),
     }));
-    const pipeline = vi.fn(async (_task: string, _model: string) => fakeExtractor);
+    const pipeline = vi.fn(async (_task: string, _model: string, _opts?: unknown) => fakeExtractor);
 
     vi.doMock('@huggingface/transformers', () => ({ pipeline }));
 
@@ -50,7 +50,10 @@ describe('embeddings hybrid guard — BR-070', () => {
     expect(vec).toBeInstanceOf(Float32Array);
     expect(vec.length).toBe(384);
     expect(isEmbeddingAvailable()).toBe(true);
-    expect(pipeline).toHaveBeenCalledWith('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+    // BR-121: one ONNX intra-op thread, so an embed pass cannot take every core.
+    expect(pipeline).toHaveBeenCalledWith('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
+      session_options: { intraOpNumThreads: 1, interOpNumThreads: 1 },
+    });
   });
 
   it('(b) import failure → latched unavailable, throws typed error, logs ONE warning, no throw-storm', async () => {

@@ -710,7 +710,7 @@ describe('BR-066 chunkTablesForPushSafe', () => {
     expect(chunks.length).toBeLessThanOrEqual(9);
   });
 
-  it('packs into a single chunk under the default 5 MB cap', () => {
+  it('packs a single small row into one chunk under the default caps', () => {
     const rows = [{ id: 1, event_name: 'a', component: 'c', payload: '{}', created_at: '2026-05-05T00:00:00Z' }];
     const chunks = chunkTablesForPushSafe({ event_log: rows });
     expect(chunks).toHaveLength(1);
@@ -721,6 +721,103 @@ describe('BR-066 chunkTablesForPushSafe', () => {
     const big = { id: 1, event_name: 'a', component: 'c', payload: 'x'.repeat(2000), created_at: '2026-05-05T00:00:00Z' };
     const chunks = chunkTablesForPushSafe({ event_log: [big] }, 100);
     expect(chunks).toHaveLength(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// BR-121 — a push chunk is bounded by BYTES and by ROWS (both measured)
+// ---------------------------------------------------------------------------
+
+/**
+ * The two default caps the chunker applies (`CHUNK_SIZE_LIMIT`,
+ * `CHUNK_ROW_LIMIT` in `tools/sync.ts`). Both, and the timeout slope that
+ * `sync.test.ts` T1 pins, were MEASURED in BR-121 Phase 0 (2026-11-23):
+ *
+ * CORPUS. The two aborted 2026-11-22 pushes still in the live brain's
+ * `sync_queue` (error `This operation was aborted`, created 14:55:28 and
+ * 14:57:23, 899 rows each), read from a `sqlite3 -readonly .backup` snapshot
+ * and deduped on `row_data`: 899 rows, 1,532,343 B, sent as ONE chunk.
+ *   learnings 392 rows (ids 2154-2545, the TD-496 export), 1,392,503 B —
+ *     min 1,413, avg 3,552, p95 7,140, max 17,015
+ *   event_log 467 / 128,505; projects 35 / 9,789; ceremony_events 4 / 875;
+ *   instances 1 / 671.
+ *
+ * GRID. Per cell, the FIRST chunk a (bytes B, rows R) chunker cuts from that
+ * corpus plus a re-titled copy of its learnings (so a 2 MiB cell fills), in
+ * SYNC_TABLES order (learnings first: the heavy, FTS-triggered table), merged
+ * by the BUILT dist's `processSyncPush` into a fresh copy of an engine-migrated
+ * brain (production pragmas, sqlite-vec), 11 runs, two passes. First-merge CPU
+ * p95 in ms (pass 1 / pass 2); rows in the cell in brackets:
+ *              R=100          250             500             inf
+ *   256 Ki   33/43 [78]    34/41 [78]      34/40 [78]      31/41 [78]
+ *   512 Ki   55/54 [100]   71/84 [162]     68/88 [162]     72/89 [162]
+ *   1 Mi     41/51 [100]  112/149 [250]   151/159 [315]   155/174 [315]
+ *   2 Mi     40/42 [100]  116/131 [250]   284/328 [500]   370/405 [615]
+ * The identical re-merge cost 14-21 ms at 1 Mi / 250 and wrote 0 rows.
+ * CPU time, not wall: the host ran at load average 40-195 on 8 cores, and
+ * wall time was 4-10x CPU. Docker's daemon was not running, so the plan's
+ * `--cpus=0.25` arm did not run.
+ *
+ * RULE. The largest cell whose p95 is at most 150 ms in both passes, with both
+ * bounds safe: 1 MiB / 250 rows. 2 Mi / 250 ties on this corpus only because
+ * the row cap binds first; its byte bound would admit the 370-405 ms chunk.
+ * Timeout at the cap: 30 s + 100 x 149 ms = 44.9 s (sync.test.ts T1).
+ */
+const BYTE_CAP = 1024 * 1024;
+const ROW_CAP = 250;
+
+describe('BR-121 — push chunks are bounded by bytes and by rows', () => {
+  it('C1: 1,000 rows of ~100 B split into ceil(1000/ROW_CAP) chunks of at most ROW_CAP rows', () => {
+    const rows = Array.from({ length: 1000 }, (_, i) => ({ id: i, event_name: 'e', component: 'c', payload: 'p'.repeat(40) }));
+    expect(Buffer.byteLength(JSON.stringify(rows[0]), 'utf8')).toBeLessThan(120);
+    const chunks = chunkTablesForPushSafe({ event_log: rows });
+    expect(chunks).toHaveLength(Math.ceil(1000 / ROW_CAP));
+    for (const c of chunks) expect(c.event_log.length).toBeLessThanOrEqual(ROW_CAP);
+    expect(chunks.reduce((n, c) => n + c.event_log.length, 0)).toBe(1000);
+  });
+
+  it('C2: rows totalling 3 x BYTE_CAP split into at least 3 chunks, each within BYTE_CAP', () => {
+    // ~10 KB rows, so the row cap (ROW_CAP) never binds first here.
+    const row = (i: number) => ({ id: i, event_name: 'e', component: 'c', payload: 'x'.repeat(10_000) });
+    const one = Buffer.byteLength(JSON.stringify(row(0)), 'utf8');
+    const n = Math.ceil((3 * BYTE_CAP) / one);
+    const rows = Array.from({ length: n }, (_, i) => row(i));
+    const chunks = chunkTablesForPushSafe({ event_log: rows });
+    expect(chunks.length).toBeGreaterThanOrEqual(3);
+    for (const c of chunks) {
+      const bytes = c.event_log.reduce((s, r) => s + Buffer.byteLength(JSON.stringify(r), 'utf8'), 0);
+      expect(bytes).toBeLessThanOrEqual(BYTE_CAP);
+      expect(c.event_log.length).toBeLessThan(ROW_CAP);
+    }
+  });
+
+  it('C4: the drain sends 500 tiny queue rows in ceil(500/ROW_CAP) POSTs', async () => {
+    const db = makeDrainDb();
+    mockedGetDb.mockReturnValue(db);
+    const originalFetch = globalThis.fetch;
+    try {
+      const insert = db.prepare(
+        "INSERT INTO sync_queue (table_name, row_data, status, retry_count, max_retries) VALUES ('event_log', ?, 'pending', 0, 5)",
+      );
+      for (let i = 1; i <= 500; i++) {
+        insert.run(JSON.stringify({ id: i, event_name: 'e', component: 'c', payload: '{}', created_at: '2026-11-23 00:00:00' }));
+      }
+      const posted: number[] = [];
+      globalThis.fetch = vi.fn(async (_u: unknown, init: RequestInit) => {
+        posted.push((JSON.parse(init.body as string) as { tables: { event_log: unknown[] } }).tables.event_log.length);
+        return { ok: true, status: 200, json: async () => ({ ok: true, results: {}, errors: {}, skipped: [] }), text: async () => '' };
+      }) as unknown as typeof globalThis.fetch;
+
+      await handleSyncQueueDrain({ remote_url: 'http://test-remote.local', api_key: 'test' });
+
+      expect(posted).toHaveLength(Math.ceil(500 / ROW_CAP));
+      for (const n of posted) expect(n).toBeLessThanOrEqual(ROW_CAP);
+      const sent = (db.prepare("SELECT COUNT(*) AS c FROM sync_queue WHERE status = 'sent'").get() as { c: number }).c;
+      expect(sent).toBe(500);
+    } finally {
+      globalThis.fetch = originalFetch;
+      db.close();
+    }
   });
 });
 

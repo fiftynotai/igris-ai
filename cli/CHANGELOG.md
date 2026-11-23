@@ -38,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `No projects registered — the registry is empty.` instead of printing only
   `Registry is empty.`.
 
+- **A push to a slow brain no longer re-sends what the brain already merged
+  (BR-121).** Chunks are capped at 1 MiB and 250 rows, the wait scales with
+  the chunk (30 to 55 s), the brain answers a repeated chunk from its
+  receipt, and `igris sync drain` stops at a timeout. `igris sync status`
+  prints the brain's version. Deploy the brain with `igris sync code` first.
+
 ---
 
 ## [7.4.0] - 2026-11-19

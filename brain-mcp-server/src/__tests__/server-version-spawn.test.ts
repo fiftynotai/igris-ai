@@ -8,7 +8,8 @@
  *  - P1 (stdio): `StdioClientTransport` spawns `node --import tsx src/index.ts`.
  *  - P2 (http): the test spawns `… src/index.ts --http --port <free> --host
  *    127.0.0.1` and connects a `StreamableHTTPClientTransport`; it also reads
- *    the authenticated REST body `GET /api/brain-stats`, the sixth site.
+ *    the authenticated REST body `GET /api/brain-stats`, the sixth site, and
+ *    (BR-121) the unauthenticated `GET /health`, the seventh.
  * The SOURCE runs through tsx, never `dist/`: the CI `brain-vitest` job does
  * not build, and a `skipIf(!dist)` would add a skip to the count that
  * `.github/workflows/test.yml` narrates for that job. The BUILT bundle's layout
@@ -233,6 +234,15 @@ describe('TD-518 — the brain reports package.json version over a real MCP hand
       expect(res.status).toBe(200);
       const body = (await res.json()) as { version?: unknown };
       expect.soft(body.version).toBe(PKG.version);
+
+      // BR-121 (TD-518 D-3): the unauthenticated /health carries the version too.
+      // `status` stays the FIRST key: scripts/igris_brain_deploy.sh greps the
+      // compact `"status":"ok"`.
+      const health = await fetch(`http://127.0.0.1:${port}/health`);
+      expect(health.status).toBe(200);
+      const raw = await health.text();
+      expect.soft(raw).toContain('"status":"ok"');
+      expect.soft(JSON.parse(raw)).toEqual({ status: 'ok', version: PKG.version });
 
       // SIGTERM runs shutdownHttp, which exits 0.
       child.kill('SIGTERM');
