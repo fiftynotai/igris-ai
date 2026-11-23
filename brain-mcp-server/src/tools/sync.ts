@@ -29,6 +29,7 @@ import { getDb } from '../db.js';
 import { normalizeSyncRow } from './brief-normalize.js';
 import { errMsg } from '../engine/helpers.js';
 import { embedNullLearnings } from '../utils/learning-embed.js';
+import { getEmbedChild } from '../utils/embed-child-client.js';
 import { deleteEmbedding, isVectorSearchAvailable } from '../utils/vector-search.js';
 
 // ---------------------------------------------------------------------------
@@ -1231,7 +1232,7 @@ export function receiveSyncPush(
  */
 const EMBED_BATCH = 50;
 
-/** BR-121: pause between rows so a small VPS keeps answering `/health` while it embeds. */
+/** BR-121: pause between rows, so the embed child leaves CPU to a small VPS. */
 const POST_MERGE_EMBED_YIELD_MS = 25;
 
 /**
@@ -1290,18 +1291,24 @@ export function scheduleLearningEmbedAfterMerge(
  * success log at schedule time (#125 observability honesty) — the only
  * completion signal is the core's own post-pass progress/summary log.
  *
+ * TD-525: inference runs in the embed child; a refusal or a close stops the pass, with no rerun.
+ *
  * Exported for direct unit testing (drive it with a fake embedder + a tick).
  */
 export async function runPostMergeEmbedPass(db: Database.Database): Promise<void> {
   try {
     for (;;) {
       embedRerun = false;
+      let stopped = false;
       try {
         await embedNullLearnings(db, {
           dryRun: false,
           batchSize: EMBED_BATCH,
           yieldMs: POST_MERGE_EMBED_YIELD_MS,
           log: (m) => console.error(m), // stdout is the stdio brain's protocol channel
+        }, {
+          embed: (t) => getEmbedChild().embed(t),
+          stopOn: (e) => (stopped = /^(EmbeddingsUnavailableError|EmbedChildClosedError)$/.test((e as Error)?.name)),
         });
       } catch (err) {
         // AC2: never break the sync path. #125: no success-implying line here.
@@ -1310,7 +1317,7 @@ export async function runPostMergeEmbedPass(db: Database.Database): Promise<void
           errMsg(err),
         );
       }
-      if (!embedRerun) break; // no await between here and the finally → race-free
+      if (stopped || !embedRerun) break; // no await between here and the finally → race-free
     }
   } finally {
     embedInFlight = false;

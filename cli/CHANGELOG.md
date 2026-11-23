@@ -44,6 +44,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   receipt, and `igris sync drain` stops at a timeout. `igris sync status`
   prints the brain's version. Deploy the brain with `igris sync code` first.
 
+- **The brain keeps answering `/health` while it embeds a sync backlog
+  (TD-525).** The post-merge embed pass runs inference in a child process.
+  The pass no longer downloads the model, so on a fresh install the first
+  interactive embed (a memory store or a search) populates the cache.
+
 ---
 
 ## [7.4.0] - 2026-11-19

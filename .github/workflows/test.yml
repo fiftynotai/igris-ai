@@ -324,6 +324,18 @@ jobs:
   # the four wall-clock P95 benchmarks stay ARMED under a documented
   # BENCH_SLACK x4 CI headroom factor (graph-traversal.integration.test.ts,
   # TD-312) sized for this 2-core runner.
+  # TD-525 — the post-merge embed pass's child process. sync.test.ts mocks the
+  # client seam (utils/embed-child-client.js) the same way; the embed-child
+  # tiers fork REAL children whose embed modules are fixtures
+  # (fixtures/embed-child/*.mjs: CPU burns, crashes, hangs — no model). The
+  # ORT exit-status tests (embed-child.test.ts EC13, embed-child-spawn.test.ts
+  # ES2-ES6) run a child compiled to plain JS (fixtures/embed-child/compile.mjs,
+  # the typescript devDependency) holding a REAL onnxruntime-node MatMul session
+  # with no model file, so this x86_64 job is the first Linux x64 run of that
+  # drain path. Four more tests self-skip HERE on the MINILM_CACHED predicate
+  # (embed-child-real-model.test.ts ER1-ER4: they need the MiniLM cache, which
+  # this job deliberately lacks), so expect 4 more skips than the count above;
+  # EC0b runs either way (no cache: it asserts the offline refusal).
   # ---------------------------------------------------------------------------
   brain-vitest:
     name: Brain vitest suite

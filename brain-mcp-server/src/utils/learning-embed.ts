@@ -75,6 +75,8 @@ export interface EmbedNullOptions {
 export interface EmbedNullDeps {
   /** injectable embedder seam for tests; production uses generateEmbedding. */
   embed?: Embedder;
+  /** TD-525: true stops the loop after this row's FAILED line. */
+  stopOn?: (err: unknown) => boolean;
 }
 
 export interface EmbedNullSummary {
@@ -196,6 +198,7 @@ export async function embedNullLearnings(
     } catch (err) {
       summary.failures++;
       log(`[fr219] row ${row.id} FAILED: ${err instanceof Error ? err.message : String(err)}`);
+      if (deps.stopOn?.(err)) break;
     }
 
     if ((i + 1) % batchSize === 0 || i === rows.length - 1) {

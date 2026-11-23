@@ -92,6 +92,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `brain version: unknown`. Deploy the brain with `igris sync code` before
   updating clients.
 
+- **The brain keeps answering `/health` while it embeds a sync backlog
+  (TD-525).** BR-121's one-thread cap made each MiniLM inference one
+  synchronous block of about 175 ms on the brain's main thread, which a
+  CPU-starved VPS stretched to seconds. The post-merge embed pass now runs
+  inference in one lazy child process per brain: it is forked on the first
+  row, reaped after 60 s idle, given 180 s to load the model and 60 s per
+  row after that, retried once after a crash, and refused for 5 minutes
+  after three crashes or timeouts. The main thread keeps every database
+  write. The pass stops at the first refusal or close instead of logging
+  one failure per row. The pass no longer downloads the model, so on a
+  fresh install, or after a CLI rebuild wipes the vendored cache, the first
+  interactive embed (a memory store or a search) populates the cache and
+  the next merge embeds the waiting rows. Interactive embeds still run in
+  the brain process.
+
 ---
 
 ## [7.4.0] - 2026-11-19

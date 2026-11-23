@@ -178,4 +178,58 @@ describe('embeddings hybrid guard — BR-070', () => {
 
     await expect(generateEmbedding('x')).rejects.toThrow(/@huggingface\/transformers/);
   });
+
+  // TD-525 D5 — the embed child's offline arm. `setEmbeddingsOffline()` only sets a flag;
+  // the next load applies `env.allowRemoteModels = false` to the transformers module object
+  // the loader itself imported, and reads it back. A guard that does not read back latches,
+  // so the child can never download (L-2506: two writers once corrupted model.onnx).
+  it('EG7: setEmbeddingsOffline() → env.allowRemoteModels is false when pipeline() runs', async () => {
+    const env = { allowRemoteModels: true };
+    const seen: boolean[] = [];
+    const pipeline = vi.fn(async () => {
+      seen.push(env.allowRemoteModels);
+      return async () => ({ data: new Float32Array(384) });
+    });
+    vi.doMock('@huggingface/transformers', () => ({ pipeline, env }));
+    const mod = await import('../embeddings.js');
+
+    mod.setEmbeddingsOffline();
+    await expect(mod.generateEmbedding('x')).resolves.toHaveLength(384);
+    expect(pipeline).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([false]);
+  });
+
+  it('EG7c: without the call, env is untouched (interactive callers keep downloading)', async () => {
+    const env = { allowRemoteModels: true };
+    const seen: boolean[] = [];
+    const pipeline = vi.fn(async () => {
+      seen.push(env.allowRemoteModels);
+      return async () => ({ data: new Float32Array(384) });
+    });
+    vi.doMock('@huggingface/transformers', () => ({ pipeline, env }));
+    const { generateEmbedding } = await import('../embeddings.js');
+
+    await expect(generateEmbedding('x')).resolves.toHaveLength(384);
+    expect(seen).toEqual([true]);
+    expect(env.allowRemoteModels).toBe(true);
+  });
+
+  it.each([
+    ['a setter that ignores writes', () => ({
+      get allowRemoteModels(): boolean { return true; },
+      set allowRemoteModels(_v: boolean) { /* ignored */ },
+    })],
+    ['no env at all', () => undefined],
+  ])('EG8: offline with %s → EmbeddingsUnavailableError /offline guard/, pipeline never called, latched', async (_label, makeEnv) => {
+    const pipeline = vi.fn(async () => async () => ({ data: new Float32Array(384) }));
+    const env = makeEnv();
+    vi.doMock('@huggingface/transformers', () => (env ? { pipeline, env } : { pipeline }));
+    const mod = await import('../embeddings.js');
+
+    mod.setEmbeddingsOffline();
+    await expect(mod.generateEmbedding('x')).rejects.toBeInstanceOf(mod.EmbeddingsUnavailableError);
+    await expect(mod.generateEmbedding('y')).rejects.toThrow(/offline guard/);
+    expect(pipeline).not.toHaveBeenCalled();
+    expect(mod.isEmbeddingAvailable()).toBe(false); // permanent latch
+  });
 });

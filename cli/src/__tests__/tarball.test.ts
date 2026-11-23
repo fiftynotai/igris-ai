@@ -3658,6 +3658,53 @@ interface PackReport {
  *   7_765 = 4_059 + 1_571 + 1_190 + 270 + 107 + 194 + 374; 144_287 + 2_328 =
  *   146_615; 153_600 − 146_615 = 6_985.
  *
+ * TD-525 MEASURED LAST (2026-11-23), after its final shipped change: the
+ * embed child (`utils/embed-child.js` + `.d.ts`) and its client
+ * (`utils/embed-child-client.js` + `.d.ts`), four new entries; the client
+ * import and the `stopOn` wiring in `tools/sync.js` (+ one `.d.ts` docblock
+ * line); the two `shutdownEmbedChild()` calls in `index.js`;
+ * `setEmbeddingsOffline` and the corrected cache text in
+ * `utils/embeddings.js`; `EmbedNullDeps.stopOn` in `utils/learning-embed.js`;
+ * and one `CHANGELOG.md` bullet. MAINTAINING, the root CHANGELOG, `test.yml`
+ * and every test and fixture (the four new brain test files, the new
+ * `utils/__tests__/embed-child.test.ts`, the 19 `fixtures/embed-child/*.mjs`,
+ * the three edited brain test files, this file) pack 0 B. Same method as
+ * BR-121 (`git archive` scratch builds, `copy-templates.sh` in both arms,
+ * brain `dist` absent so the copy step rebuilt it, smoke `(sandboxed)`,
+ * `npm pack --dry-run --json --ignore-scripts` twice per arm, identical),
+ * with ONE departure: FINAL is the `af682f2` archive with the working tree's
+ * 35 changed `cli/` and `brain-mcp-server/` files copied over it, not a
+ * temp-index `git write-tree` (no `git add` of any kind during the build).
+ * CONTROL = develop `af682f2`, the BR-121 commit, which reproduced that row's
+ * FINAL byte- and sha-identically (1_989_891 / 7_326_645 / 611 /
+ * `87cde504…`). FINAL is sha-identical to the worktree's own `npm run
+ * build`; a third arm taken the same way after this row was written packed
+ * sha-identically, twice. Phase 0's G10 probe (the full-feature prototype,
+ * before any test) packed +3_444 B; the shipped code adds 43 B over it (the
+ * offline read-back inside its own `try`, and the client's own-buffer copy
+ * of each vector). `~/.igris/config.json` not read. npm 10.9.8,
+ * node v22.23.2, darwin/arm64.
+ *   packed              1_993_378    unpacked 7_337_289, 615 entries (+4),
+ *                                    shasum
+ *                                    `c119d4763098406ba9de287a12dbf1f9609e8e7b`.
+ *   this round's share  +3_487 B     packed, under the plan's 4_500 B target
+ *                                    (estimated 3.8-5.5 KB), so no cut from
+ *                                    the cut list was taken. The dashboard
+ *                                    moves 0 B. Unpacked +10_644 over 12
+ *                                    artifacts, reconciling exactly:
+ *                                    `utils/embed-child-client.js` +6_141 /
+ *                                    `.d.ts` +652, `utils/embed-child.js`
+ *                                    +1_901 / `.d.ts` +52, `tools/sync.js`
+ *                                    +396 / `.d.ts` +101, `index.js` +132,
+ *                                    `utils/embeddings.js` +663 / `.d.ts`
+ *                                    +147, `utils/learning-embed.js` +59 /
+ *                                    `.d.ts` +109, `CHANGELOG.md` +291.
+ *   cumulative delta    +150_102 B   (1_993_378 − 1_843_276)
+ *   headroom remaining  3_498 B      (153_600 − 150_102)
+ *   RE-DERIVED: 1_993_378 − 1_989_891 = 3_487; 7_337_289 − 7_326_645 =
+ *   10_644 = 6_141 + 652 + 1_901 + 52 + 396 + 101 + 132 + 663 + 147 + 59 +
+ *   109 + 291; 146_615 + 3_487 = 150_102; 153_600 − 150_102 = 3_498.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4832,10 +4879,10 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of BR-121, measured
- * 2026-11-23, 6_985 B (6.8 KB) is what is left on PACKED — TD-444's
- * re-based grant minus the 146_615 B spent since (BR-100, at 6_715 B, was the
- * grant's first consumer).** Grep `BR-121 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of TD-525, measured
+ * 2026-11-23, 3_498 B (3.4 KB) is what is left on PACKED — TD-444's
+ * re-based grant minus the 150_102 B spent since (BR-100, at 6_715 B, was the
+ * grant's first consumer).** Grep `TD-525 MEASURED LAST` in this
  * file for that reading and
  * the method behind it (TD-444 is the floor and the re-base, BR-101 the
  * copy-step method every reading since uses), and treat the 84_262 B above
@@ -4851,7 +4898,8 @@ interface PackReport {
  * after BR-100's, through BR-120's, did not; TD-510 re-pointed it from
  * BR-100's 146_885 B, TD-518 + TD-519 from TD-510's 27_184 B, TD-496
  * part 1 from TD-518 + TD-519's 23_898 B, TD-496 part 2 from part 1's
- * 9_367 B, and BR-121 from part 2's 9_313 B). The
+ * 9_367 B, BR-121 from part 2's 9_313 B, and TD-525 from BR-121's
+ * 6_985 B). The
  * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
  * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
  * do not read such a jump as a ceiling change; both constants are still
@@ -5728,4 +5776,185 @@ describe("BR-101 — no research artifact ships from the vendored scripts/", () 
       ).toBe(pruned);
     }
   });
+});
+
+// ----------------------------------------------------------------------
+// TD-525 — the post-merge embed pass's child process ships, and runs from every layout.
+// `tools/sync.js` statically imports `utils/embed-child-client.js`, which forks the sibling
+// `utils/embed-child.js` by `import.meta.url` with the client's own extension (MAINTAINING's
+// embed-child row). Nothing degrades if either is missing: the pass would fail every merge, so
+// only a packaging assertion (TW1) and a real fork from the built layouts (TW2) catch it. TW2's
+// driver is plain `node` (no tsx), with an explicit minimal env (BR-117 / TD-518 strip) and a
+// SIGKILL hang stop; its fork wrapper (`module.syncBuiltinESMExports`) reports each child's exit.
+// TW2(c) holds a REAL onnxruntime-node session in the child, resolved from the VENDORED package
+// (the brain fixture `ort-matmul.mjs?base=`), and asserts the idle reap drains it to code 0 —
+// on CI's ubuntu x86_64 cli job, the one x64 Linux run of that path before any VPS step.
+// TW3 (R15): no CLI path may dispatch `igris_brain_pull`, the one CLI-reachable door to the pass.
+// ----------------------------------------------------------------------
+describe("TD-525 — the embed child ships and forks from the built layouts", () => {
+  const cliRoot = join(__dirname, "..", "..");
+  const repoRoot = join(cliRoot, "..");
+  const vendoredPkg = join(cliRoot, "dist", "brain-mcp-server", "package.json");
+  const ROOTS = [
+    { name: "vendored", dist: join(cliRoot, "dist", "brain-mcp-server", "dist"), pkg: vendoredPkg },
+    { name: "brain", dist: join(repoRoot, "brain-mcp-server", "dist"), pkg: join(repoRoot, "brain-mcp-server", "package.json") },
+  ];
+  const ORT_MATMUL = join(repoRoot, "brain-mcp-server", "src", "utils", "__tests__", "fixtures", "embed-child", "ort-matmul.mjs");
+  const SIG = /libc\+\+abi|mutex lock failed|terminate called|Segmentation fault|FATAL ERROR/;
+
+  /** Same shape as bundleBuilt(): the layout's entry exists. A built layout WITHOUT the child fails. */
+  function built(dist: string): boolean {
+    if (existsSync(join(dist, "index.js"))) return true;
+    console.warn(`[tarball TD-525] skipped: ${dist}/index.js absent — run \`npm run build\` in cli/ first.`);
+    return false;
+  }
+
+  /** The MiniLM cache the root's transformers would read, and a listing of it (L-2506). */
+  async function cacheOf(pkg: string): Promise<{ cached: boolean; listing: () => string }> {
+    const { createRequire } = await import("node:module");
+    const { dirname } = await import("node:path");
+    let root = "";
+    try {
+      root = join(dirname(dirname(createRequire(pkg).resolve("@huggingface/transformers"))), ".cache");
+    } catch {
+      return { cached: false, listing: () => "no transformers" };
+    }
+    const dir = join(root, "Xenova", "all-MiniLM-L6-v2");
+    const cached = ["config.json", "tokenizer.json", "tokenizer_config.json", "onnx/model.onnx"].every((f) => {
+      try {
+        return statSync(join(dir, f)).size > 0;
+      } catch {
+        return false;
+      }
+    });
+    const listing = (): string =>
+      existsSync(root)
+        ? readdirSync(root, { recursive: true }).map((f) => `${f}:${statSync(join(root, String(f))).size}`).sort().join("\n")
+        : "no cache dir";
+    return { cached, listing };
+  }
+
+  const DRIVER = `
+import cp from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { pathToFileURL } from 'node:url';
+const [client, mod, n] = process.argv.slice(2);
+const realFork = cp.fork;
+const exits = [];
+let forks = 0;
+cp.fork = (...a) => { forks++; const c = realFork(...a); c.once('exit', (code, signal) => exits.push({ code, signal })); return c; };
+syncBuiltinESMExports();
+const { createEmbedChild } = await import(pathToFileURL(client).href);
+const c = createEmbedChild({ idleMs: 300, loadMs: 120000, ...(mod !== '-' ? { embedModule: mod } : {}) });
+const out = {};
+try { for (let i = 0; i < Number(n); i++) out.len = (await c.embed('tw2 ' + i)).length; } catch (e) { out.err = e.name; }
+const t = setInterval(() => { if (exits.length) { clearInterval(t); process.stdout.write(JSON.stringify({ ...out, forks, exits }) + '\\n'); } }, 20);
+`;
+  const FAKE = `
+export async function generateEmbedding() { return new Float32Array(384).fill(0.5); }
+export async function disposeEmbeddingPipeline() {}
+export function setEmbeddingsOffline() {}
+`;
+
+  async function drive(dist: string, mod: string, n: number, budgetMs: number) {
+    const cp = await import("node:child_process");
+    const { pathToFileURL } = await import("node:url");
+    const dir = mkdtempSync(join(tmpdir(), "td525-tw2-"));
+    try {
+      writeFileSync(join(dir, "driver.mjs"), DRIVER);
+      writeFileSync(join(dir, "fake.mjs"), FAKE);
+      const modArg = mod === "fake" ? pathToFileURL(join(dir, "fake.mjs")).href : mod;
+      const child = cp.spawn(process.execPath, [join(dir, "driver.mjs"), join(dist, "utils", "embed-child-client.js"), modArg, String(n)], {
+        env: { PATH: process.env.PATH ?? "/usr/bin:/bin", TMPDIR: tmpdir(), HOME: dir },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let out = "";
+      let err = "";
+      child.stdout.on("data", (d: Buffer) => (out += d));
+      child.stderr.on("data", (d: Buffer) => (err += d));
+      const t0 = Date.now();
+      const hang = setTimeout(() => child.kill("SIGKILL"), budgetMs);
+      const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((r) =>
+        child.once("close", (code, signal) => r({ code, signal })),
+      );
+      clearTimeout(hang);
+      return { exit, ms: Date.now() - t0, lines: out.split("\n").filter(Boolean), err };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  it("TW1: the packlist carries the client and the child beside it", () => {
+    if (!built(ROOTS[0].dist)) return;
+    const packed = packedPaths();
+    for (const f of ["embed-child.js", "embed-child-client.js"]) {
+      expect(packed.has(`dist/brain-mcp-server/dist/utils/${f}`), `utils/${f} is missing from the published tarball`).toBe(true);
+    }
+  }, PACK_TIMEOUT_MS);
+
+  for (const root of ROOTS) {
+    it(`TW2(a)(b) [${root.name}]: plain node forks the sibling child — a temp module, then the default embeddings.js (offline)`, async () => {
+      if (!built(root.dist)) return;
+      const a = await drive(root.dist, "fake", 1, 30_000);
+      expect(a.exit, a.err).toEqual({ code: 0, signal: null });
+      expect(a.ms).toBeLessThanOrEqual(10_000);
+      expect(a.lines).toHaveLength(1);
+      expect(JSON.parse(a.lines[0])).toEqual({ len: 384, forks: 1, exits: [{ code: 0, signal: null }] });
+
+      const cache = await cacheOf(root.pkg);
+      const before = cache.listing();
+      const b = await drive(root.dist, "-", 1, 150_000);
+      expect(b.exit, b.err).toEqual({ code: 0, signal: null });
+      expect(b.lines).toHaveLength(1);
+      const res = JSON.parse(b.lines[0]) as { len?: number; err?: string };
+      if (cache.cached) expect(res.len).toBe(384);
+      else expect(res.err).toBe("EmbeddingsUnavailableError");
+      expect(cache.listing()).toBe(before);
+    }, 180_000);
+  }
+
+  it("TW2(c) [vendored]: a real ORT session in the child, resolved from the vendored package, drains to code 0", async () => {
+    if (!built(ROOTS[0].dist)) return;
+    const { pathToFileURL } = await import("node:url");
+    const mod = `${pathToFileURL(ORT_MATMUL).href}?base=${encodeURIComponent(vendoredPkg)}`;
+    const c = await drive(ROOTS[0].dist, mod, 3, 90_000);
+    expect(c.exit, c.err).toEqual({ code: 0, signal: null });
+    expect(c.lines).toHaveLength(1);
+    expect(JSON.parse(c.lines[0])).toEqual({ len: 384, forks: 1, exits: [{ code: 0, signal: null }] });
+    expect(c.err).not.toMatch(SIG);
+  }, 120_000);
+
+  /** Exact `'igris_brain_pull'` / `"igris_brain_pull"` literals in comment-stripped code. */
+  async function pullLiterals(code: string): Promise<number> {
+    const ts = (await import("typescript")).default;
+    const stripped = ts.transpileModule(code, {
+      compilerOptions: { removeComments: true, module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 },
+      reportDiagnostics: false,
+    }).outputText;
+    return (stripped.match(/(['"`])igris_brain_pull\1/g) ?? []).length;
+  }
+
+  it("TW3 (R15): no non-test cli/src file holds an exact 'igris_brain_pull' literal", async () => {
+    const src = join(cliRoot, "src");
+    const files = (readdirSync(src, { recursive: true }) as string[])
+      .filter((f) => f.endsWith(".ts") && !f.split(/[\\/]/).includes("__tests__"));
+    const hits: string[] = [];
+    for (const f of files) {
+      const code = readFileSync(join(src, f), "utf-8");
+      if (code.includes("igris_brain_pull") && (await pullLiterals(code)) > 0) hits.push(f);
+    }
+    expect(hits).toEqual([]);
+  }, 60_000);
+
+  it("TW3 self-test: a planted literal is flagged; prose, comments and the index.ts help string are not", async () => {
+    expect(await pullLiterals(`mcpCall(remote, "igris_brain_pull");`)).toBe(1);
+    expect(await pullLiterals(`const t = 'igris_brain_pull';`)).toBe(1);
+    expect(await pullLiterals(`// mcpCall(remote, "igris_brain_pull")\nconst x = 1;`)).toBe(0);
+    expect(await pullLiterals(`/* "igris_brain_pull" */ const y = 2;`)).toBe(0);
+    const help = readFileSync(join(cliRoot, "src", "index.ts"), "utf-8")
+      .split("\n")
+      .find((l) => l.includes("reproduction of igris_brain_pull"));
+    expect(help, "the FR-195 help string the census must not flag").toBeDefined();
+    expect(await pullLiterals(`const d = ${help!.trim().replace(/,$/, "")};`)).toBe(0);
+  }, 30_000);
 });

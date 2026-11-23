@@ -70,6 +70,10 @@ const H = vi.hoisted(() => {
     // BR-121 E4: a synchronous busy-wait of this many ms per call — the
     // stand-in for ONNX's blocking `binding.run` (see learning-embed-yield.test.ts).
     busyMs: 0,
+    // TD-525: calls the post-merge pass made through the embed-child client mock, and an
+    // optional override of what that client answers (default: the same fake embedder).
+    clientCalls: 0,
+    clientEmbed: null as null | ((text: string) => Promise<Float32Array>),
   };
   /** Main-thread CPU in ms (the E4 lag clock). */
   const threadCpuMs = (): number => {
@@ -96,6 +100,22 @@ vi.mock('../../utils/embeddings.js', async (importOriginal) => {
     generateEmbedding: (text: string) => H.embed(text),
   };
 });
+
+// TD-525: `runPostMergeEmbedPass` embeds through the embed child (`getEmbedChild().embed`).
+// This file tests the pass's merge-side behaviour in process, so the client is a factory mock:
+// it counts the calls and answers with the same fake (no fork, no model). There is no static
+// import of the client anywhere in this file — the factory runs only when source imports it.
+vi.mock('../../utils/embed-child-client.js', () => ({
+  getEmbedChild: () => ({
+    embed: (text: string) => {
+      H.control.clientCalls++;
+      return H.control.clientEmbed?.(text) ?? H.embed(text);
+    },
+    close: () => {},
+    pid: undefined,
+  }),
+  shutdownEmbedChild: () => {},
+}));
 
 // ---------------------------------------------------------------------------
 // Imports after mocks
@@ -662,6 +682,8 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
     H.control.gate = null;
     H.control.embedCount = 0;
     H.control.busyMs = 0;
+    H.control.clientCalls = 0;
+    H.control.clientEmbed = null;
   });
 
   afterEach(async () => {
@@ -836,6 +858,9 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
   // ONNX's synchronous `binding.run` does; without a macrotask yield the whole
   // backlog is ONE stretch and the ticker never runs. The count of 25 ms timers
   // and the wall-time floor prove the call site passes `yieldMs: 25`.
+  // TD-525 scope: inference now runs in the embed child, and this file's client
+  // mock answers in process, so E4 pins the pass's row yield and 25 ms duty cycle
+  // only. The off-thread bound is OT1 (`post-merge-embed-off-thread.test.ts`).
   it('E4: a blocking backlog embedded by runPostMergeEmbedPass never holds the loop past the bound', async () => {
     const N = 60;
     const D = 20;
@@ -878,6 +903,99 @@ describe('Sync — FR-220 post-merge learning embedding', () => {
       errSpy.mockRestore();
     }
   }, 20_000);
+
+  // TD-525 — the pass embeds through the embed-child client (`getEmbedChild().embed`) and stops
+  // at the first refusal or close (`stopOn`), skipping its coalesced rerun (R4, R14).
+  const named = (name: string): Error => Object.assign(new Error(`${name} (fixture)`), { name });
+  const LEARNINGS_MERGED = { learnings: { inserted: 1, updated: 0, skipped: 0, failed: 0 } };
+  function seedNull(n: number, tag: string): void {
+    const ins = db.prepare('INSERT INTO learnings (project, category, title, content) VALUES (?, ?, ?, ?)');
+    for (let i = 0; i < n; i++) ins.run(T.project, T.category, `${tag} title ${i}`, `${tag} body ${i}`);
+  }
+  const failedLines = (spy: { mock: { calls: unknown[][] } }): string[] =>
+    spy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('FAILED'));
+
+  it('WS1: the pass embeds through the embed-child client', async () => {
+    seedNull(2, 'ws1');
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await runPostMergeEmbedPass(db);
+      expect.soft(H.control.clientCalls).toBe(2); // RED on af682f2: 0
+      expect(nullCount()).toBe(0);
+    } finally {
+      errSpy.mockRestore();
+    }
+  });
+
+  it('WS2: a refusing client → ONE FAILED line, one call, rows stay NULL, no rerun', async () => {
+    seedNull(50, 'ws2');
+    let rerunSet = false;
+    H.control.clientEmbed = async () => {
+      if (!rerunSet) {
+        rerunSet = true;
+        scheduleLearningEmbedAfterMerge(db, LEARNINGS_MERGED); // in flight → sets embedRerun
+      }
+      throw named('EmbeddingsUnavailableError');
+    };
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      scheduleLearningEmbedAfterMerge(db, LEARNINGS_MERGED);
+      await waitFor(() => failedLines(errSpy).length > 0 || nullCount() === 0);
+      await new Promise((r) => setTimeout(r, 300)); // a rerun or a next row would land here
+      expect.soft(failedLines(errSpy)).toHaveLength(1);
+      expect.soft(H.control.clientCalls).toBe(1);
+      expect.soft(nullCount()).toBe(50);
+    } finally {
+      errSpy.mockRestore();
+      H.control.clientEmbed = null;
+    }
+    // Leave the table embedded so the shared afterEach does not wait out its budget.
+    await runPostMergeEmbedPass(db);
+  });
+
+  it('WS3: a close mid-pass stops the pass, skips the rerun, and leaves the DB alone after close', async () => {
+    seedNull(5, 'ws3');
+    let rerunSet = false;
+    H.control.clientEmbed = async (text) => {
+      if (H.control.clientCalls < 2) return H.embed(text);
+      if (!rerunSet) {
+        rerunSet = true;
+        scheduleLearningEmbedAfterMerge(db, LEARNINGS_MERGED); // in flight → sets embedRerun
+      }
+      throw named('EmbedChildClosedError');
+    };
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      scheduleLearningEmbedAfterMerge(db, LEARNINGS_MERGED);
+      await waitFor(() => failedLines(errSpy).length > 0 || nullCount() === 0);
+      await new Promise((r) => setTimeout(r, 300));
+      expect.soft(H.control.clientCalls).toBe(2);
+      expect.soft(nullCount()).toBe(4); // row 1 embedded; rows 2-5 untouched
+      expect.soft(failedLines(errSpy)).toHaveLength(1);
+
+      // Nothing touches the DB after it closes (the shutdown order: child first, then the engine).
+      const oldDir = dir;
+      db.close();
+      await tick(); await tick();
+      await new Promise((r) => setTimeout(r, 100));
+      expect.soft(errSpy.mock.calls.map((c) => String(c[0])).filter((m) => m.startsWith('[fr220]'))).toEqual([]);
+      fs.rmSync(oldDir, { recursive: true, force: true });
+
+      // The guard cleared: a later schedule starts a fresh pass.
+      makeVecSyncDb();
+      mockedGetDb.mockReturnValue(db);
+      H.control.clientEmbed = null;
+      seedNull(1, 'ws3-later');
+      const before = H.control.clientCalls;
+      scheduleLearningEmbedAfterMerge(db, LEARNINGS_MERGED);
+      await waitFor(() => nullCount() === 0);
+      expect.soft(H.control.clientCalls).toBe(before + 1);
+      expect(nullCount()).toBe(0);
+    } finally {
+      errSpy.mockRestore();
+      H.control.clientEmbed = null;
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------

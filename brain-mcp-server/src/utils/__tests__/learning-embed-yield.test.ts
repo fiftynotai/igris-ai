@@ -140,3 +140,71 @@ describe('BR-121 — embedNullLearnings yields between rows', () => {
     expect(wall).toBeGreaterThanOrEqual(N * D + 0.8 * (N - 1) * PAUSE);
   }, 20_000);
 });
+
+// TD-525 R4 — `deps.stopOn(err)`: when it returns true the loop logs that row's FAILED line
+// and stops, so a refused or closed embed child costs one line per pass, not one per row.
+describe('TD-525 — embedNullLearnings stops on a stopOn error', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+    (createRequire(import.meta.url)('sqlite-vec') as { load: (d: Database.Database) => void }).load(db);
+    db.exec(`
+      CREATE TABLE learnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        project TEXT NOT NULL, category TEXT NOT NULL, title TEXT NOT NULL, content TEXT NOT NULL,
+        embedding BLOB, embedding_model TEXT DEFAULT ''
+      );
+      CREATE VIRTUAL TABLE learnings_vec USING vec0(embedding float[384]);
+    `);
+    const ins = db.prepare("INSERT INTO learnings (project, category, title, content) VALUES ('p', 'pattern', ?, ?)");
+    for (let i = 1; i <= 5; i++) ins.run(`stop title ${i}`, `stop body ${i}`);
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  /** Throws on row 2 (the 2nd call); records every text it is handed. */
+  function failOnSecond(seen: string[]) {
+    return async (text: string): Promise<Float32Array> => {
+      seen.push(text);
+      if (seen.length === 2) throw Object.assign(new Error('child refused'), { name: 'EmbeddingsUnavailableError' });
+      return new Float32Array(384).fill(0.05);
+    };
+  }
+
+  it('LE1: stopOn → true after row 2 fails: rows 3-5 never reach embed, one FAILED line, no pause after the stop', async () => {
+    const seen: string[] = [];
+    const lines: string[] = [];
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    const stopOn = vi.fn((e: unknown) => (e as Error).name === 'EmbeddingsUnavailableError');
+    const summary = await embedNullLearnings(
+      db,
+      { dryRun: false, yieldMs: PAUSE, log: (m) => lines.push(m) },
+      { embed: failOnSecond(seen), stopOn },
+    );
+    const pauses = timers.mock.calls.filter((c) => c[1] === PAUSE).length;
+    timers.mockRestore();
+
+    expect.soft(seen).toHaveLength(2); // RED (stopOn ignored): 5
+    expect.soft(lines.filter((l) => l.includes('FAILED'))).toHaveLength(1);
+    expect.soft(pauses).toBe(1); // after row 1 only (RED: 4)
+    expect.soft(stopOn).toHaveBeenCalledTimes(1);
+    expect.soft(summary).toMatchObject({ scanned: 5, embedded: 1, failures: 1 });
+  });
+
+  it('LE1c: stopOn → false keeps going: all 5 rows are attempted', async () => {
+    const seen: string[] = [];
+    const lines: string[] = [];
+    const summary = await embedNullLearnings(
+      db,
+      { dryRun: false, log: (m) => lines.push(m) },
+      { embed: failOnSecond(seen), stopOn: () => false },
+    );
+    expect(seen).toHaveLength(5);
+    expect(lines.filter((l) => l.includes('FAILED'))).toHaveLength(1);
+    expect(summary).toMatchObject({ scanned: 5, embedded: 4, failures: 1 });
+  });
+});

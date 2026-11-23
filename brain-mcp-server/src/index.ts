@@ -60,6 +60,7 @@ import {
   reapStaleInstances,
 } from './stdio-lifecycle.js';
 import { readServerVersion, UNKNOWN_SERVER_VERSION } from './server-version.js';
+import { shutdownEmbedChild } from './utils/embed-child-client.js';
 
 /** Timestamp when this server process started, used for uptime calculation. */
 const SERVER_START_TIME = Date.now();
@@ -334,6 +335,7 @@ async function runStdio(): Promise<void> {
   installStdioTeardown({
     onShutdown: () => {
       deregisterInstance(ppid);
+      shutdownEmbedChild();
       engine.shutdown();
     },
   });
@@ -1463,6 +1465,7 @@ async function runHttp(config: ServerConfig): Promise<void> {
   // Graceful shutdown
   const shutdownHttp = async () => {
     console.error('Shutting down HTTP server...');
+    shutdownEmbedChild();
     clearInterval(cleanupInterval);
     for (const sid of Object.keys(transports)) {
       try {

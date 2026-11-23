@@ -4,8 +4,8 @@
  * Lazy-loaded singleton embedding pipeline using @huggingface/transformers
  * with the all-MiniLM-L6-v2 model (384 dimensions).
  *
- * The model is downloaded on first use and cached in ~/.cache/huggingface/.
- * Subsequent calls reuse the cached model and the singleton pipeline instance.
+ * The model is downloaded on first use and cached in the transformers package's
+ * own .cache/ (L-2506). Subsequent calls reuse it and the singleton pipeline.
  *
  * Exports:
  * - generateEmbedding(text): Promise<Float32Array> — produce a 384-dim embedding
@@ -40,6 +40,7 @@ let _loadPromise: Promise<unknown> | null = null;
 // BR-070: latched reason for why the backend is unavailable, so the
 // fast-fail path can report it without re-importing or re-logging.
 let _unavailableReason: string | null = null;
+let _offline = false;
 
 /**
  * Error thrown by generateEmbedding when the embedding backend is
@@ -80,9 +81,9 @@ async function getPipeline(): Promise<unknown> {
     //     short-circuits subsequent calls before they re-enter here).
     //
     //   RECOVERABLE (model weight fetch) — the import resolved and the native
-    //     addon loaded, but pipeline('feature-extraction', …) fetches ~23MB of
+    //     addon loaded, but pipeline('feature-extraction', …) fetches ~90MB of
     //     MiniLM weights from the HF Hub on first use (cached in
-    //     ~/.cache/huggingface/). A transient network blip / partial download /
+    //     <transformers>/.cache/). A transient network blip / partial download /
     //     5xx here is NOT permanent. For the long-running MCP server, latching
     //     it would silently disable semantic search for the whole process
     //     lifetime over one hiccup. So we do NOT latch: reset _loadPromise so
@@ -100,9 +101,20 @@ async function getPipeline(): Promise<unknown> {
       // Dynamic import — rejects with ERR_MODULE_NOT_FOUND if the package is
       // absent; also surfaces onnxruntime-node native-load failures, which are
       // likewise deterministic for this process.
-      ({ pipeline } = await import('@huggingface/transformers') as {
-        pipeline: (task: string, model: string, opts?: object) => Promise<unknown>;
-      });
+      const t = await import('@huggingface/transformers') as {
+        pipeline: typeof pipeline;
+        env?: { allowRemoteModels: boolean };
+      };
+      ({ pipeline } = t);
+      // TD-525: offline means never download; a guard that does not read back latches.
+      if (_offline) {
+        let armed = false;
+        try {
+          t.env!.allowRemoteModels = false;
+          armed = t.env!.allowRemoteModels === false;
+        } catch { /* not armed */ }
+        if (!armed) throw new Error('offline guard failed');
+      }
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err);
       _available = false; // PERMANENT latch
@@ -245,6 +257,11 @@ async function disposeEmbeddingPipeline(): Promise<void> {
   }
 }
 
+/** TD-525: the embed child's arm; later loads never download (L-2506). */
+function setEmbeddingsOffline(): void {
+  _offline = true;
+}
+
 const EMBEDDING_MODEL = MODEL_NAME;
 const EMBEDDING_DIMENSIONS = EMBEDDING_DIMS;
 
@@ -284,6 +301,7 @@ export {
   isEmbeddingAvailable,
   disposeEmbeddingPipeline,
   processInBatches,
+  setEmbeddingsOffline,
   EmbeddingsUnavailableError,
   EMBEDDING_MODEL,
   EMBEDDING_DIMENSIONS,
