@@ -1309,6 +1309,7 @@ name: xlate
 description: FR-158 retry 1 — bash auto-translate guard
 tools: Read, Grep, Bash
 model: sonnet
+effort: high
 memory: project
 ---
 EOF
@@ -1343,6 +1344,9 @@ EOF
   #     schema rejects it with "Unrecognized key(s) in object: 'memory'",
   #     which made the 7 core agents fail to load entirely on Gemini).
   ! grep -q "^memory:" "$gemini_harness"
+  # 3c. effort: dropped (FR-277 — the tier map stamps `effort:` into the
+  #     Claude canonical; Gemini's strict schema would refuse the key).
+  ! grep -q "^effort:" "$gemini_harness" || return 1
   # 4. description: + name: pass through verbatim.
   grep -q "^name: xlate$" "$gemini_harness"
   grep -q "^description: " "$gemini_harness"
@@ -2840,4 +2844,94 @@ td188_mutant() {
   echo "wrapper status=$status" >&2; echo "$output" >&2
   [ "$status" -eq 1 ] || return 1
   [[ "$output" == *"[harness-drift] FATAL: classifier produced malformed counts"* ]] || return 1
+}
+
+# ---------------------------------------------------------------------------
+# FR-277: model tiers. TD3 — Gemini drops the `effort` key the tier map stamps
+# into a Claude canonical (no SCHEMA-INVALID on a fresh compile), and an
+# in-place re-add of `effort:` to the loadout file IS SCHEMA-INVALID. The
+# wrapper pin — a hand-edited stamped `model:` line is `[forger/model-tier]
+# DRIFTED`, which the commit-gate wrapper treats as FATAL (exit 1); the
+# all-MATCH twin exits 0.
+# ---------------------------------------------------------------------------
+
+@test "FR-277 TD3: gemini drops a canonical's effort: key; an in-place effort: re-add is SCHEMA-INVALID" {
+  local root
+  root="$(build_fr152_agent_project demo gemini)"
+  cat > "$IGRIS_BRAIN_DIR/loadout/agents/demo/frontmatter.claude.md" <<'EOF2'
+---
+name: demo
+description: FR-152 split-shape canonical for gemini
+model: sonnet
+effort: high
+---
+EOF2
+  run bash "$COMPILE" --project-root "$root" \
+                      --manifest "$root/harness-manifest.json" --target gemini
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  local loadout_gemini="$IGRIS_BRAIN_DIR/loadout/agents/demo/harness.gemini.md"
+  ! grep -qE '^(effort|model):' "$loadout_gemini" || { cat "$loadout_gemini"; return 1; }
+  run bash "$GUARD" --project-root "$root" --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" != *"SCHEMA-INVALID"* ]] || { echo "$output"; return 1; }
+  # Planted: an in-place (inode-preserving) re-add of the key.
+  cat > "$loadout_gemini" <<'EOF2'
+---
+name: demo
+description: FR-152 split-shape canonical for gemini
+effort: high
+kind: local
+---
+
+# demo AGENT
+
+FR-152 body from the FR-151 split-shape sidecar.
+EOF2
+  run bash "$GUARD" --project-root "$root" --manifest "$root/harness-manifest.json"
+  [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"[demo/gemini] SCHEMA-INVALID"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"unrecognized key(s): effort"* ]] || { echo "$output"; return 1; }
+}
+
+# fr277_tier_wrapper_repo — build_wrapper_repo match plus a model tier map
+# giving forger a role, compiled so the canonical carries the stamp.
+fr277_tier_wrapper_repo() {
+  local root
+  root="$(build_wrapper_repo match)"
+  python3 - "$root/harness-manifest.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+m = json.load(open(p, encoding="utf-8"))
+def col(pr, mo, e): return {"provider": pr, "model": mo, "effort": e}
+m["model_tiers"] = {"tiers": {
+    "deep":   {"claude": col("anthropic", "fable", "high"),    "codex": col("openai", "gpt-6.2-astra", "high")},
+    "strong": {"claude": col("anthropic", "opus", "medium"),   "codex": col("openai", "gpt-6.2-astra", "medium")},
+    "fast":   {"claude": col("anthropic", "sonnet", "medium"), "codex": col("openai", "gpt-6.2-sol", "medium")},
+    "light":  {"claude": col("anthropic", "haiku", "low"),     "codex": col("openai", "gpt-6-luna", "low")}},
+  "roles": {"forger": {"tier": "strong"}}}
+json.dump(m, open(p, "w", encoding="utf-8"), indent=2)
+PY
+  IGRIS_BRAIN_DIR="$ISOLATED_BRAIN" bash "$root/core/scripts/cli-adapters/compile_harnesses.sh" \
+    --project-root "$root" --manifest "$root/harness-manifest.json" --target claude >/dev/null
+  echo "$root"
+}
+
+@test "FR-277 wrapper: all-MATCH including [forger/model-tier] -> exit 0" {
+  local root
+  root="$(fr277_tier_wrapper_repo)"
+  grep -qx 'model: opus' "$root/canon/forger.md" || { cat "$root/canon/forger.md"; return 1; }
+  run bash -c "cd '$root' && IGRIS_BRAIN_DIR='$ISOLATED_BRAIN' bash scripts/validate_harness_drift.sh"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"[forger/model-tier] MATCH"* ]] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 wrapper: a hand-edited stamped model: line is [forger/model-tier] DRIFTED -> FATAL, exit 1" {
+  local root
+  root="$(fr277_tier_wrapper_repo)"
+  sed -i.bak -e 's/^model: opus$/model: haiku/' "$root/canon/forger.md"
+  grep -qx 'model: haiku' "$root/canon/forger.md" || return 1
+  run bash -c "cd '$root' && IGRIS_BRAIN_DIR='$ISOLATED_BRAIN' bash scripts/validate_harness_drift.sh"
+  [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"[forger/model-tier] DRIFTED"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"FATAL"* ]] || { echo "$output"; return 1; }
 }

@@ -3,6 +3,7 @@ name: sentinel
 description: Independent tester of an uncommitted change — runs the relevant suites once, re-proves red-first, probes with mutations and adversarial inputs, and audits the change's testable claims. Returns PASS or FAIL. Use after implementation, in parallel with review.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: medium
 ---
 
 # Sentinel

@@ -78,6 +78,10 @@ import {
   validateSkillsSurface,
   validateSkillsSurfaceArray,
 } from "../verbs/loadout.js";
+import {
+  __resetHarnessDescriptorCacheForTests,
+  loadHarnessDescriptor,
+} from "../lib/harness-descriptor.js";
 import type {
   GithubSpec,
   FetchedRepo,
@@ -6011,5 +6015,194 @@ describe("loadout add-mcp — same-name re-add union", () => {
       method: "merge",
       enabled: false,
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// FR-277: model tiers. The TS translators drop `effort` with `model` (Gemini,
+// OpenCode) in lockstep with compile_harnesses.sh (TD1, TD2 + its mutation);
+// no TS path reads `model_tiers`, so a map change moves no TS-produced target
+// (TD4, a pin), and the TS descriptor reader ignores the new top-level key
+// (TD5, a pin). The tier emitter itself is bash-only (D7).
+// ---------------------------------------------------------------------------
+
+describe("FR-277 — model tiers on the TS side", () => {
+  const TIERED_FM =
+    "---\nname: tiered\ndescription: tier input\ntools: Read, Grep\nmodel: sonnet\neffort: high\n---\n";
+  const TIERED_BODY = "# tiered\n\ntier body line\n";
+
+  function stageSource(dir: string): void {
+    mkdirSync(join(projectRoot, dir), { recursive: true });
+    writeFileSync(join(projectRoot, dir, "frontmatter.claude.md"), TIERED_FM);
+    writeFileSync(join(projectRoot, dir, "system-prompt-v1.md"), TIERED_BODY);
+  }
+
+  function fullMap(seed: string): Record<string, unknown> {
+    const col = (provider: string, model: string, effort: string) => ({ provider, model, effort });
+    return {
+      tiers: {
+        deep: { claude: col("anthropic", `${seed}-d`, "high"), codex: col("openai", `gpt-${seed}-d`, "high") },
+        strong: { claude: col("anthropic", `${seed}-s`, "medium"), codex: col("openai", `gpt-${seed}-s`, "medium") },
+        fast: { claude: col("anthropic", `${seed}-f`, "medium"), codex: col("openai", `gpt-${seed}-f`, "low") },
+        light: { claude: col("anthropic", `${seed}-l`, "low"), codex: col("openai", `gpt-${seed}-l`, "low") },
+      },
+      roles: { tiered: { tier: "fast" } },
+    };
+  }
+
+  it("TD1: the TS Gemini and OpenCode translators drop effort (and model)", async () => {
+    stageSource("tcanon");
+    const code = await runLoadout(
+      addOpts({
+        name: "tiered",
+        from: "tcanon",
+        versioned: true,
+        glob: "system-prompt-v*.md",
+        targets: ["gemini:.gemini/agents/tiered.md", "opencode:~/.config/opencode/agent/tiered.md"],
+      }),
+    );
+    expect(code).toBe(0);
+    for (const f of ["harness.gemini.md", "harness.opencode.md"]) {
+      const text = readFileSync(join(vendorDir("tiered"), f), "utf-8");
+      expect(text).not.toMatch(/^effort\s*:/m);
+      expect(text).not.toMatch(/^model\s*:/m);
+      expect(text).toContain("name: tiered");
+    }
+  });
+
+  /** Run the bash compiler (optionally a mutated copy) over the same source. */
+  function bashHarnesses(compileSh: string, brainDir: string): Record<string, string> {
+    const agentDir = join(brainDir, "loadout", "agents", "tiered");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "frontmatter.claude.md"), TIERED_FM);
+    writeFileSync(join(agentDir, "system-prompt-v1.md"), TIERED_BODY);
+    const proj = join(tmpRoot, `proj-${brainDir.split("/").pop()}`);
+    mkdirSync(proj, { recursive: true });
+    writeFileSync(
+      join(proj, "harness-manifest.json"),
+      JSON.stringify({
+        version: 1,
+        agents: [
+          {
+            name: "tiered",
+            layer: "personal",
+            canonical: { dir: agentDir, versioned: true, glob: "system-prompt-v*.md" },
+            targets: [
+              { type: "gemini", path: join(proj, ".gemini/agents/tiered.md") },
+              { type: "opencode", path: join(proj, ".opencode/agent/tiered.md") },
+            ],
+          },
+        ],
+      }),
+    );
+    execFileSync(
+      "bash",
+      [compileSh, "--project-root", proj, "--manifest", join(proj, "harness-manifest.json"), "--surface", "agents"],
+      { timeout: HR_SPAWN_TIMEOUT_MS, encoding: "utf-8", env: { ...process.env, IGRIS_BRAIN_DIR: brainDir, HOME: join(tmpRoot, "home") } },
+    );
+    return {
+      gemini: readFileSync(join(agentDir, "harness.gemini.md"), "utf-8"),
+      opencode: readFileSync(join(agentDir, "harness.opencode.md"), "utf-8"),
+    };
+  }
+
+  async function tsHarnesses(): Promise<Record<string, string>> {
+    stageSource("pcanon");
+    const savedBrain = process.env.IGRIS_BRAIN_DIR;
+    delete process.env.IGRIS_BRAIN_DIR;
+    try {
+      const code = await runLoadout(
+        addOpts({
+          name: "tiered",
+          from: "pcanon",
+          versioned: true,
+          glob: "system-prompt-v*.md",
+          targets: ["gemini:.gemini/agents/tiered.md", "opencode:~/.config/opencode/agent/tiered.md"],
+        }),
+      );
+      expect(code).toBe(0);
+    } finally {
+      if (savedBrain !== undefined) process.env.IGRIS_BRAIN_DIR = savedBrain;
+    }
+    return {
+      gemini: readFileSync(join(vendorDir("tiered"), "harness.gemini.md"), "utf-8"),
+      opencode: readFileSync(join(vendorDir("tiered"), "harness.opencode.md"), "utf-8"),
+    };
+  }
+
+  it("TD2 (§18.1 / L-554): a real bash compile of a frontmatter carrying effort byte-equals the TS output", async () => {
+    if (!toolingAvailable()) return;
+    const bash = bashHarnesses(COMPILE_SH, join(tmpRoot, "brain-bash"));
+    const ts = await tsHarnesses();
+    expect(ts.gemini).toBe(bash.gemini);
+    expect(ts.opencode).toBe(bash.opencode);
+  });
+
+  it("TD2 mutation: a bash compiler that stops dropping effort breaks the parity", async () => {
+    if (!toolingAvailable()) return;
+    // A copy of the adapter dir (repo layout, so the descriptor resolves) whose
+    // Gemini and OpenCode DROPS no longer name `effort`.
+    const mutRoot = join(tmpRoot, "mut");
+    const mutAdapters = join(mutRoot, "core", "scripts", "cli-adapters");
+    mkdirSync(mutAdapters, { recursive: true });
+    execFileSync("cp", ["-R", `${ADAPTER_DIR}/.`, mutAdapters], { timeout: HR_SPAWN_TIMEOUT_MS });
+    execFileSync("cp", [join(REPO_ROOT, "harness-manifest.json"), join(mutRoot, "harness-manifest.json")], {
+      timeout: HR_SPAWN_TIMEOUT_MS,
+    });
+    const mutSh = join(mutAdapters, "compile_harnesses.sh");
+    const before = readFileSync(mutSh, "utf-8");
+    const after = before.replace(/DROPS = \{([^}]*), "effort"\}/g, "DROPS = {$1}");
+    expect(after).not.toBe(before);
+    expect(after).not.toMatch(/DROPS = \{[^}]*"effort"\}/);
+    writeFileSync(mutSh, after);
+    const bash = bashHarnesses(mutSh, join(tmpRoot, "brain-mut"));
+    const ts = await tsHarnesses();
+    expect(bash.gemini).toMatch(/^effort: high$/m);
+    expect(ts.gemini).not.toBe(bash.gemini);
+    expect(ts.opencode).not.toBe(bash.opencode);
+  });
+
+  it("TD4 (AC4, TS leg — pin): changing every tier in the base map moves none of the 4 TS-assembled files", async () => {
+    stageSource("vcanon");
+    const manifestPath = join(projectRoot, "harness-manifest.json");
+    const targets = [
+      "claude:.claude/agents/tiered.md",
+      "codex:.codex/agents/tiered.toml",
+      "gemini:.gemini/agents/tiered.md",
+      "opencode:~/.config/opencode/agent/tiered.md",
+    ];
+    const files = ["harness.claude.md", "harness.codex.toml", "harness.gemini.md", "harness.opencode.md"];
+    const vendor = async (seed: string): Promise<string[]> => {
+      writeFileSync(manifestPath, JSON.stringify({ version: 1, model_tiers: fullMap(seed), agents: [] }));
+      const code = await runLoadout(
+        addOpts({ name: "tiered", from: "vcanon", versioned: true, glob: "system-prompt-v*.md", targets }),
+      );
+      expect(code).toBe(0);
+      return files.map((f) => readFileSync(join(vendorDir("tiered"), f), "utf-8"));
+    };
+    const first = await vendor("one");
+    expect(
+      await runLoadout({ action: "remove", name: "tiered", overlayPath, originsPath, vendorDir }),
+    ).toBe(0);
+    expect(existsSync(vendorDir("tiered"))).toBe(false);
+    const second = await vendor("two");
+    expect(second).toEqual(first);
+  });
+
+  it("TD5 (pin): loadHarnessDescriptor reads the same harness ids with and without model_tiers", () => {
+    __resetHarnessDescriptorCacheForTests();
+    const real = join(REPO_ROOT, "harness-manifest.json");
+    const ids = [...loadHarnessDescriptor({ manifestPath: real }).order];
+    expect(ids).toEqual(["claude", "codex", "gemini", "opencode", "antigravity", "cursor"]);
+    const raw = JSON.parse(readFileSync(real, "utf-8")) as Record<string, unknown>;
+    const withMap = join(tmpRoot, "with-map.json");
+    const withoutMap = join(tmpRoot, "without-map.json");
+    writeFileSync(withMap, JSON.stringify({ ...raw, model_tiers: fullMap("x") }));
+    const { model_tiers: _drop, ...rest } = raw;
+    void _drop;
+    writeFileSync(withoutMap, JSON.stringify(rest));
+    expect([...loadHarnessDescriptor({ manifestPath: withMap }).order]).toEqual(ids);
+    expect([...loadHarnessDescriptor({ manifestPath: withoutMap }).order]).toEqual(ids);
+    __resetHarnessDescriptorCacheForTests();
   });
 });

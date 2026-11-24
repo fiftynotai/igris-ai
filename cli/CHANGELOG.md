@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The bundled `harness-manifest.json` carries the FR-277 model tier map**,
+  and the Gemini and OpenCode agent translators drop `effort`.
+
 - **`igris lessons` (hidden; TD-496, part 1).** `ingest` stores approved
   agent-memory lessons through the brain's gateway and keeps a ledger,
   `digest --role <agent>` prints one role's lessons in at most 4,096 bytes

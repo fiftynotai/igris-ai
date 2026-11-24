@@ -12,16 +12,22 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #       the project-checks line
 #   P3  both phases open a review worktree, and close it before the first
 #       verdict branch
-#   P4  (AC1/AC2/AC4) tools Read, Grep, Glob, Bash; model: sonnet; no effort:
+#   P4  (AC1/AC2/AC4) tools Read, Grep, Glob, Bash; model: and effort: equal
+#       the harness-manifest.json model tier map's claude column (FR-277)
 #   P5  the prompts' load-bearing text, and no TS- brief or mirror instruction
-#   P6  the six sentinel/warden event sites request the definition's model,
-#       not `inherit:`; forger/architect/mender sites still inherit (control)
+#   P6  (FR-277) all twelve core-role event sites (architect, forger,
+#       sentinel, mender, warden) request the per-run model, else the model the
+#       loaded definition names, else `inherit:`; the two document sites keep
+#       the old form (control)
 #   P7  the APPROVE-WITH-EDITS branch exists, reviewers no longer write paths
 #       into the close set, and warden's item 7 (TD-325) keeps its number
 #   PM  mutation: deleting the APPROVE-WITH-EDITS branch turns P1 red
 #   P8  both phases read the verdict word with every `*` and backtick removed
 #       and trailing punctuation dropped (the prompts print the verdict line
 #       in backticks)
+#   P9  (FR-277, AC5) Phases 2, 3 and 5 run `<model_tier> resolve`, name its
+#       refusal branch, and Phase 5 passes `--differ-from`; PM9 mutation:
+#       deleting Phase 3's step turns P9 red
 #
 # Every needle is a LITERAL (grep -F) unless stated.
 
@@ -150,13 +156,27 @@ event_models() {
   done
 }
 
-@test "(P4, AC1/AC2/AC4) both reviewers: tools Read, Grep, Glob, Bash; model: sonnet; no effort key" {
-  local f fm
-  for f in "$WARDEN" "$SENTINEL"; do
+# map_claude <role> — "model: X" and "effort: Y" from the tier map's claude
+# column for <role>, as the compile stamp writes them.
+map_claude() {
+  python3 - "$IGRIS_ROOT/harness-manifest.json" "$1" <<'PY'
+import json, sys
+mt = json.load(open(sys.argv[1], encoding="utf-8"))["model_tiers"]
+role = mt["roles"][sys.argv[2]]
+t = mt["tiers"][role["tier"]]["claude"]
+print("model: %s" % t["model"])
+print("effort: %s" % (role.get("effort") or t["effort"]))
+PY
+}
+
+@test "(P4, AC1/AC2/AC4) both reviewers: tools Read, Grep, Glob, Bash; model: and effort: equal the tier map" {
+  local f fm role want
+  for role in warden sentinel; do
+    f="$IGRIS_ROOT/core/agents/$role.md"
     fm="$(awk 'NR == 1 && /^---$/ { on = 1; next } on && /^---$/ { exit } on' "$f")"
     grep -qx 'tools: Read, Grep, Glob, Bash' <<<"$fm" || { echo "$f tools: $fm"; return 1; }
-    grep -qx 'model: sonnet' <<<"$fm" || { echo "$f model: $fm"; return 1; }
-    ! grep -qE '^effort[[:space:]]*:' <<<"$fm" || { echo "$f carries effort"; return 1; }
+    want="$(map_claude "$role")" || { echo "no tier map for $role"; return 1; }
+    [ "$(grep -E '^(model|effort):' <<<"$fm")" = "$want" ] || { echo "$f: $fm"; echo "want: $want"; return 1; }
   done
 }
 
@@ -186,21 +206,19 @@ event_models() {
   [ "$status" -eq 1 ] || { echo "$output"; return 1; }
 }
 
-@test "(P6) the sentinel and warden event sites request the definition's model; other roles still inherit (control)" {
+@test "(P6, FR-277) all twelve core-role event sites carry one wording; the document sites keep the old form (control)" {
   local rows rv n
+  local want='{the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}'
   rows="$(event_models)"
   [ -n "$rows" ] || return 1
-  rv="$(awk -F'\t' '$1 == "sentinel" || $1 == "warden"' <<<"$rows")"
+  rv="$(awk -F'\t' '$1 == "architect" || $1 == "forger" || $1 == "sentinel" || $1 == "mender" || $1 == "warden"' <<<"$rows")"
   n="$(grep -c . <<<"$rv")"
-  [ "$n" -eq 6 ] || { echo "sentinel+warden sites: $n"; echo "$rv"; return 1; }
-  ! grep -qF 'inherit:' <<<"$rv" || { echo "$rv"; return 1; }
-  grep -qF 'else the model its definition names' <<<"$rv" || { echo "$rv"; return 1; }
-  local role
-  for role in forger architect mender; do
-    rv="$(awk -F'\t' -v r="$role" '$1 == r' <<<"$rows")"
-    [ -n "$rv" ] || { echo "no site for $role"; return 1; }
-    ! grep -vqF 'inherit:' <<<"$rv" || { echo "$role site without inherit: $rv"; return 1; }
-  done
+  [ "$n" -eq 12 ] || { echo "core-role sites: $n"; echo "$rv"; return 1; }
+  [ "$(grep -cF -- "model_requested: $want" <<<"$rv")" -eq 12 ] || { echo "$rv"; return 1; }
+  rv="$(awk -F'\t' '$1 == "document"' <<<"$rows")"
+  [ "$(grep -c . <<<"$rv")" -eq 2 ] || { echo "document sites: $rv"; return 1; }
+  [ "$(grep -cF -- 'model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}' <<<"$rv")" -eq 2 ] \
+    || { echo "$rv"; return 1; }
 }
 
 @test "(P7) the APPROVE-WITH-EDITS branch exists, reviewers add no close paths, warden's item 7 keeps its number" {
@@ -231,4 +249,42 @@ verdict_rule() {
     has "$r" 'every `*` and backtick removed' || { echo "$p: $r"; return 1; }
     has "$r" 'trailing punctuation' || { echo "$p: $r"; return 1; }
   done
+}
+
+# p9_check <hunt> — P9's assertions over a hunt file.
+p9_check() {
+  local p sec
+  for p in "2: PLANNING" "3: BUILDING" "5: REVIEWING"; do
+    sec="$(phase "$1" "$p")"
+    [ -n "$sec" ] || { echo "no phase $p"; return 1; }
+    grep -qE '^2\.5\. ' <<<"$sec" || { echo "$p: no step 2.5 at column 0"; return 1; }
+    grep -qF 'bash <model_tier> resolve --agent ' <<<"$sec" || { echo "$p: no <model_tier> resolve"; return 1; }
+    grep -qF 'On exit 1' <<<"$sec" || { echo "$p: no refusal branch"; return 1; }
+  done
+  sec="$(phase "$1" "5: REVIEWING")"
+  grep -qF -- '--differ-from' <<<"$sec" || { echo "5: no --differ-from"; return 1; }
+  grep -qF 'a change is reviewed by a model other than its author' <<<"$sec" || { echo "5: lost the row-25 sentence"; return 1; }
+  grep -qF '`<model_tier>` is `core/scripts/cli-adapters/model_tier.sh`' "$1" || { echo "no <model_tier> definition"; return 1; }
+}
+
+@test "(P9, FR-277 AC5) Phases 2, 3 and 5 resolve the model tier and name the refusal branch; Phase 5 passes --differ-from" {
+  run p9_check "$HUNT"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "(PM9) mutation: delete Phase 3's model-tier step in a copy and P9 goes red" {
+  local m="$TEST_TEMP_DIR/hunt-mut9.md"
+  awk '
+    /^### Phase 3: BUILDING/ { in3 = 1 }
+    /^### Phase 4:/ { in3 = 0 }
+    in3 && /^2\.5\. / { skip = 1; next }
+    skip && /^[0-9]+(\.[0-9]+)?\. / { skip = 0 }
+    skip { next }
+    { print }
+  ' "$HUNT" > "$m"
+  [ "$(phase "$HUNT" "3: BUILDING" | grep -cF 'bash <model_tier> resolve')" -ge 1 ] || return 1
+  [ "$(phase "$m" "3: BUILDING" | grep -cF 'bash <model_tier> resolve')" -eq 0 ] || return 1
+  run p9_check "$m"
+  [ "$status" -ne 0 ] || return 1
+  [[ "$output" == *"3: BUILDING"* ]] || { echo "$output"; return 1; }
 }

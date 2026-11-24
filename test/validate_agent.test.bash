@@ -98,11 +98,22 @@ body_bytes() {
   [[ "$output" == *"FAIL: frontmatter key 'memory'"*"hidden prompt"* ]] || { echo "$output"; return 1; }
 }
 
-@test "(V3b) an effort: key FAILS as outside the portable set" {
+@test "(V3b) an effort: key with a tier-map value PASSES (FR-277: compile stamps it)" {
   fixture "effort: medium" "$GOOD_BODY"
   run bash "$VA" "$FX/probe.md"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" != *"FAIL: frontmatter key 'effort'"* ]] || { echo "$output"; return 1; }
+}
+
+@test "(V3b2) an effort: value outside low/medium/high FAILS; color: still FAILS (control)" {
+  fixture "effort: extreme" "$GOOD_BODY"
+  run bash "$VA" "$FX/probe.md"
   [ "$status" -eq 1 ] || { echo "$output"; return 1; }
-  [[ "$output" == *"FAIL: frontmatter key 'effort' is outside the portable set"* ]] || { echo "$output"; return 1; }
+  [[ "$output" == *"FAIL: frontmatter effort 'extreme' is not one of low, medium, high"* ]] || { echo "$output"; return 1; }
+  fixture "color: red" "$GOOD_BODY"
+  run bash "$VA" "$FX/probe.md"
+  [ "$status" -eq 1 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"FAIL: frontmatter key 'color' is outside the portable set"* ]] || { echo "$output"; return 1; }
 }
 
 @test "(V3c) a color: key FAILS as outside the portable set" {

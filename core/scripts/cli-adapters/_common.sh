@@ -710,6 +710,423 @@ PY
 }
 
 # ---------------------------------------------------------------------------
+# FR-277 model tiers — the ONE reader of `harness-manifest.json` `model_tiers`.
+#
+# _igris_model_tier_py prints the python source; igris_model_tier <mode> ...
+# runs it. Modes (each documented in the source): `resolve` (model_tier.sh
+# resolve, the per-run override and --differ-from), `rows` (the Codex column
+# compile writes into harness.codex.toml), `stamp` (compile writes the claude
+# column into each role's canonical frontmatter; the drift guard reads the same
+# rows with write=0 — §18.1 compile/drift pairing by construction), `xcheck`
+# (validate_manifest's cross-checks after either path) and `review` (the
+# reviewer != author verdict commit-msg §4 and TD-499 read).
+# resolve_model_tier and model_family name the plan's two shared helpers.
+# bash 3.2: no arrays cross the boundary; argv in, lines out.
+# ---------------------------------------------------------------------------
+_igris_model_tier_py() {
+  cat <<'MODEL_TIER_PY'
+# FR-277 model-tier core: the ONE reader of `model_tiers` in harness-manifest.json.
+# Modes (argv[1]): resolve, rows, stamp, xcheck, review. Exit codes per mode
+# are listed at each one. bash callers: igris_model_tier in _common.sh.
+import json
+import os
+import re
+import sys
+
+TIER_RANK = ("light", "fast", "strong", "deep")
+EFFORT_RANK = ("low", "medium", "high")
+SIZES = ("XS", "S", "M", "L", "XL")
+COLUMNS = ("claude", "codex")
+# A tier map compiled to a provider's agent files is what makes an EQUAL
+# reviewer/author pair refusable. Claude only until TD-385 compiles Codex.
+PROJECTED_PROVIDERS = ("anthropic",)
+
+
+class TierError(Exception):
+    def __init__(self, code, msg):
+        Exception.__init__(self, msg)
+        self.code = code
+
+
+def load(manifest_path):
+    """(manifest, model_tiers or None). TierError(3) on an unreadable file."""
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as fh:
+            manifest = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise TierError(3, "cannot read manifest %s: %s" % (manifest_path, exc))
+    if not isinstance(manifest, dict):
+        raise TierError(3, "manifest %s is not an object" % manifest_path)
+    mt = manifest.get("model_tiers")
+    if mt is not None and not (
+        isinstance(mt, dict) and isinstance(mt.get("tiers"), dict)
+        and isinstance(mt.get("roles"), dict)
+    ):
+        raise TierError(3, "model_tiers in %s is not a valid map" % manifest_path)
+    return manifest, mt
+
+
+def parse_size(raw):
+    m = re.match(r"^\s*(XS|XL|S|M|L)\b", raw or "", re.IGNORECASE)
+    return m.group(1).upper() if m else None
+
+
+def tier_effort(mt, tier, col):
+    return mt["tiers"][tier][col]["effort"]
+
+
+def model_family(value):
+    """(provider, family, version). provider is None when unrecognised."""
+    s = (value or "").strip().lower()
+    if s.startswith("inherit:"):
+        s = s[len("inherit:"):].strip()
+    for prefix in ("anthropic/", "openai/"):
+        if s.startswith(prefix):
+            s = s[len(prefix):]
+    s = re.sub(r"-\d{8}$", "", s)
+    m = re.match(r"^(claude-)?(fable|opus|sonnet|haiku)(-\d+(-\d+)?)?$", s)
+    if m:
+        return ("anthropic", m.group(2), (m.group(3) or "")[1:])
+    if s.startswith("gpt-"):
+        return ("openai", s, "")
+    return (None, s, "")
+
+
+def same_model(a, b):
+    """True / False, or None when either side is unknown or empty."""
+    pa, fa, va = model_family(a)
+    pb, fb, vb = model_family(b)
+    if not fa or not fb:
+        return None
+    if pa is None or pb is None:
+        return True if (pa is None and pb is None and fa == fb) else None
+    if pa != pb:
+        return False
+    if pa == "anthropic":
+        return fa == fb and (va == "" or vb == "" or va == vb)
+    return fa == fb
+
+
+def resolve(mt, agent, size=None, o_tier=None, o_effort=None, differ=None):
+    """Resolve one role. Returns (tier, source, {col: (model, effort, provider)})."""
+    roles = mt["roles"]
+    if agent not in roles:
+        raise TierError(2, "unknown agent '%s' (no role in model_tiers.roles)" % agent)
+    if o_tier is not None and o_tier not in TIER_RANK:
+        raise TierError(2, "unknown tier '%s' (one of %s)" % (o_tier, ", ".join(TIER_RANK)))
+    if o_effort is not None and o_effort not in EFFORT_RANK:
+        raise TierError(2, "unknown effort '%s' (one of %s)" % (o_effort, ", ".join(EFFORT_RANK)))
+    role = roles[agent]
+    base_tier, base_eff = role["tier"], role.get("effort")
+    tier, eff, source = base_tier, base_eff, "default"
+    if size is not None:
+        sz = parse_size(size)
+        if sz is None:
+            sys.stderr.write("NOTE: unknown size '%s'; using %s's default\n" % (size, agent))
+        else:
+            step = (role.get("by_size") or {}).get(sz)
+            if step:
+                tier, eff, source = step.get("tier", base_tier), step.get("effort", base_eff), "size:" + sz
+    if o_tier is not None or o_effort is not None:
+        eff = o_effort if o_effort is not None else (base_eff if o_tier is not None else eff)
+        tier = o_tier if o_tier is not None else tier
+        source = "override"
+        for col in COLUMNS:
+            want = (TIER_RANK.index(tier), EFFORT_RANK.index(eff or tier_effort(mt, tier, col)))
+            floor = (TIER_RANK.index(base_tier), EFFORT_RANK.index(base_eff or tier_effort(mt, base_tier, col)))
+            if want < floor:
+                raise TierError(1, "REFUSED: %s/%s is lighter than %s's default %s/%s; a per-run override only moves heavier" % (
+                    tier, eff or tier_effort(mt, tier, col), agent, base_tier,
+                    base_eff or tier_effort(mt, base_tier, col)))
+    if differ is not None:
+        prov = model_family(differ)[0]
+        if prov is None:
+            raise TierError(2, "cannot tell the provider of --differ-from '%s'" % differ)
+        col = "claude" if prov == "anthropic" else "codex"
+        while same_model(mt["tiers"][tier][col]["model"], differ):
+            i = TIER_RANK.index(tier) + 1
+            if i >= len(TIER_RANK):
+                raise TierError(1, "REFUSED: no tier at or above the role default differs from '%s'" % differ)
+            cur = eff or tier_effort(mt, tier, col)
+            tier = TIER_RANK[i]
+            nxt = tier_effort(mt, tier, col)
+            eff = nxt if EFFORT_RANK.index(nxt) > EFFORT_RANK.index(cur) else cur
+            source = "differ:" + tier
+    cols = {}
+    for col in COLUMNS:
+        t = mt["tiers"][tier][col]
+        cols[col] = (t["model"], eff or t["effort"], t["provider"])
+    return tier, source, cols
+
+
+def base_agents(manifest):
+    out = []
+    for a in manifest.get("agents") or []:
+        if isinstance(a, dict) and isinstance(a.get("name"), str):
+            out.append(a)
+    return out
+
+
+# ---- mode: resolve ----------------------------------------------------------
+# resolve <manifest> <agent> <harness|all> [--size S] [--tier T] [--effort E]
+#         [--differ-from M]
+# Exit 0 ok; 1 REFUSED (stderr); 2 usage / unknown agent, tier, effort,
+# harness; 3 no map or an invalid map.
+def mode_resolve(argv):
+    if len(argv) < 3:
+        raise TierError(2, "usage: resolve <manifest> <agent> <harness|all> [flags]")
+    manifest_path, agent, harness = argv[0], argv[1], argv[2]
+    flags = {"--size": None, "--tier": None, "--effort": None, "--differ-from": None}
+    rest = argv[3:]
+    while rest:
+        k = rest.pop(0)
+        if k not in flags or not rest:
+            raise TierError(2, "unknown or incomplete flag '%s'" % k)
+        flags[k] = rest.pop(0)
+    if harness != "all" and harness not in COLUMNS:
+        raise TierError(2, "harness '%s' has no tier column (claude, codex; best-effort harnesses read none)" % harness)
+    _, mt = load(manifest_path)
+    if mt is None:
+        raise TierError(3, "no model_tiers map in %s" % manifest_path)
+    tier, source, cols = resolve(mt, agent, flags["--size"], flags["--tier"],
+                                 flags["--effort"], flags["--differ-from"])
+    shown = COLUMNS if harness == "all" else (harness,)
+    print("agent=%s" % agent)
+    print("tier=%s" % tier)
+    print("effort=%s" % cols[shown[0]][1])
+    print("source=%s" % source)
+    for col in shown:
+        print("%s.model=%s" % (col, cols[col][0]))
+        print("%s.effort=%s" % (col, cols[col][1]))
+    return 0
+
+
+# ---- mode: rows -------------------------------------------------------------
+# rows <manifest> <column>: one `name<TAB>model<TAB>effort` per role whose
+# agent is a base agent (the default resolution; size steps are per-run).
+def mode_rows(argv):
+    manifest, mt = load(argv[0])
+    if mt is None:
+        return 0
+    names = {a["name"] for a in base_agents(manifest)}
+    for name in mt["roles"]:
+        if name in names:
+            _, _, cols = resolve(mt, name)
+            print("%s\t%s\t%s" % (name, cols[argv[1]][0], cols[argv[1]][1]))
+    return 0
+
+
+# ---- mode: stamp ------------------------------------------------------------
+# stamp <manifest> <project-root> <filter> <write:0|1>: the Claude projection
+# is the canonical file itself, so compile writes the claude column into each
+# role's canonical frontmatter (`model:` rewritten, `effort:` directly after
+# it) and drift reads the same rows with write=0. One row per line:
+#   MATCH|WROTE|DRIFTED <TAB> name <TAB> rel <TAB> expected <TAB> found
+#   NOROLE <TAB> name
+def fm_bounds(lines):
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    for i in range(1, len(lines)):
+        if lines[i].rstrip("\r\n") == "---":
+            return i
+    return None
+
+
+def fm_value(lines, end, key):
+    for ln in lines[1:end]:
+        m = re.match(r"^%s:\s*(.*?)\s*$" % key, ln.rstrip("\r\n"))
+        if m:
+            return m.group(1)
+    return None
+
+
+def stamped(lines, end, model, effort):
+    out = [lines[0]]
+    placed = False
+    for ln in lines[1:end]:
+        if re.match(r"^effort:", ln):
+            continue
+        if re.match(r"^model:", ln):
+            out.append("model: %s\n" % model)
+            out.append("effort: %s\n" % effort)
+            placed = True
+            continue
+        out.append(ln)
+    if not placed:
+        out.append("model: %s\n" % model)
+        out.append("effort: %s\n" % effort)
+    return out + lines[end:]
+
+
+def mode_stamp(argv):
+    import fnmatch
+    manifest_path, root, flt, write = argv[0], argv[1], argv[2], argv[3] == "1"
+    manifest, mt = load(manifest_path)
+    if mt is None:
+        return 0
+    root_real = os.path.realpath(root)
+    agents = {a["name"]: a for a in base_agents(manifest)}
+    for name, a in agents.items():
+        if fnmatch.fnmatch(name, flt) and name not in mt["roles"]:
+            print("NOROLE\t%s" % name)
+    for name in mt["roles"]:
+        a = agents.get(name)
+        if a is None or not fnmatch.fnmatch(name, flt):
+            continue
+        canon = a.get("canonical") or {}
+        if canon.get("versioned") or not canon.get("file"):
+            continue
+        cdir = canon.get("dir", "")
+        if cdir.startswith("~") or os.path.isabs(cdir):
+            continue
+        path = os.path.join(root, cdir, canon["file"])
+        real = os.path.realpath(path)
+        if not real.startswith(root_real + os.sep) or not os.path.isfile(real):
+            continue
+        rel = os.path.relpath(path, root)
+        _, _, cols = resolve(mt, name)  # stamp
+        model, effort = cols["claude"][0], cols["claude"][1]
+        with open(real, "r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+        end = fm_bounds(lines)
+        if end is None:
+            found = "(no frontmatter)"
+            new = None
+        else:
+            found = "model: %s, effort: %s" % (fm_value(lines, end, "model") or "(none)",
+                                               fm_value(lines, end, "effort") or "(none)")
+            new = stamped(lines, end, model, effort)
+        expected = "model: %s, effort: %s" % (model, effort)
+        if new is not None and new == lines:
+            print("MATCH\t%s\t%s\t%s\t%s" % (name, rel, expected, found))
+            continue
+        if not write or new is None:
+            print("DRIFTED\t%s\t%s\t%s\t%s" % (name, rel, expected, found))
+            continue
+        mode = os.stat(real).st_mode & 0o7777
+        tmp = real + ".tmp-%d" % os.getpid()
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.writelines(new)
+        os.chmod(tmp, mode)
+        os.replace(tmp, real)
+        print("WROTE\t%s\t%s\t%s\t%s" % (name, rel, expected, found))
+    return 0
+
+
+# ---- mode: xcheck -----------------------------------------------------------
+# xcheck <manifest>: the cross-checks a schema cannot express, run after
+# either validation path. Exit 1 with a JSON-path message on the first one.
+def mode_xcheck(argv):
+    manifest, mt = load(argv[0])
+    if mt is None:
+        return 0
+    names = {a["name"] for a in base_agents(manifest)}
+    for name, role in mt["roles"].items():
+        where = "model_tiers/roles/%s" % name
+        if name not in names:
+            raise TierError(1, "%s: no agent named '%s' in agents[]" % (where, name))
+        for sz, step in (role.get("by_size") or {}).items():
+            for col in COLUMNS:
+                t = step.get("tier", role["tier"])
+                e = step.get("effort", role.get("effort")) or tier_effort(mt, t, col)
+                d = role.get("effort") or tier_effort(mt, role["tier"], col)
+                if (TIER_RANK.index(t), EFFORT_RANK.index(e)) < (TIER_RANK.index(role["tier"]), EFFORT_RANK.index(d)):
+                    raise TierError(1, "%s/by_size/%s: %s/%s is lighter than the role default %s/%s (%s column)" % (
+                        where, sz, t, e, role["tier"], d, col))
+    return 0
+
+
+# ---- mode: review -----------------------------------------------------------
+# review <db> <brief-id> <project>: the reviewer is the latest warden
+# stop/error row, the authors every forger and orchestrator row; each value is
+# model_resolved, else model_requested. One line:
+#   REVIEW-MODEL <ID>: VERDICT=<v> reviewer=<raw> authors=<raw,...>
+# Exit 0 PASS, 1 EQUAL (projected provider), 3 UNKNOWN, 4 NO_REVIEW,
+# 5 unreadable, 6 EQUAL_UNPROJECTED.
+def mode_review(argv):
+    import sqlite3
+    from urllib.parse import quote
+    db, brief, project = argv[0], argv[1], argv[2]
+    if not os.path.isfile(db):
+        raise TierError(5, "REVIEW-MODEL %s: unreadable brain DB (%s: no such file)" % (brief, db))
+    try:
+        con = sqlite3.connect("file:%s?mode=ro" % quote(os.path.abspath(db)), uri=True)
+        cols = [r[1] for r in con.execute("PRAGMA table_info(agent_events)")]
+        if not cols:
+            raise sqlite3.DatabaseError("no agent_events table")
+        pred = " AND (project = ? OR project IS NULL)" if "project" in cols else ""
+        args = (brief, project) if pred else (brief,)
+        sql = ("SELECT agent, event_type, COALESCE(NULLIF(TRIM(model_resolved), ''), model_requested) "
+               "FROM agent_events WHERE brief_id = ?" + pred + " ORDER BY created_at, id")
+        rows = con.execute(sql, args).fetchall()
+        con.close()
+    except sqlite3.Error as exc:
+        raise TierError(5, "REVIEW-MODEL %s: unreadable brain DB (%s)" % (brief, exc))
+    reviews = [r for r in rows if r[0] == "warden" and r[1] in ("stop", "error")]
+    authors = []
+    for r in rows:
+        if r[0] in ("forger", "orchestrator"):
+            v = r[2] or ""
+            if v not in authors:
+                authors.append(v)
+    reviewer = (reviews[-1][2] or "") if reviews else ""
+    if not reviews:
+        verdict = "NO_REVIEW"
+    elif not authors or not model_family(reviewer)[1]:
+        verdict = "UNKNOWN"
+    else:
+        verdict, unknown = "PASS", False
+        for a in authors:
+            same = same_model(reviewer, a)
+            if same is None:
+                unknown = True
+            elif same:
+                prov = model_family(reviewer)[0]
+                if prov in PROJECTED_PROVIDERS:
+                    verdict = "EQUAL"
+                elif verdict != "EQUAL":
+                    verdict = "EQUAL_UNPROJECTED"
+        if verdict == "PASS" and unknown:
+            verdict = "UNKNOWN"
+    print("REVIEW-MODEL %s: VERDICT=%s reviewer=%s authors=%s" % (
+        brief, verdict, reviewer, ",".join(authors)))
+    return {"PASS": 0, "EQUAL": 1, "UNKNOWN": 3, "NO_REVIEW": 4,
+            "EQUAL_UNPROJECTED": 6}[verdict]
+
+
+def main():
+    modes = {"resolve": mode_resolve, "rows": mode_rows, "stamp": mode_stamp,
+             "xcheck": mode_xcheck, "review": mode_review}
+    if len(sys.argv) < 2 or sys.argv[1] not in modes:
+        sys.stderr.write("model-tier core: unknown mode\n")
+        return 2
+    try:
+        return modes[sys.argv[1]](sys.argv[2:])
+    except TierError as exc:
+        sys.stderr.write("%s\n" % exc)
+        return exc.code
+    except (KeyError, ValueError, TypeError) as exc:
+        sys.stderr.write("model_tiers map is invalid: %r\n" % (exc,))
+        return 3
+
+
+sys.exit(main())
+MODEL_TIER_PY
+}
+
+igris_model_tier() {
+  python3 -c "$(_igris_model_tier_py)" "$@"
+}
+
+# resolve_model_tier <manifest> <agent> <claude|codex|all> [--size S] [--tier T]
+#                    [--effort E] [--differ-from M]
+# Prints agent=, tier=, effort=, source=, then <column>.model= / .effort=.
+# Exit 0 ok, 1 REFUSED, 2 usage, 3 no map or an invalid map.
+resolve_model_tier() {
+  igris_model_tier resolve "$@"
+}
+
+# ---------------------------------------------------------------------------
 # validate_manifest <manifest-path> <schema-path>
 #
 # Validates a harness manifest against the JSON Schema (FR-136). Two code
@@ -893,7 +1310,7 @@ if manifest["version"] != 1:
     fail(f"'version' must be 1 (got {manifest['version']!r})")
 
 allowed_top = {"$schema", "_comment", "_schema", "_harnesses_comment",
-               "version", "harnesses", "agents", "surfaces"}
+               "version", "harnesses", "model_tiers", "agents", "surfaces"}
 for key in manifest:
     if key not in allowed_top:
         fail(f"unknown top-level key '{key}' (additionalProperties:false)")
@@ -1039,6 +1456,88 @@ if harnesses is not None:
         hsf = hval.get("harness_specific_file")
         if hsf is not None and not isinstance(hsf, str):
             fail(f"harnesses['{hkey}'].harness_specific_file must be a string")
+
+# FR-277: structural mirror of the `model_tiers` property and its $defs
+# (tier_columns, tier_target, tier_role, tier_step). Messages carry the JSON
+# path the jsonschema path reports (`model_tiers/tiers/fast/codex/effort`), so
+# both paths name the same field. The cross-checks no schema can express run
+# after either path (validate_manifest -> igris_model_tier xcheck).
+model_tiers = manifest.get("model_tiers")
+if model_tiers is not None:
+    import re as _re
+    _TIERS = ("deep", "strong", "fast", "light")
+    _EFFORTS = ("low", "medium", "high")
+    _COLUMN_PROVIDER = {"claude": "anthropic", "codex": "openai"}
+    _MODEL_RE = _re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
+
+    def _mt_obj(v, where):
+        if not isinstance(v, dict):
+            fail(f"{where}: must be an object")
+        return v
+
+    def _mt_keys(v, allowed, where):
+        for k in v:
+            if k not in allowed:
+                fail(f"{where}: unknown key '{k}' (additionalProperties:false; "
+                     f"allowed: {sorted(allowed)})")
+
+    def _mt_enum(v, allowed, where):
+        if v not in allowed:
+            fail(f"{where}: {v!r} is not one of {list(allowed)}")
+
+    _mt_obj(model_tiers, "model_tiers")
+    _mt_keys(model_tiers, {"tiers", "roles"}, "model_tiers")
+    for _req in ("tiers", "roles"):
+        if _req not in model_tiers:
+            fail(f"model_tiers: '{_req}' is a required property")
+    _tiers = _mt_obj(model_tiers["tiers"], "model_tiers/tiers")
+    _mt_keys(_tiers, set(_TIERS), "model_tiers/tiers")
+    for _t in _TIERS:
+        if _t not in _tiers:
+            fail(f"model_tiers/tiers: '{_t}' is a required property")
+        _cols = _mt_obj(_tiers[_t], f"model_tiers/tiers/{_t}")
+        _mt_keys(_cols, set(_COLUMN_PROVIDER), f"model_tiers/tiers/{_t}")
+        for _c, _prov in _COLUMN_PROVIDER.items():
+            if _c not in _cols:
+                fail(f"model_tiers/tiers/{_t}: '{_c}' is a required property")
+            _w = f"model_tiers/tiers/{_t}/{_c}"
+            _tc = _mt_obj(_cols[_c], _w)
+            _mt_keys(_tc, {"provider", "model", "effort"}, _w)
+            for _req in ("provider", "model", "effort"):
+                if _req not in _tc:
+                    fail(f"{_w}: '{_req}' is a required property")
+            if _tc["provider"] != _prov:
+                fail(f"{_w}/provider: must be '{_prov}' for the {_c} column (got {_tc['provider']!r})")
+            if not isinstance(_tc["model"], str) or not _MODEL_RE.match(_tc["model"]):
+                fail(f"{_w}/model: {_tc['model']!r} does not match {_MODEL_RE.pattern}")
+            _mt_enum(_tc["effort"], _EFFORTS, f"{_w}/effort")
+    _roles = _mt_obj(model_tiers["roles"], "model_tiers/roles")
+    for _rn, _role in _roles.items():
+        _w = f"model_tiers/roles/{_rn}"
+        if not _re.match(r"^[a-z0-9][a-z0-9-]*$", _rn):
+            fail(f"{_w}: role name does not match ^[a-z0-9][a-z0-9-]*$")
+        _mt_obj(_role, _w)
+        _mt_keys(_role, {"tier", "effort", "by_size"}, _w)
+        if "tier" not in _role:
+            fail(f"{_w}: 'tier' is a required property")
+        _mt_enum(_role["tier"], _TIERS, f"{_w}/tier")
+        if "effort" in _role:
+            _mt_enum(_role["effort"], _EFFORTS, f"{_w}/effort")
+        if "by_size" in _role:
+            _bs = _mt_obj(_role["by_size"], f"{_w}/by_size")
+            _mt_keys(_bs, {"XS", "S", "M", "L", "XL"}, f"{_w}/by_size")
+            if not _bs:
+                fail(f"{_w}/by_size: must name at least one size")
+            for _sz, _step in _bs.items():
+                _sw = f"{_w}/by_size/{_sz}"
+                _mt_obj(_step, _sw)
+                _mt_keys(_step, {"tier", "effort"}, _sw)
+                if not _step:
+                    fail(f"{_sw}: must set tier or effort")
+                if "tier" in _step:
+                    _mt_enum(_step["tier"], _TIERS, f"{_sw}/tier")
+                if "effort" in _step:
+                    _mt_enum(_step["effort"], _EFFORTS, f"{_sw}/effort")
 
 agents = manifest["agents"]
 if not isinstance(agents, list):
@@ -1365,6 +1864,18 @@ if surfaces is not None:
 
 sys.exit(0)
 PY
+  [ "$?" -eq 0 ] || return 1
+  # FR-277: the model tier map's cross-checks, after EITHER path above (the
+  # jsonschema path exits before the structural code): every role is a base
+  # agent, and no `by_size` step is lighter than its role's default.
+  if grep -q '"model_tiers"' "$manifest"; then
+    local xcheck_err
+    if ! xcheck_err="$(igris_model_tier xcheck "$manifest" 2>&1)"; then
+      echo "Manifest validation failed ($manifest): $xcheck_err" >&2
+      return 1
+    fi
+  fi
+  return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1413,6 +1924,15 @@ with open(overlay_path, "r", encoding="utf-8") as fh:
 
 base_agents = base.get("agents", [])
 overlay_agents = overlay.get("agents", [])
+
+# FR-277: the model tier map is base-only — an overlay never re-tiers a core
+# agent, and a personal agent has no role.
+if "model_tiers" in overlay:
+    sys.stderr.write(
+        "Error: overlay carries 'model_tiers'; the model tier map is base-only "
+        "(edit it in the project's harness-manifest.json).\n"
+    )
+    sys.exit(1)
 
 base_names = {a.get("name") for a in base_agents}
 for agent in overlay_agents:

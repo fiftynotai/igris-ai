@@ -1,0 +1,18 @@
+agent	event_type	model_requested	model_resolved	created_at	project
+architect	start	inherit:claude-opus-5-5	\N	2026-11-24 06:19:31	igris-ai
+architect	stop	inherit:claude-opus-5-5	\N	2026-11-24 06:55:50	igris-ai
+forger	start	inherit:claude-opus-5-5	\N	2026-11-24 06:56:32	igris-ai
+forger	stop	inherit:claude-opus-5-5	\N	2026-11-24 07:55:03	igris-ai
+sentinel	start	sonnet	\N	2026-11-24 07:55:04	igris-ai
+sentinel	stop	sonnet	\N	2026-11-24 08:22:47	igris-ai
+warden	start	sonnet	\N	2026-11-24 08:22:48	igris-ai
+warden	error	sonnet	\N	2026-11-24 08:27:23	igris-ai
+warden	retry	sonnet	\N	2026-11-24 08:27:24	igris-ai
+forger	start	inherit:claude-opus-5-5	\N	2026-11-24 08:30:46	igris-ai
+forger	stop	inherit:claude-opus-5-5	\N	2026-11-24 09:26:09	igris-ai
+sentinel	start	sonnet	\N	2026-11-24 09:26:10	igris-ai
+sentinel	stop	sonnet	\N	2026-11-24 09:26:12	igris-ai
+warden	start	sonnet	\N	2026-11-24 09:26:14	igris-ai
+warden	stop	sonnet	\N	2026-11-24 09:26:15	igris-ai
+document	start	inherit:claude-opus-5-5	\N	2026-11-24 09:26:45	igris-ai
+document	stop	inherit:claude-opus-5-5	\N	2026-11-24 09:33:02	igris-ai

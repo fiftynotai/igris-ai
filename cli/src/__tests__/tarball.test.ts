@@ -3739,6 +3739,45 @@ interface PackReport {
  *   RE-DERIVED: 1_993_497 − 1_993_378 = 119; 7_337_472 − 7_337_289 = 183 =
  *   22 + 161; 150_102 + 119 = 150_221; 153_600 − 150_221 = 3_379.
  *
+ * FR-277 MEASURED LAST (2026-11-24), after its final shipped change: the
+ * `model_tiers` block in the repo-root `harness-manifest.json`, which
+ * `copy-templates.sh` bundles as `dist/lib/harness-manifest.json` (the L-1531
+ * copy class: compiled output alone cannot see it), the `effort` drop in the
+ * TS Gemini and OpenCode translators (`verbs/loadout.js` and its map), and one
+ * `CHANGELOG.md` bullet. Everything else the brief touched packs 0 B:
+ * `core/**` (the compiler, the drift guard, `model_tier.sh`, commit-msg §4,
+ * the nine stamped agents, the `/hunt` wiring, the enforcement doc),
+ * `scripts/`, `test/`, `docs/`, MAINTAINING, CONTRIBUTING, the root
+ * CHANGELOG, the edited vitest files, the new golden fixture and this row.
+ * Same method as TD-497 (`git archive 4013c55 cli brain-mcp-server
+ * harness-manifest.json package.json package-lock.json` scratch builds,
+ * `node_modules` symlinked, the full `npm run build` in both arms so
+ * `copy-templates.sh` ran with brain `dist` absent and rebuilt it, smoke
+ * `(sandboxed)`, `npm pack --dry-run --json --ignore-scripts` twice per arm,
+ * identical); FINAL is that archive with the working tree's five changed
+ * `cli/` files and `harness-manifest.json` copied over it. CONTROL = develop
+ * `4013c55`, the TD-497 commit, which reproduced that row's FINAL byte- and
+ * sha-identically (1_993_497 / 7_337_472 / 615 / `b671fee2…`). FINAL is
+ * sha-identical to the worktree's own `npm run build`; a third arm taken the
+ * same way after this row was written (this file copied over too) packed
+ * sha-identically, twice. `~/.igris/config.json` not read. npm 10.9.8, node
+ * v22.23.2, darwin/arm64.
+ *   packed              1_993_886    unpacked 7_338_979, 615 entries (+0),
+ *                                    shasum
+ *                                    `c953985567e880015509f555578255883fd09486`.
+ *   this round's share  +389 B       packed, under the plan's 1_000 B hard
+ *                                    stop (estimated +480 to +770 B), so no
+ *                                    cut was taken. The dashboard moves 0 B.
+ *                                    Unpacked +1_507 over 4 artifacts,
+ *                                    reconciling exactly:
+ *                                    `lib/harness-manifest.json` +1_273,
+ *                                    `verbs/loadout.js` +52 / `.js.map` +41,
+ *                                    `CHANGELOG.md` +141.
+ *   cumulative delta    +150_610 B   (1_993_886 − 1_843_276)
+ *   headroom remaining  2_990 B      (153_600 − 150_610)
+ *   RE-DERIVED: 1_993_886 − 1_993_497 = 389; 7_338_979 − 7_337_472 = 1_507 =
+ *   1_273 + 52 + 41 + 141; 150_221 + 389 = 150_610; 153_600 − 150_610 = 2_990.
+ *
  * FR-243 MEASURED LAST (2026-09-07), after its final code-touching step —
  * LANDED. MEASURED ON A SCRATCH BUILD THAT RAN `copy-templates.sh`, BOTH
  * arms (the BR-101 / TD-444 method): `git archive <rev> cli brain-mcp-server
@@ -4913,10 +4952,10 @@ interface PackReport {
  * falsified the direction and the figure in one edit and left the sentence that
  * OPENS WITH AN INSTRUCTION TO THE NEXT PLANNER overstating headroom by more
  * than 10x. A direction word cannot survive an append, so this copy carries a
- * BRIEF, a DATE and no direction: **as of TD-497, measured
- * 2026-11-24, 3_379 B (3.3 KB) is what is left on PACKED — TD-444's
- * re-based grant minus the 150_221 B spent since (BR-100, at 6_715 B, was the
- * grant's first consumer).** Grep `TD-497 MEASURED LAST` in this
+ * BRIEF, a DATE and no direction: **as of FR-277, measured
+ * 2026-11-24, 2_990 B (2.9 KB) is what is left on PACKED — TD-444's
+ * re-based grant minus the 150_610 B spent since (BR-100, at 6_715 B, was the
+ * grant's first consumer).** Grep `FR-277 MEASURED LAST` in this
  * file for that reading and
  * the method behind it (TD-444 is the floor and the re-base, BR-101 the
  * copy-step method every reading since uses), and treat the 84_262 B above
@@ -4933,7 +4972,8 @@ interface PackReport {
  * BR-100's 146_885 B, TD-518 + TD-519 from TD-510's 27_184 B, TD-496
  * part 1 from TD-518 + TD-519's 23_898 B, TD-496 part 2 from part 1's
  * 9_367 B, BR-121 from part 2's 9_313 B, TD-525 from BR-121's
- * 6_985 B, and TD-497 from TD-525's 3_498 B). The
+ * 6_985 B, TD-497 from TD-525's 3_498 B, and FR-277 from TD-497's
+ * 3_379 B). The
  * figure goes UP only on a recovery row — TD-443's packlist cut, FR-276's
  * `CHANGELOG.md` trim (−70_543 B) — or a shorter rewrite (TD-510, −8 B), so
  * do not read such a jump as a ceiling change; both constants are still

@@ -33,11 +33,15 @@ Canonical (plus its FR-151 `frontmatter.md` sidecar) is the **sole source of
 truth**; every claude/gemini `~/.claude/agents/<name>.md` /
 `~/.gemini/agents/<name>.md` is an atomic symlink resolving to a loadout-
 resident `harness.md` assembled at compile/vendor time. Codex emits a 3-key
-`.codex/agents/<name>.toml`. Editing a target file directly is a process error.
+`.codex/agents/<name>.toml` (plus `model` and `model_reasoning_effort` for an
+agent with a role in the FR-277 `model_tiers` map, whose claude column compile
+also stamps into the canonical frontmatter). Editing a target file directly is
+a process error.
 
 | Script | Contract | Output |
 |--------|----------|--------|
 | `compile_harnesses.sh` | `compile_harnesses.sh --project-root <dir> [--manifest <p>] [--filter <glob>] [--target claude\|codex\|gemini\|opencode\|all]` | Orchestrates: reads the manifest. Every agent-target harness (`agentTargetTypes()` — claude/codex/gemini/opencode) α-projects from loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`). claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). Codex assembly is bash-side `assemble_codex_harness_into_loadout` for core agents and TS-side `assembleCodexHarness` for vendor (FR-159). |
+| `model_tier.sh` | `model_tier.sh resolve --agent <a> [--size] [--tier] [--effort] [--differ-from] [--harness] [--manifest]`; `model_tier.sh review --brief-id <ID> --project <slug> --db <path>` | FR-277. `resolve` prints the agent's tier, model and effort per column from `harness-manifest.json` `model_tiers` (exit 1 refuses an override lighter than the role default). `review` is the reviewer ≠ author check commit-msg §4 runs (exits 0 PASS, 1 EQUAL, 3 UNKNOWN, 4 NO_REVIEW, 5 unreadable, 6 EQUAL_UNPROJECTED). Compile stamps `[<name>/model-tier]` rows and the drift guard verifies them (MATCH/DRIFTED). |
 | `check_harness_drift.sh` | `check_harness_drift.sh --project-root <dir> [--manifest <p>] [--filter <glob>]` | CI-style guard — exit 1 if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard link has diverged (TD-208). Every agent-target harness uses the per-harness loadout-resident file as its verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). Verdict vocabulary: `[name] MATCH`, `DRIFTED`, `MISSING`, `DRIFT-WARN`, `SCHEMA-INVALID`, `PARITY`, plus the informational `NOTE` and `SKIP`; exit 1 also covers the no-verdict-line failures (the skills-delegate re-check, the early pre-verdict exits). The commit gate (`scripts/validate_harness_drift.sh`) fails CLOSED on all of it (TD-396): DRIFT-WARN, SCHEMA-INVALID and PARITY (TD-451) are named FATAL classes, DRIFTED and MISSING keep their two NOTICE downgrades (TD-388 worktree, FR-138 home-path), and a failure the guard counts but no verdict line explains is FATAL, unnamed. |
 
 `sync_codex_agents.sh` was RETIRED by FR-159 — the codex TOML emit moved to
@@ -85,7 +89,8 @@ to this adapter directory. Currently one exists: `designer-harness-skill-para`
 The legacy `sync_codex_agents.sh` (retired by FR-159) once faced Decision D1:
 whether to WRAP the codex CLI's native agent-import command or REIMPLEMENT
 the TOML emit. FR-138 RESOLVED it in favor of REIMPLEMENT — the emit path
-writes the fully-specified 3-key codex subagent TOML directly. FR-159 then
+writes the fully-specified 3-key codex subagent TOML directly (3 keys, plus
+2 for a tiered agent — FR-277). FR-159 then
 ported the emit to TS (`assembleCodexHarness`) + a parallel bash helper
 (`assemble_codex_harness_into_loadout`) for byte-equivalent compile-side
 fallback. The former `--d1-reimplement` flag / `IGRIS_CODEX_D1=reimplement`

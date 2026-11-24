@@ -1934,7 +1934,8 @@ function translateClaudeToGeminiFrontmatter(claudeFields: string): string {
       key === "model" ||
       key === "temperature" ||
       key === "max_turns" ||
-      key === "memory"
+      key === "memory" ||
+      key === "effort"
     ) {
       // Drop per Decision 2 — Gemini uses defaults; operators override via
       // `frontmatter.gemini.md`. `memory` (TD-229) is a Claude-only key:
@@ -2135,7 +2136,7 @@ function translateClaudeToOpencodeFrontmatter(claudeFields: string): string {
       toolsValue = value; // deferred — emitted as a boolean map below
       continue;
     }
-    if (key === "model" || key === "temperature" || key === "max_turns") {
+    if (key === "model" || key === "temperature" || key === "max_turns" || key === "effort") {
       continue; // dropped — OpenCode defaults; operator override via sidecar
     }
     if (key === "kind") {

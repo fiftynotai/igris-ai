@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Description: Igris commit-msg hook. Four checks, in this order:
+# Description: Igris commit-msg hook. Five checks, in this order:
 #
 #   1. SUMMARY LENGTH (TD-180) — hard-fails a commit whose summary (the first
 #      non-comment, non-blank line) exceeds 72 characters. The locked
@@ -39,7 +39,18 @@
 #      prose (L-1402). A role with a start but no stop/error is a WARN, not a
 #      refusal — a crashed agent still ran. Bypass: IGRIS_BYPASS_EVENT_GATE=1.
 #
-#   The four are independent: the length check runs first and is unchanged
+#   4. REVIEW-MODEL GATE (FR-277) — hard-fails a CLOSING commit whose brief
+#      was reviewed on its author's model (DECISIONS row 25: one review per
+#      change, by a model other than the author's). The ONE checker,
+#      core/scripts/cli-adapters/model_tier.sh review, compares the latest
+#      warden stop/error row with every forger and orchestrator row
+#      (model_resolved, else model_requested). EQUAL on a provider whose tiers
+#      compile projects (anthropic until TD-385) refuses; an equal pair on
+#      another provider (EQUAL_UNPROJECTED) and UNKNOWN are printed, never
+#      refused and never a pass; NO_REVIEW is silent (TD-499's audit lists
+#      unreviewed closes). Bypass: IGRIS_BYPASS_REVIEW_MODEL_GATE=1.
+#
+#   The five are independent: the length check runs first and is unchanged
 #   (test/commit_msg_length.test.bash is its regression control); §1b has its
 #   own bypass and no bypass of §2/§3 silences it, nor it them
 #   (test/commit_signature_gate.test.bash SB1-SB5). §2 and §3
@@ -47,8 +58,10 @@
 #   each has its OWN bypass and its OWN parser resolution, so a bypass of one
 #   gate never silences the other (test/agent_event_gate.test.bash G6 pins
 #   both directions; before FR-267 the AC bypass was a bare `exit 0`, which
-#   would have disabled §3 by construction). Both verdict blocks print before
-#   the single exit, and the bypass hint names only the gate(s) that refused.
+#   would have disabled §3 by construction). §4 reads no brief content and
+#   has its own bypass and checker resolution (test/review_model_gate.test.bash
+#   RM-B1/RM-B2 pin both directions). Every verdict block prints before the
+#   single exit, and the bypass hint names only the gate(s) that refused.
 #
 # Usage: git invokes this as `.git/hooks/commit-msg <msg-file>`.
 #   Argument $1 is the path to the file holding the pending commit message.
@@ -116,6 +129,10 @@
 #       parses to no roles → nothing demanded), and roles the log does NOT
 #       name (the gate reads the log you wrote; a skipped phase demands
 #       nothing).
+#     - §4 only: a reviewer that ran on another model than its event row
+#       records (the row is the record), an equal pair on a provider compile
+#       does not project yet (reported until TD-385), and a brief with no
+#       warden row (silent; TD-499's weekly audit lists unreviewed closes).
 #   All of those land in the same L3 accumulation net.
 #
 # Bypass: `git commit --no-verify` (git skips this hook entirely — native, no
@@ -123,6 +140,7 @@
 # Bypass the signature gate only: `IGRIS_BYPASS_SIGNATURE_GATE=1 git commit ...`
 # Bypass the AC gate only:    `IGRIS_BYPASS_AC_GATE=1 git commit ...`
 # Bypass the event gate only: `IGRIS_BYPASS_EVENT_GATE=1 git commit ...`
+# Bypass the review-model gate only: `IGRIS_BYPASS_REVIEW_MODEL_GATE=1 git commit ...`
 #   One-shot, never `export`ed — same posture as IGRIS_BYPASS_PHASE_GUARD and
 #   IGRIS_BYPASS_BRIEF_GATE.
 
@@ -474,10 +492,74 @@ fi
 # [[ FR-267 EVENT GATE END ]]
 
 # =============================================================================
-# Single exit: both verdict blocks are already printed; the hint names only
+# 4. Review-model gate (FR-277)
+# =============================================================================
+# [[ FR-277 REVIEW-MODEL GATE BEGIN ]]  (the bats self-negative control in
+#                                        test/review_model_gate.test.bash
+#                                        deletes this block by its markers —
+#                                        keep them intact)
+#
+# For every brief this commit closes, the checker prints one line,
+# `REVIEW-MODEL <ID>: VERDICT=<v> reviewer=<model> authors=<models>`, and its
+# exit picks the action: 1 EQUAL refuses; 6 EQUAL_UNPROJECTED and 3 UNKNOWN
+# print and pass; 0 PASS and 4 NO_REVIEW are silent; anything else WARNs. The
+# brief id and project reach it as argv and the brain as a read-only SQLite
+# URI with bound parameters — no SQL is built here (no new BR-104 site).
+# Fail-open tiers: no checker (repo first, then the runtime mirror), no
+# python3, or a brain with no agent_events table -> skip.
+review_failed=0
+if [ "${IGRIS_BYPASS_REVIEW_MODEL_GATE:-0}" != "1" ]; then
+  MODEL_TIER=""
+  if [ -f "$REPO_ROOT/core/scripts/cli-adapters/model_tier.sh" ]; then
+    MODEL_TIER="$REPO_ROOT/core/scripts/cli-adapters/model_tier.sh"
+  elif [ -f "$HOME/.igris/core/scripts/cli-adapters/model_tier.sh" ]; then
+    MODEL_TIER="$HOME/.igris/core/scripts/cli-adapters/model_tier.sh"
+  fi
+  rm_has_table="$(sqlite3 -readonly "$BRAIN_DB" \
+    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='agent_events';" 2>/dev/null)"
+  if [ -n "$MODEL_TIER" ] && command -v python3 >/dev/null 2>&1 && [ "$rm_has_table" != "0" ]; then
+    for BRIEF_ID in $brief_ids; do
+      rm_rc=0
+      rm_out="$(bash "$MODEL_TIER" review --brief-id "$BRIEF_ID" --project "$PROJECT" \
+                  --db "$BRAIN_DB" 2>&1)" || rm_rc=$?
+      case "$rm_rc" in
+        0|4) ;;
+        1)
+          if [ "$review_failed" -eq 0 ]; then
+            echo ""
+            echo "[commit-msg] FR-277 review-model gate: refusing to close a brief reviewed on its author's model"
+            echo ""
+          fi
+          printf '%s\n' "$rm_out"
+          echo "  a change is reviewed by a model other than its author's (DECISIONS row 25)."
+          echo "  Re-run warden on a different model:"
+          echo "    bash $MODEL_TIER resolve --agent warden --differ-from <the author's model>"
+          review_failed=1
+          ;;
+        6)
+          printf '%s\n' "$rm_out"
+          echo "  reported, not refused: tiers for this provider are compiled at TD-385"
+          ;;
+        3)
+          printf '%s\n' "$rm_out"
+          echo "  UNKNOWN (not a pass): a recorded model is missing or unrecognised, so the"
+          echo "  reviewer and the author cannot be compared"
+          ;;
+        *)
+          echo "REVIEW-MODEL $BRIEF_ID: WARN could not read the reviewer/author models (exit $rm_rc; skipped, fail-open)"
+          printf '%s\n' "$rm_out" | sed -n '1,2s/^/  /p'
+          ;;
+      esac
+    done
+  fi
+fi
+# [[ FR-277 REVIEW-MODEL GATE END ]]
+
+# =============================================================================
+# Single exit: every verdict block is already printed; the hint names only
 # the gate(s) that refused.
 # =============================================================================
-if [ "$ac_failed" -eq 1 ] || [ "$event_failed" -eq 1 ]; then
+if [ "$ac_failed" -eq 1 ] || [ "$event_failed" -eq 1 ] || [ "$review_failed" -eq 1 ]; then
   echo ""
   echo "  One-shot bypass (leaves a trail in this terminal, never export it):"
   if [ "$ac_failed" -eq 1 ]; then
@@ -485,6 +567,9 @@ if [ "$ac_failed" -eq 1 ] || [ "$event_failed" -eq 1 ]; then
   fi
   if [ "$event_failed" -eq 1 ]; then
     echo "    IGRIS_BYPASS_EVENT_GATE=1 git commit ..."
+  fi
+  if [ "$review_failed" -eq 1 ]; then
+    echo "    IGRIS_BYPASS_REVIEW_MODEL_GATE=1 git commit ..."
   fi
   echo ""
   exit 1

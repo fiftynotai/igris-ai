@@ -841,7 +841,7 @@ coexist:
 | File | Role |
 |------|------|
 | `scripts/cli-adapters/harness-manifest.json` | Declarative manifest: per agent, the canonical source (dir + glob/file + `versioned` flag) and the set of harness targets. Handles both canonical conventions. |
-| `cli/src/verbs/loadout.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. |
+| `cli/src/verbs/loadout.ts::assembleCodexHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.codex.toml` (3-key TOML: `description`, `developer_instructions`, `name`) from `frontmatter.claude.md` + body. FR-159 TS port replacing the retired `sync_codex_agents.sh`. The compile-side bash assembler adds `model` and `model_reasoning_effort` for an agent with a role in the model tier map (3 keys, plus 2 — see [Model tiers](#model-tiers-fr-277)); the TS one never sees a tiered agent. |
 | `cli/src/verbs/loadout.ts::assembleOpencodeHarness` | Vendor-side α-assembler — writes `<brain>/loadout/agents/<name>/harness.opencode.md` (OpenCode-shaped frontmatter: `mode: subagent`, boolean `tools:` map via `CLAUDE_TO_OPENCODE_TOOLS`, `permission:` MCP grant) from `frontmatter.claude.md` + body, OR honors an operator-authored `frontmatter.opencode.md` verbatim. FR-171. Byte-identical to the compile-side bash inline-python3 translator (§18.1 golden-fixture parity). |
 | `scripts/cli-adapters/compile_harnesses.sh` | Orchestrator — reads the manifest, projects per-harness loadout-resident files (`harness.claude.md`, `harness.codex.toml`, `harness.gemini.md`, `harness.opencode.md`) to each target. claude + codex + opencode emit via symlink (FR-171: OpenCode's agent loader follows symlinks); gemini emits via hard link (TD-208). For core agents without vendor-side α-assembly, `assemble_*_harness_into_loadout` provides byte-equivalent compile-side fallback. `--project-root`, `--filter`, `--target` flags. |
 | `scripts/cli-adapters/check_harness_drift.sh` | CI-style drift guard — exits non-zero if any claude/codex/opencode symlink target is non-loadout-anchored, refuses-to-clobber a real-file target, or any gemini hard-link target has diverged (TD-208). Every agent-surface harness (`agentTargetTypes()` — the ones declaring an `agents` block) uses per-harness loadout-resident files as verdict basis (FR-159 retired the codex body-sha verdict; FR-171 added opencode). |
@@ -924,9 +924,12 @@ inline frontmatter (TD-195 / FR-158 compatible mode).
 
 The auto-translate path (used when only `frontmatter.claude.md` exists) applies
 this 1:1 map to the `tools:` field, ALWAYS adds `kind: local`, and drops
-`model:` / `temperature:` / `max_turns:` / `memory:` (operators override via
-`frontmatter.gemini.md`). `memory:` is dropped because Gemini's strict subagent
-schema rejects it (`Unrecognized key(s) in object: 'memory'`). `mcp__`-prefixed
+`model:` / `effort:` / `temperature:` / `max_turns:` / `memory:` (operators
+override via `frontmatter.gemini.md`). `memory:` and `effort:` are dropped
+because Gemini's strict subagent schema rejects unknown keys (`Unrecognized
+key(s) in object: 'memory'`); `effort:` is the model tier map's Claude stamp
+(FR-277). The OpenCode translator drops `model:` / `effort:` / `temperature:` /
+`max_turns:` the same way. `mcp__`-prefixed
 tool tokens are also filtered out of the Gemini `tools:` list — Claude's
 `mcp__srv__tool` double-underscore grammar is invalid in Gemini's `mcp_srv_tool`
 form, and Gemini agents reach the brain MCP via session-level `mcpServers` in
@@ -977,7 +980,7 @@ subagent loader actually reads the loadout bytes:
 |---|---|---|---|
 | Claude | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.claude/agents/<name>.md` | Claude follows symlinks fine; symlink is the cheapest atomic-repoint primitive (temp+rename). |
 | Gemini | Hard link (`ln` via `emit_md_hardlink`) | `~/.gemini/agents/<name>.md` | Gemini's subagent loader does NOT follow symbolic links (verified live 2026-06-01) but DOES follow hard links. Hard link preserves **L-516** loadout-canonical: same inode = same bytes-on-disk = loadout is THE single physical home. A `cp` copy would break L-516 (two bytes-on-disk copies, not one). |
-| Codex | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.codex/agents/<name>.toml` | FR-159: codex consumes TOML, but its subagent .toml loader follows symlinks fine (parity with claude and with codex's already-symlinked skill loader per FR-157). `assembleCodexHarness` writes the 3-key TOML to the loadout; the target is a symlink to it. |
+| Codex | Symbolic link (`ln -sf` via `atomic_symlink`) | `~/.codex/agents/<name>.toml` | FR-159: codex consumes TOML, but its subagent .toml loader follows symlinks fine (parity with claude and with codex's already-symlinked skill loader per FR-157). `assembleCodexHarness` writes the 3-key TOML to the loadout (plus 2 tier keys for a core agent, compile-side — [Model tiers](#model-tiers-fr-277)); the target is a symlink to it. |
 
 **Operational notes**
 
@@ -1011,7 +1014,8 @@ subagent loader actually reads the loadout bytes:
 The legacy `sync_codex_agents.sh` (retired by FR-159) could either WRAP the
 codex CLI's native agent-import command or REIMPLEMENT the TOML emit. FR-138
 **resolved D1 in favor of REIMPLEMENT**: the emit writes the fully-specified
-3-key codex subagent TOML directly, as the live default path — no opt-in
+3-key codex subagent TOML directly (plus `model` and `model_reasoning_effort`
+for an agent with a model tier role, FR-277), as the live default path — no opt-in
 flag, no env gate. FR-159 ported the REIMPLEMENT path to TS
 (`assembleCodexHarness`) + a parallel bash helper for compile-side fallback.
 The Igris-core agents now distribute to `.codex/agents/*.toml` by default whenever
@@ -1043,6 +1047,58 @@ bash ~/.igris/core/scripts/cli-adapters/check_harness_drift.sh \
 
 The content-pipeline wires this into its `install.sh` via a
 `compile-harnesses.sh` step (see that project's `agents/MAINTAINING.md`).
+
+### Model tiers (FR-277)
+
+One Igris-owned map picks the model and effort for every core agent:
+`harness-manifest.json` → `model_tiers`. It has two parts.
+
+- **`tiers`**: `deep`, `strong`, `fast` and `light`, each with a `claude` and a
+  `codex` column of `{provider, model, effort}`. Ranks run light < fast <
+  strong < deep, and low < medium < high.
+- **`roles`**: one entry per core agent — its default `tier`, an optional
+  `effort` that overrides the tier's in both columns, and `by_size` steps
+  (`XS`…`XL`) applied as given for a brief's size, never cumulatively.
+
+**Where to change it.** Edit the map in the source repo's
+`harness-manifest.json`, then run
+`igris harness compile --surface agents --target claude` and commit the map
+and the stamped agent files together. Never hand-edit a stamped `model:` or
+`effort:` line: the drift guard reports it as `[<name>/model-tier] DRIFTED`,
+and the pre-commit gate refuses it. Until TD-385 compiles Codex once with
+the reviewer rewrite, use `--target claude` for a map edit; a full compile
+would also push the current prompts to the other harnesses. The map is
+base-only: an overlay that carries `model_tiers` is refused.
+
+**Per-harness fields.**
+
+| Harness | What carries the tier | Fields |
+|---|---|---|
+| Claude Code | the canonical `core/agents/<name>.md` frontmatter itself (Claude reads the canonical through the runtime mirror), stamped by compile | `model:` (an alias: `fable`, `opus`, `sonnet`, `haiku`) and `effort:` |
+| Codex | `harness.codex.toml`, compile-side | `model` and `model_reasoning_effort`, after `name` |
+| OpenCode, Gemini | the translated frontmatter | both keys dropped (their defaults apply) |
+| Antigravity, Cursor | read the canonical body and `tools:` only | none |
+
+**Per-run override.** `/hunt` resolves each delegation with
+`bash ~/.igris/core/scripts/cli-adapters/model_tier.sh resolve --agent <role> --size <brief Effort>`
+(the repo copy in the igris-ai checkout). `--tier` and `--effort` name a
+heavier tier or effort for one run; one lighter than the role's default is
+refused (exit 1). `--differ-from <model>` steps one tier heavier while the
+tier's model equals that model, which is how warden avoids reviewing on the
+author's model. The orchestrator requests the printed model and effort
+through its harness's per-call options and records the model in
+`model_requested`.
+
+**Reviewer ≠ author.** `commit-msg` §4 refuses a closing commit whose latest
+warden row records the same model as a forger or orchestrator row, when
+compile projects that provider's tiers (Claude today). An equal pair on
+another provider is reported, not refused, until TD-385. UNKNOWN is printed
+and is never a pass. `IGRIS_BYPASS_REVIEW_MODEL_GATE=1` is the one-shot
+bypass. See `core/enforcement/review-model.md`.
+
+Model tiers are not [harness tiers](#harness-tiers): a harness tier
+(first-class, bridge) is a property of a harness; a model tier is the size of
+model a role runs on.
 
 ### Antigravity — documented N/A for static agent projection (FR-179)
 

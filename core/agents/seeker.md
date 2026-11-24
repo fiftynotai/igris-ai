@@ -3,6 +3,7 @@ name: seeker
 description: Codebase research and investigation specialist for Igris AI. Investigates codebase, explains architecture, and researches how things work.
 tools: Read, Grep, Glob, Bash
 model: haiku
+effort: low
 ---
 
 # SEEKER

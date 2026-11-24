@@ -267,7 +267,7 @@ The table below lists each agent's `tools:` from its YAML frontmatter (`core/age
 | **aegis** | Security review & threat analysis | Defensive review/hardening | `Read, Grep, Glob, Bash, Write, Edit` | On-demand for security review, threat modeling, and hardening |
 | **scribe** | Documentation | Clarifying docs/comments only | `Read, Write, Edit, Grep, Glob` | On-demand documentation work; `/document` remains the orchestrator-level skill |
 | **mender** | Error diagnosis & recovery | Read-only (DIAGNOSES, does not fix directly) | `Read, Grep, Glob, Bash, mcp__igris-brain__igris_error_lookup` | Auto on test/commit failure (self-heal); orchestrator applies fixes |
-| **seeker** | Codebase research & investigation | Read-only (EXPLORES, does not modify) | `Read, Grep, Glob, Bash` (model: `haiku`) | On-demand; `/audit`; research questions |
+| **seeker** | Codebase research & investigation | Read-only (EXPLORES, does not modify) | `Read, Grep, Glob, Bash` (light model tier) | On-demand; `/audit`; research questions |
 | **sage** | Flutter MVVM + Actions domain expert | Read/Write (IMPLEMENTS Flutter code) | `Read, Write, Edit, Bash, Glob, Grep` | On-demand for Flutter MVVM work (custom Tier-5 agent; not part of `/hunt` by default) |
 
 Each agent's own CONTEXT PROTOCOL (in `core/agents/<name>.md`) names the context files it loads directly — self-contained, no routing tree (FR-187: `igris_tree.json` retired). E.g. architect loads `coding_guidelines` + `architecture_map`; forger adds `api_pattern`, plus `design_system` if the task is UI-flagged. The `/document` skill in `/hunt` DOCUMENTING is an orchestrator-level operation (not delegated to an agent).
@@ -361,7 +361,7 @@ triggers: ["trigger phrase", "alt phrase"]
 
 ### 8.4 Add an agent
 
-Files: `core/agents/<name>.md` (definition — the agent's own CONTEXT PROTOCOL names the docs it loads) + the repo-root `harness-manifest.json` entry. Re-run `core/scripts/gen_os_index.sh` so the agent's frontmatter is discovered into the `core/os/INDEX.md` roster (FR-187 Phase 2b — no `igris_tree.json` / CLAUDE.md enumeration writes). The `igris add agent --core` verb does all of this in one pass.
+Files: `core/agents/<name>.md` (definition — the agent's own CONTEXT PROTOCOL names the docs it loads) + the repo-root `harness-manifest.json` entry + a role in that manifest's `model_tiers.roles` (FR-277), then `igris harness compile --surface agents --target claude` stamps the role's `model:` and `effort:` into the definition (never hand-written; `docs/multi-cli.md` "Model tiers"). Re-run `core/scripts/gen_os_index.sh` so the agent's frontmatter is discovered into the `core/os/INDEX.md` roster (FR-187 Phase 2b — no `igris_tree.json` / CLAUDE.md enumeration writes). The `igris add agent --core` verb does all of this in one pass.
 
 ```yaml
 ---

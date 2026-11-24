@@ -2,9 +2,10 @@
 # Description: Checks an Igris AI agent definition against the mechanical
 #              subset of the agent-prompt standard (TD-497; the 2026-10-01
 #              reassessment, REPORT §3.5 rule 12a). What it checks:
-#                (a) frontmatter keys are only name, description, tools and
-#                    model; a `memory:` key fails with its own message (no
-#                    hidden prompts);
+#                (a) frontmatter keys are only name, description, tools,
+#                    model and effort (low, medium or high — the FR-277 tier
+#                    map's stamp); a `memory:` key fails with its own message
+#                    (no hidden prompts);
 #                (b) name equals the file stem; description and tools are
 #                    non-empty;
 #                (c) the body (everything after the closing `---`) is at most
@@ -107,11 +108,18 @@ while IFS="$(printf '\t')" read -r k _; do
   [ "$k" = "+" ] && continue
   case "$k" in
     name|description|tools|model) ;;
+    effort)
+      # FR-277: compile stamps the tier map's effort (low, medium, high).
+      ev="$(key_value effort)"
+      case "$ev" in
+        low|medium|high) ;;
+        *) fail "frontmatter effort '$ev' is not one of low, medium, high (FR-277 tier map)"; bad_key=1 ;;
+      esac ;;
     memory)
       fail "frontmatter key 'memory' — no hidden prompts: lessons reach an agent through its delegation (rule 8)"
       bad_key=1 ;;
     *)
-      fail "frontmatter key '$k' is outside the portable set {name, description, tools, model} (rule 7)"
+      fail "frontmatter key '$k' is outside the portable set {name, description, tools, model, effort} (rule 7)"
       bad_key=1 ;;
   esac
 done <<EOF

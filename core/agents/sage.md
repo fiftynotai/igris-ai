@@ -2,7 +2,8 @@
 name: sage
 description: Expert Flutter specialist mastering Kalvad's MVVM + Actions Layer architecture with GetX. Specializes in building scalable Flutter apps with clean separation of concerns, reactive state management, and type-safe API integration patterns.
 tools: Read, Write, Edit, Bash, Glob, Grep
-model: inherit
+model: opus
+effort: medium
 ---
 
 # SAGE

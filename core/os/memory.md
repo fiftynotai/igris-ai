@@ -385,7 +385,7 @@ igris_goal_dashboard({ project: "igris-ai" })
 
 ### When to call
 
-- Before and after every agent you delegate to during `/hunt`: `igris_agent_event` with `instance_id`, `agent`, `event_type` and `model_requested` (the model you chose, or `inherit:<your own model id>`) — all four are required; add `model_resolved` and token counts on `stop` only when the harness reports them. A role named in a brief's Agent Log with no recorded event is refused at the closing commit (`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past it).
+- Before and after every agent you delegate to during `/hunt`: `igris_agent_event` with `instance_id`, `agent`, `event_type` and `model_requested` (the model you chose, or `inherit:<your own model id>`) — all four are required; add `model_resolved` and token counts on `stop` only when the harness reports them. A role named in a brief's Agent Log with no recorded event is refused at the closing commit (`IGRIS_BYPASS_EVENT_GATE=1`, one-shot, is the only way past it). A close whose latest warden row records the same model as a forger or orchestrator row is refused too (FR-277, commit-msg §4; `IGRIS_BYPASS_REVIEW_MODEL_GATE=1`, one-shot).
 - When the user asks "how long did brief X take, and where did it go?", "is this model slower?", or "where is the pain point?": query `hunt_runs`. Per-invocation grain; per-agent, per-phase and per-hunt totals are GROUP BYs, never stored.
 - During `/ops`: the per-agent / per-model view (the `/ops` skill carries the query).
 

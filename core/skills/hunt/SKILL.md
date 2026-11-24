@@ -226,11 +226,22 @@ light confirm.
 
 1. Update brief: Phase = PLANNING, Active Agent = architect
 2. Add Agent Log entry: "Starting architect..."
+2.5. **Model tier (FR-277):** run
+   `bash <model_tier> resolve --agent architect --size {brief Effort}`.
+   `<model_tier>` is `core/scripts/cli-adapters/model_tier.sh` in the project
+   checkout, or `~/.igris/core/scripts/cli-adapters/model_tier.sh` at runtime.
+   To go heavier for this run, add `--tier <tier>` and/or `--effort <effort>`.
+   When the printed `source` is not `default`, request the printed model and
+   effort for your harness through its per-call options. On exit 1 the
+   override was lighter than the role's default and was refused: run the
+   command again without it and quote the refusal in the Agent Log. Add one
+   Agent Log row with the tier, model and effort. If neither path exists, or
+   the command exits 2 or 3, use the agent definition as loaded.
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID from `~/.igris/projects/{project}/session/instances/<instance_id>.md`}
    - agent: "architect"
    - event_type: "start"
-   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+   - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "PLANNING"
    Skip silently if MCP unavailable. Never block the hunt workflow.
@@ -325,7 +336,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "architect"
      - event_type: "stop"
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
@@ -352,11 +363,16 @@ Agent tool parameters:
 
 1. Update brief: Phase = BUILDING, Active Agent = forger
 2. Add Agent Log entry: "Starting forger..."
+2.5. **Model tier (FR-277):** as in Phase 2 step 2.5, with
+   `bash <model_tier> resolve --agent forger --size {brief Effort}`; a new
+   subsystem may take `--tier deep`. On exit 1, run it again without the
+   override and quote the refusal. Add one Agent Log row with the tier,
+   model and effort.
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "forger"
    - event_type: "start"
-   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+   - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "BUILDING"
    Skip silently if MCP unavailable.
@@ -425,7 +441,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "forger"
      - event_type: "stop"
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
@@ -444,7 +460,7 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
-   - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+   - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
@@ -515,7 +531,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "stop" (only on PASS) or "error" (otherwise)
-     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
@@ -543,7 +559,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "retry"
-     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
@@ -552,7 +568,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "mender"
      - event_type: "start"
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "TESTING"
      Skip silently if unavailable. Mender is a role the Agent Log names, so it
@@ -567,7 +583,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "mender"
      - event_type: "stop" (if it returned the handoff) or "error" (if it did not)
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
@@ -632,19 +648,29 @@ Agent tool parameters:
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
-2.5. **Reviewer model (TD-497):** sentinel and warden name their model in
-   their definitions. Run warden on a stronger model, through your harness's
-   per-call model option where it has one, when the operator asks, or for
-   an L or XL change to a gate, security or sync surface. If the change was
-   written on warden's model, run warden on a different one: a change is
-   reviewed by a model other than its author's. Record the model you
-   requested as `model_requested` in steps 3 and 5, and add one Agent Log
-   row naming it.
+2.5. **Reviewer model (TD-497, FR-277):** run
+   `bash <model_tier> resolve --agent warden --size {brief Effort} --differ-from {author model}`
+   (`<model_tier>` as in Phase 2 step 2.5). {author model} is the model the
+   forger's Phase 3 stop event recorded (its `model_resolved`, else its
+   `model_requested`), or your own model id when you built the change.
+   `--differ-from` steps warden one tier heavier while that tier's model
+   equals the author's, because
+   a change is reviewed by a model other than its author's.
+   Add `--tier strong` to escalate, when the operator asks or for
+   an L or XL change to a gate, security or sync surface. When the printed
+   `source` is not `default`, request the printed model and effort through
+   your harness's per-call options. On exit 1, run it again without
+   `--tier` or `--effort` and quote the refusal; if it still exits 1 (no
+   tier differs from the author's), STOP and tell the operator. Record the
+   model you requested as `model_requested` in steps 3 and 5, and add one
+   Agent Log row with the tier, model and effort. If the commit-msg
+   review-model gate refuses the close, re-run this phase with
+   `--differ-from` set to the author's model.
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
-   - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+   - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
@@ -719,7 +745,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "stop" (on APPROVE or APPROVE-WITH-EDITS) or "error" (otherwise)
-     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
@@ -758,7 +784,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "retry"
-     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
+     - model_requested: {the per-run model you requested for this agent, else the model named by the agent definition your harness loaded for it, else "inherit:<your own model id>"}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - metadata: '{"attempt": {retry_count}, "reason": "review rejection"}'
@@ -1101,10 +1127,10 @@ On each agent invocation, you MUST emit `igris_agent_event` calls — each namin
 
 **Pattern for every agent.** Every call below passes `instance_id` (from the
 per-instance session file), `agent` (the role being invoked) and
-`model_requested` (the model you chose for that role — for a role whose
-definition names a model, that model unless you requested another for this
-run — or `inherit:<your own model id>`: an opaque string, never a guess about
-how the harness resolves it) in addition to the fields named — all FOUR of
+`model_requested` (the per-run model you requested for that role, else the
+model named by the agent definition your harness loaded for it, else
+`inherit:<your own model id>`: an opaque string, never a guess about how the
+harness resolves it) in addition to the fields named — all FOUR of
 `instance_id`, `agent`, `event_type` and `model_requested` are REQUIRED, and a
 call omitting any is rejected at the gateway (BR-080, FR-267):
 

@@ -12,6 +12,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **One model tier map picks every core agent's model and effort (FR-277).**
+  `harness-manifest.json` gains `model_tiers`: four tiers (`deep` = `fable`,
+  `strong` = `opus`, `fast` = `sonnet`, `light` = `haiku` on Claude;
+  `gpt-6.2-astra` high and medium, `gpt-6.2-sol` medium and `gpt-6-luna` low
+  on Codex) and one role per core agent (architect and forger `strong`, with
+  architect at high effort and forger at high on L briefs and `deep` on XL;
+  sentinel and warden `fast`; seeker `light`; aegis, mender, sage and scribe
+  `strong`). `igris harness compile --surface agents --target claude` stamps
+  each role's `model:` and `effort:` into `core/agents/<name>.md`, and the
+  drift guard reports a hand edit as `[<name>/model-tier] DRIFTED`. The Codex
+  TOML gains `model` and `model_reasoning_effort`, written by compile but not
+  yet deployed to Codex (TD-385 compiles it once); OpenCode and Gemini drop
+  both keys. New `core/scripts/cli-adapters/model_tier.sh resolve` gives
+  `/hunt` the per-run model, refuses an override lighter than the role's
+  default, and with `--differ-from` keeps warden off the author's model. A new
+  commit-msg §4 refuses to close a brief whose latest warden row records the
+  same Claude model as a forger or orchestrator row
+  (`IGRIS_BYPASS_REVIEW_MODEL_GATE=1`, one-shot); an equal GPT pair is
+  reported until TD-385, and UNKNOWN is printed, never passed. On deploy,
+  forger, architect, aegis, mender, sage and scribe move from the session's
+  model to `opus`, and every core agent gains an `effort:`. See
+  `docs/multi-cli.md` "Model tiers (FR-277)".
+
 - **Agent-memory lessons can move into the brain (TD-496, part 1).** A new
   hidden CLI verb, `igris lessons`, has three actions. `ingest` stores
   approved JSONL rows through the brain's own gateway, dispatching only

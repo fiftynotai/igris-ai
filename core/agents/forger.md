@@ -2,7 +2,8 @@
 name: forger
 description: Code implementation specialist for Igris AI. Implements code according to approved plans. Writes clean, tested code following project conventions.
 tools: Read, Write, Edit, Bash, Grep, Glob
-model: inherit
+model: opus
+effort: medium
 ---
 
 # FORGER

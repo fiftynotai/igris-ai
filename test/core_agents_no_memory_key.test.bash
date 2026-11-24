@@ -18,6 +18,8 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #
 #   N1  vacuity: the compile projects exactly 27 targets (9 agents x codex,
 #       gemini, opencode) and every one resolves to a file in the fenced brain;
+#       with FR-277's nine `<name>/model-tier` stamp rows the summary reads 36
+#       (the copy is not a git work tree, so the stamp only checks — S7);
 #   N2  none of the 27 resolved files has a memory line (TOML `^memory\s*=`,
 #       Markdown `^memory\s*:`);
 #   N3  negative control: the detector reports a planted key in both formats.
@@ -83,7 +85,8 @@ memory_offenders() {
   run compile_core_agents
   echo "$output" >&2
   [ "$status" -eq 0 ]
-  [[ "$output" == *"27 targets — 27 ok, 0 failed"* ]]
+  [[ "$output" == *"36 targets — 36 ok, 0 failed"* ]] || return 1
+  [ "$(printf '%s\n' "$output" | grep -c '/model-tier -> core/agents/')" -eq 9 ] || return 1
 
   run list_targets
   [ "$status" -eq 0 ]

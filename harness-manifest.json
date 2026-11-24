@@ -54,6 +54,25 @@
       "harness_specific_file": "core/os/harness-specific/cursor.md"
     }
   },
+  "model_tiers": {
+    "tiers": {
+      "deep":   { "claude": { "provider": "anthropic", "model": "fable", "effort": "high" },    "codex": { "provider": "openai", "model": "gpt-6.2-astra", "effort": "high" } },
+      "strong": { "claude": { "provider": "anthropic", "model": "opus", "effort": "medium" },   "codex": { "provider": "openai", "model": "gpt-6.2-astra", "effort": "medium" } },
+      "fast":   { "claude": { "provider": "anthropic", "model": "sonnet", "effort": "medium" }, "codex": { "provider": "openai", "model": "gpt-6.2-sol", "effort": "medium" } },
+      "light":  { "claude": { "provider": "anthropic", "model": "haiku", "effort": "low" },     "codex": { "provider": "openai", "model": "gpt-6-luna", "effort": "low" } }
+    },
+    "roles": {
+      "aegis": { "tier": "strong" },
+      "architect": { "tier": "strong", "effort": "high", "by_size": { "XL": { "tier": "deep", "effort": "high" } } },
+      "forger": { "tier": "strong", "by_size": { "L": { "effort": "high" }, "XL": { "tier": "deep", "effort": "high" } } },
+      "mender": { "tier": "strong" },
+      "sage": { "tier": "strong" },
+      "seeker": { "tier": "light" },
+      "scribe": { "tier": "strong" },
+      "sentinel": { "tier": "fast" },
+      "warden": { "tier": "fast" }
+    }
+  },
   "agents": [
     {
       "name": "aegis",

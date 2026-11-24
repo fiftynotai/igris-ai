@@ -3,6 +3,7 @@ name: warden
 description: Independent reviewer of an uncommitted change — behavior, security, conventions, and whether the change's claims (comments, docs, changelog, brief ticks, the implementer's report) are true at the scope stated. Returns APPROVE, APPROVE-WITH-EDITS or REJECT. Use after implementation, before commit.
 tools: Read, Grep, Glob, Bash
 model: sonnet
+effort: medium
 ---
 
 # Warden

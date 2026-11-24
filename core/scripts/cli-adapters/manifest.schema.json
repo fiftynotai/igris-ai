@@ -138,6 +138,31 @@
       "items": { "$ref": "#/$defs/agent" }
     },
 
+    "model_tiers": {
+      "description": "FR-277: the Igris-owned model tier map. `tiers` maps each of deep, strong, fast and light to a provider, model and effort per tier column (claude, codex); `roles` gives each core agent a default tier, an optional effort that overrides the tier's in both columns, and `by_size` steps applied as given for a brief's size. Ranks: light < fast < strong < deep; low < medium < high. Compile stamps the claude column into each role's canonical frontmatter (`model:`, `effort:`) and writes the codex column into its Codex TOML; Gemini and OpenCode drop both keys. Base manifest only (an overlay carrying it is refused). Cross-checks no schema can express — every role is a base agent, no step is lighter than its role — run after either validation path. See docs/multi-cli.md 'Model tiers (FR-277)'.",
+      "type": "object",
+      "required": ["tiers", "roles"],
+      "additionalProperties": false,
+      "properties": {
+        "tiers": {
+          "type": "object",
+          "required": ["deep", "strong", "fast", "light"],
+          "additionalProperties": false,
+          "properties": {
+            "deep":   { "$ref": "#/$defs/tier_columns" },
+            "strong": { "$ref": "#/$defs/tier_columns" },
+            "fast":   { "$ref": "#/$defs/tier_columns" },
+            "light":  { "$ref": "#/$defs/tier_columns" }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+          "additionalProperties": { "$ref": "#/$defs/tier_role" }
+        }
+      }
+    },
+
     "surfaces": {
       "description": "FR-137: non-agent projection surfaces. 'skills' is fleshed out here (core-owned in surfaces-manifest.json, or personal via the FR-139 overlay). 'os_context' remains RESERVED for FR-140 (permissive). An absent or skills-only surfaces block validates. Additive flesh-out — no version bump (still v1). TD-191: `skills` is now an ARRAY of blocks (multi-source) — loaders normalize legacy single-object overlays to `[object]` on read so back-compat holds without a version bump. FR-161: `mcp_servers` is added as a 4th surface (ARRAY of blocks, mirroring `skills`); v1 is GLOBAL-ONLY (consumers treat every block as global even though the schema reuses $defs/scope for forward-compat). Additive — still v1, no version bump.",
       "type": "object",
@@ -170,6 +195,58 @@
   },
 
   "$defs": {
+    "tier_name":   { "enum": ["deep", "strong", "fast", "light"] },
+    "tier_effort": { "enum": ["low", "medium", "high"] },
+    "tier_target": {
+      "description": "FR-277: one tier column — provider, model id or alias, effort. The model pattern keeps quotes and whitespace out of the compiled YAML and TOML.",
+      "type": "object",
+      "required": ["provider", "model", "effort"],
+      "additionalProperties": false,
+      "properties": {
+        "provider": { "enum": ["anthropic", "openai"] },
+        "model":    { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._:/-]*$" },
+        "effort":   { "$ref": "#/$defs/tier_effort" }
+      }
+    },
+    "tier_columns": {
+      "type": "object",
+      "required": ["claude", "codex"],
+      "additionalProperties": false,
+      "properties": {
+        "claude": { "allOf": [ { "$ref": "#/$defs/tier_target" }, { "properties": { "provider": { "const": "anthropic" } } } ] },
+        "codex":  { "allOf": [ { "$ref": "#/$defs/tier_target" }, { "properties": { "provider": { "const": "openai" } } } ] }
+      }
+    },
+    "tier_step": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "properties": {
+        "tier":   { "$ref": "#/$defs/tier_name" },
+        "effort": { "$ref": "#/$defs/tier_effort" }
+      }
+    },
+    "tier_role": {
+      "type": "object",
+      "required": ["tier"],
+      "additionalProperties": false,
+      "properties": {
+        "tier":   { "$ref": "#/$defs/tier_name" },
+        "effort": { "$ref": "#/$defs/tier_effort" },
+        "by_size": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "XS": { "$ref": "#/$defs/tier_step" },
+            "S":  { "$ref": "#/$defs/tier_step" },
+            "M":  { "$ref": "#/$defs/tier_step" },
+            "L":  { "$ref": "#/$defs/tier_step" },
+            "XL": { "$ref": "#/$defs/tier_step" }
+          }
+        }
+      }
+    },
     "surface_contract": {
       "description": "FR-202 (M0): the surface-plugin contract. DOC BLOCK ONLY — this $def is never $ref'd for validation; it formalizes the 3-concern lifecycle the core (compile_harnesses.sh + check_harness_drift.sh) owns for every wiring surface: declare -> distribute -> project -> verify. Each surface $def below (agent, skills_surface, mcp_surface, hook_surface) carries a `_contract` object whose shape is described here. The contract GATES MEMBERSHIP: a thing is a wiring surface IFF it can fill all four fields — it has content DECLARED once (a canonical/source), DISTRIBUTED to the machine, PROJECTED into a per-harness native shape (a targets[] array), and VERIFIED by a drift verdict. A concept that cannot (no per-harness projection, no canonical declaration, or no drift-checkable artifact) is NOT a wiring surface — it belongs in core/os, a skill, or the brain. The schema enforces the membership gate structurally by requiring every surface block to carry `targets[]` (the projection points) and a `source`/`canonical` (the declaration). Adding a surface = a new `$defs/<x>_surface` + a registry entry in _common.sh (IGRIS_SURFACE_IDS) + project_<x>/verify_<x> plugins, with ZERO change to the two top scripts' dispatch loops. The `harnesses.delegation_model` descriptor is NOT a surface (FR-202 M4 retired the identity surface it rode); it is the applicability predicate for the harness-specific context layer. See README.md 'Surface-plugin contract' and MAINTAINING.md.",
       "type": "object",

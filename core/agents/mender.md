@@ -2,7 +2,8 @@
 name: mender
 description: Error diagnosis and recovery specialist for Igris AI. Diagnoses errors and suggests specific fixes. Powers the self-healing protocol.
 tools: Read, Grep, Glob, Bash, mcp__igris-brain__igris_error_lookup
-model: inherit
+model: opus
+effort: medium
 ---
 
 # MENDER

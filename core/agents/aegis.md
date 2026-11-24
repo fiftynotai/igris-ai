@@ -2,7 +2,8 @@
 name: aegis
 description: Security review and threat-analysis specialist for Igris AI. Hunts vulnerabilities, models threats, and audits code/dependencies for defensive hardening. Reports findings with severity and concrete remediation.
 tools: Read, Grep, Glob, Bash, Write, Edit
-model: inherit
+model: opus
+effort: medium
 ---
 
 # AEGIS

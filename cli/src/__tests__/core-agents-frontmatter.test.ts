@@ -79,3 +79,61 @@ describe("TD-496 part 2 — core agent frontmatter carries no memory key", () =>
     expect(frontmatter("---\nname: probe\n---\n\nmemory: project\n")!).not.toMatch(/^memory\s*:/m);
   });
 });
+
+/**
+ * FR-277 (AC7) — the model line is map-generated, and no prompt body names a
+ * model. `compile_harnesses.sh` stamps each role's `model:` and `effort:` from
+ * the claude column of `harness-manifest.json` `model_tiers`; this pins the
+ * committed canonicals to the map (AF2) and keeps model literals out of the
+ * bodies (AF1). The case-insensitive literal set is AC7's grep.
+ */
+const MANIFEST = join(REPO_ROOT, "harness-manifest.json");
+const MODEL_LITERAL = /\b(opus|sonnet|haiku|fable|gpt-[0-9])/i;
+
+/** The text after the closing `---` line. */
+function body(text: string): string {
+  const lines = text.split("\n");
+  const end = lines.findIndex((l, i) => i > 0 && l.trimEnd() === "---");
+  return lines.slice(end + 1).join("\n");
+}
+
+interface TierColumn {
+  provider: string;
+  model: string;
+  effort: string;
+}
+interface ModelTiers {
+  tiers: Record<string, { claude: TierColumn; codex: TierColumn }>;
+  roles: Record<string, { tier: string; effort?: string }>;
+}
+
+/** The manifest's tier map; read per test so a missing map fails the test, not collection. */
+function modelTiers(): ModelTiers {
+  const mt = (JSON.parse(readFileSync(MANIFEST, "utf-8")) as { model_tiers?: ModelTiers }).model_tiers;
+  expect(mt).toBeDefined();
+  return mt!;
+}
+
+describe("FR-277 — core agent model lines come from the tier map", () => {
+  it("AF2 vacuity: every core agent has a role, and every role is a core agent", () => {
+    expect(Object.keys(modelTiers().roles).sort()).toEqual(CORE_AGENTS);
+  });
+
+  it.each(CORE_AGENTS)("AF2: %s.md frontmatter model:/effort: equal the map's claude column", (name) => {
+    const mt = modelTiers();
+    const fm = frontmatter(readFileSync(join(AGENTS_DIR, `${name}.md`), "utf-8"))!;
+    const role = mt.roles[name];
+    const col = mt.tiers[role.tier].claude;
+    const lines = fm.split("\n").filter((l) => /^(model|effort):/.test(l));
+    expect(lines).toEqual([`model: ${col.model}`, `effort: ${role.effort ?? col.effort}`]);
+  });
+
+  it.each(CORE_AGENTS)("AF1: %s.md body carries no model literal", (name) => {
+    expect(body(readFileSync(join(AGENTS_DIR, `${name}.md`), "utf-8"))).not.toMatch(MODEL_LITERAL);
+  });
+
+  it("AF1 negative control: a planted body line is caught; the frontmatter line is not body", () => {
+    expect(body("---\nname: probe\nmodel: opus\n---\n\n# Probe\nRun on Sonnet.\n")).toMatch(MODEL_LITERAL);
+    expect(body("---\nname: probe\nmodel: opus\n---\n\n# Probe\n")).not.toMatch(MODEL_LITERAL);
+  });
+});

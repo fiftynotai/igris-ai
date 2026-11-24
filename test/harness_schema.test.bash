@@ -675,3 +675,163 @@ EOF
   [ "$status" -ne 0 ]
   [[ "$output" == *"codex"* || "$output" == *"enum"* || "$output" == *"oneOf"* ]]
 }
+
+# ---------------------------------------------------------------------------
+# FR-277: the `model_tiers` map (AC1). Each case runs on BOTH validation paths
+# — the structural fallback (jsonschema blocked) and the default path (the
+# python jsonschema path when it is installed) — and the schema file itself is
+# checked with ajv's draft 2020-12 validator, which stands in for the
+# jsonschema path on machines without the python module. Every failing case
+# names its JSON path (`model_tiers/...`), so a rejection for the old reason
+# (an unknown top-level key, the 4013c55 behaviour) fails the assertion.
+#   S1 a valid map passes          S6 a role with tier `huge`
+#   S2 a missing `light` tier      S7 a bad `by_size` key
+#   S3 effort `extreme`            S8 an overlay carrying the map (base-only)
+#   S4 model `gp"t` (injection)    S9 a claude column with provider openai
+#   S5 an extra harness key
+# ---------------------------------------------------------------------------
+
+# fr277_manifest <out> [python statement over the map `t`]
+fr277_manifest() {
+  python3 - "$1" "${2:-pass}" <<'PY'
+import json, sys
+out, stmt = sys.argv[1], sys.argv[2]
+def col(p, m, e): return {"provider": p, "model": m, "effort": e}
+t = {"tiers": {
+        "deep":   {"claude": col("anthropic", "fable", "high"),    "codex": col("openai", "gpt-6.2-astra", "high")},
+        "strong": {"claude": col("anthropic", "opus", "medium"),   "codex": col("openai", "gpt-6.2-astra", "medium")},
+        "fast":   {"claude": col("anthropic", "sonnet", "medium"), "codex": col("openai", "gpt-6.2-sol", "medium")},
+        "light":  {"claude": col("anthropic", "haiku", "low"),     "codex": col("openai", "gpt-6-luna", "low")}},
+     "roles": {"warden": {"tier": "fast"},
+               "forger": {"tier": "strong", "by_size": {"L": {"effort": "high"}, "XL": {"tier": "deep", "effort": "high"}}}}}
+exec(stmt)
+agent = lambda n: {"name": n, "canonical": {"dir": "canon", "file": n + ".md", "versioned": False},
+                   "targets": [{"type": "claude", "path": ".claude/agents/" + n + ".md"}]}
+json.dump({"version": 1, "model_tiers": t, "agents": [agent("warden"), agent("forger")]},
+          open(out, "w", encoding="utf-8"), indent=2)
+PY
+}
+
+# fr277_paths <manifest> — validate_manifest forced-structural, then default.
+fr277_paths() {
+  local blockdir="$PROJ/noimport"
+  mkdir -p "$blockdir"
+  cat > "$blockdir/sitecustomize.py" <<'PY'
+import sys
+class _Blocker:
+    def find_spec(self, name, path=None, target=None):
+        if name == "jsonschema" or name.startswith("jsonschema."):
+            raise ImportError("jsonschema blocked for test")
+        return None
+    def find_module(self, name, path=None):
+        return self if name == "jsonschema" else None
+    def load_module(self, name):
+        raise ImportError("jsonschema blocked for test")
+sys.meta_path.insert(0, _Blocker())
+PY
+  echo "--structural"
+  PYTHONPATH="$blockdir" bash -c "source '$COMMON' && validate_manifest '$1' '$SCHEMA'" 2>&1; echo "rc=$?"
+  echo "--default"
+  bash -c "source '$COMMON' && validate_manifest '$1' '$SCHEMA'" 2>&1; echo "rc=$?"
+}
+
+# fr277_ajv <manifest> — "VALID", or the first error's instancePath plus the
+# missing/extra property name. Skips when ajv is not installed.
+fr277_ajv() {
+  local ajv="$IGRIS_ROOT/node_modules/ajv/dist/2020.js"
+  command -v node >/dev/null 2>&1 && [ -f "$ajv" ] || { echo "NO-AJV"; return 0; }
+  node -e '
+    const Ajv = require(process.argv[1]).default;
+    const fs = require("fs");
+    const ajv = new Ajv({ strict: false });
+    const ok = ajv.validate(JSON.parse(fs.readFileSync(process.argv[2], "utf8")),
+                            JSON.parse(fs.readFileSync(process.argv[3], "utf8")));
+    if (ok) { console.log("VALID"); process.exit(0); }
+    const e = ajv.errors[0];
+    console.log(e.instancePath + " " + (e.params.missingProperty || e.params.additionalProperty || e.keyword));
+  ' "$ajv" "$SCHEMA" "$1"
+}
+
+# fr277_rejects <manifest> <json-path> [ajv-expect] — both paths fail naming
+# the path; ajv reports it too.
+fr277_rejects() {
+  local out
+  out="$(fr277_paths "$1")"
+  [ "$(printf '%s\n' "$out" | grep -c '^rc=0$')" -eq 0 ] || { echo "$out"; return 1; }
+  [ "$(printf '%s\n' "$out" | grep -cF -- "$2")" -ge 2 ] || { echo "path '$2' not named on both paths:"; echo "$out"; return 1; }
+  if [ -n "${3:-}" ]; then
+    out="$(fr277_ajv "$1")"
+    [ "$out" = NO-AJV ] || [ "$out" = "$3" ] || { echo "ajv: $out (want $3)"; return 1; }
+  fi
+}
+
+@test "FR-277 S1: a valid model_tiers map passes on both paths and under ajv" {
+  fr277_manifest "$PROJ/mt.json"
+  run fr277_paths "$PROJ/mt.json"
+  [ "$(printf '%s\n' "$output" | grep -c '^rc=0$')" -eq 2 ] || { echo "$output"; return 1; }
+  run fr277_ajv "$PROJ/mt.json"
+  [ "$output" = VALID ] || [ "$output" = NO-AJV ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S2: a map missing the light tier fails at model_tiers/tiers" {
+  fr277_manifest "$PROJ/mt.json" 'del t["tiers"]["light"]'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/tiers" "/model_tiers/tiers light"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S3: effort 'extreme' fails at model_tiers/tiers/fast/codex/effort" {
+  fr277_manifest "$PROJ/mt.json" 't["tiers"]["fast"]["codex"]["effort"] = "extreme"'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/tiers/fast/codex/effort" "/model_tiers/tiers/fast/codex/effort enum"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S4: a model id carrying a quote (TOML/YAML injection) fails at its path" {
+  fr277_manifest "$PROJ/mt.json" 't["tiers"]["fast"]["codex"]["model"] = "gp\"t"'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/tiers/fast/codex/model" "/model_tiers/tiers/fast/codex/model pattern"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S5: an extra harness column fails at model_tiers/tiers/fast" {
+  fr277_manifest "$PROJ/mt.json" 't["tiers"]["fast"]["gemini"] = dict(t["tiers"]["fast"]["claude"])'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/tiers/fast" "/model_tiers/tiers/fast gemini"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+  [[ "$output" != *"unknown top-level key"* ]] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S6: a role with tier 'huge' fails at model_tiers/roles/warden/tier" {
+  fr277_manifest "$PROJ/mt.json" 't["roles"]["warden"]["tier"] = "huge"'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/roles/warden/tier" "/model_tiers/roles/warden/tier enum"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S7: a bad by_size key fails at model_tiers/roles/forger/by_size" {
+  fr277_manifest "$PROJ/mt.json" 't["roles"]["forger"]["by_size"]["XXL"] = {"tier": "deep"}'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/roles/forger/by_size" "/model_tiers/roles/forger/by_size XXL"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S8: an overlay carrying model_tiers is a hard error (the map is base-only)" {
+  # A valid map with no roles, so the overlay validates on its own and the
+  # refusal is the merge's.
+  fr277_manifest "$PROJ/overlay.json" 't["roles"] = {}'
+  python3 - "$PROJ/overlay.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1], encoding="utf-8"))
+m["agents"] = [{"name": "personal-x", "layer": "personal",
+                "canonical": {"dir": "canon", "file": "sample.md", "versioned": False},
+                "targets": [{"type": "claude", "path": ".claude/agents/personal-x.md"}]}]
+json.dump(m, open(sys.argv[1], "w", encoding="utf-8"))
+PY
+  run bash -c "source '$COMMON' && merge_overlay_manifest '$PROJ/harness-manifest.json' '$PROJ/overlay.json'"
+  [ "$status" -ne 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"model_tiers"*"base-only"* ]] || { echo "$output"; return 1; }
+  run bash "$COMPILE" --project-root "$PROJ" --overlay "$PROJ/overlay.json" --surface agents --target claude
+  [ "$status" -ne 0 ] || { echo "$output"; return 1; }
+  [[ "$output" == *"base-only"* ]] || { echo "$output"; return 1; }
+}
+
+@test "FR-277 S9: a claude column whose provider is openai fails at its path" {
+  fr277_manifest "$PROJ/mt.json" 't["tiers"]["fast"]["claude"]["provider"] = "openai"'
+  run fr277_rejects "$PROJ/mt.json" "model_tiers/tiers/fast/claude/provider" "/model_tiers/tiers/fast/claude/provider const"
+  [ "$status" -eq 0 ] || { echo "$output"; return 1; }
+}

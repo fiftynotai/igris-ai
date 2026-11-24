@@ -224,8 +224,9 @@ set -e
 #   (one-shot override; never export it. /hunt does not need it: it commits
 #   after the brief has left BUILDING/TESTING, carrying IGRIS_INSTANCE_ID so
 #   the guard identifies its session — TD-494)
-# NB the closing-commit gates' bypasses — `IGRIS_BYPASS_AC_GATE=1` (TD-325) and
-#   `IGRIS_BYPASS_EVENT_GATE=1` (FR-267) — belong to core/git-hooks/commit-msg,
+# NB the closing-commit gates' bypasses — `IGRIS_BYPASS_AC_GATE=1` (TD-325),
+#   `IGRIS_BYPASS_EVENT_GATE=1` (FR-267) and `IGRIS_BYPASS_REVIEW_MODEL_GATE=1`
+#   (FR-277) — belong to core/git-hooks/commit-msg,
 #   NOT to this file. Deliberately separate: a closing commit may carry
 #   IGRIS_BYPASS_PHASE_GUARD, so a check placed inside the phase guard's block
 #   below would be bypassed on exactly the commits those gates must inspect.

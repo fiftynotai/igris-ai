@@ -933,6 +933,49 @@ echo "Harness drift check (project root: $PROJECT_ROOT):"
 echo ""
 
 # ---------------------------------------------------------------------------
+# verify_model_tiers — FR-277 (S1), the drift twin of compile's
+# stamp_model_tiers: the SAME `igris_model_tier stamp` rows, read with
+# write=0. Per role in the base manifest's `model_tiers` (FILTER applies), the
+# canonical frontmatter's `model:`/`effort:` must equal the map's claude
+# column: `[<name>/model-tier] MATCH` or DRIFTED (expected vs found, and the
+# fix), each counted in TOTAL and MATCH or DRIFT, so compile and drift report
+# the same total. A base agent with no role gets an uncounted NOTE. Codex
+# targets get no content verdict (their verdict is realpath-only; TD-385).
+# ---------------------------------------------------------------------------
+verify_model_tiers() {
+  grep -q '"model_tiers"' "$MANIFEST" || return 0
+  local rows status name rel expected found
+  if ! rows="$(igris_model_tier stamp "$MANIFEST" "$PROJECT_ROOT" "$FILTER" 0 2>&1)"; then
+    echo "  [model-tier] DRIFTED"
+    echo "      reason    : the model tier map could not be read: $rows"
+    TOTAL=$((TOTAL + 1))
+    DRIFT=$((DRIFT + 1))
+    return 0
+  fi
+  [ -n "$rows" ] || return 0
+  while IFS=$'\t' read -r status name rel expected found; do
+    case "$status" in
+      MATCH)
+        echo "  [$name/model-tier] MATCH"
+        TOTAL=$((TOTAL + 1))
+        MATCH=$((MATCH + 1))
+        ;;
+      DRIFTED)
+        echo "  [$name/model-tier] DRIFTED"
+        echo "      expected  : $expected (model_tiers, claude column)"
+        echo "      found     : $found ($rel)"
+        echo "      reason    : canonical frontmatter differs from the model tier map — run \`igris harness compile --surface agents --target claude\` and commit the stamped lines"
+        TOTAL=$((TOTAL + 1))
+        DRIFT=$((DRIFT + 1))
+        ;;
+      NOROLE)
+        echo "  [$name/model-tier] NOTE — no role in model_tiers.roles; its model: line is not map-owned"
+        ;;
+    esac
+  done <<< "$rows"
+}
+
+# ---------------------------------------------------------------------------
 # verify_agents — the agents drift-verification surface plugin (FR-202 M0).
 # The per-agent tree-hash + per-target symlink/hardlink-realpath MATCH/DRIFTED/
 # MISSING verdict logic is moved VERBATIM from the former inline agents drift
@@ -942,6 +985,7 @@ echo ""
 # and the shared global accumulators (TOTAL/MATCH/DRIFT/TREE_CHECKED).
 # ---------------------------------------------------------------------------
 verify_agents() {
+verify_model_tiers
 if [ -n "$WORK_ROWS" ]; then
 while IFS=$'\t' read -r name versioned canon_dir canon_ref body_exc ttype target_path layer scope_type scope_paths; do
   [ -z "$name" ] && continue
