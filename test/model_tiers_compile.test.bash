@@ -24,6 +24,8 @@ source "${BATS_TEST_DIRNAME:-$(dirname "${BASH_SOURCE[0]}")}/require_bats.bash" 
 #   MT3  control: changing every tiers.deep value moves 0 files (no role
 #        defaults to deep; size steps are per-run, never compiled)
 #   MT4  a recompile changes nothing: canonical inode + mtime, loadout bytes
+#        (GNU `stat -c` first: on Linux `stat -f` is filesystem status, whose
+#        free-block counts change between runs — CI 45417354889)
 #   MT5  (AC3) check_harness_drift.sh --surface agents: 9 [x/model-tier]
 #        MATCH, exit 0; a hand-edited warden model: line is DRIFTED, exit 1
 #   MT6  --target codex leaves canonicals alone; --target claude only stamps
@@ -270,12 +272,12 @@ t["tiers"]["deep"]["claude"]["model"] = "probe-deep"'
   run compile --target all
   [ "$status" -eq 0 ] || { echo "$output"; return 1; }
   local before after
-  before="$(cd "$PROJ/core/agents" && for f in *.md; do stat -f '%N %i %m' "$f" 2>/dev/null || stat -c '%n %i %Y' "$f"; done)"
+  before="$(cd "$PROJ/core/agents" && for f in *.md; do stat -c '%n %i %Y' "$f" 2>/dev/null || stat -f '%N %i %m' "$f"; done)"
   snapshot "$TEST_TEMP_DIR/a"
   sleep 1
   run compile --target all
   [ "$status" -eq 0 ] || { echo "$output"; return 1; }
-  after="$(cd "$PROJ/core/agents" && for f in *.md; do stat -f '%N %i %m' "$f" 2>/dev/null || stat -c '%n %i %Y' "$f"; done)"
+  after="$(cd "$PROJ/core/agents" && for f in *.md; do stat -c '%n %i %Y' "$f" 2>/dev/null || stat -f '%N %i %m' "$f"; done)"
   [ "$before" = "$after" ] || { echo "before: $before"; echo "after: $after"; return 1; }
   snapshot "$TEST_TEMP_DIR/b"
   cmp "$TEST_TEMP_DIR/a" "$TEST_TEMP_DIR/b" || return 1
