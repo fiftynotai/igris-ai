@@ -24,7 +24,7 @@ Secret-scanning is defense-in-depth, not a single gate:
 |---|---|---|---|---|
 | 1 | **Pre-commit hook** (`scripts/git-hooks/pre-commit` → `gitleaks protect --staged`) | Local, every `git commit` | Mechanical regex matches on the staged diff | `git commit --no-verify` (deliberate) |
 | 2 | **CI workflow** (`.github/workflows/secrets-scan.yml` → `gitleaks/gitleaks-action@v2`) | Every push to `develop`/`main` + every PR | Same ruleset, server-side | No — make it a required check on `main` |
-| 3 | **Warden checklist** (`core/agents/warden.md` → "Security Scan Checklist") | Per `/hunt` REVIEWING phase | Nuanced calls the curated rules don't cover (e.g. a project-specific internal subnet) | Yes (review can still err) |
+| 3 | **Review-time spot-check** (warden's Security item, `core/agents/warden.md`, plus igris-ai `test_standards.md` → Reviewer checks, carried into `/hunt` REVIEWING as project review items) | Per `/hunt` REVIEWING phase | Nuanced calls the curated rules don't cover (e.g. a project-specific internal subnet) | Yes (review can still err) |
 | 4 | **CONTRIBUTING.md Documentation Invariant #9** | Read by the author before writing | Forward guidance: use placeholders, reference the config source-of-truth | Yes (norms only) |
 
 Layers 1 + 2 are the load-bearing automated gates and share one config
@@ -222,6 +222,6 @@ Install gitleaks locally with `brew install gitleaks` (macOS) or see the
 
 - `CONTRIBUTING.md` → **Documentation Invariants #9** (placeholders-not-literals).
 - `docs/architecture/SYSTEM.md` → **§9 Invariants** (#9 secret-scanning gate).
-- `core/agents/warden.md` → **Security Scan Checklist** (the layer-3 review step).
+- `core/agents/warden.md` → **Security** item, plus igris-ai `test_standards.md` → **Reviewer checks** (the layer-3 review-time spot-check, carried into `/hunt` REVIEWING).
 - **TD-157** — the incident this gate prevents recurring.
 - **TD-158** — the server-side counterpart (VPS network/SSH hardening).

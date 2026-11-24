@@ -76,7 +76,8 @@ These four apply once you have chosen mutation as your verification method.
 7. **Ship a control mutation that must SURVIVE**, so "all killed" is a
    measurement rather than a stuck instrument.
 
-Nothing gates this while you write. Warden REJECTs on it at review — but on the
+Nothing gates this while you write. Warden blocks the commit on it at review (a
+REJECT, or an APPROVE-WITH-EDITS whose edit lands before commit) — but on the
 claude harness only: measured 2026-08-13, the codex, gemini and opencode warden
 copies carry zero occurrences of the check (TD-385). Provenance, measured
 instances, and this obligation's true enforcement strength:

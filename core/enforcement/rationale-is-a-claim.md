@@ -3,7 +3,7 @@ obligation: "A stated rationale is a claim, and a claim ships only at the scope 
 mechanism: gate
 status: "shipped on the CLAUDE harness only (review-time gate); NOT reaching codex, gemini or opencode — TD-385; build-time authoring is honor-system on every harness"
 lives_in: "core/agents/warden.md (REVIEWING gate — claude harness only until TD-385) + core/os/standards.md (build-time baseline, honor-system)"
-summary: "FR-251 / TD-382. The only REVIEW-TIME gate is warden, which REJECTs a finding stated at a scope it was not measured at, and a verification word applied to a set whose members do not all carry that status; Group B (the mutation rules) is discharged by whoever runs the mutation battery, usually sentinel at TESTING. HARNESS SCOPE, measured 2026-08-13: that gate reaches CLAUDE only — the codex, gemini and opencode warden loadout copies carry 0 occurrences of its heading, and validate_harness_drift.sh calls all three MATCH regardless, because it compares projection against loadout and never canonical against loadout (TD-385 closes the gap and removes this caveat). Nothing blocks, warns or lints on ANY harness while the sentence is being WRITTEN — no static validator exists and none is proposed, because 'this sentence was never measured' is not statically detectable, so the build-time half (the Claims and Evidence section of core/os/standards.md) is trusted, not gated."
+summary: "FR-251 / TD-382. The only REVIEW-TIME gate is warden, which blocks the commit on a finding stated at a scope it was not measured at, and on a verification word applied to a set whose members do not all carry that status (REJECT, or since TD-497 APPROVE-WITH-EDITS when the finding is a `record` about the change's own record, whose edit lands before commit); Group B (the mutation rules) is discharged by whoever runs the mutation battery, usually sentinel at TESTING. HARNESS SCOPE, measured 2026-08-13: that gate reaches CLAUDE only — the codex, gemini and opencode warden loadout copies carry 0 occurrences of its heading, and validate_harness_drift.sh calls all three MATCH regardless, because it compares projection against loadout and never canonical against loadout (TD-385 closes the gap and removes this caveat). Nothing blocks, warns or lints on ANY harness while the sentence is being WRITTEN — no static validator exists and none is proposed, because 'this sentence was never measured' is not statically detectable, so the build-time half (the Claims and Evidence section of core/os/standards.md) is trusted, not gated."
 ---
 
 # A stated rationale is a claim
@@ -27,7 +27,7 @@ touches:
 | # | Site | Carries | Mood |
 |---|---|---|---|
 | 1 | `core/os/standards.md` §Claims and Evidence | all seven rules | **authoritative** |
-| 2 | `core/agents/warden.md` items 1-5 | clauses 1-4 | review-action |
+| 2 | `core/agents/warden.md` § What to judge, item 3 (Claims) | clauses 1-4 | review-action |
 | 3 | `coding_guidelines.md` §17 checklist row | clauses 1-4 | reviewer checklist |
 | 4 | this file's frontmatter `summary` → generated verbatim into `core/enforcement/INDEX.md` | clauses 1-2 | registry row |
 | 5 | `coding_guidelines.md` §13 | rule 4's illustration only | cross-reference to L-518 |
@@ -40,10 +40,13 @@ generator never touches it, so regenerating the registry does not maintain it.
 **They did not derive from the authority.** The phrases
 `"a scope it was not measured at"`, `"whose members do not all carry that
 status"`, `"Ask the set/member question explicitly"` and `"may be TRUE and still
-be a rejection"` each appear at site 2 and at site 3 and/or 4 — and **zero times
+be a rejection"` each appeared at site 2 and at site 3 and/or 4 — and **zero times
 in `core/os/standards.md`**. Those rewordings are kept deliberately: each site
 addresses a different actor in a different mood, and collapsing them to one
-wording was considered and rejected.
+wording was considered and rejected. *Re-measured 2026-11-24, after TD-497
+rewrote warden (a whitespace-collapsing `perl -0777` count per site):* the first
+phrase is at site 2 and site 4; the second at site 4 only; the third and fourth
+at site 3 only. All four are still at zero in `core/os/standards.md`.
 
 `standards.md` is therefore authoritative **by policy, not by derivation** — and
 in the other direction too: its clauses 1-2 were copied IN from the briefs this
@@ -72,14 +75,19 @@ perl -0777 -ne 'BEGIN{$p=qr/rather\s+than\s+Y\s+because\s+Y\s+would\s+Z|Quote\s+
 ```
 
 **It must be `perl -0777`, not `grep`.** The prose is hard-wrapped, and rule 4's
-illustration breaks across the two lines of `warden.md`'s review item 3 — a line-oriented `grep` scores
-that file **0** and returns a clean, wrong answer. That failure was measured
+illustration used to break across the two lines of `warden.md`'s review item 3 — a line-oriented `grep` scored
+that file **0** and returned a clean, wrong answer. That failure was measured
 three times during this brief, by three different actors, before the
 whitespace-collapsing form was adopted. Output measured after this section
 landed: `3` standards, `2` warden, `5` this file, `2` coding_guidelines — and
 the walk from an earlier `3 / 1 / 2 / 2` is the caveat below made concrete, since
 every added hit is this section and warden's pairing note *quoting* the strings
-in order to document them, not a new rule statement.
+in order to document them, not a new rule statement. *Re-measured 2026-11-24,
+after TD-497 rewrote warden:* `3` / `1` / `5` / `2`. Warden's pairing note is
+gone, and its Claims item carries rule 4's illustration on one line, so a
+line-oriented `grep` happens to score it correctly today; keep the
+whitespace-collapsing form anyway, because a re-wrap of any carrier brings the
+wrong zero back.
 
 **What it does NOT do.** It finds candidate sites; it cannot tell a rule
 statement from a quotation *of* a rule — this section quotes those strings as
@@ -106,7 +114,9 @@ So the honest reading of the registry row is:
 
 - **At build time** — writing a brief, a plan, a docstring, a comment, a commit
   message, a review, a summary — this is **honor-system**. Nothing observes you.
-- **At REVIEWING** — warden REJECTs on this dimension. That is the only
+- **At REVIEWING** — warden blocks on this dimension: REJECT, or (since
+  TD-497) APPROVE-WITH-EDITS when the finding is a `record` about the change's
+  own record, whose edit lands before commit. That is the only
   review-time *gate*, and it is the most expensive place to catch a sentence the
   author could have checked when writing it.
 - **Group B is not warden's alone.** Rules 4–7 are discharged by whoever runs
@@ -129,6 +139,15 @@ Any future edit that makes a reader answer either question differently has
 overstated this obligation.
 
 ## Harness scope — measured, not assumed (TD-385)
+
+*Note added 2026-11-24 (TD-497):* the `CLAIM↔EVIDENCE REVIEW GATE` heading
+measured below no longer exists in the canonical `core/agents/warden.md`. The
+rules now sit in its § What to judge, item 3 (Claims), which cites the
+`Claims and Evidence` section by name. TD-385's instrument must grep
+`Claims and Evidence`, not the retired heading. TD-497 did not recompile the
+codex, gemini or opencode loadouts (operator decision D5), so they still carry
+the warden they were last compiled from. The table below is the 2026-08-13
+measurement, kept as measured.
 
 `grep -c` for the gate's heading `CLAIM↔EVIDENCE REVIEW GATE`, run 2026-08-13
 against the file each harness's declared target resolves to:

@@ -410,7 +410,7 @@ export function handleAgentEventList(
       agent,
       (SELECT CASE
          WHEN ae2.event_type = 'start' THEN 'WORKING'
-         WHEN ae2.event_type = 'stop' AND ae2.result IN ('success', 'APPROVE', 'PASS') THEN 'DONE'
+         WHEN ae2.event_type = 'stop' AND ae2.result IN ('success', 'APPROVE', 'APPROVE-WITH-EDITS', 'PASS') THEN 'DONE'
          WHEN ae2.event_type = 'stop' THEN 'FAIL'
          WHEN ae2.event_type = 'error' THEN 'FAIL'
          ELSE 'IDLE'

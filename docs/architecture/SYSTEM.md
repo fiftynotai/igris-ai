@@ -83,7 +83,7 @@ for the local recording contract.
 
 ### 3.1 Mirror invariant (TD-096)
 
-`~/.igris/core/` mirrors repo `core/` byte-for-byte. Edit the repo copy and run `igris refresh` (or, for in-place patches, the explicit `cp <repo-core> ~/.igris/core/<same-path>` + `bash core/scripts/verify_mirror.sh <pair>` protocol). The mirror is verified with the `verify_mirror.sh` primitive: realpath-resolved, exit-code-checked, one verdict per pair. Sentinel's MIRROR_CHECK runs the same primitive at `/hunt TESTING` and blocks the commit on any MISMATCH. See `core/scripts/verify_mirror.sh` and CONTRIBUTING.md "Documentation invariants" #5.
+`~/.igris/core/` mirrors repo `core/` byte-for-byte. Edit the repo copy and run `igris refresh` (or, for in-place patches, the explicit `cp <repo-core> ~/.igris/core/<same-path>` + `bash core/scripts/verify_mirror.sh <pair>` protocol). The mirror is verified with the `verify_mirror.sh` primitive: realpath-resolved, exit-code-checked, one verdict per pair. The mirror is deployed and verified after merge, from the main checkout; for igris-ai the rule lives in the project's `test_standards.md` → Reviewer checks, which `/hunt` passes to sentinel when the delegation asks for a mirror check (TD-497). See `core/scripts/verify_mirror.sh` and CONTRIBUTING.md "Documentation invariants" #5.
 
 ### 3.2 Subconscious disabled (TD-102 / FR-118)
 
@@ -145,9 +145,13 @@ flowchart LR
     BUILDING --> TESTING
     TESTING -->|"fail, retry &lt; 3"| BUILDING
     TESTING -->|"retry ≥ 3"| BLOCKED
+    TESTING -->|"no verdict, or review-worktree check failed"| BLOCKED
     TESTING -->|"pass"| REVIEWING
     REVIEWING -->|"reject, retry &lt; 2"| BUILDING
     REVIEWING -->|"reject, retry ≥ 2"| BLOCKED
+    REVIEWING -->|"approve with edits, retry &lt; 2: edits applied, narrow re-check"| REVIEWING
+    REVIEWING -->|"approve with edits, retry ≥ 2"| BLOCKED
+    REVIEWING -->|"no verdict, or review-worktree check failed"| BLOCKED
     REVIEWING -->|"approve + docs"| DOCUMENTING
     REVIEWING -->|"approve, no docs"| COMMITTING
     DOCUMENTING --> COMMITTING
@@ -243,8 +247,8 @@ flowchart LR
     O["Orchestrator<br/>(core/os/ context)"]
     O --> A["architect<br/>plan, read-only"]
     O --> F["forger<br/>implement, write"]
-    O --> S["sentinel<br/>test + execute, read-only writes"]
-    O --> W["warden<br/>review, read-only"]
+    O --> S["sentinel<br/>test + execute in a review worktree"]
+    O --> W["warden<br/>review + security, read-only shell in a review worktree"]
     O --> E["aegis<br/>security review, defensive"]
     O --> D["scribe<br/>documentation, read/write docs"]
     O --> M["mender<br/>diagnose, read-only"]
@@ -252,14 +256,14 @@ flowchart LR
     O --> G["sage<br/>Flutter MVVM, read/write"]
 ```
 
-The table below lists each agent's `tools:` from its YAML frontmatter (`core/agents/<name>.md`) verbatim. Tool restrictions are enforced at the agent-definition level, not by prompt. The **Mode** column summarizes the agent's own `CORE IDENTITY` line so the read-only vs read/write contract is unambiguous.
+The table below lists each agent's `tools:` from its YAML frontmatter (`core/agents/<name>.md`) verbatim. Tool restrictions are enforced at the agent-definition level, not by prompt, except for warden and sentinel: what their `Bash` may do is set by prompt (read-only for warden; suites and reverted mutations inside the worktree for sentinel), and they run in a review worktree that `core/scripts/review_worktree.sh close` checks afterwards (the stash list, the branch and tag names, the checked-out branch and the claimed files). Close compares state, not actions: after an explicit `cd` out of the worktree, a change that leaves that state as it found it (a stash-then-pop, an index change, an edit to a file outside the claimed set) is not detected; see the script's "Limits, stated". The **Mode** column summarizes each agent's stated write boundary so the read-only vs read/write contract is unambiguous.
 
 | Agent | Role | Mode | Tools (verbatim from YAML) | When invoked |
 |-------|------|------|---------------------------|--------------|
 | **architect** | Strategic planning, impact analysis | Read-only (NEVER writes code) | `Read, Grep, Glob` | `/hunt` PLANNING; brief analysis |
 | **forger** | Code implementation | Read/Write (WRITES code) | `Read, Write, Edit, Bash, Grep, Glob` | `/hunt` BUILDING |
-| **sentinel** | Test execution & validation | Read + Execute (RUNS tests, does not write code) | `Read, Bash, Grep` | `/hunt` TESTING |
-| **warden** | Code review & security guardian | Read-only (REVIEWS, never modifies) | `Read, Grep, Glob` | `/hunt` REVIEWING; `/audit` |
+| **sentinel** | Test execution & validation | Read + Execute in a review worktree (RUNS tests and mutations there, never edits source) | `Read, Grep, Glob, Bash` | `/hunt` TESTING |
+| **warden** | Code review & security | Read-only, with a read-only shell in a review worktree (REVIEWS, never modifies) | `Read, Grep, Glob, Bash` | `/hunt` REVIEWING |
 | **aegis** | Security review & threat analysis | Defensive review/hardening | `Read, Grep, Glob, Bash, Write, Edit` | On-demand for security review, threat modeling, and hardening |
 | **scribe** | Documentation | Clarifying docs/comments only | `Read, Write, Edit, Grep, Glob` | On-demand documentation work; `/document` remains the orchestrator-level skill |
 | **mender** | Error diagnosis & recovery | Read-only (DIAGNOSES, does not fix directly) | `Read, Grep, Glob, Bash, mcp__igris-brain__igris_error_lookup` | Auto on test/commit failure (self-heal); orchestrator applies fixes |
@@ -411,14 +415,14 @@ The **live** agent roster is discovered from each agent's own frontmatter (`name
 ## 9. Invariants
 
 1. **Brief-first protocol** — every file modification requires an active `In Progress` brief. Enforced by `pre_tool_use.sh`; bypass only via `IGRIS_BYPASS_BRIEF_GATE=1` (one-shot).
-2. **Mirror invariant (TD-096)** — `~/.igris/core/` mirrors repo `core/` byte-for-byte. Verify with `core/scripts/verify_mirror.sh`; sentinel runs MIRROR_CHECK on every changed `core/` file.
+2. **Mirror invariant (TD-096)** — `~/.igris/core/` mirrors repo `core/` byte-for-byte. Verify with `core/scripts/verify_mirror.sh` at deploy, after merge, from the main checkout; the rule lives in igris-ai `test_standards.md` → Reviewer checks (TD-497).
 3. **Strict-input MCP gateway (TD-128)** — every brain tool's `inputSchema` declares `additionalProperties: false`; callers use `ALLOWED_KEYS_PER_OP` allowlists.
 4. **Local-primary sync** — never treat the VPS as authoritative; on divergence, trust the local DB.
 5. **Carried-but-not-committed drift** — agent working memory (`**/.claude/agent-memory/`, gitignored in *every* package since TD-317) and `.igris_version` regenerate post-install. Do not "clean" them in a code-touching commit. For the core agents these directories are legacy since TD-496: those agents declare no `memory:` key, their lessons live in the brain as `role:<agent>` learnings, and `/harvest` Mode B exports any files left on disk. (`CLAUDE.md` is a static boot-pointer that nothing regenerates — TD-267; FR-191 retired its render.)
 6. **Igris-managed vs Claude-only hooks** — Igris hooks live only in `canonical-settings.json`; project-local Claude hooks go in a separate `.claude/settings.json` block and are preserved by the canonical merge.
 7. **Forger does NOT commit** — `/hunt`'s state machine owns `COMMITTING`; sentinel runs tests, warden reviews, orchestrator commits. Forger stops at the last code-touching step and reports `IMPLEMENTATION COMPLETE — UNCOMMITTED` (L-248 / PI-004).
 8. **Version sweep on bumps** — bumping the current-system version means sweeping every enumeration surface: `package.json`, `CONTRIBUTING.md` "Project structure", any README banner. `CLAUDE.md` carries no version string (TD-267 — boot-pointer only). TD-147 is the cautionary tale.
-9. **Secret-scanning gate (TD-159)** — no secret-shaped string (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family) reaches a commit. Deterministic `gitleaks` runs at four layers: pre-commit hook (`gitleaks protect --staged`), CI (`.github/workflows/secrets-scan.yml`), warden's review checklist, and CONTRIBUTING.md Documentation Invariant #9. Config: `.gitleaks.toml`. Use placeholders/`${ENV}` indirection, never literals; allowlist a true false positive with an inline `# gitleaks:allow` marker. TD-157 is the cautionary tale (the IP leak that survived 5 hunts + every other gate). Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md).
+9. **Secret-scanning gate (TD-159)** — no secret-shaped string (public IP outside RFC-1918/loopback, API-key shapes, SSH/cloud keys, the operator-VPS-IP family) reaches a commit. Deterministic `gitleaks` runs at two layers, pre-commit hook (`gitleaks protect --staged`) and CI (`.github/workflows/secrets-scan.yml`); warden's Security item and the igris-ai review-time spot-check (`test_standards.md` → Reviewer checks) and CONTRIBUTING.md Documentation Invariant #9 complete the four layers. Config: `.gitleaks.toml`. Use placeholders/`${ENV}` indirection, never literals; allowlist a true false positive with an inline `# gitleaks:allow` marker. TD-157 is the cautionary tale (the IP leak that survived 5 hunts + every other gate). Full guide: [`docs/operations/secret-scanning.md`](../operations/secret-scanning.md).
 
 ---
 

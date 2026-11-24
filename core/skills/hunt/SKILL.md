@@ -64,10 +64,15 @@ Execute the complete implementation workflow for a brief, from planning through 
 | TESTING | Tests pass | REVIEWING |
 | TESTING | Tests fail (retry < 3) | BUILDING (self-heal via mender) |
 | TESTING | Tests fail (retry >= 3) | BLOCKED |
+| TESTING | No verdict, or the review-worktree check failed | BLOCKED |
 | REVIEWING | APPROVE (docs needed) | DOCUMENTING |
 | REVIEWING | APPROVE (no docs needed) | COMMITTING |
 | REVIEWING | REJECT (retry < 2) | BUILDING (fix issues) |
 | REVIEWING | REJECT (retry >= 2) | BLOCKED |
+| REVIEWING | APPROVE-WITH-EDITS (retry < 2), every edit applied verbatim | REVIEWING (narrow re-check) |
+| REVIEWING | APPROVE-WITH-EDITS (retry >= 2) | BLOCKED |
+| REVIEWING | APPROVE-WITH-EDITS, an edit that cannot land verbatim | as REJECT |
+| REVIEWING | No verdict, or the review-worktree check failed | BLOCKED |
 | DOCUMENTING | Docs updated | COMMITTING |
 | DOCUMENTING | Skipped (no docs needed) | COMMITTING |
 | COMMITTING | Commit success | COMPLETE |
@@ -397,6 +402,10 @@ Agent tool parameters:
   Add documentation comments to public APIs.
   In your report's 'Changes:' list, name EVERY path you created, modified
   or deleted, one per line: the close commits exactly that list (TD-493).
+  In your report's Tests section, show each new or fixed behavior's test
+  failing without the change and passing with it (command and the failing
+  line), plus one control that could have failed and did not. Establish the
+  failing run without git stash: the stash is shared with other sessions.
   In your final report, include a 'Context doc impact' block. List any durable
   convention, pattern, API shape, architecture boundary, UI standard, or test
   standard changed, and name which maintain_when condition it may trigger. If
@@ -435,43 +444,84 @@ Agent tool parameters:
    - instance_id: {Instance ID}
    - agent: "sentinel"
    - event_type: "start"
-   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+   - model_requested: {the per-run model you requested for this agent, else the model its definition names}
    - brief_id: {current brief ID}
    - phase: "TESTING"
    Skip silently if MCP unavailable.
 3.5. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
    for `sentinel` (`igris lessons digest --role sentinel --project {project} --context "{safe title}"`)
    and keep its output for the `Role lessons:` line of the step 4 prompt.
+3.6. **Project checks (TD-497):** read the `## Reviewer checks` section of
+   `~/.igris/projects/{project}/context/test_standards.md`, up to the next
+   `## ` heading. Its `Review worktree links:` and `Review worktree home links:`
+   lines give step 3.7 its `--link` and `--home-link` values (`(none)` gives
+   none). Keep its `### Tester` part verbatim for the `Project checks:` line
+   of the step 4 prompt, or "none". If the section is absent, open the
+   worktree with no links and NOTIFY the operator that suites needing
+   installed dependencies may come back under Not run.
+3.7. **Review worktree (TD-497):** sentinel works in a throwaway copy of the
+   change, never in the shared working tree. Build the path set from the
+   Phase 7 step 2 sources (every forger `Changes:` list, and every path you
+   wrote yourself), then run:
+
+   ```bash
+   bash <review_worktree> open --id {BRIEF_ID}-test [--link <rel>]... [--home-link <name>]... -- <path> <path> ...
+   ```
+
+   `<review_worktree>` is `core/scripts/review_worktree.sh` in the project
+   checkout, or `~/.igris/core/scripts/review_worktree.sh` at runtime. If
+   neither exists, STOP and tell the operator: never review in the shared
+   tree. Exit 1 is a refusal that leaves nothing behind; its message says
+   why. If it says the path set is empty or not a valid close set (the same
+   rules as the close commit), rebuild the set from those sources and
+   re-run. On any other exit 1, and on exit 2 or 3, STOP and show the
+   operator the output. Keep the `REVIEW_ROOT=`, `REVIEW_DIR=`,
+   `REVIEW_ENV=` and `REVIEW_DIFF=` values for the step 4 prompt and step 5.
 4. **Delegate to the sentinel role** using your Agent tool:
 
 ```
 Agent tool parameters:
 - subagent_type: "sentinel"
 - description: "Test {BRIEF_ID} implementation"
-- prompt: "Run tests for the implementation.
+- prompt: "Test the change for {BRIEF_ID}; you did not write it.
+
+  Review worktree: {REVIEW_DIR}
+  Shell: start every command with `. {REVIEW_ENV} && `
+  Diff (untracked files included): {REVIEW_DIFF}
+  HEAD baseline: `git apply -R {REVIEW_DIFF}`, run, then `git apply {REVIEW_DIFF}`
+
+  Brief and acceptance criteria: [brief content]
+  Plan: [the plan file path, if one exists]
+  Author's commands, exit codes and red-first proof: [verbatim from the forger's report]
+  Triggers to probe: [the plan's risk list, or none]
+  Project checks: [the step 3.6 Tester part, verbatim, or none]
 
   Role lessons: [the step 3.5 digest output for sentinel, verbatim]
 
-  Run:
-  1. Linter/analyzer (if applicable)
-  2. Unit tests
-  3. Integration tests (if applicable)
-
-  Report PASS or FAIL with details."
+  First line of your report is the verdict."
 ```
 
 5. After sentinel returns:
+   - **Close the review worktree**, whatever the report says:
+     `bash <review_worktree> close {REVIEW_ROOT}`. Quote its output in the
+     Agent Log. Exit 1 means the stash, the branch and tag names, the
+     checked-out branch or a claimed file changed during the run.
+   - **Read the verdict:** the first word after `VERDICT:` on the first line
+     that contains it, with every `*` and backtick removed and trailing
+     punctuation (`.` `,` `;` `:` `!`) dropped. PASS and FAIL are the listed
+     verdicts. If close exited 1, or there is no listed verdict, go to step 9
+     instead of steps 6 to 8.
    - **Emit agent event (stop or error):** Call `igris_agent_event` with:
      - instance_id: {Instance ID}
      - agent: "sentinel"
-     - event_type: "stop" (if PASS) or "error" (if FAIL)
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - event_type: "stop" (only on PASS) or "error" (otherwise)
+     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "TESTING"
-     - result: "PASS" or "FAIL" with details
-     - error_message: {failure details, if FAIL}
+     - result: the bare verdict token, "PASS" or "FAIL", or "NO-VERDICT"
+     - error_message: {the failure details, the close output when it exited 1, or the report's opening lines when there is no verdict}
      Skip silently if unavailable.
    - Update brief: Active Agent = none
    - Update Agent Log with result
@@ -493,7 +543,7 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "sentinel"
      - event_type: "retry"
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
      - brief_id: {brief ID}
      - phase: "TESTING"
      - metadata: '{"attempt": {retry_count}, "reason": "test failure"}'
@@ -530,6 +580,14 @@ Agent tool parameters:
    - Set Phase: BLOCKED
    - Display: "Tests failing after 3 attempts. Manual intervention required."
    - Add blocker to `~/.igris/projects/{project}/session/BLOCKERS.md`
+   - Stop workflow
+
+9. **If the first line carries no listed verdict, or close exited 1:**
+   - Set Phase: BLOCKED
+   - Show the operator the report and the close output; its `+` and `-`
+     lines name what changed.
+   - Never drop, pop or delete a stash entry or a ref on the operator's
+     behalf.
    - Stop workflow
 
 ### Phase 5: REVIEWING
@@ -574,26 +632,51 @@ Agent tool parameters:
 
 1. Update brief: Phase = REVIEWING, Active Agent = warden
 2. Add Agent Log entry: "Starting warden..."
+2.5. **Reviewer model (TD-497):** sentinel and warden name their model in
+   their definitions. Run warden on a stronger model, through your harness's
+   per-call model option where it has one, when the operator asks, or for
+   an L or XL change to a gate, security or sync surface. If the change was
+   written on warden's model, run warden on a different one: a change is
+   reviewed by a model other than its author's. Record the model you
+   requested as `model_requested` in steps 3 and 5, and add one Agent Log
+   row naming it.
 3. **Emit agent event (start):** If brain MCP is available AND Instance ID exists in `~/.igris/projects/{project}/session/instances/<instance_id>.md`, call `igris_agent_event` with:
    - instance_id: {Instance ID}
    - agent: "warden"
    - event_type: "start"
-   - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+   - model_requested: {the per-run model you requested for this agent, else the model its definition names}
    - brief_id: {current brief ID}
    - phase: "REVIEWING"
    Skip silently if MCP unavailable.
 3.5. **Role-lesson digest (TD-496):** run the "Role-Lesson Digest" recipe below
    for `warden` (`igris lessons digest --role warden --project {project} --context "{safe title}"`)
    and keep its output for the `Role lessons:` line of the step 4 prompt.
+3.6. **Project checks (TD-497):** as in Phase 4 step 3.6, keeping the
+   `### Reviewer` part for the `Project review items:` line of the step 4
+   prompt, or "none".
+3.7. **Review worktree (TD-497):** as in Phase 4 step 3.7, with its own id.
+   The path set is TESTING's plus every path edited since:
+
+   ```bash
+   bash <review_worktree> open --id {BRIEF_ID}-review [--link <rel>]... [--home-link <name>]... -- <path> <path> ...
+   ```
+
 4. **Delegate to the warden role** using your Agent tool:
 
 ```
 Agent tool parameters:
 - subagent_type: "warden"
 - description: "Review {BRIEF_ID} implementation"
-- prompt: "Review the implementation for quality.
+- prompt: "Review the change for {BRIEF_ID}; you did not write it.
 
-  Role lessons: [the step 3.5 digest output for warden, verbatim]
+  Review worktree: {REVIEW_DIR}
+  Shell: start every command with `. {REVIEW_ENV} && `
+  Diff (untracked files included): {REVIEW_DIFF}
+
+  Brief, with the acceptance criteria step 0 ticked: [brief content]
+  Plan: [the plan file path, if one exists]
+  Author's report, with its red-first proof: [the forger's report, verbatim]
+  Test report: [sentinel's report, verbatim, if it ran]
 
   Check:
   1. Read ~/.igris/core/context-doc-types/INDEX.md and the plan's Context Docs
@@ -604,9 +687,9 @@ Agent tool parameters:
      be explicitly queued, or the deferral/remediation must be explicit. Do NOT
      reject merely because a legitimate Context doc impact is waiting for the
      DOCUMENTING phase to resolve it.
-  4. No security vulnerabilities.
-  5. Tests are adequate.
-  6. Documentation is present where required.
+  4. The project review items below are part of this review.
+  5. Audit the author's red-first proof and its control.
+  6. Answer R1 and R4.
   7. ACCEPTANCE CRITERIA (TD-325). No regex can catch a false tick, so this is
      yours: for every criterion ticked during this hunt, is there a NAMED
      artifact in the diff, the tests or the hunt log that establishes it — a
@@ -616,28 +699,58 @@ Agent tool parameters:
      every `- [~]`, REJECT if it carries no DEFERRED reason or names no
      follow-up brief.
 
-  Output: APPROVE or REJECT with feedback."
+  Project review items: [the step 3.6 Reviewer part, verbatim, or none]
+
+  Role lessons: [the step 3.5 digest output for warden, verbatim]
+
+  First line of your report is the verdict."
 ```
 
 5. After warden returns:
+   - **Close the review worktree**, whatever the report says:
+     `bash <review_worktree> close {REVIEW_ROOT}`. Quote its output in the
+     Agent Log, as in Phase 4 step 5.
+   - **Read the verdict:** the first word after `VERDICT:` on the first line
+     that contains it, with every `*` and backtick removed and trailing
+     punctuation (`.` `,` `;` `:` `!`) dropped. APPROVE, APPROVE-WITH-EDITS and
+     REJECT are the listed verdicts. If close exited 1, or there is no listed
+     verdict, go to step 9 instead of steps 6 to 8.
    - **Emit agent event (stop or error):** Call `igris_agent_event` with:
      - instance_id: {Instance ID}
      - agent: "warden"
-     - event_type: "stop" (if APPROVE) or "error" (if REJECT)
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - event_type: "stop" (on APPROVE or APPROVE-WITH-EDITS) or "error" (otherwise)
+     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
      - model_resolved: {the model the harness reports the agent ran on — omit when unknown}
      - input_tokens, output_tokens, cache_read, cache_create: {only when the harness reports them — omit otherwise, NEVER 0}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
-     - result: "APPROVE" or "REJECT" with feedback
+     - result: the bare verdict token, "APPROVE", "APPROVE-WITH-EDITS" or "REJECT", or "NO-VERDICT"
+     - error_message: {the blocking findings, the close output when it exited 1, or the report's opening lines when there is no verdict}
      Skip silently if unavailable.
    - Update brief: Active Agent = none
-   - Update Agent Log with result
+   - Update Agent Log with result, including warden's R1 and R4 answers
 
 6. **If APPROVE:**
    - Evaluate if documentation updates are needed (see Phase 6 conditions)
    - If docs needed: Proceed to DOCUMENTING
    - If no docs needed: Proceed to COMMITTING
+
+6.5. **If APPROVE-WITH-EDITS:** every blocking finding is a `record` edit.
+   - If Retry Count >= 2: Set Phase: BLOCKED, show the edits, stop workflow.
+   - Otherwise increment Retry Count and apply each edit exactly as written,
+     changing nothing else:
+     - a point edit: the cited current text must occur once at its
+       file:line; replace it, or delete it, then show with `grep -nF` that
+       the old text is gone and the new text is present;
+     - a class edit: run its pattern over its scope, fix every hit, run it
+       again and keep the zero-hit output.
+     Paste each check into the Agent Log as an `EVIDENCE:` line.
+   - Then re-run this phase from step 1 as a narrow re-check: a new review
+     worktree whose set includes the edited paths, the step 4 prompt plus
+     "Narrow re-check: review only these edits: [the edits]", and the start
+     and stop events of steps 3 and 5. Its verdict takes its own branch.
+   - An edit that cannot land verbatim goes to step 7, as a REJECT.
+   - The full per-tag fix-loop policy is FR-279's.
 
 7. **If REJECT and Retry Count < 2:**
    - Increment Retry Count
@@ -645,16 +758,24 @@ Agent tool parameters:
      - instance_id: {Instance ID}
      - agent: "warden"
      - event_type: "retry"
-     - model_requested: {the model you chose for this agent, or "inherit:<your own model id>"}
+     - model_requested: {the per-run model you requested for this agent, else the model its definition names}
      - brief_id: {brief ID}
      - phase: "REVIEWING"
      - metadata: '{"attempt": {retry_count}, "reason": "review rejection"}'
      Skip silently if unavailable.
-   - Return to BUILDING with reviewer feedback
+   - Return to BUILDING with reviewer feedback. Pass each finding with its
+     tag unchanged; never re-tag or downgrade one.
 
 8. **If REJECT and Retry Count >= 2:**
    - Set Phase: BLOCKED
    - Display: "Review failed after 2 attempts. Manual intervention required."
+   - Stop workflow
+
+9. **If the first line carries no listed verdict, or close exited 1:** as
+   in Phase 4 step 9.
+   - Set Phase: BLOCKED
+   - Never drop, pop or delete a stash entry or a ref on the operator's
+     behalf.
    - Stop workflow
 
 ### Phase 6: DOCUMENTING (Conditional)
@@ -766,7 +887,8 @@ Agent tool parameters:
      (fix rounds included);
    - every path you wrote yourself during this hunt (DOCUMENTING edits, the
      CHANGELOG line, a fix you applied directly);
-   - every path sentinel or warden reported writing (a test it added).
+   - every path you edited applying APPROVE-WITH-EDITS (Phase 5 step 6.5).
+     Reviewers write only in their discarded review worktree.
 
    Name files, not directories. A rename is two paths: list the old name and
    the new one. Never derive the set from `git status` or from
@@ -979,9 +1101,10 @@ On each agent invocation, you MUST emit `igris_agent_event` calls — each namin
 
 **Pattern for every agent.** Every call below passes `instance_id` (from the
 per-instance session file), `agent` (the role being invoked) and
-`model_requested` (the model you chose for that role, or
-`inherit:<your own model id>` — an opaque string, never a guess about how the
-harness resolves it) in addition to the fields named — all FOUR of
+`model_requested` (the model you chose for that role — for a role whose
+definition names a model, that model unless you requested another for this
+run — or `inherit:<your own model id>`: an opaque string, never a guess about
+how the harness resolves it) in addition to the fields named — all FOUR of
 `instance_id`, `agent`, `event_type` and `model_requested` are REQUIRED, and a
 call omitting any is rejected at the gateway (BR-080, FR-267):
 

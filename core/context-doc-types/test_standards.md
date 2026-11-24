@@ -35,3 +35,17 @@ state are set up and torn down.
 ## Conventions & decisions
 Testing decisions the project stands by (a chosen runner, a mock-vs-real policy, a
 rejected approach) — each with its why.
+
+## Reviewer checks
+Optional; omit it if the project has none. `/hunt` reads it, up to the next
+`## ` heading, when it opens a review worktree for the tester and reviewer:
+- `Review worktree links: <path>...` — gitignored dependency or build
+  directories (for example `node_modules`) linked into the review worktree from
+  the main checkout, so suites can run there without an install.
+- `Review worktree home links: <name>...`, or `(none)` — entries of the real
+  home directory the project's suites need (a toolchain cache), linked into the
+  temporary HOME. Never `.igris`.
+- `### Tester` — project checks the tester runs: which suites cover which
+  paths, failures a fresh worktree shows at HEAD too, deploy-time checks.
+- `### Reviewer` — project review items for the reviewer: what the project's
+  secret scanner or release process needs a human eye for.

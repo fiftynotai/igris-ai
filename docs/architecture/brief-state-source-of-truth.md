@@ -250,8 +250,6 @@ encoded into:
 
 - `core/agents/seeker.md` (CONSTRAINTS) — build-state/gap audits verify against
   git log + on-disk artifacts + `brief_status.status`.
-- `core/agents/warden.md` (AUDIT MODE) — the ARCHITECTURE_REVIEW / gap-review
-  path.
 - `core/skills/audit/SKILL.md` (Constraints) — build-state findings consult the
   canonical status.
 - `core/skills/scan/SKILL.md` (§2 Scan Briefs) — build-state is read from

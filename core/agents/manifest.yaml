@@ -76,8 +76,9 @@ agents:
     description: "Runs tests and validates implementations"
     tools:
       - Read
-      - Bash
       - Grep
+      - Glob
+      - Bash
     triggers:
       - "test"
       - "validate"
@@ -87,12 +88,13 @@ agents:
   - name: warden
     file: warden.md
     tier: 1
-    role: "Code review + auditing"
-    description: "Reviews code for quality and security. Also performs audit operations."
+    role: "Code review + security"
+    description: "Reviews code for behavior, security, conventions and claims"
     tools:
       - Read
       - Grep
       - Glob
+      - Bash
     triggers:
       - "review"
       - "audit"

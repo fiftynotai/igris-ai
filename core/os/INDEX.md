@@ -43,8 +43,8 @@ a hand-listed name. Reach for the agent whose role fits the work.
 | sage | Expert Flutter specialist mastering Kalvad's MVVM + Actions Layer architecture with GetX. Specializes in building scalable Flutter apps with clean separation of concerns, reactive state management, and type-safe API integration patterns. |
 | scribe | Documentation specialist for Igris AI. Writes and maintains READMEs, API references, architecture docs, and code comments. Turns implemented code into clear, accurate, audience-appropriate documentation. |
 | seeker | Codebase research and investigation specialist for Igris AI. Investigates codebase, explains architecture, and researches how things work. |
-| sentinel | Test execution and validation specialist for Igris AI. Validates implementations by running tests, linting, and builds. Reports PASS/FAIL with detailed diagnostics. |
-| warden | Code review, quality guardian, and auditor for Igris AI. Reviews code for quality, security, and guideline compliance (APPROVE/REJECT). Also runs comprehensive codebase audits via /audit skill. |
+| sentinel | Independent tester of an uncommitted change — runs the relevant suites once, re-proves red-first, probes with mutations and adversarial inputs, and audits the change's testable claims. Returns PASS or FAIL. Use after implementation, in parallel with review. |
+| warden | Independent reviewer of an uncommitted change — behavior, security, conventions, and whether the change's claims (comments, docs, changelog, brief ticks, the implementer's report) are true at the scope stated. Returns APPROVE, APPROVE-WITH-EDITS or REJECT. Use after implementation, before commit. |
 
 ## Harness-specific roster
 

@@ -21,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The bundled brain counts an `APPROVE-WITH-EDITS` review as done
+  (TD-497),** the new warden verdict; `/hunt` runs both reviewers in a
+  throwaway worktree.
 - **Core agents no longer carry `memory: project` (TD-496, part 2),** and
   `igris add agent --core` stops writing it. Your agent-memory files stay
   on disk; run `/harvest` agent-memory mode to bring them into the brain.

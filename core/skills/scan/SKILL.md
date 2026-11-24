@@ -174,7 +174,7 @@ X agents registered (Y skills available)
 | architect | Implementation planning | 1 |
 | forger | Code implementation | 1 |
 | sentinel | Test execution | 1 |
-| warden | Code review + auditing | 1 |
+| warden | Code review + security | 1 |
 | mender | Error recovery | 3 |
 | seeker | Codebase research | 4 |
 | sage | Flutter MVVM + Actions architecture | 5 |

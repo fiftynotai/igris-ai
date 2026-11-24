@@ -35,6 +35,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Warden and sentinel are rewritten, and every `/hunt` TESTING and
+  REVIEWING run happens in a throwaway worktree (TD-497).** Both prompts are
+  short and cross-project, name `model: sonnet`, and get
+  `Read, Grep, Glob, Bash`. Warden's first line is
+  `VERDICT: APPROVE`, `VERDICT: APPROVE-WITH-EDITS` or `VERDICT: REJECT`, and
+  it tags each blocking finding `mechanism`, `behavior-claim` or `record`. It
+  carries the security lens and audits the author's red-first proof and its
+  control. Sentinel keeps the five-item floor, tags `mechanism` or `claim`,
+  and calls a failure pre-existing only with a HEAD run in the same worktree.
+  The new `core/scripts/review_worktree.sh` opens a detached worktree of HEAD
+  plus the claimed paths, with a temporary HOME and brain dir, records the
+  stash list, the branch and tag names, the checked-out branch and the
+  claimed files, and on close fails the review if any of them changed.
+  `/hunt` TESTING and REVIEWING run both reviewers through it, read a new
+  `## Reviewer checks` section of the project's `test_standards.md`, and
+  route APPROVE-WITH-EDITS (apply the edits verbatim, then one narrow
+  re-check). The igris-ai mirror and secret checks moved from the prompts to
+  that section. The agent-event roll-up counts APPROVE-WITH-EDITS as DONE,
+  and `scripts/validate_agent.sh` checks the prompt standard's mechanical
+  rules. The Codex, Gemini and OpenCode agent copies are not recompiled
+  here; TD-385 does that.
 - **Core agents no longer carry `memory: project` (TD-496, part 2).** The
   key gave each of the nine core agents a per-role memory directory and,
   with it, Write and Edit whatever its `tools:` line said. It is gone from

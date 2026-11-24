@@ -30,6 +30,7 @@ vi.mock('../../db.js', () => ({
 import { getDb } from '../../db.js';
 import {
   handleAgentEvent,
+  handleAgentEventList,
   handleAgentEventLog,
   findOpenStart,
   deriveRound,
@@ -491,5 +492,73 @@ describe('igris_agent_event tool wrapper (FR-267)', () => {
       .toThrow(MODEL_REQUESTED_REQUIRED_MESSAGE);
     expect(emit).not.toHaveBeenCalled();
     component.destroy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// TD-497 — the per-agent status roll-up (handleAgentEventList). The latest
+// event per agent decides the status; a `stop` rolls up to DONE only when its
+// `result` is a bare DONE-class verdict token. Rows are seeded directly with
+// explicit `created_at` values so "latest" is fixed, not clock-dependent.
+// ---------------------------------------------------------------------------
+
+describe('handleAgentEventList status roll-up (TD-497)', () => {
+  let db: Database.Database;
+
+  beforeEach(() => {
+    db = makeTestDb();
+    mockedGetDb.mockReturnValue(db);
+  });
+
+  afterEach(() => {
+    db.close();
+    vi.restoreAllMocks();
+  });
+
+  /** Seed one row; `at` is an explicit created_at. */
+  function seed(agent: string, eventType: string, result: string | null, at: string): void {
+    db.prepare(
+      "INSERT INTO agent_events (instance_id, agent, event_type, result, model_requested, created_at) VALUES ('inst-1', ?, ?, ?, 'sonnet', ?)",
+    ).run(agent, eventType, result, at);
+  }
+
+  function statusOf(agent: string): unknown {
+    const { agents } = handleAgentEventList({ instance_id: 'inst-1' });
+    const row = agents.find((a) => a.agent === agent);
+    expect(row).toBeDefined();
+    return row!.status;
+  }
+
+  it('AE1: a stop whose result is APPROVE-WITH-EDITS rolls up to DONE', () => {
+    seed('warden', 'start', null, '2026-11-24 10:00:00');
+    seed('warden', 'stop', 'APPROVE-WITH-EDITS', '2026-11-24 10:05:00');
+    expect(statusOf('warden')).toBe('DONE');
+  });
+
+  it('AE2: APPROVE, PASS and success still roll up to DONE', () => {
+    seed('warden', 'stop', 'APPROVE', '2026-11-24 10:00:00');
+    seed('sentinel', 'stop', 'PASS', '2026-11-24 10:00:00');
+    seed('forger', 'stop', 'success', '2026-11-24 10:00:00');
+    expect(statusOf('warden')).toBe('DONE');
+    expect(statusOf('sentinel')).toBe('DONE');
+    expect(statusOf('forger')).toBe('DONE');
+  });
+
+  it('AE3 (control): REJECT, a near-miss token and a decorated result roll up to FAIL', () => {
+    seed('warden', 'stop', 'REJECT', '2026-11-24 10:00:00');
+    seed('reviewer-b', 'stop', 'APPROVED', '2026-11-24 10:00:00');
+    seed('reviewer-c', 'stop', 'APPROVE (2 notes)', '2026-11-24 10:00:00');
+    expect(statusOf('warden')).toBe('FAIL');
+    expect(statusOf('reviewer-b')).toBe('FAIL');
+    expect(statusOf('reviewer-c')).toBe('FAIL');
+  });
+
+  it('AE4: an error rolls up to FAIL and a trailing start to WORKING', () => {
+    seed('sentinel', 'stop', 'PASS', '2026-11-24 10:00:00');
+    seed('sentinel', 'error', 'FAIL', '2026-11-24 10:05:00');
+    seed('warden', 'stop', 'APPROVE', '2026-11-24 10:00:00');
+    seed('warden', 'start', null, '2026-11-24 10:05:00');
+    expect(statusOf('sentinel')).toBe('FAIL');
+    expect(statusOf('warden')).toBe('WORKING');
   });
 });
